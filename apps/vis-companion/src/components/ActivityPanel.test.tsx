@@ -854,6 +854,30 @@ describe('what the iteration cost', () => {
     expect(parts.map((part) => part.text)).toEqual(['0 mutations', '1 check', '2 external actions']);
     expect(parts.at(-1)?.tone).toBe('text-code-syntax-special');
   });
+
+  // A check can find problems inside a call that succeeded; only its verdict says so.
+  it('says how many checks found failures inside calls that succeeded', () => {
+    const projection = activityProjection();
+    const rows = projection.rows.map((row) =>
+      row.signal === 'verification'
+        ? {
+            ...row,
+            presentation: {
+              headline: 'Run tests',
+              summary: '38 passed, 2 failed',
+              content: [],
+              verdict: 'failed' as const,
+            },
+          }
+        : row,
+    );
+
+    expect(activityCostParts({ ...projection, rows }).map((part) => part.text)).toEqual([
+      '0 mutations',
+      '1 observation',
+      '1 check, 1 failing',
+    ]);
+  });
 });
 
 describe('the axis is built from the closed vocabulary', () => {

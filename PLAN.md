@@ -1,3 +1,72 @@
+# Notes-first turn summaries
+
+Show the work between progress notes as one Activity, live and after the turn, with the same display groups in both clients.
+
+## Context
+
+At main `2e37cd99b` the prompt asks for short progress notes (`1963c496f`). Both clients already join the
+tool steps between notes while a turn runs: the TUI's `render-iteration-entries` merges unnarrated
+iterations and `execution-groups` pools adjacent Python forms into one Activity band; the Companion's
+`buildSegments`/`TraceSegment` pool the same forms into one `FormTrace`. A finished turn instead folds
+into the engine digest (`internal/activity/digest.clj`, attached by `gateway/state.clj`, painted by TUI
+`turn-digest-entries` and Companion `FoldedTurn`) unless `Expand finished turns` is on, so the notes
+disappear and a finished turn no longer looks like the live one. The display switches are grouped
+differently: the TUI lists Theme and both switches under one `Terminal UI` section, the Companion shows
+`Transcript` and `Theme` panels.
+
+Owners: `apps/vis-tui` (`render.clj` `execution-groups`/`trace-render-entries`, `dialogs.clj` settings
+rows, `state.clj` preferences, `chat.clj`/`virtual.clj` digest plumbing); `apps/vis-companion`
+(`lib/transcript-display.ts`, `ChatContent.tsx`, `SettingsScreen.tsx`, `lib/activity.ts`); the engine
+digest (`internal/activity/digest.clj`, `gateway/state.clj`, `packages/vis-contract` `$defs/digest`);
+`context/prompt.clj`; `resources/vis-docs/`.
+
+Rejected: keeping the one-line fold as a third switch (a finished turn would again differ from the live
+one); a per-note engine digest (both clients already total each band from its rows, live and settled
+alike); moving device display preferences into the gateway settings catalog (they never reach the engine).
+
+## 1. TUI: summarize switch and settings groups
+
+- Rationale: one switch decides whether the steps between notes share one Activity band; a finished turn
+  renders exactly like the live one.
+- Data: settings key `:summarize-steps` / machine config `summarize_steps` (default on) replaces
+  `:expand-finished-turns`; `execution-groups` pools only while it is on; sections `Responses`
+  (`Show Python code and results`, `Summarize steps between notes`) and `Theme` replace `Terminal UI`.
+- Acceptance criteria: on, one band per stretch between notes, live and settled; off, one band per step;
+  no folded digest row; settings and persistence covered by tests.
+- Unknowns: none.
+
+## 2. Companion: the same switch and groups
+
+- Rationale: both clients show the same turn shape and the same settings groups.
+- Data: `vis.summarize_steps` replaces `vis.expand_finished_turns`; `TraceSegment` pools only while it is
+  on; `FoldedTurn`/`ActivityAttention` removed; panel `Responses` replaces `Transcript`.
+- Acceptance criteria: component tests for both switch states and the settings panel; stories updated.
+- Unknowns: none.
+
+## 3. Engine: remove the turn digest
+
+- Rationale: no client reads the digest once finished turns stop folding; obsolete paths are removed.
+- Data: `internal/activity/digest.clj`, `gateway/state.clj` digest fields on transcript turns and terminal
+  events, contract `$defs/digest` and its fixture, client digest parsers.
+- Acceptance criteria: contract, gateway and client tests pass without a digest; signals and the
+  `verification`/`external` tags stay.
+- Unknowns: none.
+
+## 4. Prompt, docs and end-to-end check
+
+- Rationale: the prompt and guides must not promise that notes fold away.
+- Data: `context/prompt.clj` answer rule, `resources/vis-docs/index.md` and settings guides.
+- Acceptance criteria: TUI captures of a live and a finished turn in both switch states; Companion story
+  screenshots; affected test suites, lint and CI pass.
+- Unknowns: none.
+
+## Plan state
+
+- [x] 1. TUI switch and groups
+- [x] 2. Companion switch and groups
+- [x] 3. Engine digest removed
+- [x] 4. Prompt, docs, end-to-end check
+
 # Less-noise settled turns
 
 Collapse a finished turn's trace into one digest row that still surfaces what needs attention.

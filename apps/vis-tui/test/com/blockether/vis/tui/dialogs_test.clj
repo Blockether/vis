@@ -1010,7 +1010,7 @@
        (var-get #'dlg/settings-render-entries)
 
        rows
-       [{:type :section :label "Terminal UI"}
+       [{:type :section :label "Responses"}
         {:key :show-thinking
          :type :toggle
          :label "Show model thinking"
@@ -1149,7 +1149,7 @@
                                     "Settings stays"))
              (finally (.stopScreen screen))))))
   (it
-    "Settings is ONE flat list (no tabs): Terminal UI + grouped toggles + Models"
+    "Settings is ONE flat list (no tabs): Responses + Theme + grouped toggles + Models"
     (let [settings-rows (var-get #'dlg/settings-rows)]
       (with-redefs [vis/get-router (constantly nil)]
         (let [rows (settings-rows)
@@ -1157,10 +1157,12 @@
                             (filter #(= :section (:type %)))
                             (mapv :label))]
 
-          ;; flat list, web-shaped: Terminal UI chrome always present. The
+          ;; flat list, web-shaped: Responses and Theme lead, as in the app. The
           ;; Models section was retired (it only carried reasoning-effort,
           ;; which moved to Ctrl+R).
-          (expect (some #{"Terminal UI"} sections))
+          (expect (= ["Responses" "Theme" "Agent"] (take 3 sections)))
+          (expect (= [:show-python-code :summarize-steps :theme-name]
+                     (vec (keep :key (take 5 rows)))))
           (expect (not-any? #{"Models"} sections))
           (expect (some #(= :theme-name (:key %)) rows))
           ;; vis-dark/light are pinned to the TOP; every other built-in follows by id.

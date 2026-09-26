@@ -20,8 +20,6 @@
             [com.blockether.vis.internal.improve.review :as improve-review]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.contract.gateway :as gateway-contract]
-            [com.blockether.vis.contract.activity :as activity-contract]
-            [com.blockether.vis.internal.activity.digest :as activity-digest]
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
@@ -2245,49 +2243,10 @@
    `:success`, `:error`, `:cancelled`, … — is a settled turn."
   #{"running" "streaming" "queued" "pending"})
 
-(defn- form-activity
-  "One form's complete Activity in engine spelling: its stored first page joined with
-   every later page of the session-owned history behind it."
-  [db sid activity]
-  (let [history-id
-        (get-in activity [:history :id])
-
-        rows
-        (loop [rows
-               (vec (:rows activity))
-
-               after
-               (get-in activity [:history :next-after])]
-
-          (if-let [page (when (and history-id after)
-                          (persistance/db-activity-page db sid history-id {:after after}))]
-            (recur (into rows (:rows page)) (get-in page [:history :next-after]))
-            rows))]
-
-    (wire/->engine (wire/->wire (assoc (dissoc activity :history) :rows rows)))))
-
-(defn- turn-digest
-  "The settled turn's Activity digest over `iterations`, or nil when the turn ran no
-   operation or its Activity cannot be read in the contract shape. A digest failure
-   never fails the turn it summarizes."
-  [db sid iterations]
-  (try (when-let [value (activity-digest/digest (into []
-                                                      (comp (mapcat :forms)
-                                                            (keep :activity)
-                                                            (map #(form-activity db sid %)))
-                                                      iterations))]
-         (if (activity-contract/digest-from-wire (wire/->wire value))
-           value
-           (do (tel/log! :warn ["gateway: turn Activity digest is outside the contract" (str sid)])
-               nil)))
-       (catch Throwable t
-         (tel/log! :warn ["gateway: turn Activity digest failed" (str sid) (ex-message t)])
-         nil)))
-
 (defn- transcript-turn
   "Hydrate one persisted turn in the canonical remote-channel shape and attach
-   the canonical TUI/CLI bubble-footer strings and Activity digest."
-  [db sid att-by-soul turn]
+   the canonical TUI/CLI bubble-footer strings."
+  [db att-by-soul turn]
   (let [iteration-rows
         (try (->> (persistance/db-list-session-turn-iterations db (:id turn))
                   (mapv with-display-iteration))
@@ -2397,10 +2356,7 @@
         (when-not in-flight? (fmt/meta-summary-line meta-source))
 
         fallback-note
-        (when-not in-flight? (fmt/meta-fallback-note meta-source))
-
-        digest
-        (when-not in-flight? (turn-digest db sid iterations))]
+        (when-not in-flight? (fmt/meta-fallback-note meta-source))]
 
     (cond-> (-> turn
                 (dissoc :id :user-request)
@@ -2414,10 +2370,7 @@
       (assoc :meta-summary meta-summary)
 
       fallback-note
-      (assoc :meta-fallback-note fallback-note)
-
-      digest
-      (assoc :digest digest))))
+      (assoc :meta-fallback-note fallback-note))))
 
 (defn transcript
   "Rich persisted transcript rows for `sid` in THE canonical wire shape
@@ -2437,7 +2390,7 @@
              (try (persistance/db-list-turns-attachments db (map :id turns))
                   (catch Throwable _ {}))]
 
-         (wire/canonical (mapv (partial transcript-turn db sid att-by-soul) turns)))
+         (wire/canonical (mapv (partial transcript-turn db att-by-soul) turns)))
        (catch Throwable t
          (tel/log! :warn ["gateway: transcript hydration failed" (ex-message t)])
          [])))
@@ -2471,7 +2424,7 @@
    for the rows it does not send. Returns `[rows dropped]` — `rows` still
    oldest-first, `dropped` the number of OLDEST window rows left out, which the
    caller adds to `:offset`."
-  [db sid att-by-soul window]
+  [db att-by-soul window]
   (loop [i
          (dec (count window))
 
@@ -2484,7 +2437,7 @@
     (if (neg? i)
       [(vec rows) 0]
       (let [row
-            (wire/canonical (transcript-turn db sid att-by-soul (nth window i)))
+            (wire/canonical (transcript-turn db att-by-soul (nth window i)))
 
             bytes'
             (+ (long bytes)
@@ -2552,8 +2505,8 @@
 
           [rows dropped]
           (if limit
-            (budgeted-page-turns db sid att-by-soul window)
-            [(wire/canonical (mapv (partial transcript-turn db sid att-by-soul) window)) 0])
+            (budgeted-page-turns db att-by-soul window)
+            [(wire/canonical (mapv (partial transcript-turn db att-by-soul) window)) 0])
 
           from
           (long (+ start (long dropped)))]
@@ -2732,17 +2685,7 @@
          error
          (when (= "failed" status)
            (not-empty (some-> (:error turn)
-                              str)))
-
-         digest
-         (when-let [turn-id (some-> tid
-                                    str
-                                    parse-uuid)]
-           (let [db (lp/db-info)]
-             (turn-digest db
-                          sid
-                          (try (persistance/db-list-session-turn-iterations db turn-id)
-                               (catch Throwable _ [])))))]
+                              str)))]
 
      (cond-> {:turn_id tid
               :status status
@@ -2755,10 +2698,7 @@
        (assoc :content content)
 
        error
-       (assoc :error error)
-
-       digest
-       (assoc :digest digest)))))
+       (assoc :error error)))))
 
 (defn turn-answer-text
   "Plain-text projection of ONE finished turn's answer content, or nil.

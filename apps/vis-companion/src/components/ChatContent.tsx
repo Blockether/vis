@@ -23,14 +23,12 @@ import { LiveView } from './LiveView';
 import { MermaidBlock } from './MermaidBlock';
 import { JustifiedProse } from './JustifiedProse';
 import { liveOwnerMatches, type LiveView as LiveViewModel } from '../lib/live-view';
-import { ActivityAttention, ActivityPanel, ActivityAttachmentContext } from './ActivityPanel';
+import { ActivityPanel, ActivityAttachmentContext } from './ActivityPanel';
 import {
-  activityDigestFromWire,
   mergeActivity,
-  type ActivityDigest,
   type ActivityProjection,
 } from '../lib/activity';
-import { useFinishedTurnsExpanded, usePythonCodeShown } from '../lib/transcript-display';
+import { usePythonCodeShown, useStepsSummarized } from '../lib/transcript-display';
 import { AlertIcon, ArrowOutIcon, ChevronIcon, ForkIcon, PauseIcon, PlayIcon } from './icons';
 import { artifactShareVerb, shareArtifact } from '../lib/artifact-share';
 import {
@@ -2438,14 +2436,15 @@ type Chunk =
     }
   | { kind: 'cards'; key: string; cards: TranscriptForm[] };
 
-// Consecutive TOOL-ONLY iterations are one run of work, not N bubbles: the model
-// kept calling tools without saying anything in between. Mirrors the TUI
-// (`render/merge-iteration-entries`): a narrated iteration may OPEN a run (its
-// thinking / prose renders above the cards), an interior narrated call closes it,
-// and so does an iteration that produced attachments (those render last).
+// The steps between two progress notes are one run of work, not N bubbles. Mirrors the
+// TUI (`render/render-iteration-entries`): with steps summarized, only a progress note
+// opens a run, and later steps join it with their reasoning and attachments, which
+// render after the run's Activity. Otherwise reasoning opens a run too, and an iteration
+// that produced attachments closes its run, since those render last.
 function buildSegments(
   iterations: TranscriptIteration[],
   answered: ReadonlySet<string> = NOTHING_ANSWERED,
+  summarize = true,
 ): TraceSegmentData[] {
   const visible = iterations
     .map((iteration, index) => traceEntry(iteration, index, answered))
@@ -2460,8 +2459,10 @@ function buildSegments(
   const segments: TraceSegmentData[] = [];
   visible.forEach((entry) => {
     const open = segments.at(-1);
-    if (open && !open.closed && !entry.thinking && !entry.prose && !entry.attachments.length)
-      open.items.push(entry);
+    const narrated = entry.prose || (!summarize && entry.thinking);
+    // Regression: an artifact split its run into two Activities between the same notes.
+    const closing = !summarize && entry.attachments.length > 0;
+    if (open && !open.closed && !narrated && !closing) open.items.push(entry);
     else {
       segments.push({
         key: String(entry.iteration.id ?? entry.iteration.position ?? entry.index),
@@ -2470,7 +2471,7 @@ function buildSegments(
         closed: false,
       });
     }
-    if (entry.attachments.length) segments[segments.length - 1].closed = true;
+    if (closing) segments[segments.length - 1].closed = true;
   });
   return segments;
 }
@@ -2481,6 +2482,7 @@ type TraceSegmentProps = {
   segment: TraceSegmentData;
   live: boolean;
   showCode: boolean;
+  summarize: boolean;
   client?: GatewayClient;
   sid?: string;
   liveViews: LiveViewModel[];
@@ -2504,6 +2506,7 @@ function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
   if (
     a.live !== b.live ||
     a.showCode !== b.showCode ||
+    a.summarize !== b.summarize ||
     a.client !== b.client ||
     a.sid !== b.sid ||
     a.liveViews !== b.liveViews
@@ -2525,11 +2528,13 @@ const TraceSegment = memo(function TraceSegment({
   segment,
   live,
   showCode,
+  summarize,
   client,
   sid,
   liveViews,
 }: TraceSegmentProps) {
-  // Narration and attachments bound a run; consecutive Python forms share its source and axis.
+  // Summarized, a run's consecutive Python forms share one source and Activity; otherwise
+  // every form keeps its own.
   const chunks = useMemo(() => {
     const built: Chunk[] = [];
     segment.items.forEach((entry) => {
@@ -2539,7 +2544,13 @@ const TraceSegment = memo(function TraceSegment({
         const isPython = isPythonForm(form);
         if (showFormCode(form, formCode(form)) || (!showCode && isPython)) {
           const pool = built.at(-1);
-          if (isPython && !form.comment?.trim() && pool?.kind === 'code' && pool.isPython)
+          if (
+            summarize &&
+            isPython &&
+            !form.comment?.trim() &&
+            pool?.kind === 'code' &&
+            pool.isPython
+          )
             pool.forms.push(form);
           else built.push({ kind: 'code', key, forms: [form], isPython });
           return;
@@ -2552,15 +2563,24 @@ const TraceSegment = memo(function TraceSegment({
       });
     });
     return built;
-  }, [segment, showCode]);
+  }, [segment, showCode, summarize]);
   const attachments = useMemo(() => segment.items.flatMap((entry) => entry.attachments), [segment]);
+  // A summarized run reads the reasoning of all its steps as one band.
+  const thinking = useMemo(
+    () =>
+      segment.items
+        .map((entry) => entry.thinking)
+        .filter(Boolean)
+        .join('\n\n'),
+    [segment],
+  );
 
   return (
     <section
       className={`relative min-w-0 ${live ? transcriptEnterClass : ''}`}
       data-transcript-part
     >
-      {segment.head.thinking && <ThinkingBand railed>{segment.head.thinking}</ThinkingBand>}
+      {thinking && <ThinkingBand railed>{thinking}</ThinkingBand>}
       {segment.head.prose && (
         // The trace owns outer gaps; prose only separates bands within this segment.
         <div className="py-2.5 text-ui text-vis-message first:pt-0 last:pb-0 mouse:text-title [&+*]:mt-0">
@@ -2658,6 +2678,7 @@ export const IterationTrace = memo(function IterationTrace({
 }) {
   const preferredCode = usePythonCodeShown();
   const showCode = codeOverride ?? preferredCode;
+  const summarize = useStepsSummarized();
   const rootRef = useRef<HTMLDivElement>(null);
   // Identity in the ramp queue, so only the bottom-most trace backfills at once.
   const [rampId] = useState(() => Symbol('trace-ramp'));
@@ -2666,7 +2687,10 @@ export const IterationTrace = memo(function IterationTrace({
   // current one started (0 = none in flight).
   const stepRef = useRef({ size: SEGMENT_RAMP_START, startedAt: 0 });
 
-  const segments = useMemo(() => buildSegments(iterations, answered), [iterations, answered]);
+  const segments = useMemo(
+    () => buildSegments(iterations, answered, summarize),
+    [iterations, answered, summarize],
+  );
 
   // How many segments at the START of the trace are still held back. The ramp
   // only ever SHRINKS it, which is what makes it safe on a turn that is still
@@ -2779,6 +2803,7 @@ export const IterationTrace = memo(function IterationTrace({
             segment={segment}
             live={live}
             showCode={showCode}
+            summarize={summarize}
             client={client}
             sid={sid}
             liveViews={liveViews}
@@ -3635,71 +3660,6 @@ function TurnStamp({ position, createdAt }: { position?: number; createdAt?: num
   );
 }
 
-/**
- * A FINISHED TURN, FOLDED: the engine's one-line digest, the outcomes that still need the
- * reader, then the answer. The row is a disclosure: pressing it opens the whole trace beneath
- * it, and the `Expand finished turns` setting opens every finished turn. The trace mounts on
- * the first press and then stays, so what the reader opened inside it survives folding the
- * turn again. Live views stay below a folded turn: a server the turn started can still be
- * running after the turn has ended.
- */
-function FoldedTurn({
-  digest,
-  iterations,
-  client,
-  sid,
-  liveViews,
-  children,
-}: {
-  digest: ActivityDigest;
-  iterations: TranscriptIteration[];
-  client?: GatewayClient;
-  sid?: string;
-  liveViews?: LiveViewModel[];
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
-  const failing = digest.attention.some(
-    (row) =>
-      row.state === 'failed' ||
-      row.state === 'cancelled' ||
-      row.presentation?.verdict === 'failed',
-  );
-  return (
-    <>
-      <div className={`grid min-w-0 gap-1 ${open ? '' : 'mb-2.5'}`} data-turn-digest>
-        <Disclosure
-          tone="chronology"
-          density="comfortable"
-          isOpen={open}
-          onClick={() => {
-            setOpen((value) => !value);
-            setMounted(true);
-          }}
-        >
-          <span className={`min-w-0 break-words ${failing ? 'text-err' : ''}`}>
-            {digest.summary}
-          </span>
-        </Disclosure>
-        {!open && (
-          <ActivityAttachmentContext.Provider value={iterationAttachment(iterations, client, sid)}>
-            <ActivityAttention digest={digest} />
-          </ActivityAttachmentContext.Provider>
-        )}
-        {!open && client && sid && liveViews?.length ? (
-          <LiveView views={liveViews} client={client} sid={sid} />
-        ) : null}
-      </div>
-      {mounted && (
-        <div className="mt-1" hidden={!open}>
-          {children}
-        </div>
-      )}
-    </>
-  );
-}
-
 export const AssistantMessage = memo(function AssistantMessage({
   turn,
   agentName = 'Vis',
@@ -3777,29 +3737,6 @@ export const AssistantMessage = memo(function AssistantMessage({
   // arming it cannot change the height it was armed with.
   const paintSkip = useMeasuredPaintSkip(streaming);
 
-  // A finished turn folds to the engine's digest of it; the turn being written never does,
-  // and neither does a turn whose trace has nothing to fold.
-  const expandFinished = useFinishedTurnsExpanded();
-  const digest = useMemo(
-    () => (streaming ? null : activityDigestFromWire(turn.digest)),
-    [streaming, turn.digest],
-  );
-  const folding =
-    !expandFinished && digest && digest.operations > 0 && (turn.iterations?.length ?? 0) > 0
-      ? digest
-      : null;
-  const trace = (
-    <IterationTrace
-      iterations={turn.iterations ?? []}
-      answered={answered}
-      live={streaming}
-      whole={whole}
-      client={client}
-      sid={sid}
-      liveViews={liveViews}
-    />
-  );
-
   return (
     <article
       className="flow-root mt-4 w-full"
@@ -3833,19 +3770,15 @@ export const AssistantMessage = memo(function AssistantMessage({
         </div>
       </div>
       <div className="min-w-0 [&>:first-child]:mt-0">
-        {folding ? (
-          <FoldedTurn
-            digest={folding}
-            iterations={turn.iterations ?? []}
-            client={client}
-            sid={sid}
-            liveViews={liveViews}
-          >
-            {trace}
-          </FoldedTurn>
-        ) : (
-          trace
-        )}
+        <IterationTrace
+          iterations={turn.iterations ?? []}
+          answered={answered}
+          live={streaming}
+          whole={whole}
+          client={client}
+          sid={sid}
+          liveViews={liveViews}
+        />
         {/* Desktop messages share the reading scale with the composer and session title.
             Controls and tool payloads stay compact; touch keeps its existing density. */}
         {(blocks.length > 0 || fallback || emptyStatus) && (

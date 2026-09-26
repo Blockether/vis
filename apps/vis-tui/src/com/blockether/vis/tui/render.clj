@@ -1359,8 +1359,6 @@
 
 (def ^:private queue-border-marker p/MARKER_QUEUE_BORDER)
 
-(def ^:private execution-summary-marker p/MARKER_EXECUTION_SUMMARY)
-
 (def ^:private activity-marker p/MARKER_ACTIVITY)
 
 (def ^:private md-h1-marker p/MARKER_MD_H1)
@@ -2476,33 +2474,6 @@
                     (do (p/set-colors! g t/header-active-tab-accent bg-color)
                         (p/fill-rect! g fbx y fill-iw 1)
                         (p/put-str! g x y (str "└" (repeat-str "─" (max 0 (dec (long iw)))))))
-                    ;; Execution summary stays on transcript paper; only its semantic state colors it.
-                    (str/starts-with? line execution-summary-marker)
-                    (let [raw (subs line 1)
-                          tone-fg (case (:status-tone meta)
-                                    :running
-                                    t/warning-fg
-
-                                    :error
-                                    t/status-bad
-
-                                    :ok
-                                    t/status-ok
-
-                                    t/text-fg)
-                          abs-row (+ (long viewport-top) (long y))]
-
-                      (p/set-colors! g tone-fg bg-color)
-                      (p/fill-rect! g fbx y fill-iw 1)
-                      (p/styled g [p/BOLD] (p/put-str! g x y raw))
-                      (when (= :toggle-details (:kind meta))
-                        (.register interactions/hit-map
-                                   {:bounds
-                                    {:row abs-row :col x :width (long (or (:click-width meta) iw))}
-                                    :kind :toggle-details
-                                    :session-id (:session-id meta)
-                                    :node-id (:node-id meta)
-                                    :collapsed? (:collapsed? meta)})))
                     ;; Activity continues the Code surface, with independent disclosure.
                     (str/starts-with? line activity-marker)
                     (let [raw (subs line 1)
@@ -5002,24 +4973,25 @@
                 (or (get m k) (get m (keyword k)) (get m (keyword (str/replace k "_" "-")))))]
     (->> attachments
          (filter #(= "tool" (str (field % "source"))))
-         (keep-indexed (fn [index artifact]
-                         (let [kind (str (field artifact "kind"))
-                               media-type (str (or (field artifact "media_type")
-                                                   "application/octet-stream"))]
+         (keep-indexed
+           (fn [index artifact]
+             (let [kind (str (field artifact "kind"))
+                   media-type (str (or (field artifact "media_type") "application/octet-stream"))]
 
-                           (when-not (or (#{"image" "table"} kind)
-                                         (str/starts-with? media-type "image/")
-                                         (str/starts-with? media-type "video/"))
-                             (cond-> {:filename (str (or (field artifact "filename") "artifact"))
-                                      :media-type media-type
-                                      :size (field artifact "size")
-                                      :iteration-id (str iteration-id)
-                                      :index index}
-                               (field artifact "view_id")
-                               (assoc :view-id (field artifact "view_id"))
+               (when-not (or (#{"image" "table"} kind)
+                             (str/starts-with? media-type "image/")
+                             (str/starts-with? media-type "video/"))
+                 (cond-> {:filename (str (or (field artifact "filename") "artifact"))
+                          :media-type media-type
+                          :size (field artifact "size")
+                          ;; A summarized run's artifact still opens from its own step.
+                          :iteration-id (str (or (::iteration-id artifact) iteration-id))
+                          :index (or (::index artifact) index)}
+                   (field artifact "view_id")
+                   (assoc :view-id (field artifact "view_id"))
 
-                               (field artifact "owner")
-                               (assoc :owner (field artifact "owner")))))))
+                   (field artifact "owner")
+                   (assoc :owner (field artifact "owner")))))))
          vec)))
 
 (defn- strip-produced-artifact-transport
@@ -5548,7 +5520,10 @@
    question a receipt is asked, and it is about the rows that are NOT there, so no row
    on the axis can answer it; the other kinds speak only when they happened. Rows
    the ENGINE dropped still count, or a receipt showing four of ten calls would report
-   the cost of four."
+   the cost of four.
+
+   A check whose own `verdict` is `failed` says so beside the count, as in
+   `2 checks, 1 failing`: the call succeeded, so no mark or state word shows it."
   ^String [activity]
   (let [rows
         (vec (:rows activity))
@@ -5573,6 +5548,13 @@
         checks
         (tally "verification")
 
+        failing
+        (count (filter #(and (= "verification" (str (:signal %)))
+                             (= "failed"
+                                (some-> (get-in % [:presentation :verdict])
+                                        name)))
+                       rows))
+
         external
         (tally "external")]
 
@@ -5582,7 +5564,9 @@
                 (conj (noun observations "observation"))
 
                 (pos? (long checks))
-                (conj (noun checks "check"))
+                (conj (cond-> (noun checks "check")
+                        (pos? failing)
+                        (str ", " failing " failing")))
 
                 (pos? (long external))
                 (conj (noun external "external action"))))))
@@ -7161,8 +7145,8 @@
 (defn- format-iteration-entry-entries
   [entry code-width iteration-number &
    [{:keys [show-header? session-id detail-expansions session-turn-id live-preview?
-            show-python-code? bubble-w]
-     :or {show-header? false live-preview? false show-python-code? true}}]]
+            show-python-code? summarize-steps? bubble-w]
+     :or {show-header? false live-preview? false show-python-code? true summarize-steps? true}}]]
   ;; Iteration / block header labels removed per user directive. The
   ;; `show-header?` argument is retained as a no-op for callers; we
   ;; never paint the right-aligned ITERATION N band any more.
@@ -7170,8 +7154,10 @@
                 repeat-count attachments iteration-id]}
         entry
 
+        ;; Summarized steps share one source and Activity per adjacent Python run;
+        ;; otherwise every form keeps its own.
         forms
-        (execution-groups forms)
+        (if summarize-steps? (execution-groups forms) (mapv #(execution-group [%]) forms))
 
         iteration-artifacts
         (iteration-artifact-rows iteration-id attachments)
@@ -7447,8 +7433,8 @@
                                  [id
                                   {:filename (field :filename)
                                    :media-type (field :media_type)
-                                   :iteration-id (str iteration-id)
-                                   :index index}])))
+                                   :iteration-id (str (or (::iteration-id artifact) iteration-id))
+                                   :index (or (::index artifact) index)}])))
                            (filter #(= "tool" (or (:source %) (get % "source"))) attachments)))
                    :activity-omitted (get-in activity [:omitted :rows] 0)
                    :activity-histories (vec (or (seq (:histories activity))
@@ -8245,22 +8231,22 @@
             :else (recur (conj! out e) nil (next xs))))))))
 
 (defn- mergeable-iteration-forms
-  "Forms of an iteration when it is a PLAIN tool iteration — has forms and
-   carries no iteration-level error / recap / provider-fallback. Returns the
-   forms vector, else nil.
+  "Forms of an iteration that may join a merged run, else nil. Unsummarized, only a
+   PLAIN tool iteration joins — forms and no iteration-level error / recap /
+   provider-fallback / attachments. With `summarize?` any iteration with forms joins:
+   its artifacts and errors travel with the merged run.
 
    No tool-name whitelist and no same-tool requirement: ANY maximal run of
    consecutive plain tool iterations (see `render-iteration-entries`) merges into
    ONE flush-stacked bubble. NARRATION does not disqualify a run's HEAD — its
    thinking / prose renders above the merged forms — but breaks the run on an
    INTERIOR iteration so mid-burst commentary never floats out of place."
-  [entry]
+  [entry summarize?]
   (let [{:keys [forms recaps provider-fallbacks error attachments]} entry]
-    (when (and (nil? error)
-               (empty? attachments)
-               (empty? recaps)
-               (empty? provider-fallbacks)
-               (seq forms))
+    (when
+      (and (seq forms)
+           (or summarize?
+               (and (nil? error) (empty? attachments) (empty? recaps) (empty? provider-fallbacks))))
       (vec forms))))
 
 (defn- iteration-narration?
@@ -8268,10 +8254,35 @@
    a thinking badge (only when `show-thinking?`, since hidden thinking paints
    nothing) or an assistant-prose block. A narrated call may still OPEN a merged
    run (its narration renders above the flush-stacked forms); narration on an
-   INTERIOR call breaks the run so mid-burst commentary never floats out of place."
-  [entry show-thinking?]
-  (or (and show-thinking? (not (str/blank? (str (:thinking entry)))))
+   INTERIOR call breaks the run so mid-burst commentary never floats out of place.
+   With `summarize?` only a progress note narrates: reasoning joins the run."
+  [entry show-thinking? summarize?]
+  (or (and show-thinking? (not summarize?) (not (str/blank? (str (:thinking entry)))))
       (not (str/blank? (str (:assistant-prose entry))))))
+
+(defn- thinking-texts
+  "Non-blank reasoning texts of one iteration, in order."
+  [thinking]
+  (filterv #(and (string? %) (not (str/blank? %))) (if (sequential? thinking) thinking [thinking])))
+
+(defn- run-attachments
+  "Attachments of a merged run's steps. Each tool attachment keeps the step and the
+   index its bytes are served under, so an artifact from any step still opens."
+  [entries]
+  (into []
+        (mapcat (fn [{:keys [iteration-id attachments]}]
+                  (let [tool-index
+                        (volatile! -1)
+
+                        stamp
+                        (fn [attachment]
+                          (assoc attachment
+                            ::iteration-id iteration-id
+                            ::index (vswap! tool-index #(inc (long %)))))]
+
+                    (mapv #(cond-> % (= "tool" (str (or (:source %) (get % "source")))) stamp)
+                          attachments))))
+        entries))
 
 (defn- render-iteration-entries
   "Turn the visible `[idx entry]` iteration pairs into painter entries. A MAXIMAL
@@ -8286,12 +8297,16 @@
    provider-fallback) renders on its own through `iter-entry-fn`.
 
    This is the uniform-compaction contract: EVERY consecutive tool run collapses
-   the same way — there is no tool-name whitelist and no per-tool summary band."
-  [visible-iterations iter-entry-fn show-silent? show-thinking? _group-ctx]
+   the same way — there is no tool-name whitelist and no per-tool summary band.
+   With `summarize?` only a progress note separates runs, and the merged
+   iteration carries every member's reasoning, so the steps between two notes
+   render as one Activity under one thinking badge. Its artifacts still open from
+   their own steps, and an error no merged call shows inline follows the Activity."
+  [visible-iterations iter-entry-fn show-silent? show-thinking? summarize?]
   (let [tagged (mapv (fn [pair]
                        (let [e (visible-iteration-entry (second pair) show-silent?)]
-                         [pair (mergeable-iteration-forms e)
-                          (iteration-narration? e show-thinking?)]))
+                         [pair (mergeable-iteration-forms e summarize?)
+                          (iteration-narration? e show-thinking? summarize?)]))
                      visible-iterations)]
     (loop [out (transient [])
            xs (seq tagged)]
@@ -8317,9 +8332,32 @@
 
               (if (>= cnt 2)
                 (let [[[first-idx head-entry] _ _] (first run)
-                      merged (iter-entry-fn [first-idx (assoc head-entry :forms forms)])]
+                      entries (map (fn [[[_ entry]]]
+                                     entry)
+                                   run)
+                      thinking (into []
+                                     (mapcat (fn [entry]
+                                               (thinking-texts (:thinking entry))))
+                                     entries)
+                      ;; A call that shows its own error keeps it inline; any other
+                      ;; error follows the merged run, as the step's own band did.
+                      notices
+                      (keep (fn [[[idx entry] f]]
+                              (let [error (:error entry)]
+                                (when (and (some? error)
+                                           (not (inline-rendered-form-error? f error)))
+                                  [idx (select-keys entry [:iteration-id :error :repeat-count])])))
+                            run)
+                      merged (iter-entry-fn
+                               [first-idx
+                                (-> head-entry
+                                    (dissoc :error :repeat-count :recaps :provider-fallbacks)
+                                    (assoc :forms forms
+                                           :thinking (not-empty thinking)
+                                           :attachments (not-empty (run-attachments entries))))])]
 
-                  (recur (reduce conj! out merged) (seq (drop cnt xs))))
+                  (recur (reduce conj! (reduce conj! out merged) (mapcat iter-entry-fn notices))
+                         (seq (drop cnt xs))))
                 (recur (reduce conj! out (iter-entry-fn (first (first xs)))) (next xs))))
             (recur (reduce conj! out (iter-entry-fn (first (first xs)))) (next xs))))))))
 
@@ -8333,9 +8371,7 @@
            remaining (seq groups)]
 
       (if-let [[idx entry] (first remaining)]
-        (let [thinking (:thinking entry)
-              texts (filterv #(and (string? %) (not (str/blank? %)))
-                      (if (sequential? thinking) thinking [thinking]))
+        (let [texts (thinking-texts (:thinking entry))
               pending (if (seq texts)
                         [(or (first pending) idx) (into (or (second pending) []) texts)]
                         pending)
@@ -8379,6 +8415,9 @@
         show-silent?
         (get settings :show-silent false)
 
+        summarize-steps?
+        (get settings :summarize-steps true)
+
         ;; One trace renderer means one visual contract: no iteration/block
         ;; label bands in live, completed, or cancelled bubbles.
         show-iteration-headers?
@@ -8412,8 +8451,8 @@
                 k
                 [::iter-entries (if live? :live :final) iter-num (iteration-fingerprint stripped)
                  (long content-w) bubble-w show-iteration-headers? (boolean show-thinking?)
-                 (boolean show-silent?) (get settings :show-python-code true) session-id
-                 session-turn-id
+                 (boolean show-silent?) (get settings :show-python-code true) summarize-steps?
+                 session-id session-turn-id
                  ;; Tool-badge / op-row disclosures are keyed
                  ;; `iter<N>:t<frag>:op<M>` — scoped by the TURN
                  ;; token, NOT the `iteration:t<frag>:i<N>` base
@@ -8429,6 +8468,7 @@
                 {:show-header? show-iteration-headers?
                  :bubble-w bubble-w
                  :show-python-code? (get settings :show-python-code true)
+                 :summarize-steps? summarize-steps?
                  :session-id session-id
                  :session-turn-id session-turn-id
                  :detail-expansions detail-expansions
@@ -8447,10 +8487,7 @@
                                              vector
                                              show-silent?
                                              show-thinking?
-                                             {:fill-w (max 1 (dec (long content-w)))
-                                              :session-id session-id
-                                              :session-turn-id session-turn-id
-                                              :detail-expansions detail-expansions})]
+                                             summarize-steps?)]
         (coalesce-bubble-blanks (if (and show-thinking? (not (get settings :show-python-code true)))
                                   (render-adjacent-thinking-entries groups iter-entry-fn)
                                   (mapcat iter-entry-fn groups)))))))
@@ -8670,7 +8707,7 @@
             (boolean (get settings :show-thinking true))
             (boolean (get settings :show-iterations true))
             (boolean (get settings :show-silent false)) (get settings :show-python-code true)
-            session-id session-turn-id
+            (get settings :summarize-steps true) session-id session-turn-id
             (turn-detail-expansions-key {:section :iteration
                                          :session-id session-id
                                          :session-turn-id session-turn-id
@@ -8793,73 +8830,6 @@
                           (str/includes? answer explanation)))))
                trace))))
 
-(defn- turn-digest-entries
-  "A FINISHED TURN, FOLDED: the engine's one-line digest, the outcomes that still need
-   the reader, then the answer. The row is a disclosure: pressing it, expand-all or the
-   `Expand finished turns` setting opens the full trace beneath it. A turn that called
-   no tool keeps its trace, because the digest would have nothing to count."
-  [digest trace-entries content-w settings {:keys [session-id session-turn-id detail-expansions]}]
-  (if (or (nil? digest)
-          (empty? trace-entries)
-          (zero? (long (or (:operations digest) 0)))
-          (get settings :expand-finished-turns false))
-    trace-entries
-    (let [node-id
-          (detail-node-id {:session-turn-id session-turn-id :section :trace :kind :digest})
-
-          open?
-          (detail-expanded? detail-expansions session-id node-id false)
-
-          width
-          (max 1 (dec (long content-w)))
-
-          attention
-          (vec (:attention digest))
-
-          states
-          (set (map activity-row-state attention))
-
-          tone
-          (cond (or (contains? states :failed)
-                    (contains? states :cancelled)
-                    (some #(= "failed" (str (get-in % [:presentation :verdict]))) attention))
-                :error
-                (contains? states :running) :running
-                :else nil)
-
-          ;; The summary starts on the answer's prose column; only what it opens is inset.
-          summary
-          {:line (str execution-summary-marker
-                      (ellipsize-cols (str (if open? "▾ " "▸ ") (:summary digest)) width))
-           :meta {:kind :toggle-details
-                  :session-id (str session-id)
-                  :node-id node-id
-                  :collapsed? (not open?)
-                  :status-tone tone}}
-
-          ;; The pinned rows are ordinary Activity rows, so each still opens its own
-          ;; evidence. Only the band header is dropped: the digest row already names it.
-          pinned
-          (when (and (not open?) (seq attention))
-            (->> (activity-detail-entries
-                   {:node-id (str node-id ":attention")
-                    :activity-rows attention
-                    :activity-omitted
-                    (max 0 (- (long (or (:attention-total digest) 0)) (count attention)))
-                    :activity-sources [{:rows attention}]
-                    :activity-expanded? (fn [item-key default-open?]
-                                          (or (= "#band" item-key)
-                                              (detail-expanded? detail-expansions
-                                                                session-id
-                                                                (str node-id ":attention:" item-key)
-                                                                default-open?)))}
-                   width
-                   session-id)
-                 rest
-                 (mapv #(update % :meta assoc :trace-inset? true))))]
-
-      (vec (concat [{:line "" :meta nil} summary] (if open? trace-entries pinned))))))
-
 (defn format-answer-with-thinking-data*
   "Uncached Markdown layout. Returns `{:text :lines :line-meta}` so the
    bubble painter can keep clickable summary-row metadata aligned with the
@@ -8900,13 +8870,7 @@
                                :detail-expansions (:detail-expansions opts)
                                :suppress-trace? suppress-trace?})
 
-        ;; A finished turn folds to its digest until the reader opens it; runs that
-        ;; ended during the bubble stay visible below either shape.
-        trace-entries
-        (if suppress-trace?
-          trace-entries
-          (turn-digest-entries (:digest opts) trace-entries content-w settings opts))
-
+        ;; Runs that ended during the bubble stay visible below its trace.
         trace-entries
         (into (vec trace-entries) (run-row-entries unplaced-runs content-w (:session-id opts)))
 
@@ -9040,29 +9004,27 @@
   ([answer trace bubble-w settings confidence cancelled?]
    (format-answer-with-thinking-data answer trace bubble-w settings confidence cancelled? nil))
   ([answer trace bubble-w settings confidence cancelled? opts]
-   (cached*
-     [::fawt-data (System/identityHashCode answer) (System/identityHashCode trace) (long bubble-w)
-      (boolean (get settings :show-thinking true)) (boolean (get settings :show-iterations true))
-      (boolean (get settings :show-silent false)) (get settings :show-python-code true) confidence
-      (boolean cancelled?) (:session-turn-id opts) (turn-detail-expansions-key opts)
-      ;; tail-lines opt switches to the back-walking renderer;
-      ;; must be in the cache key so a tail-pinned bubble's
-      ;; tail-N result doesn't shadow the same bubble's full
-      ;; render after the user scrolls up.
-      (:tail-lines opts)
-      ;; A run that FINISHED during this bubble adds a row to it, so the
-      ;; rail is part of what the cached render is OF.
-      (:runs opts)
-      ;; The digest folds a finished turn unless the reader expands every turn.
-      (System/identityHashCode (:digest opts))
-      (boolean (get settings :expand-finished-turns false))]
-     #(format-answer-with-thinking-data* answer
-                                         trace
-                                         bubble-w
-                                         settings
-                                         confidence
-                                         cancelled?
-                                         opts))))
+   (cached* [::fawt-data (System/identityHashCode answer) (System/identityHashCode trace)
+             (long bubble-w) (boolean (get settings :show-thinking true))
+             (boolean (get settings :show-iterations true))
+             (boolean (get settings :show-silent false)) (get settings :show-python-code true)
+             (get settings :summarize-steps true) confidence (boolean cancelled?)
+             (:session-turn-id opts) (turn-detail-expansions-key opts)
+             ;; tail-lines opt switches to the back-walking renderer;
+             ;; must be in the cache key so a tail-pinned bubble's
+             ;; tail-N result doesn't shadow the same bubble's full
+             ;; render after the user scrolls up.
+             (:tail-lines opts)
+             ;; A run that FINISHED during this bubble adds a row to it, so the
+             ;; rail is part of what the cached render is OF.
+             (:runs opts)]
+            #(format-answer-with-thinking-data* answer
+                                                trace
+                                                bubble-w
+                                                settings
+                                                confidence
+                                                cancelled?
+                                                opts))))
 
 (defn format-answer-with-thinking
   ([answer trace bubble-w] (format-answer-with-thinking answer trace bubble-w nil nil false nil))

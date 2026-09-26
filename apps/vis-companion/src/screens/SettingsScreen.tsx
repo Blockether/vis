@@ -3,10 +3,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayConn, SpeechPrefs, ThemePref } from '../lib/types';
 import { applyTheme } from '../lib/theme';
 import {
-  setFinishedTurnsExpanded,
   setPythonCodeShown,
-  useFinishedTurnsExpanded,
+  setStepsSummarized,
   usePythonCodeShown,
+  useStepsSummarized,
 } from '../lib/transcript-display';
 import { DEFAULT_SPEECH_PREFS, getSpeechPrefs, getThemePref, setThemePref } from '../lib/storage';
 import { speechOutput } from '../lib/speech';
@@ -76,7 +76,7 @@ export function SettingsDialog({
   onClose: () => void;
 }) {
   const showPythonCode = usePythonCodeShown();
-  const expandFinishedTurns = useFinishedTurnsExpanded();
+  const summarizeSteps = useStepsSummarized();
   const [pref, setPref] = useState<ThemePref>(DEFAULT_THEME.id);
   const [speechPrefs, setSpeechPrefs] = useState<SpeechPrefs>(DEFAULT_SPEECH_PREFS);
   const [pending, setPending] = useState<string | null>(null);
@@ -274,7 +274,7 @@ export function SettingsDialog({
               </div>
             )}
 
-            <SettingsPanel title="Transcript">
+            <SettingsPanel title="Responses">
               <div className="divide-y divide-dialog-edge">
                 <div className="flex items-center justify-between gap-4 px-3 py-3 sm:px-4">
                   <div className="min-w-0 space-y-1">
@@ -295,17 +295,17 @@ export function SettingsDialog({
                 <div className="flex items-center justify-between gap-4 px-3 py-3 sm:px-4">
                   <div className="min-w-0 space-y-1">
                     <Text as="p" variant="label">
-                      Expand finished turns
+                      Summarize steps between notes
                     </Text>
                     <Text as="p" variant="description">
-                      Show every step of a finished turn instead of its one-line summary and
-                      open problems.
+                      Combine the steps between progress notes into one Activity, during and
+                      after a turn. Turn off to show Activity for each step.
                     </Text>
                   </div>
                   <Switch
-                    label="Expand finished turns"
-                    isOn={expandFinishedTurns}
-                    onClick={() => setFinishedTurnsExpanded(!expandFinishedTurns)}
+                    label="Summarize steps between notes"
+                    isOn={summarizeSteps}
+                    onClick={() => setStepsSummarized(!summarizeSteps)}
                   />
                 </div>
               </div>

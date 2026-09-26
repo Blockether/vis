@@ -17,6 +17,7 @@ import { STORY_TURN_ITERATIONS, STORY_TURN_ITERATIONS_SETTLED } from '../dev/sto
 import type { GatewayClient } from '../lib/gateway';
 import { mediaFrameClass, mediaGridClass, mediaTileFrameClass } from '../lib/media-frame';
 import { speechOutput } from '../lib/speech';
+import { setStepsSummarized } from '../lib/transcript-display';
 import type { IterationAttachment, TranscriptTurn } from '../lib/types';
 
 /** Visible text of a rendered chunk: tags out, entities back. */
@@ -2221,6 +2222,95 @@ describe('compact execution groups', () => {
       );
     },
   );
+});
+
+// Progress notes are the only visible separators of a turn's work: the steps between two
+// notes share one Activity and one reasoning band, live and after the turn finishes.
+describe('steps between progress notes', () => {
+  const note = 'Sources read; now the last batch.';
+  const iterations = [
+    {
+      id: 'step-1',
+      position: 1,
+      thinking: 'Read the sources first.',
+      forms: [{ source: 'read_first()', duration_ms: 10 }],
+    },
+    {
+      id: 'step-2',
+      position: 2,
+      thinking: 'One more source.',
+      forms: [{ source: 'read_second()', duration_ms: 10 }],
+    },
+    {
+      id: 'step-3',
+      position: 3,
+      assistant_prose: note,
+      forms: [
+        { source: 'check()', duration_ms: 10 },
+        { source: 'report()', duration_ms: 10 },
+      ],
+    },
+  ];
+  const traces = (root: HTMLElement) => [
+    ...root.querySelectorAll('[aria-label="Execution trace"]'),
+  ];
+  // Each reasoning band, read as its paragraphs.
+  const bands = (root: HTMLElement) =>
+    [...root.querySelectorAll('.bg-thinking-surface')].map((band) =>
+      [...band.querySelectorAll('p')].map((paragraph) => paragraph.textContent),
+    );
+  const follows = (before: Node, after: Node) =>
+    Boolean(before.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+  it('combines the steps between notes into one Activity and one reasoning band', () => {
+    const painted = render(<IterationTrace whole iterations={iterations} />);
+    const [first, second] = traces(painted.container);
+    const noted = painted.getByText(note);
+    expect(traces(painted.container)).toHaveLength(2);
+    expect(bands(painted.container)).toEqual([['Read the sources first.', 'One more source.']]);
+    expect(painted.container.textContent).toContain('One more source.');
+    expect(follows(first, noted)).toBe(true);
+    expect(follows(noted, second)).toBe(true);
+  });
+
+  // Regression: a step that produced an artifact opened a second Activity between the
+  // same two notes, so one run of work read as two.
+  it('keeps an artifact inside the Activity of its notes', () => {
+    const client = {
+      attachmentUrl: async () => 'blob:none',
+      retainAttachment: () => () => {},
+    } as unknown as GatewayClient;
+    const report: IterationAttachment = {
+      index: 0,
+      iteration_id: 'step-2',
+      filename: 'report.pdf',
+      media_type: 'application/pdf',
+      size: 2048,
+    };
+    const produced = iterations.map((step) =>
+      step.id === 'step-2' ? { ...step, attachments: [report] } : step,
+    );
+    const painted = render(<IterationTrace whole iterations={produced} client={client} sid="s1" />);
+    const [first, second] = traces(painted.container);
+    const artifact = painted.getByText('report.pdf');
+    const noted = painted.getByText(note);
+    expect(traces(painted.container)).toHaveLength(2);
+    expect(follows(first, artifact)).toBe(true);
+    expect(follows(artifact, noted)).toBe(true);
+    expect(follows(noted, second)).toBe(true);
+  });
+
+  it('shows Activity and reasoning for each step when summarizing is off', () => {
+    setStepsSummarized(false);
+    try {
+      const painted = render(<IterationTrace whole iterations={iterations} />);
+      expect(traces(painted.container)).toHaveLength(4);
+      expect(bands(painted.container)).toEqual([['Read the sources first.'], ['One more source.']]);
+      expect(localStorage.getItem('vis.summarize_steps')).toBe('separate');
+    } finally {
+      setStepsSummarized(true);
+    }
+  });
 });
 
 // Regression: the user transcript discarded every non-media attachment.

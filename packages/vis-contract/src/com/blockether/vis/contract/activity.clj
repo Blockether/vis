@@ -28,10 +28,6 @@
 (def diff-line-byte-limit
   (get-in schema ["$defs" "diff_line" "properties" "text" "x-vis-truncate-bytes"]))
 
-(def digest-group-limit (get-in schema ["$defs" "digest" "properties" "groups" "maxItems"]))
-
-(def digest-attention-limit (get-in schema ["$defs" "digest" "properties" "attention" "maxItems"]))
-
 (defn valid-handle-id?
   "Opaque, bounded identity for receipts belonging to one live operation."
   [value]
@@ -101,11 +97,6 @@
   [value]
   (when (and (document/valid-json? "activity" "projection" value) (valid-projection? value))
     (wire/->engine value)))
-
-(defn digest-from-wire
-  "Valid settled-turn digest in engine spelling, or nil."
-  [value]
-  (when (document/valid-json? "activity" "digest" value) (wire/->engine value)))
 
 (defn- first-invocation-id
   [row]

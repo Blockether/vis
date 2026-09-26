@@ -1755,7 +1755,13 @@
       (virtual/invalidate-heights!)
       (render/invalidate-cache!)
       (let [traced
-            (assoc (trace-assistant-msg 8 1 "") :client-turn-id "terminal")
+            (-> (trace-assistant-msg 8 1 "")
+                (assoc :client-turn-id "terminal")
+                ;; Progress notes keep each step's rows apart, so the parked row stays mid-trace.
+                (update :traces
+                        #(vec (map-indexed (fn [i it]
+                                             (assoc it :assistant-prose (str "Progress note " i)))
+                                           %))))
 
             trace
             (:traces traced)

@@ -690,10 +690,10 @@
         (expect (str/includes? text "for stale anchors, read only the indicated region"))
         (expect (str/includes? text "After changed-file checks pass"))
         ;; User report: a working turn ran silently between calls, where opencode asks for
-        ;; short progress notes; the answer must still read on its own once the turn folds.
+        ;; short progress notes; the answer must still read on its own without them.
         (expect (str/includes? text "Narrate progress in prose"))
         (expect (str/includes? text "text beside a `python_execution` call reaches the user"))
-        (expect (str/includes? text "it stands alone, since progress notes fold away"))))
+        (expect (str/includes? text "it stands alone without the progress notes"))))
   ;; Each capability owns its contract; doc() renders Python metadata and semantics.
   ;; The core prompt must point there instead of encouraging invented call shapes.
   (it "points authority at the document a capability carries"
@@ -815,6 +815,8 @@
       ;; them beside the call, where the transcript already renders prose above each step,
       ;; and says the answer stands alone because a finished turn folds the notes away.
       ;; It lands at 11 378.
+      ;; A finished turn now keeps its notes and Activity, so §7 no longer says the notes
+      ;; fold away; the rule is 26 characters shorter.
       (expect (< (count text) 11400))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"

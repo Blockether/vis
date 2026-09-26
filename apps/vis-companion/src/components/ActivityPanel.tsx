@@ -1,9 +1,8 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { InlineMarkdown, Markdown, SyntaxCodeBlock } from './ChatContent';
 import { BandLabel, BandTally, CopyChip, Disclosure, LoadMore } from './ui';
 import type {
   ActivityDiffEvidence,
-  ActivityDigest,
   ActivityProjection,
   ActivityResource,
   ActivityRow,
@@ -16,7 +15,6 @@ import {
   activityCopyText,
   activityHistoryCopyText,
   argumentGroups,
-  digestAttentionActivity,
   operationGroups,
   mergeActivity,
   type OperationGroup,
@@ -110,6 +108,9 @@ export interface ActivityCostPart {
  * there, so no row on the axis can answer it. The other three print only when they
  * happened, because their zero is a fact the page already shows.
  *
+ * A check whose own `verdict` is `failed` says so beside the count, as in
+ * `2 checks, 1 failing`: the call succeeded, so no mark or state word shows it.
+ *
  * The rows the engine's own bound DROPPED are counted here from
  * `omitted.by_classification`: this line covers the whole run, a chronology that
  * shows four of ten calls must not report the cost of four, and the axis tail
@@ -127,6 +128,10 @@ export function activityCostParts(activity?: ActivityProjection): readonly Activ
   const noun = (amount: number, word: string) => `${amount} ${word}${amount === 1 ? '' : 's'}`;
   const observations = tally('observation');
   const checks = tally('verification');
+  const failing = rows.filter(
+    (row) => row.signal === 'verification' && row.presentation?.verdict === 'failed',
+  ).length;
+  const checkText = noun(checks, 'check') + (failing ? `, ${failing} failing` : '');
   const external = tally('external');
   return [
     { text: noun(tally('mutation'), 'mutation'), tone: 'text-accent-ink' },
@@ -138,7 +143,7 @@ export function activityCostParts(activity?: ActivityProjection): readonly Activ
           },
         ]
       : []),
-    ...(checks ? [{ text: noun(checks, 'check'), tone: '' }] : []),
+    ...(checks ? [{ text: checkText, tone: '' }] : []),
     ...(external
       ? [{ text: noun(external, 'external action'), tone: 'text-code-syntax-special' }]
       : []),
@@ -1191,21 +1196,6 @@ function ActivityThread({ activity }: { activity?: ActivityProjection }) {
         </li>
       )}
     </ol>
-  );
-}
-
-/**
- * WHAT A FOLDED TURN STILL OWES THE READER: the digest's attention rows, drawn as the
- * ordinary chronology they are, so each still opens its own evidence. There is no band
- * header, because the digest row above already says what these rows are.
- */
-export function ActivityAttention({ digest }: { digest: ActivityDigest }) {
-  const activity = useMemo(() => digestAttentionActivity(digest), [digest]);
-  if (!activity.rows.length) return null;
-  return (
-    <section className="isolate min-w-0" aria-label="Needs attention" data-activity-attention>
-      <ActivityThread activity={activity} />
-    </section>
   );
 }
 

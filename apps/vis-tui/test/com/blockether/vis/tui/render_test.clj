@@ -5898,10 +5898,7 @@
   ;; Prose / thinking is the only separator: a narrated head OPENS a run (its
   ;; narration renders above the merged forms); an INTERIOR narrated call, or an
   ;; iteration-level error, breaks the run.
-  (let [ctx
-        {:fill-w 76 :session-id "s1" :session-turn-id "t" :detail-expansions {}}
-
-        tool
+  (let [tool
         (fn [i t s]
           [i {:forms [(result-form t s)]}])
 
@@ -5915,12 +5912,14 @@
         (fn [[idx entry]]
           [{:line (str "CALL#" idx "×" (count (:forms entry))) :meta nil}])
 
+        ;; Per-step layout by default: reasoning narrates as prose does.
         calls
-        (fn [pairs]
-          (->> (render-iteration-entries pairs iter-fn false true ctx)
-               (map :line)
-               (filter #(str/starts-with? (str %) "CALL#"))
-               vec))]
+        (fn calls ([pairs] (calls pairs false)) ([pairs summarize?] (->> (render-iteration-entries
+                                                                           pairs iter-fn false true
+                                                                           summarize?) (map :line)
+                                                                      (filter #(str/starts-with?
+                                                                                 (str %)
+                                                                                 "CALL#")) vec)))]
 
     (it "a run of consecutive mixed-tool iterations merges into ONE render with every form"
         (expect (= ["CALL#0×3"]
@@ -5940,7 +5939,24 @@
                    (calls [(tool 0 "cat" "a")
                            [1
                             {:forms [(result-form "rg" "x")] :error {:type :svar.core/http-error}}]
-                           (tool 2 "rg" "c")]))))))
+                           (tool 2 "rg" "c")]))))
+    (it "summarized steps join interior reasoning into the run and its head"
+        (let [seen (atom [])]
+          (render-iteration-entries [(narr 0 "cat" "a") (narr 1 "patch" "b") (tool 2 "rg" "c")]
+                                    (fn [[idx entry]]
+                                      (swap! seen conj
+                                        [idx (:thinking entry) (count (:forms entry))])
+                                      [])
+                                    false
+                                    true
+                                    true)
+          (expect (= [[0 ["hmm" "hmm"] 3]] @seen))))
+    (it "only a progress note breaks a summarized run"
+        (expect (= ["CALL#0×1" "CALL#1×2"]
+                   (calls [(tool 0 "cat" "a")
+                           [1 {:forms [(result-form "patch" "b")] :assistant-prose "Patching now."}]
+                           (tool 2 "rg" "c")]
+                          true))))))
 
 ;; wrap-text* — the plain-text wrap path
 ;;
@@ -7114,6 +7130,12 @@ h = 8"
                    (cost {:rows [{:signal "observation"} {:signal "external"}]
                           :omitted {:rows 1 :by-classification {:external 1}}})))
         (expect (= "1 mutation" (cost {:rows [{:signal "mutation"} {:signal "generic"}]})))))
+  (it "says how many checks found failures inside calls that succeeded"
+      (let [cost @#'render/activity-cost-text]
+        (expect (= "0 mutations · 2 checks, 1 failing"
+                   (cost {:rows [{:signal "verification" :presentation {:verdict "failed"}}
+                                 {:signal "verification" :presentation {:verdict "passed"}}]})))
+        (expect (= "0 mutations · 1 check" (cost {:rows [{:signal "verification"}]})))))
   ;; Regression, issue td-132d91: expanded Activity receipts were detached into one
   ;; shared rail, so only the newest receipt could show its detail.
   (it "keeps combined results between their program and attached Activity"
@@ -8405,6 +8427,7 @@ h = 8"
 
 (defdescribe
   hidden-python-thinking-merge-test
+  ;; Per-step layout; summarized steps join reasoning per note (`summarized-steps-test`).
   (let [thought
         (fn [label]
           (str/join "\n\n" (map #(str label " paragraph " %) (range 12))))
@@ -8422,7 +8445,7 @@ h = 8"
                    :content-w 76
                    :session-id "thinking-merge"
                    :session-turn-id "turn"
-                   :settings {:show-python-code false}}
+                   :settings {:show-python-code false :summarize-steps false}}
                   opts)))
 
         headers
@@ -8458,7 +8481,7 @@ h = 8"
           (let [entries (render* iterations
                                  {:content-w width
                                   :live? live?
-                                  :settings {:show-python-code shown?}
+                                  :settings {:show-python-code shown? :summarize-steps false}
                                   :detail-expansions {:vis.channel-tui/expand-all-details?
                                                       expanded?}})]
             (expect (= (if shown? 3 1) (count (headers entries))))
@@ -8727,6 +8750,32 @@ h = 8"
           (when (>= cols 80)
             (expect (str/includes? (:line header)
                                    (if (seq retained) "6 of 7 operations" "7 operations")))))))
+    (it "paints Activity for each step when summarizing is off"
+        (doseq [live?
+                [false true]
+
+                show-code?
+                [false true]
+
+                separate?
+                [false true]]
+
+          (let [forms
+                (grouped-activity-forms #{})
+
+                painted
+                (entries forms
+                         {:live? live?
+                          :settings {:show-python-code show-code? :summarize-steps false}
+                          :iterations
+                          (if separate? (mapv #(hash-map :forms [%]) forms) [{:forms forms}])})
+
+                codes
+                (filter #(str/ends-with? (str (get-in % [:meta :node-id])) ":code") painted)]
+
+            (expect (= ["2 operations" "2 operations" "3 operations"]
+                       (mapv #(re-find #"\d+ operations" (str (:line %))) (bands painted))))
+            (expect (= (if show-code? 3 0) (count codes))))))
     (it "counts inline operations as well as every retained record in the joined band"
         (doseq [cols
                 [40 80 120]
@@ -10336,189 +10385,136 @@ print(paths)"
           (expect (nil? error))
           (expect (= #{{:kind :file :session-id "fixture" :url "src/example.clj"}} targets))))))
 
-;; A settled turn used to reprint every program, result and Activity band it ran, so
-;; its answer sat below a wall of finished work. It now folds to the engine's digest
-;; and the problems that remain, until the reader opens it.
+;; Progress notes are the only visible separators of a turn's work: the steps between two
+;; notes share one Activity, live and after the turn finishes.
 (defdescribe
-  turn-digest-test
-  (let [row
-        (fn [id sequence operation presenter signal state summary & {:as extra}]
-          (merge {"id" id
-                  "sequence" sequence
-                  "operation" operation
-                  "presenter" presenter
-                  "signal" signal
-                  "state" state
-                  "summary" summary
-                  "resources" []
-                  "evidence" []}
-                 extra))
+  summarized-steps-test
+  (let [forms
+        (grouped-activity-forms #{})
 
-        failing
-        (activity-contract/digest-from-wire
-          {"summary" "1 mutation · 1 file +2 −0 · 1 check, 1 failing"
-           "operations" 3
-           "retries" 0
-           "changes" {"files" 1 "additions" 2 "deletions" 0}
-           "groups" [{"operation" "patch"
-                      "label" "Patched"
-                      "signal" "mutation"
-                      "count" 1
-                      "failed" 0
-                      "state" "succeeded"
-                      "summary" "src/app.clj"}
-                     {"operation" "run_tests"
-                      "label" "Ran tests"
-                      "signal" "verification"
-                      "count" 1
-                      "failed" 1
-                      "state" "failed"
-                      "verdict" "failed"
-                      "summary" "3 passed, 1 failed"}]
-           "attention" [(row "c"
-                             3 "run_tests"
-                             "tests" "verification"
-                             "failed" "3 passed, 1 failed"
-                             "error_summary" "expected 1, got 2")]
-           "attention_total" 1
-           "omitted" 0})
-
-        passing
-        (assoc failing
-          :summary "1 mutation · 1 file +2 −0 · 1 check, passing"
-          :attention []
-          :attention-total 0)
+        note
+        "Sources read; now the last batch."
 
         trace
-        [{:forms
-          [{:code "print(1)"
-            :stdout "ok"
-            :success? true
-            :duration-ms 1200
-            :activity
-            {:state "failed"
-             :counts {:running 0 :succeeded 2 :failed 1 :cancelled 0}
-             :rows [{:id "a" :operation "patch" :signal "mutation" :summary "" :state "succeeded"}
-                    {:id "b" :operation "grep" :signal "observation" :summary "" :state "succeeded"}
-                    {:id "c"
-                     :operation "run_tests"
-                     :signal "verification"
-                     :summary "3 passed, 1 failed"
-                     :state "failed"}]
-             :omitted {:rows 0 :by-classification {}}}}]}]
+        [{:thinking "Read the sources first." :forms [(forms 0)]}
+         {:thinking "One more source." :forms [(forms 1)]}
+         {:assistant-prose note :forms [(forms 2)]}]
 
-        layout
-        (fn [width settings expansions digest]
-          (render/format-answer-with-thinking-data "Done."
-                                                   trace
-                                                   width
-                                                   settings
-                                                   nil
-                                                   false
-                                                   {:session-id "s1"
-                                                    :session-turn-id "turn-1"
-                                                    :detail-expansions expansions
-                                                    :digest digest}))
+        render*
+        (fn [settings live?]
+          (#'render/trace-render-entries
+           {:iterations trace
+            :live? live?
+            :content-w 76
+            :session-id "s"
+            :session-turn-id "t"
+            :settings settings}))
 
-        rendered
-        (fn [width settings expansions digest]
-          (render/invalidate-cache!)
-          (layout width settings expansions digest))
+        operations
+        (fn [entries]
+          (vec (keep #(when (= :activity-header (get-in % [:meta :kind]))
+                        (re-find #"\d+ operations" (str (:line %))))
+                     entries)))
 
-        visible
-        (fn [result]
-          (mapv (comp strip-sentinels strip-ansi) (:lines result)))
+        reasoning
+        (fn [entries]
+          (into #{}
+                (keep #(let [id (str (get-in % [:meta :node-id]))] (when (str/ends-with?
+                                                                           id
+                                                                           ":reasoning")
+                                                                     id)))
+                entries))]
 
-        text
-        (fn [result]
-          (str/join "\n" (visible result)))
+    (it "combines the steps between progress notes into one Activity, live or finished"
+        (doseq [live?
+                [false true]
 
-        summary-row
-        (fn [result]
-          (first (keep (fn [[line meta]]
-                         (when (str/includes? line "1 mutation") {:line line :meta meta}))
-                       (map vector (visible result) (:line-meta result)))))]
+                shown?
+                [false true]]
 
-    (it "folds the finished turn into its summary and the problems that remain"
-        (doseq [width [40 120]]
-          (let [result (rendered width nil {} failing)
-                {:keys [line meta]} (summary-row result)
-                body (text result)]
+          (let [entries
+                (render* {:show-python-code shown?} live?)
 
-            (expect (str/includes? line "▸ 1 mutation"))
-            (expect (= :toggle-details (:kind meta)))
-            (expect (true? (:collapsed? meta)))
-            (expect (= :error (:status-tone meta)) "a failing check colors the summary")
-            ;; User report: the summary sat two columns right of the answer's prose.
-            (expect (not (:trace-inset? meta)) "the summary starts on the prose column")
-            (let [pinned (keep (fn [[row row-meta]]
-                                 (when (str/includes? row "3 passed, 1 failed") row-meta))
-                               (map vector (visible result) (:line-meta result)))]
-              (expect (seq pinned))
-              (expect (every? :trace-inset? pinned) "the rows it pins stay inset"))
-            (expect (str/includes? body "3 passed, 1 failed"))
-            (expect (str/includes? body "expected 1, got 2") "the failure keeps its evidence")
-            (expect (not (str/includes? body "CODE")))
-            (expect (not (str/includes? body "ACTIVITY")))
-            (expect (< (.indexOf ^String body "1 mutation")
-                       (.indexOf ^String body "expected 1, got 2")
-                       (.indexOf ^String body "Done.")))
-            (expect (every? #(<= (long (p/display-width %)) (- (long width) 4)) (visible result))
-                    (str "every row fits a " width "-column bubble")))))
-    (it "opens every step beneath the summary"
-        (let [node-id
-              (:node-id (:meta (summary-row (rendered 120 nil {} failing))))
+                text
+                (str/join "\n" (map :line entries))]
 
-              result
-              (rendered 120 nil {["s1" node-id] true} failing)
+            (expect (= ["4 operations" "3 operations"] (operations entries)))
+            (expect (= 1 (count (reasoning entries))))
+            (expect (< (.indexOf ^String text "4 operations")
+                       (.indexOf ^String text note)
+                       (.indexOf ^String text "3 operations"))))))
+    (it "shows Activity and reasoning for each step when summarizing is off"
+        (doseq [live? [false true]]
+          (let [entries (render* {:summarize-steps false} live?)]
+            (expect (= ["2 operations" "2 operations" "3 operations"] (operations entries)))
+            (expect (= 2 (count (reasoning entries)))))))
+    (it "keeps a finished turn's notes and Activity instead of folding them"
+        (doseq [summarize? [true false]]
+          (let [{:keys [text line-meta]} (render/format-answer-with-thinking-data
+                                           "Done."
+                                           trace
+                                           80
+                                           {:summarize-steps summarize?}
+                                           nil
+                                           false
+                                           {:session-id "s" :session-turn-id "t"})]
+            (expect (str/includes? text note))
+            (expect (str/includes? text "Done."))
+            (expect (= (if summarize? 2 3)
+                       (count (filter #(= :activity-header (:kind %)) line-meta)))))))
+    ;; Real turns split here: a step that produced an artifact or failed a check opened
+    ;; its own Activity between the same two notes.
+    (it
+      "keeps artifacts and errors inside the Activity of their notes"
+      (let [artifact
+            {:source "tool" :kind "doc" :media-type "text/html" :filename "report.html" :size 2048}
 
-              {:keys [line meta]}
-              (summary-row result)
+            failure
+            {:type "AssertionError" :message "check failed"}
 
-              body
-              (text result)]
+            failed
+            (assoc (forms 2)
+              :success? false
+              :error failure)
 
-          (expect (str/includes? line "▾ 1 mutation"))
-          (expect (false? (:collapsed? meta)))
-          (expect (< (.indexOf ^String body "1 mutation")
-                     (.indexOf ^String body "CODE")
-                     (.indexOf ^String body "ACTIVITY")
-                     (.indexOf ^String body "Done.")))
-          (expect (str/includes?
-                    (text (rendered 120 nil {:vis.channel-tui/expand-all-details? true} failing))
-                    "print(1)")
-                  "a full copy includes every step")))
-    (it "shows every step without a summary when Expand finished turns is on"
-        (let [body (text (rendered 120 {:expand-finished-turns true} {} failing))]
-          (expect (not (str/includes? body "1 mutation")))
-          (expect (str/includes? body "CODE"))
-          (expect (str/includes? body "ACTIVITY"))))
-    (it "keeps a passing turn to its one-line summary"
-        (let [result
-              (rendered 120 nil {} passing)
+            timeout
+            {:type "timeout" :message "Step timed out"}
 
-              body
-              (text result)]
+            steps
+            [{:iteration-id "i1" :thinking "Read the sources first." :forms [(forms 0)]}
+             {:iteration-id "i2" :forms [(forms 1)] :attachments [artifact]}
+             {:iteration-id "i3" :forms [failed] :error failure}
+             {:iteration-id "i4" :forms [(forms 0)] :error timeout}
+             {:iteration-id "i5" :assistant-prose note :forms [(forms 1)]}]
 
-          (expect (str/includes? body "▸ 1 mutation · 1 file +2 −0 · 1 check, passing"))
-          (expect (nil? (:status-tone (:meta (summary-row result)))))
-          (expect (not (str/includes? body "run_tests")))
-          (expect (not (str/includes? body "CODE")))))
-    (it "keeps the trace of a turn that ran no operation"
-        (let [body (text (rendered 120 nil {} (assoc passing :operations 0)))]
-          (expect (not (str/includes? body "1 mutation")))
-          (expect (str/includes? body "CODE"))))
-    (it "lays out again when the digest or the setting changes"
-        (render/invalidate-cache!)
-        (let [plain
-              (text (layout 120 nil {} nil))
+            render
+            (fn [summarize? live?]
+              (#'render/trace-render-entries
+               {:iterations steps
+                :live? live?
+                :content-w 76
+                :session-id "s"
+                :session-turn-id "t"
+                :detail-expansions {:vis.channel-tui/expand-execution-details? true}
+                :settings {:summarize-steps summarize?}}))
 
-              folded
-              (text (layout 120 nil {} failing))
+            headers
+            (fn [entries]
+              (count (filter #(= :activity-header (get-in % [:meta :kind])) entries)))]
 
-              expanded
-              (text (layout 120 {:expand-finished-turns true} {} failing))]
+        (doseq [live? [false true]]
+          (let [entries (render true live?)
+                text (str/join "\n" (map :line entries))
+                at #(.indexOf ^String text ^String %)]
 
-          (expect (not (str/includes? plain "1 mutation")))
-          (expect (str/includes? folded "▸ 1 mutation"))
-          (expect (not (str/includes? expanded "1 mutation")))))))
+            (expect (= 2 (headers entries)))
+            (expect (some #(= {:filename "report.html"
+                               :media-type "text/html"
+                               :size 2048
+                               :iteration-id "i2"
+                               :index 0}
+                              (get-in % [:meta :artifact]))
+                          entries))
+            ;; The failed check keeps its collapsed FAILED band inside the merged Activity.
+            (expect (< -1 (at "FAILED") (at "report.html") (at "Step timed out") (at note))))
+          (expect (= 5 (headers (render false live?)))))))))

@@ -813,9 +813,6 @@
                   ;; The answer band owns prose the settled answer repeats (issue #145);
                   ;; the restore keeps one copy exactly like the live settle path.
                   traces (drop-answered-trace-prose trace content-blocks)
-                  ;; A settled turn folds to this engine-composed digest until opened.
-                  digest (some-> (get q "digest")
-                                 activity-contract/digest-from-wire)
                   assistant-message (cond-> (assistant-message content-blocks
                                                                (or (some-> (get q "created_at")
                                                                            long
@@ -857,9 +854,6 @@
 
                                       (seq tokens)
                                       (assoc :tokens tokens)
-
-                                      digest
-                                      (assoc :digest digest)
 
                                       cancelled?
                                       (assoc :status :cancelled)
@@ -1014,15 +1008,6 @@
    `is_foo`), the same policy the wire encoder owns."
   [m k]
   (get m (vis/wire-key k)))
-
-(defn- with-terminal-digest
-  "The terminal `chunk` with the settled turn's digest from `event`, in engine spelling.
-   An event without a digest in the contract shape leaves the chunk as it was."
-  [chunk event]
-  (if-let [digest (some-> (event-get event :digest)
-                          activity-contract/digest-from-wire)]
-    (assoc chunk :digest digest)
-    chunk))
 
 (defn- wire-view-kind
   "Rehydrate the CLOSED View kind without minting an arbitrary keyword."
@@ -1372,38 +1357,35 @@
       ;; terminal, but it may be stranded across a transport/restart gap; this
       ;; independent projection lets the tab reconcile its optimistic spinner.
       "turn.completed"
-      (with-terminal-digest {:phase :turn-terminal
-                             :turn-id (event-get event :turn-id)
-                             :client-id (event-get event :idempotency-key)
-                             :request-kind (some-> (event-get event :request-kind)
-                                                   keyword)
-                             :subagent (event-get event :subagent)
-                             :status (event-get event :status)}
-                            event)
+      {:phase :turn-terminal
+       :turn-id (event-get event :turn-id)
+       :client-id (event-get event :idempotency-key)
+       :request-kind (some-> (event-get event :request-kind)
+                             keyword)
+       :subagent (event-get event :subagent)
+       :status (event-get event :status)}
 
       "turn.failed"
-      (cond-> (with-terminal-digest {:phase :turn-terminal
-                                     :turn-id (event-get event :turn-id)
-                                     :client-id (event-get event :idempotency-key)
-                                     :request-kind (some-> (event-get event :request-kind)
-                                                           keyword)
-                                     :subagent (event-get event :subagent)
-                                     :status (or (event-get event :status) "failed")}
-                                    event)
+      (cond-> {:phase :turn-terminal
+               :turn-id (event-get event :turn-id)
+               :client-id (event-get event :idempotency-key)
+               :request-kind (some-> (event-get event :request-kind)
+                                     keyword)
+               :subagent (event-get event :subagent)
+               :status (or (event-get event :status) "failed")}
         ;; The settled failure content (the styled provider card). Without it the
         ;; independent terminal path can only invent a bare "Turn failed." row.
         (seq (event-get event :content))
         (assoc :content (vec (event-get event :content))))
 
       "turn.cancelled"
-      (with-terminal-digest {:phase :turn-terminal
-                             :turn-id (event-get event :turn-id)
-                             :client-id (event-get event :idempotency-key)
-                             :request-kind (some-> (event-get event :request-kind)
-                                                   keyword)
-                             :subagent (event-get event :subagent)
-                             :status (or (event-get event :status) "cancelled")}
-                            event)
+      {:phase :turn-terminal
+       :turn-id (event-get event :turn-id)
+       :client-id (event-get event :idempotency-key)
+       :request-kind (some-> (event-get event :request-kind)
+                             keyword)
+       :subagent (event-get event :subagent)
+       :status (or (event-get event :status) "cancelled")}
 
       ;; A session's title changed — auto-title or a rename, possibly produced
       ;; in a SIBLING process (another TUI, the web, the serve daemon), where

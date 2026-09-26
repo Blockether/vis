@@ -1,7 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, userEvent, within } from 'storybook/test';
+import { expect, fn, within } from 'storybook/test';
 import { AssistantMessage, UserMessage } from './ChatContent';
-import digestCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-digest.json';
 import type { TranscriptTurn } from '../lib/types';
 
 const response = `## Walidacja strategii
@@ -250,41 +249,41 @@ export const TurnHeaders: Story = {
   },
 };
 
-const [failingDigest] = digestCases.filter((sample) => sample.valid).map((sample) => sample.digest);
-
-const foldedTurn = {
-  turn_id: 'folded-turn',
+const notesFirstTurn = {
+  turn_id: 'notes-first-turn',
   position: 7,
   status: 'completed',
   iterations: [
     {
-      id: 'iteration-1',
+      id: 'step-1',
       position: 1,
-      forms: [
-        {
-          source: 'run_tests()',
-          activity: {
-            state: 'succeeded',
-            counts: { running: 0, succeeded: 1, failed: 0, cancelled: 0 },
-            rows: failingDigest.attention,
-            omitted: { rows: 0, by_classification: {} },
-          },
-        },
-      ],
+      thinking: 'Read the parser first.',
+      forms: [{ source: 'read_parser()', duration_ms: 12 }],
+    },
+    {
+      id: 'step-2',
+      position: 2,
+      thinking: 'Then its tests.',
+      forms: [{ source: 'read_tests()', duration_ms: 9 }],
+    },
+    {
+      id: 'step-3',
+      position: 3,
+      assistant_prose: 'Sources read; running the suite now.',
+      forms: [{ source: 'run_tests()', duration_ms: 840 }],
     },
   ],
   content: [{ id: 'answer', type: 'prose', markdown: 'The parser still fails one test.' }],
-  digest: failingDigest,
 } as unknown as TranscriptTurn;
 
-// A finished turn folds to the engine's digest: one row, the failing check pinned beneath it,
-// then the answer. Pressing the row opens the whole trace in place of the pinned outcomes.
-export const FoldedFinishedTurn: Story = {
+// A finished turn keeps its progress notes: the steps between two notes share one Activity,
+// then the answer follows.
+export const NotesFirstFinishedTurn: Story = {
   render: () => (
     <div className="space-y-6">
       {[280, 720].map((width) => (
         <section key={width} data-width={width} style={{ width, maxWidth: '100%' }}>
-          <AssistantMessage turn={foldedTurn} />
+          <AssistantMessage turn={notesFirstTurn} />
         </section>
       ))}
     </div>
@@ -294,37 +293,17 @@ export const FoldedFinishedTurn: Story = {
     expect(sections).toHaveLength(2);
     for (const section of sections) {
       const scope = within(section);
-      const row = scope.getByRole('button', { name: failingDigest.summary });
-      const attention = section.querySelector('[data-activity-attention]')!;
+      const traces = [...section.querySelectorAll<HTMLElement>('[aria-label="Execution trace"]')];
+      const note = scope.getByText('Sources read; running the suite now.');
       const answer = scope.getByText('The parser still fails one test.');
-
-      expect(row).toHaveAttribute('aria-expanded', 'false');
-      expect(attention).toBeVisible();
-      expect(attention).toHaveTextContent('3 passed, 1 failed');
+      expect(traces).toHaveLength(2);
+      expect(note).toBeVisible();
       expect(answer).toBeVisible();
-      expect(section.querySelector('[data-activity-axis]')).toBeNull();
-      // The summary wraps inside the column instead of widening it, and the order holds:
-      // digest, pinned outcome, answer.
-      const bounds = section.getBoundingClientRect();
-      expect(row.getBoundingClientRect().right).toBeLessThanOrEqual(bounds.right + 1);
-      expect(attention.getBoundingClientRect().top).toBeGreaterThanOrEqual(
-        row.getBoundingClientRect().bottom - 1,
-      );
-      expect(answer.getBoundingClientRect().top).toBeGreaterThanOrEqual(
-        attention.getBoundingClientRect().bottom - 1,
-      );
+      // First run, its note, the next run, then the answer.
+      const [first, second] = traces.map((trace) => trace.getBoundingClientRect());
+      expect(note.getBoundingClientRect().top).toBeGreaterThanOrEqual(first.bottom - 1);
+      expect(second.top).toBeGreaterThanOrEqual(note.getBoundingClientRect().bottom - 1);
+      expect(answer.getBoundingClientRect().top).toBeGreaterThanOrEqual(second.bottom - 1);
     }
-
-    const [narrow, wide] = sections;
-    await userEvent.click(within(narrow).getByRole('button', { name: failingDigest.summary }));
-    expect(within(narrow).getByRole('button', { name: failingDigest.summary })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    );
-    expect(narrow.querySelector('[data-activity-axis]')).toBeVisible();
-    expect(narrow.querySelector('[data-activity-attention]')).toBeNull();
-    // Each turn folds on its own: the other width keeps its digest.
-    expect(wide.querySelector('[data-activity-attention]')).toBeVisible();
-    expect(wide.querySelector('[data-activity-axis]')).toBeNull();
   },
 };

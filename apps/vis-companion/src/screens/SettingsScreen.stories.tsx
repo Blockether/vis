@@ -217,7 +217,7 @@ export const ReadingLayout: Story = {
     const title = page.getByRole('heading', { name: 'Settings', level: 2 });
     // Regression: the dialog title, sections and values all rendered at 13px bold.
     const columns = ['Machines', 'Application'].map((name) => page.getByRole('heading', { name }));
-    const sections = ['Transcript', 'Theme'].map((name) => page.getByRole('heading', { name }));
+    const sections = ['Responses', 'Theme'].map((name) => page.getByRole('heading', { name }));
     const size = (element: Element) => parseFloat(getComputedStyle(element).fontSize);
     await expect(size(title)).toBeGreaterThan(size(label));
     for (const column of columns) {

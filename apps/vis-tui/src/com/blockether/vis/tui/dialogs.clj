@@ -3054,24 +3054,27 @@
          [(keyword shared-theme/default-theme-id)])))
 
 (defn- settings-ui-options
-  "Terminal-local theme and transcript display preferences. Engine settings use the registry."
+  "Terminal-local response and theme preferences, grouped like the app's Settings.
+   Engine settings use the registry."
   []
-  [{:key :theme-name
-    :type :choice
-    :choices (theme-choice-order)
-    :label "Theme"
-    :description
-    "Reusable channel theme from com.blockether.vis.tui.shared-theme and extension :ext/theme maps"}
+  [{:type :section :label "Responses"}
    {:key :show-python-code
     :type :toggle
     :label "Show Python code and results"
     :description
     "Show source code and raw results before Activity. Turn off to show only Activity."}
-   {:key :expand-finished-turns
+   {:key :summarize-steps
     :type :toggle
-    :label "Expand finished turns"
+    :label "Summarize steps between notes"
     :description
-    "Show every step of a finished turn instead of its one-line summary and open problems."}])
+    "Combine the steps between progress notes into one Activity, during and after a turn. Turn off to show Activity for each step."}
+   {:type :section :label "Theme"}
+   {:key :theme-name
+    :type :choice
+    :choices (theme-choice-order)
+    :label "Theme"
+    :description
+    "Reusable channel theme from com.blockether.vis.tui.shared-theme and extension :ext/theme maps"}])
 
 (declare titleize-label)
 
@@ -3477,11 +3480,10 @@
     nil))
 
 (defn- settings-rows
-  "Every setting in one flat grouped list: terminal preferences, toggles,
-   providers, and MCP servers. Empty sections are omitted."
+  "Every setting in one flat grouped list: response and theme preferences,
+   toggles, providers, and MCP servers. Empty sections are omitted."
   []
-  (vec (concat [{:type :section :label "Terminal UI"}]
-               (settings-ui-options)
+  (vec (concat (settings-ui-options)
                [{:type :section :label "Agent"}
                 {:type :agent-name
                  :label "Agent name"

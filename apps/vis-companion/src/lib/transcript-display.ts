@@ -48,13 +48,13 @@ export const readPythonCodeShown = pythonCode.read;
 export const setPythonCodeShown = pythonCode.write;
 export const usePythonCodeShown = pythonCode.use;
 
-/** A finished turn folds to its one-line digest unless the reader chose every step. */
-const finishedTurns = displaySwitch(
-  'vis.expand_finished_turns',
-  { on: 'expanded', off: 'folded' },
-  false,
+/** Steps between two progress notes share one Activity unless the reader chose every step. */
+const stepsSummarized = displaySwitch(
+  'vis.summarize_steps',
+  { on: 'summarized', off: 'separate' },
+  true,
 );
 
-export const readFinishedTurnsExpanded = finishedTurns.read;
-export const setFinishedTurnsExpanded = finishedTurns.write;
-export const useFinishedTurnsExpanded = finishedTurns.use;
+export const readStepsSummarized = stepsSummarized.read;
+export const setStepsSummarized = stepsSummarized.write;
+export const useStepsSummarized = stepsSummarized.use;

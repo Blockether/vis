@@ -1345,9 +1345,9 @@ export const STORY_ARTIFACTS: SessionArtifact[] = [
  *
  * The shapes that matter for the picture: step one reasons THEN calls (the band
  * has to cross the line above its own step), step two only calls (a step with no
- * reasoning must not leave a hole in the thread), and step three is unfinished,
- * which is the only state that draws the live marker and runs the line past its
- * own step.
+ * reasoning must not leave a hole in the thread), and step three opens with a
+ * progress note, which starts the next group, and is unfinished, which is the only
+ * state that draws the live marker and runs the line past its own step.
  */
 export const STORY_TURN_ITERATIONS: TranscriptIteration[] = [
   {
@@ -1388,6 +1388,7 @@ export const STORY_TURN_ITERATIONS: TranscriptIteration[] = [
     id: 'i3',
     position: 3,
     thinking: 'Now prove it: the suite first, then the story sheet at both widths.',
+    assistant_prose: 'The rail is one line now. Next, the suite and the story sheet.',
     forms: [
       {
         scope: 'python',

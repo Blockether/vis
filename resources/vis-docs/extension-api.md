@@ -401,10 +401,10 @@ their original omission warning; the missing data cannot be reconstructed.
 
 ### Report checks and outside effects
 
-The `tag` on a tool tells Vis what kind of work each call did. When a turn ends,
-Vis folds its steps into one summary line, such as
-`2 mutations · 2 files +40 −12 · 6 observations · 2 checks, 1 failing`, and the
-tags decide where each call is counted:
+The `tag` on a tool tells Vis what kind of work each call did. Each Activity
+counts its steps in one line, such as
+`1 mutation · 6 observations · 2 checks, 1 failing`, and the tags decide where
+each call is counted:
 
 | Tag | Use it for |
 |---|---|
@@ -428,14 +428,10 @@ vis.ActivityPresentation(
 `verdict` is `"passed"` or `"failed"`; sections do not accept it. Leave it out
 for calls that check nothing.
 
-Below the summary line, the folded turn keeps the outcomes that still need the
-reader: a change, check or external action that failed, was cancelled or is
-still running, and a check whose verdict is `"failed"`. A failed read is not
-listed. A later call of the same operation settles an earlier outcome: the latest
-run of a check, or a call that covers the same resources. When that later call
-passes, the summary counts the earlier failure as a retry instead of listing it.
-Like `mutation`, the other tags describe the operation; they grant no permission
-and enforce no policy.
+A check whose verdict is `"failed"` counts as failing in the Activity line, as
+in `2 checks, 1 failing`, even when the call itself succeeded. A call that fails
+or is cancelled shows that state on its own step. Like `mutation`, the other tags
+describe the operation; they grant no permission and enforce no policy.
 
 ## Prompts and discovery
 

@@ -910,7 +910,7 @@ export const GroupDurations: Story = {
       },
       {
         position: 2,
-        thinking: 'Checking the result',
+        assistant_prose: 'Checking the result.',
         forms: [{ source: 'pass', duration_ms: 0 }],
       },
     ],

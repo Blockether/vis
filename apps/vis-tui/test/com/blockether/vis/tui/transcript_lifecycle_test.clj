@@ -23,7 +23,9 @@
   (let [iterations
         (into (if pane (:iterations active-live/review-progress) [])
               (mapv (fn [i]
+                      ;; A progress note opens each step, so every checkpoint keeps its own rows.
                       {:thinking (str "Reasoning checkpoint " i)
+                       :assistant-prose (str "Progress note " i)
                        :forms [{:code (str "verify_" i "()") :stdout "Verified" :success? true}]})
                     (range 12)))]
     (merge

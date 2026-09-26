@@ -1237,7 +1237,7 @@
       ;; them and there is never a second box's ✕ on screen.
       (doseq [frame [picker setup models]]
         (expect (str/includes? frame "Settings"))
-        (expect (str/includes? frame "Terminal UI"))
+        (expect (str/includes? frame "Responses"))
         (expect (= 1 (count (re-seq #"✕" frame)))))
       ;; …and the provider really is added, with the model just picked.
       (expect (= {:id :ollama

@@ -350,13 +350,13 @@ or what a check found. Use [desktop and mobile apps](#connecting-the-companion-a
 to follow the same session from another device. You can send a follow-up or stop
 a task while it runs; see [Controlling a session](queue-and-cancel.md).
 
-When a turn finishes, Vis folds its steps and notes into one summary line, such
-as `2 mutations · 2 files +40 −12 · 6 observations · 2 checks, passing`. Problems
-that still need you stay listed under that line: a change, check or outside
-action that failed or was cancelled, and a check that found failures. Select the
-line to show every step, and select it again to fold the turn. To always see
-every step, turn on **Expand finished turns** in Settings. The terminal and each
-app keep their own choice.
+Vis combines the steps between two notes into one Activity, so a turn reads as
+its notes with the work between them, and the answer comes last. Each Activity
+counts its steps, such as `1 mutation · 6 observations · 2 checks, 1 failing`,
+and you can open it to see every step. Files and images from those steps appear
+right after it. A finished turn keeps the same layout. To show one Activity for
+each step instead, turn off **Summarize steps between notes** in Settings, under
+**Responses**. The terminal and each app keep their own choice.
 
 ### Keep useful work when you return
 
