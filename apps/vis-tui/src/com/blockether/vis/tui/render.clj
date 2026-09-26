@@ -7777,21 +7777,29 @@
                                                             :node-id node-id
                                                             :duration-ms duration})
                                    [(line-entry (str code-err-pad-marker ""))]
-                                   (map #(line-entry (str err-result-marker %)) details)))
+                                   (map #(line-entry (str err-result-marker %)) details)
+                                   ;; Shown diagnostics end on a neutral blank.
+                                   (when (seq details) [(line-entry (str err-result-marker ""))])))
                       ;; Noninteractive output cannot offer a toggle: retain all diagnostics.
-                      (mapv #(line-entry (str err-result-marker %))
-                            (cond-> details
-                              (some? duration)
-                              (with-right-suffix (vis/format-duration duration)
-                                                 (max 1 (long fill-w))))))))
+                      (vec (concat (map #(line-entry (str err-result-marker %))
+                                        (cond-> details
+                                          (some? duration)
+                                          (with-right-suffix (vis/format-duration duration)
+                                                             (max 1 (long fill-w)))))
+                                   (when (seq details)
+                                     [(line-entry (str err-result-marker ""))]))))))
 
                 code-block
                 (vec c-lines)
 
                 result-block
-                (if (seq code-block)
-                  (mapv #(update % :meta assoc :code-result? true) result-lines)
-                  (vec result-lines))
+                (let [rows (cond->> result-lines
+                             ;; After a failure, Result opens its band with its own top padding.
+                             (and (seq result-lines) (seq inline-error-message-lines))
+                             (cons (line-entry (str result-marker ""))))]
+                  (if (seq code-block)
+                    (mapv #(update % :meta assoc :code-result? true) rows)
+                    (vec rows)))
 
                 nested-artifacts
                 (when activity-run
@@ -7825,13 +7833,14 @@
                 inline-live-entries
                 (mapcat #((:inline-entries %) fill-w) (filter :inline-entries runs))
 
-                ;; The failed control has red padding above and below its name. Keep
-                ;; a neutral blank after any diagnostics before the next surface.
+                ;; Result shows under expanded Code, or alone when there is no Code.
+                shown-result-block
+                (when (or code-expanded? (empty? code-block)) result-block)
+
+                ;; A failure keeps its red band and any shown diagnostics between Code and
+                ;; the next band, which opens with its own top padding.
                 execution-details
-                (vec (concat inline-error-message-lines
-                             (when (seq inline-error-message-lines)
-                               [(line-entry (str err-result-marker ""))])
-                             (when (or code-expanded? (empty? code-block)) result-block)))
+                (vec (concat inline-error-message-lines shown-result-block))
 
                 ;; THE SENTENCE THAT INTRODUCES A CALL IS TRANSCRIPT TEXT, above the band and
                 ;; outside its fold. The companion prints a form's comment as an ordinary block
@@ -7861,8 +7870,11 @@
                                         inline-live-entries
                                         live-artifact-block))]
 
-                    ;; Without Code/Result, Activity owns the surface's top padding.
-                    (vec (concat (when (and (empty? code-block) (empty? execution-details))
+                    ;; Activity shares the padding that closes Code or Result. Alone or after
+                    ;; a failure, it owns its top padding.
+                    (vec (concat (when (and (empty? shown-result-block)
+                                            (or (empty? code-block)
+                                                (seq inline-error-message-lines)))
                                    [(line-entry activity-marker)])
                                  entries
                                  (map #(update %

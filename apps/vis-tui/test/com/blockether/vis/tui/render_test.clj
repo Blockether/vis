@@ -1658,7 +1658,11 @@
                 (apply str (map :ch (filter :bold (nth frame failed-row))))
 
                 red
-                (get-in (shared-theme/theme shared-theme/default-theme-id) [:palette :code-err-bg])]
+                (get-in (shared-theme/theme shared-theme/default-theme-id) [:palette :code-err-bg])
+
+                paper
+                (get-in (shared-theme/theme shared-theme/default-theme-id)
+                        [:palette :code-block-bg])]
 
             (expect (str/includes? failed-line (if expanded? "FAILED ▾" "FAILED ▸")))
             (expect (= "FAILED" ink))
@@ -1670,10 +1674,20 @@
             (expect (= red (get-in frame [(inc failed-row) 20 :bg])))
             (when result-row
               (expect (< code-row result-row))
-              (expect (not= red (get-in frame [result-row 20 :bg]))))
+              (expect (not= red (get-in frame [result-row 20 :bg])))
+              (expect (= paper (get-in frame [(dec result-row) 20 :bg]))
+                      "Result keeps its top padding"))
             (when activity-row
               (expect (< code-row failed-row activity-row))
-              (expect (= column (.indexOf ^String (nth lines activity-row) "ACTIVITY"))))))))))
+              (expect (= column (.indexOf ^String (nth lines activity-row) "ACTIVITY")))
+              ;; User report: a neutral gap cut Activity off from the failure above it,
+              ;; and its header sat on the band's top edge.
+              (expect (str/blank? (apply str (map :ch (nth frame (dec activity-row))))))
+              (expect (= paper (get-in frame [(dec activity-row) 20 :bg]))
+                      "Activity keeps its top padding")
+              (when-not expanded?
+                (expect (= (+ failed-row 3) activity-row)
+                        "Activity follows the red band directly")))))))))
 
 (defdescribe
   failed-form-error-surface-test
