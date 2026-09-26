@@ -688,7 +688,12 @@
                   text
                   "Respond in plain text unless the user or tool requires another format."))
         (expect (str/includes? text "for stale anchors, read only the indicated region"))
-        (expect (str/includes? text "After changed-file checks pass"))))
+        (expect (str/includes? text "After changed-file checks pass"))
+        ;; User report: a working turn ran silently between calls, where opencode asks for
+        ;; short progress notes; the answer must still read on its own once the turn folds.
+        (expect (str/includes? text "Narrate progress in prose"))
+        (expect (str/includes? text "text beside a `python_execution` call reaches the user"))
+        (expect (str/includes? text "it stands alone, since progress notes fold away"))))
   ;; Each capability owns its contract; doc() renders Python metadata and semantics.
   ;; The core prompt must point there instead of encouraging invented call shapes.
   (it "points authority at the document a capability carries"
@@ -805,7 +810,12 @@
       ;; `defs` then" was not what §2 said. Deletion now names what it removes and that a
       ;; restart restores only what is still defined. The lifecycle lands at 10 754.
       ;; Frozen-record access and mutation recovery now take 10 881 characters.
-      (expect (< (count text) 10900))
+      ;; 10.9k → 11.4k: user report — a working turn showed code and results with nothing
+      ;; saying why, while opencode's prompts ask for short progress notes. §7 now asks for
+      ;; them beside the call, where the transcript already renders prose above each step,
+      ;; and says the answer stands alone because a finished turn folds the notes away.
+      ;; It lands at 11 378.
+      (expect (< (count text) 11400))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]

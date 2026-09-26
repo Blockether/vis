@@ -344,13 +344,14 @@ make those operations useful for your environment.
 
 ### Follow the work on every screen
 
-Activities show actions and their results in the conversation. Use
-[desktop and mobile apps](#connecting-the-companion-app) to follow the same session from another
-device. You can send a follow-up or stop a task while it runs; see
-[Controlling a session](queue-and-cancel.md).
+Activities show actions and their results in the conversation. Vis also writes
+short notes as it works, such as its first step, the change it is about to make
+or what a check found. Use [desktop and mobile apps](#connecting-the-companion-app)
+to follow the same session from another device. You can send a follow-up or stop
+a task while it runs; see [Controlling a session](queue-and-cancel.md).
 
-When a turn finishes, Vis folds its steps into one summary line, such as
-`2 mutations · 2 files +40 −12 · 6 observations · 2 checks, passing`. Problems
+When a turn finishes, Vis folds its steps and notes into one summary line, such
+as `2 mutations · 2 files +40 −12 · 6 observations · 2 checks, passing`. Problems
 that still need you stay listed under that line: a change, check or outside
 action that failed or was cancelled, and a check that found failures. Select the
 line to show every step, and select it again to fold the turn. To always see
