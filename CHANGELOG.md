@@ -35,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   model for a provider, Vis uses the first model in this order, its best one.
   Z.ai providers list GLM-5.3 Flash first. OpenCode Go no longer lists models
   that its catalog no longer offers, such as Kimi K2.5 and GLM-5.
+- Model lists no longer offer stealth models, such as OpenCode Go's Omen Alpha,
+  preview models, such as Gemini 3.1 Pro Preview, or MiMo models older than
+  MiMo V2.6. When Vis refreshes a provider's models, it also removes these
+  models from the list it saved for that provider. OpenCode Go now includes
+  MiMo V2.6 Pro and MiMo V2.6 Flash in its built-in list.
 
 ### Fixed
 - A Python block that sleeps past its time limit now stops with a timeout and

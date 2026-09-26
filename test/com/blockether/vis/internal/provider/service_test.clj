@@ -532,7 +532,7 @@
 
 (deftest model-options-accepts-mapped-provider-defaults
   (with-redefs [providers/fetch-models
-                (constantly ["ox-alpha-free"])
+                (constantly ["zebra-live"])
 
                 catalog/template
                 (constantly nil)
@@ -547,8 +547,23 @@
           (providers/default-model-names provider)]
 
       (is (= ["glm-5.2" "minimax-m3"] defaults))
-      (is (= ["minimax-m3" "glm-5.2" "ox-alpha-free"]
+      (is (= ["minimax-m3" "glm-5.2" "zebra-live"]
              (:models (providers/model-options provider defaults true)))))))
+
+(deftest model-options-leave-hidden-defaults-out
+  (with-redefs [providers/fetch-models
+                (constantly nil)
+
+                catalog/template
+                (constantly nil)]
+
+    (let [provider {:id :fake
+                    :default-models ["glm-5.2" "mimo-v2.5-pro" "gemini-3-pro-preview" "omen-alpha"
+                                     "mimo-v2.6-pro"]}]
+      (is (= ["mimo-v2.6-pro" "glm-5.2"]
+             (:models
+               (providers/model-options provider (providers/default-model-names provider) true)))
+          "stealth, preview and pre-V2.6 MiMo defaults stay out of the picker"))))
 
 ;; Regression: a fleet stayed frozen at the build that added it. `:default-models`
 ;; is a hardcoded vendor list, adding a provider persisted exactly that list, and
@@ -585,6 +600,33 @@
                 {:name "minimax-m2.5" :api-style :anthropic}]
                (:models (second @written)))
             "configured models keep their order; a new one carries the preset's own map")))))
+
+(deftest refreshing-models-drops-saved-models-svar-hides
+  (let [entry
+        {:id :fake
+         :models [{:name "glm-5.2"} {:name "omen-alpha"} "mimo-v2.5-pro" {:name "hy4-preview"}
+                  {:name "mimo-v2.6-pro"}]}
+
+        written
+        (atom nil)]
+
+    (with-redefs [providers/configured-providers
+                  (constantly [entry])
+
+                  providers/fetch-model-catalog
+                  (constantly {:identity "test-account"
+                               :models [{:name "glm-5.2"} {:name "mimo-v2.6-pro"}]})
+
+                  catalog/template
+                  (constantly {:id :fake :default-models []})
+
+                  providers/update-config-provider!
+                  (fn [provider-id f source]
+                    (reset! written [provider-id (f entry) source]))]
+
+      (is (= [] (providers/refresh-models! :fake :test)) "no live id is new")
+      (is (= [{:name "glm-5.2"} {:name "mimo-v2.6-pro"}] (:models (second @written)))
+          "stealth, preview and pre-V2.6 MiMo models leave the saved list; the rest keep order"))))
 
 (deftest a-failed-model-probe-leaves-the-fleet-alone
   (let [writes (atom 0)]

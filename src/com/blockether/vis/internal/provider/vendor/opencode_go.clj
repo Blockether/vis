@@ -52,8 +52,9 @@
    wire, a `{:name … :api-style :anthropic}` map routes to `/messages`. The list is
    in svar's canonical model order (`svar/sort-models`), which also ranks the picker
    and gives a fresh install its first model: current flagships lead, then mid-size
-   and fast models, the previous generation, and previews, aliases and stealth
-   models last.
+   and fast models, the previous generation, and aliases and experimental builds
+   last. Stealth models, previews and MiMo builds before V2.6 stay out, as they do
+   from every model list (`svar/hidden-model?`).
 
    Nothing is fetched here. `native-image` (graal-build-time) initializes this
    namespace at BUILD time, so a `/models` call at load ran on the BUILDER — it
@@ -66,14 +67,13 @@
    routable without a new build; and `enrich-models` below stamps the wire on
    whatever comes back."
   ["kimi-k3" {:name "qwen3.8-max" :api-style :anthropic} "glm-5.3" "deepseek-v4-pro"
-   {:name "minimax-m3" :api-style :anthropic} "longcat-2.0" "kimi-k2.7-code" "glm-5.3-flash"
-   "deepseek-v4.1-flash" {:name "qwen3.8-flash" :api-style :anthropic} "hy3"
-   "muse-spark-1.3-contributor" "gpt-5.6-luna" "grok-4.6" "kimi-k2.6"
+   {:name "minimax-m3" :api-style :anthropic} "longcat-2.0" "mimo-v2.6-pro" "kimi-k2.7-code"
+   "glm-5.3-flash" "deepseek-v4.1-flash" {:name "qwen3.8-flash" :api-style :anthropic}
+   "mimo-v2.6-flash" "hy3" "muse-spark-1.3-contributor" "gpt-5.6-luna" "grok-4.6" "kimi-k2.6"
    {:name "qwen3.7-max" :api-style :anthropic} {:name "qwen3.7-plus" :api-style :anthropic}
    {:name "qwen3.6-plus" :api-style :anthropic} "glm-5.2" "glm-5.1" "deepseek-v4-flash"
-   {:name "minimax-m2.7" :api-style :anthropic} "mimo-v2.5-pro" "mimo-v2.5"
-   "muse-spark-1.2-contributor" {:name "minimax-m2.5" :api-style :anthropic} "deepseek-flash"
-   "deepseek-v4-flash-vision-exp" "hy4-preview" "omen-alpha"])
+   {:name "minimax-m2.7" :api-style :anthropic} "muse-spark-1.2-contributor"
+   {:name "minimax-m2.5" :api-style :anthropic} "deepseek-flash" "deepseek-v4-flash-vision-exp"])
 
 (defn- enrich-models
   "`:provider/enrich-models-fn`: `(svar-provider router-opts) -> models-vec`, run

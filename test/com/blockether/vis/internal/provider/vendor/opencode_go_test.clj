@@ -69,12 +69,12 @@
                        bare
                        (filter string? models)]
 
-                   ;; GLM / Kimi / DeepSeek / MiMo / Hy / LongCat / Omen ride the OpenAI chat wire.
+                   ;; GLM / Kimi / DeepSeek / MiMo / Hy / LongCat ride the OpenAI chat wire.
                    (expect (some #(= "glm-5.2" %) bare))
                    (expect (some #(= "kimi-k2.7-code" %) bare))
                    (expect (some #(= "deepseek-v4-flash" %) bare))
                    (expect (some #(= "hy3" %) bare))
-                   (expect (some #(= "omen-alpha" %) bare))
+                   (expect (some #(= "mimo-v2.6-pro" %) bare))
                    ;; The catalog a build ships is the vendor's CURRENT one, not the list
                    ;; that froze when this provider was first written.
                    (expect (some #(= "deepseek-v4.1-flash" %) bare))
@@ -84,7 +84,9 @@
                  (let [models (get-in (vis/provider-by-id :opencode-go)
                                       [:provider/preset :default-models])]
                    (expect (= "kimi-k3" (first models)))
-                   (expect (= models (svar/sort-models :opencode-go models)))))
+                   (expect (= models (svar/sort-models :opencode-go models)))
+                   ;; Stealth models, previews and pre-V2.6 MiMo builds stay out of the catalog.
+                   (expect (not-any? #(svar/hidden-model? (if (map? %) (:name %) %)) models))))
              (it "declares Anthropic-wire models as maps with :api-style :anthropic"
                  (reload!)
                  (let [models
