@@ -160,6 +160,25 @@
                   (out r)
                   "escaped the \" at columns 16 and 19 so the string keeps them as text"))
         (expect (str/ends-with? (out r) "Output of the repaired block:\nHe said \"hi\" to me"))))
+  (it
+    "closes a path string that lost its closing quote before the code after it"
+    ;; The shape of a block a real session sent: the path lost its closing quote
+    ;; before `,[{'from'`, which flipped every later string on the line.
+    (let
+      [r
+       (ep/run-python-block
+         (py-ctx)
+         (str
+           "root = 'repo'\n"
+           "def patch(path, edits): return [path, edits[0]['from']]\n"
+           "print(patch(root + '/apps/x/JustifiedProse.test.tsx,[{'from':'130:5ae','to':'142:a6f'}]))"))]
+      (expect (nil? (:error r)))
+      (expect (true? (:auto-repaired r)))
+      (expect (str/includes? (out r) "line 3: added the missing closing ' at column 52"))
+      (expect
+        (str/ends-with?
+          (out r)
+          "Output of the repaired block:\n['repo/apps/x/JustifiedProse.test.tsx', '130:5ae']"))))
   (it "discloses the repair when the repaired block raises"
       (let [r (ep/run-python-block (py-ctx) "raise ValueError(\"boom\"")]
         (expect (true? (:auto-repaired r)))
@@ -180,8 +199,8 @@
                    (get-in r [:error :message])))))
   (it
     "names the first quote problem, not the brackets it flipped, and shows its line around it"
-    ;; The shape of a refused block from a real session: a path string that lost its
-    ;; closing quote flips every later string on the line.
+    ;; A path string that lost its closing quote flips every later string on the line.
+    ;; Auto-repair now closes it; `classify` only parses, so this checks the refusal text.
     (let
       [error
        (classify
@@ -193,8 +212,7 @@
         (=
           (str
             "SyntaxError: invalid decimal literal\n"
-            "line 1, column 87: the string from column 84 ends right before this text; "
-            "if its closing quote belongs to the text, escape it\n\n"
+            "line 1, column 87: the string from column 84 ends right before this text\n\n"
             "1: …nents/JustifiedProse.test.tsx,[{'from':'130:5ae','to':'142:a6f','replace':'  it(…\n"
             (apply str (repeat 44 \space))
             "^")
@@ -204,8 +222,7 @@
         (=
           (str
             "SyntaxError: closing parenthesis ']' does not match opening parenthesis '(' (line 1)\n"
-            "line 2, column 5: the string is not closed on its line; close it with ', "
-            "or use triple quotes (''') for text that spans lines\n\n"
+            "line 2, column 5: the string is not closed on its line\n\n"
             "2: y = 'abc\n" "       ^")
           (:message (classify "x = (1, 2]\ny = 'abc"))))))
 
