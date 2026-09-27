@@ -141,7 +141,7 @@
         (expect (true? (:auto-repaired r)))
         (expect (= "xs = [1, 2]\nprint(len(xs))" (:repaired-source r)))
         (expect (= (str "Vis repaired this block before running it. Python refused it with "
-                        "SyntaxError: '[' was never closed (<unknown>, line 1)\n"
+                        "SyntaxError: '[' was never closed\n"
                         "  line 1: added ']' at column 11 to close '[' from line 1\n"
                         "Output of the repaired block:\n" "2")
                    (out r)))))
@@ -167,22 +167,19 @@
         (expect (not (str/includes? (out r) "Output of the repaired block")))
         (expect (= :python/runtime (get-in r [:error :data :phase])))
         (expect (str/includes? (get-in r [:error :message]) "ValueError: boom"))))
-  (it "names the delimiters it could not repair"
+  (it "names the delimiter it could not repair"
       (let [r (ep/run-python-block (py-ctx) "x = (1 + 2\ny = 3 3")]
         (expect (nil? (:auto-repaired r)))
         (expect (nil? (:stdout r)))
         (expect (= :python/syntax (get-in r [:error :data :phase])))
         (expect (true? (get-in r [:error :data :unbalanced-delimiters?])))
-        (expect (str/starts-with?
-                  (get-in r [:error :message])
-                  (str "Vis could not repair the unbalanced quotes or brackets in this block:\n"
-                       "  line 1, column 5: '(' is never closed\n")))
-        (expect (str/includes? (get-in r [:error :message]) "Original parser error: SyntaxError"))
         ;; The parser names only the line; the caret marks the '(' the repair left open.
-        (expect (str/ends-with? (get-in r [:error :message])
-                                "1: x = (1 + 2\n       ^\n2: y = 3 3"))))
+        (expect (= (str "SyntaxError: '(' was never closed\n"
+                        "line 1, column 5: '(' is never closed\n\n"
+                        "1: x = (1 + 2\n" "       ^")
+                   (get-in r [:error :message])))))
   (it
-    "lists the first problem of each kind and shows a long line around the first one"
+    "names the first quote problem, not the brackets it flipped, and shows its line around it"
     ;; The shape of a refused block from a real session: a path string that lost its
     ;; closing quote flips every later string on the line.
     (let
@@ -193,17 +190,24 @@
            "[{'from':'130:5ae','to':'142:a6f','replace':'  it(\"keeps reasoning lines\", async () => {})'}]))"))]
       (expect (true? (get-in error [:data :unbalanced-delimiters?])))
       (expect
-        (= (str
-             "Vis could not repair the unbalanced quotes or brackets in this block:\n"
-             "  line 1, column 6: '(' is never closed\n"
-             "  line 1, column 87: the string from column 84 ends right before this text; "
-             "if its closing quote belongs to the text, escape it\n"
-             "  line 1, column 167: the string is not closed on its line; close it with ', "
-             "or use triple quotes (''') for text that spans lines\n" "  and 4 more\n"
-             "Original parser error: SyntaxError: invalid decimal literal (<unknown>, line 1)\n\n"
-             "1: print(patch(root/'apps/vis-companion/src/components/JustifiedProse.test.tsx,"
-             "[{'from':'130:5ae','to':…\n" "        ^")
-           (:message error))))))
+        (=
+          (str
+            "SyntaxError: invalid decimal literal\n"
+            "line 1, column 87: the string from column 84 ends right before this text; "
+            "if its closing quote belongs to the text, escape it\n\n"
+            "1: …nents/JustifiedProse.test.tsx,[{'from':'130:5ae','to':'142:a6f','replace':'  it(…\n"
+            (apply str (repeat 44 \space))
+            "^")
+          (:message error)))))
+  (it "keeps the parser's line when the problem it names is on another line"
+      (expect
+        (=
+          (str
+            "SyntaxError: closing parenthesis ']' does not match opening parenthesis '(' (line 1)\n"
+            "line 2, column 5: the string is not closed on its line; close it with ', "
+            "or use triple quotes (''') for text that spans lines\n\n"
+            "2: y = 'abc\n" "       ^")
+          (:message (classify "x = (1, 2]\ny = 'abc"))))))
 
 (defdescribe
   no-false-repair-test
@@ -316,9 +320,9 @@
 
         (expect (= 3 (get-in err [:data :line]))) ;; the `/ 0` line, NOT the call site (5)
         (expect (= 12 (get-in err [:data :column])))
-        (expect (str/includes? msg "1: def compute(x):"))
-        (expect (str/includes? msg "return y / 0"))
-        (expect (str/includes? msg "^"))))
+        ;; Only the failing line: the model wrote the rest of the block.
+        (expect (str/ends-with? msg "\n\n3:     return y / 0\n              ^^^^^"))
+        (expect (not (str/includes? msg "def compute(x):")))))
   (it "an undefined name pins line+caret to the name, overriding the shallow loc"
       (let [r
             (ep/run-python-block (py-ctx) "print(undefined_zzz)")
@@ -338,14 +342,12 @@
                                                        (str "values = ["
                                                             (str/join ", " (range 40))
                                                             "]; print(undefined_name_zz)"))))]
-        (expect
-          (str/ends-with?
-            msg
-            (str
-              "\n\n1: …1, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]; "
-              "print(undefined_name_zz)\n"
-              (apply str (repeat 86 \space))
-              (apply str (repeat 17 \^)))))))
+        (expect (str/ends-with? msg
+                                (str
+                                  "\n\n1: …6, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]; "
+                                  "print(undefined_name_zz)\n"
+                                  (apply str (repeat 66 \space))
+                                  (apply str (repeat 17 \^)))))))
   (it "the DEEPEST user-code frame wins for an error raised inside a called fn"
       (let [r (ep/run-python-block
                 (py-ctx)

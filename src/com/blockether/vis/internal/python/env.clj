@@ -1503,101 +1503,47 @@
   (boolean (when session (py-interrupt! session))))
 
 (def ^:private excerpt-width
-  "Characters of each source line an excerpt shows. A longer line shows only this
+  "Characters of the failing line an excerpt shows. A longer line shows only this
    many around the caret, with `…` where it was cut, so a long one-line block does
    not come back whole."
-  100)
+  80)
 
 (defn- render-source-context
-  "Babashka-style source excerpt for an eval failure: a numbered ±2-line window of
-   `code` around the 1-based `line`, with a caret run under the offending span
-   (`col`/`end-col`, 0-based offsets into the detabbed line — tabs collapse to one
-   space so 1 char == 1 caret column). When a line of the window is longer than
-   `excerpt-width`, every line shows the same `excerpt-width` columns around the
-   caret. Returns nil when `line` is out of range, so a positionless failure
-   leaves the raw message untouched."
+  "Source excerpt for an eval failure: the 1-based `line` of `code`, numbered, with
+   a caret run under the offending span (`col`/`end-col`, 0-based offsets into the
+   detabbed line — tabs collapse to one space so 1 char == 1 caret column). Only
+   that line is shown, and only `excerpt-width` columns of it around the caret.
+   Returns nil when `line` is out of range, so a positionless failure leaves the
+   raw message untouched."
   [code line col end-col]
-  (let [lines
-        (vec (str/split-lines (str code)))
-
-        n
-        (count lines)]
-
-    (when (and line (<= 1 (long line) n))
-      (let [detab
-            (fn ^String [s]
-              (str/replace s "\t" " "))
-
-            i0
-            (dec (long line))
-
-            lo
-            (max 0 (- i0 2))
-
-            hi
-            (min (dec n) (+ i0 2))
-
-            width
-            (count (str (inc hi)))
-
-            txt0
-            (detab (nth lines i0))
-
-            c0
-            (if (and col (<= 0 (long col) (count txt0))) (long col) 0)
-
-            end
-            (if (and end-col (> (long end-col) c0)) (long end-col) (inc c0))
-
+  (let [lines (vec (str/split-lines (str code)))]
+    (when (and line (<= 1 (long line) (count lines)))
+      (let [txt (str/replace (nth lines (dec (long line))) "\t" " ")
+            n (count txt)
+            c0 (if (and col (<= 0 (long col) n)) (long col) 0)
+            end (if (and end-col (> (long end-col) c0)) (long end-col) (inc c0))
             ;; Snap the caret start off leading whitespace: a `co_positions`
             ;; quirk reports the ENCLOSING handler's column for a
             ;; `raise … from …` inside an `except`, landing the caret start
             ;; in the indentation gutter. Advance to the first non-space
             ;; within the span so the caret always begins on real code (a
             ;; no-op when the reported column already points at a token).
-            c
-            (long (or (first (filter #(and (< (long %) end) (not= \space (nth txt0 %)))
-                                     (range c0 (min end (count txt0)))))
-                      c0))
+            c (long (or (first (filter #(not= \space (nth txt %)) (range c0 (min end n)))) c0))
+            ;; A long line shows `excerpt-width` columns that start half a
+            ;; window before the caret.
+            from (if (> n excerpt-width)
+                   (max 0 (min (- c (quot excerpt-width 2)) (- n excerpt-width)))
+                   0)
+            to (min n (+ from excerpt-width))
+            pfx (str line ": ")]
 
-            ;; One window for every line keeps the lines aligned: all of each
-            ;; line when the longest fits, else `excerpt-width` columns that
-            ;; start half a window before the caret.
-            clip?
-            (boolean (some #(> (count (detab (nth lines %))) excerpt-width) (range lo (inc hi))))
-
-            from
-            (if clip? (max 0 (min (- c (quot excerpt-width 2)) (- (count txt0) excerpt-width))) 0)
-
-            to
-            (if clip? (+ from excerpt-width) Long/MAX_VALUE)
-
-            cut
-            (fn ^String [^String s]
-              (let [k (count s)]
-                (str (when (and (pos? from) (pos? k)) "…")
-                     (subs s (min from k) (min to k))
-                     (when (> k to) "…"))))
-
-            sb
-            (StringBuilder.)]
-
-        (doseq [idx (range lo (inc hi))]
-          (let [pfx (str (format (str "%" width "d") (inc (long idx))) ": ")
-                txt (detab (nth lines idx))]
-
-            (.append sb pfx)
-            (.append sb (cut txt))
-            (.append sb "\n")
-            (when (= idx i0)
-              (let [end* (min (long end) (count txt) to)
-                    pad (+ (count pfx) (if (pos? from) 1 0) (- c from))
-                    span (max 1 (- end* c))]
-
-                (.append sb (apply str (repeat pad \space)))
-                (.append sb (apply str (repeat span \^)))
-                (.append sb "\n")))))
-        (str/trimr (str sb))))))
+        (str pfx
+             (when (pos? from) "…")
+             (subs txt from to)
+             (when (< to n) "…")
+             "\n"
+             (apply str (repeat (+ (count pfx) (if (pos? from) 1 0) (- c from)) \space))
+             (apply str (repeat (max 1 (- (min end to) c)) \^)))))))
 
 (def ^:private repeat-breaker-threshold
   "Consecutive identical (code, error) failures before the loop breaker fires.
@@ -1606,31 +1552,30 @@
 
 (def ^:private listed-messages "Fixes a repair note lists before it counts the rest." 5)
 
-(def ^:private listed-problems
-  "Problems a refusal lists before it counts the rest. One misplaced quote flips
-   every later string on its line, so a refusal lists only the first problem of
-   each kind: the others repeat it without adding a place to look."
-  3)
-
 (defn- message-lines
-  "The `:message` of each of `shown`, one indented line each, then a count of the
-   rest of `items`. `shown` defaults to the first `listed-messages` of `items`."
-  ([items] (message-lines items (take listed-messages items)))
-  ([items shown]
-   (let [more (- (count items) (count shown))]
-     (str (str/join (map #(str "  " (:message %) "\n") shown))
-          (when (pos? more) (str "  and " more " more\n"))))))
+  "The `:message` of each of the first `items`, one indented line each, then a
+   count of the rest."
+  [items]
+  (let [shown
+        (take listed-messages items)
 
-(defn- first-of-each-kind
-  "The first of `problems` of each `:kind`, at most `listed-problems` of them."
+        more
+        (- (count items) (count shown))]
+
+    (str (str/join (map #(str "  " (:message %) "\n") shown))
+         (when (pos? more) (str "  and " more " more\n")))))
+
+(def ^:private bracket-problems
+  "Problem kinds about brackets alone. A misplaced quote moves brackets into and
+   out of strings, so these usually follow from a quote problem elsewhere."
+  #{:unclosed-bracket :unmatched-closer :mismatched-closer :semicolon-in-brackets
+    :open-bracket-at-statement})
+
+(defn- first-cause
+  "The one problem a refusal names: the first of `problems` that is not about
+   brackets alone, else the first. The rest are mostly what that one caused."
   [problems]
-  (->> problems
-       (reduce (fn [shown p]
-                 (cond-> shown
-                   (not-any? #(= (:kind p) (:kind %)) shown)
-                   (conj p)))
-               [])
-       (take listed-problems)))
+  (or (first (remove #(contains? bracket-problems (:kind %)) problems)) (first problems)))
 
 ;; =============================================================================
 ;; Running one block
@@ -1685,6 +1630,15 @@
   [^String message]
   (when-let [[_ line] (re-find #"line (\d+)\)\s*$" message)]
     [(parse-long line) nil nil]))
+
+(defn- parser-message
+  "A SyntaxError `message` without the `(<file>, line N)` CPython ends it with,
+   or with `(line N)` in its place when `keep-line?`."
+  [^String message keep-line?]
+  (if-let [[suffix line] (re-find #"\s*\([^()]*, line (\d+)\)\s*$" message)]
+    (str (subs message 0 (- (count message) (count suffix)))
+         (when keep-line? (str " (line " line ")")))
+    message))
 
 (defn- char-column
   "A guest BYTE column as a CHARACTER column into `line-text`, or nil.
@@ -1757,6 +1711,9 @@
           (try (python-repair/diagnose (str code) {:error-line (first pos)})
                (catch Throwable _ nil)))
 
+        problem
+        (first-cause delimiter-problems)
+
         ;; The confinement refuses in the interpreter itself, naming the operation
         ;; and whether it wanted to WRITE — the one denial the model can act on.
         denied-write?
@@ -1779,10 +1736,6 @@
                            "a smart em-dash, en-dash, curly quote, or multiplication sign that you "
                            "meant as prose. Replace it with plain ASCII, or move that whole line "
                            "into a `#` comment. Original parser error: ")
-              (seq delimiter-problems)
-              (str "Vis could not repair the unbalanced quotes or brackets in this block:\n"
-                   (message-lines delimiter-problems (first-of-each-kind delimiter-problems))
-                   "Original parser error: ")
               denied-root?
               (str "Sandbox policy denied "
                    (if denied-write? "file-write" "file-read")
@@ -1801,10 +1754,11 @@
                    "\")`; if it isn't listed, ask the USER to enable "
                    "it and do NOT retry the name. If it's a variable, define it first. "
                    "Original error: ")
-              indent? (str
-                        "Python is INDENTATION-sensitive: a block (after def / if / for / with / "
-                        "a trailing `:`) must be indented consistently (4 spaces), and a top-level "
-                        "statement must start at column 0. Re-indent that region. Original error: ")
+              ;; A refusal names its problem instead.
+              (and indent? (not problem))
+              (str "Python is INDENTATION-sensitive: a block (after def / if / for / with / "
+                   "a trailing `:`) must be indented consistently (4 spaces), and a top-level "
+                   "statement must start at column 0. Re-indent that region. Original error: ")
               :else nil)
 
         ;; CPython reports a code object's columns as UTF-8 BYTE offsets, while the
@@ -1813,17 +1767,24 @@
         line-text
         (when pos (nth (str/split-lines (str code)) (dec (long (first pos))) nil))
 
-        ;; A parse failure names only its line, so a refusal puts the caret under
-        ;; the first problem the repair left on that line, not under column 1.
-        problem-column
-        (some #(when (= (:line %) (first pos)) (dec (long (:column %)))) delimiter-problems)
-
+        ;; A parse failure names only its line, so a refusal shows the line of the
+        ;; problem it names, with the caret under that problem.
         source-context
         (when (and code pos (not host?))
-          (render-source-context code
-                                 (first pos)
-                                 (or (char-column line-text (second pos)) problem-column)
-                                 (char-column line-text (nth pos 2 nil))))
+          (if problem
+            (render-source-context code (:line problem) (dec (long (:column problem))) nil)
+            (render-source-context code
+                                   (first pos)
+                                   (char-column line-text (second pos))
+                                   (char-column line-text (nth pos 2 nil)))))
+
+        ;; The excerpt numbers its line, so the parser's own `(<file>, line N)`
+        ;; stays only when the excerpt shows another line.
+        error-text
+        (cond-> base
+          (or syntax? indent?)
+          (parser-message (or (nil? source-context)
+                              (and problem (not= (first pos) (:line problem))))))
 
         repeats
         (note-block-failure! session code base)
@@ -1840,9 +1801,10 @@
         (if host?
           tool-message
           (str breaker
-               (cond-> (if hint (str hint base) base)
-                 source-context
-                 (str "\n\n" source-context))))]
+               hint
+               error-text
+               (when problem (str "\n" (:message problem)))
+               (when source-context (str "\n\n" source-context))))]
 
     {:message msg
      :data (cond-> {:phase (cond host? :python/host
@@ -1918,7 +1880,7 @@
    result and write balanced code next time."
   [^String refused fixes printed?]
   (str "Vis repaired this block before running it. Python refused it with "
-       (str/replace refused #"^vis-python:\s+" "")
+       (parser-message (str/replace refused #"^vis-python:\s+" "") false)
        "\n"
        (message-lines fixes)
        (when printed? "Output of the repaired block:\n")))

@@ -1181,8 +1181,8 @@
                       #(and
                          (str/includes?
                            %
-                           "Vis could not repair the unbalanced quotes or brackets in this block:")
-                         (str/includes? % "'(' is never closed"))
+                           "SyntaxError: '(' was never closed\nline 1, column 5: '(' is never closed")
+                         (not (str/includes? % "Vis could not repair")))
                       tools)
                     (pr-str tools))
                   (expect (str/includes? output "NATIVE_REPAIR_COMPLETE") output))
