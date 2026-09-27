@@ -1105,10 +1105,12 @@
              (str "-H:IncludeLocales="
                   (str/join "," ["en-US" "en-GB" "en-IN" "pl-PL" "de-DE" "zh-CN" "zh-TW" "hi-IN"]))]
       ;; Embed only the build-host JNI libraries: sherpa speech, ORT decisions,
-      ;; and DJL tokenizer bindings plus its version properties.
+      ;; and DJL tokenizer bindings plus its version properties. ORT's macOS
+      ;; dSYM bundles are debugging data, not libraries needed for JNI loading.
       :always
       (conj (str "-H:IncludeResources=sherpa-onnx/native/" tok "/.*")
             (str "-H:IncludeResources=ai/onnxruntime/native/" tok "/.*")
+            "-H:ExcludeResources=ai/onnxruntime/native/.*\\.dSYM/.*"
             "-H:IncludeResources=native/lib/tokenizers\\.properties"
             (str "-H:IncludeResources=native/lib/" tokenizer-tok "/cpu/.*"))
 
