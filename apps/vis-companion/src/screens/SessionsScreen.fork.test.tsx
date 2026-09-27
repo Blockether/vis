@@ -15,7 +15,7 @@ afterEach(() => {
 // Regression, user report: the list lost its whole-session Fork action, requiring
 // opening a transcript and choosing a turn even when the whole session is wanted.
 describe('forking a session from its list row', () => {
-  it('forks a grouped session on one press and shows the fresh copy in that group', async () => {
+  it('forks a grouped session on one press with a short menu label', async () => {
     const groupId = 'group-forks';
     const source = listSession({ id: 's1', title: 'A session', group_id: groupId });
     const copy = listSession({ id: 'forked', title: 'A session (fork)', group_id: groupId });
@@ -50,7 +50,7 @@ describe('forking a session from its list row', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Actions for A session' }));
     const actions = within(await screen.findByRole('dialog', { name: 'A session actions' }));
-    await userEvent.click(actions.getByRole('button', { name: 'Fork A session' }));
+    await userEvent.click(actions.getByRole('button', { name: 'Fork' }));
 
     await waitFor(() => expect(opened).toEqual([['forked', true]]));
     expect(view.requests.filter((request) => request.path === '/v1/sessions/s1/forks')).toEqual([
@@ -78,7 +78,8 @@ describe('forking a session from its list row', () => {
     await screen.findByText('A session');
 
     const actions = within(screen.getByRole('group', { name: 'A session actions' }));
-    const button = actions.getByRole('button', { name: 'Fork A session' });
+    const button = actions.getByRole('button', { name: 'Fork' });
+    expect(button).toHaveAttribute('title', 'Fork');
     await userEvent.click(button);
     expect(button).toHaveTextContent('Forking...');
     await userEvent.click(button);

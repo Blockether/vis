@@ -564,7 +564,6 @@ export const SessionRow = memo(function SessionRow({
                         {
                           key: 'fork',
                           label: forkBusy ? 'Forking...' : 'Fork',
-                          name: `Fork ${title}`,
                           icon: <ForkIcon className="size-4" />,
                           onSelect: () => void forkSession(),
                         },
