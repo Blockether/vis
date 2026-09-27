@@ -754,7 +754,7 @@ export function ExecutionAction({
   return (
     <button
       type="button"
-      className={`flex min-h-11 w-full min-w-0 items-center gap-1.5 text-left font-mono text-ui text-code-result transition-colors duration-150 enabled:hover:text-accent-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-7 ${className}`}
+      className={`relative flex min-h-9 w-full min-w-0 items-center gap-1.5 text-left font-mono text-ui text-code-result transition-colors duration-150 enabled:hover:text-accent-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none after:absolute after:inset-x-0 after:-inset-y-1 after:-z-10 after:content-[""] mouse:min-h-7 mouse:after:inset-y-0 ${className}`}
       {...props}
     />
   );
@@ -790,8 +790,8 @@ export function ExecutionAction({
  * Execution and Thinking rows keep the chevron immediately after the NAME, never in a
  * reserved leading column and never at a row edge: what the row adds to that name — a
  * count, a summary, an elapsed time — follows the chevron in `tally`, so the mark that
- * opens the row stands where its words begin. Execution bands are 44px on touch, 28px
- * with a pointer.
+ * opens the row stands where its words begin. Execution bands are 36px on touch, with
+ * invisible reach to 44px, and 28px with a pointer.
  * Compact operation rows use a 24px face with invisible reach to those targets.
  * Place compact rows in an isolated container: the reach stays behind visible
  * controls and content, so adjacent rows never intercept each other's faces.
@@ -844,9 +844,11 @@ export function Disclosure({
   const size =
     density === 'compact'
       ? 'relative min-h-6 text-ui mouse:text-meta after:absolute after:inset-x-0 after:-inset-y-2.5 after:-z-10 after:content-[""] mouse:after:-inset-y-0.5'
-      : density === 'comfortable' || tone === 'execution'
+      : density === 'comfortable'
         ? 'min-h-11 text-ui mouse:min-h-7'
-        : `min-h-8 mouse:min-h-6 ${tone === 'step' || tone === 'branch' || tone === 'thinking' ? 'text-ui' : 'text-chip'}`;
+        : tone === 'execution'
+          ? 'relative min-h-9 text-ui mouse:min-h-7 after:absolute after:inset-x-0 after:-inset-y-1 after:-z-10 after:content-[""] mouse:after:inset-y-0'
+          : `min-h-8 mouse:min-h-6 ${tone === 'step' || tone === 'branch' || tone === 'thinking' ? 'text-ui' : 'text-chip'}`;
   return (
     <button
       type="button"

@@ -1263,7 +1263,7 @@ const ToolCard = memo(function ToolCard({
     return (
       <div
         data-code-result
-        className={`min-w-0 px-3 pb-1 text-meta text-code-error-result ${embedded ? 'bg-code' : 'bg-result'}`}
+        className={`min-w-0 px-3 text-meta text-code-error-result ${embedded ? 'bg-code' : 'bg-result'} ${resultOpen || !embedded ? 'pb-1' : ''}`}
       >
         <div className="flex min-h-8 items-center gap-2">
           <Disclosure
@@ -1392,7 +1392,10 @@ const FailedCards = memo(function FailedCards({ cards }: { cards: TranscriptForm
         .map((card, index) => (
           <ToolCard key={index} form={card} embedded />
         ))}
-      <div data-code-result className="min-w-0 bg-code px-3 pb-1 text-meta text-code-error-result">
+      <div
+        data-code-result
+        className={`min-w-0 bg-code px-3 text-meta text-code-error-result${open ? ' pb-1' : ''}`}
+      >
         <div className="flex min-h-8 items-center gap-2">
           <Disclosure
             isOpen={open}
@@ -1469,7 +1472,7 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
   const lineCount = value ? value.split('\n').length : 0;
   return (
     <section className="relative z-0 min-w-0 bg-code px-3" data-execution-code>
-      <div className="flex min-h-11 min-w-0 items-center gap-2 mouse:min-h-7">
+      <div className="flex min-h-9 min-w-0 items-center gap-2 mouse:min-h-7">
         {showCode ? (
           <Disclosure
             isOpen={expanded}

@@ -193,6 +193,51 @@ describe('execution grouping', () => {
     expect(view.queryByText('Operation failed')).toBeNull();
   });
 
+  it('keeps collapsed CODE, ACTIVITY and FAILED rows equally compact on mobile', () => {
+    const view = render(
+      <IterationTrace
+        whole
+        iterations={iterations([
+          { source: 'first()', activity: activity('succeeded', 'Attempt') },
+          { source: 'fail()', error: { message: 'Operation failed' } },
+        ])}
+      />,
+    );
+    const codeHeader = view.container.querySelector('[data-execution-code]')!.firstElementChild!;
+    const codeToggle = view.getByRole('button', { name: 'Expand code' });
+    const activityToggle = view.getByRole('button', { name: 'Expand Activity' });
+    const failureToggle = view.getByRole('button', { name: 'Expand error details' });
+    for (const toggle of [codeToggle, activityToggle, failureToggle]) {
+      expect(toggle).toHaveClass('after:-inset-y-1');
+    }
+    for (const row of [codeHeader, codeToggle, activityToggle, failureToggle]) {
+      expect(row).toHaveClass('min-h-9', 'mouse:min-h-7');
+      expect(row).not.toHaveClass('min-h-11');
+    }
+    const failure = failureToggle.closest('[data-code-result]')!;
+    expect(failure).not.toHaveClass('pb-1');
+    fireEvent.click(failureToggle);
+    expect(failure).toHaveClass('pb-1');
+  });
+
+  it('keeps a grouped collapsed failure level with its neighboring rows', () => {
+    const view = render(
+      <IterationTrace
+        whole
+        iterations={iterations([
+          { source: 'first()', error: { message: 'First failed' } },
+          { source: 'second()', error: { message: 'Second failed' } },
+        ])}
+      />,
+    );
+    const toggle = view.getByRole('button', { name: 'Expand all error details' });
+    expect(toggle).toHaveClass('min-h-9', 'mouse:min-h-7');
+    const failure = toggle.closest('[data-code-result]')!;
+    expect(failure).not.toHaveClass('pb-1');
+    fireEvent.click(toggle);
+    expect(failure).toHaveClass('pb-1');
+  });
+
   it('owns source and result in one CODE disclosure before Activity', () => {
     const view = render(
       <IterationTrace

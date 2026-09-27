@@ -22,7 +22,9 @@ it('renders the embedded live view as a borderless band on its shared background
   expect(panel).not.toHaveClass('bg-panel');
   const header = panel?.querySelector('header');
   expect(header).not.toHaveClass('bg-panel-2', 'px-(--live-view-inset)');
-  expect(header).toHaveClass('min-h-11', 'mouse:min-h-7');
+  expect(header).toHaveClass('min-h-9', 'mouse:min-h-7');
+  expect(header).not.toHaveClass('min-h-11');
+  expect(header?.querySelector('button')).toHaveClass('min-h-9', 'mouse:min-h-7');
 });
 
 // User report (screenshot): LIVE stood in light type beside a stop that wore a BUTTON. The row

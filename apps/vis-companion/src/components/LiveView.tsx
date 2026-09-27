@@ -1243,7 +1243,7 @@ export function LiveViewPanel({
         <header
           className={
             embedded
-              ? 'flex min-h-11 min-w-0 items-center gap-2 mouse:min-h-7'
+              ? 'flex min-h-9 min-w-0 items-center gap-2 mouse:min-h-7'
               : 'flex items-start gap-2 border-b border-dialog-edge bg-panel-2 px-(--live-view-inset) py-2.5'
           }
         >

@@ -552,6 +552,23 @@ describe('the second vocabulary: chips, rows, disclosures', () => {
     const action = screen.getByRole('button', { name: 'Open run Build pool' });
     expect(action).not.toHaveAttribute('aria-expanded');
     expect(action).toHaveAttribute('type', 'button');
+    expect(action).toHaveClass('min-h-9', 'mouse:min-h-7', 'after:-inset-y-1');
+    expect(action).not.toHaveClass('min-h-11');
+  });
+
+  it('compacts execution disclosures without shrinking comfortable controls', () => {
+    const { rerender } = render(
+      <Disclosure isOpen={false} tone="execution">
+        CODE
+      </Disclosure>,
+    );
+    expect(screen.getByRole('button')).toHaveClass('min-h-9', 'mouse:min-h-7', 'after:-inset-y-1');
+    rerender(
+      <Disclosure isOpen={false} tone="execution" density="comfortable">
+        CODE
+      </Disclosure>,
+    );
+    expect(screen.getByRole('button')).toHaveClass('min-h-11', 'mouse:min-h-7');
   });
 
   it('Disclosure reports its state and stays the transcript scroll anchor', () => {
