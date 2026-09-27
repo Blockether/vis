@@ -96,7 +96,9 @@
 
 (defn- format-exception
   [^Throwable t & [{:keys [context]}]]
-  (merge (format-exception-short t) {:data (ex-data t) :context context}))
+  (merge
+    (format-exception-short t)
+    {:data (ex-data t) :provider-classification (perr/svar-classification t) :context context}))
 
 ;; Error normalization
 

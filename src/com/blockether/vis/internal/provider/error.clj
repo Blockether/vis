@@ -253,9 +253,12 @@
 
    Vis presents, svar classifies. Reading this instead of re-implementing it is
    what keeps the two layers from disagreeing about whether the model ever saw
-   the request — and svar, not vis, owns the retry ladder that follows."
+   the request — and svar, not vis, owns the retry ladder that follows.
+   Normalized errors retain the verdict computed while the Throwable and its
+   cause chain were still available; rebuilding ex-info from prose loses that
+   evidence (notably message-less connection failures)."
   [err]
-  (svar/classify-failure (->classifiable err)))
+  (or (:provider-classification err) (svar/classify-failure (->classifiable err))))
 
 (defn unanswered-request?
   "True when Svar says nothing reached the model: a canonical pre-response
@@ -531,6 +534,13 @@
           :read
           :else nil)))
 
+(defn- connection-establishment-error?
+  "A connection failure without the more specific upstream-timeout wording."
+  [err]
+  (and (= :connect-timeout (:category (svar-classification err)))
+       (nil? (upstream-timeout-phase (:status (or (:data err) (ex-data err) err))
+                                     (provider-error-upstream-text err)))))
+
 (declare provider-error-kind)
 
 (defn- stream-recovery-explanation
@@ -547,12 +557,16 @@
       :not-reasoning-only
       " Automatic recovery was skipped because this was not a verified reasoning-only interruption."
 
+      :provider-failed
+      (str " Automatic stream recovery stopped after "
+           attempts
+           (if (= 1 attempts) " retry" " retries")
+           "; the retry failed.")
+
       "")))
 
-(defn provider-error-explanation
-  "The `WHAT HAPPENED:` prose line — the single canonical human sentence for this
-   failure, shared by every surface. The actionable step lives in
-   `provider-error-next-step` (a separate block), so this is JUST the diagnosis."
+(defn- provider-error-diagnosis
+  "The diagnosis before any automatic-recovery outcome is appended."
   [err]
   (let [message
         (or (ex-message err) (:message err) (str err))
@@ -616,8 +630,7 @@
            "this turn, or still cooling down after repeated failures.")
       (stream-truncated-error? err)
       (str "WHAT HAPPENED: the upstream connection ended before the provider's completion marker. "
-           "Vis did not stop this request for a timeout. Your completed tool results are intact."
-           (stream-recovery-explanation err))
+           "Vis did not stop this request for a timeout. Your completed tool results are intact.")
       (stream-timeout-error? err)
       (let [data
             (or (:data err) (ex-data err))
@@ -633,8 +646,7 @@
              (if semantic? "no model progress" "no bytes")
              (when budget-ms (str " for " (long (/ (long budget-ms) 1000)) "s"))
              ". The model was likely still reasoning. Nothing was rejected; your "
-             "transcript and tool results are intact."
-             (stream-recovery-explanation err)))
+             "transcript and tool results are intact."))
       (refusal-error? err) (let [details
                                  (refusal-stop-details err)
 
@@ -701,6 +713,8 @@
            "item was created under another deployment/endpoint, so the one Vis just called "
            "cannot read it. Not an outage: an identical retry fails identically."
            (when (seq provider-message) (str " " provider-message)))
+      (connection-establishment-error? err)
+      (str "WHAT HAPPENED: " (:summary (svar-classification err)) ".")
       (= :upstream-timeout (provider-error-kind err))
       (let [phase (upstream-timeout-phase status (provider-error-upstream-text err))]
         (str "WHAT HAPPENED: the provider request timed out upstream"
@@ -736,6 +750,12 @@
                                   provider-message)
       :else (str "WHAT HAPPENED: "
                  (or (:summary (svar-classification err)) "the provider call failed.")))))
+
+(defn provider-error-explanation
+  "The canonical WHAT HAPPENED line, including the automatic-recovery outcome.
+   Shared by the chat card and trace; actionable advice lives in next-step."
+  [err]
+  (str (provider-error-diagnosis err) (stream-recovery-explanation err)))
 
 (defn provider-error-title
   "A SHORT headline for the failure, by kind — the card title on every surface."
@@ -809,7 +829,9 @@
         "Provider stream interrupted")
 
       :upstream-timeout
-      "Provider request timed out"
+      (if (connection-establishment-error? err)
+        "Could not connect to provider"
+        "Provider request timed out")
 
       :resource-mismatch
       "Conversation pinned to another provider resource"
@@ -910,10 +932,12 @@
       (rate-limit-next-step)
 
       :upstream-timeout
-      (case (upstream-timeout-phase (:status data) (provider-error-upstream-text err))
+      (case (if (= :connect-timeout (:category (svar-classification err)))
+              :connect
+              (upstream-timeout-phase (:status data) (provider-error-upstream-text err)))
         :connect
-        (str "NEXT STEP: retry — the request never reached the model. If it keeps timing "
-             "out, check network/proxy reachability or switch provider/model.")
+        (str "NEXT STEP: retry — the request never reached the model. If it keeps failing, "
+             "check network/proxy reachability or switch provider/model.")
 
         :read
         (str "NEXT STEP: retry — the model may have started, so re-read the last output "

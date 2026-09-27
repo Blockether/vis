@@ -3091,27 +3091,29 @@
                                    :msg
                                    "Context overflow: retrying with a smaller history projection"})
                                 ::retry-context-overflow)
-                              (do (when (perr/context-overflow-error? e)
-                                    (tel/log!
-                                      {:level :warn
-                                       :id ::context-overflow-terminal
-                                       :data (merge request-context
-                                                    (transcript/context-overflow-token-data (ex-data
-                                                                                              e))
-                                                    {:output-started? @provider-output-started?
-                                                     :recovery-attempts (:attempts
-                                                                          @context-recovery-state)})
-                                       :msg "Context overflow: no emergency-fold retry scheduled"}))
-                                  (loop-errors/handle-iteration-exception!
-                                    e
-                                    {:iteration iteration
-                                     :messages @effective-messages-atom
-                                     :routing @iteration-routing
-                                     :reasoning-level reasoning-level
-                                     :stream-recovery
-                                     (when (some #(or (perr/stream-truncated-error? %)
-                                                      (perr/pre-output-stream-abort? %))
-                                                 (loop-errors/bounded-cause-chain e))
+                              (do
+                                (when (perr/context-overflow-error? e)
+                                  (tel/log!
+                                    {:level :warn
+                                     :id ::context-overflow-terminal
+                                     :data (merge request-context
+                                                  (transcript/context-overflow-token-data (ex-data
+                                                                                            e))
+                                                  {:output-started? @provider-output-started?
+                                                   :recovery-attempts (:attempts
+                                                                        @context-recovery-state)})
+                                     :msg "Context overflow: no emergency-fold retry scheduled"}))
+                                (loop-errors/handle-iteration-exception!
+                                  e
+                                  {:iteration iteration
+                                   :messages @effective-messages-atom
+                                   :routing @iteration-routing
+                                   :reasoning-level reasoning-level
+                                   :stream-recovery
+                                   (let [stream-abort? (some #(or (perr/stream-truncated-error? %)
+                                                                  (perr/pre-output-stream-abort? %))
+                                                             (loop-errors/bounded-cause-chain e))]
+                                     (when (or (pos? (long (:stream retries))) stream-abort?)
                                        {:attempts (:stream retries)
                                         :declined (cond (or @provider-replay-unsafe?
                                                             (= :content
@@ -3120,7 +3122,8 @@
                                                         (>= (long (:stream retries))
                                                             (long MAX_STREAM_RECOVERY_RETRIES))
                                                         :retry-budget-exhausted
-                                                        :else :not-reasoning-only)})}))))))]
+                                                        stream-abort? :not-reasoning-only
+                                                        :else :provider-failed)}))}))))))]
 
                   {:result result :env env}))
               {:retries {:auth 0 :stream 0 :max-tokens 0}

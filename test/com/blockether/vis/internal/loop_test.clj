@@ -7732,7 +7732,7 @@
 (defdescribe
   reasoning-only-stream-recovery-test
   (doseq [[mode expected-status expected-calls expected-retries]
-          [[:recover :success 3 1] [:exhaust :error 4 2] [:content :error 2 0]
+          [[:recover :success 3 1] [:exhaust :error 4 2] [:connect :error 3 1] [:content :error 2 0]
            [:tool-input :error 2 0] [:tool-call-preview :error 2 0] [:tool-calls :error 2 0]
            [:stop :cancelled 2 0] [:stop-retry :cancelled 2 1]]]
     (it
@@ -7766,6 +7766,7 @@
                          (and (= :recover mode) (= 3 call))
                          (do ((:on-chunk opts) {:reasoning "replacement reasoning"})
                              {:stop-reason :end :content "Recovered without repeating the tool."})
+                         (and (= :connect mode) (= 3 call)) (throw (java.net.ConnectException.))
                          :else
                          (do ((:on-chunk opts) {:reasoning "interrupted reasoning"})
                              (when (#{:content :tool-input :tool-call-preview :tool-calls} mode)
@@ -7819,11 +7820,20 @@
                                             @chunks)))))
               (expect (str/includes? (str (:answer result)) "Recovered without repeating")))
             (when (= :error expected-status)
-              (let [message (get (first (:answer result)) "message")]
-                (expect (str/includes? message "connection ended"))
-                (expect (str/includes?
-                          message
-                          (if (= :exhaust mode) "after 2 retries" "answer text or tool input"))))))
+              (let [block (first (:answer result))
+                    message (get block "message")]
+
+                (if (= :connect mode)
+                  (do (expect (= "Could not connect to provider" (get block "title")))
+                      (expect (str/includes? message
+                                             "connection to the provider could not be established"))
+                      (expect (str/includes? message "after 1 retry"))
+                      (expect (not (str/includes? message "raise the provider request timeout"))))
+                  (do (expect (str/includes? message "connection ended"))
+                      (expect (str/includes? message
+                                             (if (= :exhaust mode)
+                                               "after 2 retries"
+                                               "answer text or tool input"))))))))
           (finally (loop-env/dispose-environment! environment)))))))
 
 (defdescribe
@@ -10792,6 +10802,43 @@
             (expect (str/includes? feedback ":llm-provider/output-budget-exhausted"))
             (expect (str/includes? feedback "Use a compact path now"))
             (expect (str/includes? feedback "Original request: finish the task")))))))
+
+(defdescribe
+  provider-classification-survives-normalization-test
+  ;; A message-less ConnectException was correctly classified while live, but
+  ;; became "Provider unavailable" after the loop stored it as an error map.
+  (doseq [cause
+          [(java.net.ConnectException.) (java.net.UnknownHostException. "gateway.example.com")
+           (java.net.http.HttpConnectTimeoutException. "connect timed out")]
+
+          wrapped?
+          [false true]]
+
+    (it (str (.getSimpleName (class cause)) " / wrapped=" wrapped?)
+        (let [error
+              (if wrapped?
+                (ex-info "Provider unavailable" {:type :svar.llm/provider-unavailable} cause)
+                cause)
+
+              normalized
+              (::loop-errors/iteration-error
+                (loop-errors/handle-iteration-exception! error {:iteration 1 :messages []}))
+
+              verdict
+              (perr/svar-classification error)
+
+              block
+              (first (perr/provider-error-content normalized))]
+
+          (expect (= :connect-timeout (:category verdict)))
+          (expect (= verdict (perr/svar-classification normalized)))
+          (expect (= "Could not connect to provider" (get block "title")))
+          (expect (true? (get block "retryable")))
+          (expect (str/includes? (get block "explanation")
+                                 "connection to the provider could not be established"))
+          (expect (str/includes? (get block "next_step") "network/proxy reachability"))
+          (expect (not (str/includes? (get block "next_step")
+                                      "raise the provider request timeout")))))))
 
 ;; Regression: a stream that ended before the provider's terminal marker reached
 ;; the log as class/message/type alone. Svar had already measured WHY — the last
