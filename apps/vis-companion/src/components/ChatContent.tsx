@@ -1105,7 +1105,15 @@ function interruptedPython(form: TranscriptForm): boolean {
 
 function resultBody(form: TranscriptForm): string {
   if (interruptedPython(form)) return '';
-  if (form.error != null) return jsonText(form.error);
+  if (form.error != null) {
+    if (
+      typeof form.error === 'object' &&
+      'message' in form.error &&
+      typeof form.error.message === 'string'
+    )
+      return form.error.message;
+    return jsonText(form.error);
+  }
 
   const stdout = form.stdout?.trimEnd();
   if (!stdout) return '';
@@ -1228,7 +1236,7 @@ const ToolCard = memo(function ToolCard({
   const resultText = resultBody(form);
   const failed = form.error != null && !interrupted;
   const hasOutcome = interrupted || resultText !== '' || form.duration_ms != null;
-  const stateLabel = interrupted ? 'Interrupted' : failed ? 'Failed' : '';
+  const stateLabel = interrupted ? 'Interrupted' : '';
   const running = !interrupted && !failed && !hasOutcome;
   const body = resultText;
   const duration = formatDuration(form.duration_ms);
@@ -1241,19 +1249,34 @@ const ToolCard = memo(function ToolCard({
   // one-way, so re-collapsing keeps the parsed body for the next open, and
   // "Copy result" copies `body` (the string), never the DOM.
   const [wasOpened, setWasOpened] = useState(false);
-  const stateTone = interrupted ? 'hint' : failed ? 'err' : 'default';
+  const stateTone = interrupted ? 'hint' : 'default';
   const stateClass = interrupted
     ? 'text-dialog-hint'
-    : failed
-      ? 'text-err'
-      : running
-        ? 'text-code-result'
-        : 'text-accent-ink';
-  // Failure status stays visible; diagnostic bodies require explicit expansion.
+    : running
+      ? 'text-code-result'
+      : 'text-accent-ink';
   const [resultOpen, setResultOpen] = useState(false);
   // The tally counts what the reader would see: fence rows around a stdout block are not output.
   const resultLines = body ? body.split('\n').filter((line) => !line.startsWith('```')).length : 0;
   const resultShown = interrupted || resultOpen;
+  if (failed)
+    return (
+      <div
+        data-code-result
+        className={`min-w-0 px-3 pb-1 text-meta text-code-error-result ${embedded ? 'bg-code' : 'bg-result'}`}
+      >
+        <div className="flex min-h-8 items-center gap-2">
+          <BandLabel tone="err">Failed</BandLabel>
+          {duration && (
+            <span className="ml-auto font-mono text-ui text-code-duration">{duration}</span>
+          )}
+          {!embedded && isCopyable && (
+            <CopyChip value={body} label="Copy result" density="compact" edge />
+          )}
+        </div>
+        <pre className="m-0 whitespace-pre-wrap break-words font-mono">{body}</pre>
+      </div>
+    );
   if (embedded)
     return (
       <div data-code-result className="min-w-0 bg-code pb-1 text-meta text-code-result">
@@ -1265,35 +1288,22 @@ const ToolCard = memo(function ToolCard({
             tone="execution"
             inlineChevron
             tally={
-              !failed && !resultOpen && resultLines > 0 ? (
-                <BandTally> +{resultLines} more</BandTally>
-              ) : undefined
+              !resultOpen && resultLines > 0 ? <BandTally> +{resultLines} more</BandTally> : undefined
             }
             className="min-w-0"
-            aria-label={
-              failed
-                ? resultOpen
-                  ? 'Collapse error details'
-                  : 'Expand error details'
-                : resultOpen
-                  ? 'Collapse result'
-                  : 'Expand result'
-            }
+            aria-label={resultOpen ? 'Collapse result' : 'Expand result'}
             onClick={() => setResultOpen((open) => !open)}
           >
-            <BandLabel tone={stateTone}>{failed ? 'Failed' : 'RESULT'}</BandLabel>
+            <BandLabel tone={stateTone}>RESULT</BandLabel>
           </Disclosure>
         )}
-        {resultShown &&
-          (failed ? (
-            <pre className="m-0 whitespace-pre-wrap break-words font-mono">{body}</pre>
-          ) : (
-            <div>
-              <Markdown compact nested>
-                {body}
-              </Markdown>
-            </div>
-          ))}
+        {resultShown && (
+          <div>
+            <Markdown compact nested>
+              {body}
+            </Markdown>
+          </div>
+        )}
       </div>
     );
   const headline = (
@@ -1332,7 +1342,7 @@ const ToolCard = memo(function ToolCard({
         className={`${CARD_BAND} ${isCopyable ? 'px-2' : 'pl-[15px] sm:pl-[17px] pr-0'} list-none cursor-pointer select-none text-code-result mouse:hover:text-accent-ink [&::-webkit-details-marker]:hidden`}
       >
         <ChevronIcon
-          className={`size-3 shrink-0 group-open:rotate-90 ${failed ? 'text-err' : 'text-accent-ink'}`}
+          className="size-3 shrink-0 group-open:rotate-90 text-accent-ink"
         />
         {headline}
         {isCopyable && <CopyChip value={body} label="Copy result" className="shrink-0" />}
@@ -1340,33 +1350,19 @@ const ToolCard = memo(function ToolCard({
       {/* Tool payloads retain the compact code/diff scale, below message prose. */}
       {wasOpened && (
         <div
-          className={`min-w-0 overflow-hidden border-t border-code-edge bg-result px-2.5 py-1.5 text-meta text-code-result ${failed ? 'text-code-error-result' : ''}`}
+          className="min-w-0 overflow-hidden border-t border-code-edge bg-result px-2.5 py-1.5 text-meta text-code-result"
         >
-          {failed ? (
-            <pre className="m-0 overflow-x-auto whitespace-pre-wrap break-words font-mono text-meta ">
-              {body}
-            </pre>
-          ) : (
-            <Markdown compact nested>
-              {body}
-            </Markdown>
-          )}
+          <Markdown compact nested>
+            {body}
+          </Markdown>
         </div>
       )}
     </details>
   );
 });
 
-/**
- * ADJACENT FAILURES ARE ONE OUTCOME. Several calls that failed under one program
- * painted a column of identical red `Failed` bands: the same word three times,
- * and the reader still had to open each band to learn what differed. The run
- * gets a single head that counts it — `Failed ×3`, the Activity panel's own
- * idiom — and one press prints every body at once, because a reader who opens a
- * count of failures wants all of them, not the first.
- */
+/** Adjacent failures share one label, with each diagnostic immediately readable. */
 const FailedCards = memo(function FailedCards({ cards }: { cards: TranscriptForm[] }) {
-  const [open, setOpen] = useState(false);
   const errored = cards.filter((card) => card.error != null);
   // An interruption is not a failure: it keeps its own band and never joins the count.
   const failures = errored.filter((card) => !interruptedPython(card));
@@ -1386,28 +1382,25 @@ const FailedCards = memo(function FailedCards({ cards }: { cards: TranscriptForm
         .map((card, index) => (
           <ToolCard key={index} form={card} embedded />
         ))}
-      <div data-code-result className="min-w-0 bg-code pb-1 text-meta text-code-result">
-        <Disclosure
-          isOpen={open}
-          tone="execution"
-          inlineChevron
-          className="min-w-0"
-          aria-label={open ? 'Collapse all error details' : 'Expand all error details'}
-          onClick={() => setOpen((shown) => !shown)}
-        >
+      <div data-code-result className="min-w-0 bg-code px-3 pb-1 text-meta text-code-error-result">
+        <div className="flex min-h-8 items-center gap-2">
           <BandLabel tone="err">Failed ×{failures.length}</BandLabel>
-        </Disclosure>
-        {open &&
-          failures.map((card, index) => (
-            <pre
-              key={index}
-              className={`m-0 whitespace-pre-wrap break-words font-mono${
-                index > 0 ? ' mt-1 border-t border-code-edge pt-1' : ''
-              }`}
-            >
-              {resultBody(card)}
-            </pre>
-          ))}
+          {failures.every((card) => formatDuration(card.duration_ms) != null) && (
+            <span className="ml-auto font-mono text-ui text-code-duration">
+              {formatDuration(failures.reduce((total, card) => total + card.duration_ms!, 0))}
+            </span>
+          )}
+        </div>
+        {failures.map((card, index) => (
+          <pre
+            key={index}
+            className={`m-0 whitespace-pre-wrap break-words font-mono${
+              index > 0 ? ' mt-1 border-t border-code-edge pt-1' : ''
+            }`}
+          >
+            {resultBody(card)}
+          </pre>
+        ))}
       </div>
     </>
   );
@@ -1436,14 +1429,13 @@ function showFormCode(form: TranscriptForm, code: string): boolean {
   return Boolean(code) && !hiddenForm(form);
 }
 
-/** Source disclosure containing a nested result fold. Failures remain visible. */
+/** Source disclosure containing a nested result fold. */
 const CollapsibleFormCode = memo(function CollapsibleFormCode({
   value,
   language = 'python',
   showCode,
   hasActivity,
   duration,
-  failure,
   children,
 }: {
   value: string;
@@ -1451,7 +1443,6 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
   showCode: boolean;
   hasActivity: boolean;
   duration: string | null;
-  failure?: ReactNode;
   children: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -1493,7 +1484,6 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
           />
         </div>
       )}
-      {failure}
       {(expanded || !showCode) && children}
     </section>
   );
@@ -1671,7 +1661,11 @@ const FormTrace = memo(function FormTrace({
   sid?: string;
 }) {
   const form = executionGroup(forms, live);
-  const code = formCode(form);
+  const code = forms
+    .filter((member) => member.error == null || interruptedPython(member))
+    .map(formCode)
+    .filter(Boolean)
+    .join('\n\n');
   const cards = forms
     .flatMap(toolCards)
     .filter((member) => member.error != null || resultBody(member) !== '');
@@ -1702,18 +1696,18 @@ const FormTrace = memo(function FormTrace({
           <Markdown compact>{forms[0].comment}</Markdown>
         </div>
       )}
-      {showCode && (code || cards.length > 0) && (
+      {showCode && (code || stdout) && (
         <CollapsibleFormCode
           value={code}
           language={formCodeLanguage(form)}
           showCode={showCode && Boolean(code)}
           hasActivity={hasActivity}
           duration={formatDuration(form.duration_ms)}
-          failure={<FailedCards cards={cards} />}
         >
           {stdout && <ToolCard form={{ stdout }} embedded />}
         </CollapsibleFormCode>
       )}
+      {showCode && <FailedCards cards={cards} />}
       <div
         className={hasActivity ? 'relative z-0 min-w-0 bg-code px-3' : 'min-w-0'}
         data-execution-group={hasActivity || undefined}

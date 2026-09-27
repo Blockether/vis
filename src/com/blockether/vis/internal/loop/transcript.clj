@@ -1386,6 +1386,7 @@
         (fn [f]
           (let [out (form-output f)]
             (if-let [src (and (:echo-source? iter-record)
+                              (not (:error f))
                               (not (:summary? f))
                               (not-empty (str/trim (str (:src f)))))]
               (str "```python\n" src "\n```" (when out (str "\n" out)))
@@ -1813,8 +1814,24 @@
 
          group-of
          (fn [[pos iter-rec :as entry]]
-           (let [results
-                 (iteration-results-message iter-rec)
+           (let [;; A failed call already has a diagnostic message. Replaying its
+                 ;; tool_use would resend the full source, including long failed
+                 ;; patches, on every later request. Plain text keeps successful
+                 ;; forms' source and output while omitting failed source and
+                 ;; signed thinking; no orphaned tool_result reaches the provider.
+                 failed?
+                 (some :error
+                       (or (:forms-vec iter-rec)
+                           (mapcat (fn [b]
+                                     (or (seq (:forms b)) [b]))
+                                   (:blocks iter-rec))))
+
+                 results
+                 (iteration-results-message (if failed?
+                                              (-> iter-rec
+                                                  (dissoc :tool-calls)
+                                                  (assoc :echo-source? true))
+                                              iter-rec))
 
                  ;; Image artifacts this iteration produced, as their OWN
                  ;; message(s) appended AFTER the results (keeps tool_use/tool_result
@@ -1855,6 +1872,9 @@
                    (+img [textual])
                    (vec img))
                  (vec img))
+               ;; A failed tool has a message instead of another copy of its
+               ;; model-authored code; retain any successful output as text.
+               failed? (if results (+img [results]) (vec img))
                ;; Same provider+model, valid signature → verbatim replay
                ;; with the full thinking chain.
                (contains? compatible pos)

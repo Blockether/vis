@@ -4966,6 +4966,80 @@
                  :stdout "{\"item_count\":2,\"paths\":[\"a.clj\",\"b.clj\"]}"}]}])
 
 (defdescribe
+  failed-tool-replay-test
+  (it
+    "replays only the failure message instead of the failed call's source and signed thinking"
+    (let [source
+          (str "print('" (apply str (repeat 200 "large input ")) "')")
+
+          [pos rec]
+          (stub-tool-iter {:id 1})
+
+          failed
+          (-> rec
+              (assoc-in [:assistant-message :content 1 :input] {"code" source})
+              (assoc :tool-calls [{:id "tc-1" :name "python_execution" :input {"code" source}}]
+                     :forms-vec [{:scope "t1/i1"
+                                  :svar/tool-call-id "tc-1"
+                                  :src source
+                                  :error {:message "patch refused — nothing was written"}}]))
+
+          target
+          {:provider :lmstudio :model "google/gemma-4-12b-qat"}
+
+          suffix
+          (conversation-suffix [[pos failed]] target)
+
+          incomplete
+          (conversation-suffix [[pos
+                                 (assoc failed
+                                   :preserved-thinking/replay? false
+                                   :cross-turn/turn-status :cancelled)]]
+                               target)]
+
+      (doseq [messages [suffix incomplete]]
+        (expect (= 1 (count messages)))
+        (expect (= "user" (:role (first messages))))
+        (expect (string? (:content (first messages))))
+        (expect (str/includes? (:content (first messages)) "patch refused — nothing was written"))
+        (expect (not (str/includes? (:content (first messages)) source))))))
+  (it
+    "retains the successful call's source and output when another call failed"
+    (let [[pos rec]
+          (stub-tool-iter {:id 1})
+
+          failed-source
+          "print('large failed input')"
+
+          mixed
+          (->
+            rec
+            (assoc :tool-calls [{:id "tc-1" :name "python_execution" :input {"code" "print('ok')"}}
+                                {:id "tc-2" :name "python_execution" :input {"code" failed-source}}]
+                   :forms-vec
+                   [{:scope "t1/i1" :svar/tool-call-id "tc-1" :src "print('ok')" :stdout "ok"}
+                    {:scope "t1/i1"
+                     :svar/tool-call-id "tc-2"
+                     :src failed-source
+                     :error {:message "Permission denied"}}])
+            (assoc-in [:assistant-message :content 1 :input] {"code" "print('ok')"})
+            (update-in
+              [:assistant-message :content]
+              conj
+              {:type "tool_use" :id "tc-2" :name "python_execution" :input {"code" failed-source}}))
+
+          suffix
+          (conversation-suffix [[pos mixed]] {:provider :lmstudio :model "google/gemma-4-12b-qat"})
+
+          rendered
+          (pr-str suffix)]
+
+      (expect (str/includes? rendered "Permission denied"))
+      (expect (str/includes? rendered "print('ok')"))
+      (expect (str/includes? rendered "ok"))
+      (expect (not (str/includes? rendered failed-source))))))
+
+(defdescribe
   conversation-suffix-mismatch-test
   ;; The session-c4b630c7 regression: the health gate demoted lmstudio so the
   ;; SELECTED model (target) was anthropic/opus while the ACTUAL server was

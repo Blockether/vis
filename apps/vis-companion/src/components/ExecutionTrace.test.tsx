@@ -173,15 +173,9 @@ describe('execution grouping', () => {
         ])}
       />,
     );
-    // Regression #181: failure status stays visible; diagnostics open independently.
-    const errorToggle = view.getByRole('button', {
-      name: 'Expand error details',
-    });
-    expect(errorToggle).toHaveTextContent('Failed');
-    expect(errorToggle).toHaveAttribute('aria-expanded', 'false');
-    expect(view.queryByText(/Operation failed/)).toBeNull();
-    fireEvent.click(errorToggle);
-    expect(view.getByText(/Operation failed/)).toBeVisible();
+    // Regression #181: failure messages are visible without opening source or stdout.
+    expect(view.getByText('Operation failed')).toBeVisible();
+    expect(view.container.textContent).not.toContain('fail()');
     expect(view.container.textContent).not.toContain('first output');
     fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
     expect(view.getAllByRole('button', { name: 'Expand result' })).toHaveLength(1);
@@ -190,11 +184,7 @@ describe('execution grouping', () => {
     expect(view.container.textContent).toContain('first output');
     expect(view.container.textContent).toContain('last output');
     fireEvent.click(view.getByRole('button', { name: 'Collapse code' }));
-    expect(view.getByText(/Operation failed/)).toBeVisible();
-    expect(errorToggle).toHaveAttribute('aria-expanded', 'true');
-    fireEvent.click(errorToggle);
-    expect(view.queryByText(/Operation failed/)).toBeNull();
-    expect(errorToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(view.getByText('Operation failed')).toBeVisible();
   });
 
   it('owns source and result in one CODE disclosure before Activity', () => {
