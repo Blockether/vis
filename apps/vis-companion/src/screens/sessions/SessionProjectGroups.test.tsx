@@ -209,6 +209,18 @@ function finePointer() {
   }));
 }
 
+/**
+ * A press as WebKit delivers it: Safari, the iOS app and the macOS app. A pressed
+ * button never takes focus, so whatever holds focus loses it to NOTHING between the
+ * press and the click, and the app renders before the click lands.
+ */
+function pressInWebKit(target: HTMLElement) {
+  fireEvent.mouseDown(target);
+  act(() => (document.activeElement as HTMLElement | null)?.blur());
+  fireEvent.mouseUp(target);
+  fireEvent.click(target);
+}
+
 function dragCarrier() {
   const values = new Map<string, string>();
   return {
@@ -891,6 +903,40 @@ describe('ProjectGroup groups', () => {
     await user.click(within(row).getByText('Move to...'));
     await user.click(screen.getByRole('button', { name: 'Collapse Wallet work' }));
     expect(screen.queryByRole('dialog', { name: `Move ${ROWS[0].title} to group` })).toBeNull();
+  });
+
+  // Regression, user report: choosing another group for a filed session in the app did
+  // nothing. The press blurred the focused choice to nothing, which closed the popup
+  // before its click could file the session.
+  it('moves a filed session to another group under a WebKit press', async () => {
+    const { client, user } = mount(
+      machine({
+        listSessionGroups: vi.fn(async () =>
+          wall([
+            WALLET_GROUP,
+            { ...WALLET_GROUP, id: 'group-notes', name: 'Notes', session_count: 0 },
+          ]),
+        ),
+      }),
+    );
+    const wallet = await band('Wallet work');
+    const moving = ROWS[0];
+    await user.click(within(strip(wallet, moving.id)).getByText('Move to...'));
+    const notes = within(sheet(`Move ${moving.title} to group`)).getByRole('button', { name: 'Notes' });
+    expect(notes).toHaveFocus();
+    pressInWebKit(notes);
+    await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(moving.id, 'group-notes'));
+    await waitFor(() =>
+      expect(wallet.querySelectorAll(`[data-session-id="${moving.id}"]`)).toHaveLength(0),
+    );
+    const filed = await band('Notes');
+    expect(filed.querySelectorAll(`[data-session-id="${moving.id}"]`)).toHaveLength(1);
+    expect(screen.queryByRole('dialog', { name: `Move ${moving.title} to group` })).toBeNull();
+    // The paper around the popup still puts it away under the same press.
+    await user.click(within(strip(filed, moving.id)).getByText('Move to...'));
+    pressInWebKit(sheet(`Move ${moving.title} to group`).parentElement!);
+    expect(screen.queryByRole('dialog', { name: `Move ${moving.title} to group` })).toBeNull();
+    expect(client.assignSessionGroup).toHaveBeenCalledTimes(1);
   });
 
   it('opens the same move popup from the desktop row action menu', async () => {

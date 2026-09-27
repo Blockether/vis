@@ -1561,7 +1561,11 @@ export const ProjectGroup = memo(function ProjectGroup({
                 }
               }}
               onBlur={(event) => {
-                if (!moving.current && !event.currentTarget.contains(event.relatedTarget)) {
+                // Only focus taken by ANOTHER element closes the popup. WebKit never focuses
+                // a pressed button, so a press on a choice blurs to nothing before its click
+                // lands; the paper around the popup answers presses outside it.
+                const next = event.relatedTarget;
+                if (!moving.current && next !== null && !event.currentTarget.contains(next)) {
                   setMoveMenu(null);
                 }
               }}
