@@ -455,6 +455,10 @@
    word the human typed, so it must never name the session."
   #"(?ms)^[ \t]*(`{3,})vis-[a-z-]+[^\n]*\n.*?^[ \t]*\1[ \t]*$")
 
+(def ^:private image-reference-pattern
+  ;; The exact composer token validated by attachment.core/image-reference.
+  #"\[IMAGE #[1-9][0-9]*\]")
+
 (defn- strip-attachment-fences
   "Drop every `vis-*` display fence from `user-request` so the title comes from
    the prose around a pasted image, not from the clipboard file's path. Returns
@@ -482,13 +486,28 @@
         (if (str/blank? rest) s rest))
       s)))
 
+(defn- strip-image-references
+  "Remove the companion's image tokens before choosing a local title or asking
+   the model. An image-only request gets a generic title, not a token number."
+  [user-request]
+  (let [s
+        (str user-request)
+
+        prose
+        (str/trim (str/replace s image-reference-pattern " "))]
+
+    (if (and (str/blank? prose) (re-find image-reference-pattern s)) "Image attachment" prose)))
+
 (defn- title-source
   "The text a title is allowed to be made of: the user's own prose, with the
-   channel's scaffolding removed — a leading composer slash command and every
-   `vis-*` attachment fence. Both the local title and the LLM prompt read this,
-   so neither can name the session after a command word or a clipboard path."
+   channel's scaffolding removed — a leading composer slash command, `vis-*`
+   attachment fences and image-reference tokens. Both the local title and the
+   LLM prompt read this."
   [user-request]
-  (strip-leading-slash-command (strip-attachment-fences user-request)))
+  (-> user-request
+      strip-attachment-fences
+      strip-image-references
+      strip-leading-slash-command))
 
 (defn- auto-title-pass!
   "One titling pass. Phase 1 is the deterministic LOCAL title (it cannot hang and

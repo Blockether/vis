@@ -190,6 +190,67 @@
 
         @(maybe-auto-title! (env* sid title*) request)
         (expect (= "Streaming was killed between the chunks" @title*)))))
+  ;; Regression, session a75e5d39-d558-430b-b28f-307bc6ff27e4: the companion
+  ;; prepended an image reference before the user's multiline request, leaving
+  ;; the session titled "[IMAGE #1]" instead of the sidebar topic.
+  (it "uses the prose after an image reference for the local and model titles"
+      (let [sid
+            (fresh-sid)
+
+            title*
+            (atom "")
+
+            seen
+            (atom nil)
+
+            request
+            "[IMAGE #1]\n\nPlease widen the sidebar. It feels too narrow."]
+
+        (with-redefs [titling/set-title-with-broadcast!
+                      (fn [_ _ a t]
+                        (reset! a t))
+
+                      svar/ask!
+                      (fn [_ opts]
+                        (reset! seen (get-in opts [:messages 1 :content]))
+                        (throw (ex-info "429 rate limited" {})))]
+
+          (with-titling-cfg {}
+                            (fn []
+                              (titling/maybe-auto-title! (env* sid title*) request)
+                              (expect (= "Please widen the sidebar" @title*))
+                              @(titling/after-turn-auto-title! (env* sid title*) request)
+                              (expect (str/includes? @seen "Please widen the sidebar"))
+                              (expect (not (str/includes? @seen "[IMAGE #1]")))
+                              (expect (= "Please widen the sidebar" @title*)))))))
+  (it "omits every image reference in first_words mode"
+      (let [sid
+            (fresh-sid)
+
+            title*
+            (atom "")]
+
+        (with-redefs [titling/set-title-with-broadcast! (fn [_ _ a t]
+                                                          (reset! a t))]
+          (with-titling-cfg {"mode" "first_words"}
+                            (fn []
+                              (titling/maybe-auto-title!
+                                (env* sid title*)
+                                "[IMAGE #1]\nCompare [IMAGE #2] with the sidebar in this view")
+                              (expect (= "Compare with the sidebar in this view" @title*)))))))
+  (it "names an image-only request without using its reference number"
+      (let [sid
+            (fresh-sid)
+
+            title*
+            (atom "")]
+
+        (with-redefs [titling/set-title-with-broadcast! (fn [_ _ a t]
+                                                          (reset! a t))]
+          (with-titling-cfg {"mode" "first_sentence"}
+                            (fn []
+                              (titling/maybe-auto-title! (env* sid title*) "[IMAGE #1]\n[IMAGE #2]")
+                              (expect (= "Image attachment" @title*)))))))
   (it
     "REGRESSION: a leading /new-session slash command is stripped so the title reflects the real prompt, not the command word"
     ;; The `/new-session <task>` composer action leaked its command word into
