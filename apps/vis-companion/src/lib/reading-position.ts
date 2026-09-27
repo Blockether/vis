@@ -51,6 +51,13 @@ export function bottomOf(box: ScrollBox): number {
  * reads as a retreat, drops the follow and anchors the reader onto the turn above.
  * It defaults to that end, which is the reading a caller who kept no low-water
  * mark already had.
+ *
+ * A `previousTop` past `previousBottom` is overscroll: a smooth scroll or a flick
+ * runs past the end and springs back. Nobody stood beyond the end, so a move is
+ * measured from the end itself. Measured from the overshoot, the spring back of
+ * the scroll a send starts — 14 px on the simulator — read as a retreat and
+ * dropped the follow before the reply began, which then streamed on below the
+ * reader.
  */
 export function readerRetreatedFrom(
   box: ScrollBox,
@@ -58,9 +65,10 @@ export function readerRetreatedFrom(
   previousBottom: number,
   lowestBottom: number = bottomOf(box),
 ): boolean {
-  if (box.scrollTop >= previousTop) return false;
+  const from = Math.min(previousTop, previousBottom);
+  if (box.scrollTop >= from) return false;
   const clamp = Math.max(0, previousBottom - Math.min(lowestBottom, bottomOf(box)));
-  return previousTop - box.scrollTop > clamp;
+  return from - box.scrollTop > clamp;
 }
 
 /**

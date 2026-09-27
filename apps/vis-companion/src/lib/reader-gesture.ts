@@ -88,12 +88,38 @@ let touchesDown = 0;
 let pointerHeld = false;
 let dragging = false;
 
+/**
+ * The elements the fingers now down landed on, each listening for its own lift.
+ * A touch stays aimed at the element it began on even after that element leaves
+ * the document, and its events then no longer reach `window`. Stop hides itself
+ * on `pointerup`, before the `touchend` of the same tap: measured on the
+ * simulator, that lift never reached the count, a finger stayed down for good,
+ * and the scroll the stopped turn's clamp caused read as the reader's drag — the
+ * follow never came back and the reader was left above the end.
+ */
+const landings = new Set<EventTarget>();
+const LIFTS = ['touchend', 'touchcancel'];
+
+function listenForLift(target: EventTarget | null): void {
+  if (!target || landings.has(target)) return;
+  landings.add(target);
+  for (const type of LIFTS) target.addEventListener(type, onTouchEnd, { passive: true });
+}
+
+function forgetLandings(): void {
+  for (const target of landings) {
+    for (const type of LIFTS) target.removeEventListener(type, onTouchEnd);
+  }
+  landings.clear();
+}
+
 /** A new scroll surface cannot inherit the gesture that owned the previous one. */
 export function releaseReaderScroll(): void {
   lastGestureAt = Number.NEGATIVE_INFINITY;
   touchesDown = 0;
   pointerHeld = false;
   dragging = false;
+  forgetLandings();
 }
 
 /** When the last finger or button lets go, a drag it made keeps the grace. */
@@ -105,14 +131,18 @@ function letGo(): void {
 
 function onTouchStart(event: Event): void {
   touchesDown = (event as TouchEvent).touches?.length ?? touchesDown + 1;
+  listenForLift(event.target);
 }
 
 // `touchcancel` counts as a lift so the count can never leak into a permanent
 // veto. It is also the native scroller taking the drag over, so it restarts the
-// reader's reach: the scroller may go on following that finger in silence.
+// reader's reach: the scroller may go on following that finger in silence. The
+// window and the element can both hear one lift; the count is absolute, so
+// hearing it twice changes nothing.
 function onTouchEnd(event: Event): void {
   touchesDown = (event as TouchEvent).touches?.length ?? 0;
   if (event.type === 'touchcancel') noteReaderGesture();
+  if (touchesDown === 0) forgetLandings();
   letGo();
 }
 
@@ -144,7 +174,7 @@ if (typeof window !== 'undefined') {
     window.addEventListener(type, onReaderMove, watch);
   }
   window.addEventListener('touchstart', onTouchStart, watch);
-  for (const type of ['touchend', 'touchcancel']) {
+  for (const type of LIFTS) {
     window.addEventListener(type, onTouchEnd, watch);
   }
   window.addEventListener('pointerdown', onPointerDown, watch);

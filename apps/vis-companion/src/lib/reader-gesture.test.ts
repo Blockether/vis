@@ -63,6 +63,30 @@ describe('reader gestures', () => {
     expect(readerMayBeScrolling()).toBe(false);
   });
 
+  // Stop hides itself on `pointerup`, so the `touchend` of the same tap reaches only
+  // the button that left the document, never `window`.
+  it('hears the lift of a finger whose element left the document', () => {
+    const stop = mount('button');
+    send('touchstart', { touches: [{}] }, stop);
+    stop.remove();
+    send('touchend', { touches: [] }, stop);
+    send('scroll');
+
+    expect(readerOwnsScroll()).toBe(false);
+    expect(readerMayBeScrolling()).toBe(false);
+  });
+
+  it('keeps the other finger down when one lifts from an element that left', () => {
+    const stop = mount('button');
+    send('touchstart', { touches: [{}] }, stop);
+    send('touchstart', { touches: [{}, {}] });
+    stop.remove();
+    send('touchend', { touches: [{}] }, stop);
+    send('scroll');
+
+    expect(readerOwnsScroll()).toBe(true);
+  });
+
   it('treats a held mouse button that moves the scroller as a drag', () => {
     send('pointerdown', { pointerType: 'mouse', buttons: 1 });
     send('scroll');

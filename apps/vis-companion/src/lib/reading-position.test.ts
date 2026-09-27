@@ -252,6 +252,18 @@ describe('a clamp is not a retreat', () => {
     expect(endCameUpToReader(box(8_600, 10_328, 800), 9_140, 9_140, 8_800)).toBe(false);
   });
 
+  // A smooth scroll or a flick runs past the end and springs back: the scroll a send
+  // starts overshot by 14 px on the simulator, and nobody stood where it overshot to.
+  it('forgives the spring back from past the end', () => {
+    expect(readerRetreatedFrom(box(2_318, 3_118, 800), 2_332, 2_318)).toBe(false);
+    expect(endCameUpToReader(box(2_318, 3_118, 800), 2_332, 2_318)).toBe(true);
+  });
+
+  it('still hears a drag from past the end into history', () => {
+    expect(readerRetreatedFrom(box(2_000, 3_118, 800), 2_332, 2_318)).toBe(true);
+    expect(endCameUpToReader(box(2_000, 3_118, 800), 2_332, 2_318)).toBe(false);
+  });
+
   it('reads the low-water mark off the box when the caller kept none', () => {
     // Same frame without the mark: the dip is invisible and reads as a retreat.
     expect(readerRetreatedFrom(box(8_800, 10_328, 800), 9_140, 9_140)).toBe(true);
