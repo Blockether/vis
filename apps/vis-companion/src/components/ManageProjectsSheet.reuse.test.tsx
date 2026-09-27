@@ -306,14 +306,14 @@ describe('browsing opens one level above the current project', () => {
     expect(screen.queryByRole('button', { name: /src/ })).toBeNull();
   });
 
-  // ...and the project you came from is named in that listing, so a folder one level
-  // up is still recognisable as where you already are.
-  it('badges the current project in both lists', async () => {
+  it('lists projects without implying that the gateway has one current project', async () => {
     sheet();
-    expect((await screen.findByRole('button', { name: /^vis/ })).textContent).toContain('current');
+    expect((await screen.findByRole('button', { name: /^vis/ })).textContent).not.toContain('current');
 
     await userEvent.click(screen.getByRole('button', { name: 'New project' }));
-    expect((await screen.findByRole('button', { name: /vis\// })).textContent).toContain('current');
+    const knownProject = await screen.findByRole('button', { name: /vis\// });
+    expect(knownProject.textContent).toContain('project');
+    expect(knownProject.textContent).not.toContain('current');
   });
 });
 

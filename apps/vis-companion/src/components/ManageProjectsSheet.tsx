@@ -447,10 +447,7 @@ export function ManageProjectsSheet({
 
       {!adding ? (
         <>
-          {/* WHAT THIS MACHINE HAS. Each row is the project: press it to make it the
-              machine's current one, or take the trash beside it. Removal lives here
-              because this is the portal that manages projects — it was a `⋯` on every
-              project header opening a popover with one destructive row in it. */}
+          {/* Each project opens its own workspace; deletion stays beside that project. */}
           <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain [&>*:last-child]:border-b-0">
             {visibleProjects.length === 0 ? (
               <MenuNote>This machine has no projects yet.</MenuNote>
@@ -480,7 +477,6 @@ export function ManageProjectsSheet({
                     meta={`${entry.count} ${entry.count === 1 ? 'transcript' : 'transcripts'}${
                       entry.live > 0 ? `, ${entry.live} running` : ''
                     }`}
-                    badge={entry.root === startAt ? 'current' : undefined}
                     onSelect={() => onChoose(entry.root)}
                     action={
                       <IconButton
@@ -638,15 +634,7 @@ export function ManageProjectsSheet({
                     icon={<ChevronIcon className="size-3.5" />}
                     title={`${entry.name}/`}
                     hint={entryHint(entry)}
-                    badge={
-                      entry.path === startAt
-                        ? 'current'
-                        : knownRoots.has(entry.path)
-                          ? 'project'
-                          : entry.is_repo
-                            ? 'git'
-                            : undefined
-                    }
+                    badge={knownRoots.has(entry.path) ? 'project' : entry.is_repo ? 'git' : undefined}
                     onSelect={() => enter(entry.path)}
                   />
                 ))}
