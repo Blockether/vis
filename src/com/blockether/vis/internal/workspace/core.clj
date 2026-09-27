@@ -336,6 +336,11 @@
   ^File []
   (io/file (or *workspace-root* (System/getProperty "user.dir"))))
 
+(defn cwd-root
+  "Canonical path of `cwd`: the key of the current project's scoped state."
+  ^String []
+  (normalize-root (cwd)))
+
 (defn allowed-roots
   "Canonical absolute CLONE/working-copy paths the current tool call may
    operate under: the primary cwd FIRST, then each bound filesystem root's

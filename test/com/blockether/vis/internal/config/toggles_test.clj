@@ -447,4 +447,35 @@
                           (t/set-enabled! "test_snapshot_bound" true)
                           (binding [t/*overrides* {"test_snapshot_bound" false}]
                             (expect (false? (t/enabled? "test_snapshot_bound"))))
-                          (expect (true? (t/enabled? "test_snapshot_bound")))))))
+                          (expect (true? (t/enabled? "test_snapshot_bound"))))))
+  ;; A runtime write (a Settings flip or `--toggles`) must reach sessions created after it.
+  (it "a runtime write reaches later snapshots until configuration applies again"
+      (with-clean-state (fn []
+                          (t/register-toggle!
+                            {:id "test_snapshot_runtime" :label "Snapshot runtime" :default false})
+                          (let [config {"toggles" {"test_snapshot_runtime" false}}]
+                            (t/set-enabled! "test_snapshot_runtime" true)
+                            (expect (true? (get (t/config-values config) "test_snapshot_runtime")))
+                            (t/hydrate-from-config! config)
+                            (expect (false? (get (t/config-values {}) "test_snapshot_runtime")))
+                            (t/set-enabled! "test_snapshot_runtime" true)
+                            (t/reset-to-default! "test_snapshot_runtime")
+                            (expect (false? (get (t/config-values {}) "test_snapshot_runtime")))))))
+  ;; Project files outrank a runtime write as they outrank the machine store, so a
+  ;; Settings flip or a leftover write cannot override the project a session opens.
+  (it "project configuration outranks a runtime write, and an invocation override both"
+      (with-clean-state
+        (fn []
+          (t/register-toggle!
+            {:id "test_snapshot_project" :label "Snapshot project" :default false})
+          (t/set-enabled! "test_snapshot_project" true)
+          (let [global
+                {"toggles" {"test_snapshot_project" false}}
+
+                project
+                {"toggles" {"test_snapshot_project" "false"}}]
+
+            (expect (true? (get (t/config-values global) "test_snapshot_project")))
+            (expect (false? (get (t/config-values global project) "test_snapshot_project")))
+            (binding [t/*invocation-overrides* {"test_snapshot_project" true}]
+              (expect (true? (get (t/config-values global project) "test_snapshot_project")))))))))

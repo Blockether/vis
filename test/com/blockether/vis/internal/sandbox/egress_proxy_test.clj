@@ -460,6 +460,26 @@
 
 ;; Tier-2 network filters — the extension escape valve above :rules
 
+(deftest non-extension-network-filters-test
+  (testing
+    "free-standing filters stay whatever their owner; descriptor filters are left to sessions"
+    (let [free
+          (fn [_]
+            nil)
+
+          before
+          (count (ep/non-extension-network-filters))]
+
+      (try (ep/register-network-filter! :ext/free-standing-filter-test free)
+           (ep/register-network-filter! :ext/descriptor-filter-test
+                                        (fn [_]
+                                          nil)
+                                        {:descriptor? true})
+           (is (some #(identical? free %) (ep/non-extension-network-filters)))
+           (is (= (inc before) (count (ep/non-extension-network-filters))))
+           (finally (ep/unregister-network-filters-for-owner! :ext/free-standing-filter-test)
+                    (ep/unregister-network-filters-for-owner! :ext/descriptor-filter-test))))))
+
 (deftest filter-registries
   (testing "request filter denies via the decrypted request; decide+filter honors it"
     (let [owner ::req-filt]

@@ -1222,6 +1222,12 @@
             (without-user-only-keys! path raw)))
         (project-root-yaml-paths)))
 
+(defn load-project-tiers-raw
+  "Merge the workspace's project tiers, the hidden overlay over the committed root file:
+   the part of `load-config-raw` that outranks the machine store."
+  []
+  (deep-merge-config (load-project-root-config-raw) (load-project-config-raw)))
+
 (defn extension-package-scopes
   "Read validated declarations without installing. Relative local sources belong to
    the declaring YAML directory. Global/state and project/overlay merge by package

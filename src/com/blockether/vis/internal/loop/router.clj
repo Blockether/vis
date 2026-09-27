@@ -244,7 +244,7 @@
 
 (defonce ^:private router-atom (atom {}))
 
-(defn- router-key [] (.getCanonicalPath (workspace/cwd)))
+(defn- router-key [] (workspace/cwd-root))
 
 (defn- enrich-provider-models
   "Apply a provider's optional `:provider/enrich-models-fn` hook to a

@@ -285,8 +285,7 @@
 
 (defn- effective-providers
   []
-  (let [{:keys [providers extension-names]} (get @project-providers
-                                                 (.getCanonicalPath (workspace/cwd)))]
+  (let [{:keys [providers extension-names]} (get @project-providers (workspace/cwd-root))]
     (merge (into {}
                  (remove (fn [[_ spec]]
                            (contains?

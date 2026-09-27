@@ -387,10 +387,21 @@
    `{:allow? true}` to allow, or `{:allow? false :reason s}` (or a `vis.block`
    marker map) to DENY — a denied response yields a 403 so the child never sees
    the body. Only fires on MITM'd HTTPS + plain HTTP (a tunnelled/excluded host
-   is encrypted and opaque)."
-  [owner f]
-  (when (and owner (ifn? f)) (swap! network-filters update owner (fnil conj []) f))
-  owner)
+   is encrypted and opaque). `{:descriptor? true}` marks a filter installed from
+   an extension descriptor; sessions supply those themselves (see
+   `non-extension-network-filters`)."
+  ([owner f] (register-network-filter! owner f nil))
+  ([owner f {:keys [descriptor?]}]
+   (when (and owner (ifn? f))
+     (swap! network-filters update
+       owner
+       (fnil conj [])
+       (if descriptor?
+         (with-meta (fn [ctx]
+                      (f ctx))
+           {::descriptor? true})
+         f)))
+   owner))
 
 (defn unregister-network-filters-for-owner!
   "Remove every network filter registered by `owner` (extension teardown)."
@@ -404,13 +415,9 @@
   (into [] cat (vals @network-filters)))
 
 (defn non-extension-network-filters
-  "Process filters not owned by extension descriptors (which sessions supply themselves)."
+  "Process filters not installed from extension descriptors (which sessions supply themselves)."
   []
-  (into []
-        (comp (remove (fn [[owner _]]
-                        (= "ext" (namespace owner))))
-              (mapcat val))
-        @network-filters))
+  (into [] (comp cat (remove (comp ::descriptor? meta))) (vals @network-filters)))
 
 (defn- policy-network-filters
   [policy]

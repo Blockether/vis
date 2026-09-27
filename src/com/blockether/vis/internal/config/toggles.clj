@@ -67,6 +67,15 @@
 (defonce
   ^:private
   ^{:doc
+    "id -> value written at runtime (a Settings flip, `--toggles`) after that id's
+          configuration was last applied. New session snapshots rank these above the
+          global configuration files and below the session's project files."}
+  runtime-values
+  (atom {}))
+
+(defonce
+  ^:private
+  ^{:doc
     "Vec of listener fns `(fn [{:id :old :new}])`. Each `set!`
           / `reset-to-default!` fans out so the TUI render thread,
           channels, and any background consumer can react. Listeners
@@ -221,11 +230,17 @@
   "Admitted session configuration, bound by the extension callback context."
   nil)
 
+(def ^:dynamic *invocation-overrides*
+  "Values an explicit invocation (`vis run --toggles`) fixes for every session it
+   starts. They outrank configuration, project files included."
+  nil)
+
 (defn value-of
   "Resolve the live value for `id`. Lookup order:
-     1. live override in `state`,
-     2. registered default,
-     3. `nil` if the toggle isn't registered.
+     1. the bound session snapshot in `*overrides*`,
+     2. live override in `state`,
+     3. registered default,
+     4. `nil` if the toggle isn't registered.
 
    Returns the raw value (boolean for `:boolean` toggles, any value
    from `:choices` for `:enum` toggles). `enabled?` is the
@@ -284,6 +299,7 @@
         (value-of id)]
 
     (swap! state assoc id v)
+    (swap! runtime-values assoc id v)
     (when (not= old v) (notify! {:id id :old old :new v}))
     v))
 
@@ -339,6 +355,7 @@
   [id]
   (let [old (value-of id)]
     (swap! state dissoc id)
+    (swap! runtime-values dissoc id)
     (let [new (value-of id)]
       (when (not= old new) (notify! {:id id :old old :new new}))
       new)))
@@ -423,16 +440,35 @@
       v)))
 
 (defn config-values
-  "Resolve a complete session toggle snapshot without changing another project's settings."
-  [config-map]
-  (let [persisted (or (get config-map "toggles") (:toggles config-map))]
-    (into {}
-          (map (fn [[id spec]]
-                 [id
-                  (if (contains? persisted id)
-                    (coerce-config-value id (get persisted id))
-                    (:default spec))]))
-          @registry)))
+  "Resolve a complete session toggle snapshot without changing another project's settings.
+   Each id takes the first of: `*invocation-overrides*`, the session's project tiers in
+   `project-map`, a value written at runtime since its configuration was last applied (a
+   Settings flip), the merged `config-map`, then the registered default. Project files
+   outrank a runtime write just as they outrank the machine store in `load-config-raw`."
+  ([config-map] (config-values config-map nil))
+  ([config-map project-map]
+   (let [reg
+         @registry
+
+         declared
+         (fn [m]
+           (let [values (or (get m "toggles") (:toggles m))]
+             (if (map? values)
+               (into {}
+                     (keep (fn [[id _]]
+                             (when (contains? values id)
+                               [id (coerce-config-value id (get values id))])))
+                     reg)
+               {})))]
+
+     (merge (into {}
+                  (map (fn [[id spec]]
+                         [id (:default spec)]))
+                  reg)
+            (declared config-map)
+            (select-keys @runtime-values (keys reg))
+            (declared project-map)
+            (select-keys *invocation-overrides* (keys reg))))))
 
 (defn wire-value
   "Coerce ONE value that arrived over the wire (`POST /v1/settings`) onto the
@@ -476,6 +512,8 @@
                 :when (and (string? id) (contains? reg id))]
 
           (try (set-value! id (coerce-config-value id v))
+               ;; Configuration is now this id's latest write.
+               (swap! runtime-values dissoc id)
                (catch clojure.lang.ExceptionInfo _ nil)))))))
 
 ;; Listener ops
@@ -514,6 +552,7 @@
    `reset-to-default!`."
   []
   (reset! state {})
+  (reset! runtime-values {})
   nil)
 
 ;; Host-owned canonical toggles

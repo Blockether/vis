@@ -1397,7 +1397,8 @@
 
 (defn- call-with-toggle-overrides
   "Run `f` with each toggle in `overrides` ({id value}) applied, restoring
-   every prior effective value afterward. Process-local and never persists
+   every prior effective value afterward. Sessions started meanwhile keep these
+   values over project configuration. Process-local and never persists
    a config change."
   [overrides f]
   (if (empty? overrides)
@@ -1408,7 +1409,9 @@
                          overrides)]
       (try (doseq [[id v] overrides]
              (toggles/set-value! id v))
-           (f)
+           (binding [toggles/*invocation-overrides* (merge toggles/*invocation-overrides*
+                                                           overrides)]
+             (f))
            (finally (doseq [[id v] previous]
                       (toggles/set-value! id v)))))))
 

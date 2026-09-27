@@ -869,8 +869,7 @@
     (try (bind-host! ctx label bound-env)
          (locking ctx
            (extension/with-context
-             {:ext {:ext/name label}
-              :env (or bound-env {:workspace/root (.getCanonicalPath (workspace/cwd))})}
+             {:ext {:ext/name label} :env (or bound-env {:workspace/root (workspace/cwd-root)})}
              (python-host/conveying
                ctx
                (exec-in! ctx bootstrap-python)
@@ -979,7 +978,7 @@
    carries atoms, contexts and other host-only handles). STRING keys —
    it crosses the strings-only boundary."
   [env]
-  {"cwd" (or (workspace/workspace-root env) (.getCanonicalPath (workspace/cwd)))
+  {"cwd" (or (workspace/workspace-root env) (workspace/cwd-root))
    "session_id" (some-> (:session-id env)
                         str)
    "channel" (some-> (:channel env)
@@ -1787,7 +1786,7 @@
    Each row names the file, error, retained extension, stale? status,
    loaded/requested source fingerprints and readiness changes."
   []
-  (let [root (.getCanonicalPath (workspace/cwd))]
+  (let [root (workspace/cwd-root)]
     (filterv #(or (nil? (:project-root %)) (= root (:project-root %))) @failures)))
 
 (defn- failure-summary
@@ -1806,7 +1805,7 @@
    Project declarations override global extensions with the same name."
   []
   (let [local
-        (scope-entries (.getCanonicalPath (workspace/cwd)))
+        (scope-entries (workspace/cwd-root))
 
         local-names
         (set (map (comp :ext-name val) local))]
@@ -2335,8 +2334,7 @@
                                                     @loaded))
                                      (first (filter (fn [[_ e]]
                                                       (= ext-name (:ext-name e)))
-                                                    (concat (scope-entries (.getCanonicalPath
-                                                                             (workspace/cwd)))
+                                                    (concat (scope-entries (workspace/cwd-root))
                                                             (scope-entries nil)))))]
       (let [entry
             (if-not (or (identical? dead-ctx (:context entry)) (context-dead? (:context entry)))
@@ -2569,6 +2567,11 @@
 
 (defonce ^:private ensure-load-lock (Object.))
 
+;; Scopes (nil = global) whose declared packages this process prepared. A project
+;; first loaded through the process-directory fallback is prepared once a session
+;; opens it.
+(defonce ^:private prepared-scopes (atom #{}))
+
 (defn- load-scopes!
   [opts force?]
   (locking ensure-load-lock
@@ -2582,41 +2585,56 @@
                   (default-extension-dirs)
 
                   root
-                  (.getCanonicalPath (workspace/cwd))]
+                  (workspace/cwd-root)]
 
               (cond-> [{:dirs [global-dir] :global true}]
                 (not= (.getCanonicalPath ^File global-dir) (.getCanonicalPath ^File project-dir))
                 (conj {:dirs [project-dir] :project true :project-root root}))))
 
           results
-          (mapv (fn [{:keys [project-root] :as scope}]
-                  (let [initialized? (contains? @last-fingerprint project-root)]
-                    (if (and initialized? (not force?))
-                      {:loaded (count (scope-entries project-root))
-                       :failed (count (filter #(= project-root (:project-root %)) @failures))
-                       :changed? false}
-                      (do
-                        ;; Opening a configured project admits its declared extensions. Source
-                        ;; receipts retain pins; this is not a background update or prune.
-                        (when-not explicit?
-                          (let [results (sync-packages! (assoc (select-keys scope
-                                                                            [:global :project])
-                                                          :trust true))
-                                failed (filter #(= "failed" (get % "status")) results)]
+          (mapv
+            (fn [{:keys [project-root] :as scope}]
+              (let [initialized?
+                    (contains? @last-fingerprint project-root)
 
-                            (when (seq failed)
-                              (throw (ex-info "Could not prepare configured project extensions"
-                                              {:type ::project-setup-failed
-                                               :project-root project-root
-                                               :failures (vec failed)})))))
-                        (when (:force? opts) (swap! last-fingerprint dissoc project-root))
-                        (let [result (load-scope! (cond-> (merge opts scope)
-                                                    (not explicit?)
-                                                    (assoc :sync-projects? true)))]
-                          (when (and (not initialized?) (pos? (:failed result)))
-                            (swap! last-fingerprint dissoc project-root))
-                          result)))))
-                scopes)]
+                    ;; Only the global catalog and an explicitly opened project are
+                    ;; prepared. The process-directory fallback (REPL, tests and
+                    ;; sessionless paths) loads what is already on disk.
+                    prepare?
+                    (and (not explicit?) (or (:global scope) (some? workspace/*workspace-root*)))
+
+                    pending?
+                    (and prepare? (not (contains? @prepared-scopes project-root)))]
+
+                (if (and initialized? (not force?) (not pending?))
+                  {:loaded (count (scope-entries project-root))
+                   :failed (count (filter #(= project-root (:project-root %)) @failures))
+                   :changed? false}
+                  (do
+                    ;; Opening a configured project admits its declared extensions. Source
+                    ;; receipts retain pins; this is not a background update or prune.
+                    (when prepare?
+                      (let [results
+                            (sync-packages! (assoc (select-keys scope [:global :project])
+                                              :trust true))
+
+                            failed
+                            (filter #(= "failed" (get % "status")) results)]
+
+                        (when (seq failed)
+                          (throw (ex-info "Could not prepare configured project extensions"
+                                          {:type ::project-setup-failed
+                                           :project-root project-root
+                                           :failures (vec failed)})))
+                        (swap! prepared-scopes conj project-root)))
+                    (when (or (:force? opts) pending?) (swap! last-fingerprint dissoc project-root))
+                    (let [result (load-scope! (cond-> (merge opts scope)
+                                                prepare?
+                                                (assoc :sync-projects? true)))]
+                      (when (and (not initialized?) (pos? (:failed result)))
+                        (swap! last-fingerprint dissoc project-root))
+                      result)))))
+            scopes)]
 
       {:loaded (reduce + 0 (map :loaded results))
        :failed (reduce + 0 (map :failed results))
@@ -2704,7 +2722,8 @@
           ;; ids absent from the file keep their current in-memory value.
           _toggles
           (try (if-let [values (:config/toggles extension/*current-environment*)]
-                 (reset! values (toggles/config-values (config/load-config-raw)))
+                 (reset! values (toggles/config-values (config/load-config-raw)
+                                                       (config/load-project-tiers-raw)))
                  (when-not workspace/*workspace-root*
                    (toggles/hydrate-from-config! (or (config/load-config-raw) {}))))
                (catch Throwable _ nil))

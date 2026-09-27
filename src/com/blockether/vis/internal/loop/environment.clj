@@ -443,7 +443,8 @@
                               (security-config-snapshot))
             toggle-values (binding [workspace/*workspace-root* (or (:root active-workspace)
                                                                    workspace/*workspace-root*)]
-                            (atom (toggles/config-values (config/load-config-raw))))
+                            (atom (toggles/config-values (config/load-config-raw)
+                                                         (config/load-project-tiers-raw))))
             configured-rw-roots (security-policy/read-write-roots security-config)
             ;; Engine substrate: embedded CPython (env/create-python-context builds a
             ;; deny-by-default Python session, wires the Clojure tools as Python
@@ -1282,10 +1283,10 @@
    swap: extension hooks have side effects, and a contended `swap!` would repeat
    them. Answers `{:refreshed {id [environment refreshed]} :failures {id throwable}}`."
   [router entries]
-  (let [routers (atom {(.getCanonicalPath (workspace/cwd)) router})]
+  (let [routers (atom {(workspace/cwd-root) router})]
     (reduce-kv (fn [acc id {:keys [environment]}]
                  (try (extension/with-context {:env environment}
-                                              (let [root (.getCanonicalPath (workspace/cwd))
+                                              (let [root (workspace/cwd-root)
                                                     project-router
                                                     (or (get @routers root)
                                                         (let [r (loop-router/rebuild-router!

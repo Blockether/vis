@@ -171,14 +171,18 @@
   (let [{:keys [ext-dir result]}
         (load-sources! sources)
 
+        root
+        (.getCanonicalPath ^java.io.File ext-dir)
+
         store
         (ps/db-create-connection! :memory)]
 
+    ;; A callback context inherits this environment, so it must name the same root.
     (binding [extension/*current-environment*
-              {:db-info store}
+              {:db-info store :workspace/root root}
 
               workspace/*workspace-root*
-              (.getCanonicalPath ^java.io.File ext-dir)]
+              root]
 
       (try (f result {:ext-dir ext-dir :store store})
            (finally (reset! live-load nil)
@@ -317,7 +321,48 @@
                 (expect (str/includes? prompt "a.py"))
                 (expect (not (str/includes? prompt "b.py")))))
             (binding [workspace/*workspace-root* b]
-              (expect (= ["global.py" "b.py"] (mapv :file (pyx/load-failures))))))))))
+              (expect (= ["global.py" "b.py"] (mapv :file (pyx/load-failures)))))))))
+  (it
+    "loads the process-directory project unprepared until a session opens it"
+    (let [root
+          (.getCanonicalPath (temp-dir))
+
+          home
+          (temp-dir)
+
+          fingerprint
+          (atom {})
+
+          calls
+          (atom [])
+
+          loads
+          (atom [])]
+
+      (with-redefs-fn {#'pyx/last-fingerprint fingerprint
+                       #'pyx/prepared-scopes (atom #{})
+                       #'workspace/cwd (constantly (io/file root))
+                       #'pyx/default-extension-dirs (fn []
+                                                      [(io/file home "extensions")
+                                                       (io/file root ".vis/extensions")])
+                       #'pyx/sync-packages! (fn [opts]
+                                              (swap! calls conj opts)
+                                              [])
+                       #'pyx/load-scope!
+                       (fn [opts]
+                         (swap! loads conj [(:project-root opts) (boolean (:sync-projects? opts))])
+                         (swap! fingerprint assoc (:project-root opts) [::loaded])
+                         {:loaded 1 :failed 0 :changed? true})}
+        (fn []
+          (binding [workspace/*workspace-root* nil]
+            (pyx/ensure-python-extensions-loaded!))
+          (expect (= [{:global true :trust true}] @calls))
+          (expect (= [[nil true] [root false]] @loads))
+          (pyx/prepare-project! root)
+          (expect (= [{:global true :trust true} {:project true :trust true}] @calls))
+          (expect (= [root true] (last @loads)))
+          (pyx/prepare-project! root)
+          (expect (= 2 (count @calls))))))))
 
 (defn- write-project-package!
   "A configured extension with a real, project-specific local wheel dependency."

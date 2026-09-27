@@ -1677,7 +1677,7 @@
    nil | reason). `:owner` (an ext keyword) makes the registration idempotent
    across `:reload`s — re-registering the same owner+phase for an op REPLACES the
    prior one. Returns the op-keyword."
-  [{:keys [op phase owner] hook-fn :fn :or {phase :after}}]
+  [{:keys [op phase owner] hook-fn :fn descriptor? ::descriptor? :or {phase :after}}]
   (assert (#{:before :around :after :gate} phase)
           "op hook :phase must be :before, :around, :after, or :gate")
   (assert (ifn? hook-fn) "op hook :fn must be a function")
@@ -1694,7 +1694,9 @@
       op-kw
       (fn [hooks]
         (conj (vec (remove #(and owner (= owner (:owner %)) (= phase (:phase %))) hooks))
-              {:phase phase :owner owner :fn hook-fn})))
+              (cond-> {:phase phase :owner owner :fn hook-fn}
+                descriptor?
+                (assoc ::descriptor? true)))))
     op-kw))
 
 (defn unregister-op-hooks-for-owner!
@@ -1722,7 +1724,9 @@
   [ext]
   (let [owner (ext-op-hook-owner ext)]
     (doseq [h (:ext/op-hooks ext)]
-      (register-op-hook! (assoc h :owner owner)))))
+      (register-op-hook! (assoc h
+                           :owner owner
+                           ::descriptor? true)))))
 
 (defn- install-egress-filters!
   "Register an extension's declarative `:ext/network-filters` into the egress
@@ -1731,7 +1735,7 @@
   (let [owner (ext-op-hook-owner ext)]
     (egress-proxy/unregister-network-filters-for-owner! owner)
     (doseq [f (:ext/network-filters ext)]
-      (egress-proxy/register-network-filter! owner f))))
+      (egress-proxy/register-network-filter! owner f {:descriptor? true}))))
 
 (defn network-filters
   "Network callbacks admitted to this environment, never another project's descriptors."
@@ -1751,10 +1755,7 @@
 (defn- environment-op-hooks
   [op-kw env]
   (if-let [extensions (:extensions env)]
-    (concat (remove #(= "ext"
-                        (some-> (:owner %)
-                                namespace))
-              (get @op-hooks op-kw))
+    (concat (remove ::descriptor? (get @op-hooks op-kw))
             (for [ext @extensions
                   hook (:ext/op-hooks ext)
                   :let [gate-kw (gate-op (:op hook))]
@@ -2834,7 +2835,7 @@
         @extension-registry
 
         local
-        (get @project-extensions (.getCanonicalPath (workspace/cwd)))
+        (get @project-extensions (workspace/cwd-root))
 
         local-names
         (set (map :ext/name local))]
