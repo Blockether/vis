@@ -20,7 +20,7 @@
   (if (= (:id tab) (:active-tab-id db)) db (get-in db [:tab-locals (:id tab)])))
 
 (defn geometry
-  "Use 40–56 cells on the left, reserving 56 for session alerts; keep 60 for chat."
+  "Give the rail 40% of the terminal, keeping room for alerts and 60 chat cells."
   [db cols rows]
   (when (get-in db [:project-sidebar :open?])
     (let [cols
@@ -29,7 +29,7 @@
           width
           (min cols
                (max (if (some #(or (:human-input (tab-state db %)) (:unread? %)) (:tabs db)) 56 40)
-                    (min 56 (quot cols 3))))
+                    (quot (* cols 2) 5)))
 
           remaining
           (- cols width)
@@ -253,45 +253,49 @@
                     :label (if groups-archived? "Groups · Archived" "Groups")
                     :project project
                     :archived? groups-archived?
+                    :folded? (true? (get-in sidebar [:groups-folded? pid]))
                     :set :groups
-                    :action [:noop]}]
-                  (mapcat (fn [group]
-                            (let [gid (str (get group "id"))
-                                  folded? (contains? (get-in sidebar [:group-folds pid]) gid)]
+                    :action [:toggle-groups pid]}]
+                  (when-not (get-in sidebar [:groups-folded? pid])
+                    (concat
+                      (mapcat (fn [group]
+                                (let [gid (str (get group "id"))
+                                      folded? (contains? (get-in sidebar [:group-folds pid]) gid)]
 
-                              (cons {:kind :project-group
-                                     :project project
-                                     :group group
-                                     :label (get group "name" "Untitled group")
-                                     :color (get group "color")
-                                     :group-count (long (or (get group "session_count") 0))
-                                     :folded? folded?
-                                     :action [:toggle-group pid gid]}
-                                    (when-not folded?
-                                      (map #(assoc (session-row %) :nested? true)
-                                           (get by-group gid))))))
-                          groups)
-                  (when (pos? (long (or (:group-offset page) 0)))
-                    [{:kind :project-group-page
-                      :project project
-                      :label "← Previous groups"
-                      :action [:group-page pid :previous]}])
-                  (when (< (+ (long (or (:group-offset page) 0)) (count groups))
-                           (long (or (get-in sidebar [:group-total pid]) 0)))
-                    [{:kind :project-group-page
-                      :project project
-                      :label "More groups →"
-                      :action [:group-page pid :next]}])
-                  (when (and groups-archived?
-                             (not (:loading? page))
-                             (not (:error page))
-                             (zero? (long (or (get-in sidebar [:group-total pid]) 0))))
-                    [{:kind :project-state :project project :label "No archived groups"}])
+                                  (cons {:kind :project-group
+                                         :project project
+                                         :group group
+                                         :label (get group "name" "Untitled group")
+                                         :color (get group "color")
+                                         :group-count (long (or (get group "session_count") 0))
+                                         :folded? folded?
+                                         :action [:toggle-group pid gid]}
+                                        (when-not folded?
+                                          (map #(assoc (session-row %) :nested? true)
+                                               (get by-group gid))))))
+                              groups)
+                      (when (pos? (long (or (:group-offset page) 0)))
+                        [{:kind :project-group-page
+                          :project project
+                          :label "← Previous groups"
+                          :action [:group-page pid :previous]}])
+                      (when (< (+ (long (or (:group-offset page) 0)) (count groups))
+                               (long (or (get-in sidebar [:group-total pid]) 0)))
+                        [{:kind :project-group-page
+                          :project project
+                          :label "More groups →"
+                          :action [:group-page pid :next]}])
+                      (when (and groups-archived?
+                                 (not (:loading? page))
+                                 (not (:error page))
+                                 (zero? (long (or (get-in sidebar [:group-total pid]) 0))))
+                        [{:kind :project-state :project project :label "No archived groups"}])))
                   [{:kind :project-set
                     :label (if archived? "Sessions · Archived" "Sessions")
                     :project project
                     :archived? archived?
                     :set :sessions
+                    :folded? (true? (get-in sidebar [:sessions-folded? pid]))
                     :action [:toggle-sessions pid]}]
                   (when-not (get-in sidebar [:sessions-folded? pid])
                     (map session-row (:sessions page)))
@@ -534,9 +538,12 @@
           (min before (count updated))))))
 
 (defn- row-height
-  "A saved session occupies a title, a metadata line and a breathing line."
+  "Projects, section headers and saved sessions get a three-line card."
   [entry]
-  (if (= :project-session (:kind entry)) 3 1))
+  (if (or (#{:project-select :project-session} (:kind entry))
+          (and (= :project-set (:kind entry)) (#{:groups :sessions} (:set entry))))
+    3
+    1))
 
 (defn- fit-back
   "Fill the visible area backwards from `end` with whole rows only."
@@ -582,17 +589,17 @@
 
     (if (and (seq visible)
              (not (get-in db [:project-sidebar :search]))
-             (> capacity 1)
+             (> capacity 3)
              (not= :project-select (:kind (first visible))))
       (let [tail
-            (fit-back entries end (dec capacity))
+            (fit-back entries end (- capacity 3))
 
             parent
             (first (filter #(and (= :project-select (:kind %))
                                  (= (:project (first tail)) (:project %)))
                            entries))]
 
-        (if (and (seq tail) parent) (into [parent] tail) visible))
+        (if (and (seq tail) parent) (if (= parent (first tail)) tail (into [parent] tail)) visible))
       visible)))
 
 (defn- row-bg
@@ -1085,13 +1092,16 @@
 
                                 (and (:tab-id entry) (= (:tab-id entry) (:active-tab-id db))))
                       focused? (and (:focused? sidebar) (= index (:index sidebar)))
-                      status (p/truncate-cols (row-status entry sidebar width) (max 0 (- width 9)))
+                      status (p/truncate-cols (row-status entry sidebar width)
+                                              (max 0 (- width (if (= :project-select kind) 4 9))))
                       status-col
-                      (- (+ left width)
-                         (cond (= :project-session kind) (if (>= width 48) 21 7)
-                               (and (= :project-set kind) (#{:groups :sessions} (:set entry))) 10
-                               :else 2)
-                         (long (p/display-width status)))
+                      (if (= :project-select kind)
+                        (- (+ left width) 2)
+                        (- (+ left width)
+                           (cond (= :project-session kind) (if (>= width 48) 21 7)
+                                 (and (= :project-set kind) (#{:groups :sessions} (:set entry))) 10
+                                 :else 2)
+                           (long (p/display-width status))))
                       row-left (+ left
                                   (if child? 1 0)
                                   (if (#{:project-group :project-session} kind) 1 0)
@@ -1127,7 +1137,9 @@
                                                         "  "
 
                                                         :project-set
-                                                        "  "
+                                                        (if (#{:groups :sessions} (:set entry))
+                                                          (if (:folded? entry) "▸ " "▾ ")
+                                                          "  ")
 
                                                         (:project-page :project-group-page)
                                                         "  "
@@ -1154,7 +1166,10 @@
                                        t/warning-fg
                                        :else t/dialog-hint-key)
                                  t/dialog-bg)
-                  (p/put-str! g status-col row status)))
+                  (p/put-str! g
+                              (if (= :project-select kind) (+ row-left 2) status-col)
+                              (if (= :project-select kind) (inc row) row)
+                              status)))
             (when (= :project-session kind)
               (when (>= width 48) (paint-session-status! g entry status-col row 14))
               (paint-session-meta! g entry left width (+ row-left 4) (inc row)))

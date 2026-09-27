@@ -2136,6 +2136,7 @@
                                           (update :selected dissoc pid)
                                           (update :session-archived? dissoc pid)
                                           (update :group-archived? dissoc pid)
+                                          (update :groups-folded? dissoc pid)
                                           (update :sessions-folded? dissoc pid)
                                           (update :group-folds dissoc pid))))]
 

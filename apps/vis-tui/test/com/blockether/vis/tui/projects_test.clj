@@ -316,9 +316,9 @@
            (projects/add-field-insert {:text "/work/v" :cursor 7} "\n is\uE201")))))
 
 (deftest project-sidebar-width-test
-  ;; Keep the sidebar bounded without squeezing the conversation below 60 columns.
+  ;; Target 40%, preserving 40 cells (56 for alerts) and 60 for docked chat.
   (doseq [[cols width chat-cols] [[24 24 24] [40 40 40] [80 40 80] [99 40 99] [100 40 60]
-                                  [120 40 80] [144 48 96] [168 56 112] [240 56 184]]]
+                                  [120 48 72] [144 57 87] [168 67 101] [240 96 144]]]
     (let [db (fixture-db)]
       (is (= {:left 0
               :width width
@@ -329,10 +329,14 @@
       (is (= cols (projects/chat-cols (assoc-in db [:project-sidebar :open?] false) cols)))))
   (doseq [cols (range 24 241)]
     (let [{:keys [left width chat-left chat-cols]} (projects/geometry (fixture-db) cols 24)]
-      (is (<= (min cols 40) width 56))
+      (is (= (min cols (max 40 (quot (* cols 2) 5))) width))
       (is (zero? left))
       (is (= cols (+ chat-left chat-cols)))
-      (is (or (= cols chat-cols) (>= chat-cols 60))))))
+      (is (or (= cols chat-cols) (>= chat-cols 60)))))
+  (doseq [[cols width chat-cols] [[80 56 80] [120 56 64] [144 57 87] [240 96 144]]]
+    (let [geom (projects/geometry (attention-fixture-db) cols 24)]
+      (is (= width (:width geom)))
+      (is (= chat-cols (:chat-cols geom))))))
 
 (deftest project-sidebar-grid-test
   (doseq [cols [24 26 40 72 80 85 86 96 120 144 240]]
@@ -348,7 +352,7 @@
       (is (str/includes? text "Projects"))
       (when (>= cols 40)
         (is (str/includes? text "Companion"))
-        (is (re-find #"Companion +1 tab · 1 running" text)))
+        (is (str/includes? text "1 tab · 1 running")))
       (when (>= cols 26) (is (str/includes? text "1 running")))
       (let [footer (nth (str/split-lines text) 16)]
         (doseq [label ["↑↓" "↵" "C-x w" "Esc"]]
@@ -373,7 +377,7 @@
       (is (= [:select project-b]
              (projects/key-action
                db
-               (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 4 5))))))))
+               (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 4 8))))))))
 
 (deftest project-sidebar-inline-add-test
   ;; The whole add lives on the rail: its field, its caret and the hint that ends
@@ -595,21 +599,21 @@
     (is (str/includes? (nth lines 14) "Project lookup failed"))
     (doseq [label ["↑↓" "↵" "C-x w" "Esc"]]
       (is (str/includes? (nth lines 16) label)))
-    (is (= 8
+    (is (= 2
            (count (projects/visible-entries
                     (assoc-in db [:project-sidebar :items] (vec (repeat 30 project-a)))
                     16))))))
 
 (deftest project-sidebar-label-width-test
   (doseq [[cols index label fits?] [[40 0 "vis-python-runtime" true]
-                                    [40 1 "vis-extension-center-demo" false]
-                                    [168 1 "vis-extension-center-demo" true]]]
+                                    [40 1 "vis-extension-center-demo-with-long-name" false]
+                                    [168 1 "vis-extension-center-demo-with-long-name" true]]]
     (let [db (assoc-in (fixture-db) [:project-sidebar :items index "name"] label)
           capture (cap/capture! {:cols cols
                                  :rows 18
                                  :paint! (fn [{:keys [screen]}]
                                            (projects/paint! (.newTextGraphics screen) db cols 18))})
-          row (nth (str/split-lines (cap/frame-text capture)) (+ 4 index))]
+          row (nth (str/split-lines (cap/frame-text capture)) (+ 4 (* 3 index)))]
 
       (is (nil? (:error capture)))
       (is (= fits? (str/includes? row label)))
@@ -654,7 +658,7 @@
         visible
         (projects/visible-entries {:project-sidebar sidebar} 16)]
 
-    (is (= 9 (count visible)))
+    (is (= 3 (count visible)))
     (is (= 50 (:index (last visible))))))
 
 (defn review-terminal
@@ -916,7 +920,12 @@
                                    (#'screen/render-frame! screen cols 24 (fixture-db) 1000)))})]
 
         (is (nil? (:error capture)))
-        (is (= (if (= cols 80) [] [{:col 50 :row 5 :img {:id "fixture"}}]) @placed))))
+        (is (= (if (= cols 80)
+                 []
+                 [{:col (+ 2 (:width (projects/geometry (fixture-db) cols 24)))
+                   :row 5
+                   :img {:id "fixture"}}])
+               @placed))))
     (let [capture
           (cap/capture!
             {:cols 144
@@ -1020,9 +1029,9 @@
                            nil))]
 
           (is (nil? (:error capture)))
-          (is (re-find #"Companion +2 tabs · 1 running · 1 needs input" text))
+          (is (str/includes? text "2 tabs · 1 running · 1 needs input"))
           (is (re-find #"! Mobile navigation +needs input" text))
-          (is (= 6 row) "The alert appears immediately below its project")
+          (is (= 10 row) "The alert appears immediately below its project card")
           (is (= (#'theme-test/rgb-tuple theme/warning-button-bg)
                  (get-in capture [:frames 0 row 43 :bg])))
           (is (true? (get-in capture [:frames 0 row 43 :bold])))
@@ -1058,7 +1067,7 @@
         visible
         (projects/visible-entries db 16)]
 
-    (is (= 9 (count visible)))
+    (is (= 7 (count visible)))
     (is (= :project-select (:kind (first visible)))
         "Keep the parent visible above a long waiting group")
     (is (= 31 (:index (last visible))))
@@ -1088,7 +1097,7 @@
         (is (nil? (:error capture)))
         (is (str/includes? text "Choose platform"))
         (is (= (= cols 144) (str/includes? text "Projects")))
-        (is (= (if (= cols 144) 56 0) (get-in capture [:ret :chat-left])))))))
+        (is (= (if (= cols 144) 57 0) (get-in capture [:ret :chat-left])))))))
 
 (deftest project-input-prefix-navigation-test
   (with-redefs [state/app-db
@@ -1220,7 +1229,7 @@
           (is (nil? (:error capture)))
           (is (str/includes? text "3 tabs · 1 run · 1 input · 1 NEW"))
           (is (re-find #"Keyboard navigation +NEW" text))
-          (is (= 7 row))
+          (is (= 11 row))
           (is (= (#'theme-test/rgb-tuple theme/warning-button-bg)
                  (get-in capture [:frames 0 row 51 :bg])))
           (if pointer?
@@ -1287,7 +1296,7 @@
             (when (= cols 44)
               (is (str/includes? (cap/frame-text initial) "Companion"))
               (is (str/includes? (cap/frame-text initial) "3 tabs 1 run 1 input 1 NEW")))
-            (doseq [row [6 7]]
+            (doseq [row [10 11]]
               (hover! col row)
               (let [hovered (cap/capture! {:cols cols :rows 24 :paint! paint!})
                     cell (get-in hovered [:frames 0 row col])]
@@ -1297,7 +1306,7 @@
                 (is (true? (:underline cell)))))
             (hover! 0 0)
             (let [away (cap/capture! {:cols cols :rows 24 :paint! paint!})]
-              (is (false? (get-in away [:frames 0 7 col :underline])))))))
+              (is (false? (get-in away [:frames 0 11 col :underline])))))))
       (finally (theme/apply-theme! before)))))
 
 (deftest project-unread-scroll-keeps-parent-test
@@ -1318,7 +1327,7 @@
         visible
         (projects/visible-entries db 16)]
 
-    (is (= 9 (count visible)))
+    (is (= 7 (count visible)))
     (is (= :project-select (:kind (first visible))))
     (is (= 30 (:unread (first visible))))
     (is (= 31 (:index (last visible))))
@@ -1888,9 +1897,9 @@
 
         capture
         (cap/capture! {:cols 168
-                       :rows 24
+                       :rows 36
                        :paint! (fn [{:keys [screen]}]
-                                 (projects/paint! (.newTextGraphics screen) db 168 24))})
+                                 (projects/paint! (.newTextGraphics screen) db 168 36))})
 
         hits
         (.current projects/hit-map)
@@ -1939,6 +1948,132 @@
     (doseq [[row label] [[1 "Projects"] [project-row "Vis"] [companion-row "Companion"]
                          [groups-row "Groups"] [sessions-row "Sessions"]]]
       (is (true? (get-in capture [:frames 0 row (column row label) :bold]))))))
+
+(deftest project-sidebar-section-cards-test
+  (let [db
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :groups "a"] [group-release])
+            (assoc-in [:project-sidebar :pages "a"]
+                      {:sessions [{"id" "loose" "title" "Loose session"}]
+                       :grouped [{"id" "filed" "title" "Filed session" "group_id" "g1"}]}))
+
+        cols
+        180
+
+        rows
+        36
+
+        capture
+        (cap/capture! {:cols cols
+                       :rows rows
+                       :paint! (fn [{:keys [screen]}]
+                                 (projects/paint! (.newTextGraphics screen) db cols rows))})
+
+        hits
+        (.current projects/hit-map)
+
+        lines
+        (str/split-lines (cap/frame-text capture))
+
+        project
+        (first (filter #(and (= :project-select (:kind %)) (= "a" (get-in % [:project "id"])))
+                       hits))
+
+        groups
+        (first (filter #(and (= :project-set (:kind %)) (= :groups (:set %))) hits))
+
+        sessions
+        (first (filter #(and (= :project-set (:kind %)) (= :sessions (:set %))) hits))]
+
+    (is (nil? (:error capture)))
+    (doseq [hit [project groups sessions]]
+      (is (= 3 (get-in hit [:bounds :height]))))
+    (is (str/includes? (nth lines (inc (get-in project [:bounds :row]))) "2 sessions"))
+    (is (str/includes? (nth lines (get-in groups [:bounds :row])) "▾ Groups"))
+    (is (str/includes? (nth lines (get-in sessions [:bounds :row])) "▾ Sessions"))
+    (is (= [:toggle-groups "a"] (:action groups)))
+    (is (= [:toggle-sessions "a"] (:action sessions)))
+    (doseq [hit
+            [groups sessions]
+
+            offset
+            (range 3)]
+
+      (is (= (:action hit)
+             (projects/key-action
+               db
+               (MouseAction. MouseActionType/CLICK_DOWN
+                             1
+                             (TerminalPosition. 6 (+ offset (get-in hit [:bounds :row]))))))))
+    (let [folded
+          (assoc-in db [:project-sidebar :groups-folded? "a"] true)
+
+          entries
+          (projects/sidebar-entries folded)]
+
+      (is (not-any? #(= :project-group (:kind %)) entries))
+      (is (some #(and (= :project-set (:kind %)) (= :groups (:set %))) entries))
+      (is (some #(= "loose" (get-in % [:session "id"])) entries)))))
+
+(deftest project-sidebar-section-toggle-test
+  (let [db
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :groups "a"] [group-release])
+            (assoc-in [:project-sidebar :pages "a"]
+                      {:sessions [{"id" "loose" "title" "Loose session"}]
+                       :grouped [{"id" "filed" "title" "Filed session" "group_id" "g1"}]}))
+
+        paint!
+        (fn []
+          (cap/capture! {:cols 180
+                         :rows 36
+                         :paint!
+                         (fn [{:keys [screen]}]
+                           (projects/paint! (.newTextGraphics screen) @state/app-db 180 36))}))
+
+        handle!
+        (fn [key]
+          (#'screen/project-sidebar-key!
+           key
+           (constantly nil)
+           (constantly nil)
+           (constantly nil)
+           (constantly nil)
+           (constantly nil)))]
+
+    (with-redefs [state/app-db (atom db)]
+      (paint!)
+      (let [groups (first (filter #(and (= :project-set (:kind %)) (= :groups (:set %)))
+                                  (.current projects/hit-map)))]
+        (state/dispatch [:project-sidebar {:index (:index groups)}])
+        (handle! (cap/key-stroke :enter))
+        (is (true? (get-in @state/app-db [:project-sidebar :groups-folded? "a"])))
+        (is (not-any? #(= :project-group (:kind %)) (projects/sidebar-entries @state/app-db)))
+        (is (some #(= "loose" (get-in % [:session "id"])) (projects/sidebar-entries @state/app-db)))
+        (let [capture (paint!)]
+          (is (str/includes? (nth (str/split-lines (cap/frame-text capture))
+                                  (get-in groups [:bounds :row]))
+                             "▸ Groups")))
+        (handle! (MouseAction. MouseActionType/CLICK_DOWN
+                               1
+                               (TerminalPosition. 6 (inc (get-in groups [:bounds :row])))))
+        (is (false? (get-in @state/app-db [:project-sidebar :groups-folded? "a"]))))
+      (paint!)
+      (let [sessions (first (filter #(and (= :project-set (:kind %)) (= :sessions (:set %)))
+                                    (.current projects/hit-map)))]
+        (handle! (MouseAction. MouseActionType/CLICK_DOWN
+                               1
+                               (TerminalPosition. 6 (+ 2 (get-in sessions [:bounds :row])))))
+        (is (true? (get-in @state/app-db [:project-sidebar :sessions-folded? "a"])))
+        (is (some #(= :project-group (:kind %)) (projects/sidebar-entries @state/app-db)))
+        (is (not-any? #(= "loose" (get-in % [:session "id"]))
+                      (projects/sidebar-entries @state/app-db)))
+        (let [capture (paint!)]
+          (is (str/includes? (nth (str/split-lines (cap/frame-text capture))
+                                  (get-in sessions [:bounds :row]))
+                             "▸ Sessions")))))))
 
 (deftest folded-group-uses-project-disclosure-icon-test
   (let [db
@@ -2022,7 +2157,7 @@
       (is (not (str/includes? (nth lines 4) "● Vis")))
       (is (not (str/includes? (nth lines 4) "▸ Vis")))
       (is (= (palette theme/header-active-tab-bg 0.10) (get-in capture [:frames 0 4 1 :bg])))
-      (is (= (palette theme/text-fg 0.04) (get-in capture [:frames 0 5 1 :bg]))))))
+      (is (= (palette theme/text-fg 0.04) (get-in capture [:frames 0 7 1 :bg]))))))
 
 (deftest saved-session-grid-separates-title-and-status-test
   (let [db
@@ -2059,7 +2194,7 @@
         (get-in idle [:bounds :row])
 
         status-cell
-        (get-in capture [:frames 0 live-row (- 56 21)])]
+        (get-in capture [:frames 0 live-row (- (:width (projects/geometry db 168 24)) 21)])]
 
     (is (nil? (:error capture)))
     (is (= 3 (get-in live [:bounds :height])))
@@ -2078,7 +2213,7 @@
                                               (TerminalPosition. 18 (int (inc live-row)))))))))
 
 (deftest saved-session-grid-narrow-status-and-metadata-test
-  (doseq [cols [32 120]]
+  (doseq [cols [32 100]]
     (let [db (-> (fixture-db)
                  (assoc-in [:project-sidebar :expanded] #{"a"})
                  (assoc-in [:project-sidebar :pages "a"]
@@ -2131,10 +2266,26 @@
 
     (is (= :project-select (:kind (first visible))))
     (is (= "s29" (get-in (last visible) [:session "id"])))
-    (is (<= (reduce + (map #(if (= :project-session (:kind %)) 3 1) visible)) 9))
+    (is (<= (reduce + (map #'projects/row-height visible)) 9))
     (is (every? #(<= (+ (get-in % [:bounds :row]) (get-in % [:bounds :height] 1)) 13)
                 (filter #(= :project-session (:kind %)) hits)))
     (is (nil? (:error capture)))))
+
+(deftest project-sidebar-scroll-does-not-orphan-a-card-test
+  (let [db
+        (-> (fixture-db)
+            (assoc-in [:project-sidebar :expanded] #{"a"})
+            (assoc-in [:project-sidebar :pages "a"]
+                      {:sessions [{"id" "s1" "title" "Last saved session"}] :grouped []}))
+
+        db
+        (assoc-in db [:project-sidebar :index] (count (projects/sidebar-entries db)))
+
+        visible
+        (projects/visible-entries db 15)]
+
+    (is (= [:project-select] (mapv :kind visible)))
+    (is (= ["b"] (mapv #(get-in % [:project "id"]) visible)))))
 
 (deftest saved-session-archive-set-menu-has-keyboard-and-pointer-test
   (let [db

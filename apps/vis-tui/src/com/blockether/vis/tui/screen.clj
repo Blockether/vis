@@ -6486,6 +6486,11 @@
                           (assoc (:group-folds sidebar)
                             value ((if (contains? folded detail) disj conj) folded detail))}]))
 
+      :toggle-groups
+      (let [sidebar (:project-sidebar @state/app-db)]
+        (state/dispatch [:project-sidebar
+                         {:groups-folded? (update (:groups-folded? sidebar) value not)}]))
+
       :toggle-sessions
       (let [sidebar (:project-sidebar @state/app-db)]
         (state/dispatch [:project-sidebar
