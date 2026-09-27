@@ -4,7 +4,8 @@
    `env/*` machinery the native binary runs, so these assertions hold on
    both the JVM and the native image. Boots ONE no-network sandbox for the
    ns (context creation is expensive) and captures the real-terminal
-   output by rebinding `config/original-stdout`."
+   output by rebinding `config/original-stdout`; programs write to the guest's
+   `sys.__stdout__`, which `capture-program-run` buffers."
   (:require [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.main]
@@ -34,6 +35,21 @@
    output. Returns {:exit code :out captured-stdout}."
   [ctx code]
   (capture-cli-run #(run-python-source! ctx code)))
+
+(defn- capture-program-run
+  "Run a program helper in `ctx`, capturing its output and exit code. A program
+   writes to the process stdout, so the guest's `sys.__stdout__` is a buffer
+   meanwhile."
+  [ctx run!]
+  (run-src
+    ctx
+    "import io, sys\n__vis_process_stdout__ = sys.__stdout__\nsys.__stdout__ = io.StringIO()")
+  (let [exit (try (run!)
+                  (finally (run-src ctx
+                                    (str "import sys\n"
+                                         "__vis_program_stdout__ = sys.__stdout__.getvalue()\n"
+                                         "sys.__stdout__ = __vis_process_stdout__"))))]
+    {:exit exit :out (:out (run-src ctx "print(__vis_program_stdout__, end='')"))}))
 
 (def ^:private ensure-pytest!
   "Install the real `pytest` for the sandbox once, so a `-m pytest` case runs on a
@@ -193,7 +209,12 @@
                  (let [p (parse-python-cli-args ["-m"])]
                    (expect (= :module (:mode p)))
                    (expect (nil? (:module p)))
-                   (expect (= ["-m"] (:argv p))))))
+                   (expect (= ["-m"] (:argv p)))))
+             (it "-V/--version before the program selector reports the version, as in CPython"
+                 (expect (= :version (:mode (parse-python-cli-args ["-V"]))))
+                 (expect (= :version (:mode (parse-python-cli-args ["--no-network" "--version"]))))
+                 (expect (= ["-c" "--version"]
+                            (:argv (parse-python-cli-args ["-c" "print(1)" "--version"]))))))
 
 (defdescribe python-cli-env-overrides-test
              (it "parses K=V, bare K (empty), and keeps later = in the value"
@@ -257,17 +278,12 @@
                                  :env {"PYTHONPATH" (.toString dir)}})]
 
         (try
-          (with-open [baos
-                      (java.io.ByteArrayOutputStream.)
-
-                      ps
-                      (java.io.PrintStream. baos true "UTF-8")]
-
-            (let [exit
-                  (with-redefs [config/original-stdout ps]
-                    (#'com.blockether.vis.internal.main/run-python-module! ctx "async_cli_probe"))]
-              (expect (= 7 exit) (.toString baos "UTF-8"))
-              (expect (re-find #"module-result 42 argument" (.toString baos "UTF-8")))))
+          (let [{:keys [exit out]}
+                (capture-program-run
+                  ctx
+                  #(#'com.blockether.vis.internal.main/run-python-module! ctx "async_cli_probe"))]
+            (expect (= 7 exit) out)
+            (expect (re-find #"module-result 42 argument" out) out))
           (let [{:keys [exit out]}
                 (run-src ctx "import asyncio\nawait asyncio.sleep(0)\nprint('await-still-works')")]
             (expect (= 0 exit) out)
@@ -291,21 +307,15 @@
 
         (try
           (ensure-pytest! ctx)
-          (let [baos
-                (java.io.ByteArrayOutputStream.)
-
-                ps
-                (java.io.PrintStream. baos true "UTF-8")
-
-                exit
-                (with-redefs [config/original-stdout ps]
-                  ((var-get #'com.blockether.vis.internal.main/run-python-module!) ctx "pytest"))]
-
+          (let [{:keys [exit out]}
+                (capture-program-run
+                  ctx
+                  #((var-get #'com.blockether.vis.internal.main/run-python-module!) ctx "pytest"))]
             ;; pytest's own code, not a flattened 1: a collection error is
             ;; ExitCode.INTERRUPTED (2), and the point of the case is that the
             ;; module runner hands the guest's status back untouched.
-            (expect (= 2 exit))
-            (expect (re-find #"ERROR collecting" (.toString baos "UTF-8"))))
+            (expect (= 2 exit) out)
+            (expect (re-find #"ERROR collecting" out) out))
           (finally (env/dispose-python-context! ctx) (delete-tree! dir))))))
 
 (defdescribe
@@ -329,7 +339,8 @@
                          {:network? false :mode :module :argv [module] :env {"PYTHONPATH" ""}})]
                (try (run-src ctx "import sys\nsys.dont_write_bytecode = True")
                     (let [{:keys [exit out]}
-                          (capture-cli-run
+                          (capture-program-run
+                            ctx
                             #((var-get #'com.blockether.vis.internal.main/run-python-module!)
                                 ctx
                                 module))]
@@ -363,10 +374,11 @@
                                             :argv [(.toString file) "argument"]
                                             :env {"PYTHONPATH" ""}})]
                (try (let [{:keys [exit out]}
-                          (capture-cli-run #((var-get
-                                               #'com.blockether.vis.internal.main/run-python-file!)
-                                               ctx
-                                               (.toString file)))]
+                          (capture-program-run
+                            ctx
+                            #((var-get #'com.blockether.vis.internal.main/run-python-file!)
+                                ctx
+                                (.toString file)))]
                       (expect (= 7 exit))
                       (expect (= "file __main__ True argument 42\nran main 42\n" out)))
                     (finally (env/dispose-python-context! ctx))))
@@ -409,18 +421,12 @@
                                :env {"PYTHONPATH" (.toString src)}})]
 
       (try (ensure-pytest! ctx)
-           (let [baos
-                 (java.io.ByteArrayOutputStream.)
-
-                 ps
-                 (java.io.PrintStream. baos true "UTF-8")
-
-                 exit
-                 (with-redefs [config/original-stdout ps]
-                   ((var-get #'com.blockether.vis.internal.main/run-python-module!) ctx "pytest"))]
-
-             (expect (= 0 exit))
-             (expect (re-find #"1 passed" (.toString baos "UTF-8"))))
+           (let [{:keys [exit out]}
+                 (capture-program-run
+                   ctx
+                   #((var-get #'com.blockether.vis.internal.main/run-python-module!) ctx "pytest"))]
+             (expect (= 0 exit) out)
+             (expect (re-find #"1 passed" out) out))
            (finally (env/dispose-python-context! ctx) (delete-tree! dir))))))
 
 (def ^:private python-project-import-roots com.blockether.vis.internal.python.project/import-roots)

@@ -180,6 +180,13 @@ Imports do not install packages. Use `vis-agent python --shared -m pip install <
 for shared sandbox packages and `vis-agent python --shared -m <module>` to run a
 shared tool, including from a project directory.
 
+From a terminal, `vis-agent python` runs programs the way the `python` command does.
+`-c CODE`, `-m MODULE`, a script path or `-` for standard input runs as `__main__`, with
+the remaining arguments in `sys.argv`. An uncaught error prints its traceback to stderr,
+and the command exits with your program's status. Unlike `python_execution`, it has no
+tool functions or automatic imports. `vis-agent python --version` prints the Python
+version; other interpreter options, such as `-u` or `-X`, are not supported.
+
 `vis-agent python uv sync --project PATH` is upstream uv: it prepares the project's
 environment, normally `.venv`, not shared sandbox packages. From that project,
 `vis-agent python -m <module>` uses its environment with Vis's embedded Python,

@@ -24,8 +24,8 @@
 
 (defn- start-cli!
   "Start `vis-agent python` from source like the launcher: the process runs in `dir`
-   and an :invocation-dir travels in user.dir."
-  [^File dir environment args {:keys [invocation-dir jvm-opts]}]
+   and an :invocation-dir travels in user.dir. :input is written to its stdin."
+  [^File dir environment args {:keys [invocation-dir jvm-opts ^String input]}]
   (let [classpath
         (str/join File/pathSeparator
                   (map (fn [entry]
@@ -45,27 +45,42 @@
                 (into ["-cp" classpath "clojure.main" "-m" "com.blockether.vis.core" "python"]))
               args)
 
+        log
+        (str "cli-" (java.util.UUID/randomUUID))
+
         output
-        (io/file dir (str "cli-" (java.util.UUID/randomUUID) ".log"))
+        (io/file dir (str log ".log"))
+
+        errors
+        (io/file dir (str log ".err"))
 
         builder
         (doto (ProcessBuilder. ^java.util.List command)
           (.directory dir)
-          (.redirectErrorStream true)
+          (.redirectError errors)
           (.redirectOutput output))]
 
     (doseq [key ["PYTHONPATH" "UV_PROJECT_ENVIRONMENT" "VIRTUAL_ENV" "VIS_PYTHON_PACKAGES"]]
       (.remove (.environment builder) key))
     (.putAll (.environment builder) environment)
     (let [process (.start builder)]
-      (.close (.getOutputStream process))
-      {:process process :output output})))
+      (with-open [stdin (.getOutputStream process)]
+        (when input (.write stdin (.getBytes input "UTF-8"))))
+      {:process process :output output :errors errors})))
 
 (defn- await-cli!
-  [{:keys [^Process process output]} timeout-seconds]
+  "Wait for a started CLI. :output joins stdout and stderr for messages; :stderr omits
+   the JVM's JAVA_TOOL_OPTIONS notice (CI sets it), which is not the program's output."
+  [{:keys [^Process process output errors]} timeout-seconds]
   (try (when-not (.waitFor process timeout-seconds TimeUnit/SECONDS)
-         (throw (ex-info "Python CLI timed out" {:output (slurp output)})))
-       {:exit (.exitValue process) :output (slurp output)}
+         (throw (ex-info "Python CLI timed out" {:output (str (slurp output) (slurp errors))})))
+       (let [stdout
+             (slurp output)
+
+             stderr
+             (str/replace (slurp errors) #"(?m)^Picked up .*\n?" "")]
+
+         {:exit (.exitValue process) :stdout stdout :stderr stderr :output (str stdout stderr)})
        (finally (when (.isAlive process)
                   (doseq [^java.lang.ProcessHandle child (-> process
                                                              .toHandle
@@ -81,11 +96,12 @@
   "Run independent invocations at once. C1 and the serial collector roughly halve
    each short-lived JVM's CPU, which is what several of them contend for."
   [dir invocations]
-  (let [started (mapv (fn [{:keys [environment args options]}]
+  (let [started (mapv (fn [{:keys [environment args options input]}]
                         (start-cli! dir
                                     environment
                                     args
                                     (assoc options
+                                      :input input
                                       :jvm-opts ["-XX:TieredStopAtLevel=1" "-XX:+UseSerialGC"])))
                       invocations)]
     (mapv #(await-cli! % 240) started)))
@@ -98,8 +114,9 @@
   ;; Regression #226: a project must not borrow shared wheels, editable roots,
   ;; startup hooks or modules imported by those hooks before its environment loads.
   ;; The native suite covers custom and missing environments against the binary.
+  ;; `-c` and stdin ran in a sandbox module, printed errors to stdout and exited 1.
   (it
-    "runs code, modules, files and pytest from the invocation directory in its project"
+    "runs code, stdin, modules, files and pytest like python in the invocation project"
     (let [dir
           (.getCanonicalFile (.toFile (Files/createTempDirectory (.toPath (doto (io/file "target")
                                                                             .mkdirs))
@@ -132,64 +149,92 @@
                " version('cli-invocation-project'))\n")
 
           invocation
-          (fn [args expected & [environment]]
-            {:args (into ["--no-network"] args)
-             :expected expected
-             :environment (merge {"VIS_PYTHON_PACKAGES" (.getCanonicalPath shared)} environment)
-             :options {:invocation-dir project}})]
+          (fn [args expected & [environment extra]]
+            (merge {:args (into ["--no-network"] args)
+                    :expected expected
+                    :exit 0
+                    :stderr ""
+                    :environment (merge {"VIS_PYTHON_PACKAGES" (.getCanonicalPath shared)}
+                                        environment)
+                    :options {:invocation-dir project}}
+                   extra))]
 
-      (try (spit (io/file project "pyproject.toml")
-                 (str
-                   "[project]\nname = 'cli-invocation-project'\nversion = '0.1.0'\n"
+      (try
+        (spit (io/file project "pyproject.toml")
+              (str "[project]\nname = 'cli-invocation-project'\nversion = '0.1.0'\n"
                    "dependencies = ['pytest']\n"
                    "[build-system]\nrequires = ['hatchling']\nbuild-backend = 'hatchling.build'\n"
                    "[tool.hatch.build.targets.wheel]\npackages = ['src/cli_invocation_project']\n"))
-           (spit (io/file project "expected-cwd.txt") (.getCanonicalPath project))
-           (spit (io/file project "cwd_probe.py") probe)
-           (io/make-parents (io/file project "src/cli_invocation_project/__init__.py"))
-           (spit (io/file project "src/cli_invocation_project/__init__.py") "VALUE = 226\n")
-           (spit (io/file project "src/cli_priority_fixture.py") "VALUE = 226\n")
-           (spit (io/file shadow "cli_priority_fixture.py") "VALUE = 999\n")
-           (io/make-parents (io/file project "tests/test_cwd.py"))
-           (spit (io/file project "tests/test_cwd.py") "def test_cwd():\n    import cwd_probe\n")
-           (spit (io/file shared "cli_shared_only.py") "VALUE = 'shared'\n")
-           (spit (io/file editable "cli_shared_editable.py") "VALUE = 'editable'\n")
-           (spit (io/file shared "shared.pth")
-                 (str (.getCanonicalPath editable)
-                      "\nimport cli_shared_only; print('SHARED_HOOK_RAN')\n"))
-           (python-runtime/ensure-library!)
-           (#'python-runtime/run-uv!
-            project
-            [(#'python-runtime/bundled-uv!) "sync" "--python" (Interpreter/pythonExecutable)])
-           (let [invocations
-                 [(invocation ["-c"
-                               (str probe
-                                    "from cli_priority_fixture import VALUE as PRIORITY\n"
-                                    "print('PRIORITY', PRIORITY)\n")]
-                              ;; -c code runs in a sandbox module; only files and modules are __main__.
-                              [" - 226 0.1.0" "PRIORITY 999"]
-                              {"PYTHONPATH" (.getCanonicalPath shadow)})
-                  (invocation ["-m" "cwd_probe"] ["PROBE __main__ cwd_probe.py 226 0.1.0"])
-                  (invocation ["./cwd_probe.py"] ["PROBE __main__ cwd_probe.py 226 0.1.0"])
-                  (invocation ["-m" "pytest" "./tests" "-q"]
-                              ["1 passed"]
-                              {"PYTHONPATH" "." "PYTEST_DISABLE_PLUGIN_AUTOLOAD" "1"})
-                  (invocation
-                    ["--shared" "-c"
-                     (str "import cli_shared_only, cli_shared_editable, importlib.util\n"
-                          "from pathlib import Path\n"
-                          "assert str(Path.cwd()) == Path('expected-cwd.txt').read_text()\n"
-                          "assert importlib.util.find_spec('cli_invocation_project') is None\n"
-                          "print('SHARED', cli_shared_only.VALUE, cli_shared_editable.VALUE)")]
-                    ["SHARED shared editable"])]]
-             (doseq [[{:keys [args expected]} {:keys [exit output]}]
-                     (map vector invocations (run-cli-together install invocations))]
-               (expect (= 0 exit) (str args "\n" output))
-               (doseq [text expected]
-                 (expect (str/includes? output text) (str args "\n" output)))
-               (when-not (some #{"--shared"} args)
-                 (expect (not (str/includes? output "SHARED_HOOK_RAN")) (str args "\n" output)))))
-           (finally (delete-tree! dir))))))
+        (spit (io/file project "expected-cwd.txt") (.getCanonicalPath project))
+        (spit (io/file project "cwd_probe.py") probe)
+        (io/make-parents (io/file project "src/cli_invocation_project/__init__.py"))
+        (spit (io/file project "src/cli_invocation_project/__init__.py") "VALUE = 226\n")
+        (spit (io/file project "src/cli_priority_fixture.py") "VALUE = 226\n")
+        (spit (io/file shadow "cli_priority_fixture.py") "VALUE = 999\n")
+        (io/make-parents (io/file project "tests/test_cwd.py"))
+        (spit (io/file project "tests/test_cwd.py") "def test_cwd():\n    import cwd_probe\n")
+        (spit (io/file shared "cli_shared_only.py") "VALUE = 'shared'\n")
+        (spit (io/file editable "cli_shared_editable.py") "VALUE = 'editable'\n")
+        (spit (io/file shared "shared.pth")
+              (str (.getCanonicalPath editable)
+                   "\nimport cli_shared_only; print('SHARED_HOOK_RAN')\n"))
+        (python-runtime/ensure-library!)
+        (#'python-runtime/run-uv!
+         project
+         [(#'python-runtime/bundled-uv!) "sync" "--python" (Interpreter/pythonExecutable)])
+        (let
+          [invocations
+           [(invocation
+              ["-c"
+               ;; python -c dedents its code; the host has to ask for that.
+               (str/replace
+                 (str
+                   "import atexit, sys, threading, time\n" probe
+                   "from cli_priority_fixture import VALUE as PRIORITY\n"
+                   "print('PRIORITY', PRIORITY, sys._getframe().f_code.co_filename)\n"
+                   "atexit.register(print, 'AT_EXIT')\n"
+                   "threading.Thread(target=lambda: (time.sleep(0.2), print('JOINED'))).start()\n"
+                   "print('note', file=sys.stderr)\n" "sys.exit(3)\n")
+                 #"(?m)^"
+                 "    ")]
+              ;; Like python: __main__, stderr apart, the program's exit status, and
+              ;; non-daemon threads and atexit handlers finish before the process exits.
+              ["PROBE __main__ - 226 0.1.0" "PRIORITY 999 <string>" "JOINED" "AT_EXIT"]
+              {"PYTHONPATH" (.getCanonicalPath shadow)}
+              {:exit 3 :stderr "note\n"})
+            (invocation
+              ["-" "extra"]
+              ["STDIN __main__ <stdin> ['-', 'extra']"]
+              nil
+              {:input (str
+                        "import sys\n"
+                        "print('STDIN', __name__, sys._getframe().f_code.co_filename, sys.argv)\n"
+                        "sys.exit('stdin exit')\n")
+               :exit 1
+               :stderr "stdin exit\n"})
+            (invocation ["-m" "cwd_probe"] ["PROBE __main__ cwd_probe.py 226 0.1.0"])
+            (invocation ["./cwd_probe.py"] ["PROBE __main__ cwd_probe.py 226 0.1.0"])
+            (invocation ["-m" "pytest" "./tests" "-q"]
+                        ["1 passed"]
+                        {"PYTHONPATH" "." "PYTEST_DISABLE_PLUGIN_AUTOLOAD" "1"})
+            (invocation ["--shared" "-c"
+                         (str "import cli_shared_only, cli_shared_editable, importlib.util\n"
+                              "from pathlib import Path\n"
+                              "assert str(Path.cwd()) == Path('expected-cwd.txt').read_text()\n"
+                              "assert importlib.util.find_spec('cli_invocation_project') is None\n"
+                              "print('SHARED', cli_shared_only.VALUE, cli_shared_editable.VALUE)")]
+                        ["SHARED shared editable"])]]
+          (doseq [[{:keys [args expected exit stderr]} result]
+                  (map vector invocations (run-cli-together install invocations))
+                  :let [message (str args "\n" (:output result))]]
+
+            (expect (= exit (:exit result)) message)
+            (expect (= stderr (:stderr result)) message)
+            (doseq [text expected]
+              (expect (str/includes? (:stdout result) text) message))
+            (when-not (some #{"--shared"} args)
+              (expect (not (str/includes? (:output result) "SHARED_HOOK_RAN")) message))))
+        (finally (delete-tree! dir))))))
 
 (defn- shared-fixture-wheel!
   ^File [^File project module]

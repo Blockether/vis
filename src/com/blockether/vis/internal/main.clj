@@ -1634,11 +1634,12 @@
 
 ;;; ── `vis-agent python` — standalone CPython interpreter ────────────────────────
 ;;
-;; Expose JUST the embedded Python sandbox -- the real CPython, the packages
-;; `pip` put in `~/.vis/python/packages`, the host-call doors and the
-;; auto-imports -- with NO agent tool bindings. Handy for reproducing sandbox
-;; behaviour straight from the shell. Behaves identically under the JVM and the
-;; native image: both drive the same `env/*` machinery.
+;; Expose JUST the embedded CPython -- the packages `pip` put in
+;; `~/.vis/python/packages` or the project's environment -- with NO agent tool
+;; bindings. Programs run as `__main__` with CPython's streams, tracebacks and
+;; exit codes, so scripts that call `python -c ...` can call `vis-agent python`.
+;; Behaves identically under the JVM and the native image: both drive the same
+;; `env/*` machinery.
 
 (defn- python-cli-project-environment
   "Select a project before interpreter startup; shared tools opt out explicitly."
@@ -1831,9 +1832,10 @@
 (defn- parse-python-cli-args
   "Parse `vis-agent python` residual args into a runtime plan. Leading options
    (`--shared`, `--no-network`, `--no-env`, `--env K=V`, and an explicit `--`) are
-   consumed until the program selector (`-c`, `-`, or a FILE); everything
+   consumed until the program selector (`-c`, `-m`, `-`, or a FILE); everything
    from the selector on is the program plus its verbatim script `argv`
    (mirrors CPython: trailing args land in `sys.argv`, flags included).
+   `-V`/`--version` before the selector reports the version, as in CPython.
    With no selector the mode is `:interactive` (REPL on a TTY, else stdin)."
   [residual]
   (loop [network?
@@ -1851,13 +1853,21 @@
          args
          (vec residual)]
 
-    (let [a (first args)]
-      (cond (nil? a) {:network? network?
-                      :inherit-env? inherit-env?
-                      :env-overrides env-overrides
-                      :shared? shared?
-                      :mode :interactive
-                      :argv []}
+    (let [a
+          (first args)
+
+          base
+          {:network? network?
+           :inherit-env? inherit-env?
+           :env-overrides env-overrides
+           :shared? shared?}]
+
+      (cond (nil? a) (assoc base
+                       :mode :interactive
+                       :argv [])
+            (contains? #{"-V" "--version"} a) (assoc base
+                                                :mode :version
+                                                :argv [])
             (= a "--shared") (recur network? inherit-env? env-overrides true (subvec args 1))
             (= a "--no-network") (recur false inherit-env? env-overrides shared? (subvec args 1))
             (= a "--no-env") (recur network? false env-overrides shared? (subvec args 1))
@@ -1871,17 +1881,15 @@
             (str/starts-with? a "--env=")
             (recur network? inherit-env? (conj env-overrides (subs a 6)) shared? (subvec args 1))
             :else (let [prog (if (= a "--") (subvec args 1) args)]
-                    (merge {:network? network?
-                            :inherit-env? inherit-env?
-                            :env-overrides env-overrides
-                            :shared? shared?}
+                    (merge base
                            (if (empty? prog)
                              {:mode :interactive :argv []}
                              (python-program-plan prog))))))))
 
 (def ^:private python-cli-runner-src
-  "Python helper for `vis-agent python -m MODULE` and `vis-agent python FILE`.
-   Both run through runpy as `__main__`, recording SystemExit for the host."
+  "Guest runner for `vis-agent python` programs. `-c`, stdin, FILE and `-m` run
+   as `__main__` with CPython's streams, tracebacks and exit status, which the
+   runner records for the host."
   (slurp (io/resource "vis-python/module_runner.py")))
 
 (defn- python-cli-exit-code
@@ -1895,20 +1903,35 @@
        (catch Throwable _ 0)))
 
 (defn- run-python-program!
-  "Run a file or module as `__main__`, streaming its output to the terminal."
-  [ctx runner target]
+  "Call guest `runner` with `args` to run a program as `__main__`, streaming its
+   output to the terminal, and return the exit code the program set."
+  [ctx runner & args]
   (let [code
-        (str python-cli-runner-src "\n" runner "(" (pr-str target) ")\n")
+        (str python-cli-runner-src
+             "\n"
+             runner
+             "("
+             (str/join ", " (map env/py-json-literal args))
+             ")\n")
 
         ;; Programs own their event loop; do not wrap runpy in the tool coroutine.
         {:keys [error]}
-        (json/read-json
-          (pyrt/run ctx
-                    (str "__import__('vis_runtime').run_sync_block(" (pr-str code) ", globals())"))
-          :key-fn
-          keyword)]
+        (json/read-json (pyrt/run ctx
+                                  (str "__import__('vis_runtime').run_sync_block("
+                                       (env/py-json-literal code)
+                                       ", globals())"))
+                        :key-fn
+                        keyword)]
 
-    (if error (do (commandline/stdout! error) 1) (python-cli-exit-code ctx))))
+    (if error (do (commandline/stderr! error) 1) (python-cli-exit-code ctx))))
+
+(defn- finish-python-cli!
+  "Finish Python as CPython does at process exit: wait for non-daemon threads, then
+   run `atexit` handlers. The interpreter then refuses new thread-pool work, so only
+   a process about to exit calls this."
+  [ctx]
+  (try (pyrt/exec! ctx (str python-cli-runner-src "\n__vis_shutdown__()\n"))
+       (catch Throwable t (commandline/stderr! (or (.getMessage t) (str t))))))
 
 (defn- run-python-module!
   "Run MODULE as `__main__` in `ctx`, returning its exit code."
@@ -1923,9 +1946,10 @@
   (run-python-program! ctx "__vis_run_file__" file))
 
 (defn- cli-python!
-  "`vis-agent python` -- run code in the embedded Python sandbox (no tool
-   bindings). Modes: `-c CODE` (run a string), `FILE.py` (run a file), `-` or
-   piped stdin (run stdin), or an interactive REPL on a bare TTY. Trailing args
+  "`vis-agent python` -- run the embedded CPython without tool bindings. Modes:
+   `-c CODE` (run a string), `-m MODULE`, `FILE.py`, `-` or piped stdin, an
+   interactive REPL on a bare TTY, and `-V`/`--version`. Programs run as
+   `__main__` with CPython's streams, tracebacks and exit codes; trailing args
    after the program selector become `sys.argv`. `--no-network` disables sandbox
    network; the caller's environment is inherited into `os.environ` by default
    (`--no-env` scrubs it, `--env K=V` sets/overrides one var). `--shared` selects
@@ -1941,7 +1965,12 @@
 
         ctx
         (when-not (= :uv mode)
-          (python-cli-context {:network? network? :argv argv :env env :shared? shared? :mode mode}))
+          ;; The version belongs to the interpreter; skip project activation for it.
+          (python-cli-context {:network? network?
+                               :argv argv
+                               :env env
+                               :shared? (or shared? (= :version mode))
+                               :mode mode}))
 
         exit
         (case mode
@@ -1955,11 +1984,11 @@
 
           :code
           (if code
-            (run-python-source! ctx code)
+            (run-python-program! ctx "__vis_run_code__" code "<string>" true)
             (do (commandline/stderr! "vis-agent python -c requires a CODE argument.") 2))
 
           :stdin
-          (run-python-source! ctx (slurp System/in))
+          (run-python-program! ctx "__vis_run_code__" (slurp System/in) "<stdin>")
 
           :file
           (let [f (io/file file)]
@@ -1973,8 +2002,15 @@
           :interactive
           (if (some? (System/console))
             (do (python-repl! ctx) 0)
-            (run-python-source! ctx (slurp System/in))))]
+            (run-python-program! ctx "__vis_run_code__" (slurp System/in) "<stdin>"))
 
+          :version
+          (do (commandline/stdout!
+                (str "Python "
+                     (json/read-json (pyrt/run ctx "__import__('platform').python_version()"))))
+              0))]
+
+    (when ctx (finish-python-cli! ctx))
     (shutdown-agents)
     (System/exit exit)))
 
@@ -2047,7 +2083,7 @@
     {:cmd/name "python"
      :cmd/doc
      "Run embedded Python, or pass commands unchanged to bundled uv: vis-agent python uv [ARGS...]"
-     :cmd/usage "vis-agent python [OPTS] [-c CODE | -m MODULE | FILE.py | -] [ARG...]"
+     :cmd/usage "vis-agent python [OPTS] [-V | -c CODE | -m MODULE | FILE.py | -] [ARG...]"
      :cmd/examples
      ["vis-agent python --shared -c \"import requests; print(requests.__version__)\""
       "vis-agent python --shared -m pip install requests   # shared sandbox packages"
@@ -2060,7 +2096,9 @@
       "vis-agent python -c \"import os; print(os.environ['HOME'])\"   # env inherited"
       "vis-agent python --no-env -c \"import os; print(dict(os.environ))\"   # scrubbed"
       "vis-agent python --env FOO=bar -c \"import os; print(os.environ['FOO'])\""
-      "echo 'print(1 + 1)' | vis-agent python" "vis-agent python   # interactive REPL"]
+      "vis-agent python -c \"import sys; sys.exit(3)\"   # exit status 3, as with python"
+      "vis-agent python --version" "echo 'print(1 + 1)' | vis-agent python"
+      "vis-agent python   # interactive REPL"]
      :cmd/owns-tty? true
      :cmd/run-fn cli-python!}]]
   (registry/register-cmd! spec))
@@ -2351,9 +2389,10 @@
   nil)
 
 (defn- deferred-python-dispatch?
-  "Defer gateway Python loading and keep declarative sync free of entrypoint imports."
+  "Defer gateway Python loading; keep declarative sync free of entrypoint imports
+   and the standalone interpreter free of extension loading and its output."
   [args]
-  (or (= "stdio" (first args))
+  (or (contains? #{"stdio" "python"} (first args))
       (contains? #{["gateway" "start"] ["gateway" "tui"] ["extension" "sync"]}
                  (vec (take 2 args)))))
 

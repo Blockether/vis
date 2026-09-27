@@ -99,9 +99,9 @@
 ;; synchronously initialized CPython before dispatch, then its gateway did it again.
 (defdescribe
   dispatch-extension-initialization-test
-  (it "defers Python initialization for the gateway and declarative sync"
+  (it "defers Python initialization for the gateway, declarative sync and the interpreter"
       (doseq [args [["gateway" "start"] ["extension" "sync" "--dry-run"]
-                    ["extension" "sync" "--trust"]]]
+                    ["extension" "sync" "--trust"] ["python" "-c" "print(1)"]]]
         (let [calls (atom [])]
           (with-redefs [manifest/initialize! #(swap! calls conj :clojure)
                         python-extensions/load-python-extensions! #(swap! calls conj :python)]
