@@ -63,7 +63,7 @@ it('combines same-file patches into one chronological diff without changing the 
   const original = structuredClone(activity);
   openPatches(activity);
   expect(screen.getByRole('button', { name: 'Collapse Activity' })).toHaveTextContent(
-    '2 operations',
+    '2 mutations',
   );
   expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(1);
   const row = document.querySelector('[data-activity-row="0:patch-1"]')! as HTMLElement;

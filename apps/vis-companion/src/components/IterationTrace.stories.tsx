@@ -1188,7 +1188,7 @@ export const JoinedActivity: Story = {
     await expect(executionEdge - edge).toBeCloseTo(12, 0);
     const band = canvas.getByRole('button', { name: 'Expand Activity' });
     await expect(band).toHaveTextContent('ACTIVITY');
-    await expect(band).toHaveTextContent('13 operations');
+    await expect(band).toHaveTextContent('3 mutations · 8 observations · 2 checks · 1 running');
     await expect(canvas.queryByRole('button', { name: /Read ×8/ })).toBeNull();
     await expect(textEdge(band)).toBeCloseTo(executionEdge, 0);
     await userEvent.click(band);
@@ -1216,7 +1216,7 @@ export const JoinedActivity: Story = {
     const labelSize = getComputedStyle(document.documentElement)
       .getPropertyValue('--text-ui')
       .trim();
-    const countSize = getComputedStyle(canvas.getByText(/13 operations/)).fontSize;
+    const countSize = getComputedStyle(canvas.getByText('3 mutations')).fontSize;
     await expect(Number.parseFloat(countSize)).toBeLessThanOrEqual(Number.parseFloat(labelSize));
     for (const name of ['CODE', 'ACTIVITY']) {
       const label = canvas.getByText(name);

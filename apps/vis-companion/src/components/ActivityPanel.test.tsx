@@ -3,7 +3,7 @@
 // axis the engine's own bounded snapshot — the fixture the host projects — and
 // reads the document that landed. Nothing here opens, patches or closes a view:
 // that is the Live View rail, and it is a different file for that reason.
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ActivityPanel, activityCostParts, activityReceiptText } from './ActivityPanel';
 import activityPanelSource from './ActivityPanel.tsx?raw';
@@ -424,7 +424,7 @@ describe('joined Activity operation groups', () => {
       name: 'Expand Activity',
     });
     expect(initiallyShut.textContent).toContain('ACTIVITY');
-    expect(initiallyShut.textContent).toContain('3 operations');
+    expect(initiallyShut.textContent).toContain('0 mutations · 3 observations');
     expect(screen.queryByRole('button', { name: /Read ×3/ })).toBeNull();
     fireEvent.click(initiallyShut);
     const group = screen.getByRole('button', { name: /Read ×3/ });
@@ -564,7 +564,7 @@ describe('joined Activity operation groups', () => {
       />,
     );
     const receipt = screen.getByRole('button', { name: 'Expand Activity' });
-    expect(receipt.textContent).toContain('17 operations');
+    expect(receipt.textContent).toContain('0 mutations · 17 observations');
     expect(receipt.textContent).toContain('7 omitted');
   });
 
@@ -877,6 +877,44 @@ describe('what the iteration cost', () => {
       '1 observation',
       '1 check, 1 failing',
     ]);
+  });
+
+  // Summarized steps pool into one band whose collapsed header is all a reader sees:
+  // it names what the steps cost, not only how many ran.
+  it('names the collapsed band by its cost, beside the state words', () => {
+    const projection = activityProjection();
+    const [first, ...rest] = projection.rows;
+    render(
+      <ActivityPanel
+        activity={{
+          ...projection,
+          counts: { running: 0, succeeded: 1, failed: 1, cancelled: 0 },
+          rows: [{ ...first, signal: 'mutation' as const, state: 'failed' as const }, ...rest],
+        }}
+      />,
+    );
+    const toggle = screen.getByRole('button', { name: 'Expand Activity' });
+
+    expect(toggle).toHaveTextContent('1 mutation · 1 check · 1 failed');
+    expect(toggle).not.toHaveTextContent('operation');
+    expect(within(toggle).getByText('1 mutation')).toHaveClass('text-accent-ink');
+  });
+
+  // Rows past the first page have not arrived, so the rows present cannot say what
+  // the rest cost: the header keeps the plain count until then.
+  it('keeps the plain count while a history is only partly loaded', () => {
+    render(
+      <ActivityPanel
+        activity={{
+          ...activityProjection(),
+          history: { id: 'history-1', revision: 1, total: 40, after: 0, next_after: 32 },
+        }}
+      />,
+    );
+    const toggle = screen.getByRole('button', { name: 'Expand Activity' });
+
+    expect(toggle).toHaveTextContent('40 operations');
+    expect(toggle).not.toHaveTextContent('mutation');
   });
 });
 

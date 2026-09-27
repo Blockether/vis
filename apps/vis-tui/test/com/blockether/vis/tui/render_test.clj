@@ -432,6 +432,7 @@
                     {:id (str "row-" index)
                      :sequence (inc index)
                      :operation "grep"
+                     :signal "observation"
                      :state "succeeded"
                      :summary (str "match " index)
                      :resources []
@@ -480,7 +481,9 @@
             (expect (= (mapv :line plain) (mapv :line entries)))
             (expect (= 15 (count (get-in header [:meta :copy-history]))))
             (expect (nil? (:error captured)))
-            (expect (str/includes? text "19 operations"))
+            ;; A 40-column band has room for the start of the cost line only.
+            (expect (str/includes? text
+                                   (if (< cols 80) "0 mutations" "0 mutations · 19 observations")))
             (expect (not (str/includes? text "search every operation")))
             (expect (not (str/includes? text "from run")))))))
   (it "does not offer search for an empty complete record"
@@ -616,6 +619,7 @@
                 {:id (str "op-" i)
                  :sequence i
                  :operation operation
+                 :signal (if (= "cat" operation) "observation" "mutation")
                  :state "succeeded"
                  :summary (str "file-" i)
                  :resources [{:type "file" :id (str "file-" i)}]
@@ -646,7 +650,7 @@
               (text rows {"#band" true})]
 
           (expect (str/includes? shut "ACTIVITY"))
-          (expect (str/includes? shut "6 operations"))
+          (expect (str/includes? shut "4 mutations · 2 observations"))
           (doseq [label ["Read ×2" "Patch ×2" "Shell ×2"]]
             (expect (not (str/includes? shut label)))
             (expect (str/includes? shown label)))))
@@ -2983,13 +2987,19 @@
                       :started-at-ms nil
                       :duration-ms 10
                       :silent? false
-                      :activity
-                      {:state "running"
-                       :counts {:running 1 :succeeded 1 :failed 0 :cancelled 0}
-                       :rows
-                       [{:id "one" :operation "shell" :summary "npm test" :state "running"}
-                        {:id "two" :operation "grep" :summary "18 matches" :state "succeeded"}]
-                       :omitted {:rows 0 :by-classification {}}}}]}
+                      :activity {:state "running"
+                                 :counts {:running 1 :succeeded 1 :failed 0 :cancelled 0}
+                                 :rows [{:id "one"
+                                         :operation "shell"
+                                         :signal "mutation"
+                                         :summary "npm test"
+                                         :state "running"}
+                                        {:id "two"
+                                         :operation "grep"
+                                         :signal "observation"
+                                         :summary "18 matches"
+                                         :state "succeeded"}]
+                                 :omitted {:rows 0 :by-classification {}}}}]}
 
             payload
             (render/progress->lines-data {:iterations [iter]}
@@ -3001,7 +3011,7 @@
             (strip-sentinels (strip-ansi (str/join "\n" (:lines payload))))]
 
         (expect (str/includes? body "ACTIVITY"))
-        (expect (str/includes? body "1 running · 2 operations"))
+        (expect (str/includes? body "1 running · 1 mutation · 1 observation"))
         (expect (not (str/includes? body "npm test")))))
   (it
     "uses the same trace renderer for live progress and cancelled bubbles"
@@ -8336,6 +8346,7 @@ h = 8"
                                               {:id (str "op-" n)
                                                :sequence n
                                                :operation "cat"
+                                               :signal "observation"
                                                :state "succeeded"
                                                :summary (str "source-" idx "-" n)
                                                :resources [{:type "file"
@@ -8748,8 +8759,9 @@ h = 8"
           (expect (nil? (:error captured)))
           (expect (= 1 (count (re-seq #"ACTIVITY" text))))
           (when (>= cols 80)
-            (expect (str/includes? (:line header)
-                                   (if (seq retained) "6 of 7 operations" "7 operations")))))))
+            (expect (str/includes?
+                      (:line header)
+                      (if (seq retained) "6 of 7 operations" "0 mutations · 7 observations")))))))
     (it "paints Activity for each step when summarizing is off"
         (doseq [live?
                 [false true]
@@ -8773,8 +8785,10 @@ h = 8"
                 codes
                 (filter #(str/ends-with? (str (get-in % [:meta :node-id])) ":code") painted)]
 
-            (expect (= ["2 operations" "2 operations" "3 operations"]
-                       (mapv #(re-find #"\d+ operations" (str (:line %))) (bands painted))))
+            (expect (= ["0 mutations · 2 observations" "0 mutations · 2 observations"
+                        "0 mutations · 3 observations"]
+                       (mapv #(re-find #"\d+ mutations? · \d+ observations?" (str (:line %)))
+                             (bands painted))))
             (expect (= (if show-code? 3 0) (count codes))))))
     (it "counts inline operations as well as every retained record in the joined band"
         (doseq [cols
@@ -10100,6 +10114,7 @@ print(paths)"
                              {:id (str "visible-" i)
                               :sequence i
                               :operation "shell"
+                              :signal "mutation"
                               :state "succeeded"
                               :summary (str "command-" i)
                               :presentation {:headline (str "Operation " i)
@@ -10108,6 +10123,7 @@ print(paths)"
               rows (into [{:id "shell-group"
                            :sequence 0
                            :operation "shell"
+                           :signal "mutation"
                            :state "succeeded"
                            :summary "Grouped shell"
                            :children (subvec leaves 0 4)}]
@@ -10138,7 +10154,8 @@ print(paths)"
                                                   {:viewport-h 80}))})]
 
           (expect (nil? (:error captured)))
-          (expect (str/includes? text "11 operations"))
+          ;; The cost counts the shell group once, as the one mutation it is.
+          (expect (str/includes? text "8 mutations"))
           (expect (not (str/includes? text "8 of 11")))
           (doseq [i (range 11)]
             (expect (contains? ids (str "visible-" i)))
@@ -10386,11 +10403,11 @@ print(paths)"
           (expect (= #{{:kind :file :session-id "fixture" :url "src/example.clj"}} targets))))))
 
 ;; Progress notes are the only visible separators of a turn's work: the steps between two
-;; notes share one Activity, live and after the turn finishes.
+;; notes share one Activity, live and after the turn finishes, and its header adds up their cost.
 (defdescribe
   summarized-steps-test
   (let [forms
-        (grouped-activity-forms #{})
+        (assoc-in (grouped-activity-forms #{}) [0 :activity :rows 0 :signal] "mutation")
 
         note
         "Sources read; now the last batch."
@@ -10413,7 +10430,7 @@ print(paths)"
         operations
         (fn [entries]
           (vec (keep #(when (= :activity-header (get-in % [:meta :kind]))
-                        (re-find #"\d+ operations" (str (:line %))))
+                        (re-find #"\d+ mutations? · \d+ observations?" (str (:line %))))
                      entries)))
 
         reasoning
@@ -10438,15 +10455,18 @@ print(paths)"
                 text
                 (str/join "\n" (map :line entries))]
 
-            (expect (= ["4 operations" "3 operations"] (operations entries)))
+            (expect (= ["1 mutation · 3 observations" "0 mutations · 3 observations"]
+                       (operations entries)))
             (expect (= 1 (count (reasoning entries))))
-            (expect (< (.indexOf ^String text "4 operations")
+            (expect (< (.indexOf ^String text "1 mutation · 3 observations")
                        (.indexOf ^String text note)
-                       (.indexOf ^String text "3 operations"))))))
+                       (.indexOf ^String text "0 mutations · 3 observations"))))))
     (it "shows Activity and reasoning for each step when summarizing is off"
         (doseq [live? [false true]]
           (let [entries (render* {:summarize-steps false} live?)]
-            (expect (= ["2 operations" "2 operations" "3 operations"] (operations entries)))
+            (expect (= ["1 mutation · 1 observation" "0 mutations · 2 observations"
+                        "0 mutations · 3 observations"]
+                       (operations entries)))
             (expect (= 2 (count (reasoning entries)))))))
     (it "keeps a finished turn's notes and Activity instead of folding them"
         (doseq [summarize? [true false]]

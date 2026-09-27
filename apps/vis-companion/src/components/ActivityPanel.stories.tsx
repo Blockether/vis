@@ -324,7 +324,7 @@ export const Settled: Story = {
     const toggle = canvas.getByRole('button', { name: 'Expand Activity' });
     const label = within(toggle).getByText('ACTIVITY');
     const chevron = toggle.querySelector('svg')!;
-    const summary = within(toggle).getByText(/operations/);
+    const summary = within(toggle).getByText(/mutation/).parentElement!;
     for (const expanded of [false, true]) {
       await expect(toggle).toHaveAttribute('aria-expanded', String(expanded));
       // The disclosure belongs to the label, not the operation count at the far edge.

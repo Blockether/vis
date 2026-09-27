@@ -6897,6 +6897,7 @@
             ;; WHAT THE BAND HOLDS OF WHAT THE RECORD HOLDS. One window of
             ;; thirty-two out of three hundred calls is not "32 operations":
             ;; the count a reader needs is the one that says there is more.
+            ;; Once every call is here, the band says what they cost instead.
             summary
             (let [shown (operation-count activity-rows)]
               (cond query (str "showing "
@@ -6907,7 +6908,7 @@
                                query
                                "”")
                     (< (long shown) (long retained)) (str shown " of " retained " operations")
-                    :else (str shown " operation" (when (not= 1 shown) "s"))))
+                    :else (activity-cost-text {:rows activity-rows})))
 
             suffix
             (str/join " · "
@@ -7410,7 +7411,6 @@
                    :node-id activity-node-id
                    :status-text
                    (activity-status-text activity (boolean (or is-error? error)) success?)
-                   :cost-text (activity-cost-text activity)
                    :status-tone (cond (or is-error? error) :error
                                       (some? success?) :ok
                                       :else (activity-row-tone activity))

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, Fragment, useContext, useEffect, useState, type ReactNode } from 'react';
 import { InlineMarkdown, Markdown, SyntaxCodeBlock } from './ChatContent';
 import { BandLabel, BandTally, CopyChip, Disclosure, LoadMore } from './ui';
 import type {
@@ -1346,10 +1346,23 @@ export function ActivityPanel({
     )
     .join(':');
   if (!total) return null;
-  const summary = `${total} ${total === 1 ? 'operation' : 'operations'}`;
+  // Rows past a source's first page have not arrived, so count them plainly, not by kind.
+  const partial = activities.some(
+    (activity) =>
+      activity.history && (activity.history.after > 0 || activity.history.next_after !== null),
+  );
   const states = (['running', 'failed', 'cancelled'] as const).flatMap((state) =>
     activity.counts[state] ? [`${activity.counts[state]} ${state}`] : [],
   );
+  const tally: readonly ActivityCostPart[] = [
+    ...(partial
+      ? [{ text: `${total} ${total === 1 ? 'operation' : 'operations'}`, tone: '' }]
+      : activityCostParts(activity)),
+    ...states.map((text) => ({ text, tone: '' })),
+    ...(!open && activity.omitted.rows
+      ? [{ text: `${activity.omitted.rows} omitted`, tone: '' }]
+      : []),
+  ];
   return (
     <section className="isolate min-w-0" aria-live="off" data-activity-axis>
       <div className="flex min-w-0 items-center gap-2">
@@ -1359,13 +1372,12 @@ export function ActivityPanel({
           inlineChevron
           tally={
             <BandTally placement="trailing">
-              {[
-                summary,
-                ...states,
-                !open && activity.omitted.rows ? `${activity.omitted.rows} omitted` : '',
-              ]
-                .filter(Boolean)
-                .join(' · ')}
+              {tally.map((part, index) => (
+                <Fragment key={part.text}>
+                  {index ? ' · ' : null}
+                  <span className={part.tone || undefined}>{part.text}</span>
+                </Fragment>
+              ))}
             </BandTally>
           }
           isOpen={open}
@@ -1377,11 +1389,7 @@ export function ActivityPanel({
         <CopyChip
           key={historyKey}
           value={
-            activities.some(
-              (activity) =>
-                activity.history &&
-                (activity.history.after > 0 || activity.history.next_after !== null),
-            )
+            partial
               ? (signal) =>
                   activityHistoryCopyText(
                     activities,
