@@ -1,0 +1,96 @@
+{
+  "lang": "python",
+  "prompt": "The preinstalled front_desk and seat_desk extensions are known and unchanged; reuse them without apropos, doc, signature inspection or contract metadata reads. front_desk.book(guest, /, *, section) books a guest: its own code holds a seat by calling seat_desk.hold through vis.tools, and it returns a frozen dataclass with guest, section, hold_id, seat, hold_class, seat_class and frozen; read its fields directly or convert it with dataclasses.asdict. Call front_desk.book for Ada in the balcony section, then for Lin in the main section. Never call seat_desk yourself; front_desk must do that. Do not read source files, import the extensions, recreate them, use shell, or write files yourself. If an extension is unavailable, report that and stop. Return only a JSON object with the key bookings: a list of the two complete booking objects in call order, each with guest, section, hold_id, seat, hold_class, seat_class and frozen. Do not add prose or other keys.",
+  "want": {},
+  "wantnot": {},
+  "want_tools": [
+    "front_desk.book",
+    "seat_desk.hold"
+  ],
+  "max_form_output_chars": 6000,
+  "want_requested_route": true,
+  "want_json_files": {
+    "seat-desk-calls.jsonl": [
+      {
+        "operation": "seat_desk.hold",
+        "arguments": {
+          "guest": "Ada",
+          "section": "balcony"
+        }
+      },
+      {
+        "operation": "seat_desk.hold",
+        "arguments": {
+          "guest": "Lin",
+          "section": "main"
+        }
+      }
+    ],
+    "front-desk-calls.jsonl": [
+      {
+        "operation": "front_desk.book",
+        "hold_class": "Hold",
+        "seat_class": "Seat",
+        "dataclass": true,
+        "frozen": true,
+        "fields": [
+          "guest",
+          "hold_id",
+          "seat",
+          "section"
+        ],
+        "item_access": true
+      },
+      {
+        "operation": "front_desk.book",
+        "hold_class": "Hold",
+        "seat_class": "Seat",
+        "dataclass": true,
+        "frozen": true,
+        "fields": [
+          "guest",
+          "hold_id",
+          "seat",
+          "section"
+        ],
+        "item_access": true
+      }
+    ]
+  },
+  "want_answer_json": {
+    "bookings": [
+      {
+        "guest": "Ada",
+        "section": "balcony",
+        "hold_id": "H1",
+        "seat": "B1",
+        "hold_class": "Hold",
+        "seat_class": "Seat",
+        "frozen": true
+      },
+      {
+        "guest": "Lin",
+        "section": "main",
+        "hold_id": "H2",
+        "seat": "A2",
+        "hold_class": "Hold",
+        "seat_class": "Seat",
+        "frozen": true
+      }
+    ]
+  },
+  "want_activity_sequence": [
+    "front_desk.book",
+    "seat_desk.hold",
+    "front_desk.book",
+    "seat_desk.hold"
+  ],
+  "max_total_output_chars": 10000,
+  "forbid_tools": [
+    "cat",
+    "grep",
+    "ls",
+    "shell",
+    "patch"
+  ]
+}
