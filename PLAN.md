@@ -1519,3 +1519,53 @@ Second-pass cross-validation:
   formatting, JavaScript formatting, companion lint (443 files), and actionlint for
   the five affected workflows passed. Changes remain local; no deployment or
   measured end-to-end warm-cache timing is claimed.
+
+# Project-scoped gateway environments
+
+One gateway, independent project configuration and tools.
+
+## Context
+
+The Companion Projects sheet labels the gateway launch root as current. Python
+extensions likewise load once from process cwd into one registry, although
+sessions already pin independent workspaces. Configuration readers use the bound
+workspace, and package declarations already merge global and project YAML tiers.
+Reusing the launch project's registry or changing process cwd cannot isolate
+concurrent projects. Existing unrelated working-tree edits must remain untouched.
+
+## 1. Reproduce and define isolation
+
+- Rationale: Prove the launch-root leak before changing runtime registration.
+- Data: `internal/python/extensions.clj`, `internal/extension/core.clj`,
+  `internal/loop/environment.clj`, and Companion `ManageProjectsSheet`.
+- Acceptance criteria: Regression tests cover two roots with conflicting extension
+  names, missing dependencies, project YAML, reload, and no current-project badge.
+- Unknowns: Project-scoped provider and hook contributions; automatic trust boundary.
+
+## 2. Prepare and load project environments
+
+- Rationale: Adding a project or opening its session must resolve its own tools.
+- Data: Existing package sync, workspace bindings, registry and reload listeners.
+- Acceptance criteria: Missing configured packages and environments are prepared;
+  project registrations cannot replace another project's registrations; errors are
+  visible and retryable; ordinary session recycling does not adopt code edits.
+- Unknowns: Installation failure handling and cached session refresh boundaries.
+
+## 3. Verify and publish
+
+- Rationale: Exercise real registration and session execution, not just UI labels.
+- Data: Existing Lazytest, Companion tests, formatters and linters.
+- Acceptance criteria: Affected runtime and UI suites, reflection lint, formatting
+  and scoped diff review pass; commit and push only task changes.
+- Unknowns: Concurrent edits or independent baseline test failures.
+
+## Plan state
+
+Complete. Project-scoped catalogs, providers, hooks, configuration, toggles, routers
+and automatic package preparation run through real two-project sessions. Loader
+prompts, doctor checks and reload summaries show only global and current-project
+failures. Managed loads always prepare declared packages and environments, so
+`/reload --sync` was removed; automatic admission supersedes the explicit-sync rule
+from #178. The current badge is removed. Affected runtime suites (990 cases), toggle
+tests, Companion unit tests, typecheck, compiler lint, reflection lint and
+formatting pass.

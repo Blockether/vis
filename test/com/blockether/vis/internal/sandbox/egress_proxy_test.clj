@@ -517,6 +517,42 @@
                         ((:stop! proxy))
                         ((:stop! origin)))))))))
 
+(deftest project-response-filter-wire
+  (run-wire-test
+    (fn []
+      (let [origin
+            (start-origin!)
+
+            seen
+            (atom [])
+
+            base
+            (ep/compile-policy {:allowed-domains ["localhost"]})
+
+            policy-a
+            (assoc base
+              :network-filters-fn (fn []
+                                    [(fn [response]
+                                       (swap! seen conj (:phase response))
+                                       (when (= 200 (:status response))
+                                         {:allow? false
+                                          :reason "Project A blocks this response"}))]))
+
+            policy-b
+            (assoc base :network-filters-fn (constantly []))
+
+            proxy-a
+            (ep/start! {:policy-fn (constantly policy-a)})
+
+            proxy-b
+            (ep/start! {:policy-fn (constantly policy-b)})]
+
+        (try (is (= 403 (http-through-proxy (:port proxy-a) "GET" (:port origin) "/")))
+             (is (= 200 (http-through-proxy (:port proxy-b) "GET" (:port origin) "/")))
+             (is (= 403 (http-through-proxy (:port proxy-a) "GET" (:port origin) "/")))
+             (is (= 2 (count (filter #{:http-response} @seen))))
+             (finally ((:stop! proxy-a)) ((:stop! proxy-b)) ((:stop! origin))))))))
+
 ;; SSRF deny-floor — pure, cross-platform. The proxy is an UNJAILED deputy, so
 ;; `allowed-domains ["*"]` must never mean "fetch the host's own trust plane."
 

@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.loop.router
-  "The process-wide router and per-request provider routing.
+  "Project-scoped routers and per-request provider routing.
 
-   Builds and rebuilds the shared svar router from configuration, hydrates
+   Builds and rebuilds each project's svar router from configuration, hydrates
    provider credentials and model metadata, recovers from a rejected credential
    by refreshing or rerouting, resolves the effective model and its context
    budget, and estimates request cost, including a provider's fast mode."
@@ -24,6 +24,7 @@
             [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.session.model :as session-model]
             [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel]))
 
 (defn normalize-reasoning-level [v] (svar/normalize-reasoning-level v))
@@ -241,7 +242,9 @@
 
 ;; Router lifecycle + model helpers
 
-(defonce ^:private router-atom (atom nil))
+(defonce ^:private router-atom (atom {}))
+
+(defn- router-key [] (.getCanonicalPath (workspace/cwd)))
 
 (defn- enrich-provider-models
   "Apply a provider's optional `:provider/enrich-models-fn` hook to a
@@ -580,13 +583,9 @@
     (providers/refresh-models-async! id ::model-metadata)))
 
 (defn get-router
-  "Get or create the shared LLM router.
-
-   Honors `:router` opts from `~/.vis/config.edn` (`:rate-limit`,
-   `:network`, `:budget`, ...). Without that block svar's built-in
-   defaults apply. See `config/router-opts` for the supported keys."
+  "Get or create the bound project's LLM router from its merged configuration."
   []
-  (or @router-atom
+  (or (get @router-atom (router-key))
       (let [;; Python providers own endpoint/model defaults needed by config itself.
             ;; The first router precedes the first session environment, so waiting
             ;; for create-environment to load extensions is already too late.
@@ -600,16 +599,16 @@
             (-> (build-router cfg)
                 (honor-config-roots! cfg))]
 
-        (reset! router-atom r)
+        (swap! router-atom assoc (router-key) r)
         (refresh-router-models! r)
         r)))
 
 (defn router-initialized?
-  "True once the shared router has been built (via `get-router`/`rebuild-router!`).
+  "True once the bound project's router has been built.
    Lets a frontend defer the FIRST build to lazy first-use instead of forcing it
    at startup — so OAuth token fetches (Copilot/Codex) never run at TUI boot."
   []
-  (some? @router-atom))
+  (some? (get @router-atom (router-key))))
 
 (defn rebuild-router!
   "Rebuild the router from the given config. Used when provider settings change.
@@ -620,7 +619,7 @@
   [config]
   (let [r (-> (build-router config)
               (honor-config-roots! config))]
-    (reset! router-atom r)
+    (swap! router-atom assoc (router-key) r)
     (refresh-router-models! r)
     r))
 

@@ -136,12 +136,12 @@ From `project/`:
    `doc("status")` and call `await status()`. The tool returns `ready`.
    `vis-agent extension list` checks registration only.
 
-After reviewing dependency changes, `/reload --sync` runs upstream `uv sync` for
-projects declared by configured extensions. This host-owned invocation selects the
-gateway's embedded Python with `--python` so compiled dependencies match the worker.
-It can update `uv.lock`. Plain `/reload`, startup and imports never install manually
-selected uv projects. They check an existing environment with `uv sync --check`;
-without one, the extension uses shared packages instead.
+After reviewing dependency changes, run `/reload`. Project admission and reload
+prepare declared uv projects automatically, including missing environments. The
+host-owned invocation selects the gateway's embedded Python with `--python` so
+compiled dependencies match the worker. Preparation can download dependencies
+and update `uv.lock`; review those changes before sharing them. You can also run
+`vis-agent python uv sync --project PATH` beforehand to inspect preparation directly.
 
 ### What preparation installs
 
@@ -230,16 +230,16 @@ missing project dependencies fail instead of falling back to shared installation
 Preparing it does not install the project into the model sandbox. Vis still supplies
 its bundled extension SDK; install your extension's other dependencies in its project.
 
-Without a project environment, the extension uses `~/.vis/python/packages`, even
-when it declares a uv project or has its own `pyproject.toml`. Startup and plain
-`/reload` do not create the missing environment. Install the dependencies with
-[shared sync](#install-a-project-into-shared-packages), then reload. Missing shared
-imports report an error; they do not trigger a project sync.
+When an extension declares a uv project or has its own `pyproject.toml`, adding or
+opening its Vis project prepares the missing environment before registration.
+`/reload` prepares dependency changes. A preparation failure is reported; Vis does
+not silently use shared packages instead. Extensions without a declared project
+use `~/.vis/python/packages` and the [shared sync workflow](#install-a-project-into-shared-packages).
 
 Vis follows uv's workspace root and `UV_PROJECT_ENVIRONMENT` when checking whether
 an environment exists. An existing but incomplete environment does not fall back
-to shared packages. To create a separate environment deliberately, run
-`vis-agent python uv sync --project PATH` or `/reload --sync`.
+to shared packages. To prepare or inspect an environment separately, run
+`vis-agent python uv sync --project PATH`.
 
 Shared storage also serves the model sandbox, extensions without a declared project,
 and standalone `vis-agent python --shared` commands. Sandbox imports still need their
@@ -280,8 +280,9 @@ remain editable. You do not create or manage an exported requirements file.
 
 Run `/reload` after installation to refresh Vis workers. To run a shared package
 from the CLI, including inside a project, use `vis-agent python --shared -m your_package`.
-Shared sync does not create `.venv`. Project extensions without an environment use
-these shared packages; extensions with an existing environment keep using that instead.
+Shared sync does not create `.venv`. Extensions without a declared uv project use
+these shared packages; extensions with a declared project or their own `pyproject.toml`
+use the environment Vis prepares for them instead.
 
 **Shared sync retains unrelated packages**, including packages previously installed
 from groups you no longer select. All shared consumers use the same installed versions.

@@ -39,6 +39,7 @@
    lives in `com.blockether.vis.internal.extension.manifest`."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel]))
 
 ;; Quiet boot
@@ -270,12 +271,37 @@
 
 (defn deregister-provider! [id] (swap! provider-registry dissoc id) nil)
 
-(defn registered-providers [] (vec (vals @provider-registry)))
+(defonce ^:private project-providers (atom {}))
+
+(defn set-project-providers!
+  "Replace one project's providers and extension overrides. Providers from a shadowed
+   global extension are excluded even when the project version uses different provider IDs."
+  [root specs extension-names]
+  (let [providers (mapv provider specs)]
+    (swap! project-providers assoc
+      (workspace/normalize-root root)
+      {:providers (into {} (map (juxt :provider/id identity)) providers)
+       :extension-names extension-names})))
+
+(defn- effective-providers
+  []
+  (let [{:keys [providers extension-names]} (get @project-providers
+                                                 (.getCanonicalPath (workspace/cwd)))]
+    (merge (into {}
+                 (remove (fn [[_ spec]]
+                           (contains?
+                             extension-names
+                             (:com.blockether.vis.internal.extension.core/provider-extension
+                               (meta spec)))))
+                 @provider-registry)
+           providers)))
+
+(defn registered-providers [] (vec (vals (effective-providers))))
 
 (defn provider-by-id
-  "Lookup a provider by `:provider/id`. Returns nil when absent."
+  "Lookup a provider in the calling project's catalog, then the global catalog."
   [id]
-  (get @provider-registry id))
+  (get (effective-providers) id))
 
 (defonce command-registry
   ;; Vector preserves registration order, which then becomes the

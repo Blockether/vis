@@ -12,6 +12,7 @@
             [com.blockether.vis.internal.loop.transcript :as transcript]
             [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.session.titling :as titling]))
 
 (defn db-info
@@ -104,7 +105,11 @@
 
 (defn get-project [project-id] (persistance/db-get-project (db-info) project-id))
 
-(defn create-project! [opts] (persistance/db-create-project! (db-info) opts))
+(defn create-project!
+  [opts]
+  (when-let [root (:workspace-root opts)]
+    (python-extensions/prepare-project! root))
+  (persistance/db-create-project! (db-info) opts))
 
 (defn get-project-by-root
   "Project bound to canonical workspace `root` for `owner-id` (default
@@ -119,6 +124,7 @@
    project (falls back to the root path)."
   ([root] (ensure-project-for-root! "local" root nil))
   ([owner-id root name]
+   (python-extensions/prepare-project! root)
    (or (get-project-by-root owner-id root)
        (try (create-project! {:name (or (not-empty (str name)) (str root))
                               :owner-id (or owner-id "local")

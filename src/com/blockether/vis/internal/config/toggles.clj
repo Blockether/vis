@@ -217,6 +217,10 @@
   (doseq [f @listeners]
     (try (f event) (catch Throwable _ nil))))
 
+(def ^:dynamic *overrides*
+  "Admitted session configuration, bound by the extension callback context."
+  nil)
+
 (defn value-of
   "Resolve the live value for `id`. Lookup order:
      1. live override in `state`,
@@ -228,7 +232,9 @@
    boolean-cast convenience for the common boolean path."
   [id]
   (let [s @state]
-    (if (contains? s id) (get s id) (:default (get @registry id)))))
+    (cond (contains? *overrides* id) (get *overrides* id)
+          (contains? s id) (get s id)
+          :else (:default (get @registry id)))))
 
 (defn enabled?
   "Boolean cast of `(value-of id)`. Fail-closed: returns `false` when `id` is not
@@ -415,6 +421,18 @@
             v))
 
       v)))
+
+(defn config-values
+  "Resolve a complete session toggle snapshot without changing another project's settings."
+  [config-map]
+  (let [persisted (or (get config-map "toggles") (:toggles config-map))]
+    (into {}
+          (map (fn [[id spec]]
+                 [id
+                  (if (contains? persisted id)
+                    (coerce-config-value id (get persisted id))
+                    (:default spec))]))
+          @registry)))
 
 (defn wire-value
   "Coerce ONE value that arrived over the wire (`POST /v1/settings`) onto the

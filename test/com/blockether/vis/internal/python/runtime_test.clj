@@ -340,11 +340,11 @@
                         (catch clojure.lang.ExceptionInfo e e))]
 
                (is (= (str "uv sync failed\nRun vis-agent python uv sync --project ."
-                           ", then /reload; or use /reload --sync.")
+                           ", then /reload.")
                       (.getMessage same-dir)))
                (is (= (str "uv sync failed\nRun vis-agent python uv sync --project "
                            (pr-str (.getCanonicalPath elsewhere))
-                           ", then /reload; or use /reload --sync.")
+                           ", then /reload.")
                       (.getMessage other-dir)))
                (is (= ::python-runtime/project-sync-required (:type (ex-data same-dir)))))))
          (finally (doseq [file (reverse (file-seq elsewhere))]

@@ -403,6 +403,21 @@
   []
   (into [] cat (vals @network-filters)))
 
+(defn non-extension-network-filters
+  "Process filters not owned by extension descriptors (which sessions supply themselves)."
+  []
+  (into []
+        (comp (remove (fn [[owner _]]
+                        (= "ext" (namespace owner))))
+              (mapcat val))
+        @network-filters))
+
+(defn- policy-network-filters
+  [policy]
+  (if-let [filters-fn (:network-filters-fn policy)]
+    (filters-fn)
+    (registered-network-filters)))
+
 (defn- headers->map
   "Raw header lines `[\"Name: value\" …]` -> a lower-cased name->value map."
   [headers]
@@ -480,17 +495,16 @@
           filters))
 
 (defn apply-network-filters
-  "Run every registered network filter over `ctx` (a request or response map).
-   `{:allow? true}` when none deny."
-  [ctx]
-  (run-filters (registered-network-filters) ctx))
+  "Run the policy's session filters, or process filters for a standalone caller."
+  ([ctx] (apply-network-filters nil ctx))
+  ([policy ctx] (run-filters (policy-network-filters policy) ctx)))
 
 (defn decide+filter
   "Tier-1 `decide` then, only if allowed, the Tier-2 registered request filters.
    `req` = `{:phase :method :host :path :port :headers}`."
   [policy {:keys [method host path port] :as req}]
   (let [d (decide policy method host path port)]
-    (if (:allow? d) (apply-network-filters req) d)))
+    (if (:allow? d) (apply-network-filters policy req) d)))
 
 (defn- filter-error
   "Pull a structured error out of a filter's RAW return (the network-filter
@@ -516,7 +530,9 @@
         per
         (when (:allow? tier1)
           (vec (for [[owner fs]
-                     @network-filters
+                     (if (:network-filters-fn policy)
+                       (group-by #(or (:owner (meta %)) :session) (policy-network-filters policy))
+                       @network-filters)
 
                      f
                      fs]
@@ -727,7 +743,7 @@
    the upstream body. `req` is the originating request context (host/method/path/
    phase). Used only when response filters are registered; callers otherwise use
    the cheaper full-duplex `splice`."
-  [^ExecutorService pool ^Socket client ^Socket upstream req on-log]
+  [^ExecutorService pool ^Socket client ^Socket upstream req on-log policy]
   (let [cin
         (.getInputStream client)
 
@@ -763,7 +779,7 @@
               :headers (headers->map resp-headers))
 
             {:keys [allow? reason]}
-            (apply-network-filters resp)]
+            (apply-network-filters policy resp)]
 
         (if-not allow?
           (do (on-log (assoc resp
@@ -843,7 +859,7 @@
                 ;; filter can inspect `:body`; larger/chunked bodies stream with
                 ;; `:body` nil (the honest envelope — no unbounded heap buffering).
                 body-bytes
-                (when (seq (registered-network-filters))
+                (when (seq (policy-network-filters policy))
                   (read-body-bytes cin (content-length hmap)))
 
                 req
@@ -901,13 +917,14 @@
 
                        (write-str uout req)
                        (when body-bytes (.write uout ^bytes body-bytes) (.flush uout))
-                       (if (seq (registered-network-filters))
+                       (if (seq (policy-network-filters policy))
                          (relay-with-response-filter
                            pool
                            ssl-client
                            upstream
                            {:phase :https :method method :host host :path path}
-                           on-log)
+                           on-log
+                           policy)
                          (splice pool ssl-client upstream)))
                      (catch Throwable t
                        (try (deny-response scout (str "upstream error: " (.getMessage t)))
@@ -975,7 +992,7 @@
 
         ;; Buffer a small body ONLY when a filter is registered (see mitm-intercept).
         body-bytes
-        (when (seq (registered-network-filters))
+        (when (seq (policy-network-filters policy))
           (read-body-bytes (.getInputStream client) (content-length hmap)))
 
         req
@@ -1031,13 +1048,14 @@
                          (write-str uout req)
                          (when body-bytes (.write uout ^bytes body-bytes) (.flush uout))
                          ;; body (client→upstream) + response (upstream→client), then done.
-                         (if (seq (registered-network-filters))
+                         (if (seq (policy-network-filters policy))
                            (relay-with-response-filter
                              pool
                              client
                              upstream
                              {:phase :http :method method :host host :path path}
-                             on-log)
+                             on-log
+                             policy)
                            (splice pool client upstream)))
                        (catch Throwable t
                          (try (deny-response cout (str "upstream error: " (.getMessage t)))

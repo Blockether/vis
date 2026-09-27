@@ -57,7 +57,7 @@ alter `sys.path` to hide a collision. See [entrypoint design](extension-design.m
 | --- | --- |
 | Circular import or partially initialized module | Give the entry a different filename from the package it imports |
 | Missing package | Check the build backend, dependency mode and `package.__file__`; project extensions use the environment selected by uv |
-| Missing/stale manual uv environment | Read the `uv sync --check` diagnostic, then sync followed by `/reload`, or use `/reload --sync` |
+| Missing or stale uv environment | Project admission and `/reload` prepare it automatically. Read the reported uv diagnostic, fix the dependency or lockfile problem, then retry |
 | Automatic package preparation fails | Read the reported uv phase and diagnostics. Vis bundles uv; reinstall the runtime if its executable is missing |
 | PEP 723 dependency has no wheel | This mode installs wheels only; it does not fall back to a source build |
 | Import works in a project environment but not Vis | Point `tool.vis.project` at that project; check interpreter compatibility and reload |
@@ -118,5 +118,5 @@ See [status updates](live-views.md#nodes) and
 ## See also
 
 - [Installing and sharing extensions](extension-packages.md) — locations and dependency modes.
-- [Using an existing Python project](extension-development.md) — explicit sync and editable imports.
+- [Using an existing Python project](extension-development.md) — project environments and editable imports.
 - [Extension API](extension-api.md) — exact declaration and callback contracts.

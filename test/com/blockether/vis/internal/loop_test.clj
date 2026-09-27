@@ -65,7 +65,11 @@
 
 ;; The turn loop reads routing policy from the provider catalog; every test routes
 ;; through the first-party declarations, as a booted engine does.
-(set-ns-context! [(around-each [f] (policies/with-policies f))])
+(set-ns-context! [(around-each [f]
+                               ;; Session tests use declared fixture tools, never packages from the developer checkout.
+                               (with-redefs [python-extensions/ensure-python-extensions-loaded!
+                                             (constantly {:loaded 0 :failed 0 :changed? false})]
+                                 (policies/with-policies f)))])
 
 (defdescribe
   python-providers-before-router-test
@@ -96,6 +100,45 @@
             (expect (= router (loop-router/get-router)))
             (expect (= router (loop-router/get-router)))
             (expect (= [:extensions :config :build :roots :catalog] @order)))))))
+
+(defdescribe
+  project-router-isolation-test
+  (it
+    "caches and rebuilds the router only for its project's merged configuration"
+    (let [a
+          (workspace/normalize-root "target/router-project-a")
+
+          b
+          (workspace/normalize-root "target/router-project-b")
+
+          builds
+          (atom [])]
+
+      (with-redefs-fn {#'loop-router/router-atom (atom {})
+                       #'config/load-config (fn [_]
+                                              {:project workspace/*workspace-root*})
+                       #'loop-router/build-router (fn [cfg]
+                                                    (swap! builds conj cfg)
+                                                    cfg)
+                       #'loop-router/honor-config-roots! (fn [r _]
+                                                           r)
+                       #'providers/refresh-models-async! (fn [& _])}
+        (fn []
+          (binding [workspace/*workspace-root* a]
+            (expect (false? (loop-router/router-initialized?)))
+            (expect (= {:project a} (loop-router/get-router)))
+            (expect (true? (loop-router/router-initialized?))))
+          (binding [workspace/*workspace-root* b]
+            (expect (false? (loop-router/router-initialized?)))
+            (expect (= {:project b} (loop-router/get-router))))
+          (binding [workspace/*workspace-root* a]
+            (expect (= {:project a} (loop-router/get-router)))
+            (loop-router/rebuild-router! {:project a :revision 2}))
+          (binding [workspace/*workspace-root* b]
+            (expect (= {:project b} (loop-router/get-router))))
+          (binding [workspace/*workspace-root* a]
+            (expect (= {:project a :revision 2} (loop-router/get-router))))
+          (expect (= [{:project a} {:project b} {:project a :revision 2}] @builds)))))))
 
 (defdescribe
   auto-bound-provider-precedence-test

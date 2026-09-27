@@ -441,6 +441,9 @@
             security-config (binding [workspace/*workspace-root* (or (:root active-workspace)
                                                                      workspace/*workspace-root*)]
                               (security-config-snapshot))
+            toggle-values (binding [workspace/*workspace-root* (or (:root active-workspace)
+                                                                   workspace/*workspace-root*)]
+                            (atom (toggles/config-values (config/load-config-raw))))
             configured-rw-roots (security-policy/read-write-roots security-config)
             ;; Engine substrate: embedded CPython (env/create-python-context builds a
             ;; deny-by-default Python session, wires the Clojure tools as Python
@@ -505,7 +508,9 @@
             ;; attribute requests to this environment's immutable policy snapshot.
             sandbox-token (str (java.util.UUID/randomUUID))
             compiled-network-policy (some-> (egress/compile-policy net-cfg)
-                                            (assoc :mitm? (boolean (seq (:rules net-cfg)))))
+                                            (assoc :mitm?
+                                              (boolean (seq (:rules net-cfg))) :network-filters-fn
+                                              #(extension/network-filters @environment-atom)))
             _register-sandbox (when (and sandbox-roots-fn jail-enabled?)
                                 (gateway-sandbox/register-session! sandbox-token
                                                                    (constantly
@@ -529,7 +534,10 @@
                             :net-enabled? net-on?
                             ;; Resolved per spawn (never baked into the session snapshot), so a
                             ;; `.env` edit or a refreshed keychain item reaches the next child.
-                            :env-values (config/child-environment-values)
+                            :env-values (binding [workspace/*workspace-root*
+                                                  (or (:root @workspace-atom)
+                                                      workspace/*workspace-root*)]
+                                          (config/child-environment-values))
                             :proxy-port proxy-port
                             :worker-proxy-port worker-proxy-port
                             :proxy-token (when proxy? sandbox-token)
@@ -604,6 +612,7 @@
                          ;; Python session, native file tools, shell, managed language processes,
                          ;; and egress all derive from this same environment-owned value.
                          :security-policy security-config
+                         :config/toggles toggle-values
                          :security/filesystem-roots configured-rw-roots
                          :security/no-search-roots (security-policy/no-search-roots security-config)
                          :access-view-fn access-view-fn
@@ -717,13 +726,11 @@
         ;; Initialize the one closed distribution manifest before installing its
         ;; registered extensions into this environment.
         (manifest/initialize!)
-        ;; Project-local Python extensions (`.vis/extensions/*.py`) load after
-        ;; manifest initialization so they land in the same registry walk below.
-        ;; Load-once, never adopt: this runs on every env cache miss, every recycle
-        ;; and every child env, and none of those is a human act. Only
-        ;; this process's own start and `/reload` may pick an edit up.
-        (python-extensions/ensure-python-extensions-loaded!)
-        (extension/register-extensions! env install-extension!)
+        ;; The gateway serves many projects. Discovery and registration both resolve
+        ;; under this session's pinned workspace, including on resume and recycle.
+        (extension/with-context {:env env}
+                                (python-extensions/ensure-python-extensions-loaded!)
+                                (extension/register-extensions! env install-extension!))
         (doseq [ext (client-extensions/extensions-for session-id)]
           (install-extension! env ext))
         (let [final-env (loop-router/kickoff-session-providers env)]
@@ -1263,6 +1270,9 @@
 ;; idempotent across `(require ... :reload)`.
 (defonce ^:private _toggle-extension-sync-listener
   (toggles/add-listener! (fn [event]
+                           (doseq [{:keys [environment]} (vals @cache)]
+                             (when-let [values (:config/toggles environment)]
+                               (swap! values assoc (:id event) (:new event))))
                            (when (= workspace/draft-backend-toggle-id (:id event))
                              (mark-policy-reload!))
                            (sync-cached-extension-symbols!))))
@@ -1272,14 +1282,25 @@
    swap: extension hooks have side effects, and a contended `swap!` would repeat
    them. Answers `{:refreshed {id [environment refreshed]} :failures {id throwable}}`."
   [router entries]
-  (reduce-kv (fn [acc id {:keys [environment]}]
-               (try (assoc-in acc
-                      [:refreshed id]
-                      [environment
-                       (loop-router/kickoff-session-providers (assoc environment :router router))])
-                    (catch Throwable t (assoc-in acc [:failures id] t))))
-             {:refreshed {} :failures {}}
-             entries))
+  (let [routers (atom {(.getCanonicalPath (workspace/cwd)) router})]
+    (reduce-kv (fn [acc id {:keys [environment]}]
+                 (try (extension/with-context {:env environment}
+                                              (let [root (.getCanonicalPath (workspace/cwd))
+                                                    project-router
+                                                    (or (get @routers root)
+                                                        (let [r (loop-router/rebuild-router!
+                                                                  (config/load-config false))]
+                                                          (swap! routers assoc root r)
+                                                          r))]
+
+                                                (assoc-in acc
+                                                  [:refreshed id]
+                                                  [environment
+                                                   (loop-router/kickoff-session-providers
+                                                     (assoc environment :router project-router))])))
+                      (catch Throwable t (assoc-in acc [:failures id] t))))
+               {:refreshed {} :failures {}}
+               entries)))
 
 (defn- seat-refreshed-environments
   "Pure cache merge: seat each refreshed environment only where the cache still
@@ -1430,31 +1451,38 @@
     new-cfg))
 
 (defn open-env!
-  ;; App session entry (create! + resume). The vis engine is the embedded
-  ;; CPython Python sandbox — there is no other substrate.
+  "Open or resume a session with its project bound before resolving config and providers."
   [id {:keys [channel external-id title workspace-id]}]
-  (let [router
-        (loop-router/get-router)
+  (let [db
+        (config/resolve-db-spec)
 
-        env
-        (create-environment router
-                            (cond-> {:db (config/resolve-db-spec)}
-                              id
-                              (assoc :session id)
+        db-info
+        (persistance/db-shared-connection! db)
 
-                              channel
-                              (assoc :channel channel)
+        active-workspace
+        (if id
+          (some->> (persistance/db-latest-session-state-id db-info id)
+                   (persistance/db-workspace-for-session db-info))
+          (when workspace-id (persistance/db-workspace-get db-info workspace-id)))]
 
-                              external-id
-                              (assoc :external-id external-id)
+    (binding [workspace/*workspace-root* (or (:root active-workspace) workspace/*workspace-root*)]
+      (python-extensions/prepare-project! (workspace/cwd))
+      (create-environment (loop-router/get-router)
+                          (cond-> {:db db}
+                            id
+                            (assoc :session id)
 
-                              title
-                              (assoc :title title)
+                            channel
+                            (assoc :channel channel)
 
-                              workspace-id
-                              (assoc :workspace-id workspace-id)))]
+                            external-id
+                            (assoc :external-id external-id)
 
-    env))
+                            title
+                            (assoc :title title)
+
+                            workspace-id
+                            (assoc :workspace-id workspace-id))))))
 
 (defn ensure-env!
   [id]

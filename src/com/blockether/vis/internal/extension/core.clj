@@ -33,6 +33,7 @@
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.channel.theme :as theme]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel])
@@ -600,13 +601,6 @@
 (defn ext-symbols [ext] (vec (or (get-in ext [:ext/engine :ext.engine/symbols]) [])))
 
 (defn ext-sandbox-shims [ext] (vec (or (:ext/sandbox-shims ext) [])))
-
-(defn symbol-active?
-  "Whether a symbol entry is active for `env`."
-  [entry env]
-  (if-let [active-fn (:ext.symbol/active-fn entry)]
-    (boolean (try (active-fn env) (catch Throwable _ false)))
-    true))
 
 (defn ext-alias-symbol [ext] (get-in ext [:ext/engine :ext.engine/alias]))
 
@@ -1502,10 +1496,20 @@
      (binding [*current-extension* (or ~ext *current-extension*)
                *current-symbol* ~sym
                *current-environment* env#
+               toggles/*overrides* (or (some-> (:config/toggles env#)
+                                               deref)
+                                       toggles/*overrides*)
                workspace/*workspace-root* (workspace/workspace-root env#)
                workspace/*filesystem-roots* (workspace/env-filesystem-roots env#)]
 
        ~@body)))
+
+(defn symbol-active?
+  "Whether a symbol entry is active for this session's admitted configuration."
+  [entry env]
+  (if-let [active-fn (:ext.symbol/active-fn entry)]
+    (boolean (try (with-context {:env env} (active-fn env)) (catch Throwable _ false)))
+    true))
 
 (defn session-provider-kickoff-llm-headers
   "Run active extensions' `:session_provider_kickoff` hooks for `provider`.
@@ -1729,6 +1733,38 @@
     (doseq [f (:ext/network-filters ext)]
       (egress-proxy/register-network-filter! owner f))))
 
+(defn network-filters
+  "Network callbacks admitted to this environment, never another project's descriptors."
+  [environment]
+  (into (egress-proxy/non-extension-network-filters)
+        (for [ext
+              (some-> (:extensions environment)
+                      deref)
+
+              f
+              (:ext/network-filters ext)]
+
+          (with-meta (fn [request]
+                       (with-context {:ext ext :env environment} (f request)))
+            {:owner (ext-op-hook-owner ext)}))))
+
+(defn- environment-op-hooks
+  [op-kw env]
+  (if-let [extensions (:extensions env)]
+    (concat (remove #(= "ext"
+                        (some-> (:owner %)
+                                namespace))
+              (get @op-hooks op-kw))
+            (for [ext @extensions
+                  hook (:ext/op-hooks ext)
+                  :let [gate-kw (gate-op (:op hook))]
+                  :when (= op-kw (or gate-kw (keyword (:op hook))))]
+
+              (assoc hook
+                :owner (ext-op-hook-owner ext)
+                :phase (if gate-kw :gate (or (:phase hook) :after)))))
+    (get @op-hooks op-kw)))
+
 (defn- run-op-before-hooks
   "Thread `args` through every :before hook registered for `op-kw`."
   [op-kw env args]
@@ -1747,7 +1783,7 @@
                      as))
               as))
           (vec args)
-          (get @op-hooks op-kw)))
+          (environment-op-hooks op-kw env)))
 
 (defn- run-op-after-hooks
   "Thread `result` through every :after hook registered for `op-kw`."
@@ -1767,7 +1803,7 @@
                      res))
               res))
           result
-          (get @op-hooks op-kw)))
+          (environment-op-hooks op-kw env)))
 
 (defn- run-op-around
   "MIDDLEWARE: wrap the actual op fn with every :around hook for `op-kw`. Each
@@ -1779,7 +1815,7 @@
    with none registered this is just `(apply f args)`."
   [op-kw env f args]
   (let [arounds
-        (filter #(= :around (:phase %)) (get @op-hooks op-kw))
+        (filter #(= :around (:phase %)) (environment-op-hooks op-kw env))
 
         base
         (fn [as]
@@ -1814,7 +1850,7 @@
   "Whether any gate hook is registered for `op-kw` — the short-circuit that keeps
    an engine with no guard installed paying one map lookup per operation."
   [op-kw]
-  (boolean (some #(= :gate (:phase %)) (get @op-hooks op-kw))))
+  (boolean (some #(= :gate (:phase %)) (environment-op-hooks op-kw *current-environment*))))
 
 (defn run-gate-hooks
   "Ask the gate hooks registered for `op-kw` whether the operation `ctx` describes
@@ -1823,7 +1859,7 @@
    contract the mechanism carries so the guard author does not have to."
   [op-kw env ctx]
   (when-not *in-gate*
-    (let [gates (filterv #(= :gate (:phase %)) (get @op-hooks op-kw))]
+    (let [gates (filterv #(= :gate (:phase %)) (environment-op-hooks op-kw env))]
       (when (seq gates)
         (binding [*in-gate* true]
           (some (fn [{:keys [owner] hook-fn :fn}]
@@ -2498,9 +2534,10 @@
   (atom {}))
 
 (defn- dispatch-providers!
-  [providers]
-  (doseq [provider-entry providers]
-    (registry/register-provider! provider-entry)))
+  [ext]
+  (doseq [provider-entry (:ext/providers ext)]
+    (registry/register-provider!
+      (vary-meta provider-entry assoc ::provider-extension (:ext/name ext)))))
 
 (defn- dispatch-attachment-storage!
   [entries]
@@ -2527,6 +2564,44 @@
                                    " -- extension-owned CLI mounts only under [\"extension\" ...].")
                               {:type :ext/cli-bad-parent :entry entry}))))
 
+(defn- validate-slash-collisions!
+  [ext catalog]
+  (let [ns-sym (:ext/name ext)]
+    (let [known-channels [:tui :discord :cli :repl :slack]
+          slash-channels (fn [spec]
+                           (if-let [f (:slash/availability-fn spec)]
+                             (set (filter (fn [ch]
+                                            (try (boolean (f {:channel/id ch}))
+                                                 (catch Throwable _ false)))
+                                          known-channels))
+                             (set known-channels)))
+          new-by-path (reduce (fn [m spec]
+                                (assoc m (slash-path spec) spec))
+                              {}
+                              (:ext/slash-commands ext))]
+
+      (when (seq new-by-path)
+        (let [collisions (for [[other-ns other-ext] catalog
+                               :when (not= other-ns ns-sym)
+                               other-slash (:ext/slash-commands other-ext)
+                               :let [p (slash-path other-slash)
+                                     new-spec (get new-by-path p)]
+                               :when (and new-spec
+                                          (seq (set/intersection (slash-channels new-spec)
+                                                                 (slash-channels other-slash))))]
+
+                           {:path p :other-ext other-ns})]
+          (when (seq collisions)
+            (throw (ex-info (str "Slash path collision while registering '" ns-sym
+                                 "': " (str/join
+                                         ", "
+                                         (for [{:keys [path other-ext]} collisions]
+                                           (str (pr-str path) " already owned by " other-ext))))
+                            {:type :extension/slash-path-collision
+                             :ext ns-sym
+                             :collisions (vec collisions)}))))))
+    ext))
+
 (defn register-extension!
   "Register an extension in the global process-level registry.
 
@@ -2548,50 +2623,7 @@
         ns-sym
         (:ext/name ext)]
 
-    ;; Slash paths must be unique across the union of `:ext/slash-commands` from every active
-    ;; extension. Reject registration when this extension declares a `[parent name]`
-    ;; that any OTHER currently-registered extension already owns
-    ;; AND whose `:slash/availability-fn` intersects on the known
-    ;; channel set. Two specs with the same path but DISJOINT
-    ;; channel availability (e.g. TUI `/voice` vs another channel's `/voice`)
-    ;; do not collide — the dispatcher resolves them via per-channel availability at runtime.
-    (let [known-channels
-          [:tui :discord :cli :repl :slack]
-
-          slash-channels
-          (fn [spec]
-            (if-let [f (:slash/availability-fn spec)]
-              (set (filter (fn [ch]
-                             (try (boolean (f {:channel/id ch})) (catch Throwable _ false)))
-                           known-channels))
-              (set known-channels)))
-
-          new-by-path
-          (reduce (fn [m spec]
-                    (assoc m (slash-path spec) spec))
-                  {}
-                  (:ext/slash-commands ext))]
-
-      (when (seq new-by-path)
-        (let [collisions (for [[other-ns other-ext] @extension-registry
-                               :when (not= other-ns ns-sym)
-                               other-slash (:ext/slash-commands other-ext)
-                               :let [p (slash-path other-slash)
-                                     new-spec (get new-by-path p)]
-                               :when (and new-spec
-                                          (seq (set/intersection (slash-channels new-spec)
-                                                                 (slash-channels other-slash))))]
-
-                           {:path p :other-ext other-ns})]
-          (when (seq collisions)
-            (throw (ex-info (str "Slash path collision while registering '" ns-sym
-                                 "': " (str/join
-                                         ", "
-                                         (for [{:keys [path other-ext]} collisions]
-                                           (str (pr-str path) " already owned by " other-ext))))
-                            {:type :extension/slash-path-collision
-                             :ext ns-sym
-                             :collisions (vec collisions)}))))))
+    (validate-slash-collisions! ext @extension-registry)
     (when-not (contains? @extension-registry ns-sym) (swap! extension-order conj ns-sym))
     (swap! extension-registry assoc ns-sym ext)
     (tel/log! {:level :info
@@ -2607,7 +2639,7 @@
       (registry/register-cmd! (mount-under-ext c)))
     (doseq [c (:ext/channels ext)]
       (registry/register-channel! c))
-    (dispatch-providers! (:ext/providers ext))
+    (dispatch-providers! ext)
     (dispatch-attachment-storage! (:ext/attachment-storage ext))
     (install-op-hooks! ext)
     (install-egress-filters! ext)
@@ -2659,7 +2691,8 @@
 
 (defn- source-markers-for-extension
   [ext]
-  (or (extension-source-markers-of (:ext/name ext))
+  (or (when (identical? ext (get @extension-registry (:ext/name ext)))
+        (extension-source-markers-of (:ext/name ext)))
       (try (resolve-markers-for-extension ext)
            (catch Throwable t
              (tel/log! {:level :warn
@@ -2772,10 +2805,42 @@
   (swap! extension-source-markers dissoc ns-sym)
   nil)
 
+(defonce ^:private project-extensions (atom {}))
+
+(defn set-project-extensions!
+  "Publish a validated Python extension catalog for one canonical project root.
+   These descriptors never enter the process registry or replace another project's tools."
+  [root extensions]
+  (let [root
+        (workspace/normalize-root root)
+
+        extensions
+        (mapv extension extensions)]
+
+    (when-not root (throw (ex-info "Project extensions require a workspace root" {})))
+    (let [catalog (merge @extension-registry (into {} (map (juxt :ext/name identity)) extensions))]
+      (doseq [ext extensions]
+        (validate-slash-collisions! ext catalog)))
+    (registry/set-project-providers! root
+                                     (mapcat :ext/providers extensions)
+                                     (set (map :ext/name extensions)))
+    (swap! project-extensions assoc root extensions)
+    extensions))
+
 (defn registered-extensions
+  "Native/global extensions plus the calling project's overrides, in registration order."
   []
-  (let [registry @extension-registry]
-    (into [] (keep registry) @extension-order)))
+  (let [registry
+        @extension-registry
+
+        local
+        (get @project-extensions (.getCanonicalPath (workspace/cwd)))
+
+        local-names
+        (set (map :ext/name local))]
+
+    (into (into [] (comp (keep registry) (remove #(local-names (:ext/name %)))) @extension-order)
+          local)))
 
 ;; Reload hooks — the seam `/reload` uses to refresh EXTENSION-owned resource
 ;; caches (harness skills/agents discovery, …) without core knowing about the
@@ -2832,7 +2897,7 @@
             (filter #(= slot (:slot %))))))))
 
 (defn register-extensions!
-  "Install all globally registered extensions into an environment in registry order.
+  "Install the effective native/global and project extensions into an environment in registry order.
 
    Called by `create-environment` automatically. Returns environment."
   [environment register-fn!]
@@ -2862,7 +2927,15 @@
    ops fail closed; every symbol must declare `:tag` inline on its
    `vis/symbol` entry."
   [op-keyword]
-  (if-let [tag (get @op-keyword->tag op-keyword)]
+  (if-let [tag (or (some (fn [ext]
+                           (some (fn [entry]
+                                   (when (= op-keyword
+                                            (keyword (tool-call-name ext
+                                                                     (:ext.symbol/symbol entry))))
+                                     (:ext.symbol/tag entry)))
+                                 (ext-symbols ext)))
+                         (registered-extensions))
+                   (get @op-keyword->tag op-keyword))]
     tag
     (anomaly/incorrect!
       (str "Unregistered extension op " (pr-str op-keyword) " has no mandatory tag")
@@ -2876,7 +2949,14 @@
    recover the tag — there is no `vis/symbol` handle at that point.
    Never throws; an unknown head simply misses the folded view."
   []
-  @op-keyword->tag)
+  (into @op-keyword->tag
+        (for [ext
+              (registered-extensions)
+
+              entry
+              (ext-symbols ext)]
+
+          [(keyword (tool-call-name ext (:ext.symbol/symbol entry))) (:ext.symbol/tag entry)])))
 
 (defonce ^:private op-keyword->batch-hint
   ;; Inverse index from canonical op-keyword to its per-tool high-fan-out

@@ -2334,12 +2334,14 @@
   (atom nil))
 
 (defn current-config
-  "Return the current provider config. Loads from disk on first call."
+  "Return config for the bound workspace, or the active frontend config outside a session."
   []
-  (or @active-config
-      (let [cfg (load-config)]
-        (reset! active-config cfg)
-        cfg)))
+  (if workspace/*workspace-root*
+    (load-config false)
+    (or @active-config
+        (let [cfg (load-config)]
+          (reset! active-config cfg)
+          cfg))))
 
 ;; Environment resolution: the workspace's `.env`, then `environment:`
 ;;

@@ -413,7 +413,7 @@
                                      (.getCanonicalFile (io/file (System/getProperty "user.dir"))))
                                 "."
                                 (pr-str (.getCanonicalPath project)))
-                              ", then /reload; or use /reload --sync.")
+                              ", then /reload.")
                          (assoc (ex-data e) :type ::project-sync-required)
                          e)))))
 

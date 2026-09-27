@@ -12,7 +12,7 @@ already have a uv package, follow [Using an existing Python project](extension-d
 | Small local tool using the standard library | `.vis/extensions/greeting_tools.py` | None; the SDK is supplied by Vis |
 | Local script with third-party wheels or source roots | [PEP 723 entry file](#standalone-scripts) | Automatic wheel installation at load/reload |
 | Package to install or share, optionally with skills | [`pyproject.toml` and `extension.py`](#package-manifest) | Automatic uv preparation at load/reload |
-| Existing uv project with an editable implementation | Entry file declaring `tool.vis.project` | Explicit sync; see [existing Python projects](extension-development.md) |
+| Existing uv project with an editable implementation | Entry file declaring `tool.vis.project` | Automatic preparation on project admission or reload; see [existing Python projects](extension-development.md) |
 
 Choose one dependency mode per entrypoint. A package does not need a skill, a
 provider does not need tools, and a small tool does not need a package.
@@ -49,10 +49,12 @@ installer adds Git ignore rules for installed package directories and its privat
 metadata; loose `.py` extensions remain visible to Git. Commit package declarations
 in `vis.yml`, not downloaded sources or installation receipts.
 
-**Review extensions before loading them.** Their entry files and dependencies
-run with your user permissions, outside the model's jail. Check project
-extensions before starting Vis in an unfamiliar checkout. `--trust` confirms
-that you accept running the code; validation is not a security review.
+**Review extensions before adding or opening a project.** Their entry files and
+dependencies run with your user permissions, outside the model's jail. Adding a
+project or opening its session authorizes Vis to install and load its configured
+extensions. Review `vis.yml` and local overrides before opening an unfamiliar
+checkout. CLI installation and sync commands require `--trust`; validation is not
+a security review.
 
 ## Declare packages in configuration
 
@@ -80,6 +82,27 @@ the newest approved stable release. The `source` may also carry the folder
 GitHub sources. Local paths are relative to the YAML file declaring them, not the
 shell's working directory.
 
+When you add a folder in **Projects**, or open a session in that project, the
+gateway reads its merged configuration, installs missing declared packages, and
+prepares their Python dependencies before making the tools available. Preparation
+may need network access and can take longer on the first open. An installation or
+load failure is reported instead of opening a session with incomplete tools; fix
+the declaration or dependency problem and try again.
+
+One gateway can serve several projects at once. Each session resolves tools,
+providers, environment values, and toggles from its own project, not the directory
+where the gateway started. Project extensions override same-name global extensions
+only in that project. Opening another project does not replace those tools.
+Package and declared uv project environments are separate per extension; PEP 723
+wheels and shared sync installs go to `~/.vis/python/packages`, which every project
+on the gateway shares.
+
+Use `/reload` in a project session to adopt later configuration or source changes.
+It reloads that project and shared global extensions, not other projects' local
+catalogs. Reopening an already admitted project reuses its loaded code.
+
+To preview or prepare packages without opening a session, use the CLI:
+
 ```bash
 vis-agent extension sync --dry-run
 vis-agent extension sync --trust
@@ -92,7 +115,8 @@ By default, sync manages both scopes: global declarations go to `~/.vis/extensio
 project declarations to `<project>/.vis/extensions/`. Local project overrides in
 `.vis/config.yml` replace complete declarations by name, not individual fields.
 The project registration wins when both scopes use the same extension name.
-Reading configuration never installs packages; sync requires explicit `--trust`.
+Reading configuration alone never installs packages. Adding or opening a project,
+and explicit reload, perform preparation; standalone CLI sync requires `--trust`.
 
 Sync installs missing packages, reconciles changed declarations and prepares their
 `uv` environments without importing entrypoints or reloading a running gateway.
@@ -369,9 +393,10 @@ The [operator guide](https://github.com/Blockether/vis/blob/main/apps/vis-docs/R
 documents its inputs, authenticated moderation and verification.
 
 Publishing or approving a release does not install it or update installed copies.
-Users must explicitly install or update a managed package, or reconcile its
-[configuration declaration](#declare-packages-in-configuration), then start Vis or use
-`/reload`. Reload activates installed source; it does not fetch a newer release.
+Install or update a managed package explicitly, or use a
+[configuration declaration](#declare-packages-in-configuration). Project admission
+and `/reload` reconcile declarations; unchanged pinned declarations retain their
+installed revision, while `version: latest` can fetch a newer approved release.
 Use [the update and rollback commands](#check-for-updates-and-roll-back) for an existing
 managed installation. Local source links follow their development workflow instead.
 
@@ -382,13 +407,14 @@ managed installation. Local source links follow their development workflow inste
 | Edit an entry, helper module, declared source root or bundled skill | `/reload`; call the tool on the next turn |
 | Change dependencies in an existing package environment | Deliberately update `uv.lock` if needed, then `/reload` |
 | Change dependencies used from shared packages | Run [shared sync](extension-development.md#install-a-project-into-shared-packages), then `/reload` |
-| Change a manually prepared editable project's dependencies | Follow the [explicit sync workflow](extension-development.md#prepare-the-project-environment) |
+| Change an editable project's dependencies | Update its dependency declaration and lockfile, then `/reload` |
 | Change a managed GitHub version | Explicit `extension update` or `extension rollback`, then `/reload` |
 | Uninstall | Remove the package’s `current` link, then `/reload`; keep version directories or remove them separately, without deleting a linked development checkout |
 
-Install never overwrites an existing destination. `/reload` does not fetch a newer
-GitHub revision. It rebuilds extension contexts from installed source; already
-running calls may finish with old code. Live sessions switch at the next turn boundary.
+Install never overwrites an existing destination. `/reload` reconciles configured
+packages and rebuilds extension contexts from the selected source. Unchanged pins
+do not fetch a newer revision. Already running calls may finish with old code; live
+sessions switch at the next turn boundary.
 
 `vis.state` survives reload and restarts. A failed reload retains the last working
 code, contracts, docs and package skills, marked stale with the failure reason and
@@ -450,13 +476,12 @@ Keep the implementation under the selected package directory. Do not put a PEP 7
 block in this package's `extension.py`. See [Extension design](extension-design.md#keep-the-entrypoint-small)
 for the complete registration and implementation.
 
-At startup and plain `/reload`, a package without a uv environment uses
-`~/.vis/python/packages`. Vis does not create `.venv` just because the package has a
-`pyproject.toml`. Install its dependencies with
-[shared sync](extension-development.md#install-a-project-into-shared-packages), or
-use `/reload --sync` to create a separate environment deliberately.
+Vis prepares the package's uv environment before registering it: at startup for
+global packages, when you add or open a project for that project's packages, and on
+`/reload`. A preparation failure is reported; the package does not fall back to
+`~/.vis/python/packages`.
 
-For an existing environment, Vis runs bundled upstream `uv sync`, selecting the
+To prepare the environment, Vis runs bundled upstream `uv sync`, selecting the
 gateway's embedded Python with `--python`. uv manages the project's lock and environment,
 including default dependency groups and removal of extraneous packages. It can update
 an existing lock. Vis's

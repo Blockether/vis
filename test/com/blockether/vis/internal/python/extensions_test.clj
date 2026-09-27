@@ -2,49 +2,52 @@
   "Python extension host — load fixture `.py` files into trusted CPython
    contexts and assert on the registry + adapter contracts. Boots real
    Python sessions (on the shared engine), no model in the loop."
-  (:require [babashka.http-client :as http]
-            [charred.api :as json]
-            [com.blockether.svar.core :as svar]
-            [clojure.java.io :as io]
-            [clojure.string :as str]
-            [com.blockether.vis.internal.channel.events :as channel-events]
-            [com.blockether.vis.contract.activity :as activity-contract]
-            [com.blockether.vis.internal.activity.core :as activity]
-            [com.blockether.vis.internal.activity.event :as activity-event]
-            [com.blockether.vis.internal.gateway.wiring :as wiring]
-            [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
-            [com.blockether.vis.internal.python.env :as ep]
-            [com.blockether.vis.internal.extension.core :as extension]
-            [com.blockether.vis.internal.context.agents :as agents]
-            [com.blockether.vis.internal.context.prompt :as prompt-context]
-            [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
-            [com.blockether.vis.internal.foundation.harness.core :as harness]
-            [com.blockether.vis.internal.config.core :as config]
-            [com.blockether.vis.internal.config.runtime-settings :as rt]
-            [com.blockether.vis.internal.gateway.state :as gateway-state]
-            [com.blockether.vis.internal.session.cancellation :as cancellation]
-            [com.blockether.vis.internal.view.core :as human-input]
-            [com.blockether.vis.internal.persistance.core :as ps]
-            [com.blockether.vis.internal.persistance.sqlite.test-helpers :as db-test]
-            [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
-            [com.blockether.vis.internal.provider.auth :as pauth]
-            [com.blockether.vis.internal.provider.limits :as provider-limits]
-            [com.blockether.vis.internal.provider.service :as providers]
-            [com.blockether.vis.internal.provider.limits-format :as limits-format]
-            [com.blockether.vis.internal.config.toggles :as toggles]
-            [com.blockether.vis.internal.foundation.core :as foundation]
-            [com.blockether.vis.internal.foundation.shell :as shell]
-            [com.blockether.vis.internal.python.extensions :as pyx]
-            [com.blockether.vis.internal.python.runtime :as python-runtime]
-            [com.blockether.vis.internal.python.worker :as worker]
-            [com.blockether.vis-python-runtime :as runtime]
-            [com.blockether.vis.internal.loop.environment :as loop-env]
-            [com.blockether.vis.internal.loop.python-exec :as python-exec]
-            [com.blockether.vis.internal.extension.registry :as registry]
-            [com.blockether.vis.internal.python.test-runner :as runner]
-            [com.blockether.vis.internal.workspace.core :as workspace]
-            [taoensso.nippy :as nippy]
-            [lazytest.core :refer [defdescribe expect it]])
+  (:require
+    [babashka.http-client :as http]
+    [charred.api :as json]
+    [com.blockether.svar.core :as svar]
+    [clojure.java.io :as io]
+    [clojure.string :as str]
+    [com.blockether.vis.internal.channel.events :as channel-events]
+    [com.blockether.vis.contract.activity :as activity-contract]
+    [com.blockether.vis.internal.activity.core :as activity]
+    [com.blockether.vis.internal.activity.event :as activity-event]
+    [com.blockether.vis.internal.gateway.wiring :as wiring]
+    [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
+    [com.blockether.vis.internal.python.env :as ep]
+    [com.blockether.vis.internal.extension.core :as extension]
+    [com.blockether.vis.internal.context.agents :as agents]
+    [com.blockether.vis.internal.context.prompt :as prompt-context]
+    [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
+    [com.blockether.vis.internal.foundation.harness.core :as harness]
+    [com.blockether.vis.internal.config.core :as config]
+    [com.blockether.vis.internal.config.runtime-settings :as rt]
+    [com.blockether.vis.internal.gateway.state :as gateway-state]
+    [com.blockether.vis.internal.session.cancellation :as cancellation]
+    [com.blockether.vis.internal.view.core :as human-input]
+    [com.blockether.vis.internal.persistance.core :as ps]
+    [com.blockether.vis.internal.persistance.sqlite.test-helpers :as db-test]
+    [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
+    [com.blockether.vis.internal.provider.auth :as pauth]
+    [com.blockether.vis.internal.provider.limits :as provider-limits]
+    [com.blockether.vis.internal.provider.service :as providers]
+    [com.blockether.vis.internal.provider.limits-format :as limits-format]
+    [com.blockether.vis.internal.config.toggles :as toggles]
+    [com.blockether.vis.internal.foundation.core :as foundation]
+    [com.blockether.vis.internal.foundation.shell :as shell]
+    [com.blockether.vis.internal.python.extensions :as pyx]
+    [com.blockether.vis.internal.python.runtime :as python-runtime]
+    [com.blockether.vis.internal.python.worker :as worker]
+    [com.blockether.vis-python-runtime :as runtime]
+    [com.blockether.vis.internal.loop.environment :as loop-env]
+    [com.blockether.vis.internal.loop.python-exec :as python-exec]
+    [com.blockether.vis.internal.loop :as lp]
+    [com.blockether.vis.internal.loop.router :as loop-router]
+    [com.blockether.vis.internal.extension.registry :as registry]
+    [com.blockether.vis.internal.python.test-runner :as runner]
+    [com.blockether.vis.internal.workspace.core :as workspace]
+    [taoensso.nippy :as nippy]
+    [lazytest.core :refer [defdescribe expect it]])
   (:import [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
            [java.io ByteArrayOutputStream]
            [java.net InetSocketAddress]
@@ -207,6 +210,247 @@
   [ext sym]
   (some #(when (= sym (:ext.symbol/symbol %)) (:ext.symbol/fn %))
         (get-in ext [:ext/engine :ext.engine/symbols])))
+
+(defdescribe
+  project-extension-isolation-test
+  (it
+    "loads each project's tools independently in one gateway"
+    (let [a
+          (temp-dir)
+
+          b
+          (temp-dir)
+
+          roots
+          (mapv #(.getCanonicalPath ^java.io.File %) [a b])
+
+          source
+          (fn [value]
+            (str
+              "import blockether.vis.extension as vis\n"
+              "def project_value():\n    \"Read the project value.\"\n    return " (pr-str value)
+              "\n" "vis.register_extension(vis.Extension(name='project-fixture', "
+              "description='Project fixture', alias='fixture', symbols=[vis.Symbol(project_value, "
+              "activity=vis.Activity(label='Read project value', show_start=False))]))\n"))]
+
+      (doseq [[dir value] [[a "A"] [b "B"]]]
+        (write-ext! dir ".vis/extensions/project.py" (source value)))
+      (try (doseq [[root value] (map vector roots ["A" "B"])]
+             (binding [workspace/*workspace-root* root]
+               (pyx/ensure-python-extensions-loaded! {:dirs [(str root "/.vis/extensions")]
+                                                      :project-root root})
+               (expect (= [] (pyx/load-failures)))
+               (expect (= value
+                          (:result ((symbol-fn (registered "project-fixture") 'project_value)))))))
+           (binding [workspace/*workspace-root* (first roots)]
+             (expect (= "A" (:result ((symbol-fn (registered "project-fixture") 'project_value))))))
+           (finally (doseq [root roots]
+                      (binding [workspace/*workspace-root* root]
+                        (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))))
+
+(defdescribe
+  project-admission-retry-test
+  (it
+    "reports installation failures, retries admission, then reuses the admitted project"
+    (let [root
+          (.getCanonicalPath (temp-dir))
+
+          home
+          (temp-dir)
+
+          fingerprint
+          (atom {})
+
+          fail?
+          (atom true)
+
+          calls
+          (atom [])]
+
+      (with-redefs-fn {#'pyx/last-fingerprint fingerprint
+                       #'pyx/default-extension-dirs (fn []
+                                                      [(io/file home "extensions")
+                                                       (io/file root ".vis/extensions")])
+                       #'pyx/sync-packages! (fn [opts]
+                                              (swap! calls conj opts)
+                                              (if (and (:project opts) @fail?)
+                                                [{"status" "failed"
+                                                  "error" "Fixture install failure"}]
+                                                []))
+                       #'pyx/load-scope!
+                       (fn [opts]
+                         (expect (:sync-projects? opts))
+                         (swap! fingerprint assoc (:project-root opts) [::admitted])
+                         {:loaded 1 :failed 0 :changed? true})}
+        (fn []
+          (expect (= :com.blockether.vis.internal.python.extensions/project-setup-failed
+                     (try (pyx/prepare-project! root)
+                          nil
+                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+          (expect (not (contains? @fingerprint root)))
+          (reset! fail? false)
+          (expect (zero? (:failed (pyx/prepare-project! root))))
+          (expect (contains? @fingerprint root))
+          (expect (false? (:changed? (pyx/prepare-project! root))))
+          (expect (= [{:global true :trust true} {:project true :trust true}
+                      {:project true :trust true}]
+                     @calls))))))
+  (it "shows only global and current-project load failures"
+      (let [a
+            (.getCanonicalPath (temp-dir))
+
+            b
+            (.getCanonicalPath (temp-dir))]
+
+        (with-redefs-fn {#'pyx/failures (atom [{:project-root nil :file "global.py"}
+                                               {:project-root a :file "a.py"}
+                                               {:project-root b :file "b.py"}])
+                         #'pyx/loader-registered? (atom false)
+                         #'extension/extension-registry (atom {})
+                         #'extension/extension-order (atom [])}
+          (fn []
+            (#'pyx/register-loader-extension!)
+            (binding [workspace/*workspace-root* a]
+              (expect (= ["global.py" "a.py"] (mapv :file (pyx/load-failures))))
+              ;; The loader's system-prompt note uses the same project scope.
+              (let [prompt ((:ext/prompt-fn (registered "python-extensions")) {})]
+                (expect (str/includes? prompt "a.py"))
+                (expect (not (str/includes? prompt "b.py")))))
+            (binding [workspace/*workspace-root* b]
+              (expect (= ["global.py" "b.py"] (mapv :file (pyx/load-failures))))))))))
+
+(defn- write-project-package!
+  "A configured extension with a real, project-specific local wheel dependency."
+  [root value]
+  (let [source
+        (doto (io/file root "tools") .mkdirs)
+
+        wheel
+        (io/file source "project_fixture_dependency-1.0.0-py3-none-any.whl")
+
+        dist
+        "project_fixture_dependency-1.0.0.dist-info/"]
+
+    (with-open [zip (ZipOutputStream. (io/output-stream wheel))]
+      (doseq [[path text]
+              {"project_fixture_dependency.py" (str "VALUE = " (pr-str value) "\n")
+               (str dist "METADATA")
+               "Metadata-Version: 2.1\nName: project-fixture-dependency\nVersion: 1.0.0\n"
+               (str dist "WHEEL") "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+               (str dist "RECORD") ""}]
+        (.putNextEntry zip (ZipEntry. path))
+        (.write zip (.getBytes ^String text StandardCharsets/UTF_8))
+        (.closeEntry zip)))
+    (write-ext! source
+                "pyproject.toml"
+                (str "[project]\nname='vis-project-fixture'\nversion='1.0.0'\n"
+                     "description='Project tools'\nrequires-python='>=3.12'\n"
+                     "dependencies=['vis-agent>=0.1.0', 'project-fixture-dependency @ " (.toURI
+                                                                                          wheel)
+                     "']\n" "[tool.vis]\ncategory='tools'\n"))
+    (write-ext!
+      source
+      "extension.py"
+      (str "import blockether.vis.extension as vis\nimport project_fixture_dependency as dep\n"
+           "def project_value():\n    \"Read the configured project value.\"\n"
+           "    return dep.VALUE + '/' + vis.host_env('PROJECT_LABEL')\n"
+           "vis.register_extension(vis.Extension(name='vis-project-fixture', "
+           "description='Project tools', alias='project', symbols=[vis.Symbol(project_value, "
+           "activity=vis.Activity(label='Read project value', show_start=False))]))\n"))
+    (write-ext! root
+                "vis.yml"
+                (str "extensions:\n  vis-project-fixture:\n    source: ./tools\n"
+                     "environment:\n  PROJECT_LABEL:\n    literal: "
+                     value
+                     "\n"
+                     "toggles:\n  shell: "
+                     (= value "B")
+                     "\n"))))
+
+(defdescribe
+  configured-project-sessions-test
+  (it
+    "installs on project addition and isolates real sessions, resume, config and dependencies"
+    (with-shared-packages
+      (fn [_]
+        (let [home
+              (temp-dir)
+
+              roots
+              (mapv #(.getCanonicalPath ^java.io.File %) [(temp-dir) (temp-dir)])
+
+              db-path
+              (str (io/file home "sessions.db"))
+
+              db
+              (ps/db-shared-connection! db-path)
+
+              opened
+              (atom [])
+
+              router-roots
+              (atom [])
+
+              check!
+              (fn [environment value]
+                (extension/with-context {:env environment}
+                                        (expect (= {"PROJECT_LABEL" value}
+                                                   (config/declared-environment-values))))
+                (let [out (ep/run-python-block (ep/python-context environment)
+                                               (str "print(await project_value())\n"
+                                                    "print('shell' in globals())"))]
+                  (expect (nil? (:error out)) (pr-str out))
+                  (expect (= (str value "/" value "\n" (if (= value "B") "True" "False"))
+                             (str/trim (:stdout out))))))]
+
+          (try (doseq [[root value] (map vector roots ["A" "B"])]
+                 (write-project-package! (io/file root) value))
+               (with-redefs [config/config-dir
+                             (constantly (str home))
+
+                             config/resolve-db-spec
+                             (constantly db-path)
+
+                             loop-router/get-router
+                             (fn []
+                               (swap! router-roots conj (.getCanonicalPath (workspace/cwd)))
+                               {:providers []})]
+
+                 (pyx/reload-python-extensions! {:dirs []})
+                 (doseq [root roots]
+                   ;; This is the API called by the gateway's project-add route.
+                   (let [project (try (lp/ensure-project-for-root! root)
+                                      (catch clojure.lang.ExceptionInfo error
+                                        (throw (ex-info (pr-str (ex-data error)) {} error))))]
+                     (expect (:id project)))
+                   (binding [workspace/*workspace-root* root]
+                     (expect (registered "vis-project-fixture")))
+                   (let [ws (workspace/create-trunk-at! db root)]
+                     (swap! opened conj (loop-env/open-env! nil {:workspace-id (:id ws)}))))
+                 (expect (= roots @router-roots))
+                 ;; Calls overlap across independently imported versions of the same package.
+                 (doseq [worker (mapv (fn [[environment value]]
+                                        (future (check! environment value)))
+                                      (map vector @opened ["A" "B"]))]
+                   @worker)
+                 (let [sid
+                       (:session-id (first @opened))
+
+                       resumed
+                       (loop-env/open-env! sid {})]
+
+                   (swap! opened conj resumed)
+                   (check! resumed "A")
+                   (expect (= (first roots) (last @router-roots))))
+                 (binding [workspace/*workspace-root* (first roots)]
+                   (expect (zero? (:failed (pyx/reload-python-extensions!)))))
+                 (check! (second @opened) "B"))
+               (finally (doseq [environment @opened]
+                          (loop-env/dispose-environment! environment))
+                        (doseq [root roots]
+                          (pyx/reload-python-extensions! {:dirs [] :project-root root}))
+                        (pyx/reload-python-extensions! {:dirs []})
+                        (config/invalidate-config-cache!))))))))
 
 (defdescribe fresh-load-workspace-test
              ;; Package skill discovery must not index the mutable checkout outside its fixture.
@@ -782,7 +1026,6 @@ vis.register_extension(vis.Extension(
                           (future-cancel (:result call))))))))))
 
 ;; Loading + registry
-
 (defdescribe load-and-register-test
              (it "loads a file and keeps each flat function's exact declared public name"
                  (with-loaded {"counter.py" counter-py}
@@ -813,7 +1056,7 @@ vis.register_extension(vis.Extension(
                                   (expect (= 1 (:loaded again))))))))
 
 ;; Regression, user report: an extension reading Python's conventional `__file__`
-;; global failed during loading before it could call `vis.Extension(...)`.
+  ;; global failed during loading before it could call `vis.Extension(...)`.
 (defdescribe
   extension-entry-module-globals-test
   (it
@@ -968,7 +1211,7 @@ vis.register_extension(vis.Extension(
 ")
 
 ;; Regression, issue #171: object namespaces stopped after one level, forcing
-;; extension authors to flatten nested capability objects into method names.
+  ;; extension authors to flatten nested capability objects into method names.
 (defdescribe
   python-recursive-object-namespace-test
   (it
@@ -1084,7 +1327,7 @@ raise RuntimeError(' | '.join(errors))
 ")
 
 ;; Regression, issue #171: recursive discovery could otherwise loop forever,
-;; expose one object twice, or silently discard a public data attribute.
+  ;; expose one object twice, or silently discard a public data attribute.
 (defdescribe python-recursive-object-namespace-validation-test
              (it "rejects cycles, repeated references, and unsupported public values by path"
                  (with-loaded {"invalid_recursive_object_namespace.py"
@@ -1453,7 +1696,6 @@ vis.register_extension(vis.Extension(
                      (finally (ep/dispose-python-context! ctx)))))))))))
 
 ;; Tool adapter — envelope semantics
-
 (defdescribe tool-envelope-test
              (it "return value = success payload"
                  (with-loaded {"counter.py" counter-py}
@@ -1541,7 +1783,6 @@ vis.register_extension(vis.Extension(
                        (expect (= 2 (get-in result [:result "payload" "b"]))))))))
 
 ;; Declared host environment -- issue #129
-
 (def ^:private env-py
   "\"\"\"Declared host env allowlist fixture.\"\"\"
 import os
@@ -1576,12 +1817,12 @@ vis.register_extension(vis.Extension(name=\"env-bad\", description=\"bad env fix
 ")
 
 ;; Regression, issue #129: a Python extension could not read host env vars.
-;; `vis.Extension(...)` did not accept `env=`, so any extension declaring the
-;; variables it needed raised at load and its provider was silently absent.
-;; Now `env=` declares an allowlist the host resolves from the process
-;; environment (`System/getenv`), and the declaration lands on `:ext/env` so
-;; doctor/the TUI can surface a declared-but-unset variable instead of failing
-;; silently.
+  ;; `vis.Extension(...)` did not accept `env=`, so any extension declaring the
+  ;; variables it needed raised at load and its provider was silently absent.
+  ;; Now `env=` declares an allowlist the host resolves from the process
+  ;; environment (`System/getenv`), and the declaration lands on `:ext/env` so
+  ;; doctor/the TUI can surface a declared-but-unset variable instead of failing
+  ;; silently.
 (defdescribe
   declared-host-env-test
   (it "resolve-declared-env reads the process environment and drops unset/malformed names"
@@ -1627,7 +1868,6 @@ vis.register_extension(vis.Extension(name=\"env-bad\", description=\"bad env fix
                        (expect (some #(str/includes? (str/lower-case %) "env") errs)))))))
 
 ;; State — durable across reloads
-
 (defdescribe state-durability-test
              (it "vis.state survives a full reload (fresh contexts, same DB)"
                  (with-loaded {"counter.py" counter-py}
@@ -1679,8 +1919,8 @@ vis.register_extension(vis.Extension(
 ")
 
 ;; Regression: `vis.state` answered five methods, so an extension could not `pop`
-;; (AttributeError) and `list(vis.state)` fell through to the old sequence protocol
-;; — it asked the host for the key `0`.
+  ;; (AttributeError) and `list(vis.state)` fell through to the old sequence protocol
+  ;; — it asked the host for the key `0`.
 (defdescribe state-mapping-test
              (it "vis.state drives the whole mapping surface across the host boundary"
                  (with-loaded {"state_mapping.py" state-mapping-py}
@@ -1726,7 +1966,6 @@ vis.register_extension(vis.Extension(
                        (expect (= ["a" "b"] (get-in res [:slash/data "args"]))))))))
 
 ;; Dynamic prompt + activation callables
-
 (def ^:private moods-py
   "\"\"\"Dynamic prompt/activation fixture.\"\"\"
 import blockether.vis.extension as vis
@@ -1770,7 +2009,6 @@ vis.register_extension(vis.Extension(
                                 (expect (true? ((:ext/activation-fn (registered "moods")) {})))))))
 
 ;; Ctx contribution — vis.Extension(ctx=...) folds into the session bag
-
 (def ^:private ctxer-py
   "\"\"\"Ctx-contribution fixture.\"\"\"
 import blockether.vis.extension as vis
@@ -1826,7 +2064,6 @@ vis.register_extension(vis.Extension(
         (expect (str/includes? (:error (first (pyx/load-failures))) "ctx must be a callable"))))))
 
 ;; Op hooks — before(=guard) blocks, after observes
-
 (def ^:private guard-py
   "\"\"\"Guard fixture.\"\"\"
 import blockether.vis.extension as vis
@@ -2189,7 +2426,6 @@ vis.register_extension(vis.Extension(
                  (finally (ep/dispose-python-context! ctx)))))))))
 
 ;; Gate hooks — a Python extension guards the FILESYSTEM, not a tool's arguments
-
 (def ^:private fs-gate-py
   "\"\"\"Filesystem gate fixture.\"\"\"
 import blockether.vis.extension as vis
@@ -2340,7 +2576,6 @@ vis.register_extension(vis.Extension(
                 (pf {:phase :http-response :status 200 :host "x.com" :path "/" :headers {}}))))))))
 
 ;; Failure containment
-
 (defdescribe
   load-failure-test
   (it "a broken file is a recorded load failure, never a crash"
@@ -2452,10 +2687,10 @@ vis.register_extension(vis.Extension(
                             @snapshots)))))))
 
 ;; Regression, issue #152: a preset's `api_style` was keywordized verbatim, so a
-;; near-miss spelling like `openai_responses` reached svar as a dialect its `case`
-;; does not know and silently meant `/chat/completions` — a Responses endpoint
-;; served on the chat wire, which is how a Responses-minted tool-call id ended up
-;; replayed to a chat provider.
+  ;; near-miss spelling like `openai_responses` reached svar as a dialect its `case`
+  ;; does not know and silently meant `/chat/completions` — a Responses endpoint
+  ;; served on the chat wire, which is how a Responses-minted tool-call id ended up
+  ;; replayed to a chat provider.
 (defdescribe
   provider-preset-dialect-test
   (it "an accepted alias normalizes to svar's own api-style"
@@ -2499,7 +2734,7 @@ vis.register_extension(vis.Extension(
                                                             :tokendialect))))))))))
 
 ;; The default belongs to the transport, not credentials: a token-only callback
-;; must preserve a preset's custom path. Exercise the pinned Svar through HTTP.
+  ;; must preserve a preset's custom path. Exercise the pinned Svar through HTTP.
 (defdescribe
   provider-responses-path-test
   (it
@@ -2587,7 +2822,6 @@ vis.register_extension(vis.Extension(
                 (expect (not (contains? body :messages)))))))))))
 
 ;; Reload + project-over-global precedence
-
 (defdescribe
   reload-test
   (it "editing a file and reloading swaps the registration"
@@ -2660,7 +2894,6 @@ vis.register_extension(vis.Extension(
                         (ps/db-dispose-connection! store)))))))
 
 ;; Multi-file project — an extension imports a sibling package (sys.path sugar)
-
 (def ^:private pkgext-py
   "\"\"\"Package-backed fixture: imports a sibling package next to it.\"\"\"
 import blockether.vis.extension as vis
@@ -2744,8 +2977,8 @@ vis.register_extension(vis.Extension(
                                (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})))))))))))))
 
 ;; Characterization of the split implementation/dependency layout, before adding
-;; a declaration format. These assertions describe today's missing bootstrap steps,
-;; not the desired final behavior. No private index or network install is needed.
+  ;; a declaration format. These assertions describe today's missing bootstrap steps,
+  ;; not the desired final behavior. No private index or network install is needed.
 (defdescribe
   split-project-extension-bootstrap-test
   (it
@@ -3163,7 +3396,6 @@ vis.register_extension(vis.Extension(
               (finally (.stop server 0)))))))))
 
 ;; Package extensions load only their current entry, not inactive versions.
-
 (defdescribe
   package-extension-convention-test
   (it
@@ -3191,7 +3423,6 @@ vis.register_extension(vis.Extension(
             (expect (= 3 (get-in (add 1 2) [:result "sum"])))))))))
 
 ;; Python-level self-tests — test_*.py / *_test.py run through the pytest shim
-
 (defdescribe
   python-self-test-test
   (it
@@ -3291,7 +3522,6 @@ vis.register_extension(vis.Extension(
                         (io/delete-file f)))))))
 
 ;; Structured counts — outcomes come from the shim, never scraped from stdout
-
 (defdescribe
   structured-counts-test
   (it "a failure whose assertion message contains '9 passed' must NOT inflate the pass count"
@@ -3315,7 +3545,6 @@ vis.register_extension(vis.Extension(
                (finally (ps/db-dispose-connection! store)))))))
 
 ;; /test is the user-facing surface for the Python extension runner.
-
 (defdescribe slash-test-wiring-test
              (it "exposes /test without contributing an extension CLI command"
                  (with-loaded {"counter.py" counter-py}
@@ -3365,7 +3594,6 @@ vis.register_extension(vis.Extension(
                (finally (ps/db-dispose-connection! store)))))))
 
 ;; Per-test granularity — the runner reports EACH test, not just a file verdict
-
 (defdescribe
   per-test-granularity-test
   (it "reports each test's nodeid + outcome (tagged with its file), not just a per-file aggregate"
@@ -3396,7 +3624,6 @@ vis.register_extension(vis.Extension(
                (finally (ps/db-dispose-connection! store)))))))
 
 ;; Providers — a `vis.Provider(...)` registers a first-class provider descriptor
-
 (def ^:private provider-py
   "'''Acme provider fixture.'''
 import blockether.vis.extension as vis
@@ -3622,9 +3849,9 @@ vis.register_extension(vis.Extension(
           (expect (= 1 (get-in ((symbol-fn (registered "refresh-once") 'calls)) [:result]))))))))
 
 ;; Regression: a MANAGED provider declared by a PYTHON extension was a flag that
-;; never crossed the host boundary - `is_managed=True` in `vis.Provider(...)`
-;; reached the entry decoder and every credential seam below still saw an
-;; ordinary API-key provider: a key band, an `Add provider` row, a startable flow.
+  ;; never crossed the host boundary - `is_managed=True` in `vis.Provider(...)`
+  ;; reached the entry decoder and every credential seam below still saw an
+  ;; ordinary API-key provider: a key band, an `Add provider` row, a startable flow.
 (def ^:private managed-provider-py
   "'''Corp gateway fixture - the runtime issues the credential.'''
 import blockether.vis.extension as vis
@@ -3693,7 +3920,7 @@ vis.register_extension(vis.Extension(
                          (expect (not (contains? bound :corp-byok)))))))))
 
 ;; Regression, issue #113: ordinary extension process calls from process-level
-;; provider callbacks were redirected into the session-only jail and returned nil.
+  ;; provider callbacks were redirected into the session-only jail and returned nil.
 (defn- jail-wait
   "`sh.wait(secs)` for a jailed-shell handle — the HOST's own wait op through the
    jailed entry point, so the test waits exactly as an extension does and no copy
@@ -4012,7 +4239,6 @@ vis.register_extension(vis.Extension(
           (expect (re-find #"\"error\"" s))))))
 
 ;; /reload re-hydrates feature toggles
-
 (defdescribe
   reload-slash-toggles-test
   "`/reload` is the ONE user-facing re-read of `vis.yml`. Toggles used to be
@@ -4030,8 +4256,8 @@ vis.register_extension(vis.Extension(
       (toggles/set-value! "shell" true)
       (expect (true? (toggles/enabled? "shell")))
       (try (with-redefs [pyx/reload-python-extensions!
-                         (fn [opts]
-                           (swap! calls conj opts)
+                         (fn [& args]
+                           (swap! calls conj (vec args))
                            {:loaded 0 :failed 0})
 
                          config/reload-config!
@@ -4053,20 +4279,17 @@ vis.register_extension(vis.Extension(
                          (constantly [])]
 
              (let [res ((var pyx/reload-slash) {:channel/id :tui :command/argv []})]
-               (expect (= [{:sync-projects? false}] @calls))
-               ;; #178: only explicit --sync authorizes preparation, even with shell off.
+               ;; Managed reloads prepare declared projects, so /reload takes no flags.
+               (expect (= [[]] @calls))
                (expect (false? (toggles/enabled? "shell")))
-               (expect (= :error
-                          (:slash/status (#'pyx/reload-slash {:command/argv ["--unknown"]}))))
+               (doseq [argv [["--unknown"] ["--sync"]]]
+                 (expect (= :error (:slash/status (#'pyx/reload-slash {:command/argv argv})))))
                (expect (= 1 (count @calls)))
-               (expect (= :ok (:slash/status (#'pyx/reload-slash {:command/argv ["--sync"]}))))
-               (expect (= [{:sync-projects? false} {:sync-projects? true}] @calls))
                (expect (= :ok (:slash/status res)))))
            (expect (false? (toggles/enabled? "shell")))
            (finally (toggles/set-value! "shell" before))))))
 
 ;; Input Views — `vis.ask` blocks the extension until a channel answers
-
 (defn- answer-pending!
   "Wait for an input View titled `title` to show up, then run `answer-fn`
    on its id. Runs off-thread: `vis.ask` parks the calling thread.
@@ -4482,7 +4705,6 @@ vis.register_extension(vis.Extension(name='reload-lifecycle', description='Reloa
                        (expect (empty? (human-input/pending-requests))))))))
 
 ;; Hook callbacks run inside the caller's session env (issue #101)
-
 (def ^:private hook-asker-py
   "
 import blockether.vis.extension as vis
@@ -4526,7 +4748,6 @@ vis.register_extension(vis.Extension(name='hookasker', description='hookasker', 
                                   (expect (empty? (human-input/pending-requests))))))))
 
 ;; Torn-down contexts heal instead of dying (issues #102, #103)
-
 (def ^:private rebuilder-py
   "import blockether.vis.extension as vis
 
@@ -4542,68 +4763,67 @@ vis.register_extension(vis.Extension(name='rebuilder', description='rebuilder', 
               symbols=[vis.Symbol(ping), vis.Symbol(boom)]))
 ")
 
-(defdescribe python-extension-context-heal-test
-             (it "a symbol captured before a reload keeps working after the rebuild"
-                 ;; Sandbox bindings and cached session env rows capture the symbol fn ONCE,
-                 ;; over the context that was alive then. A `/reload` builds new contexts and
-                 ;; closes the old ones without re-binding anything, so every captured symbol
-                 ;; died with "Context execution was cancelled" until the session restarted.
-                 (with-fresh-loaded {"rebuilder.py" rebuilder-py}
-                                    (fn [_ {:keys [ext-dir]}]
-                                      (let [captured (symbol-fn (registered "rebuilder") 'ping)]
-                                        (expect (= "pong" (:result (captured))))
-                                        (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
-                                        (expect (= "pong" (:result (captured))))))))
-             (it "a symbol whose context was torn down rebuilds that context and answers"
-                 ;; Nothing reloaded — the context itself is gone (host teardown, cancel).
-                 ;; The loader's fingerprint gate would call a reload a no-op here, so the
-                 ;; failing call has to rebuild its own file.
-                 (with-fresh-loaded
-                   {"rebuilder.py" rebuilder-py}
-                   (fn [_ _]
-                     (let [captured
-                           (symbol-fn (registered "rebuilder") 'ping)
+(defdescribe
+  python-extension-context-heal-test
+  (it "a symbol captured before a reload keeps working after the rebuild"
+      ;; Sandbox bindings and cached session env rows capture the symbol fn ONCE,
+      ;; over the context that was alive then. A `/reload` builds new contexts and
+      ;; closes the old ones without re-binding anything, so every captured symbol
+      ;; died with "Context execution was cancelled" until the session restarted.
+      (with-fresh-loaded {"rebuilder.py" rebuilder-py}
+                         (fn [_ {:keys [ext-dir]}]
+                           (let [captured (symbol-fn (registered "rebuilder") 'ping)]
+                             (expect (= "pong" (:result (captured))))
+                             (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
+                             (expect (= "pong" (:result (captured))))))))
+  (it "a symbol whose context was torn down rebuilds that context and answers"
+      ;; Nothing reloaded — the context itself is gone (host teardown, cancel).
+      ;; The loader's fingerprint gate would call a reload a no-op here, so the
+      ;; failing call has to rebuild its own file.
+      (with-fresh-loaded
+        {"rebuilder.py" rebuilder-py}
+        (fn [_ _]
+          (let [captured
+                (symbol-fn (registered "rebuilder") 'ping)
 
-                           dead
-                           (:context (first (vals @@#'pyx/loaded)))]
+                dead
+                (:context (first (vals (#'pyx/scope-entries nil))))]
 
-                       (pyx/close-context! dead)
-                       (expect (= "pong" (:result (captured))))
-                       ;; the heal re-registered a LIVE context, so the freshly resolved
-                       ;; symbol goes straight through
-                       (expect (not (identical? dead (:context (first (vals @@#'pyx/loaded))))))
-                       (expect (= "pong"
-                                  (:result ((symbol-fn (registered "rebuilder") 'ping)))))))))
-             (it "context-dead? asks the context itself, it never matches error text"
-                 ;; Liveness is a QUESTION for GraalVM, not a string to parse: a cheap
-                 ;; `asValue` handshake returns on a live context and throws on a cancelled
-                 ;; or closed one. A raised Python exception leaves the context alive.
-                 (with-fresh-loaded
-                   {"rebuilder.py" rebuilder-py}
-                   (fn [_ _]
-                     (let [live (:context (first (vals @@#'pyx/loaded)))]
-                       (expect (false? (#'pyx/context-dead? live)))
-                       (expect (false? (:success? ((symbol-fn (registered "rebuilder") 'boom)))))
-                       (expect (false? (#'pyx/context-dead? live)))
-                       (pyx/close-context! live)
-                       (expect (true? (#'pyx/context-dead? live)))
-                       (expect (true? (#'pyx/context-dead? nil)))))))
-             (it "an ordinary Python error stays a failure and never rebuilds the context"
-                 (with-fresh-loaded
-                   {"rebuilder.py" rebuilder-py}
-                   (fn [_ _]
-                     (let [before
-                           (:context (first (vals @@#'pyx/loaded)))
+            (pyx/close-context! dead)
+            (expect (= "pong" (:result (captured))))
+            ;; the heal re-registered a LIVE context, so the freshly resolved
+            ;; symbol goes straight through
+            (expect (not (identical? dead (:context (first (vals (#'pyx/scope-entries nil)))))))
+            (expect (= "pong" (:result ((symbol-fn (registered "rebuilder") 'ping)))))))))
+  (it "context-dead? asks the context itself, it never matches error text"
+      ;; Liveness is a QUESTION for GraalVM, not a string to parse: a cheap
+      ;; `asValue` handshake returns on a live context and throws on a cancelled
+      ;; or closed one. A raised Python exception leaves the context alive.
+      (with-fresh-loaded {"rebuilder.py" rebuilder-py}
+                         (fn [_ _]
+                           (let [live (:context (first (vals (#'pyx/scope-entries nil))))]
+                             (expect (false? (#'pyx/context-dead? live)))
+                             (expect (false? (:success? ((symbol-fn (registered "rebuilder")
+                                                                    'boom)))))
+                             (expect (false? (#'pyx/context-dead? live)))
+                             (pyx/close-context! live)
+                             (expect (true? (#'pyx/context-dead? live)))
+                             (expect (true? (#'pyx/context-dead? nil)))))))
+  (it "an ordinary Python error stays a failure and never rebuilds the context"
+      (with-fresh-loaded
+        {"rebuilder.py" rebuilder-py}
+        (fn [_ _]
+          (let [before
+                (:context (first (vals (#'pyx/scope-entries nil))))
 
-                           res
-                           ((symbol-fn (registered "rebuilder") 'boom))]
+                res
+                ((symbol-fn (registered "rebuilder") 'boom))]
 
-                       (expect (false? (:success? res)))
-                       (expect (str/includes? (get-in res [:error :message]) "kaboom"))
-                       (expect (identical? before (:context (first (vals @@#'pyx/loaded))))))))))
+            (expect (false? (:success? res)))
+            (expect (str/includes? (get-in res [:error :message]) "kaboom"))
+            (expect (identical? before (:context (first (vals (#'pyx/scope-entries nil)))))))))))
 
 ;; Human-input form builders on the `vis` module
-
 (def ^:private forms-py
   "'''Form builder fixture: composes a request and checks it without asking.'''
 import blockether.vis.extension as vis
@@ -4706,10 +4926,10 @@ vis.register_extension(vis.Extension(
                                             "validate is a function, or a list of functions")))))))
 
 ;; Regression, issue #118: a Python provider could never publish live account
-;; usage. Its `limits_fn` row came back with `:unlimited?` instead of the host
-;; schema's `:is-unlimited`, so every row failed `contract.provider/limit-row`, the
-;; whole report was replaced by an invalid-report error, and the TUI footer showed
-;; "limits: error (Provider limits fn returned an invalid report)".
+  ;; usage. Its `limits_fn` row came back with `:unlimited?` instead of the host
+  ;; schema's `:is-unlimited`, so every row failed `contract.provider/limit-row`, the
+  ;; whole report was replaced by an invalid-report error, and the TUI footer showed
+  ;; "limits: error (Provider limits fn returned an invalid report)".
 (defdescribe python-provider-limits-test
              (it "a Python limits_fn yields a valid report the footer can render"
                  (with-loaded {"acme.py" provider-py}
@@ -4735,11 +4955,11 @@ vis.register_extension(vis.Extension(
                                     (expect (str/includes? summary "Daily tokens"))))))))
 
 ;; Regression, issue #118 (same defect, general form): a Python provider's `is_*`
-;; keys crossed under a hand-written `:<foo>?` rule guarded by a two-entry
-;; allow-list, so every key the list did not name arrived as `:<foo>?` — a name
-;; no host schema reads. That is how `:unlimited?` silenced the TUI footer, and
-;; any NEW `is_*` key was one more silent miss. Keys now take `wire/engine-key`,
-;; the single inverse of the gateway's `wire-key`, with no allow-list to forget.
+  ;; keys crossed under a hand-written `:<foo>?` rule guarded by a two-entry
+  ;; allow-list, so every key the list did not name arrived as `:<foo>?` — a name
+  ;; no host schema reads. That is how `:unlimited?` silenced the TUI footer, and
+  ;; any NEW `is_*` key was one more silent miss. Keys now take `wire/engine-key`,
+  ;; the single inverse of the gateway's `wire-key`, with no allow-list to forget.
 (def ^:private provider-is-keys-py
   "'''Provider fixture pinning `is_*` key spelling across the boundary.'''
 import blockether.vis.extension as vis
@@ -4781,7 +5001,6 @@ vis.register_extension(vis.Extension(
                                   (expect (nil? (:hidden? (:provider/preset p)))))))))
 
 ;; Freshness — only a process start and `/reload` put new bytes live
-
 (def ^:private sidecar-py
   "import blockether.vis.extension as vis
 
@@ -4857,20 +5076,21 @@ vis.register_extension(vis.Extension(name='sidecar', description='sidecar', alia
           (java.util.concurrent.CountDownLatch. 1)]
 
       (try (reset! fingerprint nil)
-           (with-redefs [pyx/load-python-extensions! (fn [_]
-                                                       (swap! calls inc)
-                                                       (Thread/sleep 100)
-                                                       (reset! fingerprint [::loaded])
-                                                       {:loaded 1 :failed 0 :changed? true})]
-             (let [workers (mapv (fn [_]
-                                   (future (.countDown ready)
-                                           (.await start)
-                                           (pyx/ensure-python-extensions-loaded! {:dirs []})))
-                                 (range worker-count))]
-               (expect (.await ready 5 java.util.concurrent.TimeUnit/SECONDS))
-               (.countDown start)
-               (expect (every? map? (mapv #(deref % 5000 ::timeout) workers)))
-               (expect (= 1 @calls))))
+           (with-redefs-fn {#'pyx/load-scope! (fn [_]
+                                                (swap! calls inc)
+                                                (Thread/sleep 100)
+                                                (reset! fingerprint {nil [::loaded]})
+                                                {:loaded 1 :failed 0 :changed? true})}
+             (fn []
+               (let [workers (mapv (fn [_]
+                                     (future (.countDown ready)
+                                             (.await start)
+                                             (pyx/ensure-python-extensions-loaded! {:dirs []})))
+                                   (range worker-count))]
+                 (expect (.await ready 5 java.util.concurrent.TimeUnit/SECONDS))
+                 (.countDown start)
+                 (expect (every? map? (mapv #(deref % 5000 ::timeout) workers)))
+                 (expect (= 1 @calls)))))
            (finally (reset! fingerprint previous)))))
   (it "a torn-down context never heals into edited bytes"
       ;; The heal path re-executes the extension with no human act in the chain,
@@ -4882,14 +5102,14 @@ vis.register_extension(vis.Extension(name='sidecar', description='sidecar', alia
                 (symbol-fn (registered "rebuilder") 'ping)
 
                 dead
-                (:context (first (vals @@#'pyx/loaded)))]
+                (:context (first (vals (#'pyx/scope-entries nil))))]
 
             (write-ext! ext-dir "rebuilder.py" (str/replace rebuilder-py "'pong'" "'edited'"))
             (pyx/close-context! dead)
             (let [res (captured)]
               (expect (not= "edited" (:result res)))
               (expect (not= "pong" (:result res))))
-            (expect (identical? dead (:context (first (vals @@#'pyx/loaded)))))
+            (expect (identical? dead (:context (first (vals (#'pyx/scope-entries nil))))))
             (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
             (expect (= "edited" (:result ((symbol-fn (registered "rebuilder") 'ping)))))))))
   (it "a module the extension imports lazily is frozen with its entry file"
@@ -4912,35 +5132,36 @@ vis.register_extension(vis.Extension(name='sidecar', description='sidecar', alia
       ;; A heal is the one re-execution with no human act behind it, so what it
       ;; proves unchanged is the WHOLE import root - an entry-only check let an
       ;; edited sidecar module ride into the rebuilt trusted context.
-      (with-fresh-loaded {"sidecar/current/sidecar_impl.py" sidecar-impl-py
-                          "sidecar/current/extension.py" sidecar-py}
-                         (fn [_ {:keys [ext-dir]}]
-                           (let [captured
-                                 (symbol-fn (registered "sidecar") 'peek)
-
-                                 dead
-                                 (:context (first (vals @@#'pyx/loaded)))]
-
-                             (write-ext! ext-dir
-                                         "sidecar/current/sidecar_impl.py"
-                                         (str/replace sidecar-impl-py "v1" "v2"))
-                             (pyx/close-context! dead)
-                             (expect (not= "v2" (:result (captured))))
-                             (expect (identical? dead (:context (first (vals @@#'pyx/loaded)))))))))
-  (it "a torn-down context heals from the frozen tree when nothing changed"
       (with-fresh-loaded
         {"sidecar/current/sidecar_impl.py" sidecar-impl-py
          "sidecar/current/extension.py" sidecar-py}
-        (fn [_ _]
+        (fn [_ {:keys [ext-dir]}]
           (let [captured
                 (symbol-fn (registered "sidecar") 'peek)
 
                 dead
-                (:context (first (vals @@#'pyx/loaded)))]
+                (:context (first (vals (#'pyx/scope-entries nil))))]
 
+            (write-ext! ext-dir
+                        "sidecar/current/sidecar_impl.py"
+                        (str/replace sidecar-impl-py "v1" "v2"))
             (pyx/close-context! dead)
-            (expect (= "v1" (:result (captured))))
-            (expect (not (identical? dead (:context (first (vals @@#'pyx/loaded)))))))))))
+            (expect (not= "v2" (:result (captured))))
+            (expect (identical? dead (:context (first (vals (#'pyx/scope-entries nil))))))))))
+  (it
+    "a torn-down context heals from the frozen tree when nothing changed"
+    (with-fresh-loaded
+      {"sidecar/current/sidecar_impl.py" sidecar-impl-py "sidecar/current/extension.py" sidecar-py}
+      (fn [_ _]
+        (let [captured
+              (symbol-fn (registered "sidecar") 'peek)
+
+              dead
+              (:context (first (vals (#'pyx/scope-entries nil))))]
+
+          (pyx/close-context! dead)
+          (expect (= "v1" (:result (captured))))
+          (expect (not (identical? dead (:context (first (vals (#'pyx/scope-entries nil))))))))))))
 
 (defdescribe
   frozen-import-root-test
@@ -4972,7 +5193,7 @@ vis.register_extension(vis.Extension(name='sidecar', description='sidecar', alia
         (binding [extension/*current-environment* {:db-info store}]
           (try (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
                (expect (= "v1" (:result ((symbol-fn (registered "sidecar") 'peek)))))
-               (let [snap (io/file (:snapshot (first (vals @@#'pyx/loaded))))]
+               (let [snap (io/file (:snapshot (first (vals (#'pyx/scope-entries nil)))))]
                  (expect (.isFile (io/file snap "sidecar_impl.py"))))
                (expect (= sidecar-impl-py (slurp impl)))
                (finally (reset! live-load nil)

@@ -773,7 +773,7 @@
    sess))
 
 (defonce ^:private loaded
-  ;; canonical path -> {:sha :ext-name :context :snapshot :source}
+  ;; [project-root canonical-path] -> admitted source, context and extension descriptor
   (atom {}))
 
 (defonce
@@ -868,49 +868,54 @@
     (swap! context-lifecycle assoc ctx {:snapshot (.getCanonicalPath snap) :calls 0})
     (try (bind-host! ctx label bound-env)
          (locking ctx
-           (exec-in! ctx bootstrap-python)
-           (exec-in!
-             ctx
-             (str "import sys as __vis_pathsys__\n"
-                  "import os as __vis_pathos__\n"
-                  "__vis_ext_dir__ = "
-                  (python-string-literal (.getCanonicalPath snap))
-                  "\n"
-                  "__vis_frozen_home__ = "
-                  (python-string-literal frozen-home)
-                  "\n"
-                  "__file__ = "
-                  (python-string-literal entry-path)
-                  "\n"
-                  "__cached__ = None\n"
-                  "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
-                  "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n"
-                  "__vis_packages__ = "
-                  (python-string-literal (or packages (runtime/packages-dir)))
-                  "\nimport package_paths as __vis_package_paths__\n"
-                  "__vis_package_paths__.refresh(__vis_packages__, reload=True)\n"
-                  "if __vis_packages__ in __vis_pathsys__.path:\n"
-                  "    __vis_pathsys__.path.remove(__vis_packages__)\n"
-                  "__vis_pathsys__.path.insert(1, __vis_packages__)\n"
-                  "import importlib as __vis_importlib__\n"
-                  "__vis_importlib__.invalidate_caches()\n"
-                  "__vis_pathsys__.path[:] = [__vis_p__ for __vis_p__ in __vis_pathsys__.path\n"
-                  "                          if not __vis_p__.startswith(__vis_frozen_home__)\n"
-                  "                          or __vis_pathos__.path.isdir(__vis_p__)]\n"
-                  "for __vis_name__, __vis_mod__ in list(__vis_pathsys__.modules.items()):\n"
-                  "    __vis_file__ = getattr(__vis_mod__, '__file__', None) or ''\n"
-                  "    if (__vis_file__.startswith(__vis_frozen_home__)\n"
-                  "            and not __vis_file__.startswith(__vis_ext_dir__)):\n"
-                  "        del __vis_pathsys__.modules[__vis_name__]\n"))
-           (exec-in! ctx source))
+           (extension/with-context
+             {:ext {:ext/name label}
+              :env (or bound-env {:workspace/root (.getCanonicalPath (workspace/cwd))})}
+             (python-host/conveying
+               ctx
+               (exec-in! ctx bootstrap-python)
+               (exec-in!
+                 ctx
+                 (str "import sys as __vis_pathsys__\n"
+                      "import os as __vis_pathos__\n"
+                      "__vis_ext_dir__ = "
+                      (python-string-literal (.getCanonicalPath snap))
+                      "\n"
+                      "__vis_frozen_home__ = "
+                      (python-string-literal frozen-home)
+                      "\n"
+                      "__file__ = "
+                      (python-string-literal entry-path)
+                      "\n"
+                      "__cached__ = None\n"
+                      "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
+                      "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n"
+                      "__vis_packages__ = "
+                      (python-string-literal (or packages (runtime/packages-dir)))
+                      "\nimport package_paths as __vis_package_paths__\n"
+                      "__vis_package_paths__.refresh(__vis_packages__, reload=True)\n"
+                      "if __vis_packages__ in __vis_pathsys__.path:\n"
+                      "    __vis_pathsys__.path.remove(__vis_packages__)\n"
+                      "__vis_pathsys__.path.insert(1, __vis_packages__)\n"
+                      "import importlib as __vis_importlib__\n"
+                      "__vis_importlib__.invalidate_caches()\n"
+                      "__vis_pathsys__.path[:] = [__vis_p__ for __vis_p__ in __vis_pathsys__.path\n"
+                      "                          if not __vis_p__.startswith(__vis_frozen_home__)\n"
+                      "                          or __vis_pathos__.path.isdir(__vis_p__)]\n"
+                      "for __vis_name__, __vis_mod__ in list(__vis_pathsys__.modules.items()):\n"
+                      "    __vis_file__ = getattr(__vis_mod__, '__file__', None) or ''\n"
+                      "    if (__vis_file__.startswith(__vis_frozen_home__)\n"
+                      "            and not __vis_file__.startswith(__vis_ext_dir__)):\n"
+                      "        del __vis_pathsys__.modules[__vis_name__]\n"))
+               (exec-in! ctx source))))
          {:context ctx :registration (unseal ctx (run-in ctx "__vis_registration__()"))}
          (catch Throwable t (discard-context! ctx) (throw t)))))
 
 (defn- source-entry
   [ext-name source-ctx]
-  (some (fn [[path entry]]
+  (some (fn [[_ entry]]
           (when (and (= ext-name (:ext-name entry)) (identical? source-ctx (:context entry)))
-            (assoc entry :path path)))
+            entry))
         @loaded))
 
 (defn- session-call-target
@@ -974,7 +979,7 @@
    carries atoms, contexts and other host-only handles). STRING keys —
    it crosses the strings-only boundary."
   [env]
-  {"cwd" (System/getProperty "user.dir")
+  {"cwd" (or (workspace/workspace-root env) (.getCanonicalPath (workspace/cwd)))
    "session_id" (some-> (:session-id env)
                         str)
    "channel" (some-> (:channel env)
@@ -1735,7 +1740,14 @@
   ;; [{:file :error}] from the most recent scan.
   (atom []))
 
-(defonce ^:private last-fingerprint (atom nil))
+(defonce ^:private last-fingerprint (atom {}))
+
+(defn- scope-entries
+  [project-root]
+  (into {}
+        (filter (fn [[_ entry]]
+                  (= project-root (:project-root entry))))
+        @loaded))
 
 ;; Change listeners — the seam live surfaces subscribe to so a `/reload`
 ;; propagates beyond the global registry. Each session env caches its own
@@ -1746,11 +1758,11 @@
 
 (defn add-change-listener!
   "Subscribe `f` to Python-extension set changes. `f` receives
-   `{:extensions [<validated ext map> ...] :removed [<ext-name> ...]}`
-   after every (re)load that changed anything: `:extensions` is the full
-   freshly-registered set, `:removed` the names that no longer exist.
-   Re-registering the same `listener-id` replaces the old listener.
-   Returns `listener-id`."
+   `{:project-root root :extensions [<validated ext map> ...] :removed [<ext-name> ...]}`
+   after every (re)load that changed anything. `:project-root` is nil for the global
+   catalog; `:extensions` is that scope's full freshly-registered set and `:removed`
+   the names that no longer exist in it. Re-registering the same `listener-id`
+   replaces the old listener. Returns `listener-id`."
   [listener-id f]
   (swap! change-listeners assoc listener-id f)
   listener-id)
@@ -1771,10 +1783,12 @@
                       :data {:listener id :error (ex-message t)}})))))
 
 (defn load-failures
-  "Load failures from the latest scan. Each row names the file, error, retained
-   extension, stale? status, loaded/requested source fingerprints and readiness changes."
+  "Load failures visible to the current project, including global extensions.
+   Each row names the file, error, retained extension, stale? status,
+   loaded/requested source fingerprints and readiness changes."
   []
-  @failures)
+  (let [root (.getCanonicalPath (workspace/cwd))]
+    (filterv #(or (nil? (:project-root %)) (= root (:project-root %))) @failures)))
 
 (defn- failure-summary
   [{:keys [file error extension stale? loaded-fingerprint requested-fingerprint]}]
@@ -1787,18 +1801,27 @@
        ". " error))
 
 (defn loaded-python-extensions
-  "Snapshot of the currently loaded Python extensions:
-   `{<canonical-path> {:sha ... :ext-name ...}} ` (context handle elided)."
+  "Snapshot of the effective Python extensions for the current project:
+   `{<canonical-path> {:sha ... :ext-name ...}}` (context handle elided).
+   Project declarations override global extensions with the same name."
   []
-  (into {}
-        (map (fn [[p e]]
-               [p (dissoc e :context :ext)]))
-        @loaded))
+  (let [local
+        (scope-entries (.getCanonicalPath (workspace/cwd)))
+
+        local-names
+        (set (map (comp :ext-name val) local))]
+
+    (into {}
+          (map (fn [[_ e]]
+                 [(:path e) (dissoc e :context :ext)]))
+          (concat (remove (fn [[_ e]]
+                            (local-names (:ext-name e)))
+                    (scope-entries nil))
+                  local))))
 
 (defn ^:no-doc default-extension-dirs
   []
-  [(io/file (System/getProperty "user.home") ".vis" "extensions")
-   (io/file (System/getProperty "user.dir") ".vis" "extensions")])
+  [(io/file (config/config-dir) "extensions") (io/file (workspace/cwd) ".vis" "extensions")])
 
 (defn ^:no-doc test-file?
   "A `test_*.py` / `*_test.py` module — a Python test, never an extension entry."
@@ -1971,7 +1994,7 @@
                                           :prune (boolean prune)
                                           :dry_run (boolean dry-run)
                                           :vis_version (package-version)})))
-              scopes))))
+              (filter #(or prune (seq (:packages %))) scopes)))))
 
 (defn- extension-plan
   [^File f]
@@ -2148,9 +2171,9 @@
          (catch Throwable t (delete-tree! dest) (throw t)))))
 
 (defn- prepare-root!
-  "Snapshot sources and select an existing project environment or shared packages.
-   Only explicit sync prepares a missing project environment."
-  [{:keys [roots dependencies project automatic? package-metadata sync-projects?]}]
+  "Snapshot sources and prepare dependencies for an admitted project catalog.
+   Unmanaged explicit-directory scans prepare missing environments only when requested."
+  [{:keys [roots dependencies project automatic? package-metadata sync-projects? project-root]}]
   (let [frozen (freeze-root! roots)]
     (try (let [packages (when (and project
                                    (or sync-projects?
@@ -2173,6 +2196,7 @@
            (assoc frozen
              :roots roots
              :packages packages
+             :project-root project-root
              :package-metadata package-metadata))
          (catch Throwable t (delete-tree! (:dir frozen)) (throw t)))))
 
@@ -2264,13 +2288,16 @@
                         (get metadata "repository")
                         (assoc :ext/repository (get metadata "repository")))
                       spec)
-               validated (extension/register-extension! spec)]
+               validated (if (:project-root frozen)
+                           (extension/extension spec)
+                           (extension/register-extension! spec))]
 
            (tel/log! {:level :info
                       :id ::loaded
                       :data {:file path :ext (:ext/name spec)}
                       :msg (str "Python extension '" (:ext/name spec) "' loaded from " path)})
            {:path path
+            :project-root (:project-root frozen)
             :sha sha
             :code-sha (:code-sha frozen)
             :roots (:roots frozen)
@@ -2303,9 +2330,14 @@
    fails; the caller then reports the original failure."
   [ext-name sym dead-ctx]
   (try
-    (when-let [[path entry] (first (filter (fn [[_ e]]
-                                             (= ext-name (:ext-name e)))
-                                           @loaded))]
+    (when-let [[entry-key entry] (or (first (filter (fn [[_ e]]
+                                                      (identical? dead-ctx (:context e)))
+                                                    @loaded))
+                                     (first (filter (fn [[_ e]]
+                                                      (= ext-name (:ext-name e)))
+                                                    (concat (scope-entries (.getCanonicalPath
+                                                                             (workspace/cwd)))
+                                                            (scope-entries nil)))))]
       (let [entry
             (if-not (or (identical? dead-ctx (:context entry)) (context-dead? (:context entry)))
               entry
@@ -2319,28 +2351,35 @@
               (if-not (= (:code-sha entry) (code-sha (:roots entry)))
                 (do (tel/log! {:level :warn
                                :id ::heal-refused
-                               :data {:extension ext-name :file path}
+                               :data {:extension ext-name :file (:path entry)}
                                :msg (str "Python extension '" ext-name
                                          "' changed on disk since it was loaded - not running the"
                                          " new version; run /reload to pick it up")})
                     nil)
-                (let [rebuilt (load-file! (io/file path)
+                (let [rebuilt (load-file! (io/file (:path entry))
                                           (let [snap (io/file (:snapshot entry))]
                                             (when (.isDirectory snap)
                                               {:dir snap
+                                               :project-root (:project-root entry)
                                                :code-sha (:code-sha entry)
                                                :roots (:roots entry)
                                                :packages (:packages entry)
                                                :package-metadata (:package-metadata entry)})))]
-                  (swap! loaded assoc path (dissoc rebuilt :path))
+                  (swap! loaded assoc entry-key (assoc rebuilt :order (:order entry)))
                   (close-context! dead-ctx)
                   (tel/log! {:level :info
                              :id ::context-rebuilt
-                             :data {:extension ext-name :file path :symbol (str sym)}
+                             :data {:extension ext-name :file (:path entry) :symbol (str sym)}
                              :msg
                              (str "Rebuilt torn-down context for Python extension '" ext-name "'")})
-                  (notify-change-listeners! {:extensions (vec (keep :ext (vals @loaded)))
-                                             :removed []})
+                  (when-let [root (:project-root entry)]
+                    (extension/set-project-extensions!
+                      root
+                      (keep :ext (sort-by :order (vals (scope-entries root))))))
+                  (notify-change-listeners!
+                    {:project-root (:project-root entry)
+                     :extensions (vec (keep :ext (vals (scope-entries (:project-root entry)))))
+                     :removed []})
                   rebuilt)))]
         (some (fn [e]
                 (when (= sym (:ext.symbol/symbol e)) (:ext.symbol/fn e)))
@@ -2354,7 +2393,7 @@
 
 (declare register-loader-extension!)
 
-(defn load-python-extensions!
+(defn- load-scope!
   "Scan the Python extension dirs (default: `~/.vis/extensions` and
    `<cwd>/.vis/extensions`) and (re)load every `*.py` file. Idempotent:
    when no file changed since the last scan this is a cheap no-op. On any
@@ -2370,11 +2409,11 @@
    by `vis-agent doctor`) — it never crashes the host.
 
    Returns `{:loaded n :failed n :changed? bool}`."
-  ([] (load-python-extensions! nil))
-  ([{:keys [dirs sync-projects?]}]
+  ([] (load-scope! nil))
+  ([{:keys [dirs project-root sync-projects?]}]
    (register-loader-extension!)
    (let [dirs
-         (or dirs (default-extension-dirs))
+         (or dirs [])
 
          files
          (scan dirs)
@@ -2383,7 +2422,9 @@
          (into {}
                (map (fn [f]
                       [f
-                       (try (assoc (extension-plan f) :sync-projects? sync-projects?)
+                       (try (assoc (extension-plan f)
+                              :sync-projects? sync-projects?
+                              :project-root project-root)
                             (catch Throwable t {:error t}))])
                     files))
 
@@ -2410,10 +2451,12 @@
                        (catch Throwable _ ::invalid-sources))])
                files)]
 
-     (if (= fp @last-fingerprint)
-       {:loaded (count @loaded) :failed (count @failures) :changed? false}
+     (if (= fp (get @last-fingerprint project-root))
+       {:loaded (count (scope-entries project-root))
+        :failed (count (filter #(= project-root (:project-root %)) @failures))
+        :changed? false}
        (let [old-loaded
-             @loaded
+             (scope-entries project-root)
 
              old-names
              (set (map :ext-name (vals old-loaded)))
@@ -2424,7 +2467,9 @@
                        files))]
 
          (try
-           (reset! failures [])
+           (swap! failures #(vec (remove (fn [failure]
+                                           (= project-root (:project-root failure)))
+                                   %)))
            ;; Build-then-swap, file by file. A file that reloads cleanly swaps in
            ;; (its PREVIOUS context is closed only after the new one is live); a
            ;; file that FAILS keeps its last-good entry — still registered, context
@@ -2437,21 +2482,23 @@
            ;; load — nothing to fall back to vs. the retained last-good.
            (doseq [^File f files]
              (let [path (.getCanonicalPath f)
-                   prev-ctx (get-in @loaded [path :context])]
+                   entry-key [project-root path]
+                   prev-ctx (get-in @loaded [entry-key :context])]
 
                (try
                  (let [{:keys [ext-name] :as entry}
-                       (load-file! f (per-root :frozen (get plans f) prepare-root!))]
+                       (assoc (load-file! f (per-root :frozen (get plans f) prepare-root!))
+                         :order (.indexOf ^java.util.List files f))]
                    ;; A later file (project dir) registering the same extension
                    ;; name supersedes an earlier one at a DIFFERENT path — the
                    ;; registry already swapped the registration; close the
                    ;; superseded context so its adapters can't linger.
-                   (doseq [[opath {oname :ext-name octx :context}] @loaded
-                           :when (and (= oname ext-name) (not= opath path))]
+                   (doseq [[opath {oname :ext-name octx :context}] (scope-entries project-root)
+                           :when (and (= oname ext-name) (not= opath entry-key))]
 
                      (close-context! octx)
                      (swap! loaded dissoc opath))
-                   (swap! loaded assoc path (dissoc entry :path))
+                   (swap! loaded assoc entry-key entry)
                    (close-context! prev-ctx))
                  (catch Throwable t
                    (tel/log! {:level :warn
@@ -2459,12 +2506,13 @@
                               :data {:file (str f) :error (ex-message t)}
                               :msg (str "Python extension failed to load: " f
                                         " — " (ex-message t))})
-                   (let [previous (get @loaded path)
+                   (let [previous (get @loaded entry-key)
                          [_ sha source-sha] (some #(when (= path (first %)) %) fp)]
 
                      (swap! failures conj
                        (merge (select-keys (ex-data t) [:changed-inputs :changed-distributions])
                               {:file (str f)
+                               :project-root project-root
                                :error (ex-message t)
                                :extension (:ext-name previous)
                                :stale? (boolean previous)
@@ -2475,28 +2523,34 @@
                                (util/sha256-hex (pr-str {:sha sha :code-sha source-sha}))})))))))
            ;; Files that vanished from disk since the last scan (deleted / renamed)
            ;; have no entry to retain — deregister and close so they don't linger.
-           (doseq [[opath {:keys [ext-name] :as e}]
-                   @loaded
+           (doseq [[opath {:keys [ext-name path] :as e}]
+                   (scope-entries project-root)
 
-                   :when (not (scanned opath))]
+                   :when (not (scanned path))]
 
-             (try (extension/deregister-extension! ext-name) (catch Throwable _))
+             (when-not project-root
+               (try (extension/deregister-extension! ext-name) (catch Throwable _)))
              (close-context! (:context e))
              (swap! loaded dissoc opath))
-           (reset! last-fingerprint fp)
+           (swap! last-fingerprint assoc project-root fp)
            ;; Propagate to live surfaces (cached session envs, TUI slash
            ;; palette). Without this a /reload only updates the GLOBAL
            ;; registry: new extensions stay invisible to running sessions
            ;; and stale env rows keep calling into the closed contexts.
            (let [entries
-                 (vals @loaded)
+                 (sort-by :order (vals (scope-entries project-root)))
 
                  new-names
                  (set (map :ext-name entries))]
 
-             (notify-change-listeners! {:extensions (vec (keep :ext entries))
+             (when project-root
+               (extension/set-project-extensions! project-root (keep :ext entries)))
+             (notify-change-listeners! {:project-root project-root
+                                        :extensions (vec (keep :ext entries))
                                         :removed (vec (sort (remove new-names old-names)))}))
-           {:loaded (count @loaded) :failed (count @failures) :changed? true}
+           {:loaded (count (scope-entries project-root))
+            :failed (count (filter #(= project-root (:project-root %)) @failures))
+            :changed? true}
            (finally
              ;; A failed entry must not delete code still queued in this scan.
              ;; Release the scan's roots even if publication or retirement fails.
@@ -2515,45 +2569,97 @@
 
 (defonce ^:private ensure-load-lock (Object.))
 
+(defn- load-scopes!
+  [opts force?]
+  (locking ensure-load-lock
+    (let [explicit?
+          (contains? opts :dirs)
+
+          scopes
+          (if explicit?
+            [opts]
+            (let [[global-dir project-dir]
+                  (default-extension-dirs)
+
+                  root
+                  (.getCanonicalPath (workspace/cwd))]
+
+              (cond-> [{:dirs [global-dir] :global true}]
+                (not= (.getCanonicalPath ^File global-dir) (.getCanonicalPath ^File project-dir))
+                (conj {:dirs [project-dir] :project true :project-root root}))))
+
+          results
+          (mapv (fn [{:keys [project-root] :as scope}]
+                  (let [initialized? (contains? @last-fingerprint project-root)]
+                    (if (and initialized? (not force?))
+                      {:loaded (count (scope-entries project-root))
+                       :failed (count (filter #(= project-root (:project-root %)) @failures))
+                       :changed? false}
+                      (do
+                        ;; Opening a configured project admits its declared extensions. Source
+                        ;; receipts retain pins; this is not a background update or prune.
+                        (when-not explicit?
+                          (let [results (sync-packages! (assoc (select-keys scope
+                                                                            [:global :project])
+                                                          :trust true))
+                                failed (filter #(= "failed" (get % "status")) results)]
+
+                            (when (seq failed)
+                              (throw (ex-info "Could not prepare configured project extensions"
+                                              {:type ::project-setup-failed
+                                               :project-root project-root
+                                               :failures (vec failed)})))))
+                        (when (:force? opts) (swap! last-fingerprint dissoc project-root))
+                        (let [result (load-scope! (cond-> (merge opts scope)
+                                                    (not explicit?)
+                                                    (assoc :sync-projects? true)))]
+                          (when (and (not initialized?) (pos? (:failed result)))
+                            (swap! last-fingerprint dissoc project-root))
+                          result)))))
+                scopes)]
+
+      {:loaded (reduce + 0 (map :loaded results))
+       :failed (reduce + 0 (map :failed results))
+       :changed? (boolean (some :changed? results))})))
+
+(defn load-python-extensions!
+  "Load global extensions and the bound project's independent catalog. Declared
+   packages and missing environments are prepared before registration. Explicit
+   `:dirs` loads an unmanaged catalog; `:project-root` scopes that catalog."
+  ([] (load-python-extensions! nil))
+  ([opts] (load-scopes! opts true)))
+
 (defn ensure-python-extensions-loaded!
-  "Load the Python extension dirs only when this process has not loaded them
-   yet, and NEVER pick an edit up.
-
-   The freshness contract: a running process serves exactly the extension bytes
-   its own start loaded, or the ones the last `/reload` loaded. Editing a `.py`
-   on disk changes nothing until a human reloads. Every implicit load path — a
-   session env cache miss, an env recycle — goes through
-   HERE rather than `load-python-extensions!`, whose content fingerprint would
-   otherwise re-execute an edited file's top level at the next cache miss, with
-   no human act anywhere in the chain.
-
-   Same return shape as `load-python-extensions!`."
+  "Admit each project's configuration and extension bytes once. Session cache misses
+   and recycling reuse that project's admitted catalog; only explicit reload adopts edits."
   ([] (ensure-python-extensions-loaded! nil))
-  ([opts]
-   ;; The slash catalog and the first environment can arrive on separate gateway
-   ;; request threads. Only one of them may open extension sessions.
-   (locking ensure-load-lock
-     (if (nil? @last-fingerprint)
-       (load-python-extensions! opts)
-       {:loaded (count @loaded) :failed (count @failures) :changed? false}))))
+  ([opts] (load-scopes! opts false)))
+
+(defn prepare-project!
+  "Prepare a project's declared packages, dependencies and isolated extension catalog.
+   Adding or opening a project admits its configured code; reload adopts later edits."
+  [root]
+  (let [directory (io/file root)]
+    (when-not (.isDirectory directory)
+      (throw (ex-info "Project root must be an existing directory" {:root (str root)})))
+    (binding [workspace/*workspace-root* (.getCanonicalPath directory)]
+      (let [result (ensure-python-extensions-loaded!)]
+        (when (pos? (:failed result))
+          (throw (ex-info "Could not load project extensions" (assoc result :root (str root)))))
+        result))))
 
 (defn reload-python-extensions!
-  "Force a full reload of every Python extension (even when no file
-   changed). Same return shape as `load-python-extensions!`. Live
-   sessions pick the new tool bindings up at the next turn boundary."
+  "Reload global extensions and the calling project, preserving other project catalogs."
   ([] (reload-python-extensions! nil))
   ([opts]
    (locking ensure-load-lock
-     ;; #175: the registration worker survives reloads, unlike session workers.
-     ;; Discard its editable imports before any extension imports source again.
      (when (pyext/worker-live? pyext/shared-key)
        (pyext/exec! pyext/shared-key
                     runtime/default-session
                     (str "import package_paths; package_paths.refresh("
                          (python-string-literal (runtime/packages-dir))
                          ", reload=True)")))
-     (reset! last-fingerprint nil)
-     (load-python-extensions! opts))))
+     (load-scopes! (assoc opts :force? true) true))))
 
 ;; The loader's own host extension: `/reload` + doctor surface
 
@@ -2574,14 +2680,14 @@
 
 (defn- reload-slash
   [{argv :command/argv}]
-  (if-not (or (empty? argv) (= ["--sync"] (vec argv)))
-    {:slash/status :error :slash/title "Usage: /reload [--sync]"}
+  (if (seq argv)
+    {:slash/status :error :slash/title "Usage: /reload"}
     ;; One user-facing reload for EVERY hot-reloadable resource: configuration,
     ;; Python extensions, project guidance (AGENTS.md/CLAUDE.md stack), prompt
     ;; templates, and any extension-owned discovery cache registered as a
     ;; reload hook (harness skills/agents).
     (let [{:keys [loaded failed]}
-          (reload-python-extensions! {:sync-projects? (= ["--sync"] (vec argv))})
+          (reload-python-extensions!)
 
           old-config
           (config/current-config)
@@ -2597,7 +2703,10 @@
           ;; from the freshly re-read raw config so YAML is the source of truth again;
           ;; ids absent from the file keep their current in-memory value.
           _toggles
-          (try (toggles/hydrate-from-config! (or (config/load-config-raw) {}))
+          (try (if-let [values (:config/toggles extension/*current-environment*)]
+                 (reset! values (toggles/config-values (config/load-config-raw)))
+                 (when-not workspace/*workspace-root*
+                   (toggles/hydrate-from-config! (or (config/load-config-raw) {}))))
                (catch Throwable _ nil))
 
           cfg-changes
@@ -2797,20 +2906,21 @@
          :slash/data report}))))
 
 (defn- doctor-fn
-  [_env]
-  (vec (concat (for [failure @failures]
-                 {:level :error
-                  :check-id ::load
-                  :message (failure-summary failure)
-                  :remediation (:error failure)})
-               (for [[path {:keys [ext-name]}]
-                     @loaded
+  [env]
+  (extension/with-context
+    {:env env}
+    (let [visible-failures (load-failures)]
+      (vec (concat (for [failure visible-failures]
+                     {:level :error
+                      :check-id ::load
+                      :message (failure-summary failure)
+                      :remediation (:error failure)})
+                   (for [[path {:keys [ext-name]}] (loaded-python-extensions)
+                         :when (not-any? #(= path (:file %)) visible-failures)]
 
-                     :when (not-any? #(= path (:file %)) @failures)]
-
-                 {:level :info
-                  :check-id ::load
-                  :message (str "Python extension '" ext-name "' loaded from " path)}))))
+                     {:level :info
+                      :check-id ::load
+                      :message (str "Python extension '" ext-name "' loaded from " path)}))))))
 
 (defonce ^:private loader-registered? (atom false))
 
@@ -2840,12 +2950,13 @@
        :ext/kind "host"
        :ext/source-nses ['com.blockether.vis.internal.python.extensions]
        :ext/prompt-fn (fn [_]
-                        (when (seq @failures) (str/join "\n" (map failure-summary @failures))))
+                        (when-let [visible (seq (load-failures))]
+                          (str/join "\n" (map failure-summary visible))))
        :ext/slash-commands
        [{:slash/name "reload"
          :slash/doc
-         "Reload configuration, extensions and context. --sync authorizes locked dependency preparation for declared uv projects."
-         :slash/usage "/reload [--sync]"
+         "Reload configuration, extensions and context, preparing declared packages and extension environments."
+         :slash/usage "/reload"
          :slash/run-fn reload-slash}
         {:slash/name "test"
          :slash/doc

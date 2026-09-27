@@ -428,3 +428,23 @@
       (try (expect (false? (t/enabled? "speech_preload_model")))
            (finally (t/reset-to-default! "speech_preload_model")))
       (expect (true? (t/enabled? "speech_preload_model")))))
+
+(defdescribe
+  session-snapshot-test
+  (it "config-values resolves every registered toggle from one project's config"
+      (with-clean-state
+        (fn []
+          (t/register-toggle! {:id "test_snapshot_on" :label "Snapshot on" :default true})
+          (t/register-toggle! {:id "test_snapshot_off" :label "Snapshot off" :default false})
+          (let [values (t/config-values {"toggles" {"test_snapshot_on" false}})]
+            (expect (false? (get values "test_snapshot_on")))
+            (expect (false? (get values "test_snapshot_off")))
+            (expect (true? (get (t/config-values {}) "test_snapshot_on")))))))
+  (it "a bound session snapshot wins over the process value without changing it"
+      (with-clean-state (fn []
+                          (t/register-toggle!
+                            {:id "test_snapshot_bound" :label "Snapshot bound" :default false})
+                          (t/set-enabled! "test_snapshot_bound" true)
+                          (binding [t/*overrides* {"test_snapshot_bound" false}]
+                            (expect (false? (t/enabled? "test_snapshot_bound"))))
+                          (expect (true? (t/enabled? "test_snapshot_bound")))))))

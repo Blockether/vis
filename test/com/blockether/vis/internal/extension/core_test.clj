@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.extension.core-test
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.activity.event :as activity-event]
@@ -13,6 +14,118 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- sample-channel-fn [& _] nil)
+
+(defdescribe
+  project-extension-catalog-test
+  (it
+    "isolates overrides, providers, metadata and callbacks between projects"
+    (with-redefs-fn {#'extension/extension-registry (atom {})
+                     #'extension/extension-order (atom [])
+                     #'extension/project-extensions (atom {})
+                     #'registry/provider-registry (atom {})
+                     #'registry/project-providers (atom {})}
+      (fn []
+        (let [root-a
+              (workspace/normalize-root "target/project-catalog-a")
+
+              root-b
+              (workspace/normalize-root "target/project-catalog-b")
+
+              catalog
+              (fn [label provider-id tag]
+                {:ext/name "test.project-catalog"
+                 :ext/description "Project catalog fixture"
+                 :ext/engine {:ext.engine/alias 'fixture
+                              :ext.engine/symbols [{:ext.symbol/symbol 'read
+                                                    :ext.symbol/tag tag
+                                                    :ext.symbol/doc "Read the fixture value."
+                                                    :ext.symbol/arglists '[[]]
+                                                    :ext.symbol/activity (presenter/for-tool :cat)
+                                                    :ext.symbol/fn (fn []
+                                                                     label)}]}
+                 :ext/providers [{:provider/id provider-id :provider/label label}]
+                 :ext/op-hooks [{:op :project-catalog-read
+                                 :fn (fn [_ _ _ result]
+                                       (update result :result conj label))}]
+                 :ext/network-filters [(fn [_]
+                                         {:label label :root (str (workspace/cwd))})]
+                 :ext/slash-commands [{:slash/name "fixture"
+                                       :slash/doc "Read the fixture value."
+                                       :slash/run-fn (fn [_]
+                                                       {:slash/status :ok :slash/body label})}]})
+
+              global
+              (catalog "Global" :global-only :observation)
+
+              a
+              (catalog "A" :only-a :observation)
+
+              b
+              (catalog "B" :only-b :mutation)]
+
+          (try (extension/register-extension! global)
+               (registry/register-provider! {:provider/id :inherited :provider/label "Inherited"})
+               (extension/set-project-extensions! root-a [a])
+               (extension/set-project-extensions! root-b [b])
+               (doseq [[root ext label provider-id tag] [[root-a a "A" :only-a :observation]
+                                                         [root-b b "B" :only-b :mutation]]]
+                 (let [env {:workspace/root root :extensions (atom [ext])}]
+                   (extension/with-context
+                     {:env env}
+                     (expect (= [(:ext/providers ext)]
+                                (mapv :ext/providers (extension/registered-extensions))))
+                     (expect (= #{:inherited provider-id}
+                                (set (map :provider/id (registry/registered-providers)))))
+                     (expect (= label (:provider/label (registry/provider-by-id provider-id))))
+                     (expect (nil? (registry/provider-by-id :global-only)))
+                     (let [op (keyword (#'extension/tool-call-name ext 'read))]
+                       (expect (= tag (extension/op-tag op)))
+                       (expect (= tag (get (extension/op-tag-index) op))))
+                     (expect (= {:slash/status :ok :slash/body label}
+                                ((get-in ext [:ext/slash-commands 0 :slash/run-fn]) {}))))
+                   (expect (= [label]
+                              (:result (#'extension/run-op-after-hooks
+                                        :project-catalog-read
+                                        env
+                                        []
+                                        (extension/success {:result []})))))
+                   (expect (= {:label label :root root}
+                              ((last (extension/network-filters env)) {})))))
+               (extension/set-project-extensions! root-a [])
+               (binding [workspace/*workspace-root* root-a]
+                 (expect (= [(:ext/providers global)]
+                            (mapv :ext/providers (extension/registered-extensions))))
+                 (expect (= "Global" (:provider/label (registry/provider-by-id :global-only)))))
+               (binding [workspace/*workspace-root* root-b]
+                 (expect (= [(:ext/providers b)]
+                            (mapv :ext/providers (extension/registered-extensions)))))
+               (finally (extension/deregister-extension! "test.project-catalog")))))))
+  (it "rejects project slash collisions without replacing its last valid catalog"
+      (let [root
+            (workspace/normalize-root "target/project-collision")
+
+            slash
+            {:slash/name "project-collision"
+             :slash/doc "Read the fixture."
+             :slash/run-fn (fn [_]
+                             {:slash/status :ok})}
+
+            a
+            {:ext/name "test.project-a" :ext/description "A" :ext/slash-commands [slash]}
+
+            b
+            (assoc a :ext/name "test.project-b")]
+
+        (try (extension/set-project-extensions! root [a])
+             (expect (= :extension/slash-path-collision
+                        (try (extension/set-project-extensions! root [a b])
+                             nil
+                             (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+             (binding [workspace/*workspace-root* root]
+               (expect (= ["test.project-a"]
+                          (filterv #{"test.project-a" "test.project-b"}
+                            (mapv :ext/name (extension/registered-extensions))))))
+             (finally (extension/set-project-extensions! root []))))))
 
 (defdescribe
   summary-only-activity-registration-test
