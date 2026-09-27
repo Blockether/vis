@@ -173,8 +173,10 @@ describe('execution grouping', () => {
         ])}
       />,
     );
-    // Regression #181: failure messages are visible without opening source or stdout.
-    expect(view.getByText('Operation failed')).toBeVisible();
+    // Regression #181: the Failed label stays visible while its message is collapsed.
+    const toggle = view.getByRole('button', { name: 'Expand error details' });
+    expect(toggle).toHaveTextContent('Failed');
+    expect(view.queryByText('Operation failed')).toBeNull();
     expect(view.container.textContent).not.toContain('fail()');
     expect(view.container.textContent).not.toContain('first output');
     fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
@@ -184,7 +186,11 @@ describe('execution grouping', () => {
     expect(view.container.textContent).toContain('first output');
     expect(view.container.textContent).toContain('last output');
     fireEvent.click(view.getByRole('button', { name: 'Collapse code' }));
+    expect(view.queryByText('Operation failed')).toBeNull();
+    fireEvent.click(toggle);
     expect(view.getByText('Operation failed')).toBeVisible();
+    fireEvent.click(view.getByRole('button', { name: 'Collapse error details' }));
+    expect(view.queryByText('Operation failed')).toBeNull();
   });
 
   it('owns source and result in one CODE disclosure before Activity', () => {

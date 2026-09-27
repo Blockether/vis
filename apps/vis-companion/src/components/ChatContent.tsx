@@ -1266,15 +1266,24 @@ const ToolCard = memo(function ToolCard({
         className={`min-w-0 px-3 pb-1 text-meta text-code-error-result ${embedded ? 'bg-code' : 'bg-result'}`}
       >
         <div className="flex min-h-8 items-center gap-2">
-          <BandLabel tone="err">Failed</BandLabel>
+          <Disclosure
+            isOpen={resultOpen}
+            tone="execution"
+            inlineChevron
+            className="min-w-0"
+            aria-label={resultOpen ? 'Collapse error details' : 'Expand error details'}
+            onClick={() => setResultOpen((open) => !open)}
+          >
+            <BandLabel tone="err">Failed</BandLabel>
+          </Disclosure>
           {duration && (
             <span className="ml-auto font-mono text-ui text-code-duration">{duration}</span>
           )}
-          {!embedded && isCopyable && (
+          {resultOpen && !embedded && isCopyable && (
             <CopyChip value={body} label="Copy result" density="compact" edge />
           )}
         </div>
-        <pre className="m-0 whitespace-pre-wrap break-words font-mono">{body}</pre>
+        {resultOpen && <pre className="m-0 whitespace-pre-wrap break-words font-mono">{body}</pre>}
       </div>
     );
   if (embedded)
@@ -1361,8 +1370,9 @@ const ToolCard = memo(function ToolCard({
   );
 });
 
-/** Adjacent failures share one label, with each diagnostic immediately readable. */
+/** Adjacent failures share one collapsed label, revealing each diagnostic together. */
 const FailedCards = memo(function FailedCards({ cards }: { cards: TranscriptForm[] }) {
+  const [open, setOpen] = useState(false);
   const errored = cards.filter((card) => card.error != null);
   // An interruption is not a failure: it keeps its own band and never joins the count.
   const failures = errored.filter((card) => !interruptedPython(card));
@@ -1384,23 +1394,33 @@ const FailedCards = memo(function FailedCards({ cards }: { cards: TranscriptForm
         ))}
       <div data-code-result className="min-w-0 bg-code px-3 pb-1 text-meta text-code-error-result">
         <div className="flex min-h-8 items-center gap-2">
-          <BandLabel tone="err">Failed ×{failures.length}</BandLabel>
+          <Disclosure
+            isOpen={open}
+            tone="execution"
+            inlineChevron
+            className="min-w-0"
+            aria-label={open ? 'Collapse all error details' : 'Expand all error details'}
+            onClick={() => setOpen((shown) => !shown)}
+          >
+            <BandLabel tone="err">Failed ×{failures.length}</BandLabel>
+          </Disclosure>
           {failures.every((card) => formatDuration(card.duration_ms) != null) && (
             <span className="ml-auto font-mono text-ui text-code-duration">
               {formatDuration(failures.reduce((total, card) => total + card.duration_ms!, 0))}
             </span>
           )}
         </div>
-        {failures.map((card, index) => (
-          <pre
-            key={index}
-            className={`m-0 whitespace-pre-wrap break-words font-mono${
-              index > 0 ? ' mt-1 border-t border-code-edge pt-1' : ''
-            }`}
-          >
-            {resultBody(card)}
-          </pre>
-        ))}
+        {open &&
+          failures.map((card, index) => (
+            <pre
+              key={index}
+              className={`m-0 whitespace-pre-wrap break-words font-mono${
+                index > 0 ? ' mt-1 border-t border-code-edge pt-1' : ''
+              }`}
+            >
+              {resultBody(card)}
+            </pre>
+          ))}
       </div>
     </>
   );

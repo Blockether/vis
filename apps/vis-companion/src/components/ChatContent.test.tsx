@@ -1050,14 +1050,39 @@ describe('a card gives stdout one stable band and no op badge', () => {
     expect(rendered).not.toContain('none');
   });
 
-  it('shows a failed non-Python tool message without its structured payload', () => {
-    const rendered = card({
-      op: 'shell',
-      error: { message: 'Permission denied', trace: 'internal detail', data: { source: 'large input' } },
-    });
-    expect(rendered).toContain('Permission denied');
-    expect(rendered).not.toContain('internal detail');
-    expect(rendered).not.toContain('large input');
+  it('keeps a non-Python failure message collapsed without its structured payload', () => {
+    const view = render(
+      <AssistantMessage
+        turn={{
+          turn_id: 'failed-tool',
+          status: 'completed',
+          iterations: [
+            {
+              id: 'iteration-1',
+              forms: [
+                {
+                  op: 'shell',
+                  error: {
+                    message: 'Permission denied',
+                    trace: 'internal detail',
+                    data: { source: 'large input' },
+                  },
+                },
+              ],
+            },
+          ],
+        }}
+      />,
+    );
+    const toggle = view.getByRole('button', { name: 'Expand error details' });
+    expect(toggle).toHaveTextContent('Failed');
+    expect(view.queryByText('Permission denied')).toBeNull();
+    fireEvent.click(toggle);
+    expect(view.getByText('Permission denied')).toBeVisible();
+    expect(view.container.textContent).not.toContain('internal detail');
+    expect(view.container.textContent).not.toContain('large input');
+    fireEvent.click(view.getByRole('button', { name: 'Collapse error details' }));
+    expect(view.queryByText('Permission denied')).toBeNull();
   });
 
   it('names nothing while the op is still running', () => {
@@ -1180,7 +1205,7 @@ describe('a Python evaluation without detected Activity', () => {
     expect(painted.container.textContent).not.toContain('ACTIVITY');
   });
 
-  it('shows a failed Python message instead of the source', () => {
+  it('keeps a failed Python message collapsed instead of showing its source', () => {
     const painted = render(
       <AssistantMessage
         turn={turnWith({
@@ -1197,9 +1222,15 @@ describe('a Python evaluation without detected Activity', () => {
     expect(announcedStates(painted.container)).toContain('Failed');
     expect(painted.queryByRole('button', { name: 'Expand execution trace' })).toBeNull();
     expect(painted.queryByRole('button', { name: 'Expand code' })).toBeNull();
-    expect(painted.getByText('failed')).toBeVisible();
+    const toggle = painted.getByRole('button', { name: 'Expand error details' });
+    expect(toggle).toHaveTextContent('Failed');
+    expect(painted.queryByText('failed')).toBeNull();
     expect(painted.container.textContent).not.toContain('raise Error()');
+    fireEvent.click(toggle);
+    expect(painted.getByText('failed')).toBeVisible();
     expect(painted.container.querySelector('[data-code-result] .text-err')).toBeInTheDocument();
+    fireEvent.click(painted.getByRole('button', { name: 'Collapse error details' }));
+    expect(painted.queryByText('failed')).toBeNull();
   });
 
   it('shows an interrupted Python execution as a stop, not a JVM failure', () => {
@@ -1399,9 +1430,9 @@ describe('Activity follows the combined Python source', () => {
     expect(painted.container.textContent).not.toContain('Loading Activity');
   });
 
-  // Regression #181: hiding Python details still hides diagnostics; when shown,
-  // only the failure messages appear, not the source or structured internals.
-  it.each([true, false])('hides or shows grouped failure messages with showCode=%s', (showCode) => {
+  // Regression #181: hiding Python details still hides diagnostics; expanding
+  // a visible failure shows only its message, not source or structured internals.
+  it.each([true, false])('hides or folds grouped failure messages with showCode=%s', (showCode) => {
     const message = 'ToolError: ' + 'Diagnostic details for the agent. '.repeat(40);
     const trace = 'Traceback: diagnostic evidence';
     const turn = turnOf([
@@ -1428,10 +1459,17 @@ describe('Activity follows the combined Python source', () => {
       expect(painted.container.textContent).not.toContain(message);
       expect(painted.container.textContent).not.toContain('SECOND_FAILURE');
     } else {
-      expect(painted.container.textContent).toContain('Failed ×2');
+      const toggle = painted.getByRole('button', { name: 'Expand all error details' });
+      expect(toggle).toHaveTextContent('Failed ×2');
       expect(painted.container.textContent).toContain('29ms');
+      expect(painted.container.textContent).not.toContain(message);
+      expect(painted.container.textContent).not.toContain('SECOND_FAILURE');
+      fireEvent.click(toggle);
       expect(painted.container.textContent).toContain(message);
       expect(painted.container.textContent).toContain('SECOND_FAILURE');
+      fireEvent.click(painted.getByRole('button', { name: 'Collapse all error details' }));
+      expect(painted.container.textContent).not.toContain(message);
+      expect(painted.container.textContent).not.toContain('SECOND_FAILURE');
     }
     expect(JSON.stringify(turn)).toBe(original);
   });
@@ -1454,14 +1492,20 @@ describe('Activity follows the combined Python source', () => {
         whole
       />,
     );
-    if (showCode) expect(painted.getByText('patch refused — nothing was written')).toBeVisible();
-    else expect(painted.queryByText('patch refused — nothing was written')).toBeNull();
+    if (showCode) {
+      expect(painted.queryByText('patch refused — nothing was written')).toBeNull();
+      fireEvent.click(painted.getByRole('button', { name: 'Expand error details' }));
+      expect(painted.getByText('patch refused — nothing was written')).toBeVisible();
+    } else {
+      expect(painted.queryByRole('button', { name: 'Expand error details' })).toBeNull();
+      expect(painted.queryByText('patch refused — nothing was written')).toBeNull();
+    }
     expect(painted.container.textContent).not.toContain(source);
     expect(painted.container.textContent).not.toContain('internal trace details');
     expect(painted.queryByRole('button', { name: 'Expand code' })).toBeNull();
   });
 
-  // Failures that stand next to each other share one label and show their messages.
+  // Adjacent failures share one collapsed label and reveal their messages together.
   it('counts adjacent failures under a single head', () => {
     const painted = render(
       <AssistantMessage
@@ -1472,11 +1516,15 @@ describe('Activity follows the combined Python source', () => {
         ])}
       />,
     );
-    expect(painted.queryAllByRole('button', { name: 'Expand error details' })).toHaveLength(0);
-    expect(painted.container.textContent).toContain('Failed ×3');
+    const toggle = painted.getByRole('button', { name: 'Expand all error details' });
+    expect(toggle).toHaveTextContent('Failed ×3');
+    expect(painted.queryByText(/FIRST_FAILURE/)).toBeNull();
+    fireEvent.click(toggle);
     expect(painted.getByText(/FIRST_FAILURE/)).toBeVisible();
     expect(painted.getByText(/SECOND_FAILURE/)).toBeVisible();
     expect(painted.getByText(/THIRD_FAILURE/)).toBeVisible();
+    fireEvent.click(painted.getByRole('button', { name: 'Collapse all error details' }));
+    expect(painted.queryByText(/FIRST_FAILURE/)).toBeNull();
   });
 
   it('keeps grouped failure details on the code surface', () => {
@@ -1491,6 +1539,8 @@ describe('Activity follows the combined Python source', () => {
     const result = painted.container.querySelector('[data-code-result]');
     expect(result).toHaveClass('bg-code');
     expect(result).not.toHaveClass('bg-result');
+    expect(painted.queryByText(/FIRST_FAILURE/)).toBeNull();
+    fireEvent.click(painted.getByRole('button', { name: 'Expand all error details' }));
     expect(painted.getByText(/FIRST_FAILURE/)).toBeVisible();
   });
 
@@ -1503,14 +1553,17 @@ describe('Activity follows the combined Python source', () => {
         ])}
       />,
     );
-    expect(painted.getByText('Operation failed')).toBeVisible();
+    expect(painted.queryByText('Operation failed')).toBeNull();
     expect(painted.container.textContent).not.toContain('fail()');
     expect(painted.queryByRole('button', { name: 'Expand result' })).toBeNull();
     fireEvent.click(painted.getByRole('button', { name: 'Expand code' }));
     expect(painted.container.textContent).toContain('print_summary()');
     fireEvent.click(painted.getByRole('button', { name: 'Expand result' }));
     expect(painted.getByText('Successful output')).toBeVisible();
+    expect(painted.queryByText('Operation failed')).toBeNull();
+    fireEvent.click(painted.getByRole('button', { name: 'Expand error details' }));
     expect(painted.getByText('Operation failed')).toBeVisible();
+    expect(painted.getByText('Successful output')).toBeVisible();
   });
 
   // Regression, issue td-f9035e: Python, Result, and Activity each painted an
