@@ -129,6 +129,16 @@ describe('Menu parts', () => {
       expect(markup.match(/self-start mt-0\.5/g)).toHaveLength(2);
     });
 
+    it('keeps details near a separate action without changing plain row padding', () => {
+      const withAction = html({
+        meta: '4 transcripts',
+        action: <button type="button">Delete</button>,
+      });
+
+      expect(withAction).toContain('min-w-0 flex-1 pr-0.5');
+      expect(html()).toContain('w-full border-b border-dialog-edge pr-3');
+    });
+
     it('is a real button, so a sheet can hang off the row that opened it', () => {
       expect(html()).toContain('<button');
       expect(html()).not.toContain('<a ');
