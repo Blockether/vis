@@ -38,6 +38,8 @@
 (defdescribe
   native-runtime-source-selection-test
   ;; #194: the prebuilt worker must not override the host's pinned guest sources.
+  ;; `vis-agent python -c` runs a plain `__main__` without Vis globals, so
+  ;; native-editable-sdk-startup-test checks the build metadata instead.
   (it
     "loads the package helper from the pinned runtime revision"
     (let [home
@@ -58,12 +60,7 @@
             "source"
             ["python" "--no-env" "--no-network" "-c"
              (str
-               "import hashlib, package_paths, re\nfrom pathlib import Path\n"
-               "assert VIS_VERSION == VIS_PYTHON_SDK_VERSION != 'dev'\n"
-               "assert re.fullmatch(r'[0-9a-f]{40}(-dirty)?', VIS_SHA_RELEASE)\n"
-               "assert VIS_PYTHON_RUNTIME_VERSION == "
-               (pr-str (str/trim (slurp (io/resource "vis-python-runtime/VERSION"))))
-               "\n"
+               "import hashlib, package_paths\nfrom pathlib import Path\n"
                "print(hashlib.sha256(Path(package_paths.__file__).read_bytes()).hexdigest())\n")])]
           (try (expect (.waitFor child 60 TimeUnit/SECONDS) "native source probe timed out")
                (let [output (slurp log)]
@@ -190,14 +187,16 @@
              (spit
                (io/file entries (str name ".py"))
                (str
-                 "import hashlib, package_paths, sys\nfrom pathlib import Path\n"
+                 "import hashlib, package_paths, re, sys\nfrom pathlib import Path\n"
                  "assert hashlib.sha256(Path(package_paths.__file__).read_bytes()).hexdigest() == "
                  (pr-str (util/sha256-hex (slurp (io/resource "vis-python/package_paths.py"))))
                  ", package_paths.__file__\n"
                  "import blockether.vis.extension as vis\n"
                  "assert VIS_VERSION == VIS_PYTHON_SDK_VERSION != 'dev'\n"
-                 "assert len(VIS_SHA_RELEASE) >= 40\n"
-                 "assert VIS_PYTHON_RUNTIME_VERSION != 'dev'\n"
+                 "assert re.fullmatch(r'[0-9a-f]{40}(-dirty)?', VIS_SHA_RELEASE)\n"
+                 "assert VIS_PYTHON_RUNTIME_VERSION == "
+                 (pr-str (str/trim (slurp (io/resource "vis-python-runtime/VERSION"))))
+                 "\n"
                  "assert callable(__vis_registration__) and callable(__vis_host_live__)\n"
                  "contexts = getattr(package_paths, '_test_extension_contexts', [])\n"
                  "contexts.append(sys.modules[__name__])\n"
