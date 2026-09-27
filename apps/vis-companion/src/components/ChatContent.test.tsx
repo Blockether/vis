@@ -460,7 +460,7 @@ describe('thinking band presentation', () => {
       expect(band).toHaveClass('text-ui');
       expect(band).not.toHaveClass('mouse:text-title');
       const body = view.container.querySelector('div.italic') as HTMLDivElement;
-      expect(body).toHaveClass('max-h-[3rem]', 'overflow-hidden', '[&_p]:my-2');
+      expect(body).toHaveClass('max-h-[3rem]', 'overflow-hidden', '[&>div>p]:my-2');
       expect(view.container.textContent).toContain('THINKING');
     } finally {
       height.mockRestore();

@@ -2614,11 +2614,10 @@ export function Spinner({
 /** The shared leading inset for dialog bands and navigator rows. */
 export const LIST_EDGE = 'pl-3 sm:pl-4';
 /**
- * RUNNING PROSE, and the app has exactly ONE rule for it.
+ * RUNNING PROSE, and the app has exactly ONE native fallback rule for it.
  *
- * The transcript is one reading column: reasoning, answers, speech, and the user's
- * own text read flush left with a ragged right edge, the way every other chat
- * surface reads. Inline code remains an atomic left-aligned box inside that column,
- * while hyphenation and pretty wrapping keep the rag even on narrow phones.
+ * Reasoning, answers, speech and user requests share a reading column. Justice
+ * composes supported paragraphs across that column; unsupported content keeps
+ * hyphenation and balanced native wrapping on narrow screens.
  */
 export const PROSE = 'hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty';

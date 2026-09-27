@@ -1,4 +1,5 @@
 import {
+  Children,
   Fragment,
   isValidElement,
   memo,
@@ -539,6 +540,7 @@ export const Markdown = memo(function Markdown({
   children,
   compact = false,
   hardBreaks = false,
+  justifyHardBreaks = false,
   nested = false,
   onOpenAttachment,
   headingLevel,
@@ -546,6 +548,8 @@ export const Markdown = memo(function Markdown({
   children: string;
   compact?: boolean;
   hardBreaks?: boolean;
+  /** Compose authored reasoning lines separately while retaining their hard breaks. */
+  justifyHardBreaks?: boolean;
   /** The enclosing result owns the frame and padding of nested code and diffs. */
   nested?: boolean;
   onOpenAttachment?: OpenAttachment;
@@ -689,14 +693,41 @@ export const Markdown = memo(function Markdown({
               </ol>
             );
           },
-          p: ({ children: paragraph }) => (
-            <JustifiedProse
-              enabled={!nested}
-              className={`${compact ? 'my-2' : 'my-2.5'} ${runningText}`}
-            >
-              {paragraph}
-            </JustifiedProse>
-          ),
+          p: ({ children: paragraph }) => {
+            const paragraphClass = `${compact ? 'my-2' : 'my-2.5'} ${runningText}`;
+            if (justifyHardBreaks && hardBreaks && !nested) {
+              const lines: ReactNode[][] = [[]];
+              for (const part of Children.toArray(paragraph)) {
+                if (isValidElement(part) && part.type === 'br') {
+                  lines.push([]);
+                } else {
+                  const line = lines[lines.length - 1];
+                  // The Markdown break also carries a newline text node; its line is
+                  // already represented by the next paragraph, not a leading space.
+                  line.push(
+                    typeof part === 'string' && lines.length > 1 && !line.length
+                      ? part.replace(/^\r?\n/, '')
+                      : part,
+                  );
+                }
+              }
+              if (lines.length > 1)
+                return (
+                  <div className={paragraphClass}>
+                    {lines.map((line, index) => (
+                      <JustifiedProse key={index} className={`my-0 min-h-[1lh] ${runningText}`}>
+                        {line}
+                      </JustifiedProse>
+                    ))}
+                  </div>
+                );
+            }
+            return (
+              <JustifiedProse enabled={!nested} className={paragraphClass}>
+                {paragraph}
+              </JustifiedProse>
+            );
+          },
           pre: ({ children: codeNode }) => {
             const raw = extractText(codeNode).replace(/\n$/, '');
             const language = codeLanguage(codeNode);
@@ -1874,16 +1905,14 @@ export const ThinkingBand = memo(function ThinkingBand({
           <span className="min-w-0 truncate">THINKING</span>
         </Disclosure>
       )}
-      {/* Reasoning streams one sentence per line, so nearly every line renders
-          as its own paragraph, and this gap alone sets the band's vertical
-          rhythm; it is pinned here instead of drifting with the shared compact
-          scale. The collapsed peek clamps at REASONING_PREVIEW_LINES 16px line
-          boxes, so a wider gap trades peeked rows for air. */}
+      {/* Sentences that normalization makes into paragraphs keep this pinned gap;
+          consecutive authored lines in a paragraph keep zero gap. The collapsed
+          peek clamps at REASONING_PREVIEW_LINES 16px line boxes. */}
       <div
         ref={bodyRef}
-        className={`${collapsible && !expanded ? 'max-h-[3rem] overflow-hidden' : ''} min-w-0 italic [&_p]:my-2`}
+        className={`${collapsible && !expanded ? 'max-h-[3rem] overflow-hidden' : ''} min-w-0 italic [&>div>p]:my-2`}
       >
-        <Markdown compact hardBreaks>
+        <Markdown compact hardBreaks justifyHardBreaks>
           {normalized}
         </Markdown>
       </div>
@@ -3950,8 +3979,9 @@ const councilKindLabel: Record<CouncilRequest['kind'], string> = {
 };
 
 function UserRequestText({ text }: { text: string }) {
-  // Keep authored breaks and literal spacing. Justice only sees ordinary prose
-  // lines; fenced code, indents, and commands retain their exact whitespace.
+  // Keep authored breaks and literal spacing. Speech transcripts also put two spaces
+  // after a sentence; those are ordinary prose, not a command that needs pre-wrap.
+  // Justice retains the original text for copying while the browser collapses that gap.
   let fence = '';
   return text.split(/\r?\n/).map((line, index) => {
     const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line);
@@ -3967,7 +3997,10 @@ function UserRequestText({ text }: { text: string }) {
         fence = '';
       }
     }
-    return line && !literal && line.trim() === line && !/[ \t]{2}|\t|\r/.test(line) ? (
+    const ordinarySpacing = !/[ \t]{2}|\t|\r/.test(
+      line.replace(/([.!?…]["')\]]?) {2,}/gu, '$1 '),
+    );
+    return line && !literal && line.trim() === line && ordinarySpacing ? (
       <JustifiedProse key={index} className="whitespace-normal break-words">
         {line}
       </JustifiedProse>

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Markdown, UserMessage } from './ChatContent';
+import { Markdown, ThinkingBand, UserMessage } from './ChatContent';
 import { JustifiedProse } from './JustifiedProse';
 import { MarkdownAnnotator } from './MarkdownArtifact';
 import { lineText, prepare, solve } from '@kitlangton/justice';
@@ -36,6 +36,7 @@ beforeEach(() => {
         resize = callback;
       }
       observe() {}
+      unobserve() {}
       disconnect = disconnect;
     },
   );
@@ -115,6 +116,47 @@ describe('Justice prose', () => {
     const prose = view.container.querySelector('article p');
     expect(prose).toHaveAttribute('data-justice');
     expect(prose?.textContent).toBe(paragraph);
+  });
+
+  it('justifies a spoken request with doubled sentence spaces without changing its text', async () => {
+    const request = `${paragraph}  And another sentence follows the first.  It should still fill the column.`;
+    const view = render(<UserMessage>{request}</UserMessage>);
+    await settle();
+    const prose = view.container.querySelector('article p');
+    expect(prose).toHaveAttribute('data-justice');
+    expect(prose?.textContent).toBe(request);
+  });
+
+  it('composes a single reasoning paragraph from the chat band', async () => {
+    const reasoning =
+      'I am looking at how the Python and Clojure extensions report activity — specifically the detail shown during REPL status/connect/start that repeats the summary, and how linting activity could be improved.';
+    const view = render(<ThinkingBand>{reasoning}</ThinkingBand>);
+    await settle();
+    const prose = view.container.querySelector('section p');
+    expect(prose).toHaveAttribute('data-justice');
+    expect(prose?.textContent).toBe(reasoning);
+  });
+
+  it('justifies reasoning on each side of an authored line break', async () => {
+    const first = 'I am looking at how the Python and Clojure extensions report activity so a reader can see the right message as it runs';
+    const second = 'and the next thought continues here with enough words to fill the narrow column without losing this line break.';
+    const view = render(<ThinkingBand>{`${first}\n${second}`}</ThinkingBand>);
+    await settle();
+    const lines = [...view.container.querySelectorAll('section p')];
+    expect(lines).toHaveLength(2);
+    expect(lines.map((line) => line.textContent)).toEqual([first, second]);
+    expect(lines.map((line) => line.hasAttribute('data-justice'))).toEqual([true, true]);
+    expect(lines.every((line) => line.classList.contains('my-0'))).toBe(true);
+  });
+
+  it('keeps doubled spaces in an inline command literal', async () => {
+    const request = 'Run git  status --short.  Then read the result.';
+    const view = render(<UserMessage>{request}</UserMessage>);
+    await settle();
+    const prose = view.container.querySelector('article p');
+    expect(prose).not.toHaveAttribute('data-justice');
+    expect(prose).toHaveClass('whitespace-pre-wrap');
+    expect(prose?.textContent).toBe(request);
   });
 
   it('keeps hard line breaks and literal spacing in a user request', async () => {
