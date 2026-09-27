@@ -2,6 +2,19 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.29 (6862) — 2026-09-27
+<!-- commit: df5654226c971aae12ae599d0b04eb304e301cad -->
+
+- Fold failed tool messages by default
+- Show concise failed tool messages
+- Justify spoken requests and reasoning
+- Drop the current project badge
+- Show session move choices in popup
+- Show each Activity's step cost in its header
+- Remove image viewer footer notices
+- Tighten project details beside delete
+- Record companion build 6842
+
 ## 0.2.29 (6842) — 2026-09-27
 <!-- commit: d5316c9ddbc45d6410d6faf4b3825d5dff18ffbf -->
 
