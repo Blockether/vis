@@ -177,8 +177,33 @@
                   (get-in r [:error :message])
                   (str "Vis could not repair the unbalanced quotes or brackets in this block:\n"
                        "  line 1, column 5: '(' is never closed\n")))
-        (expect (str/includes? (get-in r [:error :message])
-                               "Original parser error: SyntaxError")))))
+        (expect (str/includes? (get-in r [:error :message]) "Original parser error: SyntaxError"))
+        ;; The parser names only the line; the caret marks the '(' the repair left open.
+        (expect (str/ends-with? (get-in r [:error :message])
+                                "1: x = (1 + 2\n       ^\n2: y = 3 3"))))
+  (it
+    "lists the first problem of each kind and shows a long line around the first one"
+    ;; The shape of a refused block from a real session: a path string that lost its
+    ;; closing quote flips every later string on the line.
+    (let
+      [error
+       (classify
+         (str
+           "print(patch(root/'apps/vis-companion/src/components/JustifiedProse.test.tsx,"
+           "[{'from':'130:5ae','to':'142:a6f','replace':'  it(\"keeps reasoning lines\", async () => {})'}]))"))]
+      (expect (true? (get-in error [:data :unbalanced-delimiters?])))
+      (expect
+        (= (str
+             "Vis could not repair the unbalanced quotes or brackets in this block:\n"
+             "  line 1, column 6: '(' is never closed\n"
+             "  line 1, column 87: the string from column 84 ends right before this text; "
+             "if its closing quote belongs to the text, escape it\n"
+             "  line 1, column 167: the string is not closed on its line; close it with ', "
+             "or use triple quotes (''') for text that spans lines\n" "  and 4 more\n"
+             "Original parser error: SyntaxError: invalid decimal literal (<unknown>, line 1)\n\n"
+             "1: print(patch(root/'apps/vis-companion/src/components/JustifiedProse.test.tsx,"
+             "[{'from':'130:5ae','to':…\n" "        ^")
+           (:message error))))))
 
 (defdescribe
   no-false-repair-test
@@ -308,6 +333,19 @@
         (expect (= 7 (get-in err [:data :column]))) ;; under `undefined_zzz`, not `print`
         (expect (str/includes? msg "1: print(undefined_zzz)"))
         (expect (str/includes? msg "^^^"))))        ;; a multi-char caret span
+  (it "a long line shows the columns around the caret, not the whole line"
+      (let [msg (:message (:error (ep/run-python-block (py-ctx)
+                                                       (str "values = ["
+                                                            (str/join ", " (range 40))
+                                                            "]; print(undefined_name_zz)"))))]
+        (expect
+          (str/ends-with?
+            msg
+            (str
+              "\n\n1: …1, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]; "
+              "print(undefined_name_zz)\n"
+              (apply str (repeat 86 \space))
+              (apply str (repeat 17 \^)))))))
   (it "the DEEPEST user-code frame wins for an error raised inside a called fn"
       (let [r (ep/run-python-block
                 (py-ctx)

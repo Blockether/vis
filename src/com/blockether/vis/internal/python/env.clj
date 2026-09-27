@@ -1502,12 +1502,20 @@
   [session]
   (boolean (when session (py-interrupt! session))))
 
+(def ^:private excerpt-width
+  "Characters of each source line an excerpt shows. A longer line shows only this
+   many around the caret, with `…` where it was cut, so a long one-line block does
+   not come back whole."
+  100)
+
 (defn- render-source-context
   "Babashka-style source excerpt for an eval failure: a numbered ±2-line window of
    `code` around the 1-based `line`, with a caret run under the offending span
    (`col`/`end-col`, 0-based offsets into the detabbed line — tabs collapse to one
-   space so 1 char == 1 caret column). Returns nil when `line` is out of range, so
-   a positionless failure leaves the raw message untouched."
+   space so 1 char == 1 caret column). When a line of the window is longer than
+   `excerpt-width`, every line shows the same `excerpt-width` columns around the
+   caret. Returns nil when `line` is out of range, so a positionless failure
+   leaves the raw message untouched."
   [code line col end-col]
   (let [lines
         (vec (str/split-lines (str code)))
@@ -1517,7 +1525,7 @@
 
     (when (and line (<= 1 (long line) n))
       (let [detab
-            (fn [s]
+            (fn ^String [s]
               (str/replace s "\t" " "))
 
             i0
@@ -1532,6 +1540,45 @@
             width
             (count (str (inc hi)))
 
+            txt0
+            (detab (nth lines i0))
+
+            c0
+            (if (and col (<= 0 (long col) (count txt0))) (long col) 0)
+
+            end
+            (if (and end-col (> (long end-col) c0)) (long end-col) (inc c0))
+
+            ;; Snap the caret start off leading whitespace: a `co_positions`
+            ;; quirk reports the ENCLOSING handler's column for a
+            ;; `raise … from …` inside an `except`, landing the caret start
+            ;; in the indentation gutter. Advance to the first non-space
+            ;; within the span so the caret always begins on real code (a
+            ;; no-op when the reported column already points at a token).
+            c
+            (long (or (first (filter #(and (< (long %) end) (not= \space (nth txt0 %)))
+                                     (range c0 (min end (count txt0)))))
+                      c0))
+
+            ;; One window for every line keeps the lines aligned: all of each
+            ;; line when the longest fits, else `excerpt-width` columns that
+            ;; start half a window before the caret.
+            clip?
+            (boolean (some #(> (count (detab (nth lines %))) excerpt-width) (range lo (inc hi))))
+
+            from
+            (if clip? (max 0 (min (- c (quot excerpt-width 2)) (- (count txt0) excerpt-width))) 0)
+
+            to
+            (if clip? (+ from excerpt-width) Long/MAX_VALUE)
+
+            cut
+            (fn ^String [^String s]
+              (let [k (count s)]
+                (str (when (and (pos? from) (pos? k)) "…")
+                     (subs s (min from k) (min to k))
+                     (when (> k to) "…"))))
+
             sb
             (StringBuilder.)]
 
@@ -1540,23 +1587,12 @@
                 txt (detab (nth lines idx))]
 
             (.append sb pfx)
-            (.append sb txt)
+            (.append sb (cut txt))
             (.append sb "\n")
             (when (= idx i0)
-              (let [c0 (if (and col (<= 0 (long col) (count txt))) (long col) 0)
-                    end (if (and end-col (> (long end-col) c0)) (long end-col) (inc c0))
-                    ;; Snap the caret start off leading whitespace: a `co_positions`
-                    ;; quirk reports the ENCLOSING handler's column for a
-                    ;; `raise … from …` inside an `except`, landing the caret start
-                    ;; in the indentation gutter. Advance to the first non-space
-                    ;; within the span so the caret always begins on real code (a
-                    ;; no-op when the reported column already points at a token).
-                    c (or (first (filter #(and (< (long %) end) (not= \space (nth txt %)))
-                                         (range c0 (min end (count txt)))))
-                          c0)
-                    end* (min (long end) (count txt))
-                    pad (+ (count pfx) (long c))
-                    span (max 1 (- end* (long c)))]
+              (let [end* (min (long end) (count txt) to)
+                    pad (+ (count pfx) (if (pos? from) 1 0) (- c from))
+                    span (max 1 (- end* c))]
 
                 (.append sb (apply str (repeat pad \space)))
                 (.append sb (apply str (repeat span \^)))
@@ -1568,20 +1604,33 @@
    Two retries is normal recovery; the third is a loop."
   3)
 
-(def ^:private listed-messages "Fixes or problems a note lists before it counts the rest." 5)
+(def ^:private listed-messages "Fixes a repair note lists before it counts the rest." 5)
+
+(def ^:private listed-problems
+  "Problems a refusal lists before it counts the rest. One misplaced quote flips
+   every later string on its line, so a refusal lists only the first problem of
+   each kind: the others repeat it without adding a place to look."
+  3)
 
 (defn- message-lines
-  "The `:message` of each of the first `items`, one indented line each, then a
-   count of the rest."
-  [items]
-  (let [shown
-        (take listed-messages items)
+  "The `:message` of each of `shown`, one indented line each, then a count of the
+   rest of `items`. `shown` defaults to the first `listed-messages` of `items`."
+  ([items] (message-lines items (take listed-messages items)))
+  ([items shown]
+   (let [more (- (count items) (count shown))]
+     (str (str/join (map #(str "  " (:message %) "\n") shown))
+          (when (pos? more) (str "  and " more " more\n"))))))
 
-        more
-        (- (count items) (count shown))]
-
-    (str (str/join (map #(str "  " (:message %) "\n") shown))
-         (when (pos? more) (str "  and " more " more\n")))))
+(defn- first-of-each-kind
+  "The first of `problems` of each `:kind`, at most `listed-problems` of them."
+  [problems]
+  (->> problems
+       (reduce (fn [shown p]
+                 (cond-> shown
+                   (not-any? #(= (:kind p) (:kind %)) shown)
+                   (conj p)))
+               [])
+       (take listed-problems)))
 
 ;; =============================================================================
 ;; Running one block
@@ -1732,8 +1781,8 @@
                            "into a `#` comment. Original parser error: ")
               (seq delimiter-problems)
               (str "Vis could not repair the unbalanced quotes or brackets in this block:\n"
-                   (message-lines delimiter-problems)
-                   "Close each string and bracket where it belongs. Original parser error: ")
+                   (message-lines delimiter-problems (first-of-each-kind delimiter-problems))
+                   "Original parser error: ")
               denied-root?
               (str "Sandbox policy denied "
                    (if denied-write? "file-write" "file-read")
@@ -1764,11 +1813,16 @@
         line-text
         (when pos (nth (str/split-lines (str code)) (dec (long (first pos))) nil))
 
+        ;; A parse failure names only its line, so a refusal puts the caret under
+        ;; the first problem the repair left on that line, not under column 1.
+        problem-column
+        (some #(when (= (:line %) (first pos)) (dec (long (:column %)))) delimiter-problems)
+
         source-context
         (when (and code pos (not host?))
           (render-source-context code
                                  (first pos)
-                                 (char-column line-text (second pos))
+                                 (or (char-column line-text (second pos)) problem-column)
                                  (char-column line-text (nth pos 2 nil))))
 
         repeats
