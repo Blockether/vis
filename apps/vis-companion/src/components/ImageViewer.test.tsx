@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { Capacitor } from '@capacitor/core';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -182,9 +183,9 @@ describe('ImageViewer', () => {
     // jsdom gives every box a zero rect, which is exactly "the frame already
     // shows the whole picture" — the tap must explain itself, never crop.
     act(() => trim.click());
-    expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe(
-      'Zoom in first — the whole picture is already in view.',
-    );
+    const alert = document.querySelector<HTMLElement>('[role="alert"]');
+    expect(alert?.textContent).toBe('Zoom in first — the whole picture is already in view.');
+    expect(alert?.className).toContain('top-[calc(4rem+env(safe-area-inset-top))]');
     expect(document.querySelector('[aria-label="Undo trim"]')).toBeNull();
   });
 
@@ -249,10 +250,10 @@ describe('ImageViewer', () => {
     expect(document.querySelector('[aria-label="Drawing tools"]')).toBeInTheDocument();
   });
 
-  // The line under the buttons reports status, not instructions: entering
-  // drawing mode leaves it empty, and Apply appears only where there is
-  // somewhere to apply it.
-  it('keeps the status line to status, and only offers Apply when there is somewhere to apply it', () => {
+  // The footer has no text line: entering drawing mode leaves its hidden
+  // announcement empty, and Apply appears only where there is somewhere to apply it.
+  it('keeps the footer free of text, and only offers Apply when there is somewhere to apply it', () => {
+    expect(document.querySelector('[role="dialog"] .border-t [aria-live]')).toBeNull();
     expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe('');
     act(() => control('Draw on image').click());
     expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe('');
@@ -269,6 +270,49 @@ describe('ImageViewer', () => {
       ),
     );
     expect(named('Attach to message')).toBeVisible();
+  });
+
+  // Regression, user report: copying left a confirmation sentence below the toolbar
+  // until the viewer closed. Keep its announcement, but not a visible footer line.
+  it('copies the picture without displaying a footer confirmation', async () => {
+    const native = vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(false);
+    const write = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { write } });
+    vi.stubGlobal(
+      'ClipboardItem',
+      class {
+        constructor(items: Record<string, Blob>) {
+          Object.assign(this, items);
+        }
+      },
+    );
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({
+      drawImage: vi.fn(),
+    } as unknown as CanvasRenderingContext2D);
+    const blob = new Blob(['image'], { type: 'image/png' });
+    const toBlob = vi
+      .spyOn(HTMLCanvasElement.prototype, 'toBlob')
+      .mockImplementation((callback) => callback(blob));
+    const picture = document.querySelector<HTMLImageElement>('[role="dialog"] img');
+    if (!picture) throw new Error('no picture in the viewer');
+    Object.defineProperties(picture, {
+      naturalWidth: { configurable: true, value: 4 },
+      naturalHeight: { configurable: true, value: 4 },
+    });
+
+    try {
+      await act(async () => control('Copy image').click());
+      expect(write).toHaveBeenCalledOnce();
+      const announcement = document.querySelector<HTMLElement>('[aria-live="polite"]');
+      expect(announcement?.textContent).toBe('Image copied. Paste it into your next message.');
+      expect(announcement?.className).toContain('sr-only');
+      expect(document.querySelector('[role="dialog"] .border-t [aria-live]')).toBeNull();
+      expect(document.querySelector('[role="alert"]')).toBeNull();
+    } finally {
+      native.mockRestore();
+      toBlob.mockRestore();
+      vi.unstubAllGlobals();
+    }
   });
 });
 
@@ -716,6 +760,9 @@ describe('a gallery in the viewer', () => {
   it('says where the reader stands', () => {
     open(0);
     expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe('1 of 3');
+    expect(document.querySelector('[role="dialog"] .border-t .text-dialog-hint')?.textContent).toBe(
+      '1 of 3',
+    );
   });
 
   // A viewer with nowhere to step must not step: a lone picture sliding under the

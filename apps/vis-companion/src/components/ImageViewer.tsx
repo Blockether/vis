@@ -180,8 +180,8 @@ type SafariGestureEvent = Event & {
  * `onApply` it also hands the flattened result back, which is what makes an
  * attachment editable and a rendered document page sendable.
  *
- * The viewer itself owns only the SCREEN: which gesture is in flight, what the
- * status line says, which button is busy. The geometry it applies comes from
+ * The viewer itself owns only the SCREEN: which gesture is in flight, what to
+ * announce, which button is busy. The geometry it applies comes from
  * `lib/zoom-pan`, the strokes belong to {@link AnnotationLayer}, flattening to
  * `lib/annotate` and the platform sheets to `lib/image-share` — so each of
  * those can be used, and tested, without opening a full-screen dialog.
@@ -213,6 +213,7 @@ export function ImageViewer({
   // Probed once per open: the sheet cannot appear or disappear mid-viewer.
   const [shareAction] = useState(shareVerb);
   const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
   // A gallery of one is not a gallery: nothing to step to, so no stepper, no
   // arrow keys and no position to report.
   const gallery = pictures && pictures.length > 1 ? pictures : null;
@@ -301,6 +302,7 @@ export function ImageViewer({
       dropTrim();
       resetTransform();
       setStatus('');
+      setError('');
       setShownSrc(gallery[target].src);
     },
     [gallery, drawing, step, resetTransform, dropTrim],
@@ -560,10 +562,12 @@ export function ImageViewer({
     if (!image || !frame) return;
     const part = visiblePart(image.getBoundingClientRect(), frame.getBoundingClientRect());
     if (!part) {
-      setStatus('Zoom in first — the whole picture is already in view.');
+      setStatus('');
+      setError('Zoom in first — the whole picture is already in view.');
       return;
     }
     setBusy('trim');
+    setError('');
     setStatus('Trimming…');
     try {
       const blob = await flattenAnnotations(image, annotationRef.current?.canvas() ?? null, part);
@@ -577,7 +581,8 @@ export function ImageViewer({
       setTrimmed({ src: url, name: shown.name });
       setStatus(`Trimmed to ${size.width} × ${size.height}.`);
     } catch (cause) {
-      setStatus(cause instanceof Error ? cause.message : 'Could not trim this image');
+      setStatus('');
+      setError(cause instanceof Error ? cause.message : 'Could not trim this image');
     } finally {
       setBusy(null);
     }
@@ -589,12 +594,7 @@ export function ImageViewer({
     return flattenAnnotations(image, annotationRef.current?.canvas() ?? null);
   }
 
-  /**
-   * Every finished action is the same two steps — do it, then say how it went —
-   * so they are said once, and each caller only supplies the work and the
-   * sentence to fall back to. The line is emptied first so the previous action's
-   * result cannot be read as this one's; the work itself says nothing.
-   */
+  /** Announce completed work without leaving a visible line below the toolbar. */
   async function run(
     kind: 'copy' | 'share' | 'apply',
     fallback: string,
@@ -602,10 +602,11 @@ export function ImageViewer({
   ) {
     setBusy(kind);
     setStatus('');
+    setError('');
     try {
       setStatus(await work(await editedImage()));
     } catch (cause) {
-      setStatus(cause instanceof Error ? cause.message : fallback);
+      setError(cause instanceof Error ? cause.message : fallback);
     } finally {
       setBusy(null);
     }
@@ -674,6 +675,18 @@ export function ImageViewer({
               onClear={() => annotationRef.current?.clear()}
             />
           )}
+        </div>
+      )}
+
+      <div className="sr-only" aria-live="polite">
+        {status || (gallery ? `${step + 1} of ${gallery.length}` : '')}
+      </div>
+      {error && (
+        <div
+          role="alert"
+          className="absolute inset-x-4 top-[calc(4rem+env(safe-area-inset-top))] z-20 mx-auto max-w-lg border border-warn-edge bg-warn-surface px-3 py-2 text-center font-mono text-chip text-answer-foreground shadow-lg"
+        >
+          {error}
         </div>
       )}
 
@@ -762,6 +775,12 @@ export function ImageViewer({
             </IconButton>
           </div>
 
+          {gallery && (
+            <span className="shrink-0 font-mono text-chip text-dialog-hint" aria-hidden="true">
+              {step + 1} of {gallery.length}
+            </span>
+          )}
+
           {editable ? (
             <IconButton
               variant={onApply && hasEdits ? 'primary' : 'secondary'}
@@ -793,6 +812,7 @@ export function ImageViewer({
                 resetTransform();
                 setDrawing((current) => !current);
                 setStatus('');
+                setError('');
               }}
               aria-pressed={drawing}
               disabled={busy !== null}
@@ -827,6 +847,7 @@ export function ImageViewer({
                 dropTrim();
                 resetTransform();
                 setStatus('');
+                setError('');
               }}
               disabled={busy !== null}
               aria-label="Undo trim"
@@ -861,13 +882,6 @@ export function ImageViewer({
               {shareAction === 'Share' ? <ShareIcon /> : <DownloadIcon />}
             </IconButton>
           </div>
-        </div>
-
-        <div
-          className="mx-auto min-h-4 max-w-[1400px] truncate pt-1 text-center font-mono text-chip text-dialog-hint"
-          aria-live="polite"
-        >
-          {status || (gallery ? `${step + 1} of ${gallery.length}` : '')}
         </div>
       </div>
     </div>
