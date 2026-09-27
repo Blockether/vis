@@ -829,7 +829,8 @@
    ;; arrived on: every command runs under a real pty, where stdout and stderr ARE
    ;; ONE stream, so a `stdout`/`stderr` pair would be a choice with only one
    ;; answer — the second field nil, and misread as \"nothing went wrong\".
-   "out" nil
+   ;; An empty string means THIS stage returned no output, not that the log is empty.
+   "out" ""
    ;; A truncated stream has an inline \"…[N chars omitted]…\" marker spliced into
    ;; its MIDDLE, so it no longer parses — the count says exactly how much is gone,
    ;; and 0 means nothing was.
@@ -3010,6 +3011,8 @@
        "A fresh run has `exit=None`; nonzero exit is data. "
        "`out` is the pty's ONE stream: stdout and stderr are the same channel there, so whatever "
        "the command wrote to either is IN it, in order — one name, and no `stderr` key. "
+       "`out` is always a string: an empty string means THIS stage returned no output, not "
+       "that the process log is empty. Use `sh.logs()` to read it, including after `sh.stop()`. "
        "`out` automatically normalizes terminal colours and controls; parse this text view. "
        "`log_path` preserves the raw terminal stream, including ANSI sequences.")
      :description
@@ -3098,7 +3101,8 @@
     {:activity (presenter/for-tool :_shell-type)
      :symbol '_shell-type
      :name "_shell_type"
-     :result "The same shell result shape (`stage` \"send\"): `sent` chars, `keys` label."
+     :result (str "The same shell result shape (`stage` \"send\"): `sent` chars, `keys` label. "
+                  "`out` is an empty string; use `sh.logs()` to read process output.")
      :description
      "TRANSPORT for `sh.type(text, is_enter=True)` — call the handle. Writes keystrokes to a background shell's stdin."
      :params [{:name "id" :required? true} {:name "text" :required? true} {:name "is_enter"}]
@@ -3114,9 +3118,10 @@
     {:activity (presenter/for-tool :_shell-stop)
      :symbol '_shell-stop
      :name "_shell_stop"
-     :result "The same shell result shape (`stage` \"stop\"): `status` \"stopped\", `exit`."
+     :result (str "The same shell result shape (`stage` \"stop\"): `status` \"stopped\", `exit`. "
+                  "`out` is an empty string; the process log remains readable with `sh.logs()`.")
      :description
-     "TRANSPORT for `sh.stop()` — call the handle. Kills a background shell's process tree and drops its retained logs and resource."
+     "TRANSPORT for `sh.stop()` — call the handle. Kills a background shell's process tree and releases its live resource; the log remains on disk."
      :call {:pos ["id"]}
      :inject-env? true
      :tag :mutation

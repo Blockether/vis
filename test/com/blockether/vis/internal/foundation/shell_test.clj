@@ -1391,6 +1391,12 @@
                (expect (zero? @reads)))
              (finally (Thread/interrupted) (.delete file))))))
 
+;; Regression: shell lifecycle results returned nil output, breaking Python string slices.
+(defdescribe shell-empty-output-test
+             (it "returns an empty string for stages that do not read output"
+                 (doseq [stage ["run" "background" "logs" "wait" "send" "stop"]]
+                   (expect (= "" (get (@#'shell/shell-result stage {}) "out"))))))
+
 (defdescribe shell-send-test
              (it "types into a running background shell's stdin and the program reads it"
                  (with-shell-on
@@ -1405,13 +1411,17 @@
                                 ;; The card must be able to show WHAT was typed, not
                                 ;; just how many chars it was — and the keystrokes are
                                 ;; the LABEL, never a second spelling of `out`.
-                                (expect (nil? (get snt "out")))
+                                (expect (= "" (get snt "out")))
                                 (expect (= "\"hi-there\" ↵" (get snt "keys"))))
                               (let [hit? (fn [r]
                                            (str/includes? (str (get r "out")) "GOT:hi-there"))
                                     r (poll #(:result (shell-logs* env "echoer")) hit?)]
 
-                                (expect (hit? r)))
+                                (expect (hit? r))
+                                (let [stopped (:result (shell-stop* env "echoer"))]
+                                  (expect (= "stopped" (get stopped "status")))
+                                  (expect (= "" (get stopped "out")))
+                                  (expect (hit? (:result (shell-logs* env "echoer"))))))
                               (finally (resources/stop-all! sid))))))))
              (it "refuses a send to an unknown id and to an exited shell"
                  (with-shell-on (fn []
@@ -2165,14 +2175,17 @@
             c
             (py-ctx {:session-id sid})]
 
-        (try (expect (= [true "__VisShell__" false true "exited" false]
+        ;; Regression: slicing type/stop output raised TypeError after the operation succeeded.
+        (try (expect (= [true "__VisShell__" false true "exited" false "" "" true]
                         (py c
                             (str
                               "sh = __vis_settle__(shell('read x; echo got $x', {'id':'handle'}))\n"
-                              "sh.type('ready')\n"
-                              "w = sh.wait(30)\n" "sh.stop()\n"
+                              "sent = sh.type('ready')\n"
+                              "w = sh.wait(30)\n" "stopped = sh.stop()\n"
                               "[isinstance(sh, dict), type(sh).__name__, 'shell_logs' in globals(),"
-                              " 'got ready' in w['out'], w['status'], w['timed_out']]"))))
+                              " 'got ready' in w['out'], w['status'], w['timed_out'],"
+                              " sent['out'][-300:], stopped.out[-300:],"
+                              " 'got ready' in sh.logs(-7)['out']]"))))
              (finally (resources/stop-all! sid)))))
   (it "reads a LINE window on the handle, folds `n`, and refuses a keyword by name"
       ;; A near-miss keyword used to cross as an unread key: `sh.logs(n=10)` came
