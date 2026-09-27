@@ -1,7 +1,30 @@
 """One conversation using an injected execution layer or an owned local engine."""
 
+import json
+from typing import TYPE_CHECKING, TypeVar
+
 from ._client import ExecutionLayer, Session, TransportError, Turn
 from ._local import LocalEngine
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+ResponseModel = TypeVar("ResponseModel", bound="BaseModel")
+
+
+class StructuredOutputError(ValueError):
+    """A completed turn had no valid structured result, or did not complete.
+
+    `turn` retains the canonical record for inspection without printing its
+    potentially private content in the exception message. No retry is performed.
+    """
+
+    def __init__(self, reason: str, turn: dict):
+        self.turn = turn
+        super().__init__(
+            f"{reason} (turn {turn.get('turn_id', 'unknown')}, "
+            f"status {turn.get('status', 'unknown')})"
+        )
 
 
 class Agent:
@@ -150,6 +173,80 @@ class Agent:
         unfinished work only when it owns the default local engine.
         """
         return self.send(request, **options).wait(timeout=timeout)
+
+    def run_structured(
+        self,
+        request: str,
+        *,
+        response_model: type[ResponseModel],
+        timeout: float = 300,
+        **options,
+    ) -> ResponseModel:
+        """Request JSON and return a validated Pydantic model from the final answer.
+
+        Install `vis-agent[structured]` for Pydantic 2. The model's validation
+        JSON Schema is included in the request. This is a prompt, not a provider
+        JSON-mode guarantee: the engine currently uses plain-text completions.
+        The final prose block must contain one complete JSON value matching the
+        schema and the model's Python validators. Other block types are ignored.
+
+        Raises `StructuredOutputError` with the original `turn` if the turn did
+        not complete or its answer is invalid. Validation does not retry or
+        undo any project edits. Transport errors and `VisTimeout` propagate as
+        in `run`; a timeout does not cancel the turn. All submission options are
+        forwarded unchanged to `send`.
+        """
+        try:
+            from pydantic import BaseModel
+        except ImportError as exc:
+            raise ImportError(
+                "install vis-agent[structured] to use run_structured"
+            ) from exc
+        from jsonschema import Draft202012Validator, ValidationError
+
+        if not isinstance(response_model, type) or not issubclass(
+            response_model, BaseModel
+        ):
+            raise TypeError("response_model must be a Pydantic BaseModel subclass")
+        schema = response_model.model_json_schema(mode="validation")
+        Draft202012Validator.check_schema(schema)
+
+        prompt = (
+            f"{request}\n\n"
+            "Return the final answer as exactly one JSON object. Do not include "
+            "Markdown fences, commentary, or text outside the JSON object. "
+            "Match this JSON Schema:\n"
+            f"{json.dumps(schema, ensure_ascii=False)}"
+        )
+        turn = self.run(prompt, timeout=timeout, **options)
+        if turn.get("status") != "completed":
+            raise StructuredOutputError("turn did not complete", turn)
+
+        content = turn.get("content")
+        prose = (
+            next(
+                (
+                    block.get("markdown")
+                    for block in reversed(content)
+                    if isinstance(block, dict) and block.get("type") == "prose"
+                ),
+                None,
+            )
+            if isinstance(content, list)
+            else None
+        )
+        if not isinstance(prose, str) or not prose.strip():
+            raise StructuredOutputError("missing final prose answer", turn)
+
+        def reject_constant(value):
+            raise ValueError(f"invalid JSON constant {value}")
+
+        try:
+            payload = json.loads(prose, parse_constant=reject_constant)
+            Draft202012Validator(schema).validate(payload)
+            return response_model.model_validate_json(prose)
+        except (ValueError, ValidationError) as exc:
+            raise StructuredOutputError("invalid structured answer", turn) from exc
 
     def close(self):
         """Detach callbacks and release only resources owned by this agent.

@@ -4,6 +4,7 @@ from unittest.mock import Mock
 
 import blockether.vis.engine as engine
 import pytest
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 @pytest.fixture
@@ -270,3 +271,140 @@ def test_invalid_execution_layer_is_rejected_before_default_engine(local):
     with pytest.raises(TypeError, match="ExecutionLayer"):
         engine.Agent(execution_layer=object())
     local.assert_not_called()
+
+
+class Delivery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    quote_cents: int = Field(ge=0)
+    express: bool
+
+    @field_validator("quote_cents")
+    @classmethod
+    def require_whole_dollars(cls, value):
+        if value % 100:
+            raise ValueError("quote must be in whole dollars")
+        return value
+
+
+def test_structured_result_uses_final_prose_and_reuses_conversation(local, tmp_path):
+    result = {
+        "turn_id": "turn-one",
+        "status": "completed",
+        "content": [
+            {"type": "tool", "output": {"quote_cents": 999}},
+            {"type": "reasoning", "text": "not the answer"},
+            {"type": "prose", "markdown": "Earlier progress"},
+            {"type": "prose", "markdown": '{"quote_cents": 1200, "express": true}'},
+        ],
+    }
+    with engine.Agent(tmp_path) as agent:
+        conversation = agent.session
+        conversation.send.return_value.wait.return_value = result
+        quote = agent.run_structured(
+            "Quote delivery without changing files.",
+            response_model=Delivery,
+            timeout=12,
+            provider="example",
+        )
+        assert quote == Delivery(quote_cents=1200, express=True)
+        request = conversation.send.call_args.args[0]
+        assert "Quote delivery without changing files." in request
+        assert '"quote_cents"' in request and '"express"' in request
+        assert conversation.send.call_args.kwargs == {"provider": "example"}
+        conversation.send.return_value.wait.assert_called_once_with(timeout=12)
+        assert agent.run("Follow up")["status"] == "completed"
+        assert conversation.send.call_count == 2
+
+
+@pytest.mark.parametrize("status", ["failed", "cancelled", "suspended", "error"])
+def test_structured_result_does_not_parse_unsuccessful_turn(local, tmp_path, status):
+    with engine.Agent(tmp_path) as agent:
+        conversation = agent.session
+        result = {
+            "turn_id": "turn-one",
+            "status": status,
+            "content": [
+                {"type": "prose", "markdown": '{"quote_cents": 1200, "express": true}'},
+            ],
+        }
+        conversation.send.return_value.wait.return_value = result
+        with pytest.raises(engine.StructuredOutputError) as failure:
+            agent.run_structured("Quote", response_model=Delivery)
+        assert failure.value.turn is result
+        assert conversation.send.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        [],
+        [{"type": "tool", "output": {"quote_cents": 1200}}],
+        [{"type": "prose", "markdown": "not JSON"}],
+        [{"type": "prose", "markdown": '{"quote_cents": 1200}'}],
+        [{"type": "prose", "markdown": '{"quote_cents": 1201, "express": true}'}],
+        [
+            {
+                "type": "prose",
+                "markdown": '{"quote_cents": 1200, "express": true, "other": 1}',
+            }
+        ],
+        [
+            {
+                "type": "prose",
+                "markdown": '{"quote_cents": 1200, "express": true} trailing text',
+            }
+        ],
+    ],
+)
+def test_structured_result_rejects_invalid_answer_without_retry(
+    local, tmp_path, content
+):
+    with engine.Agent(tmp_path) as agent:
+        conversation = agent.session
+        result = {"turn_id": "turn-one", "status": "completed", "content": content}
+        conversation.send.return_value.wait.return_value = result
+        with pytest.raises(engine.StructuredOutputError) as failure:
+            agent.run_structured("Quote", response_model=Delivery)
+        assert failure.value.turn is result
+        assert "turn-one" in str(failure.value)
+        assert "1201" not in str(failure.value)
+        assert conversation.send.call_count == 1
+
+
+def test_structured_result_checks_schema_before_pydantic_coercion(local, tmp_path):
+    class Count(BaseModel):
+        count: int
+
+    with engine.Agent(tmp_path) as agent:
+        conversation = agent.session
+        result = {
+            "turn_id": "turn-one",
+            "status": "completed",
+            "content": [{"type": "prose", "markdown": '{"count": true}'}],
+        }
+        conversation.send.return_value.wait.return_value = result
+        with pytest.raises(engine.StructuredOutputError) as failure:
+            agent.run_structured("Count", response_model=Count)
+        assert failure.value.turn is result
+        assert conversation.send.call_count == 1
+
+
+def test_structured_result_rejects_invalid_model_before_connect(local, tmp_path):
+    agent = engine.Agent(tmp_path)
+    try:
+        with pytest.raises(TypeError, match="BaseModel"):
+            agent.run_structured("Quote", response_model=dict)
+        agent.execution_layer.connect.assert_not_called()
+    finally:
+        agent.close()
+
+
+def test_structured_result_does_not_retry_timeout(local, tmp_path):
+    with engine.Agent(tmp_path) as agent:
+        turn = agent.session.send.return_value
+        turn.wait.side_effect = engine.VisTimeout("deadline")
+        with pytest.raises(engine.VisTimeout, match="deadline"):
+            agent.run_structured("Quote", response_model=Delivery, timeout=1)
+        turn.cancel.assert_not_called()
+        agent.session.send.assert_called_once()

@@ -137,6 +137,21 @@ def test_gateway_recipe_sends_a_task_and_releases_only_its_lease(
     assert "fixture-token" not in output
 
 
+def test_structured_recipe_validates_a_gateway_result(recipe, gateway):
+    url, calls, submissions, result = gateway
+    result["content"] = [
+        {"type": "prose", "markdown": '{"cents": 1200, "express": false}'}
+    ]
+    with engine.GatewayClient(url, token="fixture-token") as client:
+        with engine.Agent("/srv/vis-project", execution_layer=client) as agent:
+            quote = recipe("structured_quote").quote_delivery(agent)
+            assert quote.cents == 1200
+            assert quote.express is False
+    assert '"cents"' in submissions[1]["request"]
+    assert "JSON Schema" in submissions[1]["request"]
+    assert sum(call[0] == "POST" and call[1].endswith("/turns") for call in calls) == 1
+
+
 @pytest.mark.parametrize("status", ["failed", "cancelled", "suspended"])
 def test_gateway_recipe_reports_noncompleted_status(
     recipe, gateway, monkeypatch, capsys, status

@@ -67,6 +67,56 @@ You should see a session ID, `Status: completed` and the answer's content blocks
 `run()` returns a turn record, not a text string. A failed, cancelled or suspended
 turn also returns a record: always check `status`.
 
+## Get a validated result
+
+When your program needs fields rather than a prose answer, install the optional
+Pydantic dependency with `python -m pip install "vis-agent[structured]"`. Define
+what you want returned, then ask the same `Agent` for a structured result:
+
+```python
+# structured_quote.py
+from pydantic import BaseModel, Field
+
+from blockether.vis.engine import Agent
+
+
+class Quote(BaseModel):
+    cents: int = Field(ge=0)
+    express: bool
+
+
+def quote_delivery(agent: Agent) -> Quote:
+    return agent.run_structured(
+        "For a 1000 gram parcel, quote 1200 cents with express false. "
+        "Do not inspect or change files.",
+        response_model=Quote,
+    )
+
+
+def main():
+    with Agent(project=".") as agent:
+        quote = quote_delivery(agent)
+        print(quote.cents, quote.express)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Run `python structured_quote.py` in a project with a configured provider. A
+valid result prints `1200 False`. `run_structured()` includes the model's
+validation JSON Schema in the request, checks the final prose block against
+that schema, then uses Pydantic to run your Python validators and return a
+`Quote`. It works with a private local engine or a borrowed `GatewayClient`.
+
+The schema is a **request to the model**, not provider-enforced JSON mode: Vis
+currently uses plain-text completions. The result must be one JSON object,
+without a Markdown fence or commentary. If the turn fails, suspends or returns
+invalid JSON or fields, `StructuredOutputError` contains the original `turn`
+record for inspection. The SDK never retries a structured request automatically;
+model calls can cost money and tools may already have changed files. Closing
+a private agent discards its session database, not those file edits.
+
 ## Use stdio from the Python SDK
 
 The local `Agent` example above starts `vis-agent stdio` for you. This is a
