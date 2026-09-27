@@ -59,7 +59,7 @@
         (.start thread)
         (.join thread 5000))
       ;; Observe the live file, without shutdown or manually flushing writers.
-      (let [missing (loop [remaining 100]
+      (let [missing (loop [remaining 250]
                       (let [text (if (.isFile (io/file path)) (slurp path) "")
                             missing (remove #(str/includes? text %) markers)]
 
@@ -72,23 +72,36 @@
 
 (defdescribe
   live-diagnostic-logs-test
-  (it "writes Java, Clojure, Telemere and Trove diagnostics before shutdown"
-      (doseq [mode ["boot" "boot-debug" "cli" "cli-debug" "tui" "tui-debug"]]
-        (let [directory (.toFile (Files/createTempDirectory "vis-live-logs-"
-                                                            (make-array FileAttribute 0)))
-              output (io/file directory "child-output")
-              process (-> (ProcessBuilder. ^java.util.List
-                                           [(str (System/getProperty "java.home") "/bin/java") "-cp"
-                                            (System/getProperty "java.class.path") "clojure.main"
-                                            "-m" "com.blockether.vis.internal.config.logging-test"
-                                            mode (.getAbsolutePath directory)])
-                          (.redirectErrorStream true)
-                          (.redirectOutput output)
-                          (.start))]
+  (it
+    "writes Java, Clojure, Telemere and Trove diagnostics before shutdown"
+    ;; Each mode needs its own JVM because logging initialization replaces process-wide
+    ;; streams. The children are independent, so start them together instead of paying
+    ;; six JVM startups one after another.
+    (let [children (mapv (fn [mode]
+                           (let [directory (.toFile (Files/createTempDirectory
+                                                      "vis-live-logs-"
+                                                      (make-array FileAttribute 0)))
+                                 output (io/file directory "child-output")]
 
-          (try (expect (.waitFor process 40 TimeUnit/SECONDS) (str mode " logging child timed out"))
-               (expect (zero? (.exitValue process)) (str mode ": " (slurp output)))
-               (finally (.destroyForcibly process)
-                        (.waitFor process 5 TimeUnit/SECONDS)
-                        (doseq [file (reverse (file-seq directory))]
-                          (io/delete-file file true))))))))
+                             {:mode mode
+                              :directory directory
+                              :output output
+                              :process (-> (ProcessBuilder.
+                                             ^java.util.List
+                                             [(str (System/getProperty "java.home") "/bin/java")
+                                              "-XX:TieredStopAtLevel=1" "-XX:+UseSerialGC" "-cp"
+                                              (System/getProperty "java.class.path") "clojure.main"
+                                              "-m" "com.blockether.vis.internal.config.logging-test"
+                                              mode (.getAbsolutePath directory)])
+                                           (.redirectErrorStream true)
+                                           (.redirectOutput output)
+                                           (.start))}))
+                         ["boot" "boot-debug" "cli" "cli-debug" "tui" "tui-debug"])]
+      (try (doseq [{:keys [mode output ^Process process]} children]
+             (expect (.waitFor process 180 TimeUnit/SECONDS) (str mode " logging child timed out"))
+             (expect (zero? (.exitValue process)) (str mode ": " (slurp output))))
+           (finally (doseq [{:keys [directory ^Process process]} children]
+                      (.destroyForcibly process)
+                      (.waitFor process 5 TimeUnit/SECONDS)
+                      (doseq [file (reverse (file-seq directory))]
+                        (io/delete-file file true))))))))

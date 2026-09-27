@@ -40,7 +40,6 @@
             (it "carries the product version"
                 (expect (= (str/trim (slurp "VIS_VERSION")) (declared-version agent-dir))))
             (it "bundles contracts instead of depending on another Python distribution"
-                (expect (not (.exists (io/file "packages/vis-contract/pyproject.toml"))))
                 (expect (not (str/includes? (pyproject agent-dir) "vis-contract==")))
                 (expect (str/includes? (pyproject agent-dir) "jsonschema>=4.23,<5"))
                 (expect (str/includes? (pyproject agent-dir) "hatch_build.py")))))

@@ -1,5 +1,7 @@
 (ns com.blockether.vis.internal.python.cli-environment-test
-  "Clean-process coverage: Python imports and editable hooks are process-wide."
+  "Clean-process coverage: Python imports and editable hooks are process-wide.
+   Each source-launcher JVM loads the whole engine, so independent invocations run
+   together and one probe checks every contract an invocation shares."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
@@ -20,72 +22,88 @@
   (doseq [^File file (reverse (file-seq dir))]
     (.delete file)))
 
-(defn- run-cli
-  ([dir environment args] (run-cli dir environment args {}))
-  ([^File dir environment args {:keys [tty? invocation-dir]}]
-   (let [classpath
-         (str/join File/pathSeparator
-                   (map (fn [entry]
-                          (let [file (io/file entry)]
-                            (.getCanonicalPath file)))
-                        (str/split (System/getProperty "java.class.path")
-                                   (re-pattern (java.util.regex.Pattern/quote
-                                                 File/pathSeparator)))))
+(defn- start-cli!
+  "Start `vis-agent python` from source like the launcher: the process runs in `dir`
+   and an :invocation-dir travels in user.dir."
+  [^File dir environment args {:keys [invocation-dir jvm-opts]}]
+  (let [classpath
+        (str/join File/pathSeparator
+                  (map (fn [entry]
+                         (let [file (io/file entry)]
+                           (.getCanonicalPath file)))
+                       (str/split (System/getProperty "java.class.path")
+                                  (re-pattern (java.util.regex.Pattern/quote File/pathSeparator)))))
 
-         command
-         (into (cond-> [(str (io/file (System/getProperty "java.home") "bin/java"))
-                        "--enable-native-access=ALL-UNNAMED" "--enable-preview"]
-                 invocation-dir
-                 (conj (str "-Duser.dir=" (.getCanonicalPath ^File invocation-dir)))
+        command
+        (into (cond-> (into [(str (io/file (System/getProperty "java.home") "bin/java"))
+                             "--enable-native-access=ALL-UNNAMED" "--enable-preview"]
+                            jvm-opts)
+                invocation-dir
+                (conj (str "-Duser.dir=" (.getCanonicalPath ^File invocation-dir)))
 
-                 true
-                 (into ["-cp" classpath "clojure.main" "-m" "com.blockether.vis.core" "python"]))
-               args)
+                true
+                (into ["-cp" classpath "clojure.main" "-m" "com.blockether.vis.core" "python"]))
+              args)
 
-         command
-         (if tty?
-           (into ["python3"
-                  (.getCanonicalPath
-                    (io/file "test-native/com/blockether/vis/fixtures/python_cli_tty.py"))]
-                 command)
-           command)
+        output
+        (io/file dir (str "cli-" (java.util.UUID/randomUUID) ".log"))
 
-         output
-         (io/file dir (str "cli-" (java.util.UUID/randomUUID) ".log"))
+        builder
+        (doto (ProcessBuilder. ^java.util.List command)
+          (.directory dir)
+          (.redirectErrorStream true)
+          (.redirectOutput output))]
 
-         builder
-         (doto (ProcessBuilder. ^java.util.List command)
-           (.directory dir)
-           (.redirectErrorStream true)
-           (.redirectOutput output))]
+    (doseq [key ["PYTHONPATH" "UV_PROJECT_ENVIRONMENT" "VIRTUAL_ENV" "VIS_PYTHON_PACKAGES"]]
+      (.remove (.environment builder) key))
+    (.putAll (.environment builder) environment)
+    (let [process (.start builder)]
+      (.close (.getOutputStream process))
+      {:process process :output output})))
 
-     (doseq [key ["PYTHONPATH" "UV_PROJECT_ENVIRONMENT" "VIRTUAL_ENV" "VIS_PYTHON_PACKAGES"]]
-       (.remove (.environment builder) key))
-     (.putAll (.environment builder) environment)
-     (let [process (.start builder)]
-       (try (.close (.getOutputStream process))
-            (when-not (.waitFor process (if tty? 240 90) TimeUnit/SECONDS)
-              (throw (ex-info "Python CLI timed out" {:output (slurp output)})))
-            {:exit (.exitValue process) :output (slurp output)}
-            (finally (when (.isAlive process)
-                       (doseq [^java.lang.ProcessHandle child (-> process
-                                                                  .toHandle
-                                                                  .descendants
-                                                                  .toList)]
-                         (.destroyForcibly child))
-                       (.destroyForcibly process)
-                       (.waitFor process 10 TimeUnit/SECONDS))))))))
+(defn- await-cli!
+  [{:keys [^Process process output]} timeout-seconds]
+  (try (when-not (.waitFor process timeout-seconds TimeUnit/SECONDS)
+         (throw (ex-info "Python CLI timed out" {:output (slurp output)})))
+       {:exit (.exitValue process) :output (slurp output)}
+       (finally (when (.isAlive process)
+                  (doseq [^java.lang.ProcessHandle child (-> process
+                                                             .toHandle
+                                                             .descendants
+                                                             .toList)]
+                    (.destroyForcibly child))
+                  (.destroyForcibly process)
+                  (.waitFor process 10 TimeUnit/SECONDS)))))
+
+(defn- run-cli [dir environment args] (await-cli! (start-cli! dir environment args {}) 90))
+
+(defn- run-cli-together
+  "Run independent invocations at once. C1 and the serial collector roughly halve
+   each short-lived JVM's CPU, which is what several of them contend for."
+  [dir invocations]
+  (let [started (mapv (fn [{:keys [environment args options]}]
+                        (start-cli! dir
+                                    environment
+                                    args
+                                    (assoc options
+                                      :jvm-opts ["-XX:TieredStopAtLevel=1" "-XX:+UseSerialGC"])))
+                      invocations)]
+    (mapv #(await-cli! % 240) started)))
 
 (defdescribe
-  python-cli-invocation-directory-test
+  python-cli-invocation-test
   ;; Regression #237: the source launcher runs in its install directory and
   ;; carries the caller's directory in user.dir, not the process cwd.
+  ;; Regression #287: file mode skipped __main__ and -m missed the invocation cwd.
+  ;; Regression #226: a project must not borrow shared wheels, editable roots,
+  ;; startup hooks or modules imported by those hooks before its environment loads.
+  ;; The native suite covers custom and missing environments against the binary.
   (it
-    "preserves cwd and relative paths in code, module and file modes, including --shared"
+    "runs code, modules, files and pytest from the invocation directory in its project"
     (let [dir
           (.getCanonicalFile (.toFile (Files/createTempDirectory (.toPath (doto (io/file "target")
                                                                             .mkdirs))
-                                                                 "vis-cli-cwd-"
+                                                                 "vis-cli-invocation-"
                                                                  (make-array FileAttribute 0))))
 
           install
@@ -97,174 +115,81 @@
           shared
           (doto (io/file dir "shared") .mkdirs)
 
-          environment
-          {"VIS_PYTHON_PACKAGES" (.getCanonicalPath shared)
-           "PYTHONPATH" "."
-           "PYTEST_DISABLE_PLUGIN_AUTOLOAD" "1"}
+          editable
+          (doto (io/file dir "editable") .mkdirs)
 
-          source
-          (str "from pathlib import Path\n" "print('CLI_CWD', Path.cwd())\n"
+          shadow
+          (doto (io/file dir "shadow") .mkdirs)
+
+          probe
+          (str "import importlib.util\n"
+               "from importlib.metadata import version\n" "from pathlib import Path\n"
+               "from cli_invocation_project import VALUE\n"
                "assert str(Path.cwd()) == Path('expected-cwd.txt').read_text()\n"
-               "print('RELATIVE_CWD_OK')\n")]
+               "assert importlib.util.find_spec('cli_shared_only') is None\n"
+               "assert importlib.util.find_spec('cli_shared_editable') is None\n"
+               "print('PROBE', __name__, Path(globals().get('__file__', '-')).name, VALUE,"
+               " version('cli-invocation-project'))\n")
+
+          invocation
+          (fn [args expected & [environment]]
+            {:args (into ["--no-network"] args)
+             :expected expected
+             :environment (merge {"VIS_PYTHON_PACKAGES" (.getCanonicalPath shared)} environment)
+             :options {:invocation-dir project}})]
 
       (try (spit (io/file project "pyproject.toml")
-                 (str "[project]\nname = 'cli-cwd-project'\nversion = '0.1.0'\n"
-                      "dependencies = ['pytest']\n[tool.uv]\npackage = false\n"))
+                 (str
+                   "[project]\nname = 'cli-invocation-project'\nversion = '0.1.0'\n"
+                   "dependencies = ['pytest']\n"
+                   "[build-system]\nrequires = ['hatchling']\nbuild-backend = 'hatchling.build'\n"
+                   "[tool.hatch.build.targets.wheel]\npackages = ['src/cli_invocation_project']\n"))
            (spit (io/file project "expected-cwd.txt") (.getCanonicalPath project))
-           (spit (io/file project "cwd_probe.py") source)
+           (spit (io/file project "cwd_probe.py") probe)
+           (io/make-parents (io/file project "src/cli_invocation_project/__init__.py"))
+           (spit (io/file project "src/cli_invocation_project/__init__.py") "VALUE = 226\n")
+           (spit (io/file project "src/cli_priority_fixture.py") "VALUE = 226\n")
+           (spit (io/file shadow "cli_priority_fixture.py") "VALUE = 999\n")
            (io/make-parents (io/file project "tests/test_cwd.py"))
            (spit (io/file project "tests/test_cwd.py") "def test_cwd():\n    import cwd_probe\n")
+           (spit (io/file shared "cli_shared_only.py") "VALUE = 'shared'\n")
+           (spit (io/file editable "cli_shared_editable.py") "VALUE = 'editable'\n")
+           (spit (io/file shared "shared.pth")
+                 (str (.getCanonicalPath editable)
+                      "\nimport cli_shared_only; print('SHARED_HOOK_RAN')\n"))
            (python-runtime/ensure-library!)
-           (doseq [flags [[] ["--shared"]]]
-             (let [synced (run-cli project
-                                   environment
-                                   (into flags
-                                         (cond-> ["uv" "sync"]
-                                           (empty? flags)
-                                           (into ["--python" (Interpreter/pythonExecutable)]))))]
-               (expect (= 0 (:exit synced)) (:output synced))))
-           (doseq [flags
-                   [[] ["--shared"]]
-
-                   [args expected]
-                   [[["-c" source] "RELATIVE_CWD_OK"] [["-m" "cwd_probe"] "RELATIVE_CWD_OK"]
-                    [["./cwd_probe.py"] "RELATIVE_CWD_OK"]
-                    [[(.getCanonicalPath (io/file project "cwd_probe.py"))] "RELATIVE_CWD_OK"]
-                    [["-m" "pytest" "./tests" "-q"] "1 passed"]]]
-
-             (let [result (run-cli install
-                                   environment
-                                   (into flags (into ["--no-network"] args))
-                                   {:invocation-dir project})]
-               (expect (= 0 (:exit result)) (str flags " " args "\n" (:output result)))
-               (expect (str/includes? (:output result) expected) (:output result))))
-           (finally (delete-tree! dir))))))
-
-(defdescribe
-  python-cli-main-entrypoint-test
-  ;; Regression #287: file mode skipped __main__ and -m missed the invocation cwd.
-  (it "runs a file and a module as main without PYTHONPATH"
-      (let [dir
-            (.toFile (Files/createTempDirectory (.toPath (doto (io/file "target") .mkdirs))
-                                                "vis-cli-main-"
-                                                (make-array FileAttribute 0)))
-
-            install
-            (doto (io/file dir "install") .mkdirs)
-
+           (#'python-runtime/run-uv!
             project
-            (doto (io/file dir "project") .mkdirs)]
-
-        (try (spit (io/file project "probe_cli.py")
-                   (str "print('name:', __name__)\n"
-                        "print('file:', __file__)\n"
-                        "if __name__ == '__main__':\n    print('ran main')\n"))
-             (doseq [args [["-m" "probe_cli"] ["probe_cli.py"]]]
-               (let [result
-                     (run-cli install {} (into ["--no-network"] args) {:invocation-dir project})]
-                 (expect (= 0 (:exit result)) (:output result))
-                 (expect (str/includes? (:output result) "name: __main__") (:output result))
-                 (expect (re-find #"file: .*probe_cli\.py" (:output result)) (:output result))
-                 (expect (str/includes? (:output result) "ran main") (:output result))))
-             (finally (delete-tree! dir))))))
-
-;; Regression #226: a project must not borrow shared wheels, editable roots,
-;; startup hooks or modules imported by those hooks before its environment loads.
-(defdescribe
-  python-cli-environment-isolation-test
-  (it
-    "loads a synced project without activating shared packages or editable hooks"
-    (let [dir
-          (.toFile (Files/createTempDirectory (.toPath (doto (io/file "target") .mkdirs))
-                                              "vis-cli-isolation-"
-                                              (make-array FileAttribute 0)))
-
-          project
-          (doto (io/file dir "project") .mkdirs)
-
-          shared
-          (doto (io/file dir "shared") .mkdirs)
-
-          editable
-          (doto (io/file dir "editable") .mkdirs)]
-
-      (try
-        (spit (io/file project "pyproject.toml")
-              (str "[project]\nname = 'cli-isolation-project'\nversion = '0.1.0'\n"
-                   "[build-system]\nrequires = ['hatchling']\nbuild-backend = 'hatchling.build'\n"
-                   "[tool.hatch.build.targets.wheel]\npackages = ['src/cli_isolation_project']\n"))
-        (io/make-parents (io/file project "src/cli_isolation_project/__init__.py"))
-        (spit (io/file project "src/cli_isolation_project/__init__.py") "VALUE = 226\n")
-        (spit (io/file project "src/cli_isolation_project/__main__.py")
-              "from . import VALUE\nprint(VALUE)\n")
-        (spit (io/file shared "cli_shared_only.py") "VALUE = 'shared'\n")
-        (spit (io/file editable "cli_shared_editable.py") "VALUE = 'editable'\n")
-        (spit (io/file shared "shared.pth")
-              (str (.getCanonicalPath editable)
-                   "\nimport cli_shared_only; print('SHARED_HOOK_RAN')\n"))
-        (python-runtime/ensure-library!)
-        (#'python-runtime/run-uv!
-         project
-         [(#'python-runtime/bundled-uv!) "sync" "--python" (Interpreter/pythonExecutable)])
-        (let [environment
-              {"VIS_PYTHON_PACKAGES" (.getCanonicalPath shared)}
-
-              isolated-code
-              (str "import sys, importlib.util\n"
-                   "from importlib.metadata import version\n"
-                   "from cli_isolation_project import VALUE\n"
-                   "assert importlib.util.find_spec('cli_shared_only') is None\n"
-                   "assert importlib.util.find_spec('cli_shared_editable') is None\n"
-                   "assert 'cli_shared_only' not in sys.modules\n"
-                   "print('ISOLATED', VALUE, version('cli-isolation-project'))")]
-
-          (doseq [selection [{} {"UV_PROJECT_ENVIRONMENT" ".venv"}
-                             {"UV_PROJECT_ENVIRONMENT" (.getCanonicalPath (io/file project
-                                                                                   ".venv"))}]]
-            (let [result (run-cli project
-                                  (merge environment selection)
-                                  ["--no-network" "-c" isolated-code])]
-              (expect (= 0 (:exit result)) (:output result))
-              (expect (str/includes? (:output result) "ISOLATED 226 0.1.0") (:output result))
-              (expect (not (str/includes? (:output result) "SHARED_HOOK_RAN")) (:output result))))
-          (let [result (run-cli project environment ["--no-network" "-m" "cli_isolation_project"])]
-            (expect (= 0 (:exit result)) (:output result))
-            (expect (str/includes? (:output result) "226") (:output result)))
-          (let [shadow (doto (io/file project "shadow") .mkdirs)]
-            (spit (io/file project "src/cli_priority_fixture.py") "VALUE = 226\n")
-            (spit (io/file shadow "cli_priority_fixture.py") "VALUE = 999\n")
-            (let [result (run-cli project
-                                  (assoc environment "PYTHONPATH" (.getCanonicalPath shadow))
-                                  ["--no-network" "-c"
-                                   "from cli_priority_fixture import VALUE; print(VALUE)"])]
-              (expect (= 0 (:exit result)) (:output result))
-              (expect (str/includes? (:output result) "999") (:output result))))
-          (doseq [[cwd options] [[project ["--shared"]] [dir []]]]
-            (let [result
-                  (run-cli
-                    cwd
-                    environment
-                    (into
-                      options
-                      ["--no-network" "-c"
-                       (str "import cli_shared_only, cli_shared_editable, importlib.util\n"
-                            "assert importlib.util.find_spec('cli_isolation_project') is None\n"
-                            "print('SHARED', cli_shared_only.VALUE, cli_shared_editable.VALUE)")]))]
-              (expect (= 0 (:exit result)) (:output result))
-              (expect (str/includes? (:output result) "SHARED shared editable") (:output result))))
-          (let [missing (doto (io/file dir "missing") .mkdirs)]
-            (spit (io/file missing "pyproject.toml")
-                  "[project]\nname = 'missing'\nversion = '0.1.0'\n")
-            (doseq [selection [{} {"UV_PROJECT_ENVIRONMENT" "nonexistent"}]]
-              (let [result (run-cli missing
-                                    (merge environment selection)
-                                    ["--no-network" "-c" "print('WRONG')"])]
-                (expect (not= 0 (:exit result)) (:output result))
-                (expect (str/includes? (:output result) "has no site-packages for embedded Python")
-                        (:output result))
-                (expect (str/includes? (:output result) "vis-agent python uv sync")
-                        (:output result))))))
-        (finally (delete-tree! dir))))))
+            [(#'python-runtime/bundled-uv!) "sync" "--python" (Interpreter/pythonExecutable)])
+           (let [invocations
+                 [(invocation ["-c"
+                               (str probe
+                                    "from cli_priority_fixture import VALUE as PRIORITY\n"
+                                    "print('PRIORITY', PRIORITY)\n")]
+                              ;; -c code runs in a sandbox module; only files and modules are __main__.
+                              [" - 226 0.1.0" "PRIORITY 999"]
+                              {"PYTHONPATH" (.getCanonicalPath shadow)})
+                  (invocation ["-m" "cwd_probe"] ["PROBE __main__ cwd_probe.py 226 0.1.0"])
+                  (invocation ["./cwd_probe.py"] ["PROBE __main__ cwd_probe.py 226 0.1.0"])
+                  (invocation ["-m" "pytest" "./tests" "-q"]
+                              ["1 passed"]
+                              {"PYTHONPATH" "." "PYTEST_DISABLE_PLUGIN_AUTOLOAD" "1"})
+                  (invocation
+                    ["--shared" "-c"
+                     (str "import cli_shared_only, cli_shared_editable, importlib.util\n"
+                          "from pathlib import Path\n"
+                          "assert str(Path.cwd()) == Path('expected-cwd.txt').read_text()\n"
+                          "assert importlib.util.find_spec('cli_invocation_project') is None\n"
+                          "print('SHARED', cli_shared_only.VALUE, cli_shared_editable.VALUE)")]
+                    ["SHARED shared editable"])]]
+             (doseq [[{:keys [args expected]} {:keys [exit output]}]
+                     (map vector invocations (run-cli-together install invocations))]
+               (expect (= 0 exit) (str args "\n" output))
+               (doseq [text expected]
+                 (expect (str/includes? output text) (str args "\n" output)))
+               (when-not (some #{"--shared"} args)
+                 (expect (not (str/includes? output "SHARED_HOOK_RAN")) (str args "\n" output)))))
+           (finally (delete-tree! dir))))))
 
 (defn- shared-fixture-wheel!
   ^File [^File project module]
@@ -535,18 +460,3 @@
                               @requests)
                     (pr-str @requests))))
         (finally (.stop server 0) (delete-tree! dir))))))
-
-(defdescribe
-  python-cli-interactive-input-test
-  ;; Regression #229: enter input only after the prompt reaches a real terminal.
-  (it "reads delayed terminal input and EOF in both file and module modes"
-      (let [dir (.toFile (Files/createTempDirectory (.toPath (doto (io/file "target") .mkdirs))
-                                                    "vis-cli-tty-"
-                                                    (make-array FileAttribute 0)))]
-        (try (let [result (run-cli dir {} [] {:tty? true})]
-               (expect (= 0 (:exit result)) (:output result))
-               (expect (str/includes? (:output result) "file: interactive input and EOF passed")
-                       (:output result))
-               (expect (str/includes? (:output result) "module: interactive input and EOF passed")
-                       (:output result)))
-             (finally (delete-tree! dir))))))
