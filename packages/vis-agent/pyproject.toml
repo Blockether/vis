@@ -14,7 +14,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-dependencies = ["jsonschema>=4.23,<5", "packaging>=24"]
+dependencies = ["jsonschema>=4.23,<5", "packaging>=24", "pydantic>=2.13.5,<3"]
 authors = [{ name = "Blockether" }]
 keywords = ["vis", "agent", "extension", "automation", "human-in-the-loop"]
 classifiers = [
@@ -26,7 +26,6 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-structured = ["pydantic>=2,<3"]
 decisions-training = [
   "laya==0.3.7",
   "torch==2.10.0",

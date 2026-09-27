@@ -1,15 +1,15 @@
 """One conversation using an injected execution layer or an owned local engine."""
 
 import json
-from typing import TYPE_CHECKING, TypeVar
+from typing import TypeVar, overload
+
+from jsonschema import Draft202012Validator, ValidationError
+from pydantic import BaseModel
 
 from ._client import ExecutionLayer, Session, TransportError, Turn
 from ._local import LocalEngine
 
-if TYPE_CHECKING:
-    from pydantic import BaseModel
-
-ResponseModel = TypeVar("ResponseModel", bound="BaseModel")
+ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
 
 
 class StructuredOutputError(ValueError):
@@ -32,7 +32,8 @@ class Agent:
 
     Choose this entry point for sequential requests that should share history.
     Use `send` to get a `blockether.vis.engine.Turn` immediately, or `run` to wait
-    for its result. Access `session` for transcripts, attachments and progress.
+    for its result. Pass `response_model` to `run` for a validated Pydantic model.
+    Access `session` for transcripts, attachments and progress.
 
     Args:
         project: Project directory. Local execution resolves an existing directory
@@ -149,60 +150,56 @@ class Agent:
         self._extensions.started = True
         return conversation.send(request, **options)
 
-    def run(self, request: str, *, timeout=300, **options):
-        """Submit a request and return its final or suspended turn record.
+    @overload
+    def run(
+        self,
+        request: str,
+        *,
+        timeout: float = 300,
+        response_model: None = None,
+        **options,
+    ) -> dict: ...
 
-        Args:
-            request: User message or slash command, as for `send`.
-            timeout: Positive finite wait deadline in seconds; defaults to 300.
-                This is separate from the layer's transport timeout.
-            **options: Submission options forwarded to `send`.
-
-        Returns:
-            The canonical turn dictionary, not a string. Inspect `status`:
-            `completed`, `failed`, `cancelled`, `suspended` and `error` all end the
-            wait. Failed model work is returned as a record, not raised as an
-            exception by this method.
-
-        Raises:
-            blockether.vis.engine.VisTimeout: The wait deadline expired. The turn
-                was not cancelled; use `send` followed by `Turn.wait` when you
-                need to retain a handle for cancellation or a later wait.
-
-        Transport and gateway errors also propagate. Closing this agent stops
-        unfinished work only when it owns the default local engine.
-        """
-        return self.send(request, **options).wait(timeout=timeout)
-
-    def run_structured(
+    @overload
+    def run(
         self,
         request: str,
         *,
         response_model: type[ResponseModel],
         timeout: float = 300,
         **options,
-    ) -> ResponseModel:
-        """Request JSON and return a validated Pydantic model from the final answer.
+    ) -> ResponseModel: ...
 
-        Install `vis-agent[structured]` for Pydantic 2. The model's validation
-        JSON Schema is included in the request. This is a prompt, not a provider
-        JSON-mode guarantee: the engine currently uses plain-text completions.
-        The final prose block must contain one complete JSON value matching the
-        schema and the model's Python validators. Other block types are ignored.
+    def run(
+        self,
+        request: str,
+        *,
+        timeout: float = 300,
+        response_model: type[ResponseModel] | None = None,
+        **options,
+    ) -> dict | ResponseModel:
+        """Submit a request and wait for its result in the same conversation.
 
-        Raises `StructuredOutputError` with the original `turn` if the turn did
-        not complete or its answer is invalid. Validation does not retry or
-        undo any project edits. Transport errors and `VisTimeout` propagate as
-        in `run`; a timeout does not cancel the turn. All submission options are
-        forwarded unchanged to `send`.
+        Without `response_model`, return the canonical turn dictionary. Check its
+        `status`: completed, failed, cancelled, suspended and error all end the
+        wait; failed model work is returned as a record, not raised.
+
+        With a Pydantic `BaseModel` subclass, include its validation JSON Schema
+        in the request and return an instance validated against the schema and
+        Python validators. This is a prompt, not provider-enforced JSON mode:
+        the final prose block must be one complete JSON value, without fences
+        or commentary. Other content block types are ignored. Unsuccessful
+        turns and invalid answers raise `StructuredOutputError` with the
+        original `turn` record. Validation never retries or undoes file edits.
+
+        `timeout` is a positive finite wait deadline in seconds, separate from
+        the layer's transport timeout. Submission options such as `provider`,
+        `model` and `attachments` are forwarded unchanged to `send`.
+        `VisTimeout` does not cancel the turn; transport errors propagate.
+        Closing an owned local agent stops unfinished work.
         """
-        try:
-            from pydantic import BaseModel
-        except ImportError as exc:
-            raise ImportError(
-                "install vis-agent[structured] to use run_structured"
-            ) from exc
-        from jsonschema import Draft202012Validator, ValidationError
+        if response_model is None:
+            return self.send(request, **options).wait(timeout=timeout)
 
         if not isinstance(response_model, type) or not issubclass(
             response_model, BaseModel
@@ -213,12 +210,12 @@ class Agent:
 
         prompt = (
             f"{request}\n\n"
-            "Return the final answer as exactly one JSON object. Do not include "
-            "Markdown fences, commentary, or text outside the JSON object. "
+            "Return the final answer as exactly one JSON value matching the schema. "
+            "Do not include Markdown fences, commentary, or text outside the JSON. "
             "Match this JSON Schema:\n"
             f"{json.dumps(schema, ensure_ascii=False)}"
         )
-        turn = self.run(prompt, timeout=timeout, **options)
+        turn = self.send(prompt, **options).wait(timeout=timeout)
         if turn.get("status") != "completed":
             raise StructuredOutputError("turn did not complete", turn)
 

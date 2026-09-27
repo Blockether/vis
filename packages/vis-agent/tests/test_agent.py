@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import blockether.vis.engine as engine
 import pytest
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator
 
 
 @pytest.fixture
@@ -301,7 +301,7 @@ def test_structured_result_uses_final_prose_and_reuses_conversation(local, tmp_p
     with engine.Agent(tmp_path) as agent:
         conversation = agent.session
         conversation.send.return_value.wait.return_value = result
-        quote = agent.run_structured(
+        quote = agent.run(
             "Quote delivery without changing files.",
             response_model=Delivery,
             timeout=12,
@@ -315,6 +315,25 @@ def test_structured_result_uses_final_prose_and_reuses_conversation(local, tmp_p
         conversation.send.return_value.wait.assert_called_once_with(timeout=12)
         assert agent.run("Follow up")["status"] == "completed"
         assert conversation.send.call_count == 2
+        assert agent.run("No schema", response_model=None) is result
+        conversation.send.assert_called_with("No schema")
+
+
+def test_structured_root_model_requests_an_array_not_an_object(local, tmp_path):
+    class Scores(RootModel[list[int]]):
+        pass
+
+    with engine.Agent(tmp_path) as agent:
+        conversation = agent.session
+        conversation.send.return_value.wait.return_value = {
+            "turn_id": "turn-one",
+            "status": "completed",
+            "content": [{"type": "prose", "markdown": "[10, 20]"}],
+        }
+        assert agent.run("Return scores", response_model=Scores) == Scores([10, 20])
+        prompt = conversation.send.call_args.args[0]
+        assert '"type": "array"' in prompt
+        assert "JSON object" not in prompt
 
 
 @pytest.mark.parametrize("status", ["failed", "cancelled", "suspended", "error"])
@@ -330,7 +349,7 @@ def test_structured_result_does_not_parse_unsuccessful_turn(local, tmp_path, sta
         }
         conversation.send.return_value.wait.return_value = result
         with pytest.raises(engine.StructuredOutputError) as failure:
-            agent.run_structured("Quote", response_model=Delivery)
+            agent.run("Quote", response_model=Delivery)
         assert failure.value.turn is result
         assert conversation.send.call_count == 1
 
@@ -365,7 +384,7 @@ def test_structured_result_rejects_invalid_answer_without_retry(
         result = {"turn_id": "turn-one", "status": "completed", "content": content}
         conversation.send.return_value.wait.return_value = result
         with pytest.raises(engine.StructuredOutputError) as failure:
-            agent.run_structured("Quote", response_model=Delivery)
+            agent.run("Quote", response_model=Delivery)
         assert failure.value.turn is result
         assert "turn-one" in str(failure.value)
         assert "1201" not in str(failure.value)
@@ -385,7 +404,7 @@ def test_structured_result_checks_schema_before_pydantic_coercion(local, tmp_pat
         }
         conversation.send.return_value.wait.return_value = result
         with pytest.raises(engine.StructuredOutputError) as failure:
-            agent.run_structured("Count", response_model=Count)
+            agent.run("Count", response_model=Count)
         assert failure.value.turn is result
         assert conversation.send.call_count == 1
 
@@ -394,7 +413,7 @@ def test_structured_result_rejects_invalid_model_before_connect(local, tmp_path)
     agent = engine.Agent(tmp_path)
     try:
         with pytest.raises(TypeError, match="BaseModel"):
-            agent.run_structured("Quote", response_model=dict)
+            agent.run("Quote", response_model=dict)
         agent.execution_layer.connect.assert_not_called()
     finally:
         agent.close()
@@ -405,6 +424,6 @@ def test_structured_result_does_not_retry_timeout(local, tmp_path):
         turn = agent.session.send.return_value
         turn.wait.side_effect = engine.VisTimeout("deadline")
         with pytest.raises(engine.VisTimeout, match="deadline"):
-            agent.run_structured("Quote", response_model=Delivery, timeout=1)
+            agent.run("Quote", response_model=Delivery, timeout=1)
         turn.cancel.assert_not_called()
         agent.session.send.assert_called_once()

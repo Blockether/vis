@@ -24,7 +24,7 @@ def test_live_structured_result(tmp_path):
     before = readme.read_bytes()
 
     with engine.Agent(work) as agent:
-        quote = agent.run_structured(
+        quote = agent.run(
             "For a 1000 gram parcel, quote 1200 cents with express false. "
             "Do not inspect or change files.",
             response_model=Quote,
