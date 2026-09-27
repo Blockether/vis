@@ -7,6 +7,7 @@
             [com.blockether.vis.internal.decisions.assets :as assets]
             [com.blockether.vis.internal.decisions.cache :as cache]
             [com.blockether.vis.internal.decisions.registry :as registry]
+            [com.blockether.vis.internal.inference.runtime :as runtime]
             [com.blockether.vis.internal.util :as util])
   (:import [ai.djl.huggingface.tokenizers HuggingFaceTokenizer]
            [ai.djl.huggingface.tokenizers.jni TokenizersLibrary]
@@ -473,6 +474,9 @@
     (let [special
           (special-tokens dir)
 
+          _
+          (runtime/ensure-ort!)
+
           ^OrtEnvironment environment
           (OrtEnvironment/getEnvironment)
 
@@ -521,6 +525,9 @@
                       {:type :decisions/invalid-bundle :model (:id model)})))
     (let [special
           (special-tokens dir ["[PAD]" "[P]" "[L]" "[SEP_STRUCT]" "[SEP_TEXT]"])
+
+          _
+          (runtime/ensure-ort!)
 
           ^OrtEnvironment environment
           (OrtEnvironment/getEnvironment)

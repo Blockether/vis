@@ -148,7 +148,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.fasterxml.jackson.dataformat/jackson-dataformat-cbor` | `2.22.2` | Apache-2.0 | 72 KB | 3rd-party |
 | `com.fasterxml.jackson.dataformat/jackson-dataformat-smile` | `2.22.2` | Apache-2.0 | 95 KB | 3rd-party |
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |
-| `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm` | `v1.13.5` | Apache-2.0 | 183 KB | 3rd-party |
+| `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm` | `v1.13.8` | Apache-2.0 | 183 KB | 3rd-party |
 | `com.github.liquidz/antq` | `RELEASE` | (floating) | — | 3rd-party |
 | `com.github.seancorfield/honeysql` | `2.7.1437` | EPL-2.0 | 43 KB | 3rd-party |
 | `com.github.seancorfield/next.jdbc` | `1.3.1118` | EPL-2.0 | 55 KB | 3rd-party |

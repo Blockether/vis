@@ -37,7 +37,7 @@
   {;; k2-fsa publishes sherpa-onnx through JitPack, which serves an
    ;; install:install-file POM with no <licenses> block. Apache-2.0 is the
    ;; license of the k2-fsa/sherpa-onnx repository these artifacts are built
-   ;; from, vetted by hand at v1.13.5. The five native-lib coordinates are no
+   ;; from, vetted by hand at v1.13.8. The five native-lib coordinates are no
    ;; longer declared in any deps.edn — build.clj resolves the BUILD host's for
    ;; the image and the extension fetches the RUNNING host's on demand — so they
    ;; no longer reach the inventory below. They stay named here because they are

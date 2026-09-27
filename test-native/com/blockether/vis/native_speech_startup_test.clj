@@ -4,6 +4,7 @@
             [clojure.set :as set]
             [clojure.string :as str]
             [com.blockether.vis.native-binary-test :as native]
+            [com.blockether.vis.internal.inference.runtime :as runtime]
             [com.blockether.vis.internal.speech.assets :as assets]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io File IOException]
@@ -199,7 +200,18 @@
           (let [heard (run! ["speech" "transcribe" (.getAbsolutePath wav)] 900)]
             (expect (= 0 (:exit heard)) (:output heard))
             (expect (heard-most-words? (:output heard) spoken-sentence)
-                    (str "the binary did not hear what it had just said:\n" (:output heard))))))))
+                    (str "the binary did not hear what it had just said:\n" (:output heard))))
+          ;; The native process ran both speech engines; its private home must hold
+          ;; precisely one ONNX Runtime alongside the two distinct JNI shims.
+          (let [dir (io/file home
+                             ".vis"
+                             "native"
+                             (str "onnxruntime-" runtime/ort-version
+                                  "-sherpa-" runtime/sherpa-version)
+                             (runtime/platform-token))]
+            (expect (= (set (runtime/library-names))
+                       (set (map #(.getName ^File %) (.listFiles ^File dir))))
+                    (str "Unexpected shared native libraries at " dir)))))))
   (it "speaks with the pocket-tts export Vis publishes itself"
       ;; Piper uses VITS; pocket-tts uses a separate ONNX config and reference clip.
       (with-native-gateway
