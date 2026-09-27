@@ -885,9 +885,13 @@ def test_real_council_disabled(tmp_path, monkeypatch, transport):
         tmp_path,
         monkeypatch,
         transport,
+        # Subagents are also off, so the sandbox binds no Council name at all.
         tool_code=(
-            "assert 'council' not in session; assert not hasattr(council, 'publish'); "
-            "assert callable(council.subagents); print('disabled')"
+            "assert 'council' not in session\n"
+            "try:\n"
+            "    council\n"
+            "except NameError:\n"
+            "    print('Council tools are unavailable')\n"
         ),
     ) as (client, work, requests):
         session = client.create_session(
@@ -908,7 +912,11 @@ def test_real_council_disabled(tmp_path, monkeypatch, transport):
             for message in request["messages"]
             if message["role"] == "system"
         )
-        assert "disabled" in str(session.transcript().content)
+        (turn,) = json.loads(session.transcript().content)["turns"]
+        forms = [form for row in turn["iterations"] for form in row.get("forms", ())]
+        assert [(form.get("error"), form.get("stdout")) for form in forms] == [
+            (None, "Council tools are unavailable\n")
+        ]
         session.delete()
 
 
