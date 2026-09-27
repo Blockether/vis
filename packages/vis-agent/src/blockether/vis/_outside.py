@@ -69,6 +69,14 @@ def council_wake(opts):
     )
 
 
+def call_tool(tool, args, kwargs):
+    """Refuse another tool without a bound Vis session to run it in."""
+    raise Refused(
+        f"vis.tools needs a bound Vis session to run `{tool}`. "
+        "Outside Vis, import and call the other package directly."
+    )
+
+
 # -- Where the outside host keeps things --------------------------------------
 
 
@@ -1288,6 +1296,7 @@ _IMPLEMENTATIONS = {
     "shell": shell,
     "jailed_shell": jailed_shell,
     "council_wake": council_wake,
+    "call_tool": call_tool,
     "request_input": request_input,
     "live": live,
     "activity": lambda blocks: False,

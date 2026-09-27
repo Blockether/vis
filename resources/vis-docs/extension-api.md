@@ -791,6 +791,51 @@ bound session fails rather than using the gateway directory. It does not grant
 filesystem permissions. The model sandbox uses `project_root_path` for the
 corresponding root; extension code uses this SDK function.
 
+## Call other session tools
+
+Use `vis.tools` to reuse a tool that the session already has, such as another
+extension's browser or GitHub tool, instead of reimplementing it. Name the tool
+the way the model calls it in `python_execution`:
+
+```python
+import blockether.vis.extension as vis
+
+runs = vis.tools.gh_runs(limit=5)                   # the model calls gh_runs(limit=5)
+reservation = vis.tools.spel.reserve("x-login")     # an object method, spel.reserve(...)
+reservation = vis.tools["spel.reserve"]("x-login")  # the same call, named by a string
+```
+
+The call runs in the session that called your extension, the same way the
+model's call would. It uses only tools that are active in that session and
+shows its own Activity under your tool's Activity.
+
+Results arrive in the same shape the model sees:
+
+- A typed object from a Python extension becomes a frozen object with the same
+  class name and public fields. Read a field as an attribute or with
+  `result["field"]`; an unknown field raises `AttributeError` or `KeyError`
+  listing the available fields. An object with a
+  [field-backed sequence](#field-backed-sequences) iterates over that field and
+  supports `len()`.
+- Other results are JSON data. Objects become dicts that also allow attribute
+  access, such as `page.meta.total`, and lists stay lists.
+
+The object is a copy in your extension's process, not an instance of the other
+extension's class, so check its fields instead of using `isinstance` with the
+other package's class. Results with the same class name and fields share one
+class.
+
+Pass JSON-compatible arguments: strings, numbers, booleans, `None`, lists and
+dicts. A dataclass argument is sent as a dict of its public fields.
+
+A failed call raises `VisToolError`, a `RuntimeError` whose message carries the
+tool's own error, such as `ValueError: no browser available`. An unknown name
+raises the same error and lists similarly named active tools. Vis refuses a call
+back into your own extension, or into another extension that is waiting on the
+current call, because that call would never return; call your own functions
+directly instead. Outside a Vis session, for example in plain unit tests,
+`vis.tools` raises an error; import and call the other package directly there.
+
 ## Filesystem and processes
 
 Extension code runs in a trusted process, separate from the model's sandbox.

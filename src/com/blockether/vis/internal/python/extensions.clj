@@ -481,6 +481,69 @@
 
 (def ^:private notify-levels {"info" :info "success" :success "warn" :warn "error" :error})
 
+(def ^:private ^:dynamic *suspended-contexts*
+  "Contexts whose Python waits in a `vis.tools` call further up this call chain.
+
+   A context serves one driver call at a time, and a suspended caller keeps its
+   turn until the tool returns, so a call back into one of them would never start."
+  #{})
+
+(defn- tool-candidates
+  "`[python-name ext entry]` for each callable symbol of `session-env`'s active
+   extensions, named as `python_execution` binds it."
+  [session-env]
+  (let [active (set (map :ext/name
+                         (some-> (:active-extensions session-env)
+                                 deref)))]
+    (for [ext (some-> (:extensions session-env)
+                      deref)
+          :when (contains? active (:ext/name ext))
+          entry (extension/ext-symbols ext)
+          :when (contains? entry :ext.symbol/fn)]
+
+      [(env/sym->py-name (extension/symbol-binding ext (:ext.symbol/symbol entry))) ext entry])))
+
+(defn- unknown-tool
+  "The refusal for `tool`, naming active tools that share its first name segment."
+  [tool names]
+  (let [head
+        (first (str/split tool #"[._]"))
+
+        similar
+        (->> names
+             (filter #(str/starts-with? % head))
+             sort
+             (take 12))]
+
+    (ex-info (str
+               "vis.tools: no active tool is named `" tool
+               "` in this session"
+               (if (seq similar)
+                 (str "; similar: " (str/join ", " similar))
+                 "; pass the name python_execution calls, such as `alias_name` or `alias.method`"))
+             {:error :unknown-tool :tool tool})))
+
+(defn- call-tool!
+  "Run the tool `python_execution` binds as `tool` for a calling extension.
+
+   The call runs in the bound session as the model's call would, with its own
+   Activity, and answers deep-stringified data. `sess`, the calling context, is
+   marked suspended until the tool returns, so a call back into it is refused."
+  [sess tool args kwargs]
+  (let [session-env extension/*current-environment*]
+    (when-not (some-> (:extensions session-env)
+                      deref)
+      (throw (ex-info "vis.tools needs a bound Vis session" {:error :session-not-bound})))
+    (let [usable (filter (fn [[_ _ entry]]
+                           (extension/symbol-active? entry session-env))
+                         (tool-candidates session-env))
+          [_ ext entry] (or (some #(when (= tool (first %)) %) usable)
+                            (throw (unknown-tool tool (map first usable))))
+          f (get (extension/wrap-extension ext session-env) (:ext.symbol/symbol entry))]
+
+      (binding [*suspended-contexts* (conj *suspended-contexts* sess)]
+        (stringify-deep (apply f (python-host/call-args (plainify args) (plainify kwargs))))))))
+
 (defn- put!
   "Record host callable `f` under the guest name `n`.
 
@@ -558,6 +621,12 @@
           (fn [text level]
             (notifications/notify! (str text) :level (get notify-levels (str level) :info))
             nil))
+    (put! g
+          "__vis_host_call_tool__"
+          ;; `vis.tools`: another active session tool, called as the model calls
+          ;; it - an extension's object methods (`alias.method`) included.
+          (fn [tool args kwargs]
+            (call-tool! sess (str tool) args kwargs)))
     (put! g
           "__vis_host_shell__"
           ;; `vis.shell` follows the extension's trusted process boundary,
@@ -920,6 +989,11 @@
         [call-ctx call-f]
         (locking session-contexts
           (let [[target target-f] (session-call-target ext-name effective-env ctx f)]
+            (when (contains? *suspended-contexts* target)
+              (throw (ex-info (str "Extension `" ext-name
+                                   "` is waiting on this vis.tools call; "
+                                   "calling back into it would never return")
+                              {:type ::tool-call-cycle :extension ext-name})))
             (acquire-context! target)
             [target target-f]))]
 

@@ -614,6 +614,19 @@
   [ext]
   (boolean (get-in ext [:ext/engine :ext.engine/exact-symbol-names?])))
 
+(defn symbol-binding
+  "The name `sym` of `ext` is bound under in `python_execution`.
+
+   Clojure extensions bind `<alias>/<name>`, which Python spells `<alias>_<name>`.
+   Python-authored extensions declare their public names verbatim: the registry
+   alias is metadata only, and dotted names become namespace objects. Builtins
+   carry no alias and remain bare."
+  [ext sym]
+  (let [alias (ext-alias-symbol ext)]
+    (if (and alias (not (ext-exact-symbol-names? ext)))
+      (clojure.core/symbol (str alias "/" (name sym)))
+      sym)))
+
 (defn ext-builtin? [ext] (boolean (get-in ext [:ext/engine :ext.engine/builtin?])))
 
 (defn ext-source-nses [ext] (vec (or (:ext/source-nses ext) [])))

@@ -178,6 +178,16 @@
       (try (answer tool f args) (finally (clojure.lang.Var/resetThreadBindingFrame held))))
     (answer tool f args)))
 
+(defn call-args
+  "The argument vector a tool fn takes for Python `args` and `kwargs`.
+
+   Clojure tools consume options maps; Python callables recover the marked
+   kwargs before invocation. User positional maps never carry this metadata."
+  [args kwargs]
+  (cond-> (vec args)
+    (seq kwargs)
+    (conj (with-meta kwargs {::keyword-arguments true}))))
+
 (defn dispatch
   "Serve one call from the sandbox: WHO called, `payload` in, reply JSON out.
 
@@ -204,11 +214,7 @@
         (if (str/blank? (str caller)) nil caller)
 
         args
-        ;; Clojure tools consume options maps; Python callables recover the marked
-        ;; kwargs before invocation. User positional maps never carry this metadata.
-        (cond-> (vec (get request "args"))
-          (seq (get request "kwargs"))
-          (conj (with-meta (get request "kwargs") {::keyword-arguments true})))
+        (call-args (get request "args") (get request "kwargs"))
 
         f
         (or (get-in @registry [session tool]) (get-in @registry [door-session tool]))]

@@ -54,29 +54,16 @@
     (doseq [ext
             installed
 
-            :let [alias
-                  (extension/ext-alias-symbol ext)
-
-                  exact-names?
-                  (extension/ext-exact-symbol-names? ext)
-
-                  by-sym
+            :let [by-sym
                   (into {} (map (juxt :ext.symbol/symbol identity) (extension/ext-symbols ext)))]
             [sym f]
             (try (extension/wrap-extension ext environment) (catch Throwable _ nil))]
 
-      ;; Clojure extensions use `<alias>_<name>` in Python. Python-authored
-      ;; extensions declare their public names verbatim: the registry alias is
-      ;; metadata only, and dotted names become safe namespace objects in
-      ;; env/set-python-binding!. Builtins carry no alias and remain bare.
-      ;;
       ;; Deactivated extensions get their members REMOVED, not nil'd:
       ;; `putMember nil` parks a None under the name, which `apropos` kept
       ;; listing and which called as 'NoneType is not callable' — a disabled
       ;; tool must not exist in the sandbox at all.
-      (let [target (if (and alias (not exact-names?))
-                     (clojure.core/symbol (str alias "/" (name sym)))
-                     sym)]
+      (let [target (extension/symbol-binding ext sym)]
         ;; Bound only when the extension is active and the symbol's `:active-fn`
         ;; holds for env — one gate for every Python binding.
         (if (and (contains? active-set (:ext/name ext))

@@ -19,7 +19,7 @@ from collections.abc import Callable, Mapping, Sequence
 from collections.abc import MutableMapping as _MutableMapping
 from contextlib import contextmanager
 from contextvars import ContextVar as _ContextVar
-from dataclasses import MISSING, dataclass, field, fields, is_dataclass
+from dataclasses import MISSING, dataclass, field, fields, is_dataclass, make_dataclass
 from os import PathLike
 from pathlib import Path
 from types import FunctionType, MappingProxyType, MethodType, ModuleType, UnionType
@@ -103,6 +103,11 @@ class Host(Protocol):
     def declare_env(self, declarations_json: str) -> str:
         """Resolve the environment variables the extension declared."""
 
+    def call_tool(
+        self, tool: str, args: Sequence[Any], kwargs: Mapping[str, Any]
+    ) -> Any:
+        """Run one active session tool by the name `python_execution` calls."""
+
 
 try:
     _host  # noqa: B018, F821 — the host seeds this into the module dict before exec.
@@ -148,6 +153,155 @@ class _Council:
 
 
 council = _Council()
+
+
+class _ToolRecord(dict):
+    """A tool's JSON object answer, read by key or, as in python_execution, by field."""
+
+    __slots__ = ()
+
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError:
+            names = ", ".join(map(str, self)) or "none"
+            raise AttributeError(
+                f"tool result has no field {name!r}; fields: {names}"
+            ) from None
+
+
+_tool_classes = {}
+
+
+def _tool_class(name, names, sequence):
+    """The frozen class for objects answered as `name` with fields `names`.
+
+    Built once per shape, as python_execution rebuilds an extension object: its
+    public fields only, read by field or key, iterable only through its declared
+    sequence field.
+    """
+    shape = (name, names, sequence)
+    if shape in _tool_classes:
+        return _tool_classes[shape]
+
+    def missing(self, key):
+        return (
+            f"{type(self).__name__} has no field {key!r}; "
+            f"available fields: {', '.join(names) or '(none)'}"
+        )
+
+    def getitem(self, key):
+        if not isinstance(key, str):
+            if sequence is not None:
+                return getattr(self, sequence)[key]
+            raise TypeError(f"{type(self).__name__} field name must be a string")
+        if key not in names:
+            raise KeyError(missing(self, key))
+        return getattr(self, key)
+
+    def getattr_(self, key):
+        raise AttributeError(missing(self, key))
+
+    # `__iter__ = None` disables Python's integer-subscription iteration fallback.
+    namespace = {"__getitem__": getitem, "__getattr__": getattr_, "__iter__": None}
+    if sequence is not None:
+        namespace["__iter__"] = lambda self: iter(getattr(self, sequence))
+        namespace["__len__"] = lambda self: len(getattr(self, sequence))
+    cls = make_dataclass(
+        name,
+        [(n, object) for n in names],
+        namespace=namespace,
+        frozen=True,
+        slots=True,
+    )
+    # setdefault keeps one class per shape when two threads build it at once.
+    return _tool_classes.setdefault(shape, cls)
+
+
+def _tool_object(name, attrs, sequence):
+    values = {str(key): _tool_value(item) for key, item in attrs.items()}
+    if sequence is not None:
+        if (
+            not isinstance(sequence, str)
+            or not sequence.isidentifier()
+            or sequence.startswith("_")
+            or sequence not in values
+        ):
+            raise ValueError("sequence field must name a public serialized field")
+        if type(values[sequence]) not in (list, tuple):
+            raise TypeError("sequence field must contain a list or tuple")
+    return _tool_class(name, tuple(values), sequence)(**values)
+
+
+def _tool_value(value):
+    """One answered value: extension objects as frozen classes, JSON objects as records."""
+    if isinstance(value, Mapping):
+        name = value.get("__vis_object__")
+        attrs = value.get("__vis_attrs__")
+        if isinstance(name, str) and isinstance(attrs, Mapping):
+            return _tool_object(name, attrs, value.get("__vis_sequence_field__"))
+        return _ToolRecord({key: _tool_value(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return [_tool_value(item) for item in value]
+    return value
+
+
+def _tool_data(value):
+    """One argument as JSON data; a dataclass instance travels as its public fields."""
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            f.name: _tool_data(getattr(value, f.name))
+            for f in fields(value)
+            if not f.name.startswith("_")
+        }
+    if isinstance(value, Mapping):
+        return {key: _tool_data(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_tool_data(item) for item in value]
+    return value
+
+
+class _Tools:
+    """Active session tools, called from extension code the way the model calls them.
+
+    `vis.tools.spel.reserve("x-login", profile="x-com")` runs the tool the model
+    calls as `spel.reserve(...)`, including another extension's object methods;
+    `vis.tools["spel.reserve"]("x-login")` takes the name as a string. The call
+    runs in the bound session and shows its own Activity. An extension object
+    answers as a frozen class of the same name with its public fields, as in
+    python_execution; other answers are JSON data. Arguments are JSON data, and a
+    dataclass argument travels as its fields. An outside host refuses, and so
+    does a call back into an extension that is waiting on this one.
+    """
+
+    def __init__(self, name=""):
+        self._name = name
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return self[name]
+
+    def __getitem__(self, name):
+        if not isinstance(name, str) or not name:
+            raise TypeError(
+                "vis.tools takes a tool name, such as vis.tools['spel.reserve']"
+            )
+        return _Tools(f"{self._name}.{name}" if self._name else name)
+
+    def __call__(self, *args, **kwargs):
+        if not self._name:
+            raise TypeError(
+                "vis.tools is not a tool; call one, such as vis.tools.spel.reserve(...)"
+            )
+        answer = _host.call_tool(self._name, _tool_data(args), _tool_data(kwargs))
+        return _tool_value(answer)
+
+    def __repr__(self):
+        return f"<vis tool {self._name}>" if self._name else "<vis tools>"
+
+
+tools = _Tools()
 
 
 # Hosted SDK code has no package-loader dependency; cross-language contract tests

@@ -1283,3 +1283,13 @@
                                                                :ext.symbol/val 42}]}}
                                                {}))))
         (expect (= 300000 @deadline)))))
+
+(defdescribe
+  symbol-binding-test
+  (it "names each symbol as python_execution binds it"
+      (expect (= 'gh/runs (extension/symbol-binding {:ext/engine {:ext.engine/alias 'gh}} 'runs)))
+      (expect (= 'spel.reserve
+                 (extension/symbol-binding {:ext/engine {:ext.engine/alias 'spel
+                                                         :ext.engine/exact-symbol-names? true}}
+                                           'spel.reserve)))
+      (expect (= 'cat (extension/symbol-binding {:ext/engine {}} 'cat)))))
