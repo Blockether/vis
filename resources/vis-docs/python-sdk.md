@@ -114,11 +114,45 @@ turn record. Both modes work with a private local engine or a borrowed
 The schema is a **request to the model**, not provider-enforced JSON mode: Vis
 currently uses plain-text completions. The result must be one complete JSON
 value matching your model (an object for `Quote`), without a Markdown fence
-or commentary. If the turn fails, suspends or returns
-invalid JSON or fields, `StructuredOutputError` contains the original `turn`
-record for inspection. The SDK never retries a structured request automatically;
-model calls can cost money and tools may already have changed files. Closing
-a private agent discards its session database, not those file edits.
+or commentary.
+
+### Handle invalid answers
+
+If the answer is not valid JSON, does not match the schema or fails one of
+your validators, `run()` asks the agent to correct it in the same
+conversation. The request lists each problem with its location, where `$` is
+the whole value, and repeats the schema. For example, the answer
+`{"cents": -5, "express": "no"}` gets this feedback:
+
+```text
+- $.cents: does not satisfy minimum 0 (input: -5)
+- $.express: expected boolean, got string (input: "no")
+```
+
+By default, `run()` sends up to two corrections. Set `max_corrections` to
+change the limit; `max_corrections=0` accepts only the first answer. Each
+correction is another model call, which can cost money. The agent is asked
+to keep work it has already done, but earlier tool calls and file edits are
+not undone. Closing a private agent discards its session database, not those
+file edits. The `timeout` covers the first answer and all corrections.
+
+`run()` raises `StructuredOutputError` when a turn fails, is cancelled or
+suspends, when the answer is still invalid after the last correction, or when
+the timeout leaves no time for another correction. Its message lists up to 10
+problems, and its attributes show what went wrong:
+
+| Attribute | Contents |
+| --- | --- |
+| `errors` | Problems in the last answer, each with a `path`, a `message` and a `source` |
+| `attempts` | One entry per turn, with its `turn` record, final prose `answer` and `errors` |
+| `turn` | The last turn record |
+
+The `source` names the check that found the problem: `turn` for a turn that
+did not complete, `answer` for a turn without a final prose answer, `json` for
+text that is not one JSON value, `schema` for a schema mismatch and `pydantic`
+for your model's validators. Messages quote short values from the answer, such
+as numbers and short strings, but never whole objects or arrays. If your model
+sets Pydantic's `hide_input_in_errors`, messages quote no values.
 
 ## Use stdio from the Python SDK
 
@@ -463,6 +497,7 @@ never assigns engine IDs, sequence numbers, timeouts or terminal outcomes.
 | `GatewayError` | Inspect `status` and `code` for authentication, permissions or request errors |
 | `TransportError` | Check the executable or gateway, network and TLS setup |
 | `VisTimeout` from `run()` or `turn.wait()` | Waiting ended, not necessarily the turn; inspect it or call `turn.cancel()` |
+| `StructuredOutputError` from `run()` | No valid structured result; read its `errors` and `attempts` |
 | A record whose `status` is not `completed` | The task did not complete normally; inspect its content and input requirements |
 
 A wait timeout is separate from the execution layer's transport `timeout`. A

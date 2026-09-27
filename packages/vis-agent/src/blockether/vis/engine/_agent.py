@@ -1,30 +1,361 @@
 """One conversation using an injected execution layer or an owned local engine."""
 
 import json
-from typing import TypeVar, overload
+import math
+import re
+import time
+from functools import lru_cache
+from itertools import islice
+from typing import Any, TypeVar, overload
 
-from jsonschema import Draft202012Validator, ValidationError
+from jsonschema import Draft202012Validator, validators
+from jsonschema.exceptions import ValidationError, best_match
 from pydantic import BaseModel
+from pydantic_core import SchemaError, SchemaValidator, core_schema
+from pydantic_core import ValidationError as PydanticValidationError
+from referencing import Registry
+from referencing.exceptions import Unresolvable
 
-from ._client import ExecutionLayer, Session, TransportError, Turn
+from ._client import ExecutionLayer, Session, TransportError, Turn, _duration
 from ._local import LocalEngine
 
 ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
 
+_PROBLEM_LIMIT = 100
+_PROBLEMS_SHOWN = 10
+_FIRST_TURN_ONLY = frozenset({"attachments", "idempotency_key"})
+_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def _shorten(text: str, limit: int = 300) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _is_scalar(value: Any) -> bool:
+    return value is None or isinstance(value, (bool, int, float, str))
+
+
+def _brief(value: Any) -> str:
+    return _shorten(json.dumps(value, ensure_ascii=False), 80)
+
+
+def _json_type(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    return "array" if isinstance(value, list) else "object"
+
+
+def _path(parts) -> str:
+    text = "$"
+    for part in parts:
+        if isinstance(part, int) and not isinstance(part, bool):
+            text += f"[{part}]"
+        elif _IDENTIFIER.match(str(part)):
+            text += f".{part}"
+        else:
+            text += f"[{_brief(str(part))}]"
+    return text
+
+
+def _problem(source: str, parts, message: str) -> dict:
+    return {"path": _path(parts), "message": _shorten(message), "source": source}
+
+
+def _problem_lines(problems: list[dict]) -> str:
+    lines = [f"\n- {item['path']}: {item['message']}" for item in problems]
+    hidden = len(lines) - _PROBLEMS_SHOWN
+    if hidden > 0:
+        lines[_PROBLEMS_SHOWN:] = [f"\n- ...and {hidden} more"]
+    return "".join(lines)
+
 
 class StructuredOutputError(ValueError):
-    """A completed turn had no valid structured result, or did not complete.
+    """No valid structured result: a turn did not complete or answers stayed invalid.
 
-    `turn` retains the canonical record for inspection without printing its
-    potentially private content in the exception message. No retry is performed.
+    `errors` lists the problems in the last turn as dictionaries with a
+    JSONPath-like `path` (`$` is the whole value), a `message` and a `source`:
+    `turn`, `answer`, `json`, `schema` or `pydantic`. `attempts` has one
+    dictionary per turn with its canonical `turn` record, final prose `answer`
+    (None when absent) and `errors`; `turn` is the last record. The message
+    lists the first problems. Messages include short scalar values from the
+    answer, never whole objects or arrays, unless the response model sets
+    Pydantic's `hide_input_in_errors`.
     """
 
-    def __init__(self, reason: str, turn: dict):
-        self.turn = turn
+    def __init__(self, reason: str, attempts: list[dict]):
+        self.attempts = attempts
+        self.turn = attempts[-1]["turn"]
+        self.errors = attempts[-1]["errors"]
         super().__init__(
-            f"{reason} (turn {turn.get('turn_id', 'unknown')}, "
-            f"status {turn.get('status', 'unknown')})"
+            f"{reason} (turn {self.turn.get('turn_id', 'unknown')}, "
+            f"status {self.turn.get('status', 'unknown')})"
+            f"{_problem_lines(self.errors)}"
         )
+
+
+@lru_cache(maxsize=256)
+def _regex(pattern: str) -> SchemaValidator:
+    """Compile like Pydantic: linear-time Rust regex, else Python `re`."""
+    try:
+        return SchemaValidator(core_schema.str_schema(pattern=pattern))
+    except SchemaError:
+        return SchemaValidator(
+            core_schema.str_schema(pattern=pattern, regex_engine="python-re")
+        )
+
+
+def _search(pattern: str, text: str) -> bool:
+    try:
+        _regex(pattern).validate_python(text)
+    except PydanticValidationError:
+        return False
+    return True
+
+
+def _pattern(validator, pattern, instance, schema):
+    if validator.is_type(instance, "string") and not _search(pattern, instance):
+        yield ValidationError(f"does not match {pattern!r}")
+
+
+def _pattern_properties(validator, patterns, instance, schema):
+    if validator.is_type(instance, "object"):
+        for pattern, subschema in patterns.items():
+            for name, value in instance.items():
+                if _search(pattern, name):
+                    yield from validator.descend(
+                        value, subschema, path=name, schema_path=pattern
+                    )
+
+
+_AnswerSchema = validators.extend(
+    Draft202012Validator,
+    {"pattern": _pattern, "patternProperties": _pattern_properties},
+)
+
+
+def _external_references(node: Any):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in {"$ref", "$dynamicRef"} and isinstance(value, str):
+                if not value.startswith("#"):
+                    yield value
+            else:
+                yield from _external_references(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _external_references(value)
+
+
+def _relevant_errors(error: ValidationError):
+    """Expand an anyOf or oneOf failure to every error in its closest branch."""
+    closest = best_match([error]) if error.context else error
+    if closest is error:
+        yield error
+        return
+    while closest.parent is not None and closest.parent is not error:
+        closest = closest.parent
+    branch = closest.relative_schema_path[0] if closest.relative_schema_path else None
+    for child in error.context:
+        if child.relative_schema_path and child.relative_schema_path[0] == branch:
+            yield from _relevant_errors(child)
+
+
+def _schema_problems(error: ValidationError, show_input: bool):
+    """Describe a JSON Schema error without printing whole objects or arrays."""
+    path = tuple(error.absolute_path)
+    keyword, expected, value = error.validator, error.validator_value, error.instance
+    if keyword == "required" and isinstance(value, dict):
+        for name in expected:
+            if name not in value:
+                yield _problem("schema", (*path, name), "required property is missing")
+        return
+    if keyword in {"additionalProperties", "unevaluatedProperties"}:
+        message = error.message
+    elif keyword is None:
+        message = "no value is allowed here"
+    elif keyword == "type":
+        types = " or ".join(expected) if isinstance(expected, list) else expected
+        message = f"expected {types}, got {_json_type(value)}"
+    else:
+        message = f"does not satisfy {keyword} {_brief(expected)}"
+    if show_input and _is_scalar(value) and keyword is not None:
+        message += f" (input: {_brief(value)})"
+    yield _problem("schema", path, message)
+
+
+def _unique(problems) -> list[dict]:
+    seen, result = set(), []
+    for item in problems:
+        key = (item["path"], item["message"])
+        if key not in seen:
+            seen.add(key)
+            result.append(item)
+    return result
+
+
+def _unique_members(pairs):
+    members = {}
+    for name, value in pairs:
+        if name in members:
+            raise ValueError(f"object has duplicate member {_brief(name)}")
+        members[name] = value
+    return members
+
+
+def _integer(text: str) -> int:
+    try:
+        return int(text)
+    except ValueError:
+        raise ValueError(
+            f"an integer with {len(text)} characters is too long"
+        ) from None
+
+
+def _reject_constant(name: str):
+    raise ValueError(f"{name} is not valid JSON")
+
+
+def _syntax_message(answer: str, error: json.JSONDecodeError) -> str:
+    where = f"line {error.lineno}, column {error.colno}"
+    start = len(answer) - len(answer.lstrip())
+    if answer.startswith("```", start):
+        return (
+            "the answer is wrapped in a Markdown code fence; send only the JSON value"
+        )
+    if error.msg == "Extra data":
+        return f"text follows the JSON value at {where}; send exactly one JSON value"
+    if error.msg == "Expecting value" and error.pos == start:
+        return "the answer starts with text instead of a JSON value"
+    return f"not valid JSON: {error.msg} at {where}"
+
+
+def _final_answer(turn: dict) -> str | None:
+    content = turn.get("content")
+    if not isinstance(content, list):
+        return None
+    for block in reversed(content):
+        if isinstance(block, dict) and block.get("type") == "prose":
+            answer = block.get("markdown")
+            return answer if isinstance(answer, str) and answer.strip() else None
+    return None
+
+
+def _turn_problem(turn: dict) -> dict:
+    content = turn.get("content")
+    detail = next(
+        (
+            block["message"]
+            for block in reversed(content if isinstance(content, list) else [])
+            if isinstance(block, dict)
+            and block.get("type") == "error"
+            and isinstance(block.get("message"), str)
+        ),
+        turn.get("error") if isinstance(turn.get("error"), str) else None,
+    )
+    message = f"the turn ended with status {turn.get('status', 'unknown')}"
+    return _problem("turn", (), f"{message}: {detail}" if detail else message)
+
+
+class _ResponseContract:
+    """Prompts and validation for one `response_model`."""
+
+    def __init__(self, model: Any):
+        if not isinstance(model, type) or not issubclass(model, BaseModel):
+            raise TypeError("response_model must be a Pydantic BaseModel subclass")
+        schema = model.model_json_schema(mode="validation")
+        _AnswerSchema.check_schema(schema)
+        for reference in _external_references(schema):
+            raise ValueError(
+                "response_model JSON Schema must be self-contained; "
+                f"unsupported reference {reference!r}"
+            )
+        self.model = model
+        self.schema_text = json.dumps(schema, ensure_ascii=False)
+        self.validator = _AnswerSchema(schema, registry=Registry())
+        self.show_input = not model.model_config.get("hide_input_in_errors", False)
+
+    def request(self, request: str) -> str:
+        return (
+            f"{request}\n\n"
+            "Return the final answer as exactly one JSON value matching the schema. "
+            "Do not include Markdown fences, commentary, or text outside the JSON. "
+            f"Match this JSON Schema:\n{self.schema_text}"
+        )
+
+    def correction(self, problems: list[dict]) -> str:
+        return (
+            "Your previous final answer is not a valid structured result "
+            f"($ is the whole JSON value):{_problem_lines(problems)}\n\n"
+            "Answer the previous request again with exactly one corrected JSON value. "
+            "Do not include Markdown fences, commentary, or text outside the JSON. "
+            "Keep completed work; repeat tools or file changes only if the correction "
+            f"requires them. Match this JSON Schema:\n{self.schema_text}"
+        )
+
+    def _finite(self, text: str) -> float:
+        value = float(text)
+        if not math.isfinite(value):
+            shown = f"number {_shorten(text, 40)}" if self.show_input else "a number"
+            raise ValueError(f"{shown} is outside the finite JSON number range")
+        return value
+
+    def validate(self, answer: str | None) -> tuple[Any, list[dict]]:
+        """Return the model instance, or no instance and the answer's problems."""
+        if answer is None:
+            return None, [_problem("answer", (), "the turn has no final text answer")]
+        try:
+            payload = json.loads(
+                answer,
+                object_pairs_hook=_unique_members,
+                parse_constant=_reject_constant,
+                parse_float=self._finite,
+                parse_int=_integer,
+            )
+            problems = _unique(
+                islice(
+                    (
+                        problem
+                        for error in self.validator.iter_errors(payload)
+                        for leaf in _relevant_errors(error)
+                        for problem in _schema_problems(leaf, self.show_input)
+                    ),
+                    _PROBLEM_LIMIT,
+                )
+            )
+        except json.JSONDecodeError as error:
+            return None, [_problem("json", (), _syntax_message(answer, error))]
+        except ValueError as error:
+            return None, [_problem("json", (), str(error))]
+        except RecursionError:
+            return None, [_problem("json", (), "the JSON value is nested too deeply")]
+        except Unresolvable as error:
+            raise ValueError(
+                f"response_model JSON Schema has an unresolvable reference: {error}"
+            ) from None
+        if problems:
+            return None, problems
+        try:
+            return self.model.model_validate_json(answer), []
+        except PydanticValidationError as error:
+            details = islice(error.errors(include_url=False), _PROBLEM_LIMIT)
+        return None, _unique(
+            _problem("pydantic", item["loc"], self._pydantic_message(item))
+            for item in details
+        )
+
+    def _pydantic_message(self, item: dict) -> str:
+        value = item.get("input")
+        if self.show_input and item["type"] != "missing" and _is_scalar(value):
+            return f"{item['msg']} (input: {_brief(value)})"
+        return item["msg"]
 
 
 class Agent:
@@ -167,6 +498,7 @@ class Agent:
         *,
         response_model: type[ResponseModel],
         timeout: float = 300,
+        max_corrections: int = 2,
         **options,
     ) -> ResponseModel: ...
 
@@ -176,6 +508,7 @@ class Agent:
         *,
         timeout: float = 300,
         response_model: type[ResponseModel] | None = None,
+        max_corrections: int = 2,
         **options,
     ) -> dict | ResponseModel:
         """Submit a request and wait for its result in the same conversation.
@@ -185,65 +518,72 @@ class Agent:
         wait; failed model work is returned as a record, not raised.
 
         With a Pydantic `BaseModel` subclass, include its validation JSON Schema
-        in the request and return an instance validated against the schema and
-        Python validators. This is a prompt, not provider-enforced JSON mode:
-        the final prose block must be one complete JSON value, without fences
-        or commentary. Other content block types are ignored. Unsuccessful
-        turns and invalid answers raise `StructuredOutputError` with the
-        original `turn` record. Validation never retries or undoes file edits.
+        in the request and return an instance validated against that schema, then
+        by Pydantic with your Python validators. This is a prompt, not
+        provider-enforced JSON mode: the final prose block must be one complete
+        JSON value, without fences or commentary. Other content block types are
+        ignored. Duplicate object members and non-finite numbers are invalid.
 
-        `timeout` is a positive finite wait deadline in seconds, separate from
-        the layer's transport timeout. Submission options such as `provider`,
-        `model` and `attachments` are forwarded unchanged to `send`.
-        `VisTimeout` does not cancel the turn; transport errors propagate.
-        Closing an owned local agent stops unfinished work.
+        An invalid answer starts a correction turn in the same conversation that
+        lists each problem and repeats the schema, up to `max_corrections` times
+        (0 disables corrections). Each correction is another model call; the
+        agent is asked to keep completed work, but tool calls and file edits are
+        never undone. `StructuredOutputError` reports an unsuccessful turn, an
+        answer that is still invalid, or a deadline that left no time for a
+        correction; its `errors` and `attempts` say what went wrong.
+
+        `timeout` is a positive finite wait deadline in seconds for the answer
+        and any corrections, separate from the layer's transport timeout.
+        Submission options such as `provider`, `model` and `attachments` are
+        forwarded unchanged to `send`; corrections reuse them except
+        `attachments` and `idempotency_key`. `VisTimeout` does not cancel the
+        turn; transport errors propagate. Closing an owned local agent stops
+        unfinished work.
         """
         if response_model is None:
             return self.send(request, **options).wait(timeout=timeout)
 
-        if not isinstance(response_model, type) or not issubclass(
-            response_model, BaseModel
-        ):
-            raise TypeError("response_model must be a Pydantic BaseModel subclass")
-        schema = response_model.model_json_schema(mode="validation")
-        Draft202012Validator.check_schema(schema)
-
-        prompt = (
-            f"{request}\n\n"
-            "Return the final answer as exactly one JSON value matching the schema. "
-            "Do not include Markdown fences, commentary, or text outside the JSON. "
-            "Match this JSON Schema:\n"
-            f"{json.dumps(schema, ensure_ascii=False)}"
-        )
-        turn = self.send(prompt, **options).wait(timeout=timeout)
-        if turn.get("status") != "completed":
-            raise StructuredOutputError("turn did not complete", turn)
-
-        content = turn.get("content")
-        prose = (
-            next(
-                (
-                    block.get("markdown")
-                    for block in reversed(content)
-                    if isinstance(block, dict) and block.get("type") == "prose"
-                ),
-                None,
-            )
-            if isinstance(content, list)
-            else None
-        )
-        if not isinstance(prose, str) or not prose.strip():
-            raise StructuredOutputError("missing final prose answer", turn)
-
-        def reject_constant(value):
-            raise ValueError(f"invalid JSON constant {value}")
-
-        try:
-            payload = json.loads(prose, parse_constant=reject_constant)
-            Draft202012Validator(schema).validate(payload)
-            return response_model.model_validate_json(prose)
-        except (ValueError, ValidationError) as exc:
-            raise StructuredOutputError("invalid structured answer", turn) from exc
+        contract = _ResponseContract(response_model)
+        if isinstance(max_corrections, bool) or not isinstance(max_corrections, int):
+            raise TypeError("max_corrections must be an integer")
+        if max_corrections < 0:
+            raise ValueError("max_corrections must not be negative")
+        wait = _duration(timeout)
+        follow_up = {
+            name: value
+            for name, value in options.items()
+            if name not in _FIRST_TURN_ONLY
+        }
+        name = response_model.__name__
+        attempts: list[dict] = []
+        pending = self.send(contract.request(request), **options)
+        deadline = time.monotonic() + wait
+        while True:
+            turn = pending.wait(timeout=max(deadline - time.monotonic(), 0.001))
+            if turn.get("status") != "completed":
+                attempts.append(
+                    {"turn": turn, "answer": None, "errors": [_turn_problem(turn)]}
+                )
+                raise StructuredOutputError(f"{name} turn did not complete", attempts)
+            answer = _final_answer(turn)
+            result, problems = contract.validate(answer)
+            if not problems:
+                return result
+            attempts.append({"turn": turn, "answer": answer, "errors": problems})
+            if len(attempts) > max_corrections:
+                count = len(attempts)
+                raise StructuredOutputError(
+                    f"{name} answer is invalid after {count} "
+                    f"attempt{'s' if count > 1 else ''}",
+                    attempts,
+                )
+            if deadline <= time.monotonic():
+                raise StructuredOutputError(
+                    f"{name} answer is invalid and the timeout left no time "
+                    "for a correction",
+                    attempts,
+                )
+            pending = self.send(contract.correction(problems), **follow_up)
 
     def close(self):
         """Detach callbacks and release only resources owned by this agent.

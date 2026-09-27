@@ -1,5 +1,8 @@
 """Agent lifecycle and transport injection; real transports live in test_sdk_guide."""
 
+import json
+import time
+from typing import Annotated
 from unittest.mock import Mock
 
 import blockether.vis.engine as engine
@@ -287,6 +290,15 @@ class Delivery(BaseModel):
         return value
 
 
+def completed(markdown, turn_id="turn-one"):
+    """A completed turn record whose final prose block is `markdown`."""
+    return {
+        "turn_id": turn_id,
+        "status": "completed",
+        "content": [{"type": "prose", "markdown": markdown}],
+    }
+
+
 def test_structured_result_uses_final_prose_and_reuses_conversation(local, tmp_path):
     result = {
         "turn_id": "turn-one",
@@ -312,7 +324,9 @@ def test_structured_result_uses_final_prose_and_reuses_conversation(local, tmp_p
         assert "Quote delivery without changing files." in request
         assert '"quote_cents"' in request and '"express"' in request
         assert conversation.send.call_args.kwargs == {"provider": "example"}
-        conversation.send.return_value.wait.assert_called_once_with(timeout=12)
+        wait = conversation.send.return_value.wait
+        wait.assert_called_once()
+        assert 11 < wait.call_args.kwargs["timeout"] <= 12
         assert agent.run("Follow up")["status"] == "completed"
         assert conversation.send.call_count == 2
         assert agent.run("No schema", response_model=None) is result
@@ -344,6 +358,7 @@ def test_structured_result_does_not_parse_unsuccessful_turn(local, tmp_path, sta
             "turn_id": "turn-one",
             "status": status,
             "content": [
+                {"type": "error", "code": "turn_failed", "message": "provider down"},
                 {"type": "prose", "markdown": '{"quote_cents": 1200, "express": true}'},
             ],
         }
@@ -351,69 +366,274 @@ def test_structured_result_does_not_parse_unsuccessful_turn(local, tmp_path, sta
         with pytest.raises(engine.StructuredOutputError) as failure:
             agent.run("Quote", response_model=Delivery)
         assert failure.value.turn is result
+        assert failure.value.errors == [
+            {
+                "path": "$",
+                "message": f"the turn ended with status {status}: provider down",
+                "source": "turn",
+            }
+        ]
+        assert str(failure.value).startswith("Delivery turn did not complete")
         assert conversation.send.call_count == 1
+
+
+def test_structured_result_corrects_answer_in_same_conversation(local, tmp_path):
+    with engine.Agent(tmp_path) as agent:
+        conversation = agent.session
+        conversation.send.return_value.wait.side_effect = [
+            completed('{"quote_cents": 1201}'),
+            completed('{"quote_cents": 1201, "express": true}', "turn-two"),
+            completed('{"quote_cents": 1200, "express": true}', "turn-three"),
+        ]
+        quote = agent.run(
+            "Quote",
+            response_model=Delivery,
+            provider="example",
+            attachments=["upload-1"],
+            idempotency_key="quote-1",
+        )
+    assert quote == Delivery(quote_cents=1200, express=True)
+    first, second, third = conversation.send.call_args_list
+    assert first.kwargs == {
+        "provider": "example",
+        "attachments": ["upload-1"],
+        "idempotency_key": "quote-1",
+    }
+    assert second.kwargs == third.kwargs == {"provider": "example"}
+    assert "- $.express: required property is missing" in second.args[0]
+    assert '"quote_cents"' in second.args[0]
+    assert (
+        "- $.quote_cents: Value error, quote must be in whole dollars (input: 1201)"
+        in third.args[0]
+    )
+
+
+def test_structured_result_reports_every_attempt(local, tmp_path):
+    answer = '{"quote_cents": -1, "express": "yes"}'
+    turns = [completed(answer, f"turn-{number}") for number in range(3)]
+    with engine.Agent(tmp_path) as agent:
+        agent.session.send.return_value.wait.side_effect = turns
+        with pytest.raises(engine.StructuredOutputError) as failure:
+            agent.run("Quote", response_model=Delivery)
+        assert agent.session.send.call_count == 3
+    problems = [
+        {
+            "path": "$.quote_cents",
+            "message": "does not satisfy minimum 0 (input: -1)",
+            "source": "schema",
+        },
+        {
+            "path": "$.express",
+            "message": 'expected boolean, got string (input: "yes")',
+            "source": "schema",
+        },
+    ]
+    error = failure.value
+    assert error.attempts == [
+        {"turn": turn, "answer": answer, "errors": problems} for turn in turns
+    ]
+    assert error.turn is turns[-1] and error.errors == problems
+    assert str(error) == (
+        "Delivery answer is invalid after 3 attempts (turn turn-2, status completed)\n"
+        "- $.quote_cents: does not satisfy minimum 0 (input: -1)\n"
+        '- $.express: expected boolean, got string (input: "yes")'
+    )
+    assert error.__cause__ is None and error.__context__ is None
 
 
 @pytest.mark.parametrize(
-    "content",
+    ("content", "problem"),
     [
-        [],
-        [{"type": "tool", "output": {"quote_cents": 1200}}],
-        [{"type": "prose", "markdown": "not JSON"}],
-        [{"type": "prose", "markdown": '{"quote_cents": 1200}'}],
-        [{"type": "prose", "markdown": '{"quote_cents": 1201, "express": true}'}],
-        [
-            {
-                "type": "prose",
-                "markdown": '{"quote_cents": 1200, "express": true, "other": 1}',
-            }
-        ],
-        [
-            {
-                "type": "prose",
-                "markdown": '{"quote_cents": 1200, "express": true} trailing text',
-            }
-        ],
+        ([], ("$", "the turn has no final text answer", "answer")),
+        (
+            [{"type": "tool", "output": {"quote_cents": 1200}}],
+            ("$", "the turn has no final text answer", "answer"),
+        ),
+        (
+            "not JSON",
+            ("$", "the answer starts with text instead of a JSON value", "json"),
+        ),
+        (
+            '```json\n{"quote_cents": 1200, "express": true}\n```',
+            (
+                "$",
+                "the answer is wrapped in a Markdown code fence; "
+                "send only the JSON value",
+                "json",
+            ),
+        ),
+        (
+            '{"quote_cents": 1200, "express": true} trailing text',
+            (
+                "$",
+                "text follows the JSON value at line 1, column 40; "
+                "send exactly one JSON value",
+                "json",
+            ),
+        ),
+        (
+            '{"quote_cents": -1, "quote_cents": 1200, "express": true}',
+            ("$", 'object has duplicate member "quote_cents"', "json"),
+        ),
+        (
+            '{"quote_cents": 1e400, "express": true}',
+            ("$", "number 1e400 is outside the finite JSON number range", "json"),
+        ),
+        (
+            '{"quote_cents": NaN, "express": true}',
+            ("$", "NaN is not valid JSON", "json"),
+        ),
+        (
+            '{"quote_cents": 1200}',
+            ("$.express", "required property is missing", "schema"),
+        ),
+        (
+            '{"quote_cents": 1200, "express": true, "other": 1}',
+            (
+                "$",
+                "Additional properties are not allowed ('other' was unexpected)",
+                "schema",
+            ),
+        ),
+        (
+            '{"quote_cents": true, "express": true}',
+            (
+                "$.quote_cents",
+                "expected integer, got boolean (input: true)",
+                "schema",
+            ),
+        ),
+        (
+            '{"quote_cents": 1201, "express": true}',
+            (
+                "$.quote_cents",
+                "Value error, quote must be in whole dollars (input: 1201)",
+                "pydantic",
+            ),
+        ),
     ],
 )
-def test_structured_result_rejects_invalid_answer_without_retry(
-    local, tmp_path, content
-):
+def test_structured_result_explains_invalid_answer(local, tmp_path, content, problem):
+    if isinstance(content, str):
+        content = [{"type": "prose", "markdown": content}]
+    result = {"turn_id": "turn-one", "status": "completed", "content": content}
+    path, message, source = problem
     with engine.Agent(tmp_path) as agent:
-        conversation = agent.session
-        result = {"turn_id": "turn-one", "status": "completed", "content": content}
-        conversation.send.return_value.wait.return_value = result
+        agent.session.send.return_value.wait.return_value = result
         with pytest.raises(engine.StructuredOutputError) as failure:
-            agent.run("Quote", response_model=Delivery)
-        assert failure.value.turn is result
-        assert "turn-one" in str(failure.value)
-        assert "1201" not in str(failure.value)
-        assert conversation.send.call_count == 1
+            agent.run("Quote", response_model=Delivery, max_corrections=0)
+        assert agent.session.send.call_count == 1
+    assert failure.value.turn is result
+    assert failure.value.errors == [
+        {"path": path, "message": message, "source": source}
+    ]
+    assert str(failure.value) == (
+        "Delivery answer is invalid after 1 attempt (turn turn-one, status completed)"
+        f"\n- {path}: {message}"
+    )
 
 
-def test_structured_result_checks_schema_before_pydantic_coercion(local, tmp_path):
-    class Count(BaseModel):
-        count: int
+def test_structured_errors_never_print_whole_values(local, tmp_path):
+    class Profile(BaseModel):
+        name: str
+        age: int
+
+    class Account(BaseModel):
+        model_config = ConfigDict(hide_input_in_errors=True)
+
+        balance: int = Field(ge=0)
+        token: str
 
     with engine.Agent(tmp_path) as agent:
         conversation = agent.session
-        result = {
-            "turn_id": "turn-one",
-            "status": "completed",
-            "content": [{"type": "prose", "markdown": '{"count": true}'}],
+        conversation.send.return_value.wait.side_effect = [
+            completed('{"name": "canary-name"}'),
+            completed('[{"name": "canary-name", "age": 3}]', "turn-two"),
+            completed('{"balance": -7, "token": "canary-token"}', "turn-three"),
+            completed('{"balance": 1e999, "token": "canary-token"}', "turn-four"),
+        ]
+        with pytest.raises(engine.StructuredOutputError) as profile:
+            agent.run("Profile", response_model=Profile, max_corrections=1)
+        with pytest.raises(engine.StructuredOutputError) as account:
+            agent.run("Account", response_model=Account, max_corrections=1)
+        corrections = [call.args[0] for call in conversation.send.call_args_list]
+    assert "- $.age: required property is missing" in corrections[1]
+    assert profile.value.errors[0]["message"] == "expected object, got array"
+    assert "- $.balance: does not satisfy minimum 0\n" in corrections[3]
+    assert account.value.errors[0]["message"] == (
+        "a number is outside the finite JSON number range"
+    )
+    for text in [
+        corrections[1],
+        corrections[3],
+        str(profile.value),
+        str(account.value),
+    ]:
+        assert "canary" not in text and "-7" not in text and "1e999" not in text
+
+
+def test_structured_patterns_match_in_linear_time(local, tmp_path):
+    exponential = r"^(a+)+$"
+    hostile = "a" * 26 + "!"
+
+    class Code(BaseModel):
+        code: str = Field(pattern=exponential)
+        tags: dict[Annotated[str, Field(pattern=exponential)], int] = {}
+
+    with engine.Agent(tmp_path) as agent:
+        agent.session.send.return_value.wait.side_effect = [
+            completed(json.dumps({"code": hostile})),
+            completed(json.dumps({"code": "aa", "tags": {"aaa": "x", hostile: 1}})),
+        ]
+        started = time.monotonic()
+        with pytest.raises(engine.StructuredOutputError) as code:
+            agent.run("Code", response_model=Code, max_corrections=0)
+        with pytest.raises(engine.StructuredOutputError) as tags:
+            agent.run("Code", response_model=Code, max_corrections=0)
+    assert time.monotonic() - started < 1
+    assert code.value.errors == [
+        {
+            "path": "$.code",
+            "message": f'does not satisfy pattern "{exponential}" (input: "{hostile}")',
+            "source": "schema",
         }
-        conversation.send.return_value.wait.return_value = result
-        with pytest.raises(engine.StructuredOutputError) as failure:
-            agent.run("Count", response_model=Count)
-        assert failure.value.turn is result
-        assert conversation.send.call_count == 1
+    ]
+    assert tags.value.errors == [
+        {
+            "path": "$.tags.aaa",
+            "message": 'expected integer, got string (input: "x")',
+            "source": "schema",
+        }
+    ]
 
 
-def test_structured_result_rejects_invalid_model_before_connect(local, tmp_path):
+def link_note(schema):
+    schema["properties"]["note"] = {"$ref": "https://schemas.example.com/note.json"}
+
+
+class Linked(BaseModel):
+    model_config = ConfigDict(json_schema_extra=link_note)
+
+    note: str
+
+
+@pytest.mark.parametrize(
+    ("options", "failure", "message"),
+    [
+        ({"response_model": dict}, TypeError, "BaseModel"),
+        ({"response_model": Linked}, ValueError, "self-contained"),
+        ({"response_model": Delivery, "max_corrections": True}, TypeError, "integer"),
+        ({"response_model": Delivery, "max_corrections": -1}, ValueError, "negative"),
+        ({"response_model": Delivery, "timeout": 0}, ValueError, "timeout"),
+    ],
+)
+def test_structured_result_rejects_invalid_options_before_connect(
+    local, tmp_path, options, failure, message
+):
     agent = engine.Agent(tmp_path)
     try:
-        with pytest.raises(TypeError, match="BaseModel"):
-            agent.run("Quote", response_model=dict)
+        with pytest.raises(failure, match=message):
+            agent.run("Quote", **options)
         agent.execution_layer.connect.assert_not_called()
     finally:
         agent.close()
@@ -427,3 +647,16 @@ def test_structured_result_does_not_retry_timeout(local, tmp_path):
             agent.run("Quote", response_model=Delivery, timeout=1)
         turn.cancel.assert_not_called()
         agent.session.send.assert_called_once()
+
+
+def test_structured_result_needs_time_left_for_a_correction(local, tmp_path):
+    def slow_invalid_answer(timeout):
+        time.sleep(timeout + 0.01)
+        return completed('{"quote_cents": 1200}')
+
+    with engine.Agent(tmp_path) as agent:
+        agent.session.send.return_value.wait.side_effect = slow_invalid_answer
+        with pytest.raises(engine.StructuredOutputError, match="no time") as failure:
+            agent.run("Quote", response_model=Delivery, timeout=0.05)
+        agent.session.send.assert_called_once()
+    assert failure.value.errors[0]["path"] == "$.express"
