@@ -140,7 +140,7 @@ VIS_PROVIDER=zai-coding-plan VIS_MODEL=glm-5.3-flash python3 e2e/run.py
 VIS_MODELS=glm-5.3-flash,glm-5.3 python3 e2e/run.py
 
 # Pin exact native effort and reject missing evidence or a changed route:
-VIS_PROVIDER=github-copilot VIS_MODEL=gpt-6-astra VIS_REASONING_EFFORT=low python3 e2e/run.py py-fix-body py-add-param
+VIS_PROVIDER=openai-codex VIS_MODEL=gpt-6-sol VIS_REASONING_EFFORT=low python3 e2e/run.py py-fix-body py-add-param
 ```
 
 To run the same scenarios against a built native engine, set
