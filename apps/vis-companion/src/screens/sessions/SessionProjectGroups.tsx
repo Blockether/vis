@@ -1406,15 +1406,15 @@ export const ProjectGroup = memo(function ProjectGroup({
       return moved;
     };
   }, [rowActions.commands.archive]);
-  // The row's Move action expands its destinations right under that row, never over the list.
-  const [movingId, setMovingId] = useState<string | null>(null);
+  // The row's Move action opens the same anchored popup on a phone and a desktop.
+  const [moveMenu, setMoveMenu] = useState<{ id: string; at: MenuPosition } | null>(null);
   const [moveFailure, setMoveFailure] = useState<string | null>(null);
   const [moveBusy, setMoveBusy] = useState(false);
   const moving = useRef(false);
   const moveChoicesRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (movingId) moveChoicesRef.current?.querySelector('button')?.focus();
-  }, [movingId]);
+    if (moveMenu) moveChoicesRef.current?.querySelector('button')?.focus();
+  }, [moveMenu]);
   const moveSession = async (session: Session, gid: string | null) => {
     if (moving.current) return;
     moving.current = true;
@@ -1423,7 +1423,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     try {
       await assignGroup(session, gid);
       setGroupsRead((read) => read + 1);
-      setMovingId(null);
+      setMoveMenu(null);
     } catch {
       setMoveFailure('That did not reach the machine. Try again.');
       requestAnimationFrame(() => moveChoicesRef.current?.querySelector('button')?.focus());
@@ -1477,16 +1477,18 @@ export const ProjectGroup = memo(function ProjectGroup({
       dropping.current = false;
     }
   };
-  // The row's own verb opens inline choices only when there is a group to choose.
+  // The row's own verb opens an anchored popup only when there is a group to choose.
   const rowCommands = useMemo<SessionRowCommands>(
     () => ({
       ...rowActions.commands,
       archive: archiveSession,
       ...(bands.length > 0 && {
-        moveToGroup: (session: Session) => {
+        moveToGroup: (session: Session, _conn: GatewayConn, anchor: HTMLElement) => {
           if (moving.current) return;
+          const at = menuPosition(anchor.getBoundingClientRect(), MENU_WIDTH);
+          if (!at) return;
           setMoveFailure(null);
-          setMovingId((held) => (held === session.id ? null : session.id));
+          setMoveMenu((held) => (held?.id === session.id ? null : { id: session.id, at }));
         },
       }),
     }),
@@ -1522,7 +1524,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           cancel: rowActions.deletion.cancel,
         }
       : null;
-    const isMoving = movingId === session.id;
+    const isMoving = moveMenu?.id === session.id;
     return (
       <Fragment key={session.id}>
         <SessionRow
@@ -1542,43 +1544,48 @@ export const ProjectGroup = memo(function ProjectGroup({
           dragIds={selectedSet.has(session.id) ? selectedIds : undefined}
           isDraggable={!isMoving && (session.group_id ? !isGroupRevealing : !isSessionRevealing)}
         />
-        {isMoving && (
-          <div
-            ref={moveChoicesRef}
-            role="group"
-            aria-label={`Move ${rowTitle(session)} to group`}
-            className="max-h-56 overflow-y-auto border-y border-edge bg-set-groups pl-4 pr-2"
-            onKeyDown={(event) => {
-              if (event.key === 'Escape' && !moveBusy) {
-                event.preventDefault();
-                setMovingId(null);
-              }
-            }}
-            onBlur={(event) => {
-              if (!moving.current && !event.currentTarget.contains(event.relatedTarget)) {
-                setMovingId(null);
-              }
+        {isMoving && moveMenu && (
+          <Menu
+            label={`Move ${rowTitle(session)} to group`}
+            at={moveMenu.at}
+            onDismiss={() => {
+              if (!moving.current) setMoveMenu(null);
             }}
           >
-            {bands.filter((band) => band.id !== session.group_id).map((band) => (
-              <MenuItem
-                key={band.id}
-                title={band.name}
-                icon={<Swatch color={band.color} />}
-                disabled={moveBusy}
-                onSelect={() => void moveSession(session, band.id)}
-              />
-            ))}
-            {session.group_id && (
-              <MenuItem
-                title="Take out of its group"
-                icon={<ProjectsIcon className="size-3.5" />}
-                disabled={moveBusy}
-                onSelect={() => void moveSession(session, null)}
-              />
-            )}
-            {moveFailure && <p role="status" className="px-3 py-2 font-mono text-meta text-err">{moveFailure}</p>}
-          </div>
+            <div
+              ref={moveChoicesRef}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape' && !moveBusy) {
+                  event.preventDefault();
+                  setMoveMenu(null);
+                }
+              }}
+              onBlur={(event) => {
+                if (!moving.current && !event.currentTarget.contains(event.relatedTarget)) {
+                  setMoveMenu(null);
+                }
+              }}
+            >
+              {bands.filter((band) => band.id !== session.group_id).map((band) => (
+                <MenuItem
+                  key={band.id}
+                  title={band.name}
+                  icon={<Swatch color={band.color} />}
+                  disabled={moveBusy}
+                  onSelect={() => void moveSession(session, band.id)}
+                />
+              ))}
+              {session.group_id && (
+                <MenuItem
+                  title="Take out of its group"
+                  icon={<ProjectsIcon className="size-3.5" />}
+                  disabled={moveBusy}
+                  onSelect={() => void moveSession(session, null)}
+                />
+              )}
+              {moveFailure && <p role="status" className="px-3 py-2 font-mono text-meta text-err">{moveFailure}</p>}
+            </div>
+          </Menu>
         )}
       </Fragment>
     );

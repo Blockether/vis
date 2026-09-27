@@ -808,22 +808,25 @@ describe('ProjectGroup groups', () => {
     );
   });
 
-  // Regression, user report: Move to... opened another question over the list.
-  it('files a session from its own inline group choices', async () => {
-    const { client, user } = mount();
+  // Regression, user report: the mobile action must not expand the project list.
+  it('opens a compact anchored popup without shifting the session rows', async () => {
+    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(390);
+    const { client, user, open } = mount();
     const wallet = await band('Wallet work');
     const list = wallet.closest('[data-project-root]') as HTMLElement;
-    const slab = list.querySelector(`[data-session-id="${LOOSE.id}"]`) as HTMLElement;
-    const row = slab.closest('[draggable="true"]') as HTMLElement;
+    const row = strip(list, LOOSE.id);
     await user.click(within(row).getByText('Move to...'));
-    expect(screen.queryByRole('dialog', { name: `Groups in ${ROOT}` })).toBeNull();
-    const choices = screen.getByRole('group', { name: `Move ${LOOSE.title} to group` });
+    const choices = sheet(`Move ${LOOSE.title} to group`);
+    expect(choices).toHaveClass('w-[min(20rem,calc(100vw-24px))]');
+    expect(list).not.toContainElement(choices);
+    expect(list.querySelectorAll(`[data-session-id="${LOOSE.id}"]`)).toHaveLength(1);
     await user.click(within(choices).getByRole('button', { name: 'Wallet work' }));
     await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(LOOSE.id, WALLET));
     await waitFor(() =>
       expect(wallet.querySelectorAll(`[data-session-id="${LOOSE.id}"]`)).toHaveLength(1),
     );
-    expect(screen.queryByRole('group', { name: `Move ${LOOSE.title} to group` })).toBeNull();
+    expect(open).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: `Move ${LOOSE.title} to group` })).toBeNull();
   });
 
   // ONE GROUP, AND THIS ROW IS FILED UNDER IT: `Move to...` opened a sheet whose only
@@ -844,7 +847,7 @@ describe('ProjectGroup groups', () => {
     );
   });
 
-  it('keeps inline move choices visible and retryable after a failed filing', async () => {
+  it('keeps popup move choices visible and retryable after a failed filing', async () => {
     const assignSessionGroup = vi.fn()
       .mockRejectedValueOnce(new Error('Offline'))
       .mockImplementation(async (sid: string, gid: string) => ({ ...LOOSE, id: sid, group_id: gid }));
@@ -852,18 +855,18 @@ describe('ProjectGroup groups', () => {
     const wallet = await band('Wallet work');
     const list = wallet.closest('[data-project-root]') as HTMLElement;
     await user.click(within(strip(list, LOOSE.id)).getByText('Move to...'));
-    const choices = screen.getByRole('group', { name: `Move ${LOOSE.title} to group` });
+    const choices = sheet(`Move ${LOOSE.title} to group`);
     await user.click(within(choices).getByRole('button', { name: 'Wallet work' }));
     expect(await within(choices).findByRole('status')).toHaveTextContent('Try again.');
     expect(screen.queryByRole('dialog', { name: `Groups in ${ROOT}` })).toBeNull();
     await user.click(within(choices).getByRole('button', { name: 'Wallet work' }));
     await waitFor(() => expect(assignSessionGroup).toHaveBeenCalledTimes(2));
     await waitFor(() =>
-      expect(screen.queryByRole('group', { name: `Move ${LOOSE.title} to group` })).toBeNull(),
+      expect(screen.queryByRole('dialog', { name: `Move ${LOOSE.title} to group` })).toBeNull(),
     );
   });
 
-  // More than one destination remains an inline choice, not another sheet.
+  // More than one destination remains a choice in the anchored popup.
   it('keeps Move to... on a filed row while another group could take it', async () => {
     const { user } = mount(
       machine({
@@ -879,15 +882,63 @@ describe('ProjectGroup groups', () => {
     const row = strip(wallet, ROWS[0].id);
     expect(within(row).queryByText('Ungroup')).toBeNull();
     await user.click(within(row).getByText('Move to...'));
-    const choices = screen.getByRole('group', { name: `Move ${ROWS[0].title} to group` });
+    const choices = sheet(`Move ${ROWS[0].title} to group`);
     expect(within(choices).getByRole('button', { name: 'Notes' })).toBeInTheDocument();
     expect(within(choices).getByRole('button', { name: 'Take out of its group' })).toBeInTheDocument();
     expect(screen.queryByRole('dialog', { name: `Groups in ${ROOT}` })).toBeNull();
     await user.keyboard('{Escape}');
-    expect(screen.queryByRole('group', { name: `Move ${ROWS[0].title} to group` })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: `Move ${ROWS[0].title} to group` })).toBeNull();
     await user.click(within(row).getByText('Move to...'));
     await user.click(screen.getByRole('button', { name: 'Collapse Wallet work' }));
-    expect(screen.queryByRole('group', { name: `Move ${ROWS[0].title} to group` })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: `Move ${ROWS[0].title} to group` })).toBeNull();
+  });
+
+  it('opens the same move popup from the desktop row action menu', async () => {
+    finePointer();
+    const { client, user } = mount();
+    await band('Wallet work');
+    const row = strip(document.body, LOOSE.id);
+    await user.click(within(row).getByRole('button', { name: `Actions for ${LOOSE.title}` }));
+    await user.click(within(sheet(`${LOOSE.title} actions`)).getByRole('button', { name: 'Move' }));
+    expect(screen.queryByRole('dialog', { name: `${LOOSE.title} actions` })).toBeNull();
+    await user.click(
+      within(sheet(`Move ${LOOSE.title} to group`)).getByRole('button', { name: 'Wallet work' }),
+    );
+    await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(LOOSE.id, WALLET));
+  });
+
+  it.each([
+    ['running', true, 'turn-in-progress'],
+    ['idle', false, null],
+    ['suspended', false, null],
+  ] as const)('moves a session in the %s state without changing execution', async (status, live, turn) => {
+    const source: Session = { ...LOOSE, status, live, current_turn_id: turn };
+    const rows = ROWS.map((row) => (row.id === source.id ? source : row));
+    const page = { rows, total: rows.length, awaiting: [], grouped: [], nextCursor: '' };
+    const assignSessionGroup = vi.fn(async (sid: string, gid: string | null) => ({
+      ...source,
+      id: sid,
+      group_id: gid,
+    }));
+    const client = machine({
+      heldProjectPage: () => page,
+      listProjectPage: vi.fn(async () => page),
+      assignSessionGroup,
+    });
+    const { user, open } = mount(client, undefined, '', rows);
+    const wallet = await band('Wallet work');
+    const list = wallet.closest('[data-project-root]') as HTMLElement;
+    await user.click(within(strip(list, source.id)).getByText('Move to...'));
+    await user.click(
+      within(sheet(`Move ${source.title} to group`)).getByRole('button', { name: 'Wallet work' }),
+    );
+    await waitFor(() => expect(assignSessionGroup).toHaveBeenCalledExactlyOnceWith(source.id, WALLET));
+    await waitFor(() =>
+      expect(wallet.querySelectorAll(`[data-session-id="${source.id}"]`)).toHaveLength(1),
+    );
+    const moved = await assignSessionGroup.mock.results[0].value;
+    expect(moved).toMatchObject({ status, live, current_turn_id: turn, group_id: WALLET });
+    expect(open).not.toHaveBeenCalled();
   });
 
   it('selects a visible range across groups on Shift-click without opening another session', async () => {

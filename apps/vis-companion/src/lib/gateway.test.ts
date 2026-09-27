@@ -485,6 +485,43 @@ describe('GatewayClient project-page snapshots', () => {
     }
   });
 
+  // Filing changes membership, never the execution state or the active turn.
+  it('files running, idle and stopped sessions through PUT without stopping a turn', async () => {
+    const rows = [
+      { id: 'running', status: 'running', live: true, current_turn_id: 'turn-running' },
+      { id: 'idle', status: 'idle', live: false, current_turn_id: null },
+      { id: 'stopped', status: 'suspended', live: false, current_turn_id: null },
+    ];
+    const fetches = vi.fn(async (url: string, init: RequestInit) => {
+      const source = rows.find((row) => url.endsWith(`/v1/sessions/${row.id}/group`))!;
+      return new Response(
+        JSON.stringify({
+          ...source,
+          group_id: JSON.parse(String(init.body)).group_id,
+          workspace: { root: '/CryptoSafe' },
+        }),
+      );
+    });
+    vi.stubGlobal('fetch', fetches);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    for (const row of rows) {
+      const filed = await client.assignSessionGroup(row.id, 'group-wallet');
+      expect(filed).toMatchObject({ ...row, group_id: 'group-wallet' });
+      const unfiled = await client.assignSessionGroup(row.id, null);
+      expect(unfiled).toMatchObject({ ...row, group_id: null });
+    }
+    expect(fetches).toHaveBeenCalledTimes(6);
+    for (const [index, [url, init]] of fetches.mock.calls.entries()) {
+      expect(url).toContain(`/v1/sessions/${rows[Math.floor(index / 2)].id}/group`);
+      expect(init.method).toBe('PUT');
+      expect(JSON.parse(String(init.body))).toEqual({
+        group_id: index % 2 === 0 ? 'group-wallet' : null,
+      });
+    }
+  });
+
   it('never reuses a project validator for a different draft overlay', async () => {
     const fetches = vi.fn().mockImplementation(() =>
       Promise.resolve(

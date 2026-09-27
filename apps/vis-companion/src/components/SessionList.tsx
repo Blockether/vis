@@ -95,8 +95,8 @@ export type SessionRowCommands = {
    * has nothing of its own to put away, so the band that paints it passes no verb.
    */
   archive?: (session: Session, conn: GatewayConn, away: boolean) => Promise<Session>;
-  /** File this session through inline group choices in its project list, when available. */
-  moveToGroup?: (session: Session, conn: GatewayConn) => void;
+  /** Open anchored group choices for this session in its project list, when available. */
+  moveToGroup?: (session: Session, conn: GatewayConn, anchor: HTMLElement) => void;
   open: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
   /** Remember the answers visible on this row before opening its transcript. */
   read?: (conn: GatewayConn, session: Session) => void;
@@ -467,7 +467,7 @@ export const SessionRow = memo(function SessionRow({
         },
       ]
     : [];
-  // THE ROW'S FILING VERB opens choices below this row when another group could take it.
+  // THE ROW'S FILING VERB opens anchored choices when another group could take it.
   // When the only group is the one it already belongs to, Ungroup acts directly.
   const filing: SwipeAction[] = commands.ungroup
     ? [
@@ -485,7 +485,7 @@ export const SessionRow = memo(function SessionRow({
             label: 'Move to...',
             name: 'Move',
             icon: <FolderPlusIcon className="size-4" />,
-            onSelect: () => commands.moveToGroup?.(session, conn),
+            onSelect: (anchor) => commands.moveToGroup?.(session, conn, anchor),
           },
         ]
       : [];
