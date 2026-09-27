@@ -377,7 +377,7 @@
       (is (= [:select project-b]
              (projects/key-action
                db
-               (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 4 8))))))))
+               (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 4 5))))))))
 
 (deftest project-sidebar-inline-add-test
   ;; The whole add lives on the rail: its field, its caret and the hint that ends
@@ -599,7 +599,7 @@
     (is (str/includes? (nth lines 14) "Project lookup failed"))
     (doseq [label ["↑↓" "↵" "C-x w" "Esc"]]
       (is (str/includes? (nth lines 16) label)))
-    (is (= 2
+    (is (= 8
            (count (projects/visible-entries
                     (assoc-in db [:project-sidebar :items] (vec (repeat 30 project-a)))
                     16))))))
@@ -613,7 +613,7 @@
                                  :rows 18
                                  :paint! (fn [{:keys [screen]}]
                                            (projects/paint! (.newTextGraphics screen) db cols 18))})
-          row (nth (str/split-lines (cap/frame-text capture)) (+ 4 (* 3 index)))]
+          row (nth (str/split-lines (cap/frame-text capture)) (+ 4 index))]
 
       (is (nil? (:error capture)))
       (is (= fits? (str/includes? row label)))
@@ -658,7 +658,7 @@
         visible
         (projects/visible-entries {:project-sidebar sidebar} 16)]
 
-    (is (= 3 (count visible)))
+    (is (= 9 (count visible)))
     (is (= 50 (:index (last visible))))))
 
 (defn review-terminal
@@ -1031,7 +1031,12 @@
           (is (nil? (:error capture)))
           (is (str/includes? text "2 tabs · 1 running · 1 needs input"))
           (is (re-find #"! Mobile navigation +needs input" text))
-          (is (= 10 row) "The alert appears immediately below its project card")
+          (is (= (inc (get-in (first (filter #(and (= :project-select (:kind %))
+                                                   (= "b" (get-in % [:project "id"])))
+                                             (.current projects/hit-map)))
+                              [:bounds :row]))
+                 row)
+              "The alert appears immediately below its project")
           (is (= (#'theme-test/rgb-tuple theme/warning-button-bg)
                  (get-in capture [:frames 0 row 43 :bg])))
           (is (true? (get-in capture [:frames 0 row 43 :bold])))
@@ -1067,7 +1072,7 @@
         visible
         (projects/visible-entries db 16)]
 
-    (is (= 7 (count visible)))
+    (is (= 9 (count visible)))
     (is (= :project-select (:kind (first visible)))
         "Keep the parent visible above a long waiting group")
     (is (= 31 (:index (last visible))))
@@ -1229,7 +1234,7 @@
           (is (nil? (:error capture)))
           (is (str/includes? text "3 tabs · 1 run · 1 input · 1 NEW"))
           (is (re-find #"Keyboard navigation +NEW" text))
-          (is (= 11 row))
+          (is (= 7 row))
           (is (= (#'theme-test/rgb-tuple theme/warning-button-bg)
                  (get-in capture [:frames 0 row 51 :bg])))
           (if pointer?
@@ -1296,7 +1301,9 @@
             (when (= cols 44)
               (is (str/includes? (cap/frame-text initial) "Companion"))
               (is (str/includes? (cap/frame-text initial) "3 tabs 1 run 1 input 1 NEW")))
-            (doseq [row [10 11]]
+            (doseq [row (map #(get-in % [:bounds :row])
+                             (filter #(#{:project-input :project-unread} (:kind %))
+                                     (.current projects/hit-map)))]
               (hover! col row)
               (let [hovered (cap/capture! {:cols cols :rows 24 :paint! paint!})
                     cell (get-in hovered [:frames 0 row col])]
@@ -1306,7 +1313,7 @@
                 (is (true? (:underline cell)))))
             (hover! 0 0)
             (let [away (cap/capture! {:cols cols :rows 24 :paint! paint!})]
-              (is (false? (get-in away [:frames 0 11 col :underline])))))))
+              (is (false? (get-in away [:frames 0 7 col :underline])))))))
       (finally (theme/apply-theme! before)))))
 
 (deftest project-unread-scroll-keeps-parent-test
@@ -1327,7 +1334,7 @@
         visible
         (projects/visible-entries db 16)]
 
-    (is (= 7 (count visible)))
+    (is (= 9 (count visible)))
     (is (= :project-select (:kind (first visible))))
     (is (= 30 (:unread (first visible))))
     (is (= 31 (:index (last visible))))
@@ -1949,7 +1956,7 @@
                          [groups-row "Groups"] [sessions-row "Sessions"]]]
       (is (true? (get-in capture [:frames 0 row (column row label) :bold]))))))
 
-(deftest project-sidebar-section-cards-test
+(deftest project-sidebar-section-headings-are-single-line-test
   (let [db
         (-> (fixture-db)
             (assoc-in [:project-sidebar :expanded] #{"a"})
@@ -1988,24 +1995,20 @@
 
     (is (nil? (:error capture)))
     (doseq [hit [project groups sessions]]
-      (is (= 3 (get-in hit [:bounds :height]))))
-    (is (str/includes? (nth lines (inc (get-in project [:bounds :row]))) "2 sessions"))
+      (is (= 1 (get-in hit [:bounds :height]))))
+    (is (str/includes? (nth lines (get-in project [:bounds :row])) "Vis"))
+    (is (str/includes? (nth lines (get-in project [:bounds :row])) "2 sessions"))
     (is (str/includes? (nth lines (get-in groups [:bounds :row])) "▾ Groups"))
     (is (str/includes? (nth lines (get-in sessions [:bounds :row])) "▾ Sessions"))
     (is (= [:toggle-groups "a"] (:action groups)))
     (is (= [:toggle-sessions "a"] (:action sessions)))
-    (doseq [hit
-            [groups sessions]
-
-            offset
-            (range 3)]
-
+    (doseq [hit [groups sessions]]
       (is (= (:action hit)
-             (projects/key-action
-               db
-               (MouseAction. MouseActionType/CLICK_DOWN
-                             1
-                             (TerminalPosition. 6 (+ offset (get-in hit [:bounds :row]))))))))
+             (projects/key-action db
+                                  (MouseAction. MouseActionType/CLICK_DOWN
+                                                1
+                                                (TerminalPosition. 6
+                                                                   (get-in hit [:bounds :row])))))))
     (let [folded
           (assoc-in db [:project-sidebar :groups-folded? "a"] true)
 
@@ -2058,14 +2061,14 @@
                              "▸ Groups")))
         (handle! (MouseAction. MouseActionType/CLICK_DOWN
                                1
-                               (TerminalPosition. 6 (inc (get-in groups [:bounds :row])))))
+                               (TerminalPosition. 6 (get-in groups [:bounds :row]))))
         (is (false? (get-in @state/app-db [:project-sidebar :groups-folded? "a"]))))
       (paint!)
       (let [sessions (first (filter #(and (= :project-set (:kind %)) (= :sessions (:set %)))
                                     (.current projects/hit-map)))]
         (handle! (MouseAction. MouseActionType/CLICK_DOWN
                                1
-                               (TerminalPosition. 6 (+ 2 (get-in sessions [:bounds :row])))))
+                               (TerminalPosition. 6 (get-in sessions [:bounds :row]))))
         (is (true? (get-in @state/app-db [:project-sidebar :sessions-folded? "a"])))
         (is (some #(= :project-group (:kind %)) (projects/sidebar-entries @state/app-db)))
         (is (not-any? #(= "loose" (get-in % [:session "id"]))
@@ -2157,7 +2160,7 @@
       (is (not (str/includes? (nth lines 4) "● Vis")))
       (is (not (str/includes? (nth lines 4) "▸ Vis")))
       (is (= (palette theme/header-active-tab-bg 0.10) (get-in capture [:frames 0 4 1 :bg])))
-      (is (= (palette theme/text-fg 0.04) (get-in capture [:frames 0 7 1 :bg]))))))
+      (is (= (palette theme/text-fg 0.04) (get-in capture [:frames 0 5 1 :bg]))))))
 
 (deftest saved-session-grid-separates-title-and-status-test
   (let [db
@@ -2282,7 +2285,7 @@
         (assoc-in db [:project-sidebar :index] (count (projects/sidebar-entries db)))
 
         visible
-        (projects/visible-entries db 15)]
+        (projects/visible-entries db 11)]
 
     (is (= [:project-select] (mapv :kind visible)))
     (is (= ["b"] (mapv #(get-in % [:project "id"]) visible)))))

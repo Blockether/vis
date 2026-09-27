@@ -538,12 +538,9 @@
           (min before (count updated))))))
 
 (defn- row-height
-  "Projects, section headers and saved sessions get a three-line card."
+  "Saved sessions get three lines; project and section headings use one."
   [entry]
-  (if (or (#{:project-select :project-session} (:kind entry))
-          (and (= :project-set (:kind entry)) (#{:groups :sessions} (:set entry))))
-    3
-    1))
+  (if (= :project-session (:kind entry)) 3 1))
 
 (defn- fit-back
   "Fill the visible area backwards from `end` with whole rows only."
@@ -589,10 +586,10 @@
 
     (if (and (seq visible)
              (not (get-in db [:project-sidebar :search]))
-             (> capacity 3)
+             (> capacity 1)
              (not= :project-select (:kind (first visible))))
       (let [tail
-            (fit-back entries end (- capacity 3))
+            (fit-back entries end (dec capacity))
 
             parent
             (first (filter #(and (= :project-select (:kind %))
@@ -1092,16 +1089,13 @@
 
                                 (and (:tab-id entry) (= (:tab-id entry) (:active-tab-id db))))
                       focused? (and (:focused? sidebar) (= index (:index sidebar)))
-                      status (p/truncate-cols (row-status entry sidebar width)
-                                              (max 0 (- width (if (= :project-select kind) 4 9))))
+                      status (p/truncate-cols (row-status entry sidebar width) (max 0 (- width 9)))
                       status-col
-                      (if (= :project-select kind)
-                        (- (+ left width) 2)
-                        (- (+ left width)
-                           (cond (= :project-session kind) (if (>= width 48) 21 7)
-                                 (and (= :project-set kind) (#{:groups :sessions} (:set entry))) 10
-                                 :else 2)
-                           (long (p/display-width status))))
+                      (- (+ left width)
+                         (cond (= :project-session kind) (if (>= width 48) 21 7)
+                               (and (= :project-set kind) (#{:groups :sessions} (:set entry))) 10
+                               :else 2)
+                         (long (p/display-width status)))
                       row-left (+ left
                                   (if child? 1 0)
                                   (if (#{:project-group :project-session} kind) 1 0)
@@ -1166,10 +1160,7 @@
                                        t/warning-fg
                                        :else t/dialog-hint-key)
                                  t/dialog-bg)
-                  (p/put-str! g
-                              (if (= :project-select kind) (+ row-left 2) status-col)
-                              (if (= :project-select kind) (inc row) row)
-                              status)))
+                  (p/put-str! g status-col row status)))
             (when (= :project-session kind)
               (when (>= width 48) (paint-session-status! g entry status-col row 14))
               (paint-session-meta! g entry left width (+ row-left 4) (inc row)))
