@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.29 (6842) — 2026-09-27
+<!-- commit: d5316c9ddbc45d6410d6faf4b3825d5dff18ffbf -->
+
+- Keep visited sessions read on return
+- Summarize the steps between progress notes
+- Align project actions with close icon
+- Place create beside Projects and hide paths
+- Check the project bands in the narrow rail story
+- Give every story file its own web storage
+- Keep the narrow rail story within CI's budget
+- Fix stale and flaky stories on main
+- Keep a dropped row on its band between reads
+- Fold settled turns into one digest row
+- Show unhealthy after connection deadline
+- Align pager and row chevrons
+- Count turn steps in the jump-to-latest chip
+- Center pager chevrons
+- Keep following the end through layout clamps
+- Keep justified prose stories honest on Linux
+- Keep justified prose steady on scroll and open
+- Share clips and open them on their first frame
+- Keep failed turns visibly stopped
+- Split server handlers by route domain
+
 ## 0.2.29 (6758) — 2026-09-25
 <!-- commit: daf66450985ace63416f2a232d4cc04e64b302a2 -->
 
