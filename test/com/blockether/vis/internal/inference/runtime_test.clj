@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.inference.runtime-test
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.inference.runtime :as runtime]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io ByteArrayInputStream File]
@@ -68,6 +69,11 @@
              (expect (not (runtime/installed? (str dir) "libonnxruntime.so")))
              (expect (empty? (seq (.listFiles dir))))
              (finally (remove-dir! dir)))))
+  (it "does not reuse an incompatible pre-fix Linux native cache"
+      (doseq [token ["linux-x64" "linux-aarch64"]]
+        (expect (str/includes? (runtime/default-native-dir token)
+                               (str "sherpa-" runtime/sherpa-version "-abi1"))))
+      (expect (not (str/includes? (runtime/default-native-dir "osx-aarch64") "-abi1"))))
   (it "preserves upstream loading on platforms without a shared native release"
       (let [old-path (System/getProperty runtime/ort-native-path-property)]
         (with-redefs [runtime/platform-token (constantly "osx-x64")]

@@ -26,7 +26,10 @@
             [com.blockether.vis.internal.extension.capability :as capability]
             [com.blockether.vis.internal.inference.runtime :as runtime]
             [com.blockether.vis.internal.speech.files :as files])
-  (:import [java.io File]
+  (:import [java.io ByteArrayInputStream File InputStream]
+           [java.nio.charset StandardCharsets]
+           [java.security MessageDigest]
+           [java.util Arrays HexFormat]
            [java.util.zip ZipFile]))
 
 ;; Reflective interop is FATAL in the native image (needs metadata per call
@@ -96,6 +99,58 @@
        version
        ".jar"))
 
+(def ^:private linux-ort-symbol-patches
+  ;; The v1.13.8 JNI imports only OrtGetApiBase@VERS_1.28.2 from libonnxruntime.so.
+  ;; ORT 1.30 retains the older C API, but its ELF export is named VERS_1.30.0.
+  ;; Pin the exact upstream binaries before changing that version reference locally;
+  ;; never mirror sherpa's GPL JNI or rewrite an unrecognized binary.
+  {"linux-x64" {:sha256 "adcabd1866f667ec78796a504ff96030eff30fbd80792e892752c64a861bf231"
+                :version-offset 33151
+                :hash-offset 34656}
+   "linux-aarch64" {:sha256 "a2b107bb7125bc8518731655781bfcddb54a5a4731eaeeb177274b08fe79aebc"
+                    :version-offset 33255
+                    :hash-offset 34696}})
+
+(defn- replace-verified-bytes!
+  [^bytes data offset ^bytes before ^bytes after]
+  (let [offset
+        (long offset)
+
+        end
+        (+ offset (alength before))]
+
+    (when-not (and (= (alength before) (alength after))
+                   (<= 0 offset)
+                   (<= end (alength data))
+                   (Arrays/equals before (Arrays/copyOfRange data (int offset) (int end))))
+      (throw (ex-info "Sherpa's ONNX symbol version did not match its pinned binary"
+                      {:type :speech/native-incompatible :offset offset})))
+    (System/arraycopy after 0 data (int offset) (alength before)))
+  data)
+
+(defn- compatible-linux-jni!
+  [token ^bytes data {:keys [sha256 version-offset hash-offset]}]
+  (when-not (MessageDigest/isEqual (.parseHex (HexFormat/of) ^String sha256)
+                                   (.digest (MessageDigest/getInstance "SHA-256") data))
+    (throw (ex-info "Sherpa's Linux JNI changed; cannot safely share ONNX Runtime 1.30.0"
+                    {:type :speech/native-incompatible :platform token})))
+  (replace-verified-bytes! data
+                           version-offset
+                           (.getBytes "VERS_1.28.2" StandardCharsets/US_ASCII)
+                           (.getBytes "VERS_1.30.0" StandardCharsets/US_ASCII))
+  (replace-verified-bytes! data
+                           hash-offset
+                           (byte-array (map unchecked-byte [0x82 0xfe 0x7b 0x02]))
+                           (byte-array (map unchecked-byte [0x80 0xc6 0x7b 0x02])))
+  data)
+
+(defn- shared-jni-stream
+  [token ^InputStream stream]
+  (if-let [patch (get linux-ort-symbol-patches token)]
+    (with-open [in stream]
+      (ByteArrayInputStream. (compatible-linux-jni! token (.readAllBytes in) patch)))
+    stream))
+
 (defn- install!
   "Download the platform jar; on shared platforms extract only Sherpa's JNI."
   [token dir shared?]
@@ -117,7 +172,9 @@
                                               :platform token})))]
 
                (if shared?
-                 (runtime/install-stream! dir lib (.getInputStream zip entry))
+                 (runtime/install-stream! dir
+                                          lib
+                                          (shared-jni-stream token (.getInputStream zip entry)))
                  (with-open [in (.getInputStream zip entry)]
                    (io/copy in (io/file staging lib)))))))
          (when-not (installed? (if shared? dir (str staging)))

@@ -52,12 +52,16 @@
      (str o "-" a))))
 
 (defn default-native-dir
-  "Versioned path so upgrading either JNI package cannot reuse an old library."
+  "Versioned path so upgrading either JNI package or Linux ABI cannot reuse an old library."
   [token]
   (str (io/file (System/getProperty "user.home")
                 ".vis"
                 "native"
-                (str "onnxruntime-" ort-version "-sherpa-" sherpa-version)
+                (str "onnxruntime-"
+                     ort-version
+                     "-sherpa-"
+                     sherpa-version
+                     (if (contains? #{"linux-x64" "linux-aarch64"} token) "-abi1" ""))
                 token)))
 
 (defn native-dir

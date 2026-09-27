@@ -11,6 +11,9 @@
   (:import [ai.onnxruntime OrtEnvironment]
            [com.blockether.vis.internal.speech.tts GenerationCallback]
            [com.k2fsa.sherpa.onnx VersionInfo]
+           [java.nio.charset StandardCharsets]
+           [java.security MessageDigest]
+           [java.util Arrays HexFormat]
            [java.util.jar JarEntry JarFile]))
 
 (defn- refused
@@ -49,6 +52,56 @@
                    ;; JNI, so a system copy cannot win
                    (expect (= (System/mapLibraryName "onnxruntime") runtime))
                    (expect (= (System/mapLibraryName "sherpa-onnx-jni") jni)))))
+
+;; Regression: Linux x64 run 36358782219 linked Sherpa v1.13.8 against ORT 1.30
+;; and failed because its sole versioned import was OrtGetApiBase@VERS_1.28.2.
+(defdescribe
+  linux-ort-symbol-patch-test
+  (it
+    "changes only the pinned symbol version and its GNU ELF hash"
+    (let [^bytes original
+          (byte-array 48)
+
+          old-version
+          (.getBytes "VERS_1.28.2" StandardCharsets/US_ASCII)
+
+          new-version
+          (.getBytes "VERS_1.30.0" StandardCharsets/US_ASCII)
+
+          old-hash
+          (byte-array (map unchecked-byte [0x82 0xfe 0x7b 0x02]))
+
+          new-hash
+          (byte-array (map unchecked-byte [0x80 0xc6 0x7b 0x02]))]
+
+      (System/arraycopy old-version 0 original 4 (alength old-version))
+      (System/arraycopy old-hash 0 original 32 (alength old-hash))
+      (let [compat
+            {:sha256 (.formatHex (HexFormat/of)
+                                 (.digest (MessageDigest/getInstance "SHA-256") original))
+             :version-offset 4
+             :hash-offset 32}
+
+            ^bytes actual
+            (aclone original)
+
+            ^bytes expected
+            (aclone original)
+
+            ^bytes changed
+            (aclone original)]
+
+        (System/arraycopy new-version 0 expected 4 (alength new-version))
+        (System/arraycopy new-hash 0 expected 32 (alength new-hash))
+        (expect (identical? actual (#'sherpa/compatible-linux-jni! "linux-x64" actual compat)))
+        (expect (Arrays/equals expected actual))
+        (aset-byte changed 40 (unchecked-byte 1))
+        (let [^bytes unchanged (aclone changed)]
+          (expect (= :speech/native-incompatible
+                     (try (#'sherpa/compatible-linux-jni! "linux-x64" changed compat)
+                          nil
+                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+          (expect (Arrays/equals unchanged changed)))))))
 
 (defdescribe
   ensure-native-test
