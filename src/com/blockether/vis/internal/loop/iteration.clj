@@ -1833,7 +1833,8 @@
                                                                  (:max-input-tokens overflow)
                                                                  turn-input-tokens
                                                                  (loop-router/context-fold-budget
-                                                                   (:max-input-tokens overflow))))
+                                                                   (:max-input-tokens overflow)
+                                                                   model)))
           (let [before-tokens (svar/count-messages model
                                                    (or request-messages
                                                        (into (vec base-messages)
@@ -2210,14 +2211,27 @@
         (or (empty? (:attached user-attachments))
             (transcript/target-supports-vision? (transcript/replay-context initial-resolved-model)))
 
+        ;; Price the first request with the routed budget the loop uses, not the
+        ;; catalog's raw window. A route Svar cannot price keeps the catalog window;
+        ;; the request itself reports that failure.
+        initial-request-budget
+        (try (loop-router/resolved-context-budget environment
+                                                  initial-resolved-model
+                                                  routing
+                                                  initial-extra-body)
+             (catch clojure.lang.ExceptionInfo _ nil))
+
         initial-context-limit
-        (or max-context-tokens
-            (:input-limit initial-resolved-model)
-            (:context initial-resolved-model)
-            200000)
+        (loop-router/iteration-context-limit max-context-tokens
+                                             nil
+                                             initial-resolved-model
+                                             initial-request-budget)
 
         initial-fold-budget
-        (loop-router/context-fold-budget initial-context-limit)
+        (loop-router/iteration-fold-budget max-context-tokens
+                                           nil
+                                           initial-resolved-model
+                                           initial-request-budget)
 
         _initial-utilization
         (when-let [ctx-atom (:ctx-atom environment)]
@@ -2540,14 +2554,11 @@
                                                    routing
                                                    iteration-extra-body))
 
-        effective-context-limit
-        (loop-router/iteration-context-limit max-context-tokens
-                                             served-model
-                                             pre-resolved-model
-                                             @request-budget-atom)
-
         effective-fold-budget
-        (loop-router/context-fold-budget effective-context-limit)
+        (loop-router/iteration-fold-budget max-context-tokens
+                                           served-model
+                                           pre-resolved-model
+                                           @request-budget-atom)
 
         _llm-provider-context
         (cond-> {:selected (transcript/llm-id (:provider pre-resolved-model)
@@ -2890,16 +2901,24 @@
                                                              @iteration-routing
                                                              current-extra-body)))
                              (when-let [input (get-in response [:api-usage :input-tokens])]
-                               (let [window (loop-router/iteration-context-limit
-                                              max-context-tokens
-                                              (loop-router/turn-served-model environment)
-                                              pre-resolved-model
-                                              @request-budget-atom)]
+                               (let [served-now (loop-router/turn-served-model environment)
+                                     request-budget @request-budget-atom
+                                     window (loop-router/iteration-context-limit max-context-tokens
+                                                                                 served-now
+                                                                                 pre-resolved-model
+                                                                                 request-budget)
+                                     fold-budget (loop-router/iteration-fold-budget
+                                                   max-context-tokens
+                                                   served-now
+                                                   pre-resolved-model
+                                                   request-budget)]
+
                                  (transcript/stamp-utilization! (:ctx-atom environment)
                                                                 (accounting/pending-utilization
                                                                   @accounting-atom
                                                                   input
-                                                                  window)))))
+                                                                  window
+                                                                  fold-budget)))))
                            :on-chunk (fn [chunk]
                                        (when (provider-output-chunk? chunk)
                                          (reset! provider-output-started? true)
@@ -3253,19 +3272,20 @@
                                     (loop-router/turn-served-model environment)
                                     pre-resolved-model
                                     @request-budget-atom)
-          effective-fold-budget (loop-router/context-fold-budget effective-context-limit)
+          effective-fold-budget (loop-router/iteration-fold-budget max-context-tokens
+                                                                   (loop-router/turn-served-model
+                                                                     environment)
+                                                                   pre-resolved-model
+                                                                   @request-budget-atom)
           ;; Publish this response's measurement before rendering its
           ;; context delta. Stamping at the next loop head made the
           ;; next model request read usage from TWO requests ago.
           _ (when-let [ca (:ctx-atom environment)]
-              (let [window (loop-router/iteration-context-limit max-context-tokens
-                                                                (loop-router/turn-served-model
-                                                                  environment)
-                                                                pre-resolved-model
-                                                                @request-budget-atom)]
-                (transcript/stamp-utilization! ca
-                                               (accounting/measured-utilization @accounting-atom
-                                                                                window))))
+              (transcript/stamp-utilization! ca
+                                             (accounting/measured-utilization
+                                               @accounting-atom
+                                               effective-context-limit
+                                               effective-fold-budget)))
           ;; …and when the pin is the credential that died, the SESSION
           ;; follows the rescue: the picker chip stops naming a provider
           ;; this session cannot reach, and the next turn no longer re-pins
@@ -3361,7 +3381,9 @@
                   ;; output reserve and any tighter caller ceiling.
                   limit (when (or known-served? (loop-router/token-limit max-context-tokens))
                           effective-context-limit)
-                  budget (loop-router/context-fold-budget limit)]
+                  budget (if limit
+                           effective-fold-budget
+                           (loop-router/context-fold-budget nil (:llm-model iteration-result)))]
 
               (cond-> {:session-turn-id session-turn-id
                        :council-input council-input

@@ -1,0 +1,21 @@
+{
+  "lang": "python",
+  "prompt": "Report the context budget this Vis session gives you. Run exactly this Python block and nothing else: print(json.dumps({'auto_compress_above': session['utilization']['auto_compress_above'], 'model_input_limit': session['utilization']['model_input_limit']}, sort_keys=True)). Then answer with only the JSON object it printed, unchanged, with no code fence or other text. Do not read or edit files and do not run anything else.",
+  "want": {},
+  "wantnot": {},
+  "want_forms": [
+    "session['utilization']['auto_compress_above']",
+    "session['utilization']['model_input_limit']"
+  ],
+  "want_requested_route": true,
+  "want_context_budget": {
+    "anthropic-coding-plan/claude-opus-5-5": {
+      "auto_compress_above": 250000,
+      "model_input_limit": 872000
+    },
+    "openai-codex/gpt-6-sol": {
+      "auto_compress_above": 183600,
+      "model_input_limit": 204000
+    }
+  }
+}

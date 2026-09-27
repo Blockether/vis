@@ -185,11 +185,12 @@
                                   {:input-tokens 300 :output-tokens 1})
 
             util
-            (accounting/pending-utilization acc 400 1000)]
+            (accounting/pending-utilization acc 400 1000 900)]
 
         (expect (= 400 (get util "last_request_tokens")))
         (expect (= 700 (get util "turn_total_tokens")))
-        (expect (= 1000 (get util "model_input_limit")))))
+        (expect (= 1000 (get util "model_input_limit")))
+        (expect (= 900 (get util "auto_compress_above")))))
   (it "reports the latest folded response"
       (let [acc
             (-> (accounting/initial-usage nil)
@@ -197,10 +198,11 @@
                 (accounting/add-usage {:input-tokens 400 :output-tokens 1}))
 
             util
-            (accounting/measured-utilization acc 1000)]
+            (accounting/measured-utilization acc 1000 900)]
 
         (expect (= 400 (get util "last_request_tokens")))
-        (expect (= 700 (get util "turn_total_tokens")))))
+        (expect (= 700 (get util "turn_total_tokens")))
+        (expect (= 900 (get util "auto_compress_above")))))
   (it "attaches the prompt-cache status to the turn's final utilization"
       (let [acc
             (accounting/add-usage (accounting/initial-usage nil)

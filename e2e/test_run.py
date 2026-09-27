@@ -498,6 +498,137 @@ class CacheMetricValidationTest(unittest.TestCase):
             decode_usage_body('{"usage":null}')
 
 
+class ContextBudgetTest(unittest.TestCase):
+    CODEX = {"auto_compress_above": 183600, "model_input_limit": 204000}
+
+    def usage(self, **changes):
+        health = {
+            "budget_tokens": 183600,
+            "model_input_limit": 204000,
+            "reminder_tokens": 137700,
+        }
+        return {"health": {**health, **changes}}
+
+    def failures(self, usage=None, printed=CODEX, answer=None, expected=None):
+        outputs = (
+            []
+            if printed is None
+            else [{"stdout": json.dumps(printed, sort_keys=True) + "\n"}]
+        )
+        return run.context_budget_failures(
+            self.usage() if usage is None else usage,
+            outputs,
+            json.dumps(self.CODEX) if answer is None else answer,
+            expected,
+        )
+
+    def run_scenario(self, health):
+        scenario = run.load_scenarios(["context-budget"])[0]
+        route = {"provider": "openai-codex", "model": "gpt-6-sol"}
+        code = (
+            "print(json.dumps({'auto_compress_above': session['utilization']"
+            "['auto_compress_above'], 'model_input_limit': session['utilization']"
+            "['model_input_limit']}, sort_keys=True))"
+        )
+        printed = json.dumps(self.CODEX, sort_keys=True)
+        form = {"scope": "t1/i1/f1", "iteration": 1}
+        events = [
+            {"phase": "provider-call", "iteration": 1, **route},
+            {"phase": "form-start", "code": code, **form},
+            {"phase": "form-result", "stdout": printed + "\n", **form},
+        ]
+        result = {
+            "answer": printed,
+            "session-id": "00000000-0000-0000-0000-000000000000",
+            "cost": route,
+        }
+        with (
+            tempfile.TemporaryDirectory() as traces,
+            patch.object(run, "TRACES", traces),
+            patch.object(run, "PROVIDER", "openai-codex"),
+            patch.object(run, "REASONING_EFFORT", None),
+            patch.object(run, "source_classpath", return_value="/checkout/src"),
+            patch.object(
+                run, "fetch_session_usage", return_value=(200, {"health": health})
+            ),
+            patch.object(run.subprocess, "run") as invoke,
+        ):
+            invoke.return_value.returncode = 0
+            invoke.return_value.stdout = "\n".join(
+                [
+                    *(
+                        json.dumps({"event": "trace-chunk", "payload": event})
+                        for event in events
+                    ),
+                    json.dumps({"event": "result", "payload": result}),
+                ]
+            )
+            return run.run_one((scenario, "gpt-6-sol", {}, 12344))
+
+    def test_printed_answered_and_persisted_budgets_agree(self):
+        self.assertEqual([], self.failures())
+        self.assertEqual([], self.failures(expected=self.CODEX))
+        fenced = "```json\n" + json.dumps(self.CODEX) + "\n```"
+        self.assertEqual([], self.failures(answer=fenced))
+
+    def test_budget_keeps_a_ten_percent_reserve(self):
+        wide = {"auto_compress_above": 200000, "model_input_limit": 204000}
+        self.assertEqual(
+            ["budget_tokens 200000 exceeds 90% of limit 204000"],
+            self.failures(
+                self.usage(budget_tokens=200000, reminder_tokens=150000),
+                printed=wide,
+                answer=json.dumps(wide),
+            ),
+        )
+
+    def test_reminder_is_three_quarters_of_the_budget(self):
+        self.assertEqual(
+            ["reminder_tokens 137699 is not 75% of 183600"],
+            self.failures(self.usage(reminder_tokens=137699)),
+        )
+
+    def test_pinned_route_values_are_exact(self):
+        opus = {"auto_compress_above": 250000, "model_input_limit": 872000}
+        failures = self.failures(expected=opus)
+        self.assertEqual(1, len(failures), failures)
+        self.assertTrue(failures[0].startswith("persisted budget"))
+
+    def test_model_visible_and_answered_budgets_must_match_health(self):
+        stale = {"auto_compress_above": 200000, "model_input_limit": 1000000}
+        for printed, answer, expected in (
+            (stale, None, "model-visible budget"),
+            (None, None, "no sandbox form printed"),
+            (self.CODEX, "183600", "does not report the persisted budget"),
+            (self.CODEX, json.dumps(stale), "does not report the persisted budget"),
+        ):
+            with self.subTest(printed=printed, answer=answer):
+                failures = self.failures(printed=printed, answer=answer)
+                self.assertEqual(1, len(failures), failures)
+                self.assertIn(expected, failures[0])
+
+    def test_missing_health_or_limit_fails(self):
+        self.assertEqual(["usage has no persisted request health"], self.failures({}))
+        self.assertEqual(
+            ["health model_input_limit is not a positive integer: None"],
+            self.failures(self.usage(model_input_limit=None)),
+        )
+
+    def test_scenario_checks_the_pinned_route_through_run_one(self):
+        result = self.run_scenario(self.usage()["health"])
+        self.assertTrue(result["correct"], result["detail"])
+        self.assertIn(
+            "context-budget=183600/204000 tokens, reminder 137700", result["evidence"]
+        )
+        wide = self.usage(budget_tokens=200000, reminder_tokens=150000)["health"]
+        result = self.run_scenario(wide)
+        self.assertFalse(result["correct"])
+        self.assertTrue(
+            any("exceeds 90% of limit" in item for item in result["detail"]),
+            result["detail"],
+        )
+
+
 class StdoutGoalRecoveryTest(unittest.TestCase):
     def test_scenario_requires_goal_cache_and_exact_read_back(self):
         scenario = run.load_scenarios(["stdout-goal-cache"])[0]

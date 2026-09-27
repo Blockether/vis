@@ -63,6 +63,12 @@ e2e/
   sample counts, and (with `want_folded_prefix`) the one estimated rebuild.
   Invalid, missing or impossible token counts fail; a cold cache does not. This
   does not require a particular cache rate or report a request-level hit percentage.
+- **want_context_budget** — persist the run, read the request health from
+  `/v1/sessions/:sid/usage`, and require the `auto_compress_above` and
+  `model_input_limit` values the model printed from `session['utilization']` and
+  answered to match it. The soft budget must be positive, at most 90% of the input
+  limit, with its reminder at 75% of the budget. An object keyed by `provider/model`
+  also pins both values for those routes; other routes check only these rules.
 - **want_goal_complete** — require the persisted gateway goal to be complete after
   the scenario, not just a model claim or a tool-call attempt.
 - **want_stdout_recovery** — require an oversized raw stdout, then a later

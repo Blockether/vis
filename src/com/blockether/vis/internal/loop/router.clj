@@ -1300,12 +1300,14 @@
       (let [d (double n)]
         (when (and (not (Double/isNaN d)) (not (Double/isInfinite d)) (pos? d)) (long d))))))
 
-(defn iteration-context-limit
-  "Input ceiling shared by CTX and folding. The routed Svar budget already accounts
-   for the requested output and independent input cap; never subtract output again.
-   An optional caller ceiling may only reduce it. Without a resolved request, retain
-   the served-model, pinned-model, then historical advisory fallback."
-  [max-context-tokens served-model pinned-model & [request-budget]]
+(def ^:private ADVISORY_CONTEXT_TOKENS
+  "Input ceiling assumed for a model whose window nothing reports."
+  200000)
+
+(defn- known-context-limit
+  "Input ceiling from the routed Svar budget, a caller ceiling or a model catalog,
+   or nil when none of them reports one."
+  [max-context-tokens served-model pinned-model request-budget]
   (let [caller
         (token-limit max-context-tokens)
 
@@ -1319,8 +1321,27 @@
           (token-limit (:input-limit served-model))
           (token-limit (:context served-model))
           (token-limit (:input-limit pinned-model))
-          (token-limit (:context pinned-model))
-          200000))))
+          (token-limit (:context pinned-model))))))
+
+(defn iteration-context-limit
+  "Input ceiling shared by CTX and folding. The routed Svar budget already accounts
+   for the requested output and independent input cap; never subtract output again.
+   An optional caller ceiling may only reduce it. Without a resolved request, retain
+   the served-model, pinned-model, then historical advisory fallback."
+  [max-context-tokens served-model pinned-model & [request-budget]]
+  (or (known-context-limit max-context-tokens served-model pinned-model request-budget)
+      ADVISORY_CONTEXT_TOKENS))
+
+(defn iteration-context-model
+  "Name of the model whose family prices the soft budget: the routed request's
+   model, else the served model, else the pinned model — the same precedence that
+   picks the window in `iteration-context-limit`."
+  [served-model pinned-model & [request-budget]]
+  (or (:model request-budget)
+      (:name served-model)
+      (:model served-model)
+      (:name pinned-model)
+      (:model pinned-model)))
 
 (defn resolved-context-budget
   "Resolve the same routed generation controls Svar will use for preflight."
@@ -1331,16 +1352,24 @@
                           :extra-body extra-body})))
 
 (defn context-fold-budget
-  "Soft folding threshold for a known input window. Windows below the normal 200K
-   operating budget keep a 10% provider-rejection reserve. Unknown and >=200K windows
-   retain the historical 200K threshold."
-  [context-limit]
-  (if-let [raw-limit (token-limit context-limit)]
-    (let [limit (long raw-limit)
-          default-budget (long ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS)]
+  "Soft folding threshold for the model named `model`: its family budget
+   (`ctx-engine/prompt-budget-tokens`), capped at 90% of a known input window so a
+   provider rejection always keeps a 10% reserve. An unknown window keeps the
+   historical 200K advisory budget."
+  [context-limit model]
+  (let [family-budget (long (ctx-engine/prompt-budget-tokens model))]
+    (if-let [limit (token-limit context-limit)]
+      (min family-budget (max 1 (quot (* (long limit) 9) 10)))
+      (min family-budget (long ADVISORY_CONTEXT_TOKENS)))))
 
-      (if (< limit default-budget) (max 1 (quot (* limit 9) 10)) default-budget))
-    ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))
+(defn iteration-fold-budget
+  "Soft folding threshold for the window `iteration-context-limit` resolves, priced
+   for `iteration-context-model`. The historical advisory fallback is not a known
+   window, so it keeps the advisory budget instead of a reserve below it."
+  [max-context-tokens served-model pinned-model & [request-budget]]
+  (context-fold-budget
+    (known-context-limit max-context-tokens served-model pinned-model request-budget)
+    (iteration-context-model served-model pinned-model request-budget)))
 
 (defn router-for-model
   "Return a router variant whose provider/model ORDER reflects a model PREFERENCE,

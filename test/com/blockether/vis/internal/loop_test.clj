@@ -615,6 +615,50 @@
            (expect (= 36000 (:input-tokens (persistance/db-session-usage-stats db sid))))
            (finally (loop-env/dispose-environment! environment))))))
 
+(defdescribe
+  model-family-budget-test
+  (it
+    "prices turn start and persisted health with the routed window and the family budget"
+    (doseq [[model limits expected-limit expected-budget]
+            [["claude-opus-5-5" {:context 1000000 :output-limit 128000} 872000 250000]
+             ["gpt-6-sol" {:context 272000 :input-limit 272000 :output-limit 128000} 204000
+              183600]]]
+      (let [router (svar/make-router [{:id :lmstudio
+                                       :base-url "http://127.0.0.1:1234/v1"
+                                       :api-key "test"
+                                       :models [(assoc limits :name model)]}])
+            environment (loop-env/create-environment router {:db :memory})
+            db (:db-info environment)
+            sid (:session-id environment)
+            first-request (atom nil)]
+
+        (try (let [tid (persistance/db-store-session-turn! db
+                                                           {:parent-session-id sid
+                                                            :user-request "measure"})]
+               (with-redefs [svar/ask-code! (fn [_ _]
+                                              (compare-and-set! first-request
+                                                                nil
+                                                                (get @(:ctx-atom environment)
+                                                                     "engine_utilization"))
+                                              {:stop-reason :end
+                                               :tool-calls []
+                                               :content "done"
+                                               :routed/provider-id :lmstudio
+                                               :routed/model model
+                                               :api-usage {:input-tokens 32000 :output-tokens 1}
+                                               :tokens {}})]
+                 (iteration/iteration-loop environment "measure" {:session-turn-id tid}))
+               ;; Turn start priced the catalog's raw window (1M for Opus) until the
+               ;; first response replaced it with Svar's routed budget.
+               (expect (= expected-limit (get @first-request "model_input_limit")))
+               (expect (= expected-budget (get @first-request "auto_compress_above")))
+               (let [health (:health (persistance/db-session-usage-stats db sid))]
+                 (expect (= expected-limit (:model-input-limit health)))
+                 (expect (= expected-budget (:budget-tokens health)))
+                 (expect (= (long (Math/ceil (* 0.75 expected-budget)))
+                            (:reminder-tokens health)))))
+             (finally (loop-env/dispose-environment! environment)))))))
+
 (defn- fold-usage-scenario
   "Drive Python folding, persisted accounting and the next provider request together."
   ([fold-code] (fold-usage-scenario fold-code 0))
@@ -8497,6 +8541,12 @@
         fold-budget
         @#'loop-router/context-fold-budget
 
+        iteration-budget
+        @#'loop-router/iteration-fold-budget
+
+        model-of
+        @#'loop-router/iteration-context-model
+
         stamp!
         @#'transcript/stamp-served-route!
 
@@ -8517,13 +8567,36 @@
         (expect (= 300000 (limit nil {:context 300000} {:input-limit 1000000}))))
     (it "keeps the historical 200K advisory ceiling for a model nothing is known about"
         (expect (= 200000 (limit nil nil nil)))
-        (expect (= 200000 (fold-budget (limit nil nil nil)))))
-    (it "lowers the folding budget only when the effective window is below 200K"
-        (expect (= 7372 (fold-budget 8192)))
-        (expect (= 115200 (fold-budget 128000)))
-        (expect (= 129600 (fold-budget 144000)))
-        (expect (= 200000 (fold-budget 200000)))
-        (expect (= 200000 (fold-budget 1000000))))
+        (expect (= 200000 (iteration-budget nil nil nil)))
+        (expect (= 200000 (fold-budget nil "claude-opus-5-5"))))
+    (it "keeps a 10% reserve below every known window, up to the model's budget"
+        (expect (= 7372 (fold-budget 8192 nil)))
+        (expect (= 115200 (fold-budget 128000 nil)))
+        (expect (= 129600 (fold-budget 144000 nil)))
+        (expect (= 180000 (fold-budget 200000 nil)))
+        (expect (= 200000 (fold-budget 1000000 nil))))
+    ;; Svar's routed windows: openai-codex gpt-6-sol 204K, openai gpt-6-sol 794K,
+    ;; anthropic claude-opus-5-5 872K and claude-opus-4-5 150K.
+    (it "prices the budget for the model family whose window it measures"
+        (expect (= 183600 (fold-budget 204000 "gpt-6-sol")))
+        (expect (= 230000 (fold-budget 794000 "gpt-6-sol")))
+        (expect (= 229999 (fold-budget 255555 "gpt-6-sol")))
+        (expect (= 230000 (fold-budget 255556 "gpt-6-sol")))
+        (expect (= 250000 (fold-budget 872000 "claude-opus-5-5")))
+        (expect (= 135000 (fold-budget 150000 "claude-opus-4-5"))))
+    (it "names the budget's model with the same precedence as its window"
+        (expect (= "routed" (model-of {:name "served"} {:name "pinned"} {:model "routed"})))
+        (expect (= "served" (model-of {:name "served"} {:name "pinned"})))
+        (expect (= "pinned" (model-of nil {:model "pinned"})))
+        (expect (= 183600
+                   (iteration-budget nil
+                                     nil
+                                     {:name "gpt-6-sol"}
+                                     {:model "gpt-6-sol" :max-input-tokens 204000})))
+        (expect (= 250000
+                   (iteration-budget nil
+                                     {:name "claude-opus-5-5" :input-limit 1000000}
+                                     {:name "gpt-6-sol"}))))
     ;; A window is config a human edits and a catalog a provider ships; neither is a promise,
     ;; and this number divides every saturation the session prints.
     (it "accepts a window quoted as a string, exactly as YAML hands one over"

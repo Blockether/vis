@@ -79,10 +79,14 @@ There is no inline undo.
 In `session["utilization"]`, `latest_measured_input_tokens` is the latest
 provider-reported request **input**, including context. It can include a
 rejected overflow request; it is not a live count, output usage or turn total.
-`auto_compress_above` is the soft budget (normally 200k tokens, lower for
-smaller windows); `model_input_limit` is the hard per-request input limit. A
-conditional `hint` starts at 75% of the soft budget, becomes urgent at 90% and
-requires folding above 100% while pressure remains.
+`auto_compress_above` is the soft budget; `model_input_limit` is the hard
+per-request input limit. The soft budget depends on the model: 250k tokens for
+Claude Opus models, 230k for GPT models and 200k for other models. It never
+exceeds 90% of a known input limit, so smaller windows get a lower budget: a
+204k input limit gives a GPT model a budget of 183,600 tokens. When the input
+limit is unknown, the soft budget is 200k. A conditional `hint` starts at 75% of
+the soft budget, becomes urgent at 90% and requires folding above 100% while
+pressure remains.
 
 A fold receipt estimates removed text locally. The next provider response
 measures the input change for the **whole request**, without an extra call—not

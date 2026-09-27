@@ -8,11 +8,31 @@
 
 (def DEFAULT_PROMPT_BUDGET_TOKENS
   "Soft per-call operating budget surfaced to the model as
-   `session_utilization.auto_compress_above`. It keeps routine work below a
-   200k-token handled-context allowance while the provider-reported input
-   limit remains the hard ceiling. Compared against provider-reported input
-   tokens (no local tokenizer) — see `utilization`."
+   `session_utilization.auto_compress_above` for a model without an entry in
+   `MODEL_PROMPT_BUDGET_TOKENS`. It keeps routine work below a 200k-token
+   handled-context allowance while the provider-reported input limit remains the
+   hard ceiling. Compared against provider-reported input tokens (no local
+   tokenizer) — see `utilization`."
   200000)
+
+(def MODEL_PROMPT_BUDGET_TOKENS
+  "Operating budgets for model families whose routed windows reach far past the
+   default, as `[name-pattern tokens]` pairs; the first match wins. Patterns accept
+   provider spellings such as `anthropic/claude-opus-4.5`,
+   `anthropic.claude-opus-4-5-20251101-v1:0` and `azure/gpt-5.5`. The routed input
+   window still caps every budget — see `loop.router/context-fold-budget`."
+  [[#"(?i)claude-(?:[0-9.]+-)*opus" 250000] [#"(?i)(?:^|[^a-z0-9])(?:chat)?gpt-" 230000]])
+
+(defn prompt-budget-tokens
+  "Operating budget for the model named `model` before any input-window cap:
+   its family budget from `MODEL_PROMPT_BUDGET_TOKENS`, else
+   `DEFAULT_PROMPT_BUDGET_TOKENS`."
+  [model]
+  (let [model-name (str model)]
+    (or (some (fn [[pattern tokens]]
+                (when (re-find pattern model-name) tokens))
+              MODEL_PROMPT_BUDGET_TOKENS)
+        DEFAULT_PROMPT_BUDGET_TOKENS)))
 
 ;; Scope parsing — deterministic, regex-driven
 ;; Iteration scope is `tN/iM`. The legacy per-form `/fK` tail is OPTIONAL (and no

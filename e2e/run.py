@@ -21,7 +21,9 @@ real files in several formats, all driven through the same sandbox tools:
 `contract_probe.record`); `want_forms` are source substrings that MUST occur in a top-level
 sandbox form. The four boolean benchmark guards pin the requested route, the
 canonical oldest-prefix fold, real provider cache reads, and the persisted
-cache-metric arithmetic. Peak/cumulative stdout guards count characters, not tokens.
+cache-metric arithmetic. `want_context_budget` matches the soft budget the model
+saw with persisted request health. Peak/cumulative stdout guards count characters,
+not tokens.
 Exact JSON answers, JSONL fixture journals, operation sequences, helper reuse and
 discovery audits are described in README.md. Every run reports provider token totals
 separately from output size; VIS_E2E_REPEATS adds repeated-run measurements to results.json.
@@ -166,6 +168,70 @@ def fold_count_failures(usage):
     return []
 
 
+CONTEXT_BUDGET_KEYS = ("auto_compress_above", "model_input_limit")
+
+
+def context_budget_failures(usage, form_outputs, answer, expected):
+    """Match the budget a model saw and reported with persisted request health.
+
+    Every route must keep a positive soft budget within 90% of its input limit and
+    a reminder at 75% of that budget. `expected` optionally pins both values for
+    the requested route; None applies only those rules.
+    """
+    health = usage.get("health")
+    if not isinstance(health, dict):
+        return ["usage has no persisted request health"]
+    budget, limit, reminder = (
+        health.get(key)
+        for key in ("budget_tokens", "model_input_limit", "reminder_tokens")
+    )
+    failures = [
+        f"health {key} is not a positive integer: {value!r}"
+        for key, value in (
+            ("budget_tokens", budget),
+            ("model_input_limit", limit),
+            ("reminder_tokens", reminder),
+        )
+        if type(value) is not int or value <= 0
+    ]
+    if failures:
+        return failures
+    if budget > max(1, limit * 9 // 10):
+        failures.append(f"budget_tokens {budget} exceeds 90% of limit {limit}")
+    if reminder != (3 * budget + 3) // 4:
+        failures.append(f"reminder_tokens {reminder} is not 75% of {budget}")
+    persisted = {"auto_compress_above": budget, "model_input_limit": limit}
+    if expected is not None and persisted != expected:
+        failures.append(f"persisted budget {persisted!r} != expected {expected!r}")
+    printed = []
+    for item in form_outputs:
+        for line in item["stdout"].splitlines():
+            try:
+                value = exact_json(line)
+            except ValueError:
+                continue
+            if (
+                isinstance(value, dict)
+                and sorted(value) == sorted(CONTEXT_BUDGET_KEYS)
+                and all(type(number) is int for number in value.values())
+            ):
+                printed.append(value)
+    if not printed:
+        failures.append("no sandbox form printed the session utilization budget")
+    elif printed[-1] != persisted:
+        failures.append(
+            f"model-visible budget {printed[-1]!r} != persisted health {persisted!r}"
+        )
+    text = unfenced_json(answer.strip())
+    try:
+        reported = exact_json(text)
+    except ValueError:
+        reported = None
+    if reported != persisted:
+        failures.append(f"answer {text!r} does not report the persisted budget")
+    return failures
+
+
 def token_summary(tokens):
     """Keep provider totals separate from cache shares and character counts."""
     if not isinstance(tokens, dict):
@@ -270,6 +336,13 @@ def exact_json(text):
     return json.loads(text, object_pairs_hook=object_pairs)
 
 
+def unfenced_json(text):
+    """Unwrap one whole-answer ```json fence, the only wrapper exact answers allow."""
+    if text.startswith("```json\n") and text.endswith("\n```"):
+        return text[8:-4]
+    return text
+
+
 def structured_failures(sc, work, answer, activities):
     """Check exact fixture truth, not numbers or JSON fragments embedded in prose."""
 
@@ -294,8 +367,7 @@ def structured_failures(sc, work, answer, activities):
         text = answer.strip()
         if sc.get("want_goal_complete") and text.startswith("Goal complete: "):
             text = text.removeprefix("Goal complete: ")
-        if text.startswith("```json\n") and text.endswith("\n```"):
-            text = text[8:-4]
+        text = unfenced_json(text)
         try:
             actual = exact_json(text)
         except ValueError:
@@ -1373,7 +1445,11 @@ def run_one(job):
             detail.append("provider reported zero prompt-cache read tokens")
 
         cache_usage = None
-        if sc.get("want_cache_metrics") or sc.get("want_folded_prefix"):
+        if (
+            sc.get("want_cache_metrics")
+            or sc.get("want_folded_prefix")
+            or sc.get("want_context_budget")
+        ):
             if not result_session_id:
                 correct = False
                 detail.append("persistent run returned no session id")
@@ -1408,8 +1484,21 @@ def run_one(job):
                                 metric_failures.append(
                                     "usage output_tokens != provider output tokens"
                                 )
-                        else:
+                        elif sc.get("want_folded_prefix"):
                             metric_failures = fold_count_failures(cache_usage)
+                        else:
+                            metric_failures = []
+                        if want_budget := sc.get("want_context_budget"):
+                            metric_failures.extend(
+                                context_budget_failures(
+                                    cache_usage,
+                                    form_outputs,
+                                    answer,
+                                    want_budget.get(f"{PROVIDER}/{model}")
+                                    if isinstance(want_budget, dict)
+                                    else None,
+                                )
+                            )
                         if metric_failures:
                             correct = False
                             detail.extend(metric_failures)
@@ -1478,6 +1567,13 @@ def run_one(job):
             )
         if sc.get("want_folded_prefix") and fold_forms:
             evidence.append(f"fold={fold_forms[0]['scope']}→prior-prefix")
+        health = cache_usage.get("health") if isinstance(cache_usage, dict) else None
+        if sc.get("want_context_budget") and isinstance(health, dict):
+            evidence.append(
+                f"context-budget={health.get('budget_tokens')}/"
+                f"{health.get('model_input_limit')} tokens, "
+                f"reminder {health.get('reminder_tokens')}"
+            )
         if sc.get("want_cache_read"):
             evidence.append(
                 f"cache-read={cached_tokens}/{tokens.get('input', 'unavailable')} input tokens"

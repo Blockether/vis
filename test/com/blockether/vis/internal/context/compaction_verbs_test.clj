@@ -1114,6 +1114,20 @@
         (expect (nil? (cr/render-ctx-delta (delta-map with-summary) (delta-map grown))))
         (expect (not (contains? (cr/project-ctx (eng/session-view grown)) "utilization"))))))
 
+(defdescribe prompt-budget-tokens-test
+             (it "gives the Opus family its budget across provider spellings"
+                 (doseq [model ["claude-opus-5-5" "anthropic/claude-opus-4.5"
+                                "anthropic.claude-opus-4-5-20251101-v1:0"
+                                "anthropic--claude-4.5-opus"]]
+                   (expect (= 250000 (eng/prompt-budget-tokens model)))))
+             (it "gives the GPT family its budget across provider spellings"
+                 (doseq [model ["gpt-6-sol" "GPT-6-Sol" "azure/gpt-5.5" "databricks-gpt-5-4"
+                                "chatgpt-4o-latest"]]
+                   (expect (= 230000 (eng/prompt-budget-tokens model)))))
+             (it "keeps the default for other and unnamed models"
+                 (doseq [model ["claude-sonnet-5" "gemini-3-pro" "o3" "mygpt-x" nil]]
+                   (expect (= eng/DEFAULT_PROMPT_BUDGET_TOKENS (eng/prompt-budget-tokens model))))))
+
 (defdescribe
   over-budget-hint-test
   ;; Pressure escalates before the soft ceiling and never silently expires while

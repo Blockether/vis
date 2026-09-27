@@ -168,21 +168,18 @@
 
 (defn pending-utilization
   "Context utilization of a request that measured `input-tokens` before its usage
-   is folded into `acc`, against an input `window`."
-  [acc input-tokens window]
+   is folded into `acc`, against an input `window` and soft `fold-budget`."
+  [acc input-tokens window fold-budget]
   (ctx-engine/utilization input-tokens
                           window
                           (+ (long (:input-tokens acc)) (long input-tokens))
-                          (loop-router/context-fold-budget window)))
+                          fold-budget))
 
 (defn measured-utilization
   "Context utilization after the turn's latest folded response, against an input
-   `window`."
-  [acc window]
-  (ctx-engine/utilization (:last-iter-input acc)
-                          window
-                          (:input-tokens acc)
-                          (loop-router/context-fold-budget window)))
+   `window` and soft `fold-budget`."
+  [acc window fold-budget]
+  (ctx-engine/utilization (:last-iter-input acc) window (:input-tokens acc) fold-budget))
 
 (defn turn-utilization
   "Context utilization at the end of a turn, with Svar's prompt-cache status
