@@ -112,6 +112,87 @@ def test_accounting_records_model_failure_but_retries_canceled_peer(tmp_path):
     assert failed == {"model-failed"}
 
 
+@pytest.mark.parametrize("name", ["completed", "live", "pending", "unknown"])
+def test_retry_task_refuses_unaccounted_completed_or_active_trials(
+    tmp_path, monkeypatch, capsys, name
+):
+    monkeypatch.setattr(
+        run_suite.sys, "argv", ["run_suite", "--dry-run", "--retry-task", name]
+    )
+    monkeypatch.setattr(run_suite, "JOBS", tmp_path / "jobs")
+    monkeypatch.setattr(
+        run_suite,
+        "catalog",
+        lambda _: (
+            [
+                {"name": task}
+                for task in ("completed", "live", "interrupted", "pending")
+            ],
+            [],
+        ),
+    )
+    monkeypatch.setattr(
+        run_suite,
+        "accounted_tasks",
+        lambda _: ({"completed"}, {"live"}, {"interrupted", "completed", "live"}),
+    )
+    with pytest.raises(SystemExit, match="2"):
+        run_suite.main()
+    assert (
+        "--retry-task requires an uncompleted, inactive failed model attempt"
+        in capsys.readouterr().err
+    )
+
+
+def test_retry_task_selects_interrupted_model_attempt_without_losing_failed_artifacts(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        run_suite.sys,
+        "argv",
+        [
+            "run_suite",
+            "--dry-run",
+            "--retry-task",
+            "interrupted",
+            "--retry-task",
+            "interrupted2",
+        ],
+    )
+    monkeypatch.setattr(run_suite, "JOBS", tmp_path / "jobs")
+    monkeypatch.setattr(
+        run_suite,
+        "catalog",
+        lambda _: (
+            [
+                {"name": task}
+                for task in (
+                    "completed",
+                    "live",
+                    "interrupted",
+                    "pending",
+                    "interrupted2",
+                )
+            ],
+            [],
+        ),
+    )
+    monkeypatch.setattr(
+        run_suite,
+        "accounted_tasks",
+        lambda _: (
+            {"completed"},
+            {"live"},
+            {"interrupted", "interrupted2", "completed", "live"},
+        ),
+    )
+    run_suite.main()
+    output = capsys.readouterr().out
+    assert "failed after model call: 4" in output
+    assert "pending: 3" in output
+    assert "Next tasks: interrupted, interrupted2, pending" in output
+
+
 def test_job_names_and_missing_metrics_are_not_silently_accepted(tmp_path):
     jobs = tmp_path / "jobs"
     job = jobs / "suite-001"

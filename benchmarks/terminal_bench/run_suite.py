@@ -203,10 +203,24 @@ def main() -> None:
     parser.add_argument("--max-batches", type=int)
     parser.add_argument("--min-free-gb", type=float, default=12.0)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--retry-task",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="retry a named failed model attempt (repeatable)",
+    )
     args = parser.parse_args()
     tasks, gpu_tasks = catalog(DATASET)
     completed, in_flight, failed = accounted_tasks(JOBS)
-    pending = [
+    retry_tasks = set(args.retry_task)
+    retryable = (failed & {task["name"] for task in tasks}) - completed - in_flight
+    if invalid := retry_tasks - retryable:
+        parser.error(
+            "--retry-task requires an uncompleted, inactive failed model attempt: "
+            + ", ".join(sorted(invalid))
+        )
+    pending = [task for task in tasks if task["name"] in retry_tasks] + [
         task for task in tasks if task["name"] not in completed | in_flight | failed
     ]
     print(
