@@ -470,11 +470,11 @@
 
 (defn- ->id
   "Normalize a model-supplied resource id. The tool is documented as taking a
-   positional string, but a model frequently calls `resource_stop({\"id\": x})`
-   (or `resource_stop({:id x})`) — unwrap that single-key map to its id value so
-   the call resolves instead of stringifying to a bogus `{id x}` literal."
+   positional string, but a model frequently calls `resource_stop({\"id\": x})`;
+   sandbox arguments arrive JSON-keyed, so unwrap that single-key map to its id
+   value and the call resolves instead of stringifying to a bogus `{id x}` literal."
   [id]
-  (if (map? id) (str (or (get id "id") (get id :id) id)) (str id)))
+  (if (map? id) (str (or (get id "id") id)) (str id)))
 
 (defn sandbox-bindings
   "Map of engine-builtin tool fns the loop merges into `session`'s agent sandbox.

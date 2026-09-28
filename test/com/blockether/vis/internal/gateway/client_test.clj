@@ -1856,3 +1856,14 @@
       (try (is (some? (report! ahead)))
            (is (nil? (report! ahead)) "the second attach repeats nothing")
            (finally (reset! reported? false))))))
+
+(deftest submit-turn-sync-reads-a-rejected-body-under-json-names
+  ;; Issue #291: a gateway body arrives JSON-keyed, so a rejected submission is
+  ;; read under "error" and "message" only.
+  (with-redefs-fn {#'client/submit-turn! (fn [_ _]
+                                           {"error" "busy" "message" "Session is busy."})}
+    (fn []
+      (let [failure
+            (try (client/submit-turn-sync! "sid" {}) nil (catch clojure.lang.ExceptionInfo e e))]
+        (is (= "Session is busy." (ex-message failure)))
+        (is (= "busy" (get (ex-data failure) "error")))))))

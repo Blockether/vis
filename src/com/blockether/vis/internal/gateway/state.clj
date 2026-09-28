@@ -1432,7 +1432,7 @@
       (some? roots)
       (assoc :root-count
         (count roots) :estimated-root-count
-        (count (filter #(#{:available "available"} (get-in % [:guidance :status])) roots))))))
+        (count (filter #(= "available" (get-in % [:guidance :status])) roots))))))
 
 (defn- usage-percent
   ^long [part total]

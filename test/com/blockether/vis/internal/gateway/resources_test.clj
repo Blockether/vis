@@ -361,3 +361,14 @@
              (expect (nil? (resources/get-resource failed "broken")))
              (finally (resources/unregister! sid "external")
                       (resources/unregister! failed "broken"))))))
+
+(defdescribe sandbox-bindings-test
+             (it "unwraps a JSON-keyed id map passed from the sandbox"
+                 ;; Issue #291: sandbox arguments arrive with JSON (string) keys only.
+                 (let [sid (fresh-sid)]
+                   (resources/register! sid
+                                        {:id "r1" :kind :thing :status :up}
+                                        {:stop-fn (fn [])})
+                   (try (let [stop (get (resources/sandbox-bindings sid) 'resource-stop)]
+                          (expect (= {"result" "stopped" "id" "r1"} (stop {"id" "r1"}))))
+                        (finally (resources/unregister! sid "r1"))))))

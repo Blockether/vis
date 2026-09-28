@@ -373,15 +373,16 @@
 
                   persistance/db-session-usage-stats
                   (constantly {:input-tokens 900000
-                               :health {:last-request-tokens 32000
-                                        :budget-tokens 200000
-                                        :counted-projection :prepared-request
-                                        :estimated-input-tokens 33000
-                                        :breakdown [{:label "Conversation and tool results"
-                                                     :tokens 33000}]
-                                        :call 5
-                                        :stale true
-                                        :roots [{:path "/linked"}]}})]
+                               :health
+                               {:last-request-tokens 32000
+                                :budget-tokens 200000
+                                :counted-projection :prepared-request
+                                :estimated-input-tokens 33000
+                                :breakdown [{:label "Conversation and tool results" :tokens 33000}]
+                                :call 5
+                                :stale true
+                                :roots [{:path "/linked"}
+                                        {:path "/guided" :guidance {:status "available"}}]}})]
 
       (let [usage (state/session-usage-info "session")]
         (expect (= 900000 (get usage "input_tokens")))
@@ -394,14 +395,14 @@
               "budget_remaining_tokens" 168000
               "estimate_difference_tokens" 1000
               "estimate_difference_percent" 3.1
-              "root_count" 1
-              "estimated_root_count" 0
+              "root_count" 2
+              "estimated_root_count" 1
               "counted_projection" "prepared-request"
               "estimated_input_tokens" 33000
               "breakdown" [{"label" "Conversation and tool results" "tokens" 33000}]
               "call" 5
               "stale" true
-              "roots" [{"path" "/linked"}]}
+              "roots" [{"path" "/linked"} {"path" "/guided" "guidance" {"status" "available"}}]}
              (get usage "health")))))))
 
 (defdescribe session-health-derived-metrics-test

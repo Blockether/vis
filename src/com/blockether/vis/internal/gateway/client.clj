@@ -2986,8 +2986,8 @@
         turn-id
         (get turn "turn_id")]
 
-    (when-let [e (or (:error submitted) (get submitted "error"))]
-      (throw (ex-info (or (:message submitted) (get submitted "message") (str e)) submitted)))
+    (when-let [e (get submitted "error")]
+      (throw (ex-info (or (get submitted "message") (str e)) submitted)))
     (terminal-event->result (read-events-until! sid 0 turn-id on-event) turn-id)))
 
 (defn attach-turn-sync!

@@ -457,12 +457,11 @@
            (str "globals().setdefault('" dict-name "', {}).update(" (py-json-literal m) ")"))))
 
 (defn- keywordize-facts
-  "The guest's facts map with keyword keys, whichever way the envelope decoded
-   them, and its `:names` as strings."
+  "The guest's JSON-keyed facts map with keyword keys, and its `:names` as strings."
   [facts]
   (let [m (into {}
                 (map (fn [[k v]]
-                       [(keyword (str/replace (if (keyword? k) (name k) (str k)) "_" "-")) v]))
+                       [(keyword (str/replace k "_" "-")) v]))
                 (or facts {}))]
     (assoc m :names (mapv str (or (:names m) [])))))
 

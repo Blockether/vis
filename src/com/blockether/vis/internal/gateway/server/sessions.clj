@@ -28,7 +28,7 @@
   [request]
   (if-let [sid (http/path-sid request)]
     (if-let [info (state/session-workspace-info sid)]
-      (let [root (or (get info "root") (:root info))
+      (let [root (get info "root")
             requested (get-in request [:query-params "channel"])
             channel (case requested
                       nil
