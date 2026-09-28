@@ -96,6 +96,24 @@
                                   {:input 0.1 :cached-input 0.01 :output 0.5})
                                 (select-keys (:pricing model) [:input :cached-input :output])))))))
 
+(defdescribe copilot-claude-5-5-routing-test
+             (it "routes the Copilot Claude 5.5 defaults on the native wire"
+                 (let [provider
+                       (@#'sut/provider-entry)
+
+                       router
+                       (svar/make-router [(assoc (:provider/preset provider)
+                                            :id (:provider/id provider)
+                                            :api-key "test"
+                                            :models [{:name "claude-opus-5.5"}
+                                                     {:name "claude-sonnet-5.5"}])])]
+
+                   (doseq [model (:models (first (:providers router)))]
+                     (expect (= :anthropic (:api-style model)))
+                     (expect (= :anthropic-thinking (:reasoning-style model)))
+                     (expect (= 0.0 (get-in model [:pricing :input]))))
+                   (expect (= 1000000 (:context (first (:models (first (:providers router))))))))))
+
 (defdescribe copilot-gpt6-policy-test
              (it "requests Copilot policy access for Sol and Luna"
                  (let [requested (atom #{})]
@@ -136,9 +154,10 @@
         (expect (= "https://api.individual.githubcopilot.com/v1"
                    (get-in copilot [:provider/preset :base-url])))
         (expect (= "/responses" (get-in copilot [:provider/preset :responses-path])))
-        ;; The curated defaults intentionally contain only the current cacheable fleets.
-        (expect (= #{"claude-opus-5" "claude-fable-5" "claude-sonnet-5" "gpt-6-astra" "gpt-6-sol"
-                     "gpt-6-luna" "gpt-5.6-luna" "gpt-5.6-sol" "gpt-5.6-terra"}
+        ;; A configured default is selectable; account access depends on Copilot policy.
+        (expect (= #{"claude-opus-5.5" "claude-sonnet-5.5" "claude-opus-5" "claude-fable-5"
+                     "claude-sonnet-5" "gpt-6-astra" "gpt-6-sol" "gpt-6-luna" "gpt-5.6-luna"
+                     "gpt-5.6-sol" "gpt-5.6-terra"}
                    models))
         (expect (not-any? #(re-find #"(?i)gemini|grok" %) models))
         (expect (ifn? (:provider/status-fn copilot)))
@@ -147,14 +166,15 @@
         (expect (ifn? (:provider/auth-fn copilot)))
         (expect (ifn? (:provider/get-token-fn copilot)))
         (expect (ifn? (:provider/limits-fn copilot)))))
-  (it "requests Copilot policy access for Claude Fable 5.1"
+  (it "requests Copilot policy access for new Claude 5.5 models"
       (let [requested (atom #{})]
         (with-redefs-fn {#'sut/enable-copilot-model! (fn [_ _ model]
                                                        (swap! requested conj model)
                                                        true)}
           (fn []
             (#'sut/enable-known-copilot-models! "token" "https://api.githubcopilot.com")
-            (expect (contains? @requested "claude-fable-5.1"))))))
+            (doseq [model ["claude-opus-5.5" "claude-sonnet-5.5" "claude-fable-5.1"]]
+              (expect (contains? @requested model)))))))
   (describe "credential-detect"
             (it "detects the one Copilot credential whatever tier minted it"
                 (sut/register!)
