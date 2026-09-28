@@ -25,7 +25,8 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.extension.capability :as capability]
             [com.blockether.vis.internal.inference.runtime :as runtime]
-            [com.blockether.vis.internal.speech.files :as files])
+            [com.blockether.vis.internal.speech.files :as files]
+            [com.blockether.vis.internal.util :as util])
   (:import [java.io ByteArrayInputStream File InputStream]
            [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
@@ -130,8 +131,7 @@
 
 (defn- compatible-linux-jni!
   [token ^bytes data {:keys [sha256 version-offset hash-offset]}]
-  (when-not (MessageDigest/isEqual (.parseHex (HexFormat/of) ^String sha256)
-                                   (.digest (MessageDigest/getInstance "SHA-256") data))
+  (when-not (MessageDigest/isEqual (.parseHex (HexFormat/of) ^String sha256) (util/sha256 data))
     (throw (ex-info "Sherpa's Linux JNI changed; cannot safely share ONNX Runtime 1.30.0"
                     {:type :speech/native-incompatible :platform token})))
   (replace-verified-bytes! data

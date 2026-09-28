@@ -82,7 +82,7 @@
     ;; Domain services.
     [services
      [extension provider workspace session channel sandbox attachment external-opener context python
-      speech decisions docs council view gateway.client gateway.resources gateway.runtime
+      inference speech decisions docs council view gateway.client gateway.resources gateway.runtime
       gateway.discovery gateway.diagnostics foundation.harness.discovery foundation.mpl-capture
       foundation.shell-log]]
     ;; Built-in extensions over the services.

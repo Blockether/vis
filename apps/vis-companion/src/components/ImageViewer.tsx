@@ -684,7 +684,7 @@ export function ImageViewer({
       {error && (
         <div
           role="alert"
-          className="absolute inset-x-4 top-[calc(4rem+env(safe-area-inset-top))] z-20 mx-auto max-w-lg border border-warn-edge bg-warn-surface px-3 py-2 text-center font-mono text-chip text-answer-foreground shadow-lg"
+          className="absolute inset-x-4 top-[calc(4rem+env(safe-area-inset-top))] z-20 mx-auto max-w-lg border border-warn-edge bg-warn-surface px-3 py-2 text-center font-mono text-chip text-answer-foreground shadow-float"
         >
           {error}
         </div>
