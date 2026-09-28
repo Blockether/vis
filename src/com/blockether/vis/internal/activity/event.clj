@@ -111,23 +111,18 @@
 
 (defn- compact-presentation
   [workspace-root presentation]
-  (let [field-key
-        (fn [m k]
-          (if (contains? m (keyword k)) (keyword k) k))
-
-        compact
+  (let [compact
         #(compact-path-text workspace-root %)
 
         block
         (fn [block]
-          (case (some-> (get block (field-key block "type"))
-                        name)
+          (case (get block "type")
             ("text" "heading")
-            (update block (field-key block "text") compact)
+            (update block "text" compact)
 
             "table"
             (update block
-                    (field-key block "rows")
+                    "rows"
                     #(mapv (fn [row]
                              (mapv compact row))
                            %))
@@ -135,12 +130,11 @@
             block))]
 
     (cond-> (-> presentation
-                (update (field-key presentation "headline") compact)
-                (update (field-key presentation "summary") compact)
-                (update (field-key presentation "content") #(mapv block %)))
-      (contains? presentation (field-key presentation "sections"))
-      (update (field-key presentation "sections")
-              #(mapv (partial compact-presentation workspace-root) %)))))
+                (update "headline" compact)
+                (update "summary" compact)
+                (update "content" #(mapv block %)))
+      (contains? presentation "sections")
+      (update "sections" #(mapv (partial compact-presentation workspace-root) %)))))
 
 (defn- metric-key
   [k]
@@ -176,16 +170,17 @@
         :else value))
 
 (defn- redact-result
-  "Retain complete finite result data for authored presentations, without transport handles."
+  "Retain complete finite result data for authored presentations, without transport handles,
+   under the JSON member names presenters read."
   [value]
   (cond (callback-envelope? value) "[CALLBACK]"
-        (map? value) (into {}
-                           (map (fn [[k v]]
-                                  [k (if (secret-entry? k v) "[REDACTED]" (redact-result v))]))
-                           (if (and (string? (get value "__vis_object__"))
-                                    (map? (get value "__vis_attrs__")))
-                             (get value "__vis_attrs__")
-                             value))
+        (map? value)
+        (into {}
+              (map (fn [[k v]]
+                     [(wire/wire-key k) (if (secret-entry? k v) "[REDACTED]" (redact-result v))]))
+              (if (and (string? (get value "__vis_object__")) (map? (get value "__vis_attrs__")))
+                (get value "__vis_attrs__")
+                value))
         (coll? value) (mapv redact-result value)
         (string? value) (util/redact-secret-text value)
         :else value))
@@ -486,23 +481,21 @@
     (throw (ex-info "Invalid or oversized Activity presentation"
                     {:type :activity/invalid-content})))
   (let [public
-        (compact-presentation workspace-root (redact presentation))
+        (compact-presentation workspace-root (redact (wire/->wire presentation)))
 
         handle-id
-        (or (get public "handle_id") (get public :handle-id))]
+        (get public "handle_id")]
 
     (when-not (contract/valid-presentation? public)
       (throw (ex-info "Invalid or oversized Activity presentation"
                       {:type :activity/invalid-content})))
     (checked (cond-> (assoc (base-event ctx invocation operation presenter :content)
-                       :presentation (dissoc public "handle_id" :handle-id))
+                       :presentation (dissoc public "handle_id"))
                handle-id
                (assoc :handle-id handle-id)
 
                (false? (:show-start activity))
                (assoc :show-start false)))))
-
-(defn- map-value [m k] (when (map? m) (or (get m k) (get m (name k)))))
 
 (def ^:private sensitive-diff-text? util/secret-key?)
 
@@ -546,16 +539,16 @@
   "ONE file's diff, named by that file and carried WHOLE."
   [unit]
   (let [lines
-        (diff-lines (map-value unit :diff))
+        (diff-lines (:diff unit))
 
         counts
-        (map-value unit :lines)
+        (:lines unit)
 
         target
-        (map-value unit :target)
+        (:target unit)
 
         path
-        (or (map-value target :resolved) (map-value target :requested))
+        (or (:resolved target) (:requested target))
 
         upstream-truncated?
         (some #(and (= :context (:kind %)) (str/includes? (:text %) "omitted")) lines)]
@@ -563,9 +556,9 @@
     {:kind :diff
      :text (str (or path "diff"))
      :lines lines
-     :additions (long (or (map-value counts :added) 0))
-     :deletions (long (or (map-value counts :removed) 0))
-     :modifications (long (or (map-value counts :modified) 0))
+     :additions (long (or (get counts "added") 0))
+     :deletions (long (or (get counts "removed") 0))
+     :modifications (long (or (get counts "modified") 0))
      :is-truncated (boolean upstream-truncated?)
      :is-redacted (boolean (some :is-redacted lines))}))
 
@@ -580,35 +573,32 @@
    the transport's ceiling is answered once, at the event's own edge, by `fit-event`."
   [{:keys [result-envelope]}]
   (let [metadata
-        (map-value result-envelope :metadata)
+        (:metadata result-envelope)
 
         declared
-        (map-value metadata :diffs)
+        (:diffs metadata)
 
         carried
-        (filterv #(util/non-blank-string? (map-value % :diff))
+        (filterv #(util/non-blank-string? (:diff %))
           (if (sequential? declared) (vec declared) [metadata]))]
 
     (when (seq carried) (mapv file-diff-evidence carried))))
 
 (defn- explicit-group-token
   [value]
-  (let [token (or (map-value value :activity/group-token)
-                  (get-in value [:metadata :activity/group-token])
-                  (get-in value ["metadata" "activity/group-token"]))]
+  (let [token (when (map? value)
+                (or (:activity/group-token value)
+                    (get-in value [:metadata :activity/group-token])))]
     (when (some? token) (bounded-text token max-summary-bytes))))
 
 (defn- declared-resources
   [result]
   (let [value (when (map? result)
-                (or (:activity/resources result)
-                    (get result "activity/resources")
-                    (get-in result [:metadata :activity/resources])
-                    (get-in result ["metadata" "activity/resources"])))]
+                (or (:activity/resources result) (get-in result [:metadata :activity/resources])))]
     (when (sequential? value)
       (keep (fn [resource]
-              (let [type (or (:type resource) (get resource "type"))
-                    id (or (:id resource) (get resource "id"))]
+              (let [type (:type resource)
+                    id (:id resource)]
 
                 (when (and type id) {:type type :id (bounded-text id max-summary-bytes)})))
             value))))
@@ -617,7 +607,7 @@
   "Keys a caller puts in a result to DECLARE something to Activity instead of reporting a
    value: resources to name, a token to group by. `declared-resources` and
    `explicit-group-token` are their only readers."
-  [:activity/resources "activity/resources" :activity/group-token "activity/group-token"])
+  [:activity/resources :activity/group-token])
 
 (defn- displayable-result
   "The part of a result a row can SHOW. A declaration is addressed to Activity, not to the
@@ -644,7 +634,7 @@
           (first args)
 
           id
-          (if (map? first-arg) (map-value first-arg :id) first-arg)]
+          (if (map? first-arg) (get first-arg "id") first-arg)]
 
       (when (some? id) (bounded-text id max-summary-bytes)))))
 
@@ -685,16 +675,16 @@
   [{:keys [operation presenter result workspace-root]}]
   (when (and (map? result) (= :tests (presenter/presenter-for operation presenter)))
     (let [failures
-          (or (get result "failures") (get result :failures))
+          (get result "failures")
 
           dir
-          (or (not-empty (str (or (get result "cwd") (get result :cwd) ""))) workspace-root)]
+          (or (not-empty (str (get result "cwd"))) workspace-root)]
 
       (when (sequential? failures)
         (->> failures
              (filter map?)
              (keep (fn [failure]
-                     (let [file (or (get failure "file") (get failure :file))]
+                     (let [file (get failure "file")]
                        (when (util/non-blank-string? file) (runner-file dir file)))))
              distinct
              (map (fn [path]
@@ -704,7 +694,7 @@
   [{:keys [operation presenter args result result-envelope] :as details}]
   (let [shell-id
         (when (shell-presenter? operation presenter)
-          (or (when (map? result) (map-value result :id)) (shell-id-from-args operation args)))
+          (or (when (map? result) (get result "id")) (shell-id-from-args operation args)))
 
         refs
         (concat (declared-resources result)
@@ -824,7 +814,8 @@
 
         full
         (when-let [render (get-in details [:activity :render])]
-          (compact-presentation (:workspace-root details) (redact (render details value))))
+          (compact-presentation (:workspace-root details)
+                                (redact (wire/->wire (render details value)))))
 
         clip-line
         #(-> (str %)

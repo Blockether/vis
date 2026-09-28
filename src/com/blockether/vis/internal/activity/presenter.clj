@@ -33,7 +33,7 @@
 ;; Presentation primitives shared with compiled-in packs. `vis.core` re-exports
 ;; them under `activity-*` names so a library that owns a tool binding builds the
 ;; same evidence shapes as a built-in, without reaching into this namespace.
-(defn field [m k] (when (map? m) (get m k (get m (keyword k)))))
+(defn field [m k] (when (map? m) (get m k)))
 
 (defn label
   [value]
@@ -173,13 +173,13 @@
                   (if (and (= "heading" (get heading "type")) (= "code" (get body "type")))
                     (case (get heading "text")
                       "Command"
-                      (assoc fields :command (get body "text"))
+                      (assoc fields "command" (get body "text"))
 
                       "Output"
-                      (update fields :out merge-shell-output (get body "text"))
+                      (update fields "out" merge-shell-output (get body "text"))
 
                       "Stderr"
-                      (update fields :err merge-shell-output (get body "text"))
+                      (update fields "err" merge-shell-output (get body "text"))
 
                       fields)
                     fields))
@@ -196,13 +196,13 @@
 
     (cond-> fields
       (= "Running command" (get presentation "headline"))
-      (assoc :status "running")
+      (assoc "status" "running")
 
       (= "Command finished" (get presentation "headline"))
-      (assoc :status "exited")
+      (assoc "status" "exited")
 
       (some? exit-text)
-      (assoc :exit exit-text))))
+      (assoc "exit" exit-text))))
 
 (defn shell-receipt-presentation
   "One current shell outcome from ordered handle receipts, retaining distinct output and errors."
@@ -217,14 +217,14 @@
         (reduce (fn [fields presentation]
                   (let [next-fields (shell-content-fields presentation)]
                     (-> fields
-                        (merge (dissoc next-fields :out :err))
-                        (update :out merge-shell-output (:out next-fields))
-                        (update :err merge-shell-output (:err next-fields)))))
+                        (merge (dissoc next-fields "out" "err"))
+                        (update "out" merge-shell-output (get next-fields "out"))
+                        (update "err" merge-shell-output (get next-fields "err")))))
                 {}
                 presentations)
 
         command
-        (or (:command fields) (:summary (first children)))
+        (or (get fields "command") (:summary (first children)))
 
         current-error
         (:error-summary current)
@@ -234,12 +234,12 @@
 
     (when (or (seq presentations) (seq errors))
       (let [value
-            (cond-> (assoc fields :command command)
+            (cond-> (assoc fields "command" command)
               (= :failed (:state current))
-              (dissoc :status :exit)
+              (dissoc "status" "exit")
 
               (= :running (:state current))
-              (assoc :status "running"))
+              (assoc "status" "running"))
 
             view
             (shell-presentation value)]
@@ -758,8 +758,7 @@
                               (cons (heading (str "Failure " n (when turn (str " · Turn " turn))))
                                     (result-blocks (visible-result (cond-> failure
                                                                      shared-request?
-                                                                     (dissoc "user_request"
-                                                                       :user_request)))))))
+                                                                     (dissoc "user_request")))))))
                           (range 1 (inc (count failures)))
                           failures))}])))}))
 

@@ -9,6 +9,11 @@
             [charred.api :as json]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defn- result-view
+  "A built-in presentation of `value` in the JSON shape Activity hands presenters."
+  [details value]
+  (presenter/result-presentation details (wire/->wire value)))
+
 (defn result-fixture
   "Production-generated result views shared by Companion stories and TUI grid tests."
   [& [override-cases]]
@@ -196,7 +201,7 @@
               result
               [nil {} []]]
 
-        (let [view (presenter/result-presentation {:operation operation} result)]
+        (let [view (result-view {:operation operation} result)]
           (expect (= summary (get view "summary")))
           (expect (empty? (get view "content"))))))
   (it
@@ -208,7 +213,7 @@
              [:update_goal
               {:status "blocked" :objective "Verify Activity" :reason "Missing test dependency"}
               "Blocked · Verify Activity" ["Missing test dependency"]]]]
-      (let [view (presenter/result-presentation {:operation operation} result)
+      (let [view (result-view {:operation operation} result)
             content (pr-str (get view "content"))]
 
         (expect (contract/valid-presentation? view))
@@ -265,12 +270,12 @@
   semantic-results-test
   (it "hides transport identifiers and redundant flags recursively"
       (let [view
-            (presenter/result-presentation {:operation :council.publish}
-                                           {:title "Review"
-                                            :thread_id 258
-                                            :entry_id "secret-handle"
-                                            :content "Useful result"
-                                            :nested {:session_id "uuid" :name "Reviewer"}})
+            (result-view {:operation :council.publish}
+                         {:title "Review"
+                          :thread_id 258
+                          :entry_id "secret-handle"
+                          :content "Useful result"
+                          :nested {:session_id "uuid" :name "Reviewer"}})
 
             body
             (pr-str (get view "content"))]
@@ -279,13 +284,13 @@
         (expect (re-find #"Useful result" body))))
   (it "shows command, preserved output and actual exit status for shell handles"
       (let [view
-            (presenter/result-presentation {:operation :_shell-wait :label "internal"}
-                                           {:command "printf 'a\nb' && false"
-                                            :out "a\nb"
-                                            :exit 1
-                                            :id "handle-123"
-                                            :log_path "/private/log"
-                                            :status "exited"})
+            (result-view {:operation :_shell-wait :label "internal"}
+                         {:command "printf 'a\nb' && false"
+                          :out "a\nb"
+                          :exit 1
+                          :id "handle-123"
+                          :log_path "/private/log"
+                          :status "exited"})
 
             blocks
             (get view "content")]
@@ -305,11 +310,10 @@
              {"type" "code" "language" "bash" "text" "npm run storybook"}]
 
             running
-            (presenter/result-presentation {:operation :shell} value)
+            (result-view {:operation :shell} value)
 
             with-output
-            (presenter/result-presentation {:operation :_shell-logs}
-                                           (assoc value :out "Server ready"))]
+            (result-view {:operation :_shell-logs} (assoc value :out "Server ready"))]
 
         (expect (= "Running command" (get running "headline")))
         (expect (= command (get running "content")))
@@ -317,18 +321,16 @@
                          [{"type" "heading" "text" "Output"} {"type" "code" "text" "Server ready"}])
                    (get with-output "content")))))
   (it "labels an unavailable exit beside its bold label"
-      (let [view (presenter/result-presentation {:operation :_shell-wait}
-                                                {:command "sleep 10" :exit nil :status "exited"})]
+      (let [view (result-view {:operation :_shell-wait}
+                              {:command "sleep 10" :exit nil :status "exited"})]
         (expect (= {"type" "markdown" "text" "**Exit code:** unavailable"}
                    (last (get view "content"))))))
   (it "does not turn a publish receipt identifier into expandable content"
-      (expect
-        (= [] (get (presenter/result-presentation {:operation :council.publish} 279) "content"))))
+      (expect (= [] (get (result-view {:operation :council.publish} 279) "content"))))
   (it "retains useful titles within member lists"
       (expect (re-find #"Reviewer"
-                       (pr-str (presenter/result-presentation {:operation :council.members}
-                                                              [{:session_id "opaque"
-                                                                :title "Reviewer"}]))))))
+                       (pr-str (result-view {:operation :council.members}
+                                            [{:session_id "opaque" :title "Reviewer"}]))))))
 
 (defdescribe
   council-activity-test
@@ -352,7 +354,7 @@
              :replies [{:session_id "internal-recipient" :state "pending"}]}]
 
         (doseq [value [entry (wire/->wire entry)]]
-          (let [view (presenter/result-presentation {:operation :council.publish} value)]
+          (let [view (result-view {:operation :council.publish} value)]
             (expect (= {"headline" "Published Council message"
                         "summary" ""
                         "content" [{"type" "markdown" "text" body}]}
@@ -367,9 +369,9 @@
               [nil {} {:content ""} {"content" ""} 279]]
 
         (expect (= {"headline" headline "summary" "No message content" "content" []}
-                   (presenter/result-presentation {:operation operation} value)))))
+                   (result-view {:operation operation} value)))))
   (it "shows only the Council read label and message body"
-      (let [view (presenter/result-presentation
+      (let [view (result-view
                    {:operation :council.get}
                    {:title "Review"
                     :content "Tests **passed**."
@@ -399,7 +401,7 @@
              :has_more true}
 
             view
-            (presenter/result-presentation {:operation :council.read} value)]
+            (result-view {:operation :council.read} value)]
 
         (expect (= "1 message · more available" (get view "summary")))
         (expect (empty? (get view "content")))
@@ -416,7 +418,7 @@
                 {:entries [{:thread_id 42 :title "Review" :created_at 1 :kind "coordination"}]
                  :after 42
                  :has_more false} "1 thread" ["Thread"] [["Review"]]]]]
-        (let [view (presenter/result-presentation {:operation operation} value)]
+        (let [view (result-view {:operation operation} value)]
           (expect (= summary (get view "summary")))
           (expect (= [{"type" "table" "columns" columns "rows" rows}] (get view "content"))))))
   (it "names empty Council results instead of exposing empty envelopes"
@@ -424,7 +426,7 @@
               [[:council.members [] "No active members"]
                [:council.threads {:entries [] :after 0 :has_more false} "No threads"]
                [:council.read {:entries [] :after 0 :has_more false} "No messages"]]]
-        (let [view (presenter/result-presentation {:operation operation} value)]
+        (let [view (result-view {:operation operation} value)]
           (expect (= summary (get view "summary")))
           (expect (empty? (get view "content")))
           (expect (empty? (get view "sections"))))))
@@ -438,7 +440,7 @@
              "replies" [{"state" "delivered"} {"state" "interrupted"} {"state" "unavailable"}]}
 
             view
-            (presenter/result-presentation {:operation :council.get} value)]
+            (result-view {:operation :council.get} value)]
 
         (expect (= "" (get view "summary")))
         (expect (= [{"type" "markdown" "text" body}] (get view "content")))
@@ -453,11 +455,10 @@
 (defdescribe
   managed-agent-presentation-test
   (it "keeps cancellation counts without exposing recipient identifiers"
-      (let [view (presenter/result-presentation {:operation :council.cancel}
-                                                {:session_id "internal-child"
-                                                 :status "cancelled"
-                                                 :cancelled ["internal-child"
-                                                             "internal-grandchild"]})]
+      (let [view (result-view {:operation :council.cancel}
+                              {:session_id "internal-child"
+                               :status "cancelled"
+                               :cancelled ["internal-child" "internal-grandchild"]})]
         (expect (= "Cancelled · 2 subagents" (get view "summary")))
         (expect (empty? (get view "content")))
         (expect (not (re-find #"internal-" (pr-str view))))))
@@ -487,9 +488,7 @@
   (it "shows meaningful empty and populated team counts"
       (doseq [[value expected] [[[] "No subagents"]
                                 [[{:session_id "child" :status "queued"}] "1 subagent"]]]
-        (expect (= expected
-                   (get (presenter/result-presentation {:operation :council.subagents} value)
-                        "summary")))))
+        (expect (= expected (get (result-view {:operation :council.subagents} value) "summary")))))
   (it "keeps all agent result views valid and retains lifecycle evidence"
       (let [projection
             (result-fixture
@@ -640,7 +639,7 @@
           (read-session-result)
 
           view
-          (presenter/result-presentation {:operation :read_session} value)
+          (result-view {:operation :read_session} value)
 
           content
           (get view "content")
@@ -686,7 +685,7 @@
               "diagnosis" {})
 
             view
-            (presenter/result-presentation {:operation :read_session} value)
+            (result-view {:operation :read_session} value)
 
             rows
             (mapcat #(get % "rows") (get view "content"))]
@@ -696,7 +695,7 @@
         (expect (.contains (pr-str (get view "sections")) "Request 1 ends here."))
         (expect (not-any? #(= "Failure details" (get % "headline")) (get view "sections")))))
   (it "states empty and unavailable data without inventing zero usage"
-      (let [view (presenter/result-presentation {:operation :read_session} {})]
+      (let [view (result-view {:operation :read_session} {})]
         (expect (= "No session data" (get view "summary")))
         (expect (empty? (get view "sections")))
         (expect (contract/valid-presentation? view))))
@@ -722,9 +721,9 @@
             (apply str (repeat 100 "😀"))
 
             view
-            (presenter/result-presentation
-              {:operation :read_session}
-              {"session" {"title" request "turns" [{"id" "unicode" "user_request" request}]}})
+            (result-view {:operation :read_session}
+                         {"session" {"title" request
+                                     "turns" [{"id" "unicode" "user_request" request}]}})
 
             rows
             (mapcat #(get % "rows") (get view "content"))]
@@ -740,10 +739,10 @@
             (first (get value "failures"))
 
             view
-            (presenter/result-presentation {:operation :read_session}
-                                           (-> value
-                                               (assoc "failures" [failure failure])
-                                               (assoc-in ["current_turn" "failures"] [failure])))]
+            (result-view {:operation :read_session}
+                         (-> value
+                             (assoc "failures" [failure failure])
+                             (assoc-in ["current_turn" "failures"] [failure])))]
 
         (expect (= 1 (count (re-seq #"Final failure detail\." (pr-str view)))))
         (expect (.contains (get view "summary") "1 failure"))))
@@ -752,7 +751,7 @@
             (first (get (read-session-result) "failures"))
 
             view
-            (presenter/result-presentation {:operation :read_session} {"failures" [failure]})]
+            (result-view {:operation :read_session} {"failures" [failure]})]
 
         (expect (= 1 (count (re-seq #"Final request requirement\." (pr-str view)))))
         (expect (= 1 (count (re-seq #"Final failure detail\." (pr-str view)))))))
@@ -780,7 +779,7 @@
           (expect (contract/valid-projection? settled)))))
   (it "distinguishes uncached input from regular input excluding cache writes"
       (let [view
-            (presenter/result-presentation {:operation :read_session} (read-session-result))
+            (result-view {:operation :read_session} (read-session-result))
 
             rows
             (mapcat #(get % "rows") (get (first (get view "sections")) "content"))

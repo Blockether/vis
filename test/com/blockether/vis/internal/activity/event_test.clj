@@ -285,7 +285,8 @@
             (event/terminal-event ctx (event/invocation ctx nil) details)]
 
         (expect (= usage (get @captured "cost")))
-        (expect (= (event/redact credentials) (get @captured "nested")))
+        ;; Presenters read JSON member names, so the boundary renames keys after redaction.
+        (expect (= (wire/->wire (event/redact credentials)) (get @captured "nested")))
         (doseq [text
                 [(:argument-summary start) (:result-summary terminal)
                  (wire/json-str (:presentation terminal))]
@@ -325,15 +326,14 @@
                                              "summary" "Usage"
                                              "content" [{"type" "table"
                                                          "columns" ["Count"]
-                                                         "rows"
-                                                         (mapv #(vector (str %))
-                                                               (vals (get public
-                                                                          (key-fn "tokens"))))}]})}}
+                                                         "rows" (mapv #(vector (str %))
+                                                                      (vals (get public
+                                                                                 "tokens")))}]})}}
               start (event/start-event ctx (event/invocation ctx nil) details)
               terminal (event/terminal-event ctx (event/invocation ctx nil) details)]
 
           (expect (= value (event/redact value)))
-          (expect (= value @captured))
+          (expect (= (wire/->wire value) @captured))
           (doseq [text [(:argument-summary start) (:result-summary terminal)
                         (wire/json-str (:presentation terminal))]
                   n (vals tokens)]
@@ -1121,36 +1121,31 @@
          :outcome :succeeded}
 
         terminal-for
-        (fn [result] (event/terminal-event ctx invocation (assoc details :result result)))]
+        (fn [result]
+          (event/terminal-event ctx invocation (assoc details :result result)))]
 
     (it "carries the file a failing test named, resolved under the runner's directory"
         ;; the runner reports a classpath-relative location; the row carries the
         ;; file itself, which is what a reader presses to open it
-        (let [terminal
-              (terminal-for {"cwd" root
-                             "failures" [{"file" reported
-                                          "line" 2372
-                                          "test" "renderer-router-refresh-test"}]})]
-
+        (let [terminal (terminal-for {"cwd" root
+                                      "failures" [{"file" reported
+                                                   "line" 2372
+                                                   "test" "renderer-router-refresh-test"}]})]
           (expect (= [{:type :file :id (.getAbsolutePath source)}] (:resources terminal)))))
     (it "names a file once however many of its tests failed"
-        (let [terminal
-              (terminal-for {"cwd" root
-                             "failures" [{"file" reported "line" 12}
-                                         {"file" reported "line" 44}]})]
-
+        (let [terminal (terminal-for {"cwd" root
+                                      "failures" [{"file" reported "line" 12}
+                                                  {"file" reported "line" 44}]})]
           (expect (= [{:type :file :id (.getAbsolutePath source)}] (:resources terminal)))))
     (it "leaves a location that resolves to no readable file out of the row"
-        (let [terminal
-              (terminal-for {"cwd" root "failures" [{"file" "com/absent/missing_test.clj"}]})]
-
+        (let [terminal (terminal-for {"cwd" root
+                                      "failures" [{"file" "com/absent/missing_test.clj"}]})]
           (expect (nil? (:resources terminal)))))
     (it "reads failures only from a test run"
-        (let [terminal
-              (event/terminal-event ctx
-                                    invocation
-                                    (assoc details
-                                      :presenter :generic
-                                      :result {"cwd" root "failures" [{"file" reported}]}))]
-
+        (let [terminal (event/terminal-event ctx
+                                             invocation
+                                             (assoc details
+                                               :presenter :generic
+                                               :result {"cwd" root
+                                                        "failures" [{"file" reported}]}))]
           (expect (nil? (:resources terminal)))))))
