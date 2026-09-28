@@ -83,6 +83,22 @@ def has_pinned_provider_call(trial: Path) -> bool:
     return False
 
 
+def exception_type(result: dict) -> str | None:
+    """Name the exception Harbor recorded for a trial, if any."""
+    return (result.get("exception_info") or {}).get("exception_type")
+
+
+def is_scored_attempt(result: dict, trial: Path) -> bool:
+    """Accept verified Vis results and verified timeouts after real model work."""
+    if result.get("verifier_result") is None:
+        return False
+    # Harbor verifies a timed-out agent, but Vis never writes its final result.
+    return has_vis_result(result) or (
+        exception_type(result) == "AgentTimeoutError"
+        and has_pinned_provider_call(trial)
+    )
+
+
 def accounted_tasks(jobs: Path) -> tuple[set[str], set[str], set[str]]:
     """Skip scored and failed model attempts, but retry setup and canceled trials."""
     completed = set()
@@ -93,15 +109,14 @@ def accounted_tasks(jobs: Path) -> tuple[set[str], set[str], set[str]]:
         if (
             isinstance(task, str)
             and result.get("finished_at")
-            and has_vis_result(result)
-            and result.get("verifier_result") is not None
+            and is_scored_attempt(result, path.parent)
         ):
             completed.add(task.removeprefix("terminal-bench/"))
         elif (
             isinstance(task, str)
             and result.get("finished_at")
-            and (result.get("exception_info") or {}).get("exception_type")
-            == "NonZeroAgentExitCodeError"
+            and exception_type(result)
+            in {"AgentTimeoutError", "NonZeroAgentExitCodeError"}
             and has_pinned_provider_call(path.parent)
         ):
             failed.add(task.removeprefix("terminal-bench/"))
@@ -165,17 +180,17 @@ def batch_results(job: Path, tasks: list[dict]) -> list[dict]:
         result = json.loads(path.read_text(encoding="utf-8"))
         name = str(result.get("task_name") or "").removeprefix("terminal-bench/")
         if name in expected:
-            found[name] = result
+            found[name] = (path.parent, result)
     if set(found) != expected:
         raise RuntimeError(
             f"Incomplete job {job.name}: missing results for {sorted(expected - set(found))}"
         )
-    for name, result in found.items():
-        if not has_vis_result(result) or result.get("verifier_result") is None:
+    for name, (trial, result) in found.items():
+        if not is_scored_attempt(result, trial):
             raise RuntimeError(
                 f"Incomplete metrics in {job.name}/{name}; inspect the trial"
             )
-    return [found[task["name"]] for task in tasks]
+    return [found[task["name"]][1] for task in tasks]
 
 
 def archive_batch_traces(job: Path) -> None:
@@ -281,12 +296,15 @@ def main() -> None:
         results = batch_results(JOBS / name, batch)
         archive_batch_traces(JOBS / name)
         for task, trial in zip(batch, results, strict=True):
-            metadata = (trial["agent_result"].get("metadata") or {}).get("vis") or {}
+            agent = trial.get("agent_result") or {}
+            metadata = (agent.get("metadata") or {}).get("vis") or {}
             is_error = metadata.get("status") == "error"
+            is_timeout = exception_type(trial) == "AgentTimeoutError"
             errors_in_a_row = errors_in_a_row + 1 if is_error else 0
             reward = (trial["verifier_result"].get("rewards") or {}).get("reward")
             print(
-                f"Finished {name}/{task['name']}: reward={reward}, agent_error={is_error}",
+                f"Finished {name}/{task['name']}: reward={reward}, "
+                f"agent_error={is_error}, agent_timeout={is_timeout}",
                 flush=True,
             )
         if errors_in_a_row >= 2:

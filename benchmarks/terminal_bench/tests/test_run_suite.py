@@ -16,6 +16,28 @@ from run_suite import (
 )
 
 
+def write_model_attempt(trial, result):
+    """Write a Harbor trial whose trace shows a pinned provider call."""
+    (trial / "agent").mkdir(parents=True, exist_ok=True)
+    (trial / "result.json").write_text(json.dumps(result))
+    with gzip.open(
+        trial / "agent/vis-trace.jsonl.gz", "wt", encoding="utf-8"
+    ) as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "event": "trace-chunk",
+                    "payload": {
+                        "phase": "provider-call",
+                        "provider": "zai-coding-plan",
+                        "model": "glm-5.3-flash",
+                    },
+                }
+            )
+            + "\n"
+        )
+
+
 def test_catalog_skips_gpu_and_reserves_high_memory(tmp_path):
     for name, hours, memory, gpu in (
         ("small", 1, 4096, 0),
@@ -80,36 +102,50 @@ def test_accounting_records_model_failure_but_retries_canceled_peer(tmp_path):
         ("model-failed", "NonZeroAgentExitCodeError"),
         ("canceled-peer", "EOFError"),
     ):
-        trial = jobs / "interrupted" / f"{name}__abcd"
-        (trial / "agent").mkdir(parents=True)
-        (trial / "result.json").write_text(
-            json.dumps(
-                {
-                    "task_name": f"terminal-bench/{name}",
-                    "finished_at": "2026-01-01T00:00:01Z",
-                    "exception_info": {"exception_type": exception},
-                }
-            )
+        write_model_attempt(
+            jobs / "interrupted" / f"{name}__abcd",
+            {
+                "task_name": f"terminal-bench/{name}",
+                "finished_at": "2026-01-01T00:00:01Z",
+                "exception_info": {"exception_type": exception},
+            },
         )
-        with gzip.open(
-            trial / "agent/vis-trace.jsonl.gz", "wt", encoding="utf-8"
-        ) as stream:
-            stream.write(
-                json.dumps(
-                    {
-                        "event": "trace-chunk",
-                        "payload": {
-                            "phase": "provider-call",
-                            "provider": "zai-coding-plan",
-                            "model": "glm-5.3-flash",
-                        },
-                    }
-                )
-                + "\n"
-            )
     completed, in_flight, failed = accounted_tasks(jobs)
     assert completed == in_flight == set()
     assert failed == {"model-failed"}
+
+
+def test_accounting_scores_verified_timeouts_after_model_work(tmp_path):
+    jobs = tmp_path / "jobs"
+    for name, verifier in (
+        ("verified-timeout", {"rewards": {"reward": 0.0}}),
+        ("unverified-timeout", None),
+    ):
+        write_model_attempt(
+            jobs / "long" / f"{name}__abcd",
+            {
+                "task_name": f"terminal-bench/{name}",
+                "finished_at": "2026-01-01T08:00:01Z",
+                "exception_info": {"exception_type": "AgentTimeoutError"},
+                "verifier_result": verifier,
+            },
+        )
+    setup = jobs / "long" / "setup-timeout__abcd"
+    setup.mkdir(parents=True)
+    (setup / "result.json").write_text(
+        json.dumps(
+            {
+                "task_name": "terminal-bench/setup-timeout",
+                "finished_at": "2026-01-01T08:00:01Z",
+                "exception_info": {"exception_type": "AgentTimeoutError"},
+                "verifier_result": {"rewards": {"reward": 0.0}},
+            }
+        )
+    )
+    completed, in_flight, failed = accounted_tasks(jobs)
+    assert completed == {"verified-timeout"}
+    assert in_flight == set()
+    assert failed == {"unverified-timeout"}
 
 
 @pytest.mark.parametrize("name", ["completed", "live", "pending", "unknown"])
@@ -222,6 +258,27 @@ def test_job_names_and_missing_metrics_are_not_silently_accepted(tmp_path):
         batch_results(job, [{"name": "another"}])
 
 
+def test_batch_accepts_verified_timeout_only_after_model_work(tmp_path):
+    job = tmp_path / "suite-001"
+    trial = job / "long__abcd"
+    trial.mkdir(parents=True)
+    result = {
+        "task_name": "terminal-bench/long",
+        "agent_result": {"metadata": None},
+        "verifier_result": {"rewards": {"reward": 0.0}},
+        "exception_info": {"exception_type": "AgentTimeoutError"},
+    }
+    (trial / "result.json").write_text(json.dumps(result))
+    with pytest.raises(RuntimeError, match="Incomplete metrics"):
+        batch_results(job, [{"name": "long"}])
+    write_model_attempt(trial, result)
+    assert batch_results(job, [{"name": "long"}]) == [result]
+    result["verifier_result"] = None
+    write_model_attempt(trial, result)
+    with pytest.raises(RuntimeError, match="Incomplete metrics"):
+        batch_results(job, [{"name": "long"}])
+
+
 @pytest.mark.skipif(shutil.which("zstd") is None, reason="zstd executable required")
 def test_batch_archive_preserves_incomplete_traces(tmp_path):
     job = tmp_path / "suite-003"
@@ -240,7 +297,9 @@ def test_batch_archive_preserves_incomplete_traces(tmp_path):
     assert not (job / "interrupted__abcd/agent/vis-trace.jsonl.zst").exists()
 
 
-def test_queue_captures_harbor_logs_through_redaction(tmp_path, monkeypatch):
+@pytest.fixture
+def one_task_queue(tmp_path, monkeypatch):
+    """Run one queue batch without Harbor, Podman or existing jobs."""
     monkeypatch.setenv("ZAI_CODING_API_KEY", "fixture-zai-credential-12345")
     monkeypatch.setattr(run_suite.sys, "argv", ["run_suite", "--max-batches", "1"])
     monkeypatch.setattr(run_suite, "ROOT", tmp_path)
@@ -250,6 +309,12 @@ def test_queue_captures_harbor_logs_through_redaction(tmp_path, monkeypatch):
     monkeypatch.setattr(run_suite, "accounted_tasks", lambda _: (set(), set(), set()))
     monkeypatch.setattr(run_suite, "free_gb", lambda _: (32, 32))
     monkeypatch.setattr(run_suite, "next_batch", lambda _: [task])
+    return task
+
+
+def test_queue_captures_harbor_logs_through_redaction(
+    tmp_path, monkeypatch, one_task_queue
+):
     calls = []
 
     def capture(command, path, *, cwd):
@@ -264,3 +329,27 @@ def test_queue_captures_harbor_logs_through_redaction(tmp_path, monkeypatch):
     assert command[1] == "run"
     assert path == tmp_path / "runs/suite-001.log"
     assert cwd == tmp_path
+
+
+def test_queue_continues_after_verified_agent_timeout(
+    tmp_path, monkeypatch, capsys, one_task_queue
+):
+    monkeypatch.setattr(run_suite, "archive_batch_traces", lambda _: None)
+
+    def capture(command, path, *, cwd):
+        write_model_attempt(
+            tmp_path / "jobs/suite-001/sample__abcd",
+            {
+                "task_name": "terminal-bench/sample",
+                "agent_result": {"metadata": None},
+                "verifier_result": {"rewards": {"reward": 0.0}},
+                "exception_info": {"exception_type": "AgentTimeoutError"},
+            },
+        )
+        return 0
+
+    monkeypatch.setattr(run_suite, "capture", capture)
+    run_suite.main()
+    output = capsys.readouterr().out
+    assert "Finished suite-001/sample: reward=0.0, agent_error=False" in output
+    assert "agent_timeout=True" in output
