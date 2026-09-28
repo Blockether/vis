@@ -81,11 +81,7 @@
 
 (defn- object-map [value] (when (and (map? value) (not (record? value))) value))
 
-(defn- field
-  [m k]
-  (when-let [m* (object-map m)]
-    (cond (contains? m* k) (get m* k)
-          (contains? m* (name k)) (get m* (name k)))))
+(defn- field [m k] (get (object-map m) k))
 
 (defn- limit-kind
   [limit]

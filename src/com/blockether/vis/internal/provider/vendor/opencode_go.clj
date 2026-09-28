@@ -190,7 +190,7 @@
         (when (number? percent) (clamp-percent percent))
 
         reset-ms
-        (resets-at-ms (or (:resetsAt data) (:resets_at data) (:resets-at data)))]
+        (resets-at-ms (:resetsAt data))]
 
     (cond-> {:id id
              :label label

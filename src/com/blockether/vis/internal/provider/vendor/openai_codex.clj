@@ -597,22 +597,13 @@
 
 (defn- object-map [value] (when (and (map? value) (not (record? value))) value))
 
-(defn- camel-key
+(defn- codex-key
+  "The keyword one Codex JSON key is read under. ChatGPT answers in snake_case or
+   camelCase, so a camelCase key is joined with `_` once, at the parse."
   [k]
-  (let [s (name k)]
-    (str/replace s #"_([a-zA-Z])" #(str/upper-case (second %)))))
+  (keyword (str/replace k #"([a-z0-9])([A-Z])" #(str (nth % 1) "_" (str/lower-case (nth % 2))))))
 
-(defn- kebab-key [k] (str/replace (name k) #"_" "-"))
-
-(defn- field
-  [m k]
-  (when-let [m* (object-map m)]
-    (let [ks [k (name k) (keyword (camel-key k)) (camel-key k) (keyword (kebab-key k))
-              (kebab-key k)]]
-      (reduce (fn [_ k*]
-                (when (contains? m* k*) (reduced (get m* k*))))
-              nil
-              ks))))
+(defn- field [m k] (get (object-map m) k))
 
 (defn- clamp-percent
   [value]
@@ -773,7 +764,7 @@
    :note "OpenAI Codex did not report this quota window."})
 
 (defn usage->dynamic-limits
-  "Convert ChatGPT/Codex `/wham/usage` JSON into Vis dynamic limit rows.
+  "Convert the `/wham/usage` payload [[fetch-usage!]] parsed into Vis dynamic limit rows.
 
    `model-ref` may be a model id string/keyword or a map with `:id` /
    `:name`. It is used only for Codex Spark, whose bucket is nested in
@@ -816,8 +807,8 @@
        (assoc :note "OpenAI Codex reports that the selected quota bucket is currently limited.")))))
 
 (defn fetch-usage!
-  "Fetch raw ChatGPT/Codex usage JSON from
-   `https://chatgpt.com/backend-api/wham/usage`."
+  "Fetch ChatGPT/Codex usage from `https://chatgpt.com/backend-api/wham/usage`,
+   keyed by snake_case keywords in either upstream naming ([[codex-key]])."
   [access-token account-id]
   (let [response
         (http/get usage-url
@@ -834,7 +825,7 @@
         (:body response)]
 
     (if (<= 200 status 299)
-      (json/read-json body :key-fn keyword)
+      (json/read-json body :key-fn codex-key)
       (throw
         (ex-info
           (str "OpenAI Codex usage request failed: HTTP " status)
@@ -867,7 +858,7 @@
                                           :throw false})]
              (cond (= 404 status) {:status :unsupported}
                    (= 200 status)
-                   (let [n (field (json/read-json body :key-fn keyword) :available_count)]
+                   (let [n (field (json/read-json body :key-fn codex-key) :available_count)]
                      (if (known-count? n)
                        (available n)
                        {:status :error :message "Reset availability was not reported."}))
@@ -921,7 +912,7 @@
            (if error
              response
              (let [outcome (when (= 200 status)
-                             (field (json/read-json body :key-fn keyword) :code))]
+                             (field (json/read-json body :key-fn codex-key) :code))]
                (if (contains? #{"reset" "nothing_to_reset" "no_credit" "already_redeemed"} outcome)
                  {:outcome outcome}
                  {:error :reset-unconfirmed

@@ -45,12 +45,7 @@
   "The explicit upstream auth status carried by a provider exception, if any."
   [^Throwable t]
   (let [data (ex-data t)]
-    (or (:status data)
-        (:code data)
-        (get data "status")
-        (get data "code")
-        (get-in data [:response :status])
-        (get-in data ["response" "status"]))))
+    (or (:status data) (:code data) (get-in data [:response :status]))))
 
 (defn- authentication-rejection?
   [^Throwable t]

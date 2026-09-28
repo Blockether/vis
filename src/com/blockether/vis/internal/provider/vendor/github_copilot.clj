@@ -332,11 +332,7 @@
 
 (defn- host-url [host] (when (valid-copilot-host? host) (str "https://" host)))
 
-(defn- response-field [m k] (or (get m k) (get m (name k))))
-
-(defn- endpoint-api-url
-  [response]
-  (or (get-in response [:endpoints :api]) (get-in response ["endpoints" "api"])))
+(defn- endpoint-api-url [response] (get-in response [:endpoints :api]))
 
 #_{:clj-kondo/ignore [:unused-private-var]}
 
@@ -466,7 +462,7 @@
                          (long REFRESH_MARGIN_MS))
        :api-url (copilot-llm-base-url token resp enterprise-domain)
        :account-type (credential-account-type)
-       :sku (or (response-field resp :sku) (response-field resp :access_type_sku))
+       :sku (or (:sku resp) (:access_type_sku resp))
        :oauth-token oauth-token})))
 
 (defn get-copilot-token!
@@ -605,21 +601,21 @@
             str/capitalize)
 
         raw-remaining
-        (response-field quota :remaining)
+        (:remaining quota)
 
         limit
-        (or (response-field quota :entitlement) (response-field quota :limit))
+        (or (:entitlement quota) (:limit quota))
 
         pct
-        (response-field quota :percent_remaining)
+        (:percent_remaining quota)
 
         unlimited?
-        (true? (response-field quota :unlimited))
+        (true? (:unlimited quota))
 
         exhausted?
         (and (not unlimited?)
              (or (and (number? raw-remaining) (not (pos? (double raw-remaining))))
-                 (false? (response-field quota :has_quota))))
+                 (false? (:has_quota quota))))
 
         overage?
         (and (number? raw-remaining) (neg? (double raw-remaining)))
@@ -635,7 +631,7 @@
                                 (String/format java.util.Locale/ROOT
                                                " (%.0f over)"
                                                (object-array [(- (double raw-remaining))])))
-                              (if (true? (response-field quota :overage_permitted))
+                              (if (true? (:overage_permitted quota))
                                 "; overage billing applies"
                                 "; requests are rejected until it resets"))
               (number? pct)
@@ -669,10 +665,10 @@
 (defn- limited-quota-rows
   [reset-ms usage]
   (let [remaining
-        (response-field usage :limited_user_quotas)
+        (:limited_user_quotas usage)
 
         monthly
-        (response-field usage :monthly_quotas)]
+        (:monthly_quotas usage)]
 
     (if (and (map? remaining) (map? monthly))
       (mapv (fn [[k rem]]
@@ -710,9 +706,9 @@
   []
   (if-let [{:keys [oauth-token]} (detect-oauth-token)]
     (let [usage (fetch-user-usage! oauth-token)
-          reset-ms (or (parse-epoch-ms (response-field usage :quota_reset_date))
-                       (parse-epoch-ms (response-field usage :limited_user_reset_date)))
-          rows (let [snapshots (response-field usage :quota_snapshots)]
+          reset-ms (or (parse-epoch-ms (:quota_reset_date usage))
+                       (parse-epoch-ms (:limited_user_reset_date usage)))
+          rows (let [snapshots (:quota_snapshots usage)]
                  (if (seq snapshots)
                    (quota-map-rows reset-ms snapshots)
                    (limited-quota-rows reset-ms usage)))]
@@ -720,9 +716,7 @@
       {:status :ok
        :dynamic {:limits rows
                  :note (str "Copilot plan: "
-                            (or (response-field usage :copilot_plan)
-                                (response-field usage :access_type_sku)
-                                "unknown"))}})
+                            (or (:copilot_plan usage) (:access_type_sku usage) "unknown"))}})
     UNAUTHENTICATED_LIMITS))
 
 (defn- observe-account-type!
@@ -732,9 +726,8 @@
   []
   (try (when-let [{:keys [oauth-token]} (detect-oauth-token)]
          (let [usage (fetch-user-usage! oauth-token)]
-           (remember-account-type! (normalize-account-type
-                                     (or (response-field usage :copilot_plan)
-                                         (response-field usage :access_type_sku))))))
+           (remember-account-type! (normalize-account-type (or (:copilot_plan usage)
+                                                               (:access_type_sku usage))))))
        (catch Exception e (cancellation/preserve-interrupt! e) nil)))
 
 (defn- force-refresh-fn
