@@ -29,12 +29,18 @@
     (let [signatures
           (extension/sandbox-symbol-signatures)
 
+          ;; A variadic tuple annotation keeps its `...`; only an Ellipsis default is rewritten.
           probes
-          (into {}
-                (map-indexed (fn [i [sym signature]]
-                               [(str sym)
-                                {"binding" (str "signature_probe_" i) "signature" signature}]))
-                (sort-by (comp str key) signatures))
+          (assoc (into {}
+                       (map-indexed (fn [i [sym signature]]
+                                      [(str sym)
+                                       {"binding" (str "signature_probe_" i)
+                                        "signature" signature}]))
+                       (sort-by (comp str key) signatures))
+            "signature.tuple-probe"
+            {"binding" "signature_tuple_probe"
+             "signature"
+             "(limit: int = ..., *, ids: tuple[int, ...] = ()) -> tuple['RunSummary', ...]"})
 
           bindings
           (into {}
@@ -59,9 +65,11 @@
                ctx
                (str
                  "import inspect\n"
-                 "observed = {}\n" "for name, probe in signature_probes.items():\n"
-                 "    fn = globals()[probe['binding']]\n" "    actual = inspect.signature(fn)\n"
-                 "    expected = probe['signature'].replace('...', 'Ellipsis')\n"
+                 "import re\n" "observed = {}\n"
+                 "for name, probe in signature_probes.items():\n"
+                 "    fn = globals()[probe['binding']]\n"
+                 "    actual = inspect.signature(fn)\n"
+                 "    expected = re.sub(r'(=\\s*)\\.\\.\\.(?=\\s*[,)])', r'\\1Ellipsis', probe['signature'])\n"
                  "    assert str(actual) == expected, (name, str(actual), expected)\n"
                  "    observed[name] = actual.parameters\n"
                  "publish = observed['council.publish']\n"
@@ -75,9 +83,12 @@
                  "assert all(p.default is inspect.Parameter.empty for p in observed['patch'].values())\n"
                  "assert not observed['council.subagents']\n"
                  "assert list(observed['council.cancel']) == ['session_id']\n"
+                 "tuple_probe = observed['signature.tuple-probe']\n"
+                 "assert tuple_probe['limit'].default is Ellipsis\n"
+                 "assert str(tuple_probe['ids']) == 'ids: tuple[int, ...] = ()'\n"
                  "assert 'paths' in inspect.signature(ls).parameters\n" "print(len(observed))\n"))]
             (expect (nil? (:error answer)) (pr-str answer))
-            (expect (= (str (count signatures) "\n") (:stdout answer)))))))))
+            (expect (= (str (count probes) "\n") (:stdout answer)))))))))
 
 (defdescribe
   signature-refresh-test
