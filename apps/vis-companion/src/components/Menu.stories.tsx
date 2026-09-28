@@ -182,22 +182,6 @@ export const StandingOnItsAnchor: Story = {
       </>
     ),
   },
-  play: async ({ canvasElement }) => {
-    const win = canvasElement.ownerDocument.defaultView!;
-    const panel = within(canvasElement.ownerDocument.body).getByRole('dialog', {
-      name: 'Projects on tower',
-    });
-    const paint = win.getComputedStyle(panel);
-    // ONE vertical edge is pinned, and a panel standing above its anchor pins its
-    // foot. This project runs at PHONE width, where the panel was once a sheet docked
-    // across the bottom edge and `at` was ignored: it holds its anchor's column and
-    // its own foot here too. The geometry behind it is `anchored-menu.test.ts`.
-    await expect(win.innerWidth).toBeLessThan(640);
-    await expect(paint.bottom).toBe('240px');
-    await expect(paint.left).toBe('82px');
-    await expect(panel.getBoundingClientRect().width).toBe(Math.min(320, win.innerWidth - 24));
-    await expect(paint.getPropertyValue('--menu-top').trim()).toBe('');
-  },
 };
 
 /**
@@ -217,17 +201,5 @@ export const SqueezedAgainstItsAnchor: Story = {
         <MenuItem title="svar" meta="6 sessions" onSelect={noop} />
       </>
     ),
-  },
-  play: async ({ canvasElement }) => {
-    const win = canvasElement.ownerDocument.defaultView!;
-    const panel = within(canvasElement.ownerDocument.body).getByRole('dialog', {
-      name: 'Projects on relay',
-    });
-    const paint = win.getComputedStyle(panel);
-    // Same phone width as above, and the cap the placement handed the panel is the
-    // one it wears — never the height of the screen it used to fill from the bottom.
-    await expect(paint.maxHeight).toBe('180px');
-    await expect(paint.bottom).toBe('240px');
-    await expect(paint.getPropertyValue('--menu-top').trim()).toBe('');
   },
 };

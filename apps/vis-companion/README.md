@@ -65,10 +65,11 @@ npm run lint       # React Compiler static analysis over every src file (no esli
 ## Testing
 
 ```sh
-npm test                 # the whole suite, the way CI runs it
-npx vitest run <file>    # one file while you work
-npm run typecheck        # tsc over the app and its tests
-npm run test:storybook   # story tests, a static Storybook build, contrast audit
+npm test                    # the whole suite, the way CI runs it
+npx vitest run <file>       # one file while you work
+npm run typecheck           # tsc over the app and its tests
+npm run test:storybook      # only the story tests
+npm run storybook:contrast  # contrast audit of every story in every theme, in Chromium
 ```
 
 Each test answers one kind of question. Pick the layer by what you want to
@@ -84,24 +85,62 @@ know, and keep a test in a single layer:
   They live in `src/components/ui.conventions.test.ts`, which scans source
   files instead of rendering them. Add a rule there when a behavior test
   cannot see the thing you want to enforce.
-- **Looks** belong to Storybook: stories are the visual gallery, and the
-  `storybook` vitest project exercises the shipped Tailwind layout in
-  Chromium.
+- **Looks** belong to Storybook. The story tests play every story in jsdom,
+  which checks what a story does and how assistive technology reads it, not
+  how it is laid out. Review layout, colour and scrolling in the browser with
+  `npm run storybook`. After you change a colour or a theme, run
+  `npm run storybook:contrast`: it builds Storybook and checks every story in
+  every theme with axe in Chromium. That takes about half an hour, so it is
+  not part of `npm test`.
 
 Do not pin rendered markup with `toContain` string matches, and do not
 restate source text imported with `?raw`. Both break on every styling
 change and assert nothing a user can perceive. How a control paints is
 reviewed in Storybook, not unit-pinned.
 
-The suite runs as three vitest projects. `unit` covers everything under `src`,
-`scripts` covers the tests that drive the real toolchain (a production Vite
-build, a Playwright launch), and `storybook` runs the gallery in Chromium.
-`unit` uses the `vmForks` pool: each file still gets its own module registry
-and its own jsdom, but in a VM context inside a pooled process instead of a
-worker started for that one file. Building a DOM for each of them cost 190s of
-CPU and now costs 20s, which halves the `src` run; on a two-core machine — what
-CI gets — it went from 124s to 46s. `scripts` keeps real processes, because a
-native bundler refuses the objects a VM realm hands it.
+A story that needs real browser layout to play (a frame-size variant, line
+fitting, a scroll position, a Mermaid diagram) has `tags: ['!test']` and a
+comment that says why. The story tests skip it; Storybook still shows it, and
+the contrast audit still checks it.
+
+### How the suite runs
+
+The suite runs as three Vitest projects, and none of them starts a browser:
+
+- `unit` covers every `*.test.ts` and `*.test.tsx` file under `src`.
+- `scripts` covers the tests that drive the real toolchain, such as a
+  production Vite build.
+- `storybook` plays the stories in jsdom.
+
+`unit` and `storybook` use the `vmForks` pool: each file still gets its own
+module registry and its own jsdom, but in a VM context inside a pooled process
+instead of a worker started for that one file. For `unit`, building a DOM for
+each file cost 190s of CPU and now costs 20s, which halves the run; on a
+two-core machine — what CI gets — it went from 124s to 46s. `scripts` keeps
+real processes, because a native bundler refuses the objects a VM realm hands
+it.
+
+One test opens the production session bundle in Playwright's Chromium. It is
+too heavy for every local run, so only CI runs it. To run it yourself, use
+`CI=1 npx vitest run scripts/session-bundle.test.mjs`.
+
+### Parallel test runs
+
+Every `vitest run` of this app on one machine shares one worker budget: one
+less than the machine's CPU count. Several checkouts or drafts that test at the
+same time therefore do not compete for the same cores. Each run records the
+workers it takes in the system temporary directory and starts once at least
+half of the budget is free. While it waits, it prints
+`Waiting for test workers`; after ten minutes it starts with whatever is free.
+Interactive watch mode keeps Vitest's own worker count. To choose the count
+yourself, pass `--maxWorkers` or set `VITEST_MAX_WORKERS`; the run then
+neither waits nor counts against the budget.
+
+The budget covers only test runs of this app. Other work on the machine, such
+as a JVM test suite or a native build, still slows a run down. To keep a slow
+run from failing, every `findBy*` query and `waitFor` call waits up to five
+seconds, and every test may take up to 15 seconds. A test that hangs therefore
+takes 15 seconds to fail.
 
 ## Native builds
 

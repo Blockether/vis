@@ -1,20 +1,18 @@
-import tailwindcss from '@tailwindcss/vite';
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
-import { playwright } from '@vitest/browser-playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 import pkg from './package.json' with { type: 'json' };
 import { companionBuildInfo } from './scripts/build-info.ts';
+import { testWorkers } from './scripts/test-workers.ts';
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const buildInfo = companionBuildInfo();
 
 // Deliberately NOT an extension of `vite.config.ts`: the app config exists to
 // build a browser bundle (React Compiler, Tailwind, the dev gateway proxy), and
-// none of that helps the node suite. The browser project compiles the same Tailwind
-// CSS as the app so geometry and hit-testing assertions exercise the shipped layout.
+// none of that helps these suites, which run in node and jsdom.
 export default defineConfig({
   // `compat.ts` reads the release string the app build injects; the tests need
   // the SAME source of truth, not a hand-written stand-in.
@@ -24,6 +22,12 @@ export default defineConfig({
     __VIS_APP_BUILD_COMMIT__: JSON.stringify(buildInfo.commit),
   },
   test: {
+    // Concurrent runs on one machine share its cores (`scripts/test-workers.ts`).
+    maxWorkers: await testWorkers(),
+    // A `findBy*` may wait five seconds (`src/test-setup.ts`, `.storybook/preview.tsx`),
+    // and a test on a busy machine can need several. A story play that outlives its
+    // test keeps typing into the next story's document.
+    testTimeout: 15_000,
     projects: [
       {
         extends: true,
@@ -36,12 +40,9 @@ export default defineConfig({
           // Testing Library's matchers and its unmount-between-tests. The setup
           // no-ops under node, so pure logic pays nothing for it.
           setupFiles: ['./src/test-setup.ts'],
-          // A VM context per FILE, not a worker per file: the same isolation (fresh
-          // module registry, fresh jsdom) without starting a worker and building a
-          // DOM for every one of them. On a two-core box — what CI gets — this suite
-          // goes 124s -> 46s. `vmThreads` is a second faster on a laptop but keeps
-          // every context in ONE heap (9GB against 0.8GB here), which is how a run
-          // dies on a runner instead of finishing.
+          // A VM context per file rather than a worker per file: the same isolation
+          // without starting a worker for each one. `vmThreads` would hold every
+          // context in one heap.
           pool: 'vmForks',
         },
       },
@@ -52,31 +53,21 @@ export default defineConfig({
           environment: 'node',
           include: ['scripts/**/*.test.mjs'],
           setupFiles: ['./src/test-setup.ts'],
-          // These drive the real toolchain: a production Vite build, a Playwright
-          // browser. Rolldown's native binding refuses objects handed to it from a
-          // `node:vm` realm, so the toolchain tests keep a real process.
+          // Some of these drive the real toolchain, and Rolldown's native binding
+          // refuses objects handed to it from a `node:vm` realm: a real process each.
           pool: 'forks',
         },
       },
       {
         extends: true,
-        plugins: [tailwindcss(), storybookTest({ configDir: path.join(dirname, '.storybook') })],
+        plugins: [storybookTest({ configDir: path.join(dirname, '.storybook') })],
         test: {
           name: 'storybook',
-          // CI's two-core runner plays the longest interaction stories at half of Vitest's
-          // 15s default. The limit is there to catch a hung story, not a busy runner.
-          testTimeout: 30_000,
-          // Story files play in iframes of one origin: without their own storage they
-          // start from what another story file left (see `src/test-storage.ts`).
-          setupFiles: ['./src/test-storage.ts'],
-          browser: {
-            enabled: true,
-            headless: true,
-            // Exercise the shipped reduced-motion path; immediate interaction assertions
-            // must not race the first transparent frame of real CSS entrance animations.
-            provider: playwright({ contextOptions: { reducedMotion: 'reduce' } }),
-            instances: [{ browser: 'chromium' }],
-          },
+          // Stories play in jsdom, like the unit suite: behaviour and semantics.
+          // Layout, colour and scrolling are checked in the browser Storybook.
+          environment: 'jsdom',
+          setupFiles: ['./src/test-setup.ts'],
+          pool: 'vmForks',
         },
       },
     ],

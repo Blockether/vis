@@ -53,7 +53,7 @@ async function openSession() {
   window.location.hash = '';
   const view = renderApp({ machines: fleet() });
   restore = view.restore;
-  await screen.findByText('Alpha one', {}, { timeout: 5_000 });
+  await screen.findByText('Alpha one');
   fireEvent.click(screen.getByText('Alpha one'));
   await screen.findByLabelText('Message Vis');
   return view;

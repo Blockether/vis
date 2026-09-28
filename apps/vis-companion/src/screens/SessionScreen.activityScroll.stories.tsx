@@ -103,6 +103,9 @@ const subscriptions = {
 
 const meta = {
   title: 'Screens/Session Activity scroll',
+  // Scroll positions need real browser layout, which the jsdom story run lacks: open these
+  // stories in Storybook to play them.
+  tags: ['!test'],
   component: SessionScreen,
   parameters: { layout: 'fullscreen' },
   decorators: [

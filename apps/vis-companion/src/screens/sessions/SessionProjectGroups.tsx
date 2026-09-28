@@ -184,12 +184,11 @@ function NameForm({
   );
 }
 
-/** Read a desktop batch, or the single id that existing mouse and touch drags carry. */
+/** Read a desktop batch, or the single id a one-row drag carries. */
 function droppedIds(event: DragEvent<HTMLElement>): string[] {
   const single = event.dataTransfer.getData('text/plain');
   const batch = event.dataTransfer.getData(SESSION_DRAG_MIME);
-  // Legacy test carriers answer the same id for every format, unlike DataTransfer.
-  if (!batch || batch === single) return single ? [single] : [];
+  if (!batch) return single ? [single] : [];
   try {
     const ids: unknown = JSON.parse(batch);
     return Array.isArray(ids) && ids.length > 0 && ids.every((id) => typeof id === 'string' && id)

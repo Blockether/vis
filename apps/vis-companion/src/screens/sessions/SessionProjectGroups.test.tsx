@@ -232,6 +232,13 @@ function dragCarrier() {
   };
 }
 
+/** A one-row drag as a browser carries it: the id under `text/plain` alone. */
+function carrying(id: string) {
+  const carrier = dragCarrier();
+  carrier.setData('text/plain', id);
+  return carrier;
+}
+
 describe('ProjectGroup groups', () => {
   // A fold is REMEMBERED (`lib/project-fold`), so one test's shut band must not
   // arrive shut in the next one.
@@ -1362,7 +1369,7 @@ describe('ProjectGroup groups', () => {
     const wallet = await band('Wallet work');
     const header = within(wallet).getByRole('button', { name: 'Collapse Wallet work' })
       .parentElement as HTMLElement;
-    const dataTransfer = { getData: () => LOOSE.id, setData: vi.fn(), dropEffect: '' };
+    const dataTransfer = carrying(LOOSE.id);
     fireEvent.dragOver(header, { dataTransfer });
     fireEvent.drop(header, { dataTransfer });
     await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(LOOSE.id, WALLET));
@@ -1376,7 +1383,7 @@ describe('ProjectGroup groups', () => {
     const wallet = await band('Wallet work');
     const row = strip(wallet, ROWS[0].id);
     expect(wallet).toHaveAttribute('data-session-drop');
-    const dataTransfer = { getData: () => LOOSE.id, setData: vi.fn(), dropEffect: '' };
+    const dataTransfer = carrying(LOOSE.id);
     fireEvent.dragOver(row, { dataTransfer });
     expect(wallet).toHaveClass('bg-white/10');
     // Crossing between rows is still inside this group's drop area.
@@ -1397,7 +1404,7 @@ describe('ProjectGroup groups', () => {
     const sessions = screen.getByText('Sessions').parentElement!.parentElement as HTMLElement;
     const row = strip(sessions, LOOSE.id);
     expect(sessions).toHaveAttribute('data-session-drop');
-    const dataTransfer = { getData: () => ROWS[0].id, setData: vi.fn(), dropEffect: '' };
+    const dataTransfer = carrying(ROWS[0].id);
     fireEvent.dragOver(row, { dataTransfer });
     expect(sessions).toHaveClass('bg-white/10');
     // Hovering a loose row highlights the drop area without adding a banner beside Sessions.
@@ -1409,11 +1416,10 @@ describe('ProjectGroup groups', () => {
     );
 
     const other = ROWS[1].id;
-    fireEvent.drop(sessions, {
-      dataTransfer: { getData: () => other, setData: vi.fn(), dropEffect: '' },
-    });
+    fireEvent.drop(sessions, { dataTransfer: carrying(other) });
     await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(other, null));
   });
+
   it('finds the full group and Sessions areas under a carried row on touch', async () => {
     const { client } = mount();
     const wallet = await band('Wallet work');
@@ -1457,7 +1463,7 @@ describe('ProjectGroup groups', () => {
     const { client } = mount();
     const wallet = await band('Wallet work');
     const sessions = screen.getByText('Sessions').parentElement as HTMLElement;
-    const dataTransfer = { getData: () => ROWS[0].id, setData: vi.fn(), dropEffect: '' };
+    const dataTransfer = carrying(ROWS[0].id);
     fireEvent.dragOver(sessions, { dataTransfer });
     expect(within(sessions).queryByText('Drop to ungroup')).toBeNull();
     fireEvent.drop(sessions, { dataTransfer });
@@ -1473,7 +1479,7 @@ describe('ProjectGroup groups', () => {
     const { client } = mount();
     await band('Wallet work');
     const sessions = screen.getByText('Sessions').parentElement as HTMLElement;
-    const dataTransfer = { getData: () => LOOSE.id, setData: vi.fn(), dropEffect: '' };
+    const dataTransfer = carrying(LOOSE.id);
     fireEvent.drop(sessions, { dataTransfer });
     expect(client.assignSessionGroup).not.toHaveBeenCalled();
   });

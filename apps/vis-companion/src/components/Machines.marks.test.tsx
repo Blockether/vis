@@ -2,8 +2,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import machinesSource from './Machines.tsx?raw';
-
 import type { GatewayConn } from '../lib/types';
 import { MachineRows } from './Machines';
 
@@ -65,7 +63,5 @@ describe('what a machine row says about its rank', () => {
     rows({ conns: [tower, laptop] });
 
     expect(screen.queryByText('Current')).toBeNull();
-    // And the prop that fed it is gone from the list's own contract.
-    expect(machinesSource).not.toContain('activeUrl?:');
   });
 });

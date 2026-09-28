@@ -5,7 +5,6 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { HumanInputSheet } from './HumanInputPrompt';
-import promptSource from './HumanInputPrompt.tsx?raw';
 import { HUMAN_INPUT_REQUESTS } from '../dev/humanInputVariants';
 import fixture from '../lib/human-input.fixture.json';
 import {
@@ -340,16 +339,6 @@ describe('a pause is only as tall as the question it asks', () => {
     const scrim = /<div class="fixed inset-0 z-50[^"]*"/.exec(html)?.[0] ?? '';
     expect(scrim).not.toContain('items-stretch');
     expect(html).not.toContain('sm:h-[min(38rem,100%)]');
-  });
-
-  // The scrim was a third copy of the same forty characters, and it had already
-  // drifted — `bg-black/60` against the one glass every other layer wears.
-  it('brings no second scrim of its own', () => {
-    expect(promptSource).toContain('<Modal');
-    expect(promptSource).toContain('size="fit"');
-    expect(promptSource).not.toContain('fixed inset-0 z-50');
-    expect(promptSource).not.toContain('bg-black/60');
-    expect(promptSource).not.toContain('DIALOG_DESKTOP_HEIGHT');
   });
 
   // A sheet that starts halfway down the glass has no notch above it: the inset

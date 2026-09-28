@@ -129,6 +129,9 @@ const subscriptions = {
 
 const meta = {
   title: 'Screens/Session Handover scroll',
+  // Scroll positions need real browser layout, which the jsdom story run lacks: open these
+  // stories in Storybook to play them.
+  tags: ['!test'],
   component: SessionScreen,
   parameters: { layout: 'fullscreen' },
   globals: { viewport: { value: 'desktop', isRotated: false } },

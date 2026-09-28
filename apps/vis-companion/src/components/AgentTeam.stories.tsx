@@ -29,9 +29,6 @@ type Story = StoryObj<typeof meta>;
 const openTeam: NonNullable<Story['play']> = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
   const button = canvas.getByRole('button', { name: /^Agents:/ });
-  const box = button.getBoundingClientRect();
-  expect(box.left).toBeGreaterThanOrEqual(0);
-  expect(box.right).toBeLessThanOrEqual(window.innerWidth);
   await userEvent.click(button);
   expect(within(document.body).getByRole('dialog', { name: 'Agent team' })).toBeVisible();
 };

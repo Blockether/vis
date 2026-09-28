@@ -4,8 +4,10 @@ import { build } from 'vite';
 import { expect, it } from 'vitest';
 
 // Node and Vite's development optimizer initialize CommonJS differently from the
-// shipped bundle. Open its lazy session chunk in a fresh browser, not jsdom.
-it('loads the production session bundle on a cold mobile launch', async () => {
+// shipped bundle. Open its lazy session chunk in a fresh browser, not jsdom. A
+// production build plus Chromium is too heavy for every local run: CI runs it, and
+// `CI=1 npx vitest run scripts/session-bundle.test.mjs` runs it locally.
+it.runIf(process.env.CI)('loads the production session bundle on a cold mobile launch', async () => {
   const { output } = await build({
     root: fileURLToPath(new URL('..', import.meta.url)),
     logLevel: 'error',

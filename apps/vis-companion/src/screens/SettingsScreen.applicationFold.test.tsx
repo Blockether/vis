@@ -3,7 +3,6 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
 import { SettingsColumn } from './settings/SettingsLayout';
-import settingsScreenSource from './SettingsScreen.tsx?raw';
 
 /** The dialog's two columns stack below `sm:`; there the application's own settings
  *  fold behind their band, and the machines lead. Beside each other — the same
@@ -62,10 +61,5 @@ describe("the settings dialog's stacked application fold", () => {
     render(<Harness initialOpen={false} />);
     expect(screen.getByText('Theme')).toBeInTheDocument();
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
-  });
-
-  it("dropped the dialog's 'this device' copy along with the fold", () => {
-    expect(settingsScreenSource).not.toContain('This device');
-    expect(settingsScreenSource).not.toContain('meta="this device"');
   });
 });

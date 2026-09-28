@@ -49,8 +49,18 @@ if (typeof document !== 'undefined') {
     removeEventListener: () => {},
     dispatchEvent: () => false,
   })) as never;
+  // jsdom has no canvas and computes no pseudo-element styles. It answers as a
+  // browser without them would (no context, the element's own style) but logs a
+  // line per call, and the accessibility check makes hundreds of those calls.
+  HTMLCanvasElement.prototype.getContext = (() => null) as never;
+  const computedStyle = window.getComputedStyle.bind(window);
+  window.getComputedStyle = (element: Element) => computedStyle(element);
 
   await import('@testing-library/jest-dom/vitest');
-  const { cleanup } = await import('@testing-library/react');
+  const { cleanup, configure } = await import('@testing-library/react');
   afterEach(cleanup);
+  // A whole screen on a busy machine can take longer than Testing Library's
+  // one-second default to settle, so every `findBy*` and `waitFor` waits five
+  // seconds, as the story plays do (`.storybook/preview.tsx`).
+  configure({ asyncUtilTimeout: 5_000 });
 }

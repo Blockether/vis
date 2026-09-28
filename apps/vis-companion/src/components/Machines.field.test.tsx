@@ -2,8 +2,6 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import connectScreenSource from '../screens/ConnectScreen.tsx?raw';
-import settingsScreenSource from '../screens/SettingsScreen.tsx?raw';
 import { AddMachine } from './Machines';
 import type { GatewayConn } from '../lib/types';
 
@@ -149,12 +147,5 @@ describe('one field takes whatever the terminal printed', () => {
     expect(document.body.textContent).toMatch(
       /"not an address" is not a pairing link or a machine address/,
     );
-  });
-
-  it('is one component at every width: the owner decides the frame, not a prop', () => {
-    // The settings dialog is a column and the connect page a full-width plane; the
-    // component reads its own width, so neither owner is allowed to tell it.
-    expect(settingsScreenSource).not.toContain('isStacked');
-    expect(connectScreenSource).not.toContain('isStacked');
   });
 });

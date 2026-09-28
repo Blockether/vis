@@ -53,7 +53,7 @@ describe('a cold start reopens only the transcript the app died on', () => {
     openSession(Date.now() - 2 * MINUTE);
     const view = coldStart();
 
-    expect(await screen.findByLabelText('Message Vis', {}, { timeout: 5_000 })).toBeVisible();
+    expect(await screen.findByLabelText('Message Vis')).toBeVisible();
     // On top of the list, the way a tap on its row would have put it.
     expect(screen.getByRole('button', { name: 'Back to sessions' })).toBeVisible();
     view.unmount();
@@ -100,7 +100,7 @@ describe('a cold start reopens only the transcript the app died on', () => {
   it('forgets the transcript the moment the user goes back to the list', async () => {
     const view = coldStart();
     fireEvent.click(await screen.findByText('Session one'));
-    await screen.findByLabelText('Message Vis', {}, { timeout: 5_000 });
+    await screen.findByLabelText('Message Vis');
     await waitFor(async () =>
       expect(await loadOpenSession()).toMatchObject({ url: LAPTOP, sid: 's1' }),
     );

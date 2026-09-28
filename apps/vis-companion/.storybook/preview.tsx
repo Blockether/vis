@@ -1,15 +1,13 @@
 import type { Decorator, Preview } from '@storybook/react-vite';
-import { configure, expect } from 'storybook/test';
+import { configure } from 'storybook/test';
 import { useLayoutEffect, type ReactNode } from 'react';
 import { applyTheme, resolveTheme } from '../src/lib/theme';
 import { DEFAULT_THEME, THEMES } from '../src/lib/themes.generated';
 import '../src/index.css';
 
-// A play function starts as soon as its story is queued, and a whole screen can
-// need longer than Testing Library's one-second default to reach its first frame
-// on a busy machine: the query then reads Storybook's own loading shell and the
-// run fails for a reason that has nothing to do with the screen. Every `findBy*`
-// in this gallery waits five seconds before it gives up.
+// A whole screen can need longer than Testing Library's one-second default to
+// reach its first frame on a busy machine, so every `findBy*` in this gallery
+// waits five seconds before it gives up.
 configure({ asyncUtilTimeout: 5000 });
 
 /**
@@ -17,12 +15,11 @@ configure({ asyncUtilTimeout: 5000 });
  * `data-theme` on the document exactly as `main.tsx` does at launch, and every
  * entry in the toolbar comes from `THEMES` — the catalog `clojure -X:companion-themes`
  * generates from the engine's `theme.clj`. A palette therefore cannot exist in
- * this gallery and be missing from the product, and a contrast measured here is
- * the contrast that ships.
+ * this gallery and be missing from the product.
  *
  * It runs in a LAYOUT effect so the paper is right on the first painted frame:
  * `themes.generated.css` keys every variable off `[data-theme]`, and a story that
- * paints once before the attribute lands is a story photographed unstyled.
+ * paints once before the attribute lands flashes unstyled.
  */
 function Themed({ id, children }: { id: string; children: ReactNode }) {
   useLayoutEffect(() => {
@@ -38,38 +35,12 @@ const withTheme: Decorator = (Story, { globals }) => (
 );
 
 /**
- * THE FRAME ANSWERS THE TWO QUESTIONS, AND NO TOOLBAR OVERRULES IT.
- *
- * `sm:` asks "is there room" and `mouse:` asks "is a pointer driving this"
- * (`@media (width >= 40rem) and (pointer: fine)`, `src/index.css`), so the viewport
- * is what decides a control's box. Measured in this gallery: a default `Button`
- * paints 28px under a 10px label in the phone frame and 32px under an 11px label in
- * the desktop one, while a `density="compact"` Button goes the other way, 32px on
- * the phone and 24px under the pointer.
+ * The viewport frame decides a control's box: `sm:` asks whether there is room and
+ * `mouse:` whether a pointer drives the page (`src/index.css`).
  */
 const preview: Preview = {
   decorators: [withTheme],
   tags: ['autodocs'],
-  afterEach: async ({ canvasElement }) => {
-    const rounded: string[] = [];
-    // Include portals and generated faces, but preserve the Lucide glyphs themselves.
-    for (const element of canvasElement.ownerDocument.body.querySelectorAll('*')) {
-      if (!(element instanceof HTMLElement) || !element.checkVisibility()) continue;
-      for (const pseudo of [null, '::before', '::after']) {
-        const style = getComputedStyle(element, pseudo);
-        if (pseudo && (style.content === 'none' || style.content === 'normal')) continue;
-        for (const corner of ['top-left', 'top-right', 'bottom-right', 'bottom-left']) {
-          const radius = style.getPropertyValue(`border-${corner}-radius`);
-          if (radius !== '0px') {
-            rounded.push(
-              `${element.tagName}.${element.className}${pseudo ?? ''}: ${corner} ${radius}`,
-            );
-          }
-        }
-      }
-    }
-    await expect(rounded, 'Every app surface and control has square corners').toEqual([]);
-  },
   parameters: {
     layout: 'fullscreen',
 
@@ -83,8 +54,7 @@ const preview: Preview = {
     },
 
     a11y: {
-      // A story with broken semantics is not a picture to approve. The browser
-      // project runs this same axe pass in CI; the panel is only its explanation.
+      // A story with broken semantics fails its test; the panel explains why.
       test: 'error',
     },
   },

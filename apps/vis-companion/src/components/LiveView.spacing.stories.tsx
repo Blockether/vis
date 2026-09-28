@@ -6,6 +6,9 @@ import { LiveViewPanel } from './LiveView';
 
 const meta = {
   title: 'Components/Live view spacing',
+  // Spacing is measured in real browser layout, which the jsdom story run lacks: open these
+  // stories in Storybook to play them.
+  tags: ['!test'],
   component: LiveViewPanel,
   parameters: { layout: 'padded' },
   args: {

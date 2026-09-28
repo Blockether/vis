@@ -55,7 +55,7 @@ describe('a desk keeps the list beside the conversation', () => {
       view.restore();
       restoreDensity();
     };
-    await screen.findByText('Alpha one', {}, { timeout: 5_000 });
+    await screen.findByText('Alpha one');
 
     const main = view.baseElement.querySelector('main') as HTMLElement;
     const sidebar = main.firstElementChild as HTMLElement;
@@ -196,7 +196,7 @@ describe('a desk keeps the list beside the conversation', () => {
       view.restore();
       restoreDensity();
     };
-    await screen.findByText('Alpha one', {}, { timeout: 5_000 });
+    await screen.findByText('Alpha one');
     const main = view.baseElement.querySelector('main') as HTMLElement;
     const sidebar = main.firstElementChild as HTMLElement;
     const row = (sid: string) => sidebar.querySelector(`[data-session-row="${sid}"]`) as HTMLElement;
@@ -255,7 +255,7 @@ describe('a desk keeps the list beside the conversation', () => {
       view.restore();
       restoreDensity();
     };
-    const mark = await screen.findByText('NEW ×2', {}, { timeout: 5_000 });
+    const mark = await screen.findByText('NEW ×2');
     // In the row's ONE status mark, where the same row otherwise reads IDLE.
     expect(mark.closest('[data-session-status]')).toBeVisible();
 

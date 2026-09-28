@@ -44,7 +44,7 @@ describe('swiping in from the edge of a transcript', () => {
     window.location.hash = '';
     const view = renderApp({ machines: fleet() });
     restore = view.restore;
-    await screen.findByText('Alpha one', {}, { timeout: 5_000 });
+    await screen.findByText('Alpha one');
     fireEvent.click(screen.getByText('Alpha one'));
     await screen.findByLabelText('Message Vis');
     const pane = (view.baseElement.querySelector('main') as HTMLElement)
@@ -61,7 +61,7 @@ describe('swiping in from the edge of a transcript', () => {
     window.location.hash = '';
     const view = renderApp({ machines: fleet() });
     restore = view.restore;
-    await screen.findByText('Alpha one', {}, { timeout: 5_000 });
+    await screen.findByText('Alpha one');
     fireEvent.click(screen.getByText('Alpha one'));
     await screen.findByLabelText('Message Vis');
     const pane = (view.baseElement.querySelector('main') as HTMLElement)
@@ -80,7 +80,7 @@ describe('swiping in from the edge of a transcript', () => {
     window.location.hash = '';
     const view = renderApp({ machines: fleet() });
     restore = view.restore;
-    await screen.findByText('Alpha one', {}, { timeout: 5_000 });
+    await screen.findByText('Alpha one');
     fireEvent.click(screen.getByText('Alpha one'));
     await screen.findByLabelText('Message Vis');
     const pane = (view.baseElement.querySelector('main') as HTMLElement)
@@ -112,7 +112,7 @@ describe('swiping in from the edge of a transcript', () => {
     window.location.hash = '';
     const view = renderApp({ machines: fleet() });
     restore = view.restore;
-    await screen.findByText('Alpha one', {}, { timeout: 5_000 });
+    await screen.findByText('Alpha one');
     fireEvent.click(screen.getByText('Alpha one'));
     await screen.findByLabelText('Message Vis');
     const main = view.baseElement.querySelector('main') as HTMLElement;

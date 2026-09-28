@@ -39,6 +39,9 @@ type Story = StoryObj<typeof meta>;
 
 /** A decision with a retry edge: the shape the TUI draws with ├ and ▼. */
 export const Flowchart: Story = {
+  // Mermaid lays diagrams out in real browser layout, which the jsdom story run lacks: open
+  // this story in Storybook to play it.
+  tags: ['!test'],
   args: { source: FLOWCHART, fallback: fence(FLOWCHART) },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -52,6 +55,9 @@ export const Flowchart: Story = {
 
 /** Left to right, with a dotted and a thick link. */
 export const Pipeline: Story = {
+  // Mermaid lays diagrams out in real browser layout, which the jsdom story run lacks: open
+  // this story in Storybook to play it.
+  tags: ['!test'],
   args: { source: PIPELINE, fallback: fence(PIPELINE) },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);

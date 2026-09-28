@@ -1,0 +1,9 @@
+/.venv/
+/.pytest_cache/
+/.ruff_cache/
+/artifacts/
+/jobs/
+/runs/
+__pycache__/
+*.jsonl
+*.log

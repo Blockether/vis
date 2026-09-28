@@ -61,7 +61,7 @@ try {
     .map((entry) => entry.id)
     .sort();
   const hoverStories = new Set([
-    'session-jump-to-latest--default',
+    'session-remaining-messages--default',
     ...storyIds.filter((id) => id.startsWith('vocabulary-controls--')),
     'components-artifacts-sheet--files',
     'components-data-table--opened',

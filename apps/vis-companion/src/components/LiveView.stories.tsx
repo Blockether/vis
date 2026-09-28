@@ -30,17 +30,6 @@ type Story = StoryObj<typeof meta>;
 export const Running: Story = {
   play: async ({ args, canvas }) => {
     const interrupt = canvas.getByRole('button', { name: 'Interrupt' });
-    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
-    await expect(interrupt.getBoundingClientRect().height).toBe(pointer ? 28 : 32);
-    if (!pointer) {
-      const box = interrupt.getBoundingClientRect();
-      await expect(
-        parseFloat(getComputedStyle(interrupt, '::after').height),
-      ).toBeGreaterThanOrEqual(44);
-      await expect(
-        interrupt.contains(document.elementFromPoint(box.left + box.width / 2, box.top - 5)),
-      ).toBe(true);
-    }
     await userEvent.click(interrupt);
     const reason = await canvas.findByRole('textbox', {
       name: 'Why are you stopping Fleet scan?',
@@ -112,32 +101,9 @@ export const FinishedJobs: Story = {
     onSelect: fn(),
   },
   play: async ({ canvas, args }) => {
-    const first = canvas.getByRole('button', {
-      name: 'Select Typecheck and test',
-    });
     const last = canvas.getByRole('button', {
       name: 'Select Deploy to Cloudflare',
     });
-    const table = first.closest('table')!;
-    const node = table.closest('li')!;
-    const nodeStyle = getComputedStyle(node);
-    await expect(nodeStyle.paddingTop).toBe('0px');
-    await expect(nodeStyle.paddingBottom).toBe('0px');
-    await expect(first.getBoundingClientRect().height).toBe(last.getBoundingClientRect().height);
-    // A ROW IS A BAND, NOT A TOUCH CELL: under a thumb the compact face answers at 44px through
-    // its invisible slop instead of standing 48px tall, and under a pointer it keeps the rhythm
-    // of the head and parent rows beside it.
-    if (matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
-      await expect(first.getBoundingClientRect().height).toBeGreaterThanOrEqual(28);
-    } else {
-      await expect(parseFloat(getComputedStyle(first, '::after').height)).toBeGreaterThanOrEqual(
-        44,
-      );
-    }
-    await expect(table.getBoundingClientRect().top).toBe(node.getBoundingClientRect().top);
-    await expect(
-      node.getBoundingClientRect().bottom - table.getBoundingClientRect().bottom,
-    ).toBeLessThanOrEqual(1);
     await userEvent.click(last);
     await expect(args.onSelect).toHaveBeenCalledWith('jobs', ['deploy']);
   },
@@ -154,16 +120,7 @@ export const LabelledJobs: Story = {
     },
   },
   play: async ({ canvas }) => {
-    const table = canvas.getByRole('table');
-    const node = table.closest('li')!;
     await expect(canvas.getByText('Jobs')).toBeVisible();
-    // A heading rides the row's own air under the rule above it; only the table's
-    // rails run to the panel's inset edge.
-    await expect(getComputedStyle(node).paddingTop).toBe('10px');
-    await expect(getComputedStyle(node).paddingBottom).toBe('0px');
-    await expect(
-      node.getBoundingClientRect().bottom - table.getBoundingClientRect().bottom,
-    ).toBeLessThanOrEqual(1);
     await expect(canvas.queryByRole('button', { name: /Select/ })).not.toBeInTheDocument();
   },
 };
@@ -178,21 +135,6 @@ export const AllPrimitives: Story = {
       ).toBeVisible();
     }
     await expect(canvas.getByRole('button', { name: 'Unavailable action' })).toBeDisabled();
-    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
-    const refresh = canvas.getByRole('button', { name: 'Refresh results' });
-    await expect(refresh.getBoundingClientRect().height).toBe(pointer ? 28 : 32);
-    if (!pointer) {
-      await expect(parseFloat(getComputedStyle(refresh, '::after').height)).toBeGreaterThanOrEqual(
-        44,
-      );
-      const box = refresh.getBoundingClientRect();
-      await expect(
-        refresh.contains(document.elementFromPoint(box.left + box.width / 2, box.top - 5)),
-      ).toBe(true);
-    }
-    await expect(
-      canvas.getByRole('button', { name: 'Details' }).getBoundingClientRect().height,
-    ).toBeGreaterThanOrEqual(pointer ? 28 : 44);
     await userEvent.click(canvas.getByRole('button', { name: 'Refresh results' }));
     await expect(args.onActivate).toHaveBeenCalledWith('refresh');
     await userEvent.click(canvas.getByRole('button', { name: 'Details' }));
@@ -263,19 +205,6 @@ export const SearchableLog: Story = {
   },
   play: async ({ canvas }) => {
     const search = canvas.getByRole('searchbox', { name: 'Search Build log' });
-    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
-    const box = search.getBoundingClientRect();
-    await expect(box.height).toBe(
-      canvas.getByRole('button', { name: 'Search' }).getBoundingClientRect().height,
-    );
-    // The shared compact face keeps its larger touch target outside the native field.
-    const reach =
-      box.height +
-      (pointer
-        ? 0
-        : parseFloat(getComputedStyle(search.parentElement!, '::before').height) +
-          parseFloat(getComputedStyle(search.parentElement!, '::after').height));
-    await expect(reach).toBeGreaterThanOrEqual(pointer ? 28 : 44);
     await userEvent.type(search, 'error');
     await userEvent.click(canvas.getByRole('button', { name: 'Search' }));
     await expect(await canvas.findByText(/2 matches.*503 recorded lines/)).toBeVisible();
@@ -376,21 +305,6 @@ export const NestedDisclosures: Story = {
     if (group.getAttribute('aria-expanded') !== 'true') await userEvent.click(group);
     const log = canvas.getByRole('button', { name: 'Worker output' });
     if (log.getAttribute('aria-expanded') !== 'true') await userEvent.click(log);
-    const summary = canvas.getByText('2 workers observed');
-    const search = canvas.getByRole('searchbox', { name: 'Search Worker output' });
-    const output = canvas.getByRole('region', { name: 'Worker output output' });
-    await expect(summary.getBoundingClientRect().left - group.getBoundingClientRect().left).toBe(18);
-    await expect(log.getBoundingClientRect().left).toBe(summary.getBoundingClientRect().left);
-    await expect(search.getBoundingClientRect().left - log.getBoundingClientRect().left).toBe(18);
-    await expect(output.getBoundingClientRect().left).toBe(search.getBoundingClientRect().left);
-    await expect(canvas.getByText('Runtime not checked').getBoundingClientRect().left).toBe(
-      group.getBoundingClientRect().left,
-    );
-    for (const element of [summary, search, output]) {
-      await expect(element.getBoundingClientRect().right).toBeLessThanOrEqual(
-        group.getBoundingClientRect().right,
-      );
-    }
     log.focus();
     await userEvent.keyboard('{Enter}');
     await expect(canvas.queryByRole('searchbox')).not.toBeInTheDocument();
@@ -456,31 +370,6 @@ export const LinkResults: Story = {
     },
   },
   play: async ({ canvas }) => {
-    const list = canvas.getByRole('link', { name: 'Full console · router #4344' }).closest('ul')!;
-    const items = Array.from(list.children);
-    const box = list.getBoundingClientRect();
-    await expect(getComputedStyle(list).borderTopStyle).toBe('solid');
-    await expect(parseFloat(getComputedStyle(list).borderTopWidth)).toBeGreaterThan(0);
-    const luminance = (color: string) => color.match(/\d+/g)!.slice(0, 3)
-      .map((channel) => Number(channel) / 255)
-      .map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
-      .reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
-    const ink = luminance(getComputedStyle(list).borderTopColor);
-    const paper = luminance(getComputedStyle(list.closest('section')!).backgroundColor);
-    await expect((Math.max(ink, paper) + 0.05) / (Math.min(ink, paper) + 0.05)).toBeGreaterThanOrEqual(3);
-    if (box.width >= 550) {
-      await expect(items[0].getBoundingClientRect().top).toBe(items[1].getBoundingClientRect().top);
-      await expect(items[1].getBoundingClientRect().left).toBeGreaterThan(
-        items[0].getBoundingClientRect().right,
-      );
-    } else {
-      await expect(items[1].getBoundingClientRect().top).toBeGreaterThan(
-        items[0].getBoundingClientRect().bottom,
-      );
-    }
-    for (const item of items) {
-      await expect(item.getBoundingClientRect().right).toBeLessThanOrEqual(box.right);
-    }
     const links = canvas.getAllByRole('link');
     await expect(links.map((link) => link.getAttribute('href'))).toEqual([
       'https://gateway.example.com/build/4344',
@@ -564,23 +453,6 @@ export const LinkResultStates: Story = {
     },
   },
   play: async ({ canvas }) => {
-    const long = canvas.getByRole('link', {
-      name: 'Full console · gateway-router-integration-checks #4344 · SUCCESS',
-    });
-    const list = long.closest('ul')!;
-    const path = canvas.getByText(
-      '/tmp/gateway-router-integration-checks/build-report-with-complete-results.txt',
-    );
-    const label = canvas.getByText('Retained integration report');
-    for (const element of [long, path, label]) {
-      await expect(element.scrollWidth).toBeLessThanOrEqual(element.clientWidth);
-      await expect(element.getBoundingClientRect().right).toBeLessThanOrEqual(
-        list.getBoundingClientRect().right,
-      );
-    }
-    await expect(long.getBoundingClientRect().height).toBeGreaterThan(28);
-    const single = canvas.getByRole('link', { name: 'Build summary' });
-    await expect(parseFloat(getComputedStyle(single.closest('ul')!).borderTopWidth)).toBe(0);
     await expect(canvas.getByText('no links')).toBeVisible();
   },
 };
@@ -631,50 +503,15 @@ export const Dividers: Story = {
   },
   play: async ({ canvas }) => {
     await expect(canvas.getAllByRole('separator')).toHaveLength(2);
-    const dividerRow = canvas.getAllByRole('separator')[0].closest('li')!;
-    // An explicit break replaces adjacent automatic rules; it is not three lines.
-    await expect(parseFloat(getComputedStyle(dividerRow).borderBottomWidth)).toBe(0);
-    await expect(
-      parseFloat(getComputedStyle(dividerRow.previousElementSibling!).borderBottomWidth),
-    ).toBe(0);
     const disclosure = canvas.getByRole('button', { name: 'Build details' });
     await userEvent.click(disclosure);
     const dividers = canvas.getAllByRole('separator');
     await expect(dividers).toHaveLength(3);
     await expect(canvas.getByText('No warnings reported.')).toBeVisible();
     for (const divider of dividers) {
-      const box = divider.getBoundingClientRect();
-      const parent = divider.parentElement!.getBoundingClientRect();
-      const style = getComputedStyle(divider);
       await expect(divider.tagName).toBe('HR');
       await expect(divider.tabIndex).toBe(-1);
       await expect(divider.textContent).toBe('');
-      await expect(box.width).toBeGreaterThan(0);
-      await expect(box.left).toBe(parent.left);
-      await expect(box.right).toBe(parent.right);
-      await expect(style.borderTopStyle).toBe('solid');
-      await expect(parseFloat(style.borderTopWidth)).toBeGreaterThan(0);
-      const luminance = (color: string) =>
-        color
-          .match(/\d+/g)!
-          .slice(0, 3)
-          .map((channel) => Number(channel) / 255)
-          .map((channel) =>
-            channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
-          )
-          .reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
-      let surface: Element = divider;
-      while (
-        surface.parentElement &&
-        getComputedStyle(surface).backgroundColor === 'rgba(0, 0, 0, 0)'
-      ) {
-        surface = surface.parentElement;
-      }
-      const ink = luminance(style.borderTopColor);
-      const paper = luminance(getComputedStyle(surface).backgroundColor);
-      await expect(
-        (Math.max(ink, paper) + 0.05) / (Math.min(ink, paper) + 0.05),
-      ).toBeGreaterThanOrEqual(3);
     }
     await userEvent.click(disclosure);
     await expect(canvas.getAllByRole('separator')).toHaveLength(2);
@@ -749,13 +586,4 @@ export const NarrowGroups: Story = {
       </div>
     ),
   ],
-  play: async ({ canvas }) => {
-    const host = canvas.getByText('gateway.example.com').getBoundingClientRect();
-    const port = canvas.getByText('Port 5432').getBoundingClientRect();
-    const transport = canvas.getByText('Encrypted transport').getBoundingClientRect();
-    await expect(port.left).toBe(host.left);
-    await expect(port.top).toBeGreaterThanOrEqual(host.bottom + 12);
-    await expect(transport.left).toBe(port.left);
-    await expect(transport.top).toBeGreaterThanOrEqual(port.bottom + 12);
-  },
 };

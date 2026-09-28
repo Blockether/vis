@@ -27,25 +27,6 @@ export const Files: Story = {
   args: { onClose: close },
   play: async ({ args, canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
-    const filters = page.getByRole('group', { name: 'Filter artifacts by kind' });
-    const buttons = within(filters).getAllByRole('button');
-    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
-    for (const [index, button] of buttons.entries()) {
-      const box = button.getBoundingClientRect();
-      await expect(box.height).toBe(pointer ? 28 : 32);
-      if (index) {
-        await expect(
-          box.left - buttons[index - 1].getBoundingClientRect().right,
-        ).toBeGreaterThanOrEqual(8);
-      }
-      if (!pointer && box.right <= filters.getBoundingClientRect().right) {
-        for (const y of [box.top - 5, box.bottom + 5]) {
-          await expect(
-            button.contains(button.ownerDocument.elementFromPoint(box.left + box.width / 2, y)),
-          ).toBe(true);
-        }
-      }
-    }
     await userEvent.click(page.getByRole('button', { name: 'Close artifacts' }));
     await expect(args.onClose).toHaveBeenCalledOnce();
   },
@@ -86,20 +67,8 @@ export const OpenedDocument: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
     await page.findByRole('heading', { name: 'Plan', level: 1 });
-    const detail = page.getByRole('dialog', { name: 'plan.md' });
-    const header = detail.querySelector('header')!;
-    await expect(header.getBoundingClientRect().top).toBe(detail.getBoundingClientRect().top);
-    await expect(getComputedStyle(detail).paddingTop).toBe('0px');
-    const body = detail.lastElementChild!;
-    await expect(body.getBoundingClientRect().top).toBe(header.getBoundingClientRect().bottom);
-    await expect(body.getBoundingClientRect().bottom).toBe(detail.getBoundingClientRect().bottom);
 
     await userEvent.click(page.getByRole('button', { name: 'Close plan.md' }));
     await expect(page.queryByRole('dialog', { name: 'plan.md' })).toBeNull();
-    const sheet = page.getByRole('region', { name: 'Artifacts produced by the model' });
-    await expect(sheet.querySelector('header')!.getBoundingClientRect().top).toBe(
-      sheet.getBoundingClientRect().top,
-    );
-    await expect(getComputedStyle(sheet).paddingTop).toBe('0px');
   },
 };

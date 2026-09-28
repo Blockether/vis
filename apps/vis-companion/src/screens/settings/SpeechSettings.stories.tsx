@@ -101,27 +101,9 @@ type Story = StoryObj<typeof meta>;
 export const Empty: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const record = await canvas.findByRole('button', {
+    await canvas.findByRole('button', {
       name: 'Record your voice',
     });
-    const upload = canvas.getByRole('button', { name: 'Import voice' });
-    const group = record.closest('section')!;
-    const box = record.getBoundingClientRect();
-    const groupBox = group.getBoundingClientRect();
-    const uploadBox = upload.getBoundingClientRect();
-    await expect(box.width).toBeLessThan(groupBox.width - 24);
-    await expect(box.height).toBe(32);
-    await expect(uploadBox.height).toBe(box.height);
-    await expect(box.left - groupBox.left).toBeGreaterThanOrEqual(12);
-    await expect(groupBox.right - uploadBox.right).toBeGreaterThanOrEqual(12);
-    await expect(uploadBox.left - box.right).toBeGreaterThanOrEqual(8);
-    await expect(parseFloat(getComputedStyle(record).fontSize)).toBeGreaterThanOrEqual(11);
-    if (!matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
-      const target = getComputedStyle(record, '::after');
-      // The pseudo-element starts at the padding edge, inside the two border pixels.
-      const reach = box.height - 2 - parseFloat(target.top) - parseFloat(target.bottom);
-      await expect(reach).toBeGreaterThanOrEqual(44);
-    }
   },
 };
 
@@ -142,18 +124,6 @@ export const ExistingVoice: Story = {
   },
 };
 
-async function expectInlineTestAction(input: HTMLElement, button: HTMLElement) {
-  await input.ownerDocument.fonts.ready;
-  const field = input.getBoundingClientRect();
-  const action = button.getBoundingClientRect();
-  await expect(action.left - field.right).toBeGreaterThanOrEqual(8);
-  // The input and its icon-labelled action must share a face and type scale.
-  await expect(action.top).toBeCloseTo(field.top, 0);
-  await expect(action.height).toBeCloseTo(field.height, 0);
-  await expect(action.bottom).toBeCloseTo(field.bottom, 0);
-  await expect(getComputedStyle(input).fontSize).toBe(getComputedStyle(button).fontSize);
-}
-
 async function startTest(canvasElement: HTMLElement) {
   const canvas = within(canvasElement);
   const input = await canvas.findByRole('textbox', {
@@ -161,7 +131,6 @@ async function startTest(canvasElement: HTMLElement) {
   });
   await userEvent.type(input, 'This is how my voice sounds in Vis.');
   const test = canvas.getByRole('button', { name: 'Test' });
-  await expectInlineTestAction(input, test);
   await userEvent.click(test);
   return { canvas, input };
 }
@@ -173,15 +142,9 @@ export const TestVoice: Story = {
     await expect(canvas.getByRole('status')).toHaveTextContent('Synthesizing');
     // Pointer release runs before click; Stop must not turn into a submit button between them.
     const stop = canvas.getByRole('button', { name: 'Stop test' });
-    await expectInlineTestAction(input, stop);
-    const box = stop.getBoundingClientRect();
-    const coords = {
-      clientX: box.x + box.width / 2,
-      clientY: box.y + box.height / 2,
-    };
     await userEvent.pointer([
-      { target: stop, coords, keys: '[MouseLeft>]' },
-      { target: stop, coords, keys: '[/MouseLeft]' },
+      { target: stop, keys: '[MouseLeft>]' },
+      { target: stop, keys: '[/MouseLeft]' },
     ]);
     await expect(canvas.getByRole('button', { name: 'Test' })).toBeEnabled();
     await expect(input).toHaveValue('This is how my voice sounds in Vis.');

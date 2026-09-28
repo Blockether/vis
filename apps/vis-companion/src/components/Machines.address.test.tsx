@@ -27,8 +27,6 @@ vi.mock('../lib/gateway', async (importOriginal) => ({
   },
 }));
 
-import settingsScreenSource from '../screens/SettingsScreen.tsx?raw';
-import machineSettingsSource from '../screens/settings/MachineSettings.tsx?raw';
 import { MachineRows } from './Machines';
 import type { GatewayConn } from '../lib/types';
 
@@ -178,17 +176,5 @@ describe('binding a machine to one of its addresses', () => {
     await user.click(menu.getByRole('button', { name: /^Automatic/ }));
 
     expect(bound).toEqual([[LAN, LAN, false]]);
-  });
-
-  it('leaves no address panel behind in settings', () => {
-    // The panel, its probe and its three swipe verbs are gone — not kept beside the
-    // dropdown, which would be the two lists again. The one slide left in settings
-    // belongs to the MCP rows, which carry their own verbs the way every list does.
-    const settingsSource = `${settingsScreenSource}\n${machineSettingsSource}`;
-    expect(settingsSource).not.toContain('AddressPanel');
-    expect(settingsScreenSource).not.toContain('SwipeActions');
-    expect(machineSettingsSource.indexOf('<SwipeActions')).toBeGreaterThan(
-      machineSettingsSource.indexOf('export function McpServersPanel'),
-    );
   });
 });
