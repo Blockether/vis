@@ -188,3 +188,88 @@ def test_training_requires_both_labels_and_an_explicit_quality_gate(tmp_path):
         json.dumps({"min_decision_accuracy": 0.75, "min_action_accuracy": 0.9})
     )
     assert _config(policy, kind="quality policy")["min_action_accuracy"] == 0.9
+
+
+def test_inventory_hashes_bundle_files_in_order_without_the_license(tmp_path):
+    from blockether.vis.decisions.training import _inventory
+
+    (tmp_path / "tokenizer").mkdir()
+    (tmp_path / "tokenizer" / "tokenizer.json").write_bytes(b"{}")
+    (tmp_path / "model.onnx").write_bytes(b"graph")
+    (tmp_path / "LICENSE.txt").write_text("Apache-2.0")
+    inventory = _inventory(tmp_path)
+    assert list(inventory) == ["model.onnx", "tokenizer/tokenizer.json"]
+    assert inventory["model.onnx"] == {
+        "bytes": 5,
+        "sha256": hashlib.sha256(b"graph").hexdigest(),
+    }
+
+
+def test_quality_report_gates_both_heads_before_writing(tmp_path):
+    from blockether.vis.decisions._trainer import _quality_report
+
+    policy = {"min_decision_accuracy": 0.75, "min_action_accuracy": 0.5}
+
+    def evaluate(decisions, actions):
+        return _quality_report(
+            tmp_path,
+            policy,
+            revision="pinned",
+            examples=4,
+            decisions=decisions,
+            actions=actions,
+            largest_error=0.01,
+        )
+
+    for decisions, actions in ((2, 2), (3, 1)):
+        with pytest.raises(ValueError, match="failed the quality policy"):
+            evaluate(decisions, actions)
+    assert not (tmp_path / "validation_report.json").exists()
+    report = evaluate(3, 2)
+    assert json.loads(report.read_text()) == {
+        "examples": 4,
+        "decision_accuracy": 0.75,
+        "action_accuracy": 0.5,
+        "max_abs_logit_error": 0.01,
+        "quality_policy": policy,
+        "status": "evaluated_not_approved_for_autonomous_actions",
+        "checkpoint_revision": "pinned",
+    }
+
+
+def test_fp32_export_publishes_only_a_completed_preparation(tmp_path):
+    from blockether.vis.decisions._trainer import TrainingResult, _export_fp32
+
+    exports = tmp_path.resolve() / "exports"
+    checkpoint = tmp_path / "checkpoint"
+    stages = []
+
+    def prepare(prepared):
+        (prepared / "inference").mkdir()
+        (prepared / "validation_report.json").write_text("{}")
+
+    def fail(prepared):
+        (prepared / "partial").write_text("incomplete")
+        raise ValueError("FP32 export disagrees with the training checkpoint")
+
+    def export(name, step, progress=None):
+        return _export_fp32(
+            exports / name,
+            checkpoint=checkpoint,
+            prefix=".test-export-",
+            prepare=step,
+            progress=progress,
+        )
+
+    assert export("fp32", prepare, stages.append) == TrainingResult(
+        checkpoint,
+        exports / "fp32" / "inference",
+        exports / "fp32" / "validation_report.json",
+    )
+    assert stages == [{"stage": "exporting"}, {"stage": "validated"}]
+    assert (exports / "fp32" / "inference").is_dir()
+    with pytest.raises(FileExistsError):
+        export("fp32", prepare)
+    with pytest.raises(ValueError, match="disagrees"):
+        export("failed", fail)
+    assert [path.name for path in exports.iterdir()] == ["fp32"]

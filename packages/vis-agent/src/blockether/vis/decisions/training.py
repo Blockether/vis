@@ -65,6 +65,17 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _inventory(directory: Path) -> dict[str, dict]:
+    return {
+        item.relative_to(directory).as_posix(): {
+            "bytes": item.stat().st_size,
+            "sha256": _sha256(item),
+        }
+        for item in sorted(directory.rglob("*"))
+        if item.is_file() and item.name != "LICENSE.txt"
+    }
+
+
 @dataclass(frozen=True)
 class TrainingBundle:
     """Complete local checkpoint with both decision heads, not an ONNX graph."""

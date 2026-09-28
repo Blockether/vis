@@ -7,7 +7,6 @@ extractive entity/JSON heads. No checkpoint or dependency is downloaded here.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import shutil
@@ -22,6 +21,7 @@ import torch
 from gliner2 import AutoExtractor
 
 from ._models import ARCHITECTURES
+from .training import _inventory, _sha256
 
 INPUT_NAMES = ("input_ids", "attention_mask", "label_indices")
 PROBES = (
@@ -64,14 +64,6 @@ class DecisionGraph(torch.nn.Module):
             1, label_indices.unsqueeze(-1).expand(-1, -1, states.shape[-1])
         )
         return self.classifier(labels).squeeze(-1)
-
-
-def _digest(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def load_checkpoint(source: str | Path, *, model_id: str):
@@ -260,14 +252,7 @@ def prepare_fp32(
             if (source / name).is_file():
                 shutil.copyfile(source / name, staging / "tokenizer" / name)
         shutil.copyfile(license_file, staging / "LICENSE.txt")
-        inventory = {
-            item.relative_to(staging).as_posix(): {
-                "bytes": item.stat().st_size,
-                "sha256": _digest(item),
-            }
-            for item in sorted(staging.rglob("*"))
-            if item.is_file() and item.name != "LICENSE.txt"
-        }
+        inventory = _inventory(staging)
         metadata = {
             "schema_version": 1,
             "kind": "inference",
@@ -276,7 +261,7 @@ def prepare_fp32(
             "family": "gliner2.5",
             "architecture": ARCHITECTURES[model_id],
             "model": model_id,
-            "revision": revision or _digest(source / "model.safetensors"),
+            "revision": revision or _sha256(source / "model.safetensors"),
             "license": "Apache-2.0",
             "files": inventory,
         }

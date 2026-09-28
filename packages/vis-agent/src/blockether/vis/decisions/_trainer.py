@@ -109,6 +109,65 @@ def _config(source: str | Path, *, kind: str) -> dict:
     return config
 
 
+def _quality_report(
+    destination: Path,
+    policy: dict,
+    *,
+    revision: str,
+    examples: int,
+    decisions: int,
+    actions: int,
+    largest_error: float,
+) -> Path:
+    """Gate held-out accuracy on the quality policy, then write the report."""
+    metrics = {
+        "examples": examples,
+        "decision_accuracy": decisions / examples,
+        "action_accuracy": actions / examples,
+        "max_abs_logit_error": largest_error,
+        "quality_policy": policy,
+        "status": "evaluated_not_approved_for_autonomous_actions",
+        "checkpoint_revision": revision,
+    }
+    if (
+        metrics["decision_accuracy"] < policy["min_decision_accuracy"]
+        or metrics["action_accuracy"] < policy["min_action_accuracy"]
+    ):
+        raise ValueError(
+            "Held-out decision/action evaluation failed the quality policy"
+        )
+    report = destination / "validation_report.json"
+    report.write_text(json.dumps(metrics, indent=2) + "\n")
+    return report
+
+
+def _export_fp32(
+    output_dir: str | Path,
+    *,
+    checkpoint: Path,
+    prefix: str,
+    prepare: Callable[[Path], object],
+    progress: Callable[[dict], None] | None,
+) -> TrainingResult:
+    """Prepare in a sibling temporary directory, then publish it with one rename."""
+    target = Path(output_dir).expanduser().resolve()
+    if target.exists():
+        raise FileExistsError(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=prefix, dir=target.parent) as temporary:
+        prepared = Path(temporary) / "prepared"
+        prepared.mkdir()
+        if progress:
+            progress({"stage": "exporting"})
+        prepare(prepared)
+        prepared.rename(target)
+    if progress:
+        progress({"stage": "validated"})
+    return TrainingResult(
+        checkpoint, target / "inference", target / "validation_report.json"
+    )
+
+
 class ModernBertTrainer:
     """Explicit CPU training; an ONNX inference bundle is never a checkpoint.
 
@@ -172,16 +231,9 @@ class ModernBertTrainer:
         # retain the verified parent files so the new checkpoint stays immutable.
         shutil.copytree(parent / "tokenizer", directory / "tokenizer")
         shutil.copyfile(parent / "LICENSE.txt", directory / "LICENSE.txt")
-        from .training import TrainingBundle, _sha256
+        from .training import TrainingBundle, _inventory, _sha256
 
-        files = {
-            item.relative_to(directory).as_posix(): {
-                "bytes": item.stat().st_size,
-                "sha256": _sha256(item),
-            }
-            for item in sorted(directory.rglob("*"))
-            if item.is_file() and item.name != "LICENSE.txt"
-        }
+        files = _inventory(directory)
         source = json.loads((parent / "PROVENANCE.json").read_text())
         metadata = {
             "schema_version": 1,
@@ -225,16 +277,9 @@ class ModernBertTrainer:
         self._exporter.export_model(self.agent, inference, sample)
         shutil.copyfile(checkpoint / "LICENSE.txt", inference / "LICENSE.txt")
         source = json.loads((checkpoint / "PROVENANCE.json").read_text())
-        from .training import _sha256
+        from .training import _inventory
 
-        files = {
-            item.relative_to(inference).as_posix(): {
-                "bytes": item.stat().st_size,
-                "sha256": _sha256(item),
-            }
-            for item in sorted(inference.rglob("*"))
-            if item.is_file() and item.name != "LICENSE.txt"
-        }
+        files = _inventory(inference)
         metadata = {
             "schema_version": 1,
             "kind": "inference",
@@ -276,25 +321,15 @@ class ModernBertTrainer:
                 decision_correct += int(actual[0][0].argmax().item() == row["target"])
                 action_correct += int(actual[1][0].argmax().item() == row["action"])
         del runtime, graph
-        count = len(eval_rows)
-        metrics = {
-            "examples": count,
-            "decision_accuracy": decision_correct / count,
-            "action_accuracy": action_correct / count,
-            "max_abs_logit_error": largest_error,
-            "quality_policy": policy,
-            "status": "evaluated_not_approved_for_autonomous_actions",
-            "checkpoint_revision": source["revision"],
-        }
-        if (
-            metrics["decision_accuracy"] < policy["min_decision_accuracy"]
-            or metrics["action_accuracy"] < policy["min_action_accuracy"]
-        ):
-            raise ValueError(
-                "Held-out decision/action evaluation failed the quality policy"
-            )
-        report = destination / "validation_report.json"
-        report.write_text(json.dumps(metrics, indent=2) + "\n")
+        report = _quality_report(
+            destination,
+            policy,
+            revision=source["revision"],
+            examples=len(eval_rows),
+            decisions=decision_correct,
+            actions=action_correct,
+            largest_error=largest_error,
+        )
         return TrainingResult(checkpoint, inference, report)
 
     def prepare_fp32(
@@ -310,30 +345,17 @@ class ModernBertTrainer:
             progress({"stage": "loading"})
         rows = _examples(eval_data)
         policy = _config(validation_policy, kind="quality policy")
-        target = Path(output_dir).expanduser().resolve()
-        if target.exists():
-            raise FileExistsError(target)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(
-            prefix=".decision-export-", dir=target.parent
-        ) as temporary:
-            prepared = Path(temporary) / "prepared"
-            prepared.mkdir()
-            if progress:
-                progress({"stage": "exporting"})
-            self._prepare(
+        return _export_fp32(
+            output_dir,
+            checkpoint=self.checkpoint.path,
+            prefix=".decision-export-",
+            prepare=lambda prepared: self._prepare(
                 checkpoint=self.checkpoint.path,
                 eval_rows=rows,
                 policy=policy,
                 destination=prepared,
-            )
-            prepared.rename(target)
-            if progress:
-                progress({"stage": "validated"})
-        return TrainingResult(
-            self.checkpoint.path,
-            target / "inference",
-            target / "validation_report.json",
+            ),
+            progress=progress,
         )
 
     def finetune(

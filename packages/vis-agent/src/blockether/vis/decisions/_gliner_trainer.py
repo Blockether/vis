@@ -15,7 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ._trainer import TrainingResult, _config
+from ._trainer import TrainingResult, _config, _export_fp32, _quality_report
+from .training import _sha256
 
 if TYPE_CHECKING:
     from .gliner_training import GlinerTrainingBundle
@@ -255,25 +256,15 @@ class GlinerTrainer:
         finally:
             del runtime, model
             gc.collect()
-        count = len(rows)
-        metrics = {
-            "examples": count,
-            "decision_accuracy": correct_decisions / count,
-            "action_accuracy": correct_actions / count,
-            "max_abs_logit_error": largest_error,
-            "quality_policy": policy,
-            "checkpoint_revision": metadata["revision"],
-            "status": "evaluated_not_approved_for_autonomous_actions",
-        }
-        if (
-            metrics["decision_accuracy"] < policy["min_decision_accuracy"]
-            or metrics["action_accuracy"] < policy["min_action_accuracy"]
-        ):
-            raise ValueError(
-                "Held-out decision/action evaluation failed the quality policy"
-            )
-        report = destination / "validation_report.json"
-        report.write_text(json.dumps(metrics, indent=2) + "\n")
+        report = _quality_report(
+            destination,
+            policy,
+            revision=metadata["revision"],
+            examples=len(rows),
+            decisions=correct_decisions,
+            actions=correct_actions,
+            largest_error=largest_error,
+        )
         return TrainingResult(checkpoint, inference, report)
 
     def prepare_fp32(
@@ -289,25 +280,14 @@ class GlinerTrainer:
             raise RuntimeError("Trainer is closed")
         rows = _examples(eval_data)
         policy = _config(validation_policy, kind="quality policy")
-        target = Path(output_dir).expanduser().resolve()
-        if target.exists():
-            raise FileExistsError(target)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(
-            prefix=".gliner-prepare-", dir=target.parent
-        ) as temporary:
-            prepared = Path(temporary) / "prepared"
-            prepared.mkdir()
-            if progress:
-                progress({"stage": "exporting"})
-            self._prepare(self.checkpoint.path, prepared, rows, policy)
-            prepared.rename(target)
-        if progress:
-            progress({"stage": "validated"})
-        return TrainingResult(
-            self.checkpoint.path,
-            target / "inference",
-            target / "validation_report.json",
+        return _export_fp32(
+            output_dir,
+            checkpoint=self.checkpoint.path,
+            prefix=".gliner-prepare-",
+            prepare=lambda prepared: self._prepare(
+                self.checkpoint.path, prepared, rows, policy
+            ),
+            progress=progress,
         )
 
     def finetune(
@@ -406,7 +386,7 @@ class GlinerTrainer:
             trained = staging / "training" / "final"
             if not (trained / "model.safetensors").is_file():
                 raise FileNotFoundError("GLiNER training did not save full weights")
-            revision = self._exporter._digest(trained / "model.safetensors")
+            revision = _sha256(trained / "model.safetensors")
             prepared = staging / "prepared"
             prepared.mkdir()
             checkpoint = GlinerTrainingBundle.from_local(

@@ -17,7 +17,7 @@ from urllib.request import urlopen
 
 from ._models import ARCHITECTURES
 from ._trainer import TrainingResult
-from .training import TrainingBundle, _manifest, _safe_name, _sha256
+from .training import TrainingBundle, _inventory, _manifest, _safe_name, _sha256
 
 _REQUIRED = {
     "config.json",
@@ -195,14 +195,7 @@ class GlinerTrainingBundle(TrainingBundle):
                 copied.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(original, copied)
             shutil.copyfile(license_file, staging / "LICENSE.txt")
-            files = {
-                item.relative_to(staging).as_posix(): {
-                    "bytes": item.stat().st_size,
-                    "sha256": _sha256(item),
-                }
-                for item in sorted(staging.rglob("*"))
-                if item.is_file() and item.name != "LICENSE.txt"
-            }
+            files = _inventory(staging)
             metadata = {
                 "schema_version": 1,
                 "kind": "training",
