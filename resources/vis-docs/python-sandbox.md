@@ -1,9 +1,10 @@
 # Python sandbox
 
-Vis uses a CPython sandbox to run the agent's tool calls and calculations. It is
-separate from your project's Python environment: installing a package in one
-does not necessarily make it available in the other. This page explains which
-environment to use, how to install packages and what the sandbox can access.
+Vis uses a CPython sandbox to run the agent's tool calls and calculations, and to
+start its shell commands. It is separate from your project's Python environment:
+installing a package in one does not necessarily make it available in the other.
+This page explains which environment to use, how to install packages with `pip`
+and what the sandbox can access.
 
 ## When to use
 

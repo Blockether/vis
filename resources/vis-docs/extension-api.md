@@ -1,7 +1,7 @@
 # Extension API
 
-Reference for Python extension declarations, tool contracts, callbacks and host
-operations.
+Reference for registering Python extensions: declarations, tool contracts,
+callbacks and host operations.
 
 ## When to use
 

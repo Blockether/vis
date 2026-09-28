@@ -1,7 +1,8 @@
 # Decision models
 
 Vis can answer typed `choice`, `score` and `noul` questions with the Laya ModernBERT
-decision model. Each answer also includes an action-versus-escalation score. The
+decision model, a classifier that runs on your gateway from a downloaded ONNX
+bundle. Each answer also includes an action-versus-escalation score. The
 published baseline is a starting point, **not** a policy for taking actions on your
 behalf: collect representative labels for your use case, evaluate both heads and decide
 when a human should review the result before relying on it.

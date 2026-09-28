@@ -116,6 +116,10 @@ Whole skill body."}
     (it "finds a page by its opening, headings and When to use problems"
         (doseq [pattern ["working copy" "^drafts$" "review changes" "whole diff first"]]
           (expect (= ["drafts"] (mapv :name (dc/search es pattern))) pattern)))
+    (it "reads a hyphenated name as words too"
+        (let [pages [{:name "human-input" :kind "doc" :text "Ask for a value."}]]
+          (expect (= ["human-input"] (mapv :name (dc/search pages "human input"))))
+          (expect (= ["human-input"] (mapv :name (dc/search pages "HUMAN-INPUT"))))))
     (it "never searches a callable's contract or a page's body prose"
         (expect (empty? (dc/search es "matrix")))
         (expect (empty? (dc/search es "fenced heading"))))
@@ -153,6 +157,11 @@ Whole skill body."}
         (expect (str/includes?
                   (dc/miss-text (conj es {:name "copy-tool" :kind "tool" :text "Copies."}) "copy")
                   "contains it: copy-tool, drafts.")))
+    (it "counts a hyphenated name read as words as a name match"
+        (expect (str/includes? (dc/miss-text
+                                 (conj es {:name "working-copy" :kind "tool" :text "Copies."})
+                                 "working copy")
+                               "contains it: working-copy, drafts.")))
     (it "caps the suggestions and counts the rest"
         (expect (str/includes? (dc/miss-text es "tool")
                                "tool-0, tool-1, tool-2, tool-3, tool-4 and 2 more.")))

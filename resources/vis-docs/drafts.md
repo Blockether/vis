@@ -1,8 +1,8 @@
 # Drafts
 
-A draft gives a session its own working copies of one or more repositories, separate from
-your current checkout, as a Git worktree or a copy-on-write clone. **Drafts are
-experimental and off by default.**
+A draft gives a session its own isolated working copies of one or more repositories,
+separate from your current checkout, as a Git worktree or a copy-on-write clone.
+**Drafts are experimental and off by default.**
 
 ## When to use
 

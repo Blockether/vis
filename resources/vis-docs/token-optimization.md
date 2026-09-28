@@ -1,8 +1,8 @@
 # How Vis manages context
 
 Long sessions can fill the model's context window with old file reads and tool
-results. Vis returns only selected tool output and can summarize completed work
-without deleting your session history.
+results. Vis returns only selected tool output and can compress completed work
+into a summary without deleting your session history.
 
 ## When to use
 

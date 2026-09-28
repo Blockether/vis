@@ -9,7 +9,7 @@ The view appears in the terminal or Companion app and can be stopped at any time
 
 - **Your tool waits for a CI run or deployment that takes minutes.** Show its jobs
   as they finish, as in [Watch a CI run](#watch-a-ci-run).
-- **You follow several builds at once.** Keep them in [one
+- **You want a dashboard for several builds at once.** Keep them in [one
   view](#monitor-a-fixed-build-set) instead of one message per update.
 - **Errors get lost in a long log.** [Mark each line's
   severity](#add-severity-to-streaming-output) so failures stand out.

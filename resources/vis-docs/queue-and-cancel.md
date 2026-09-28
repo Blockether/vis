@@ -1,7 +1,8 @@
 # Controlling a session
 
 You can keep typing while Vis is working. Messages sent during a running turn
-are queued and run in order when the turn finishes.
+are queued and run in order when the turn finishes. You can also interrupt the
+running turn or quit the session.
 
 ## When to use
 

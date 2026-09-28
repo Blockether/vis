@@ -6,10 +6,11 @@
 
    `entries` is the whole corpus in source order, deduplicated by EXACT name; `pages`
    is the documentation subset the docs site renders. `apropos` applies one regular
-   expression to record names — and to the outline of pages and skills: title,
-   opening, headings, `When to use` problems — preserving corpus order. There is no
-   ranking, tokenization, search index or classpath discovery. `doc` retrieves the
-   same record by name and prints its whole text."
+   expression to record names, reading a hyphenated name also as words, and to the
+   outline of pages and skills: title, opening, headings, `When to use` problems.
+   It preserves corpus order. There is no ranking, tokenization, search index or
+   classpath discovery. `doc` retrieves the same record by name and prints its
+   whole text."
   (:refer-clojure :exclude [record?])
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
@@ -370,6 +371,13 @@
                                    (conj line))
                            phrases))))))
 
+(defn- name-forms
+  "An entry's name as written and, when it is hyphenated, read as words: a search
+   for `human input` finds `human-input`."
+  [{:keys [name]}]
+  (let [n (str name)]
+    (distinct [n (str/replace n "-" " ")])))
+
 (defn- search-pattern
   "Compile a caller's pattern: a string ignores case, a compiled `Pattern` keeps
    its own flags and a blank string matches everything."
@@ -382,10 +390,10 @@
                                                       java.util.regex.Pattern/UNICODE_CASE)))))
 
 (defn search
-  "Return entries `pattern` finds, preserving corpus order: a match in the `:name`
-   or in one phrase of a page's or skill's `outline`. A string pattern ignores
-   case; a compiled `Pattern` keeps its own flags. A blank string lists every
-   entry. Invalid regular expressions are errors."
+  "Return entries `pattern` finds, preserving corpus order: a match in one of the
+   `name-forms` or in one phrase of a page's or skill's `outline`. A string pattern
+   ignores case; a compiled `Pattern` keeps its own flags. A blank string lists
+   every entry. Invalid regular expressions are errors."
   [es pattern]
   (let [re
         (search-pattern pattern)
@@ -393,7 +401,7 @@
         found?
         #(some? (re-find re (str %)))]
 
-    (into [] (filter #(or (found? (:name %)) (some found? (outline %)))) es)))
+    (into [] (filter #(or (some found? (name-forms %)) (some found? (outline %)))) es)))
 
 ;; The curated index — `doc()` with no argument
 
@@ -464,7 +472,8 @@ Everything else — "
         (when-not (str/blank? wanted) (search es (java.util.regex.Pattern/quote wanted)))
 
         named?
-        #(str/includes? (str/lower-case (str (:name %))) wanted)
+        (fn [e]
+          (some #(str/includes? (str/lower-case %) wanted) (name-forms e)))
 
         found
         (mapv :name (concat (filter named? hits) (remove named? hits)))

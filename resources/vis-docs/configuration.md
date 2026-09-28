@@ -5,9 +5,9 @@ when you want settings shared across projects or checked into a repository.
 
 ## When to use
 
-- **You want to use a model from another provider or your own endpoint, or set its
-  API key.** Add it from the app in [Quick setup](#quick-setup), or declare it in
-  YAML under [Providers and models](#providers-and-models).
+- **You want to use a model from OpenAI, Ollama, another provider or your own
+  endpoint, or set its API key.** Add it from the app in [Quick setup](#quick-setup),
+  or declare it in YAML under [Providers and models](#providers-and-models).
 - **Your team should share the same settings.** Commit a project `vis.yml`;
   [Configuration files](#configuration-files) shows which file wins when several set
   the same key.

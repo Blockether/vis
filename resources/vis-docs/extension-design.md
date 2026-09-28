@@ -1,8 +1,8 @@
 # Extension design
 
 A useful extension gives Vis a clear way to do a job your project needs: run the
-right tests, inspect a service or check a result. This guide covers choosing an
-operation, explaining its inputs and testing it. Start with the
+right tests, inspect a service or check a result. This guide covers best practices
+for choosing an operation, explaining its inputs and testing it. Start with the
 [one-file tutorial](extending.md), or use the
 [tested greeter package](https://github.com/Blockether/vis/tree/main/packages/vis-agent/examples/greeter)
 when you need a larger example.

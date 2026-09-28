@@ -1,7 +1,8 @@
 # Project instructions
 
-Vis reads Markdown instructions from your project and home directory. Changes
-apply on the next turn without a restart.
+Vis reads Markdown instructions from your project and home directory, and turns
+prompt templates into slash commands. Changes apply on the next turn without a
+restart.
 
 | File | Purpose |
 |---|---|

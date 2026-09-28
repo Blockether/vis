@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   name or outline contains that text. Every feature guide now opens with a
   `When to use` section that links each problem to the part of the page that
   solves it.
+- `apropos()` also matches a hyphenated guide name written as words, so `human input`
+  finds `human-input`. Guide openings now use the terms readers search for, such as
+  slash commands, daemon, systemd, pip, ONNX and OpenAI.
 - The gateway formats Python code for the TUI and the companion with a built-in
   formatter that lays out code the way `ruff format` does. Code with formatter
   suppression comments such as `fmt: off` is shown as written. Vis no longer

@@ -3,7 +3,7 @@
 Run a gateway when you want the Vis app, your scripts and other clients to share
 one agent service. The gateway owns sessions and runs tools on its machine;
 clients send requests and follow progress. You can run it in your terminal or
-keep it running under a service manager.
+keep it running as a daemon under a service manager such as systemd.
 
 ## When to use
 

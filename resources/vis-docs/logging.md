@@ -1,8 +1,8 @@
 # Logs and diagnostics
 
-Use this page to find startup errors, command output and hang reports. Vis writes
-log files and other diagnostics under `~/.vis/logs/YYYY-MM-DD/` on the machine
-running the process.
+Use this page to debug Vis: find startup errors, command output and hang reports.
+Vis writes log files and other diagnostics under `~/.vis/logs/YYYY-MM-DD/` on the
+machine running the process.
 The date is UTC. A process or command keeps the directory chosen when it starts;
 a hang report uses its capture date.
 

@@ -1,6 +1,6 @@
 # Forms and user input
 
-Use a form when your extension needs someone to choose an option, enter a
+Use a form when your extension needs to ask the user to choose an option, enter a
 password or token, or confirm a step. `vis.ask` displays the form in the terminal
 or Companion app, waits for an answer and returns it to your Python code.
 

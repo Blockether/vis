@@ -1,7 +1,7 @@
 # Native builds for Java and Clojure extensions
 
-This guide shows how to add **Java or Clojure capabilities inside Vis** and ship
-them in a GraalVM native image that runs without a JVM. This is an in-tree
+This guide shows how to add **Java or Clojure capabilities inside Vis** and compile
+them into a GraalVM native image that runs without a JVM. This is an in-tree
 engine build, not a drop-in JAR plugin system.
 
 ## When to use
