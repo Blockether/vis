@@ -521,6 +521,34 @@ describe('timeLabel', () => {
     expect(timeLabel(undefined, now)).toBe('-');
     expect(timeLabel('not a date', now)).toBe('-');
   });
+
+  // Regression, user report: going back from a session to a long list lagged on a
+  // phone. Building an `Intl` formatter per row was most of the list's render time.
+  it('reuses its formatters instead of building them for every row', () => {
+    const stamps = ['2024-05-02T11:40:00Z', '2024-04-20T08:30:00Z', '2023-11-04T08:30:00Z'];
+    for (const stamp of stamps) timeLabel(stamp, now);
+    let built = 0;
+    const counted = <T extends new (...args: never[]) => object>(real: T): T =>
+      new Proxy(real, {
+        construct(target, args, newTarget) {
+          built += 1;
+          return Reflect.construct(target, args, newTarget);
+        },
+      });
+    const { RelativeTimeFormat, DateTimeFormat } = Intl;
+    Object.assign(Intl, {
+      RelativeTimeFormat: counted(RelativeTimeFormat),
+      DateTimeFormat: counted(DateTimeFormat),
+    });
+    try {
+      for (let row = 0; row < 50; row += 1) {
+        for (const stamp of stamps) timeLabel(stamp, now);
+      }
+    } finally {
+      Object.assign(Intl, { RelativeTimeFormat, DateTimeFormat });
+    }
+    expect(built).toBe(0);
+  });
 });
 
 // Regression (reported in-app: "we have this function which is hiding the session

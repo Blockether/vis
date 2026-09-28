@@ -439,6 +439,27 @@ export function sessionMillis(session: Session): number {
   return dateMillis(session.modified_at ?? session.created_at);
 }
 
+// Building an `Intl` formatter resolves locale data, which costs far more than
+// formatting with one; a list labels every row on each render, so each shape is
+// built once and reused.
+let relativeFormat: Intl.RelativeTimeFormat | undefined;
+const stampFormats = new Map<boolean, Intl.DateTimeFormat>();
+
+function stampFormat(sameYear: boolean): Intl.DateTimeFormat {
+  let format = stampFormats.get(sameYear);
+  if (!format) {
+    format = new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      ...(sameYear ? {} : { year: 'numeric' }),
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    stampFormats.set(sameYear, format);
+  }
+  return format;
+}
+
 /**
  * When a row last moved, as a human reads it: relative inside the last day ("3
  * hours ago"), an absolute DATE and time beyond it, with the year only when it is
@@ -450,19 +471,12 @@ export function timeLabel(value?: string, now: number = Date.now()): string {
   if (!millis) return '-';
   const seconds = Math.round((millis - now) / 1000);
   const absolute = Math.abs(seconds);
-  const relative = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
-  if (absolute < 60) return relative.format(seconds, 'second');
-  if (absolute < 3_600) return relative.format(Math.round(seconds / 60), 'minute');
-  if (absolute < 86_400) return relative.format(Math.round(seconds / 3_600), 'hour');
+  relativeFormat ??= new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+  if (absolute < 60) return relativeFormat.format(seconds, 'second');
+  if (absolute < 3_600) return relativeFormat.format(Math.round(seconds / 60), 'minute');
+  if (absolute < 86_400) return relativeFormat.format(Math.round(seconds / 3_600), 'hour');
   const date = new Date(millis);
-  const sameYear = date.getFullYear() === new Date(now).getFullYear();
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    ...(sameYear ? {} : { year: 'numeric' }),
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date);
+  return stampFormat(date.getFullYear() === new Date(now).getFullYear()).format(date);
 }
 
 // A DRAFT is a per-session clone parked at ~/.vis/drafts/<repo>/<label>; it is a

@@ -232,6 +232,19 @@ export function sidebarRailClass(isUp: boolean): string {
     : `${box} ml-[min(-20rem,-33%)] invisible border-transparent`;
 }
 
+/**
+ * THE PHONE'S LIST WHILE A SESSION COVERS IT. `display: none` would discard the
+ * list's styles, layout and scroll offset, and the way back would rebuild them for
+ * every row before its first frame. Out of the flow with its contents skipped, the
+ * list keeps all three for the way back.
+ *
+ * The contents are skipped rather than made `invisible`: `visibility` is inherited,
+ * so parking and returning would each restyle every row. The empty box waits behind
+ * the page, where it takes no taps. An engine without `content-visibility` hides it.
+ */
+const PARKED_LIST_CLASS =
+  'absolute inset-0 -z-10 [content-visibility:hidden] not-supports-[content-visibility:hidden]:invisible';
+
 export function App() {
   // Warm the split screens once the shell is up — off the critical path, so the
   // launch frame stays the list and the first tap still opens instantly.
@@ -1253,7 +1266,7 @@ export function App() {
               !sessionsVisible
                 ? canSplit
                   ? sidebarRailClass(false)
-                  : 'hidden'
+                  : PARKED_LIST_CLASS
                 : isSplit
                   ? sidebarRailClass(true)
                   : 'h-full'
