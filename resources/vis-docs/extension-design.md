@@ -53,9 +53,10 @@ Document what the signature and types cannot explain:
 
 Use `Annotated[T, "meaning"]` for parameter and result-field descriptions. Keep
 preconditions, side effects and failure conditions in the docstring. Do not copy
-the signature into prose or maintain a second schema. Use
-`from __future__ import annotations` and module-level result classes for safely
-inspectable annotations on supported Python versions.
+the signature into prose or maintain a second schema. Keep result classes at
+module level so Vis can resolve their names safely. Vis loads the extension file
+itself as if it began with `from __future__ import annotations`; package and helper
+modules that define tools need that import themselves.
 
 The packaged example's `src/vis_greeter/__init__.py` is ordinary Python with no Vis dependency:
 

@@ -584,10 +584,16 @@ use references rather than expanding forever.
 - `Name (opaque)` means the class is known but its structure is not described.
   Both labels appear in nested types and record fields, not just top-level returns.
 
-Use `from __future__ import annotations` and module-level result classes. Python
-3.14's deferred annotation functions can execute code even when asked for strings;
-without that import they are reported as unresolved instead of evaluated. Local
-forward references absent from the defining module remain unresolved.
+Vis loads each extension file as if it began with `from __future__ import annotations`.
+Annotations stay strings, and Vis resolves them against the module's own names, so
+define result classes at module level. Local forward references absent from the
+defining module remain unresolved.
+
+Modules that your extension file imports follow normal Python rules. Add
+`from __future__ import annotations` to a helper or package module that defines
+tools, and keep it in the extension file when tests import that file directly.
+Without it, Python 3.14 defers annotations into functions that can run code even
+when asked for strings, so Vis reports them as unresolved instead of evaluating them.
 
 ### Cross-module decorators
 

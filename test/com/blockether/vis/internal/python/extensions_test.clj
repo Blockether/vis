@@ -5693,6 +5693,53 @@ vis.register_extension(vis.Extension(
             (finally (ep/dispose-python-context! ctx))))))))
 
 (defdescribe
+  python-postponed-annotations-test
+  ;; Python 3.14 defers annotations; without a future import in the extension file,
+  ;; `doc()` reported every type as unresolved and dropped the return fields.
+  (it
+    "compiles extension files with postponed annotations"
+    (with-fresh-loaded
+      {"plain_tools.py"
+       (str
+         "\"Tools whose file has no future import 📦.\"\n" "from dataclasses import dataclass\n"
+         "import blockether.vis.extension as vis\n"
+         "@dataclass(frozen=True)\nclass Run:\n    run_id: int\n    branch: str\n"
+         "class Plain:\n" "    def runs(self, repo: str | None = None, limit: int = 10) -> Run:\n"
+         "        \"List recent runs.\"\n" "        return Run(limit, repo or 'main')\n"
+         "assert __doc__ == 'Tools whose file has no future import 📦.', __doc__\n"
+         "vis.register_extension(vis.Extension(name='plain-tools', description='Plain tools', alias='plain', symbols=[vis.Symbol(Plain(), name='plain')]))\n")}
+      (fn [result _]
+        (expect (= 1 (:loaded result)))
+        (let [ext
+              (registered "plain-tools")
+
+              made
+              (ep/create-python-context {} nil {:worker? true} nil)
+
+              ctx
+              (:python-context made)
+
+              env
+              {:python-context ctx :extensions (atom [ext]) :active-extensions (atom [])}]
+
+          (try
+            (loop-env/sync-active-extension-symbols! env [ext])
+            (let
+              [answer
+               (ep/run-python-block
+                 ctx
+                 (str
+                   "import inspect\n" "text = doc('plain.runs')\n"
+                   "assert 'deferred annotation' not in text, text\n"
+                   "assert 'run_id: int' in text and 'branch: str' in text, text\n"
+                   "sig = inspect.signature(plain.runs)\n"
+                   "assert str(sig) == \"(repo: str | None = None, limit: int = 10) -> 'Run'\", str(sig)\n"
+                   "assert (await plain.runs(limit=3)).run_id == 3\n" "print('postponed')"))]
+              (expect (nil? (:error answer)) (pr-str answer))
+              (expect (str/includes? (or (:stdout answer) "") "postponed")))
+            (finally (ep/dispose-python-context! ctx))))))))
+
+(defdescribe
   python-literal-defaults-test
   ;; #281: literals cross the trusted extension boundary without changing dispatch.
   (it

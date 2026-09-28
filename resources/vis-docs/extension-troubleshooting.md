@@ -74,7 +74,7 @@ mode's preparation steps. Plain reload and imports do not prepare manual uv proj
 | `parameter=...` in `doc()` | The parameter is optional; omit it to use its original default, not `Ellipsis` |
 | No explanation of the omitted-argument behavior | Fix the tool's docstring or `Annotated` description; public defaults should be documented |
 | A quoted string such as `'Results'` in `__annotations__`, or `NameError` from `get_type_hints()` | Record, opaque and unresolved types stay forward-reference strings on the proxy; use `.contract` for their fields, or pass `localns` to `get_type_hints()` |
-| `Name (unresolved)` | Keep result classes at module scope, use `from __future__ import annotations`, and check decorator metadata |
+| `Name (unresolved)` | Keep result classes at module scope, add `from __future__ import annotations` to helper and package modules that define tools, and check decorator metadata |
 | `Name (opaque)` | The class is known but has no described structure; use an annotated dataclass when callers need fields |
 | Missing docstring or invalid public name | Fix the named callable; declaration rejects it |
 

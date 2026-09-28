@@ -850,6 +850,18 @@
               (release-context! ctx))
       (release-context! ctx))))
 
+(defn- postponed-annotations-python
+  "Python that executes extension `source` as if the file began with
+   `from __future__ import annotations`. Python 3.14 otherwise defers annotations
+   into functions that the SDK does not evaluate, so `doc()` lost every type.
+   The source crosses as JSON text: a Python string literal reads an escaped
+   surrogate pair as two characters, while `json.loads` rejoins it. `<string>` is
+   the file name the interpreter gives code it executes directly."
+  [source]
+  (str "exec(compile(__import__('json').loads(" (python-string-literal (json/write-json-str source))
+       "), '<string>', 'exec', flags=__import__('__future__').annotations.compiler_flag,"
+       " dont_inherit=True), globals())"))
+
 (defn- initialize-extension-context!
   "Evaluate admitted extension `source` in a trusted namespace of `worker`.
    `entry-path` is the canonical source entry file exposed through Python's
@@ -906,7 +918,7 @@
                       "    if (__vis_file__.startswith(__vis_frozen_home__)\n"
                       "            and not __vis_file__.startswith(__vis_ext_dir__)):\n"
                       "        del __vis_pathsys__.modules[__vis_name__]\n"))
-               (exec-in! ctx source))))
+               (exec-in! ctx (postponed-annotations-python source)))))
          {:context ctx :registration (unseal ctx (run-in ctx "__vis_registration__()"))}
          (catch Throwable t (discard-context! ctx) (throw t)))))
 
