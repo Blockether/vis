@@ -72,9 +72,11 @@
     (is (= [:tui :app] (:channel-ids (hi/normalize-request (spec)))))
     (is (= [:tui] (:channel-ids (hi/normalize-request (spec :channel-ids [:tui])))))
     (is (= [:app] (:channel-ids (hi/normalize-request (spec :channel-id :app))))))
-  (testing "the request names its session, from either key spelling"
+  (testing "the request names its session, in Clojure or as converted JSON"
     (is (= "sid-1" (:session-id (hi/normalize-request (spec :session-id "sid-1")))))
-    (is (= "sid-2" (:session-id (hi/normalize-request (assoc (spec) "session_id" "sid-2")))))
+    (is (= "sid-2"
+           (:session-id (hi/normalize-request (hi/spec<-json (assoc (spec)
+                                                               "session_id" "sid-2"))))))
     (is (nil? (:session-id (hi/normalize-request (spec))))))
   (testing "the channel/wire view keeps the session — the app routes on it"
     (is (= "sid-3"

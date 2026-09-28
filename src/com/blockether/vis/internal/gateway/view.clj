@@ -16,7 +16,8 @@
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.view.core :as view]
             [com.blockether.vis.internal.view.sink :as sink]
-            [com.blockether.vis.contract.view :as view-spec])
+            [com.blockether.vis.contract.view :as view-spec]
+            [com.blockether.vis.contract.wire :as wire])
   (:import [java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit]))
 
 (set! *warn-on-reflection* true)
@@ -54,9 +55,14 @@
 
 (defn action!
   "Apply one closed operator action to open View `view-id`. Kind policy and all
-   validation stay in the engine, so every remote surface receives the same verdict."
+   validation stay in the engine, so every remote surface receives the same verdict.
+   The decoded action's own keys become engine keywords here, once; the `values`
+   it submits stay keyed by field name."
   [view-id action]
-  (view/action! (str view-id) action))
+  (view/action! (str view-id)
+                (cond-> action
+                  (map? action)
+                  (update-keys wire/engine-key))))
 
 ;; --- Live views (a run the human WATCHES) ---
 

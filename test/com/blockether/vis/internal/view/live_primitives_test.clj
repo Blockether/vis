@@ -61,7 +61,7 @@
         (select-keys declared ["title" "description" "nodes"])
 
         view
-        (materializer/materialize (engine/normalize-live-view raw))]
+        (materializer/materialize (engine/normalize-live-view (engine/spec<-json raw)))]
 
     (is (nil? (spec/live-view-error view)))
     (is (= (set (vals spec/live-node-types))
@@ -104,7 +104,7 @@
                  (catch clojure.lang.ExceptionInfo _ true)))
         (let [presses (mapv (fn [_]
                               (future (engine/action! id
-                                                      {"action" "activate" "node_id" "refresh"})))
+                                                      {:action :activate :node-id "refresh"})))
                             (range 12))]
           (is (every? :is-accepted (map deref presses))))
         (is (= 12 (:clicks (node (engine/live-view id) "refresh"))))

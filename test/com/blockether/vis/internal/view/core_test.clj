@@ -173,12 +173,12 @@
         (expect (= {:is-accepted true :values {"note" "hi"}}
                    (hi/coerce-values fields {"note" "hi"})))))
   (it "reads string keys from the Python boundary"
-      (let [[field] (normalized-fields {"id" "token"
-                                        "type" "password"
-                                        "label" "API token"
-                                        "is_required" true
-                                        "max_length" 40
-                                        "description" "from the dashboard"})]
+      (let [[field] (normalized-fields (hi/spec<-json {"id" "token"
+                                                       "type" "password"
+                                                       "label" "API token"
+                                                       "is_required" true
+                                                       "max_length" 40
+                                                       "description" "from the dashboard"}))]
         (expect (= "token" (:id field)))
         (expect (= :password (:type field)))
         (expect (= "API token" (:label field)))
@@ -192,7 +192,7 @@
                    (:options field)))))
   (it "keeps explicit option labels"
       (let [[field] (normalized-fields
-                      {:id "env" :type "select" :options [{"value" "prod" "label" "Production"}]})]
+                      {:id "env" :type "select" :options [{:value "prod" :label "Production"}]})]
         (expect (= [{:value "prod" :label "Production"}] (:options field)))))
   (it "validates a declared default against its own field"
       (let [[field] (normalized-fields {:id "env" :type "select" :options ["a" "b"] :default "b"})]
@@ -258,8 +258,9 @@
       ;; A Python extension says the same thing over the strings boundary, where a
       ;; 0 is easy to mistake for a missing key and default back to five minutes.
       (expect (= hi/no-timeout-ms
-                 (:timeout-ms (hi/normalize-request
-                                {"title" "t" "fields" [{"name" "a"}] "timeout_ms" 0})))))
+                 (:timeout-ms (hi/normalize-request (hi/spec<-json {"title" "t"
+                                                                    "fields" [{"name" "a"}]
+                                                                    "timeout_ms" 0}))))))
   (it "accepts a single channel id or a collection"
       (expect (= [:app]
                  (:channel-ids (hi/normalize-request
@@ -275,9 +276,10 @@
       ;; forbidden dismissing.
       (expect (false? (:is-cancellable (hi/normalize-request
                                          {:title "t" :fields [{:id "a"}] :is-cancellable false}))))
-      (expect (false? (:is-cancellable (hi/normalize-request {"title" "t"
-                                                              "fields" [{"id" "a"}]
-                                                              "is_cancellable" false}))))))
+      (expect (false? (:is-cancellable (hi/normalize-request (hi/spec<-json {"title" "t"
+                                                                             "fields" [{"id" "a"}]
+                                                                             "is_cancellable"
+                                                                             false})))))))
 
 (defn- refusal
   "The message a spec the engine must refuse throws, or nil when it wrongly
@@ -292,8 +294,8 @@
 
 (defn- unknown-keys
   "Of the spec vocabulary `ks`, the ones `normalize` calls an UNKNOWN key when
-   `base` is written with them. Always none: the snake_case keys the parser
-   accepts are derived from these very sets. A key `base` already carries is
+   `base` is written with them the way a Python spec writes them. Always none:
+   the keys the parser accepts are derived from these very sets. A key `base` already carries is
    proven by `base` parsing at all, and any other refusal is somebody else's
    business."
   [ks base normalize]
@@ -301,7 +303,7 @@
         (comp (map wire-name)
               (remove #(contains? base %))
               (filter (fn [k]
-                        (boolean (some-> (refusal #(normalize (assoc base k nil)))
+                        (boolean (some-> (refusal #(normalize (hi/spec<-json (assoc base k nil))))
                                          (str/includes? "unknown"))))))
         ks))
 
@@ -321,21 +323,22 @@
     "takes the snake_case string spelling a Python spec writes"
     (let [request
           (hi/normalize-request
-            {"title" "Deploy"
-             "description" "Pick a target"
-             "submit_label" "Go"
-             "cancel_label" "Stop"
-             "is_cancellable" false
-             "timeout_ms" 20000
-             "session_id" "sid-1"
-             "source" "asker"
-             "fields" [{"name" "env"
-                        "label" "Target"
-                        "description" "Where it lands."
-                        "type" "select"
-                        "options" [{"value" "prod" "label" "Production"}]
-                        "is_required" true}
-                       {"name" "note" "placeholder" "why" "max_length" 5 "default" "ok"}]})
+            (hi/spec<-json {"title" "Deploy"
+                            "description" "Pick a target"
+                            "submit_label" "Go"
+                            "cancel_label" "Stop"
+                            "is_cancellable" false
+                            "timeout_ms" 20000
+                            "session_id" "sid-1"
+                            "source" "asker"
+                            "fields"
+                            [{"name" "env"
+                              "label" "Target"
+                              "description" "Where it lands."
+                              "type" "select"
+                              "options" [{"value" "prod" "label" "Production"}]
+                              "is_required" true}
+                             {"name" "note" "placeholder" "why" "max_length" 5 "default" "ok"}]}))
 
           [env note]
           (:fields request)]
@@ -357,16 +360,18 @@
       ;; This is the whole point. `{'isRequired': True}` from Python parsed as
       ;; clean JSON, matched no key at all, and left a MANDATORY field optional
       ;; on every surface — the human just skipped it and the run went on.
-      (let [message (refusal #(normalized-fields {"name" "env" "isRequired" true}))]
+      (let [message (refusal #(normalized-fields (hi/spec<-json {"name" "env" "isRequired" true})))]
         (expect (some? message))
         (expect (str/includes? message "is_required")))
-      (expect (some? (refusal #(normalized-fields {"name" "env" "maxLength" 5}))))
-      (expect (some? (refusal #(hi/normalize-request
-                                 {"title" "t" "fields" [{"name" "a"}] "timeoutMs" 10})))))
+      (expect (some? (refusal #(normalized-fields (hi/spec<-json {"name" "env" "maxLength" 5})))))
+      (expect (some? (refusal #(hi/normalize-request (hi/spec<-json {"title" "t"
+                                                                     "fields" [{"name" "a"}]
+                                                                     "timeoutMs" 10}))))))
   (it "refuses a kebab-case STRING and a snake_case KEYWORD"
       ;; Each half of the contract, spelled the other half's way: strings are
       ;; snake_case (Python/JSON), keywords are kebab-case (Clojure).
-      (expect (some? (refusal #(normalized-fields {"name" "env" "is-required" true}))))
+      (expect (some? (refusal #(normalized-fields (hi/spec<-json {"name" "env"
+                                                                  "is-required" true})))))
       (expect (some? (refusal #(normalized-fields {:name "env" :is_required true}))))
       (expect (some? (refusal #(hi/normalize-request
                                  {:title "t" :fields [{:name "a"}] :timeout_ms 10})))))
@@ -382,10 +387,10 @@
   (it "takes the `id` spelling of a name, and no longer a `help`"
       ;; `help` was `description`'s legacy alias; the vocabulary has one spelling
       ;; per key, so it is now as unknown as any other stray word.
-      (let [[field] (normalized-fields {"id" "env" "description" "prose"})]
+      (let [[field] (normalized-fields (hi/spec<-json {"id" "env" "description" "prose"}))]
         (expect (= "env" (:name field)))
         (expect (= "prose" (:description field))))
-      (let [message (refusal #(normalized-fields {"name" "env" "help" "prose"}))]
+      (let [message (refusal #(normalized-fields (hi/spec<-json {"name" "env" "help" "prose"})))]
         (expect (some? message))
         (expect (str/includes? message "unknown field key"))))
   (it "calls no key of the spec's own vocabulary unknown"
@@ -399,7 +404,8 @@
       (expect (= #{}
                  (unknown-keys hs/option-keys
                                {"value" "a"}
-                               #(normalized-fields {"name" "env" "type" "select" "options" [%]}))))
+                               #(normalized-fields
+                                  (hi/spec<-json {"name" "env" "type" "select" "options" [%]})))))
       (expect (= #{}
                  (unknown-keys hs/request-keys
                                {"title" "t" "fields" [{"name" "a"}]}
@@ -897,7 +903,7 @@
 (defn- otp-field
   "A normalized `:otp` field from the spec keys a caller would actually write."
   [& {:as spec}]
-  (hi/normalize-field (merge {"name" "code" "type" "otp"} spec)))
+  (hi/normalize-field (hi/spec<-json (merge {"name" "code" "type" "otp"} spec))))
 
 (defdescribe
   otp-field-test
@@ -944,22 +950,24 @@
   "Two passwords and an email — the form every validation feature is for."
   [& {:as overrides}]
   (hi/normalize-request
-    (merge {"title" "Sign in"
-            "fields" [{"name" "email"
-                       "is_required" true
-                       "validate" #(when-not (re-find #"@" (str %)) "must be an email address")}
-                      {"name" "pw"
-                       "type" "password"
-                       "label" "Password"
-                       "is_required" true
-                       "validate" [#(when (< (count (str %)) 8) "at least 8 characters")
-                                   #(when-not (re-find #"[0-9]" (str %)) "needs a digit")]}
-                      {"name" "pw2"
-                       "type" "password"
-                       "is_required" true
-                       "validate" (fn [value values]
-                                    (when-not (= value (get values "pw")) "must match Password"))}]}
-           overrides)))
+    (hi/spec<-json
+      (merge {"title" "Sign in"
+              "fields" [{"name" "email"
+                         "is_required" true
+                         "validate" #(when-not (re-find #"@" (str %)) "must be an email address")}
+                        {"name" "pw"
+                         "type" "password"
+                         "label" "Password"
+                         "is_required" true
+                         "validate" [#(when (< (count (str %)) 8) "at least 8 characters")
+                                     #(when-not (re-find #"[0-9]" (str %)) "needs a digit")]}
+                        {"name" "pw2"
+                         "type" "password"
+                         "is_required" true
+                         "validate" (fn [value values]
+                                      (when-not (= value (get values "pw"))
+                                        "must match Password"))}]}
+             overrides))))
 
 (defn- errors
   "The `field id -> message` map a submission of `values` would be refused with."
@@ -996,25 +1004,26 @@
   (it "checks the shape of an answer, never whether there IS one"
       ;; A validator and `:is-required` answer two different questions: an
       ;; optional email left blank is fine, a required one is refused as missing.
-      (let [optional (hi/normalize-request {"title" "t"
-                                            "fields" [{"name" "email"
-                                                       "validate"
-                                                       #(when-not (re-find #"@" (str %))
-                                                          "must be an email address")}]})]
+      (let [optional (hi/normalize-request
+                       (hi/spec<-json {"title" "t"
+                                       "fields" [{"name" "email"
+                                                  "validate" #(when-not (re-find #"@" (str %))
+                                                                "must be an email address")}]}))]
         (expect (= {} (errors optional {"email" ""})))
         (expect (= {} (errors optional {})))
         (expect (= {"email" "must be an email address"} (errors optional {"email" "nope"})))))
   (it "takes a validator's word for it, whatever shape that word arrives in"
-      (let [request (hi/normalize-request {"title" "t"
-                                           "fields" [{"name" "team"
-                                                      :validate #(when-not (= "ops" %)
-                                                                   "must be an ops team")}
-                                                     {"name" "quiet" :validate (constantly nil)}
-                                                     {"name" "sure" :validate (constantly true)}
-                                                     {"name" "flag" :validate (constantly false)}
-                                                     {"name" "boom"
-                                                      :validate (fn [_]
-                                                                  (throw (ex-info "nope" {})))}]})]
+      (let [request (hi/normalize-request
+                      (hi/spec<-json {"title" "t"
+                                      "fields" [{"name" "team"
+                                                 :validate #(when-not (= "ops" %)
+                                                              "must be an ops team")}
+                                                {"name" "quiet" :validate (constantly nil)}
+                                                {"name" "sure" :validate (constantly true)}
+                                                {"name" "flag" :validate (constantly false)}
+                                                {"name" "boom"
+                                                 :validate (fn [_]
+                                                             (throw (ex-info "nope" {})))}]}))]
         (expect (= {} (errors request {"team" "ops" "flag" nil "boom" nil})))
         (expect (= {"team" "must be an ops team"
                     "flag" "is not valid"
@@ -1028,15 +1037,15 @@
             (atom 0)
 
             request
-            (hi/normalize-request {"title" "t"
-                                   "fields" [{"name" "a"
-                                              :validate (fn [_]
-                                                          (swap! calls inc)
-                                                          nil)}
-                                             {"name" "b"
-                                              :validate (fn [_]
-                                                          (swap! calls inc)
-                                                          "no")}]})]
+            (hi/normalize-request (hi/spec<-json {"title" "t"
+                                                  "fields" [{"name" "a"
+                                                             :validate (fn [_]
+                                                                         (swap! calls inc)
+                                                                         nil)}
+                                                            {"name" "b"
+                                                             :validate (fn [_]
+                                                                         (swap! calls inc)
+                                                                         "no")}]}))]
 
         (expect (= {"b" "no"} (errors request {"a" "x" "b" "y"})))
         (expect (= 2 @calls))
@@ -1047,25 +1056,26 @@
       ;; refused where they used to be honoured, so a spec written against the
       ;; old DSL fails loudly instead of quietly checking nothing.
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(hi/normalize-field {"name" "a" "validate" {"type" "email"}})))
+                       #(hi/normalize-field (hi/spec<-json {"name" "a"
+                                                            "validate" {"type" "email"}}))))
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(hi/normalize-field {"name" "a" "validate" "email"})))
+                       #(hi/normalize-field (hi/spec<-json {"name" "a" "validate" "email"}))))
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(hi/normalize-field {"name" "a" "validate" #"^[0-9]+$"})))
+                       #(hi/normalize-field (hi/spec<-json {"name" "a" "validate" #"^[0-9]+$"}))))
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(hi/normalize-field {"name" "a"
-                                             "validate" (fn []
-                                                          nil)})))
+                       #(hi/normalize-field (hi/spec<-json {"name" "a"
+                                                            "validate" (fn []
+                                                                         nil)}))))
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(hi/normalize-field {"name" "a"
-                                             "validate" (fn [_ _ _]
-                                                          nil)}))))
+                       #(hi/normalize-field (hi/spec<-json {"name" "a"
+                                                            "validate" (fn [_ _ _]
+                                                                         nil)})))))
   (it "never lets a validator near the wire"
       ;; A function cannot be serialized and a surface has no business owning a
       ;; rule: the view carries the field, never the check.
       (let [request
-            (hi/normalize-request {"title" "t"
-                                   "fields" [{"name" "a" "validate" (constantly "no")}]})
+            (hi/normalize-request
+              (hi/spec<-json {"title" "t" "fields" [{"name" "a" "validate" (constantly "no")}]}))
 
             view-field
             (first (:fields (hi/request->view request)))]
@@ -1094,17 +1104,18 @@
   "One row holding two fields, beside a plain stacked field — the smallest form
    that can tell a layout tree from a flat list."
   [& {:as overrides}]
-  (hi/normalize-request (merge {"title" "Deploy"
-                                "fields" [{"type" "group"
-                                           "direction" "row"
-                                           "fields"
-                                           [{"name" "host" "label" "Host" "is_required" true}
-                                            {"name" "port"
-                                             "label" "Port"
-                                             "validate" #(when-not (re-matches #"[0-9]+" (str %))
-                                                           "must be a whole number")}]}
-                                          {"name" "note" "type" "multiline" "label" "Note"}]}
-                               overrides)))
+  (hi/normalize-request (hi/spec<-json
+                          (merge {"title" "Deploy"
+                                  "fields" [{"type" "group"
+                                             "direction" "row"
+                                             "fields"
+                                             [{"name" "host" "label" "Host" "is_required" true}
+                                              {"name" "port"
+                                               "label" "Port"
+                                               "validate" #(when-not (re-matches #"[0-9]+" (str %))
+                                                             "must be a whole number")}]}
+                                            {"name" "note" "type" "multiline" "label" "Note"}]}
+                                 overrides))))
 
 (defdescribe
   group-layout-test
@@ -1136,60 +1147,71 @@
         (expect (some? (hs/field-error group)))
         (expect (some? (hs/group-error note)))
         ;; and the fork is taken above both, before a value key is parsed.
-        (expect (str/includes? (refusal #(hi/normalize-field {"type" "group"
-                                                              "fields" [{"name" "a"}]}))
+        (expect (str/includes? (refusal #(hi/normalize-field (hi/spec<-json {"type" "group"
+                                                                             "fields" [{"name"
+                                                                                        "a"}]})))
                                "not a field"))))
   (it "stacks by default — a group without a :direction is a column"
-      (let [[group] (normalized-fields {"type" "group" "fields" [{"name" "a"} {"name" "b"}]})]
+      (let [[group] (normalized-fields (hi/spec<-json {"type" "group"
+                                                       "fields" [{"name" "a"} {"name" "b"}]}))]
         (expect (= :column (:direction group)))))
   (it "nests, so a row of stacks needs no new key"
-      (let [[outer] (normalized-fields {"type" "group"
-                                        "direction" "row"
-                                        "fields" [{"type" "group"
-                                                   "fields" [{"name" "a"} {"name" "b"}]}
-                                                  {"name" "c"}]})]
+      (let [[outer] (normalized-fields (hi/spec<-json {"type" "group"
+                                                       "direction" "row"
+                                                       "fields" [{"type" "group"
+                                                                  "fields" [{"name" "a"}
+                                                                            {"name" "b"}]}
+                                                                 {"name" "c"}]}))]
         (expect (= :row (:direction outer)))
         (expect (= :column (:direction (first (:fields outer)))))
         (expect (= ["a" "b" "c"] (mapv :id (hi/input-fields [outer]))))))
   (it "names itself from its children when the spec does not name it"
-      (let [[outer] (normalized-fields {"type" "group"
-                                        "fields" [{"type" "group" "fields" [{"name" "a"}]}]})]
+      (let [[outer] (normalized-fields (hi/spec<-json {"type" "group"
+                                                       "fields" [{"type" "group"
+                                                                  "fields" [{"name" "a"}]}]}))]
         (expect (= "group:group:a" (:id outer)))
         (expect (= "group:a" (:id (first (:fields outer)))))
         (expect (= (:id outer) (:name outer))))
-      (let [[outer] (normalized-fields {"name" "when" "type" "group" "fields" [{"name" "a"}]})]
+      (let [[outer] (normalized-fields (hi/spec<-json
+                                         {"name" "when" "type" "group" "fields" [{"name" "a"}]}))]
         (expect (= "when" (:id outer)))))
   (it "refuses a direction that is not a flexbox direction"
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(normalized-fields
-                          {"type" "group" "direction" "diagonal" "fields" [{"name" "a"}]}))))
+                       #(normalized-fields (hi/spec<-json {"type" "group"
+                                                           "direction" "diagonal"
+                                                           "fields" [{"name" "a"}]})))))
   (it "refuses a group with nothing in it"
-      (expect (throws? clojure.lang.ExceptionInfo #(normalized-fields {"type" "group"})))
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(normalized-fields {"type" "group" "fields" []}))))
+                       #(normalized-fields (hi/spec<-json {"type" "group"}))))
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(normalized-fields (hi/spec<-json {"type" "group" "fields" []})))))
   (it "refuses a key that only an answerable field could use"
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(normalized-fields
-                          {"type" "group" "is_required" true "fields" [{"name" "a"}]})))
+                       #(normalized-fields (hi/spec<-json {"type" "group"
+                                                           "is_required" true
+                                                           "fields" [{"name" "a"}]}))))
       (expect (throws? clojure.lang.ExceptionInfo
                        #(normalized-fields
-                          {"type" "group" "default" "x" "fields" [{"name" "a"}]}))))
+                          (hi/spec<-json {"type" "group" "default" "x" "fields" [{"name" "a"}]})))))
   (it "refuses a layout key on a field that could never lay anything out"
       ;; The mirror of the rule above: `fields`/`direction` describe an
       ;; arrangement, and a leaf arranges nothing — silently ignoring them would
       ;; drop half the form the caller wrote.
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(normalized-fields {"name" "host" "fields" [{"name" "a"}]})))
+                       #(normalized-fields (hi/spec<-json {"name" "host"
+                                                           "fields" [{"name" "a"}]}))))
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(normalized-fields {"name" "host" "direction" "row"})))
-      (expect (str/includes? (try (normalized-fields {"name" "host" "direction" "row"})
+                       #(normalized-fields (hi/spec<-json {"name" "host" "direction" "row"}))))
+      (expect (str/includes? (try (normalized-fields (hi/spec<-json {"name" "host"
+                                                                     "direction" "row"}))
                                   nil
                                   (catch clojure.lang.ExceptionInfo e (ex-message e)))
                              "only exists on a group")))
   (it "still refuses two fields with the same name across different groups"
       (expect (throws? clojure.lang.ExceptionInfo
-                       #(normalized-fields {"type" "group" "fields" [{"name" "a"}]}
-                                           {"type" "group" "fields" [{"name" "a"}]}))))
+                       #(normalized-fields (hi/spec<-json {"type" "group" "fields" [{"name" "a"}]})
+                                           (hi/spec<-json {"type" "group"
+                                                           "fields" [{"name" "a"}]})))))
   (it "validates and answers the nested fields as if the tree were flat"
       (let [request (grouped-request)]
         (expect (= {"host" "is required" "port" "must be a whole number"}
@@ -1199,27 +1221,28 @@
                                               {"host" "vis.example.com" "port" "8080"}))))))
   (it "reaches a sibling in another group, because `values` is flat"
       (let [request (hi/normalize-request
-                      {"title" "Sign in"
-                       "fields" [{"type" "group"
-                                  "direction" "row"
-                                  "fields" [{"name" "pw" "type" "password" "label" "Password"}]}
-                                 {"name" "pw2"
-                                  "type" "password"
-                                  "validate" (fn [value values]
-                                               (when-not (= value (get values "pw"))
-                                                 "must match Password"))}]})]
+                      (hi/spec<-json
+                        {"title" "Sign in"
+                         "fields" [{"type" "group"
+                                    "direction" "row"
+                                    "fields" [{"name" "pw" "type" "password" "label" "Password"}]}
+                                   {"name" "pw2"
+                                    "type" "password"
+                                    "validate" (fn [value values]
+                                                 (when-not (= value (get values "pw"))
+                                                   "must match Password"))}]}))]
         (expect (= {} (errors request {"pw" "hunter42" "pw2" "hunter42"})))
         (expect (= {"pw2" "must match Password"} (errors request {"pw" "hunter42" "pw2" "nope"})))))
   (it "projects the tree onto the wire, direction and all, and never a validator"
       (let [view
-            (hi/request->view (hi/normalize-request {"title" "Deploy"
-                                                     "fields" [{"type" "group"
-                                                                "direction" "row"
-                                                                "label" "Target"
-                                                                "fields" [{"name" "host"
-                                                                           :validate
-                                                                           [(fn [_]
-                                                                              true)]}]}]}))
+            (hi/request->view (hi/normalize-request
+                                (hi/spec<-json {"title" "Deploy"
+                                                "fields" [{"type" "group"
+                                                           "direction" "row"
+                                                           "label" "Target"
+                                                           "fields" [{"name" "host"
+                                                                      :validate [(fn [_]
+                                                                                   true)]}]}]})))
 
             [group]
             (:fields view)]
@@ -1275,10 +1298,11 @@
           (expect (nil? (hs/group-error group)))
           (expect (every? #(nil? (hs/field-error %)) (:fields group))))))
   (it "a request spelled the Python way lands in the very same form"
-      (let [request (hi/normalize-request {"title" "Deploy"
-                                           "fields"
-                                           [{"name" "env" "type" "select" "options" ["dev" "prod"]}]
-                                           "timeout_ms" 1000})]
+      (let [request (hi/normalize-request (hi/spec<-json {"title" "Deploy"
+                                                          "fields" [{"name" "env"
+                                                                     "type" "select"
+                                                                     "options" ["dev" "prod"]}]
+                                                          "timeout_ms" 1000}))]
         (expect (nil? (hs/request-error request)))))
   (it "the closed vocabulary has ONE home"
       ;; Two copies of the type table drift, and the copy the normalizer reads
@@ -1408,25 +1432,26 @@
   "A `heading` and a `paragraph` are pure DECORATION: ink on the form, with no
    answer, no children and no identity."
   (it "normalizes to just its type and the words it paints"
-      (let [[head para field] (normalized-fields {"type" "heading" "text" "Connection"}
-                                                 {"type" "paragraph" "text" "Where it runs."}
-                                                 {"name" "host" "label" "Host"})]
+      (let [[head para field] (normalized-fields
+                                (hi/spec<-json {"type" "heading" "text" "Connection"})
+                                (hi/spec<-json {"type" "paragraph" "text" "Where it runs."})
+                                (hi/spec<-json {"name" "host" "label" "Host"}))]
         (expect (= {:type :heading :text "Connection"} head))
         (expect (= {:type :paragraph :text "Where it runs."} para))
         (expect (= "host" (:name field)))))
   (it "answers nothing, so it never keys the values map — not even inside a group"
-      (let [fields (normalized-fields {"type" "heading" "text" "H"}
-                                      {"name" "host"}
-                                      {"type" "group"
-                                       "name" "g"
-                                       "fields" [{"type" "paragraph" "text" "P"}
-                                                 {"name" "pw" "type" "password"}]})]
+      (let [fields (normalized-fields (hi/spec<-json {"type" "heading" "text" "H"})
+                                      (hi/spec<-json {"name" "host"})
+                                      (hi/spec<-json {"type" "group"
+                                                      "name" "g"
+                                                      "fields" [{"type" "paragraph" "text" "P"}
+                                                                {"name" "pw" "type" "password"}]}))]
         (expect (= ["host" "pw"] (mapv :name (hi/input-fields fields))))))
   (it "is neither a field nor a group, and the three contracts refuse each other"
-      (let [[head field group] (normalized-fields
-                                 {"type" "heading" "text" "H"}
-                                 {"name" "host"}
-                                 {"type" "group" "name" "g" "fields" [{"name" "a"}]})]
+      (let [[head field group]
+            (normalized-fields (hi/spec<-json {"type" "heading" "text" "H"})
+                               (hi/spec<-json {"name" "host"})
+                               (hi/spec<-json {"type" "group" "name" "g" "fields" [{"name" "a"}]}))]
         ;; One home for the vocabulary, as with the field and group tables.
         (expect (= #{:heading :paragraph} (set (vals hs/decor-types))))
         (expect (not (contains? (set (vals hs/field-types)) :heading)))
@@ -1439,22 +1464,26 @@
   (it "refuses a decoration that tries to ask something"
       ;; A `:name` would make it keyed, a `:default` would make it answerable:
       ;; both are a spec that meant to add a field.
-      (expect (str/includes? (refusal #(hi/normalize-node {"type" "heading" "text" "H" "name" "h"}))
+      (expect (str/includes? (refusal #(hi/normalize-node
+                                         (hi/spec<-json {"type" "heading" "text" "H" "name" "h"})))
                              "name"))
-      (expect (str/includes? (refusal #(hi/normalize-node {"type" "paragraph"})) "text"))
+      (expect (str/includes? (refusal #(hi/normalize-node (hi/spec<-json {"type" "paragraph"})))
+                             "text"))
       ;; And it can never arrive on the FIELD path: the fork is taken once, above.
-      (expect (str/includes? (refusal #(hi/normalize-field {"type" "heading" "text" "H"}))
+      (expect (str/includes? (refusal #(hi/normalize-field (hi/spec<-json {"type" "heading"
+                                                                           "text" "H"})))
                              "decoration")))
   (it "leaves a decorated request satisfying the declared contract"
-      (let [request (hi/normalize-request (spec {"type" "heading" "text" "H"}
-                                                {"type" "paragraph" "text" "P"}
-                                                {"name" "host"}))]
+      (let [request (hi/normalize-request (spec (hi/spec<-json {"type" "heading" "text" "H"})
+                                                (hi/spec<-json {"type" "paragraph" "text" "P"})
+                                                (hi/spec<-json {"name" "host"})))]
         (expect (nil? (hs/request-error request)))
         ;; Two headings reading the same words are two decorations, never a name
         ;; collision: there is no identity to collide.
-        (expect (nil? (hs/request-error (hi/normalize-request (spec {"type" "heading" "text" "H"}
-                                                                    {"type" "heading" "text" "H"}
-                                                                    {"name" "host"}))))))))
+        (expect (nil? (hs/request-error (hi/normalize-request
+                                          (spec (hi/spec<-json {"type" "heading" "text" "H"})
+                                                (hi/spec<-json {"type" "heading" "text" "H"})
+                                                (hi/spec<-json {"name" "host"})))))))))
 
 (defn- live-view
   "A legal normalized live view carrying one node of every keyed kind, so a test
@@ -1867,12 +1896,13 @@
                                    "18 of 18 jobs finished")))))))
   (it "opens a ROW that stands two nodes side by side, in the spelling the wire writes"
       (watching (live-spec
-                  {"id" "reading"
-                   "type" "group"
-                   "direction" "row"
-                   "fields"
-                   [{"id" "hosts" "type" "table" "columns" [{"id" "host" "label" "Host"}]}
-                    {"id" "why" "type" "status" "text" "`db-2` failed the `openssl` check"}]})
+                  (hi/spec<-json
+                    {"id" "reading"
+                     "type" "group"
+                     "direction" "row"
+                     "fields"
+                     [{"id" "hosts" "type" "table" "columns" [{"id" "host" "label" "Host"}]}
+                      {"id" "why" "type" "status" "text" "`db-2` failed the `openssl` check"}]}))
                 (fn [view]
                   ;; A view lays itself out with the FORM's own vocabulary — one `group`
                   ;; carrying the nodes that stand together, in the direction it names.
@@ -2111,7 +2141,7 @@
                 (:id view)
 
                 selected
-                (hi/action! view-id {"action" "select" "node_id" "jobs" "item_ids" ["b"]})]
+                (hi/action! view-id {:action "select" :node-id "jobs" :item-ids ["b"]})]
 
             (expect
               (=

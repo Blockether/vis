@@ -29,9 +29,10 @@
    the nodes below it, and a DECORATION ([[heading]] / [[paragraph]]) is ink —
    no name, never focusable, never in the answer map.
 
-   Every optional key is the one the engine documents, in either spelling
-   (`:is-required` or `\"is_required\"`): builders pass options through
-   untouched instead of keeping a second copy of the vocabulary.
+   Every optional key is the keyword the engine documents (`:is-required`):
+   builders pass options through untouched instead of keeping a second copy of
+   the vocabulary. The snake_case strings a Python extension writes are converted
+   once where its JSON enters, so a Clojure spec never spells a key that way.
 
    A LIVE VIEW is the same discipline one `:kind` further: [[view]] and the node
    builders under it declare a picture the human WATCHES while the work runs. It

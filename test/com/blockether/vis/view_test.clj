@@ -107,12 +107,13 @@
                                                                       :name "who"}]}))))
         (expect (some? (refusal #(engine/normalize-request {:title "Deploy" :fields []}))))
         (expect (some? (refusal #(engine/normalize-request nil)))))
-    (it "reads the wire spelling of every key too"
-        (expect (nil? (refusal #(engine/normalize-request {"title" "Deploy"
-                                                           "fields" [{"type" "select"
-                                                                      "name" "env"
-                                                                      "options" [{"value" "a"}]
-                                                                      "is_required" true}]}))))))
+    (it "reads the wire spelling of every key once the JSON seam converts it"
+        (expect (nil? (refusal #(engine/normalize-request (engine/spec<-json
+                                                            {"title" "Deploy"
+                                                             "fields" [{"type" "select"
+                                                                        "name" "env"
+                                                                        "options" [{"value" "a"}]
+                                                                        "is_required" true}]})))))))
   (describe
     "validate"
     (it "keeps the validator itself in the map, in either shape"
