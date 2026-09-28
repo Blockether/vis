@@ -7,5 +7,8 @@ dependencies = ["harbor==0.23.0"]
 [dependency-groups]
 dev = ["pytest>=8,<10", "ruff>=0.13,<1"]
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 [tool.uv]
 package = false

@@ -3,6 +3,7 @@
 import base64
 import gzip
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -108,3 +109,25 @@ def test_serialized_credentials_are_redacted_in_reports(monkeypatch):
         "url": "[REDACTED]",
         "base64": "[REDACTED]",
     }
+
+
+def test_console_pytest_collects_without_pythonpath():
+    # CI invokes the console entrypoint, unlike the language tool's module runner.
+    environment = {
+        key: value for key, value in os.environ.items() if key != "PYTHONPATH"
+    }
+    result = subprocess.run(
+        [
+            str(Path(sys.executable).with_name("pytest")),
+            "--collect-only",
+            "-q",
+            "tests",
+        ],
+        cwd=Path(__file__).parents[1],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "tests collected" in result.stdout
