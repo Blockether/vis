@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.speech.asr-test
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.internal.inference.runtime :as runtime]
             [com.blockether.vis.internal.speech.asr :as asr]
             [com.blockether.vis.internal.speech.files :as files]
             [com.blockether.vis.internal.speech.sherpa :as sherpa]
@@ -238,15 +239,14 @@
 ;; pinned ONNX Runtime — and on Linux one minor off that pin killed every
 ;; transcription with "version `VERS_1.17.1' not found".
 (defdescribe sherpa-native-test
-             (it "runs the version the deps.edn pins, with the ONNX Runtime that jar carries"
-                 ;; The classpath no longer carries any native library: `ensure-native!`
-                 ;; is what puts THIS platform's pair where sherpa's loader finds it.
+             (it "runs the pinned Sherpa JNI with one shared ONNX Runtime"
+                 ;; Sherpa loads from the staged path. On release platforms the
+                 ;; same ORT 1.30 native library serves Java decisions and speech.
                  (sherpa/ensure-native!)
-                 ;; Both are NATIVE methods: an answer at all means the JNI loaded, and the
-                 ;; runtime it reports is the one shipped beside it — not a coordinate we
-                 ;; pin, and no longer ours to keep in step.
-                 (expect (= "1.13.5" (VersionInfo/getVersion)))
-                 (expect (re-matches #"\d+\.\d+\.\d+" (VersionInfo/getOnnxruntimeVersion))))
+                 (expect (= sherpa/version (VersionInfo/getVersion)))
+                 (if (contains? runtime/shared-platforms (sherpa/platform-token))
+                   (expect (= runtime/ort-version (VersionInfo/getOnnxruntimeVersion)))
+                   (expect (re-matches #"\d+\.\d+\.\d+" (VersionInfo/getOnnxruntimeVersion)))))
              (it "reads a WAV through the native stack with nothing but the upstream jars"
                  ;; WaveReader's constructor is what triggers sherpa's LibraryLoader, and it
                  ;; is the first native call every transcription makes.

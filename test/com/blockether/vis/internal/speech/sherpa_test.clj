@@ -3,11 +3,20 @@
             [clojure.java.io :as io]
             [clojure.set :as set]
             [clojure.string :as str]
+            [com.blockether.vis.internal.inference.runtime :as runtime]
             [com.blockether.vis.internal.speech.sherpa :as sherpa]
             [com.blockether.vis.internal.speech.tts]
+            [com.blockether.vis.test-network-guard :as network-guard]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [com.blockether.vis.internal.speech.tts GenerationCallback]
+  (:import [ai.onnxruntime OrtEnvironment]
+           [com.blockether.vis.internal.speech.tts GenerationCallback]
            [com.k2fsa.sherpa.onnx VersionInfo]
+           [java.io File OutputStream]
+           [java.nio.charset StandardCharsets]
+           [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]
+           [java.security MessageDigest]
+           [java.util Arrays HexFormat]
            [java.util.jar JarEntry JarFile]))
 
 (defn- refused
@@ -47,22 +56,166 @@
                    (expect (= (System/mapLibraryName "onnxruntime") runtime))
                    (expect (= (System/mapLibraryName "sherpa-onnx-jni") jni)))))
 
-(defdescribe ensure-native-test
-             (it "provisions THIS platform's pair and the JNI answers the pinned version"
-                 (let [{:keys [source platform dir]} (sherpa/ensure-native!)]
-                   (expect (contains? #{:property :embedded :downloaded} source))
-                   (expect (= (sherpa/platform-token) platform))
-                   (when dir (expect (sherpa/installed? dir)))
-                   ;; a NATIVE method: an answer at all means both libraries loaded, and
-                   ;; the version is the integrity check no digest can be pinned for
-                   (expect (= sherpa/version (VersionInfo/getVersion)))))
-             (it "is idempotent — the pair is provisioned once per JVM"
-                 (expect (= (sherpa/ensure-native!) (sherpa/ensure-native!))))
-             (it "carries NO other platform's libraries"
-                 ;; the classpath is where the 51 MB used to sit: every foreign platform
-                 ;; must be absent from it, downloaded or not.
-                 (doseq [other (disj sherpa/published-platforms (sherpa/platform-token))]
-                   (expect (not (sherpa/embedded? other))))))
+;; Regression: Linux x64 run 36358782219 linked Sherpa v1.13.8 against ORT 1.30
+;; and failed because its sole versioned import was OrtGetApiBase@VERS_1.28.2.
+(defn- synthetic-linux-jni
+  "Small pinned version-reference fixture for both Linux staging paths."
+  []
+  (let [^bytes original
+        (byte-array 48)
+
+        old-version
+        (.getBytes "VERS_1.28.2" StandardCharsets/US_ASCII)
+
+        new-version
+        (.getBytes "VERS_1.30.0" StandardCharsets/US_ASCII)
+
+        old-hash
+        (byte-array (map unchecked-byte [0x82 0xfe 0x7b 0x02]))
+
+        new-hash
+        (byte-array (map unchecked-byte [0x80 0xc6 0x7b 0x02]))]
+
+    (System/arraycopy old-version 0 original 4 (alength old-version))
+    (System/arraycopy old-hash 0 original 32 (alength old-hash))
+    (let [^bytes expected (aclone original)]
+      (System/arraycopy new-version 0 expected 4 (alength new-version))
+      (System/arraycopy new-hash 0 expected 32 (alength new-hash))
+      {:original original
+       :expected expected
+       :compat {:sha256 (.formatHex (HexFormat/of)
+                                    (.digest (MessageDigest/getInstance "SHA-256") original))
+                :version-offset 4
+                :hash-offset 32}})))
+
+(defdescribe
+  linux-ort-symbol-patch-test
+  (it "changes only the pinned symbol version and its GNU ELF hash"
+      (let [{:keys [original expected compat]}
+            (synthetic-linux-jni)
+
+            ^bytes actual
+            (aclone ^bytes original)
+
+            ^bytes changed
+            (aclone ^bytes original)]
+
+        (expect (identical? actual (#'sherpa/compatible-linux-jni! "linux-x64" actual compat)))
+        (expect (Arrays/equals ^bytes expected actual))
+        (aset-byte changed 40 (unchecked-byte 1))
+        (let [^bytes unchanged (aclone changed)]
+          (expect (= :speech/native-incompatible
+                     (try (#'sherpa/compatible-linux-jni! "linux-x64" changed compat)
+                          nil
+                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+          (expect (Arrays/equals unchanged changed)))))
+  (it "patches the native image's embedded Linux JNI before staging it"
+      ;; Regression: Linux ARM64 native run 36363290772 embedded the unpatched JNI.
+      (let [{:keys [original expected compat]}
+            (synthetic-linux-jni)
+
+            ^File upstream
+            (File/createTempFile "vis-sherpa-embedded-" ".so")
+
+            ^File dir
+            (.toFile (Files/createTempDirectory "vis-sherpa-staging-" (make-array FileAttribute 0)))
+
+            lib
+            (second (sherpa/library-names))
+
+            resource
+            (str "sherpa-onnx/native/linux-x64/" lib)
+
+            ^File staged
+            (io/file dir lib)
+
+            previous
+            (System/getProperty sherpa/native-path-property)]
+
+        (try (with-open [^OutputStream out (io/output-stream upstream)]
+               (.write out ^bytes original))
+             (with-redefs-fn {#'sherpa/linux-ort-symbol-patches {"linux-x64" compat}
+                              #'sherpa/installed? (constantly false)
+                              #'sherpa/embedded? (constantly true)
+                              #'runtime/ensure-ort! (constantly {:dir (.getAbsolutePath dir)})
+                              #'io/resource (fn [name]
+                                              (when (= resource name) (.toURL (.toURI upstream))))}
+               (fn []
+                 (expect (= :embedded (:source (#'sherpa/provision! "linux-x64"))))))
+             (expect (Arrays/equals ^bytes expected (Files/readAllBytes (.toPath staged))))
+             (finally (if previous
+                        (System/setProperty sherpa/native-path-property previous)
+                        (System/clearProperty sherpa/native-path-property))
+                      (.delete staged)
+                      (.delete dir)
+                      (.delete upstream))))))
+
+(defdescribe
+  ensure-native-test
+  (it "provisions this platform's JNI beside ONNX Runtime Java 1.30"
+      ;; First speech use intentionally downloads the upstream platform jar when
+      ;; it is not already embedded or cached in this JVM.
+      (binding [network-guard/*allow-network* true]
+        (let [{:keys [source platform dir]} (sherpa/ensure-native!)]
+          (expect (contains? #{:property :embedded :downloaded} source))
+          (expect (= (sherpa/platform-token) platform))
+          (when dir (expect (sherpa/installed? dir)))
+          (expect (= sherpa/version (VersionInfo/getVersion)))
+          (when (contains? runtime/shared-platforms platform)
+            (expect (= dir (System/getProperty runtime/ort-native-path-property)))
+            (expect (= dir (System/getProperty sherpa/native-path-property)))
+            (expect (= runtime/ort-version (.getVersion (OrtEnvironment/getEnvironment))))))))
+  (it "is idempotent — the pair is provisioned once per JVM"
+      (binding [network-guard/*allow-network* true]
+        (expect (= (sherpa/ensure-native!) (sherpa/ensure-native!)))))
+  (it
+    "shares a complete custom Java ONNX directory with Sherpa"
+    (when (contains? runtime/shared-platforms (sherpa/platform-token))
+      (let [chosen
+            (str (io/file (System/getProperty "java.io.tmpdir") "vis-custom-onnx-runtime"))
+
+            previous-ort
+            (System/getProperty runtime/ort-native-path-property)
+
+            previous-sherpa
+            (System/getProperty sherpa/native-path-property)
+
+            staged
+            (atom [])]
+
+        (try (System/setProperty runtime/ort-native-path-property chosen)
+             (System/clearProperty sherpa/native-path-property)
+             (with-redefs [sherpa/installed?
+                           (constantly false)
+
+                           sherpa/embedded?
+                           (constantly true)
+
+                           sherpa/native-dir
+                           (constantly (str chosen "-default"))
+
+                           runtime/ensure-ort!
+                           (constantly {:source :property :dir chosen})
+
+                           sherpa/install-embedded-jni!
+                           (fn [token dir]
+                             (swap! staged conj [token dir]))]
+
+               (let [answer (#'sherpa/provision! (sherpa/platform-token))]
+                 (expect (= chosen (:dir answer)))
+                 (expect (= chosen (System/getProperty sherpa/native-path-property)))
+                 (expect (= [[(sherpa/platform-token) chosen]] @staged))))
+             (finally (if previous-ort
+                        (System/setProperty runtime/ort-native-path-property previous-ort)
+                        (System/clearProperty runtime/ort-native-path-property))
+                      (if previous-sherpa
+                        (System/setProperty sherpa/native-path-property previous-sherpa)
+                        (System/clearProperty sherpa/native-path-property)))))))
+  (it "carries NO other platform's libraries"
+      ;; the classpath is where the 51 MB used to sit: every foreign platform
+      ;; must be absent from it, downloaded or not.
+      (doseq [other (disj sherpa/published-platforms (sherpa/platform-token))]
+        (expect (not (sherpa/embedded? other))))))
 
 (defdescribe
   jar-url-test

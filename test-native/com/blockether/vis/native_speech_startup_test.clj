@@ -4,6 +4,7 @@
             [clojure.set :as set]
             [clojure.string :as str]
             [com.blockether.vis.native-binary-test :as native]
+            [com.blockether.vis.internal.inference.runtime :as runtime]
             [com.blockether.vis.internal.speech.assets :as assets]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io File IOException]
@@ -48,7 +49,23 @@
   [home binary args timeout-secs]
   (let [[^Process client log] (start-native! home binary "client" args)]
     (try (expect (.waitFor client timeout-secs TimeUnit/SECONDS) "native speech query timed out")
-         {:exit (.exitValue client) :output (slurp log)}
+         (let [exit (.exitValue client)
+               output (slurp log)
+               details (when (not= 0 exit)
+                         (when-let [path (second (re-find #"See (\S+\.log) for details\." output))]
+                           (let [^File file (io/file path)
+                                 ^File logs (io/file home ".vis/logs")]
+
+                             (when (and (.isFile file)
+                                        (str/starts-with? (.getCanonicalPath file)
+                                                          (str (.getCanonicalPath logs)
+                                                               File/separator)))
+                               (str "\n"
+                                    (->> (str/split-lines (slurp file))
+                                         (take-last 50)
+                                         (str/join "\n")))))))]
+
+           {:exit exit :output (str output details)})
          (finally (when (.isAlive client) (#'native/kill-tree! client))))))
 
 (defn- with-native-gateway
@@ -199,7 +216,17 @@
           (let [heard (run! ["speech" "transcribe" (.getAbsolutePath wav)] 900)]
             (expect (= 0 (:exit heard)) (:output heard))
             (expect (heard-most-words? (:output heard) spoken-sentence)
-                    (str "the binary did not hear what it had just said:\n" (:output heard))))))))
+                    (str "the binary did not hear what it had just said:\n" (:output heard))))
+          ;; The native process ran both speech engines; its private home must hold
+          ;; precisely one ONNX Runtime alongside the two distinct JNI shims.
+          (let [dir (io/file home
+                             ".vis"
+                             "native"
+                             (runtime/native-cache-name (runtime/platform-token))
+                             (runtime/platform-token))]
+            (expect (= (set (runtime/library-names))
+                       (set (map #(.getName ^File %) (.listFiles ^File dir))))
+                    (str "Unexpected shared native libraries at " dir)))))))
   (it "speaks with the pocket-tts export Vis publishes itself"
       ;; Piper uses VITS; pocket-tts uses a separate ONNX config and reference clip.
       (with-native-gateway

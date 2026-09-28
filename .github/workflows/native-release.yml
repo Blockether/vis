@@ -198,6 +198,15 @@ jobs:
           sudo mkswap /mnt/swapfile
           sudo swapon /mnt/swapfile
           free -h
+      # On Linux the JNI needs an unversioned libonnxruntime.so in its directory.
+      # Exercise both Java bindings before spending hours compiling the image.
+      - name: Verify shared ONNX Runtime JNI (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          clojure -X:deps prep
+          clojure -M:test --namespace com.blockether.vis.internal.speech.sherpa-test
       - name: Build native image
         env:
           # A dispatch may replace the measured matrix arguments for ONE run, and
@@ -277,6 +286,12 @@ jobs:
           bin/verify-linux-abi target/tui-release-bundle
           target/tui-release-bundle/vis-tui --version
           target/tui-release-bundle/vis-tui --help >/dev/null
+      # Catch a native JNI link failure before running the slower full image suite.
+      - name: Smoke-test shared ONNX Runtime (native Linux)
+        if: runner.os == 'Linux'
+        env:
+          VIS_NATIVE_BIN: ${{ matrix.bin }}
+        run: clojure -M:test-native --namespace com.blockether.vis.native-speech-startup-test
       - name: Test the native binaries
         shell: bash
         env:
