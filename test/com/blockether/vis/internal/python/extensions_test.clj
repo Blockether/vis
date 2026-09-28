@@ -2866,6 +2866,73 @@ vis.register_extension(vis.Extension(
                 (expect (seq (:input body)))
                 (expect (not (contains? body :messages)))))))))))
 
+(defdescribe
+  provider-model-extra-body-test
+  ;; #291: a Python provider's model `extra_body` crosses with JSON string keys.
+  ;; svar serialized its own keyword `reasoning` beside the model's, so the
+  ;; Responses request carried two top-level `reasoning` members.
+  (it
+    "sends each member of a Python model's extra_body once"
+    (with-loaded
+      {"responsesjson.py"
+       (str "import blockether.vis.extension as vis\n"
+            "def credential():\n" "    return vis.ProviderCredential('fixture')\n"
+            "def enrich(provider, router_opts):\n"
+            "    return [vis.ProviderModel('gpt-6-luna', context=1050000,\n"
+            "        extra={'output_limit': 128, 'extra_body': {\n"
+            "        'reasoning': {'summary': 'detailed'},\n"
+            "        'include': ['reasoning.encrypted_content'], 'store': False}})]\n"
+            "vis.register_extension(vis.Extension(name='responsesjson', description='d',\n"
+            "    providers=[vis.Provider(id='responsesjson', label='Responses JSON',\n"
+            "        preset=vis.ProviderPreset(base_url='https://gateway.example.com/v1',\n"
+            "            api_style='openai-responses'),\n"
+            "        get_token_fn=credential, enrich_models_fn=enrich)]))\n")}
+      (fn [loaded _]
+        (expect (= 1 (:loaded loaded)))
+        (let [provider
+              (#'loop-router/enrich-provider-models
+               (config/->svar-provider
+                 (with-redefs [config/load-config-raw
+                               (constantly {"providers" [{"id" "responsesjson"
+                                                          "models" [{"name" "gpt-6-luna"}]}]})]
+                   (first (:providers (config/load-config)))))
+               {})
+
+              router
+              (svar/make-router [provider])
+
+              bodies
+              (atom [])
+
+              reply
+              {:id "response-fixture"
+               :output
+               [{:type "message" :role "assistant" :content [{:type "output_text" :text "ok"}]}]
+               :usage {:input_tokens 1 :output_tokens 1 :total_tokens 2}}]
+
+          (with-redefs [http/post (fn [_url opts]
+                                    (swap! bodies conj (:body opts))
+                                    {:status 200 :headers {} :body (json-text reply)})]
+            (expect (= "ok"
+                       (:content (svar/ask-code! router
+                                                 {:routing {:provider :responsesjson
+                                                            :model "gpt-6-luna"}
+                                                  :messages [{:role "user" :content "hello"}]
+                                                  :tools []
+                                                  :reasoning :deep})))))
+          (expect (= 1 (count @bodies)))
+          (let [wire
+                (first @bodies)
+
+                body
+                (json/read-json wire)]
+
+            (expect (= 1 (count (re-seq #"\"reasoning\":" wire))))
+            (expect (= {"summary" "detailed" "effort" "high"} (get body "reasoning")))
+            (expect (= ["reasoning.encrypted_content"] (get body "include")))
+            (expect (false? (get body "store")))
+            (expect (= 128 (get body "max_output_tokens")))))))))
+
 ;; Reload + project-over-global precedence
 (defdescribe
   reload-test

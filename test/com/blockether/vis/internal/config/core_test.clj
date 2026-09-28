@@ -249,6 +249,18 @@
                                                       :models [{:name "probe"}]
                                                       :network {:first-byte-timeout-ms
                                                                 700000}}))))))
+  (it "lets configured extra_body members replace preset defaults"
+      ;; #291: presets spell request members as keywords and vis.yml as JSON
+      ;; strings. Merged as given, svar received both spellings of one member.
+      (with-redefs [registry/provider-by-id
+                    (constantly {:provider/preset {:extra-body {:temperature 0.6 :top_p 0.95}}})]
+        (let [provider (first (:providers (config/runtime-config {"providers"
+                                                                  [{"id" "lmstudio"
+                                                                    "models" [{"name" "probe"}]
+                                                                    "extra_body" {"temperature" 0.2
+                                                                                  "seed" 7}}]})))]
+          (expect (= {:temperature 0.2 :top_p 0.95 :seed 7}
+                     (:extra-body (config/->svar-provider provider)))))))
   (it "leaves cloud presets keyless when none is configured (no catalog dummy)"
       ;; Hermetic: a DEVELOPER machine may hold a real OpenRouter credential
       ;; (env/keychain), and the registry token fn would resolve it — the claim

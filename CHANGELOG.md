@@ -89,6 +89,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   seconds, or 60 seconds with `--jvm`, with an error that did not say why, and
   the gateway that finished starting afterwards shut down because no client was
   connected (#290).
+- Each `extra_body` request option reaches the provider once. For a custom
+  OpenAI Responses provider whose Python extension sets a model's `reasoning`
+  options, the request now has one `reasoning` object with both the model's
+  `summary` and the effort of the selected reasoning level. An `extra_body`
+  value in `vis.yml` replaces the provider preset's default for the same
+  option. Before, the request could contain the same option twice, and the
+  provider could apply either value (#291).
 
 ## [v0.2.29] - 2026-09-25
 
