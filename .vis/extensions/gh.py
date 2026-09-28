@@ -2010,14 +2010,14 @@ class Gh:
 gh = Gh()
 
 
-PROMPT = """gh_ surface active — GitHub through the gh CLI (gh):
-  login(hostname="github.com")          authenticate through private human input
-  runs(repo=None, limit=10)             recent Actions runs, newest first
-  watch(run=None, repo=None, pr=None)   one run or PR checks, live, until failure or completion
+PROMPT = """gh surface active — GitHub through the gh CLI:
+  gh.login(hostname="github.com")          authenticate through private human input
+  gh.runs(repo=None, limit=10)             recent Actions runs, newest first
+  gh.watch(run=None, repo=None, pr=None)   one run or PR checks, live, until failure or completion
 Every answer is a typed frozen object (Account, RunSummary, WatchOutcome). A watch opens a live view
 the human can watch and stop; its WatchOutcome carries every job, step and failed-log tail once. Use
-watch() instead of a shell polling loop or a loop around watch(): it signs in by itself when needed
-and follows a newer run that replaces the one it watches."""
+gh.watch() instead of a shell polling loop or a loop around gh.watch(): it signs in by itself when
+needed and follows a newer run that replaces the one it watches."""
 
 
 vis.register_extension(

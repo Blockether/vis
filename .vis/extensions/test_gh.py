@@ -12,6 +12,7 @@ that the engine would refuse turns a Clojure test red rather than failing in fro
 
 import json
 import pathlib
+import re
 from dataclasses import FrozenInstanceError
 
 import blockether.vis.extension as vis
@@ -1815,3 +1816,10 @@ def test_empty_job_list_does_not_claim_to_be_waiting_for_a_runner():
     shape = gh.run_shape({"status": "queued", "jobs": []})
     assert shape["headline"] == "Waiting for job details"
     assert shape["detail"] == "No jobs reported yet"
+
+
+def test_prompt_calls_use_the_registered_alias():
+    # The sandbox binds only `gh.<method>`; bare names in the prompt raised NameError.
+    calls = set(re.findall(r"([\w.]+)\(", gh.PROMPT))
+    assert calls == {"gh.login", "gh.runs", "gh.watch"}, calls
+    assert all(callable(getattr(gh.gh, call.removeprefix("gh."))) for call in calls)

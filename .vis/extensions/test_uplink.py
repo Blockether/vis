@@ -5,6 +5,7 @@ The fake transport checks commands and typed results without SSH or network acce
 
 import importlib.util
 import os
+import re
 import sys
 from dataclasses import FrozenInstanceError
 
@@ -447,3 +448,13 @@ def test_run_never_echoes_the_password(monkeypatch):
     monkeypatch.setattr(uplink, "_spawn", spawn)
     result = uplink.uplink.run("true")
     assert "s3cret-value" not in repr(result)
+
+
+def test_prompt_calls_use_the_registered_alias():
+    # The sandbox binds only `uplink.<method>`; bare names in the prompt raised NameError.
+    calls = set(re.findall(r"([\w.]+)\(", uplink.PROMPT))
+    names = ("run", "service", "health", "info", "put", "get")
+    assert calls == {f"uplink.{name}" for name in names}, calls
+    assert all(
+        callable(getattr(uplink.uplink, call.removeprefix("uplink."))) for call in calls
+    )
