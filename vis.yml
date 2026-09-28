@@ -94,4 +94,4 @@ extensions:
     version: "1.6.1"
   vis-lang-python:
     source: https://github.com/Blockether/vis-lang-python
-    version: "1.4.1"
+    version: "1.4.2"
