@@ -324,6 +324,81 @@ describe('a running transcript row without canonical session state', () => {
     expect(await screen.findByText('check the logs')).toBeInTheDocument();
     expect((await screen.findAllByText(/Vis sent your message/)).length).toBeGreaterThan(0);
   });
+
+  // Regression, session 3960d3aa-e090-41af-927d-f9ae2e24f200: the last
+  // reasoning text survives a 30-minute tool pause, but is not its live phase.
+  it('uses current tool progress rather than old reasoning for the live label', async () => {
+    const listeners = new Set<(event: Record<string, unknown>) => void>();
+    renderSessionScreen({
+      session: sessionFixture({
+        status: 'running',
+        live: true,
+        current_turn_id: 't-live',
+        running_request: 'check benchmark',
+      }),
+      client: {
+        cachedRunningTurn: () => ({
+          turn: {
+            id: 't-live',
+            request: 'check benchmark',
+            answer: '',
+            status: 'running',
+            startedAt: Date.now(),
+            iterations: [{ position: 1, thinking: 'Earlier reasoning', forms: [] }],
+          },
+          seq: 7,
+        }),
+        cachedTranscript: () => [],
+        transcript: () => Promise.resolve([]),
+      },
+      subscriptions: {
+        subscribeConnection: (on: (live: boolean) => void) => {
+          on(true);
+          return () => {};
+        },
+        subscribeSession: (_sid: string, on: (event: Record<string, unknown>) => void) => {
+          listeners.add(on);
+          return () => listeners.delete(on);
+        },
+      },
+    });
+
+    expect((await screen.findAllByText(/Vis is working \(iter 1\)/)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Vis is thinking \(iter 1\)/)).toBeNull();
+    await waitFor(() => expect(listeners.size).toBeGreaterThanOrEqual(1));
+    act(() => {
+      for (const listener of listeners)
+        listener({
+          type: 'block.started',
+          session_id: 's1',
+          turn_id: 't-live',
+          block_id: 'code-1',
+          iteration: 1,
+          form_index: 0,
+          code: 'start_task()',
+          seq: 8,
+        });
+    });
+    expect((await screen.findAllByText(/Vis is running code \(iter 1\)/)).length).toBeGreaterThan(0);
+
+    act(() => {
+      for (const listener of listeners)
+        listener({
+          type: 'turn.progress',
+          session_id: 's1',
+          turn_id: 't-live',
+          iteration: 1,
+          progress: 'tool',
+          phrase: 'waiting up to 1825s for: sleep 1800',
+          seq: 9,
+        });
+    });
+    expect(
+      (await screen.findAllByText(/Vis is waiting up to 1825s for: sleep 1800 \(iter 1\)/))
+        .length,
+    ).toBeGreaterThan(0);
+  });
+
   // Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: with a CI watch on screen,
   // still read "Vis is thinking (iter 30)... 10m 1s" while the panel under it was
   // filling in and offering an Interrupt — a hang, in the one place the answer was.

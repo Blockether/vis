@@ -3342,8 +3342,7 @@ function runningTurnPhase(turn: TranscriptTurn, agentName: string): string {
   const last = iterations.at(-1);
   const suffix = `(iter ${iteration})`;
   if (last?.error != null) return `${agentName} is retrying ${suffix}`;
-  if (last?.forms?.length) return `${agentName} is running code ${suffix}`;
-  if (last?.thinking?.trim()) return `${agentName} is thinking ${suffix}`;
+  // Persisted reasoning and forms cannot identify what the live turn is doing now.
   return `${agentName} is working ${suffix}`;
 }
 

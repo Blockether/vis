@@ -2038,6 +2038,19 @@ describe('a turn that has not answered yet', () => {
     expect(html).not.toContain('bg-thinking-surface');
   });
 
+  // Regression, session 3960d3aa-e090-41af-927d-f9ae2e24f200: an old reasoning
+  // fragment must not name the current phase of a long-running benchmark.
+  it('does not infer thinking from earlier reasoning in a running row', () => {
+    const html = renderToStaticMarkup(
+      <AssistantMessage
+        turn={{ ...running, iterations: [{ position: 1, thinking: 'Earlier reasoning', forms: [] }] }}
+      />,
+    );
+
+    expect(text(html)).toContain('Vis is working (iter 1)');
+    expect(text(html)).not.toContain('Vis is thinking (iter 1)');
+  });
+
   it('keeps naming its phase once the screen stops following it', () => {
     const html = renderToStaticMarkup(<AssistantMessage turn={running} settled />);
 

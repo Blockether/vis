@@ -375,6 +375,8 @@ function runningTurnPhase(
       return `${agentName} is calling ${progress.model ?? 'the provider'} ${suffix}`;
     case 'response-parse':
       return `${agentName} is parsing model response ${suffix}`;
+    case 'code':
+      return `${agentName} is running code ${suffix}`;
     case 'tool':
     case 'tool-call': {
       if (progress.phrase) return `${agentName} is ${progress.phrase} ${suffix}`;
@@ -385,8 +387,7 @@ function runningTurnPhase(
       break;
   }
 
-  if (last?.thinking?.trim()) return `${agentName} is thinking ${suffix}`;
-  if (last?.forms?.length) return `${agentName} is running code ${suffix}`;
+  // Reasoning and forms are historical content, not evidence of the current phase.
   return `${agentName} is working ${suffix}`;
 }
 
