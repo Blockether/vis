@@ -1,6 +1,7 @@
 (ns com.blockether.vis.tui.render
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.activity :as activity-contract]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.tui.attachments :as attach]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.interactions :as interactions]
@@ -4941,17 +4942,11 @@
 (defn- owns-live-view?
   "Match host-captured ownership, including retained histories and nested invocations."
   [activity owner]
-  (let [field
-        (fn [k]
-          (or (get owner k)
-              (get owner (keyword (str/replace (name k) "-" "_")))
-              (get owner (str/replace (name k) "-" "_"))))
-
-        activity-id
-        (field :activity-id)
+  (let [activity-id
+        (:activity-id owner)
 
         invocation-id
-        (field :invocation-id)
+        (:invocation-id owner)
 
         sources
         (or (seq (:sources activity)) [activity])]
@@ -4969,30 +4964,31 @@
 (defn- iteration-artifact-rows
   "Normalize durable produced attachments in byte-endpoint index order."
   [iteration-id attachments]
-  (let [field (fn [m k]
-                (or (get m k) (get m (keyword k)) (get m (keyword (str/replace k "_" "-")))))]
-    (->> attachments
-         (filter #(= "tool" (str (field % "source"))))
-         (keep-indexed
-           (fn [index artifact]
-             (let [kind (str (field artifact "kind"))
-                   media-type (str (or (field artifact "media_type") "application/octet-stream"))]
+  (->> attachments
+       (filter #(= "tool" (str (get % "source"))))
+       (keep-indexed
+         (fn [index artifact]
+           (let [kind
+                 (str (get artifact "kind"))
 
-               (when-not (or (#{"image" "table"} kind)
-                             (str/starts-with? media-type "image/")
-                             (str/starts-with? media-type "video/"))
-                 (cond-> {:filename (str (or (field artifact "filename") "artifact"))
-                          :media-type media-type
-                          :size (field artifact "size")
-                          ;; A summarized run's artifact still opens from its own step.
-                          :iteration-id (str (or (::iteration-id artifact) iteration-id))
-                          :index (or (::index artifact) index)}
-                   (field artifact "view_id")
-                   (assoc :view-id (field artifact "view_id"))
+                 media-type
+                 (str (or (get artifact "media_type") "application/octet-stream"))]
 
-                   (field artifact "owner")
-                   (assoc :owner (field artifact "owner")))))))
-         vec)))
+             (when-not (or (#{"image" "table"} kind)
+                           (str/starts-with? media-type "image/")
+                           (str/starts-with? media-type "video/"))
+               (cond-> {:filename (str (or (get artifact "filename") "artifact"))
+                        :media-type media-type
+                        :size (get artifact "size")
+                        ;; A summarized run's artifact still opens from its own step.
+                        :iteration-id (str (or (::iteration-id artifact) iteration-id))
+                        :index (or (::index artifact) index)}
+                 (get artifact "view_id")
+                 (assoc :view-id (get artifact "view_id"))
+
+                 (get artifact "owner")
+                 (assoc :owner (wire/->engine (get artifact "owner"))))))))
+       vec))
 
 (defn- strip-produced-artifact-transport
   "Remove attach’s internal document fence and pending descriptor once the
@@ -5687,8 +5683,6 @@
   (let [error (first (filter #(= "error" (activity-evidence-kind %)) (:evidence row)))]
     (when-not error (not-empty (str/trim (str error-summary))))))
 
-(defn- activity-field [m k] (get m k (get m (name k))))
-
 (defn- activity-summary-inlines
   "Restrict summary Markdown to inline styles and HTTP(S) links."
   [node]
@@ -5719,12 +5713,12 @@
 (defn- activity-summary-entry
   [presentation]
   (let [text
-        (str/trim (str/replace (str (activity-field presentation :summary)) #"\s+" " "))
+        (str/trim (str/replace (str (:summary presentation)) #"\s+" " "))
 
         format
-        (or (activity-field presentation :summary-format) (get presentation "summary_format"))]
+        (:summary-format presentation)]
 
-    (if (contains? #{:markdown "markdown"} format)
+    (if (= "markdown" format)
       (assoc (first (layout/ast->entries
                       [:ast {} (into [:p {}] (activity-summary-inlines (vis/markdown->ast text)))]
                       Integer/MAX_VALUE
@@ -5739,8 +5733,8 @@
 (defn- activity-row-openable?
   "Disclosure opens content, never the visible headline or summary."
   [{:keys [summary children resources evidence presentation] :as row}]
-  (boolean (or (seq (activity-field presentation :content))
-               (seq (activity-field presentation :sections))
+  (boolean (or (seq (:content presentation))
+               (seq (:sections presentation))
                (seq children)
                (some #(contains? #{"diff" "error"} (activity-evidence-kind %)) evidence)
                (and (empty? children)
@@ -5859,10 +5853,6 @@
 
     nil))
 
-(defn- activity-content-field
-  [block k]
-  (or (get block k) (get block (name k)) (get block (keyword (str/replace (name k) "_" "-")))))
-
 (defn- activity-content-entries
   "Render symbol content through the existing Markdown/table/code painter, set in
    from the paper's edge to `col`, the column its step's words start in.
@@ -5875,17 +5865,14 @@
         (let [[_ block]
               (first group)
 
-              field
-              (partial activity-content-field block)
-
               kind
-              (field :type)
+              (:type block)
 
               text
-              (field :text)
+              (:text block)
 
               artifact
-              (get artifacts (field :attachment_id))
+              (get artifacts (:attachment-id block))
 
               media?
               (contains? #{"image" "video" "audio" "file"} kind)
@@ -5902,16 +5889,14 @@
                 [:ast {} [:p {} text]]
 
                 ("code" "diff")
-                [:ast {} [:code {:lang (if (= kind "diff") "diff" (field :language))} text]]
+                [:ast {} [:code {:lang (if (= kind "diff") "diff" (:language block))} text]]
 
                 "table"
                 [:ast {}
                  (into [:table {}]
                        (mapcat (fn [[_ table]]
-                                 (let [paths (vec (activity-content-field table :paths))]
-                                   (cons (into [:tr {}]
-                                               (map #(vector :th {} %)
-                                                    (activity-content-field table :columns)))
+                                 (let [paths (vec (:paths table))]
+                                   (cons (into [:tr {}] (map #(vector :th {} %) (:columns table)))
                                          (map-indexed
                                            (fn [at row]
                                              (let [path (not-empty (str (nth paths at "")))]
@@ -5922,21 +5907,21 @@
                                                                       [:td {:path path} cell]
                                                                       [:td {} cell]))
                                                                   row))))
-                                           (activity-content-field table :rows)))))
+                                           (:rows table)))))
                                group))]
 
                 "progress"
                 [:ast {}
                  [:p {}
-                  (str (field :label)
+                  (str (:label block)
                        " · "
-                       (if (field :total)
-                         (str (field :value) " / " (field :total))
+                       (if (:total block)
+                         (str (:value block) " / " (:total block))
                          (if running? "In progress…" "Stopped")))]]
 
                 [:ast {}
                  [:p {}
-                  (str (field :label)
+                  (str (:label block)
                        " · "
                        (if artifact
                          "↗ click to open in the system viewer"
@@ -5956,9 +5941,7 @@
                           entries)
                     entries))))
       (partition-by (fn [[index block]]
-                      (if (= "table" (activity-content-field block :type))
-                        (activity-content-field block :columns)
-                        index))
+                      (if (= "table" (:type block)) (:columns block) index))
                     (map-indexed vector blocks)))))
 
 (defn- activity-section-entries
@@ -5968,7 +5951,7 @@
     (mapcat
       (fn [[index section]]
         (let [headline
-              (activity-field section :headline)
+              (:headline section)
 
               summary-entry
               (activity-summary-entry section)
@@ -5977,7 +5960,7 @@
               (:line summary-entry)
 
               content
-              (activity-field section :content)
+              (:content section)
 
               section-key
               (str row-id ":section:" index)
@@ -6216,13 +6199,12 @@
                                (:presentation row)
 
                                headline
-                               (activity-field presentation :headline)]
+                               (:headline presentation)]
 
                            (if (str/blank? (str headline))
                              row
                              (assoc-in row
-                               [:presentation
-                                (if (contains? presentation :headline) :headline "headline")]
+                               [:presentation :headline]
                                (str (inc (long index)) ": " headline))))))
           children)))
 
@@ -6429,9 +6411,9 @@
                                                                (not (and (= "patch"
                                                                             (:operation row))
                                                                          (= (:id %)
-                                                                            (activity-field
-                                                                              (:presentation row)
-                                                                              :summary))))
+                                                                            (get-in row
+                                                                                    [:presentation
+                                                                                     :summary]))))
                                                                (not (contains? #{"shell-handle"
                                                                                  "council-group"
                                                                                  "council-thread"
@@ -6443,14 +6425,14 @@
                                                        (:presentation row)
 
                                                        headline
-                                                       (or (activity-field presentation :headline)
+                                                       (or (:headline presentation)
                                                            (activity-step-lead row))
 
                                                        content
-                                                       (activity-field presentation :content)
+                                                       (:content presentation)
 
                                                        sections
-                                                       (activity-field presentation :sections)
+                                                       (:sections presentation)
 
                                                        summary-entry
                                                        (when presentation
@@ -7417,24 +7399,16 @@
                    :activity-rows (:rows activity)
                    :activity-artifacts
                    (into {}
-                         (keep-indexed
-                           (fn [index artifact]
-                             (let [field
-                                   (fn [k]
-                                     (or (get artifact k)
-                                         (get artifact (name k))
-                                         (get artifact (keyword (str/replace (name k) "_" "-")))))
-
-                                   id
-                                   (field :attachment_id)]
-
-                               (when id
-                                 [id
-                                  {:filename (field :filename)
-                                   :media-type (field :media_type)
-                                   :iteration-id (str (or (::iteration-id artifact) iteration-id))
-                                   :index (or (::index artifact) index)}])))
-                           (filter #(= "tool" (or (:source %) (get % "source"))) attachments)))
+                         (keep-indexed (fn [index artifact]
+                                         (let [id (get artifact "attachment_id")]
+                                           (when id
+                                             [id
+                                              {:filename (get artifact "filename")
+                                               :media-type (get artifact "media_type")
+                                               :iteration-id (str (or (::iteration-id artifact)
+                                                                      iteration-id))
+                                               :index (or (::index artifact) index)}])))
+                                       (filter #(= "tool" (get % "source")) attachments)))
                    :activity-omitted (get-in activity [:omitted :rows] 0)
                    :activity-histories (vec (or (seq (:histories activity))
                                                 (when-let [history (:history activity)]
@@ -8279,8 +8253,7 @@
                             ::iteration-id iteration-id
                             ::index (vswap! tool-index #(inc (long %)))))]
 
-                    (mapv #(cond-> % (= "tool" (str (or (:source %) (get % "source")))) stamp)
-                          attachments))))
+                    (mapv #(cond-> % (= "tool" (str (get % "source"))) stamp) attachments))))
         entries))
 
 (defn- render-iteration-entries

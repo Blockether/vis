@@ -1125,7 +1125,7 @@
   "Adapt one strings-keyed gateway catalog row without importing executable handlers."
   [row]
   (let [raw-name
-        (some-> (or (get row "name") (:name row))
+        (some-> (get row "name")
                 str
                 str/trim)
 
@@ -1145,7 +1145,7 @@
         (when path-s (str "/" path-s))
 
         doc
-        (some-> (or (get row "doc") (:doc row))
+        (some-> (get row "doc")
                 str)]
 
     (when (seq path)
@@ -7234,25 +7234,24 @@
                                          @refresh-active-tab-pending*
                                          (compare-and-set! refresh-active-tab-running* false true))
                                    (recur)))))))))
-                 fork-session! (fn [source-id through-turn-id success-message]
-                                 (try
-                                   (if-let [forked (vis/fork-session! source-id through-turn-id)]
-                                     (if-let [session-result (chat/resume-session
-                                                               (or (get forked "id") (:id forked)))]
-                                       (do (open-session-tab! session-result false)
-                                           (vis/notify! success-message
-                                                        :level :success
-                                                        :ttl-ms copy-success-ttl-ms))
-                                       (vis/notify! "Forked, but failed to reload session"
-                                                    :level :warn
-                                                    :ttl-ms copy-success-ttl-ms))
-                                     (vis/notify! "Could not fork session"
-                                                  :level :warn
-                                                  :ttl-ms copy-success-ttl-ms))
-                                   (catch Throwable error
-                                     (vis/notify! (or (ex-message error) "Could not fork session")
-                                                  :level :warn
-                                                  :ttl-ms copy-success-ttl-ms))))
+                 fork-session!
+                 (fn [source-id through-turn-id success-message]
+                   (try (if-let [forked (vis/fork-session! source-id through-turn-id)]
+                          (if-let [session-result (chat/resume-session (get forked "id"))]
+                            (do (open-session-tab! session-result false)
+                                (vis/notify! success-message
+                                             :level :success
+                                             :ttl-ms copy-success-ttl-ms))
+                            (vis/notify! "Forked, but failed to reload session"
+                                         :level :warn
+                                         :ttl-ms copy-success-ttl-ms))
+                          (vis/notify! "Could not fork session"
+                                       :level :warn
+                                       :ttl-ms copy-success-ttl-ms))
+                        (catch Throwable error
+                          (vis/notify! (or (ex-message error) "Could not fork session")
+                                       :level :warn
+                                       :ttl-ms copy-success-ttl-ms))))
                  switch-session!
                  (fn [choice]
                    ;; No `:loading?` guard: opening or focusing a tab never

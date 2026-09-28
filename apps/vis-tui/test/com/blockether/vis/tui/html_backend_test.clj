@@ -1287,12 +1287,12 @@
            :lines 421
            :elapsed-ms 617000
            :owner {:invocation-id "jenkins-watch"}}]
-   :attachments [{:source "tool"
-                  :kind "doc"
-                  :filename "Jenkins.live.ndjson"
-                  :media-type "application/vnd.vis.live+ndjson"
-                  :view_id "jenkins-build"
-                  :owner {:invocation_id "jenkins-watch"}}]})
+   :attachments [{"source" "tool"
+                  "kind" "doc"
+                  "filename" "Jenkins.live.ndjson"
+                  "media_type" "application/vnd.vis.live+ndjson"
+                  "view_id" "jenkins-build"
+                  "owner" {"invocation_id" "jenkins-watch"}}]})
 
 (defn activity-live-rows
   "One deterministic operation owns the recorded Jenkins view."

@@ -103,12 +103,12 @@
          :resources []
          :evidence []
          :presentation
-         {"headline" "Check code nesting"
-          "summary" (if finding? "4 files checked · 1 finding" "4 files checked · 0 findings")
-          "content"
-          [{"type" "text" "text" "Scope: src/**/*.py · Nesting limit: 3"}
-           {"type" "text"
-            "text" (if finding? "src/orders.py:18: nesting 4 exceeds 3" "No nesting findings.")}]}}
+         {:headline "Check code nesting"
+          :summary (if finding? "4 files checked · 1 finding" "4 files checked · 0 findings")
+          :content
+          [{:type "text" :text "Scope: src/**/*.py · Nesting limit: 3"}
+           {:type "text"
+            :text (if finding? "src/orders.py:18: nesting 4 exceeds 3" "No nesting findings.")}]}}
 
         projection
         {:state "succeeded"

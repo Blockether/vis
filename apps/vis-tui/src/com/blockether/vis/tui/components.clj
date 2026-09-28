@@ -292,7 +292,7 @@
     [["Enter" "Send — or queue it while a turn is running"]
      ["Esc · C-g" "Abort — cancel turn (queued msgs return to draft) · close dialog · clear draft"]
      ["C-c" "Quit — clears a draft, cancels a running turn, quits again while cancelling"]
-      ["M-> · C-x j · C-l · C-End" "Jump to the bottom (or click the ↓ messages chip)"]
+     ["M-> · C-x j · C-l · C-End" "Jump to the bottom (or click the ↓ messages chip)"]
      ["M-<" "Jump to the top — beginning-of-buffer"]
      ["C-v · M-v · PgDn · PgUp" "Scroll a screen forward · back"]
      [(keymap/label-for :show-sessions) "Switch session — the session-list picker"]
@@ -308,7 +308,7 @@
            ["C-w · C-d" "Kill word back · delete char forward"]
            ["↑ · ↓ · ← · →" "History / move cursor (Alt+←/→ by word where supported)"]
            ["Copy / paste" "Use your terminal — select to copy, its paste key"]
-            ["Mouse" "Click a session in Projects · ↓ messages jumps down"]]}])
+           ["Mouse" "Click a session in Projects · ↓ messages jumps down"]]}])
 
 ;; ── header band chrome ──────────────────────────────────────────────────────
 (defn band-rule!
@@ -1064,27 +1064,27 @@
 
                             region-rows
                             (vec
-                              (mapcat
-                                (fn [r]
-                                  (let [note
-                                        (not-empty (str (or (:note r) (:src r))))
+                              (mapcat (fn [r]
+                                        (let [note
+                                              (not-empty (str (or (:note r) (:src r))))
 
-                                        anchor
-                                        (not-empty (str (or (:from_anchor r) (:from-anchor r))))
+                                              anchor
+                                              (not-empty (str (:from_anchor r)))
 
-                                        text
-                                        (str note
-                                             (when (and note anchor) "  ")
-                                             (when anchor (str "(" anchor ")")))]
+                                              text
+                                              (str note
+                                                   (when (and note anchor) "  ")
+                                                   (when anchor (str "(" anchor ")")))]
 
-                                    (when (or note anchor)
-                                      (wrapped-rows [["        \u21b3 " t/footer-fg-muted false]]
-                                                    10
-                                                    text
-                                                    (max 6 (- (long body-w) 10))
-                                                    t/footer-fg-muted
-                                                    false))))
-                                (:regions file)))]
+                                          (when (or note anchor)
+                                            (wrapped-rows [["        \u21b3 " t/footer-fg-muted
+                                                            false]]
+                                                          10
+                                                          text
+                                                          (max 6 (- (long body-w) 10))
+                                                          t/footer-fg-muted
+                                                          false))))
+                                      (:regions file)))]
 
                         (into [path-row] region-rows)))
                     files)))]

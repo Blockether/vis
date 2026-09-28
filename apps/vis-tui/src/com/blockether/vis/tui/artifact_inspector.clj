@@ -25,8 +25,6 @@
       {:artifacts artifacts}
       {:artifacts [] :error "Artifact index unavailable"})))
 
-(defn- field [m k] (or (get m k) (get m (keyword k))))
-
 (defn- produced-rows
   "Newest artifact per filename, preserving how many durable versions it represents."
   [artifacts]
@@ -34,25 +32,25 @@
         (reverse (vec artifacts))
 
         counts
-        (frequencies (map #(str (or (field % "filename") "artifact")) newest))]
+        (frequencies (map #(str (or (get % "filename") "artifact")) newest))]
 
     (:rows
       (reduce (fn [{:keys [seen rows] :as acc} artifact]
-                (let [filename (str (or (field artifact "filename") "artifact"))]
+                (let [filename (str (or (get artifact "filename") "artifact"))]
                   (if (contains? seen filename)
                     acc
                     {:seen (conj seen filename)
                      :rows (conj rows
                                  {:source :produced
                                   :filename filename
-                                  :media-type (str (or (field artifact "media_type")
+                                  :media-type (str (or (get artifact "media_type")
                                                        "application/octet-stream"))
-                                  :size (field artifact "size")
-                                  :version (field artifact "version")
-                                  :commentable (true? (field artifact "commentable"))
+                                  :size (get artifact "size")
+                                  :version (get artifact "version")
+                                  :commentable (true? (get artifact "commentable"))
                                   :version-count (get counts filename 1)
-                                  :iteration-id (str (field artifact "iteration_id"))
-                                  :index (field artifact "index")
+                                  :iteration-id (str (get artifact "iteration_id"))
+                                  :index (get artifact "index")
                                   :artifact artifact})})))
               {:seen #{} :rows []}
               newest))))
@@ -280,11 +278,11 @@
              (re-matches
                #"(?i)attachment://([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
                url)]
-    (when-let [artifact (some #(when (= (str/lower-case attachment-id) (field % "attachment_id")) %)
+    (when-let [artifact (some #(when (= (str/lower-case attachment-id) (get % "attachment_id")) %)
                               (:artifacts (fetch-session-artifacts! session-id)))]
-      {:filename (field artifact "filename")
-       :iteration-id (field artifact "iteration_id")
-       :index (field artifact "index")})))
+      {:filename (get artifact "filename")
+       :iteration-id (get artifact "iteration_id")
+       :index (get artifact "index")})))
 
 (defn materialize-artifact!
   "Fetch one produced artifact's durable bytes and write them under its original

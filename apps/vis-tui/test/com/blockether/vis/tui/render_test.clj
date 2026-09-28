@@ -538,7 +538,7 @@
   (it "does not offer disclosures for technical resource IDs"
       (expect (false? (#'render/activity-row-openable?
                        {:summary "Review"
-                        :presentation {"content" []}
+                        :presentation {:content []}
                         :resources [{:type "council-thread" :id "258"}
                                     {:type "shell-handle" :id "opaque"}]}))))
   (it "opens the retained patch directly rather than a second diff disclosure"
@@ -1033,10 +1033,9 @@
                        (assoc %
                          :state "succeeded"
                          :result-summary "Last search: 5 matches"
-                         :presentation {"headline" "Searched"
-                                        "summary" "same query"
-                                        "content" [{"type" "text"
-                                                    "text" "Last search: 5 matches"}]})
+                         :presentation {:headline "Searched"
+                                        :summary "same query"
+                                        :content [{:type "text" :text "Last search: 5 matches"}]})
                        %)
                     rows)
 
@@ -6494,13 +6493,13 @@ h = 8"
   produced-attachment-receipt-test
   (let [entry
         {:iteration-id "iteration-1"
-         :attachments [{:source "tool"
-                        :tool-call-id "call-1"
-                        :position 0
-                        :kind "doc"
-                        :media-type "text/html"
-                        :filename "report.html"
-                        :size 2048}]
+         :attachments [{"source" "tool"
+                        "tool_call_id" "call-1"
+                        "position" 0
+                        "kind" "doc"
+                        "media_type" "text/html"
+                        "filename" "report.html"
+                        "size" 2048}]
          :forms [{:code "attach(page, filename=\"report.html\")"
                   :svar-tool-call-id "call-1"
                   :stdout (str "````vis-doc\n[Document: report.html HTML, 2 KB]\n"
@@ -6548,10 +6547,11 @@ h = 8"
 (defdescribe
   produced-attachment-inline-dedup-test
   (it "keeps inline images out of the durable document card without shifting indexes"
-      (let [rows (@#'render/iteration-artifact-rows
-                  "iteration-1"
-                  [{:source "tool" :kind "image" :media-type "image/png" :filename "preview.png"}
-                   {:source "tool" :kind "doc" :media-type "text/html" :filename "report.html"}])]
+      (let [rows
+            (@#'render/iteration-artifact-rows
+             "iteration-1"
+             [{"source" "tool" "kind" "image" "media_type" "image/png" "filename" "preview.png"}
+              {"source" "tool" "kind" "doc" "media_type" "text/html" "filename" "report.html"}])]
         (expect (= [{:filename "report.html"
                      :media-type "text/html"
                      :size nil
@@ -9096,11 +9096,11 @@ h = 8"
                    :presenter "observation"
                    :state "succeeded"
                    :duration-ms 42
-                   :presentation {"headline" "Listed apps/vis-companion/src"
-                                  "summary" "3 directories · 2 files"
-                                  "content" [{:type "table"
-                                              :columns ["Name" "Kind"]
-                                              :rows [["components/" "Directory"]]}]}}]}
+                   :presentation {:headline "Listed apps/vis-companion/src"
+                                  :summary "3 directories · 2 files"
+                                  :content [{:type "table"
+                                             :columns ["Name" "Kind"]
+                                             :rows [["components/" "Directory"]]}]}}]}
 
           data
           (render/format-answer-with-thinking-data* ""
@@ -9506,7 +9506,7 @@ print(paths)"
            {:type "code" :language "python" :text "print(42)"}
            {:type "diff" :text "+added\n-removed"}
            {:type "progress" :label "Checking" :value 1 :total 2}
-           {:type "image" :label "Screenshot" :attachment_id "image-1"}]
+           {:type "image" :label "Screenshot" :attachment-id "image-1"}]
 
           entries
           (#'render/activity-content-entries
@@ -9537,9 +9537,11 @@ print(paths)"
           (iteration/canonicalize
             {:id "i"
              :position 0
-             :attachments
-             [{:source "user" :filename "input.txt"}
-              {:source "tool" :attachment_id "clip" :filename "clip.mp4" :media_type "video/mp4"}]
+             :attachments [{"source" "user" "filename" "input.txt"}
+                           {"source" "tool"
+                            "attachment_id" "clip"
+                            "filename" "clip.mp4"
+                            "media_type" "video/mp4"}]
              :forms [{:code "record()"
                       :success? true
                       :activity {:state "succeeded"
@@ -9552,7 +9554,7 @@ print(paths)"
                                          :presentation {:headline "Record"
                                                         :summary "Recording ready"
                                                         :content [{:type "video"
-                                                                   :attachment_id "clip"
+                                                                   :attachment-id "clip"
                                                                    :label "Recording"}]}}]
                                  :omitted {:rows 0 :by-classification {}}}}]})
 
@@ -9584,13 +9586,13 @@ print(paths)"
                                                     :presentation
                                                     {:headline "Found"
                                                      :summary "See [root](https://example.com/root)"
-                                                     :summary-format :markdown
+                                                     :summary-format "markdown"
                                                      :content [{:type "text" :text "Body"}]
                                                      :sections
-                                                     [{"headline" "Details"
-                                                       "summary"
+                                                     [{:headline "Details"
+                                                       :summary
                                                        "See [section](https://example.com/section)"
-                                                       "summary_format" "markdown"}]}}]}
+                                                       :summary-format "markdown"}]}}]}
                                   100
                                   "links")]
                      (expect (= (if open?
@@ -9612,7 +9614,7 @@ print(paths)"
     (let
       [entry
        (#'render/activity-summary-entry
-        {:summary-format :markdown
+        {:summary-format "markdown"
          :summary
          "**bold** `code` [safe](https://example.com) ![image](https://example.com/img) [bad](javascript:alert) [file](file:///tmp/a) [relative](/a) [mail](mailto:a@example.com)"})]
       (expect (= ["https://example.com"] (mapv :url (get-in entry [:meta :links])))))))
@@ -9634,7 +9636,7 @@ print(paths)"
                                           :presentation {:headline "Search failed"
                                                          :summary
                                                          "[success](https://example.com/success)"
-                                                         :summary-format :markdown}}]}
+                                                         :summary-format "markdown"}}]}
                         120
                         "error")]
 
@@ -9667,12 +9669,12 @@ print(paths)"
                 :presentation
                 {:headline "Found"
                  :summary "[ROOTROOTROOTROOTROOTROOTROOTROOT](https://example.com/root)"
-                 :summary-format :markdown
+                 :summary-format "markdown"
                  :content [{:type "text" :text "Body"}]
                  :sections [{:headline "Details"
                              :summary
                              "[界SECTIONSECTIONSECTIONSECTIONSECTION](https://example.com/section)"
-                             :summary-format :markdown
+                             :summary-format "markdown"
                              :content [{:type "text" :text "Details body"}]}]}}]}
              width
              "links")
@@ -9727,16 +9729,16 @@ print(paths)"
     ;; Regression #230: opening the overview must not expand every long body.
     ;; Regression #270: collapsing the row folds its section index away with it.
     (let [presentation
-          {"headline" "Read session"
-           "summary" "3 turns"
-           "content" [{"type" "text" "text" "Overview metrics"}]
-           "sections" [{"headline" "Turn details"
-                        "summary" "Full requests"
-                        "content" [{"type" "text" "text" "Complete request"}]}
-                       {"headline" "Failure details"
-                        "summary" "One failure"
-                        "content" [{"type" "text" "text" "Complete failure"}]}
-                       {"headline" "Empty details" "summary" "No retries" "content" []}]}
+          {:headline "Read session"
+           :summary "3 turns"
+           :content [{:type "text" :text "Overview metrics"}]
+           :sections [{:headline "Turn details"
+                       :summary "Full requests"
+                       :content [{:type "text" :text "Complete request"}]}
+                      {:headline "Failure details"
+                       :summary "One failure"
+                       :content [{:type "text" :text "Complete failure"}]}
+                      {:headline "Empty details" :summary "No retries" :content []}]}
 
           row
           {:id "session" :state "succeeded" :operation "read_session" :presentation presentation}]
@@ -9915,11 +9917,11 @@ print(paths)"
       (let [entries
             (format-iteration-entry-entries
               {:iteration-id "iteration-live"
-               :attachments [{:source "tool"
-                              :kind "doc"
-                              :filename "Release.live.ndjson"
-                              :media-type "application/vnd.vis.live+ndjson"
-                              :size 2048}]
+               :attachments [{"source" "tool"
+                              "kind" "doc"
+                              "filename" "Release.live.ndjson"
+                              "media_type" "application/vnd.vis.live+ndjson"
+                              "size" 2048}]
                :forms [{:code "await gh.watch()" :stdout "Finished" :success? true}]}
               80
               1
@@ -10014,18 +10016,18 @@ print(paths)"
     (doseq [width [40 80]]
       (let [entries (format-iteration-entry-entries
                       {:iteration-id "recorded-iteration"
-                       :attachments [{:source "tool"
-                                      :kind "doc"
-                                      :filename "Jenkins.live.ndjson"
-                                      :media-type "application/vnd.vis.live+ndjson"
-                                      :view_id "build"
-                                      :owner {:invocation_id "watch"}}
-                                     {:source "tool"
-                                      :kind "doc"
-                                      :filename "Other.live.ndjson"
-                                      :media-type "application/vnd.vis.live+ndjson"
-                                      :view_id "other"
-                                      :owner {:invocation_id "unknown"}}]
+                       :attachments [{"source" "tool"
+                                      "kind" "doc"
+                                      "filename" "Jenkins.live.ndjson"
+                                      "media_type" "application/vnd.vis.live+ndjson"
+                                      "view_id" "build"
+                                      "owner" {"invocation_id" "watch"}}
+                                     {"source" "tool"
+                                      "kind" "doc"
+                                      "filename" "Other.live.ndjson"
+                                      "media_type" "application/vnd.vis.live+ndjson"
+                                      "view_id" "other"
+                                      "owner" {"invocation_id" "unknown"}}]
                        :forms [{:code "watch()"
                                 :success? true
                                 :activity {:state :succeeded
@@ -10487,7 +10489,11 @@ print(paths)"
     (it
       "keeps artifacts and errors inside the Activity of their notes"
       (let [artifact
-            {:source "tool" :kind "doc" :media-type "text/html" :filename "report.html" :size 2048}
+            {"source" "tool"
+             "kind" "doc"
+             "media_type" "text/html"
+             "filename" "report.html"
+             "size" 2048}
 
             failure
             {:type "AssertionError" :message "check failed"}

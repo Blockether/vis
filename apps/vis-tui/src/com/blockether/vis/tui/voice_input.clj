@@ -130,10 +130,10 @@
   "What the status line says while the gateway-owned engine works."
   [update-map]
   (let [phase
-        (keyword (or (:phase update-map) (get update-map "phase") "transcribing"))
+        (keyword (or (get update-map "phase") "transcribing"))
 
         progress
-        (or (:progress update-map) (get update-map "progress"))
+        (get update-map "progress")
 
         pct
         (some-> progress

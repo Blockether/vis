@@ -2118,7 +2118,7 @@
                                        :turn-start-ms 10
                                        :render-version 0})
                  (state/dispatch [:init-session
-                                  {:id "s1" :status "running" :current_turn_id "turn-1"}
+                                  {:id "s1" :status "running" :current-turn-id "turn-1"}
                                   [{:role :user :text "running"} {:role :assistant :pending? true}]
                                   {:root "/tmp"}])
                  (let [db @state/app-db]

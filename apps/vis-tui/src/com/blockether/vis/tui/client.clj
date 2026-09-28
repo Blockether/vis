@@ -2624,7 +2624,7 @@
 (defn- model-entry
   [model]
   (if (map? model)
-    (cond-> {:name (or (get model "name") (:name model))}
+    (cond-> {:name (get model "name")}
       (contains? model "is_reasoning_effort_configurable")
       (assoc :reasoning-effort? (boolean (get model "is_reasoning_effort_configurable")))
 

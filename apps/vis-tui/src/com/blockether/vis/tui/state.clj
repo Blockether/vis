@@ -2251,10 +2251,7 @@
 
 (defn- session-running?
   [session]
-  (or (= "running" (:status session))
-      (= :running (:status session))
-      (some? (:current_turn_id session))
-      (some? (:current-turn-id session))))
+  (or (= "running" (:status session)) (some? (:current-turn-id session))))
 
 (defn- park-live-trace
   "Stash the iterations the user already WATCHED onto the pending assistant
@@ -6003,10 +6000,9 @@
                         (:messages target)))
 
           human-answer?
-          (and (not (contains? #{:council "council"}
-                               (or (:request-kind completion) (:request-kind request-message))))
+          (and (not= :council (or (:request-kind completion) (:request-kind request-message)))
                (not (:subagent completion))
-               (not (contains? #{:subagent "subagent"} (get-in target [:session :agent :role]))))
+               (not= "subagent" (get-in target [:session :agent :role])))
 
           skip-identified-completion?
           (boolean (and client-turn-id (nil? matching-pending-index)))
