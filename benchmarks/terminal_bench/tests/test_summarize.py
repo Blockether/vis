@@ -293,6 +293,79 @@ def test_report_groups_scored_tasks_by_how_their_latest_attempt_ended(tmp_path):
     }
 
 
+def test_report_lists_attempts_that_end_repeating_one_error(tmp_path):
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    jobs = tmp_path / "jobs"
+
+    def ended(iteration):
+        return {
+            "event": "trace-chunk",
+            "payload": {"phase": "iteration-final", "iteration": iteration},
+        }
+
+    def failed(iteration, error_type):
+        return {
+            "event": "trace-chunk",
+            "payload": {
+                "phase": "iteration-error",
+                "iteration": iteration,
+                "error": {"type": error_type, "message": "sandbox detail"},
+            },
+        }
+
+    for task, frames in (
+        (
+            "stuck",
+            [
+                failed(1, "tool-timeout"),
+                ended(2),
+                *(
+                    failed(iteration, "python-worker-retired")
+                    for iteration in (3, 4, 5)
+                ),
+            ],
+        ),
+        ("last-error", [ended(1), failed(2, "http-error")]),
+        ("clean", [failed(1, "tool-timeout"), ended(2)]),
+    ):
+        trial = jobs / "job" / f"{task}__abcd"
+        (trial / "agent").mkdir(parents=True)
+        (trial / "result.json").write_text(
+            json.dumps(
+                {
+                    "task_name": f"terminal-bench/{task}",
+                    "trial_name": f"{task}__abcd",
+                    "finished_at": "2026-01-01T08:00:00Z",
+                    "exception_info": {"exception_type": "AgentTimeoutError"},
+                    "agent_result": {"metadata": None},
+                    "verifier_result": {"rewards": {"reward": 0.0}},
+                }
+            )
+        )
+        (trial / "agent/vis-trace.jsonl").write_text(
+            "".join(json.dumps(frame) + "\n" for frame in frames)
+        )
+    report = make_report(jobs, dataset)
+    traces = {trial["trial"]: trial["trace"] for trial in report["trials"]}
+    assert traces["stuck__abcd"]["iteration_error_types"] == {
+        "tool-timeout": 1,
+        "python-worker-retired": 3,
+    }
+    assert traces["last-error__abcd"]["trailing_iteration_errors"] == {
+        "type": "http-error",
+        "iterations": 1,
+    }
+    assert traces["clean__abcd"]["trailing_iteration_errors"] is None
+    assert report["repeated_final_errors"] == [
+        {
+            "trial": "job/stuck__abcd",
+            "type": "python-worker-retired",
+            "iterations": 3,
+        }
+    ]
+
+
 def test_compressed_trace_and_invalid_line(tmp_path):
     path = tmp_path / "vis-trace.jsonl.gz"
     with gzip.open(path, "wt") as stream:

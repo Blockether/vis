@@ -48,6 +48,9 @@ def trace_summary(path: Path, root: Path) -> dict | None:
     result_status = None
     result_error_type = None
     last_provider_error_usage = None
+    iteration_errors = Counter()
+    trailing_error_type = None
+    trailing_errors = 0
     truncated = False
     process = None
     if path.suffix == ".zst":
@@ -85,6 +88,18 @@ def trace_summary(path: Path, root: Path) -> dict | None:
                 tools[payload["tool-name"]] += 1
             if phase == "provider-call":
                 providers[f"{payload.get('provider')}/{payload.get('model')}"] += 1
+            if phase == "iteration-final":
+                trailing_error_type, trailing_errors = None, 0
+            if phase == "iteration-error":
+                error = payload.get("error")
+                error_type = error.get("type") if isinstance(error, dict) else None
+                if not isinstance(error_type, str) or len(error_type) > 100:
+                    error_type = "unknown"
+                iteration_errors[error_type] += 1
+                if error_type == trailing_error_type:
+                    trailing_errors += 1
+                else:
+                    trailing_error_type, trailing_errors = error_type, 1
             iteration = payload.get("iteration")
             if isinstance(iteration, int) and not isinstance(iteration, bool):
                 iterations = max(iterations, iteration)
@@ -129,6 +144,13 @@ def trace_summary(path: Path, root: Path) -> dict | None:
         "phase_counts": dict(phases),
         "provider_calls": dict(providers),
         "tool_calls": dict(tools),
+        "iteration_error_types": dict(iteration_errors),
+        "trailing_iteration_errors": {
+            "type": trailing_error_type,
+            "iterations": trailing_errors,
+        }
+        if trailing_errors
+        else None,
         "iterations_observed": iterations,
         "invalid_jsonl_lines": invalid_lines,
         "vis_result_status": result_status,
@@ -271,6 +293,14 @@ def make_report(jobs_dir: Path, dataset_dir: Path) -> dict:
     outcomes = {}
     for name, trial in sorted(scored.items()):
         outcomes.setdefault(task_outcome(trial), []).append(name)
+    # An attempt that ends repeating one error, such as a dead sandbox, needs no trace digging.
+    repeated_errors = []
+    for trial in trials:
+        streak = (trial["trace"] or {}).get("trailing_iteration_errors")
+        if streak and streak["iterations"] > 1:
+            repeated_errors.append(
+                {"trial": f"{trial['job']}/{trial['trial']}", **streak}
+            )
     return redact_value(
         {
             "dataset": "terminal-bench/terminal-bench@4.0.0",
@@ -290,6 +320,7 @@ def make_report(jobs_dir: Path, dataset_dir: Path) -> dict:
             "task_pass_rate": len(solved) / len(scored) if scored else None,
             "task_outcomes": dict(sorted(outcomes.items())),
             "unscored_model_tasks": sorted(model_tasks - set(scored)),
+            "repeated_final_errors": repeated_errors,
             "trials": trials,
         }
     )
