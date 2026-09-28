@@ -1233,7 +1233,9 @@ describe('a Python evaluation without detected Activity', () => {
     expect(painted.queryByText('failed')).toBeNull();
   });
 
-  it('shows an interrupted Python execution as a stop, not a JVM failure', () => {
+  // Regression, user screenshot: a stopped execution showed a second Interrupted band
+  // instead of a quiet state beside CODE in the same header.
+  it('places an interrupted Python execution beside CODE without a result band', () => {
     const painted = render(
       <AssistantMessage
         turn={turnWith({
@@ -1248,10 +1250,17 @@ describe('a Python evaluation without detected Activity', () => {
     );
 
     expect(painted.container.textContent).toContain('29ms');
-    expect(painted.container.textContent).not.toContain('INTERRUPTED · PYTHON');
     expect(announcedStates(painted.container)).toContain('Interrupted');
-    expect(painted.container.textContent).toContain('Interrupted');
+    const code = painted.getByRole('button', { name: 'Expand code' });
+    expect(code).toHaveTextContent('CODE (interrupted)');
+    expect(painted.container.querySelector('[data-code-result]')).toBeNull();
     expect(painted.container.textContent).not.toContain('FutureTask/awaitDone');
+    fireEvent.click(code);
+    expect(painted.getByRole('button', { name: 'Collapse code' })).toHaveTextContent(
+      'CODE (interrupted)',
+    );
+    expect(painted.getByText('walk_the_tree()')).toBeVisible();
+    expect(painted.container.querySelector('[data-code-result]')).toBeNull();
   });
 
   it('enhances the same receipt when semantic activity arrives', () => {
@@ -1393,6 +1402,9 @@ describe('Activity follows the combined Python source', () => {
     );
     expect(painted.container.querySelectorAll('[data-execution-code]')).toHaveLength(1);
     expect(painted.container.textContent).toContain('CODE');
+    expect(painted.getByRole('button', { name: 'Expand code' })).not.toHaveTextContent(
+      '(interrupted)',
+    );
     fireEvent.click(painted.getByRole('button', { name: 'Expand code' }));
     expect(painted.container.textContent).toContain('second_form()');
     for (const details of painted.container.querySelectorAll('details')) {
@@ -1409,6 +1421,33 @@ describe('Activity follows the combined Python source', () => {
     expect(painted.getAllByRole('button', { name: 'Copy code' })).toHaveLength(1);
     // Nothing is fetched for a receipt any more, so there is no loading state.
     expect(painted.container.textContent).not.toContain('Loading Activity');
+  });
+
+  it('keeps grouped failures and output while placing an interruption beside CODE', () => {
+    const painted = render(
+      <AssistantMessage
+        turn={turnOf([
+          { source: 'first_form()', error: 'java.lang.InterruptedException', duration_ms: 29 },
+          { source: 'second_form()', stdout: 'second result\n' },
+          { source: 'third_form()', error: { message: 'actual failure' }, duration_ms: 12 },
+        ])}
+      />,
+    );
+
+    const code = painted.getByRole('button', { name: 'Expand code' });
+    expect(code).toHaveTextContent('CODE (interrupted)');
+    expect(painted.container.querySelectorAll('[data-code-result]')).toHaveLength(1);
+    const failure = painted.getByRole('button', { name: 'Expand error details' });
+    expect(failure).toHaveTextContent('Failed');
+    fireEvent.click(failure);
+    expect(painted.getByText('actual failure')).toBeVisible();
+    fireEvent.click(code);
+    expect(painted.getByRole('button', { name: 'Collapse code' })).toHaveTextContent(
+      'CODE (interrupted)',
+    );
+    expect(painted.getByText('first_form()')).toBeVisible();
+    fireEvent.click(painted.getByRole('button', { name: 'Expand result' }));
+    expect(painted.getByText('second result')).toBeVisible();
   });
 
   // Regression, issue td-65cdf6: a 1-based iteration anchor was compared with the

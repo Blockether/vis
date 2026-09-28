@@ -73,6 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   been interrupted or finished, or after the turn has ended. Calls left running
   are shown as failed when the step failed and as cancelled otherwise. Before,
   the Activity band could keep counting `1 running` under a failed step.
+- The companion shows `(interrupted)` beside CODE for a stopped execution
+  instead of adding a separate Interrupted result band beneath its code.
 
 ## [v0.2.29] - 2026-09-25
 

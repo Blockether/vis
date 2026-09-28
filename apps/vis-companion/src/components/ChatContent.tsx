@@ -1375,7 +1375,7 @@ const ToolCard = memo(function ToolCard({
 const FailedCards = memo(function FailedCards({ cards }: { cards: TranscriptForm[] }) {
   const [open, setOpen] = useState(false);
   const errored = cards.filter((card) => card.error != null);
-  // An interruption is not a failure: it keeps its own band and never joins the count.
+  // An interruption is not a failure and never joins the failure count.
   const failures = errored.filter((card) => !interruptedPython(card));
   if (errored.length === 0) return null;
   if (failures.length < 2)
@@ -1458,6 +1458,7 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
   value,
   language = 'python',
   showCode,
+  interrupted,
   hasActivity,
   duration,
   children,
@@ -1465,12 +1466,14 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
   value: string;
   language?: string;
   showCode: boolean;
+  interrupted: boolean;
   hasActivity: boolean;
   duration: string | null;
   children: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
   const lineCount = value ? value.split('\n').length : 0;
+  const interruptionLabel = interrupted ? <BandTally> (interrupted)</BandTally> : null;
   return (
     <section className="relative z-0 min-w-0 bg-code px-3" data-execution-code>
       <div className="flex min-h-9 min-w-0 items-center gap-2 mouse:min-h-7">
@@ -1485,6 +1488,7 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
             onClick={() => setExpanded((open) => !open)}
           >
             <BandLabel>CODE</BandLabel>
+            {interruptionLabel}
           </Disclosure>
         ) : (
           <BandLabel className="min-w-0 flex-1">CODE</BandLabel>
@@ -1713,6 +1717,8 @@ const FormTrace = memo(function FormTrace({
   const cards = forms
     .flatMap(toolCards)
     .filter((member) => member.error != null || resultBody(member) !== '');
+  const showInterruptionInCode =
+    showCode && forms.some((member) => interruptedPython(member) && Boolean(formCode(member)));
   // One result disclosure per execution group, matching the TUI. Keep errors
   // separate so they remain visible even while source and stdout are folded.
   const stdout = cards
@@ -1745,13 +1751,22 @@ const FormTrace = memo(function FormTrace({
           value={code}
           language={formCodeLanguage(form)}
           showCode={showCode && Boolean(code)}
+          interrupted={showInterruptionInCode}
           hasActivity={hasActivity}
           duration={formatDuration(form.duration_ms)}
         >
           {stdout && <ToolCard form={{ stdout }} embedded />}
         </CollapsibleFormCode>
       )}
-      {showCode && <FailedCards cards={cards} />}
+      {showCode && (
+        <FailedCards
+          cards={
+            showInterruptionInCode
+              ? cards.filter((card) => !interruptedPython(card) || !formCode(card))
+              : cards
+          }
+        />
+      )}
       <div
         className={hasActivity ? 'relative z-0 min-w-0 bg-code px-3' : 'min-w-0'}
         data-execution-group={hasActivity || undefined}
