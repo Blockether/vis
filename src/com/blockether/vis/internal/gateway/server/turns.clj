@@ -113,16 +113,19 @@
             (http/json-response 201 {:upload_id upload-id :size (alength bytes)})))))))
 
 (defn- resolve-upload-attachments
+  "The body's attachment rows in the engine's keyword shape. JSON keys convert
+   once here; an `upload_id` row becomes its staged upload, or nil when that
+   upload is missing, expired or belongs to another session."
   [sid rows]
   (mapv (fn [row]
-          (if-let [upload-id (or (get row "upload_id") (get row :upload-id))]
+          (if-let [upload-id (:upload-id row)]
             (when-let [{stored-sid :sid :as upload} (@pending-uploads upload-id)]
               (when (= sid stored-sid)
                 (cond-> (refresh-upload-transcription upload)
                   (attachments/image-reference row)
                   (assoc :reference (attachments/image-reference row)))))
             row))
-        (or rows [])))
+        (wire/->engine (or rows []))))
 
 (defn- path-tid [request] (get-in request [:path-params :tid]))
 
@@ -175,7 +178,7 @@
                                                           (configured-reasoning-level))
                                    :extra-body (get body "extra_body")
                                    :turn-features (get body "turn_features")
-                                   :workspace (get body "workspace")
+                                   :workspace (wire/->engine (get body "workspace"))
                                    :attachments attachments
                                    ;; The submitter's own pre-expansion prose. Dropping it here
                                    ;; is what made a queued image render as a raw /var/folders path.

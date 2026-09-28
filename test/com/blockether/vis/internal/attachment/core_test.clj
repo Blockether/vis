@@ -660,7 +660,7 @@
 
               out
               (attachments/prepare-inline-attachments
-                [{"filename" filename "media_type" media-type "base64" payload}])
+                [{:filename filename :media-type media-type :base64 payload}])
 
               attachment
               (first (:attached out))]
@@ -726,7 +726,7 @@
 
               out
               (attachments/prepare-inline-attachments
-                [{"filename" filename "media_type" media-type "base64" payload}])
+                [{:filename filename :media-type media-type :base64 payload}])
 
               attachment
               (first (:attached out))]
@@ -816,7 +816,7 @@
     (it "preserves validated image references from inline uploads without renaming files"
         (let [out (attachments/prepare-inline-attachments
                     [{:base64 tiny-png-b64 :filename "same.png" :reference "[IMAGE #2]"}
-                     {"base64" tiny-png-b64 "filename" "same.png" "reference" "[IMAGE #7]"}])]
+                     {:base64 tiny-png-b64 :filename "same.png" :reference "[IMAGE #7]"}])]
           (expect (= ["[IMAGE #2]" "[IMAGE #7]"] (mapv :reference (:attached out))))
           (expect (= ["same.png" "same.png"] (mapv :filename (:attached out))))))
     (it "ignores invalid references and image labels on non-image media"

@@ -453,6 +453,41 @@
                 (String. (.decode (java.util.Base64/getDecoder) ^String (:base64 attachment))
                          "UTF-8")))))))
 
+(deftest inline-attachments-and-workspace-enter-in-engine-shape
+  ;; #291: the body's JSON keys convert once at intake, so gateway and engine
+  ;; readers see one spelling.
+  (let [sid
+        (random-uuid)
+
+        submitted
+        (atom nil)]
+
+    (with-redefs-fn {#'state/soul (constantly {:id sid})
+                     #'state/submit-turn! (fn [_ opts]
+                                            (reset! submitted opts)
+                                            {:turn {:turn_id "turn-1"}})}
+      #(let [response
+             (#'turns-api/submit-turn-handler
+              {:path-params {:sid (str sid)}
+               :body (java.io.ByteArrayInputStream.
+                       (.getBytes (wire/json-str {:request "inspect"
+                                                  :workspace {:root "/tmp/project"}
+                                                  :attachments [{:filename "shot.png"
+                                                                 :media_type "image/png"
+                                                                 :base64 "QUJD"
+                                                                 :reference "[IMAGE #1]"}]})
+                                  "UTF-8"))})] (is (= 202 (:status response))) (is
+                                                                                 (= [{:filename
+                                                                                      "shot.png"
+                                                                                      :media-type
+                                                                                      "image/png"
+                                                                                      :base64 "QUJD"
+                                                                                      :reference
+                                                                                      "[IMAGE #1]"}]
+                                                                                    (:attachments
+                                                                                      @submitted)))
+         (is (= {:root "/tmp/project"} (:workspace @submitted)))))))
+
 (deftest markdown-upload-survives-turn-intake
   (let [sid
         (random-uuid)

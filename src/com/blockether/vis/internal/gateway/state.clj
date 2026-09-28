@@ -1928,12 +1928,12 @@
   [rows]
   (reduce (fn [acc row]
             (let [filename
-                  (or (:filename row) (get row "filename"))
+                  (:filename row)
 
                   reference
                   (attachments/image-reference row)]
 
-              (if (some #(and (= filename (or (:filename %) (get % "filename")))
+              (if (some #(and (= filename (:filename %))
                               (or (nil? reference) (= reference (attachments/image-reference %))))
                         acc)
                 acc
@@ -1943,23 +1943,11 @@
 
 (defn- inline-attachment-preview
   "Byte-free chip payload for ONE inline (already base64-encoded) upload."
-  [a]
-  (let [pick
-        (fn [& ks]
-          (some (fn [k]
-                  (let [v (or (get a k) (get a (keyword k)))]
-                    (when-not (str/blank? (str v)) (str v))))
-                ks))
-
-        b64
-        (str (or (get a "base64") (get a :base64) ""))
-
-        size
-        (long (* 3 (quot (count b64) 4)))]
-
-    (when-let [filename (pick "filename" "name")]
-      (cond-> {:filename filename
-               :media_type (or (pick "media_type" "media-type") "image")
+  [{:keys [filename media-type base64] :as a}]
+  (let [size (long (* 3 (quot (count (str base64)) 4)))]
+    (when-not (str/blank? (str filename))
+      (cond-> {:filename (str filename)
+               :media_type (if (str/blank? (str media-type)) "image" (str media-type))
                :size size
                :size_label (fmt/format-bytes size)}
         (attachments/image-reference a)
@@ -1977,7 +1965,7 @@
    Explicit image references stay distinct; repeated unreferenced paths are deduped."
   [request inline workspace]
   (let [root
-        (or (:root workspace) (get workspace "root"))
+        (:root workspace)
 
         from-inline
         (keep inline-attachment-preview (or inline []))
@@ -2063,7 +2051,7 @@
              (:workspace turn)
 
              root
-             (or (:root workspace) (get workspace "root"))]
+             (:root workspace)]
 
          (into []
                (map-indexed (fn [position {:keys [path media-type base64 size]}]
@@ -2098,7 +2086,7 @@
   [sid tid]
   (when (and sid tid)
     (let [turn (read-turn-record (turn-record sid tid))]
-      (or (seq (distinct-attachments (wire/canonical (into (vec (:attachments turn))
+      (or (seq (wire/canonical (distinct-attachments (into (vec (:attachments turn))
                                                            (request-text-attachments turn)))))
           (try (seq (wire/canonical (vec (get (persistance/db-list-turns-attachments (lp/db-info)
                                                                                      [tid])
@@ -3288,7 +3276,7 @@
   record + events. Never throws - a worker failure becomes a `failed`
   turn record and a `turn.failed` event."
   [sid tid request
-   {:keys [messages provider model reasoning-default cancel-token extra-body turn-features workspace
+   {:keys [messages provider model reasoning-default cancel-token extra-body turn-features
            engine-opts attachments display-request stall]}]
   (let [caller-on-chunk
         (get-in engine-opts [:hooks :on-chunk])
@@ -3456,9 +3444,6 @@
 
               turn-features
               (assoc :turn/features turn-features)
-
-              (seq workspace)
-              (merge workspace)
 
               (seq attachments)
               (assoc :user/attachments attachments))
@@ -3747,7 +3732,7 @@
 (defn- launch-turn-worker!
   [sid tid request
    {:keys [messages provider model reasoning-default cancel-token queued? extra-body turn-features
-           workspace engine-opts attachments display-request]}]
+           engine-opts attachments display-request]}]
   ;; `turn.started` is the point of no return: from there on the turn is public
   ;; and `:current-turn` points at `tid`, while everything that could finish it is
   ;; still being wired up below. The announcement itself used to sit outside this
@@ -3830,7 +3815,6 @@
                                      :cancel-token cancel-token
                                      :extra-body extra-body
                                      :turn-features turn-features
-                                     :workspace workspace
                                      :engine-opts engine-opts
                                      :attachments attachments
                                      :display-request display-request
@@ -3964,8 +3948,7 @@
            entry
            (if-let [[tid
                      {:keys [request messages provider model reasoning-default cancel-token
-                             extra-body turn-features workspace engine-opts attachments
-                             display_request]}]
+                             extra-body turn-features engine-opts attachments display_request]}]
                     (next-drainable-turn entry force?)]
              (let [token (or cancel-token (cancellation/cancellation-token))
                    started-at (util/now-ms)]
@@ -3981,7 +3964,6 @@
                          :cancel-token token
                          :extra-body extra-body
                          :turn-features turn-features
-                         :workspace workspace
                          :engine-opts engine-opts
                          :attachments attachments})
                (-> entry
@@ -3992,7 +3974,7 @@
                               {:status "running" :cancel-token token :started_at started-at})))
              entry))))
      (when-let [{:keys [tid request display-request messages provider model reasoning-default
-                        cancel-token extra-body turn-features workspace engine-opts attachments]}
+                        cancel-token extra-body turn-features engine-opts attachments]}
                 @decision]
        ;; Queue-mirror signal: the queue head is no longer QUEUED. Every
        ;; attached channel drops its mirrored entry on this, and a replayed
@@ -4010,7 +3992,6 @@
                              :queued? true
                              :extra-body extra-body
                              :turn-features turn-features
-                             :workspace workspace
                              :engine-opts engine-opts
                              :attachments attachments
                              :display-request display-request})
@@ -4414,7 +4395,6 @@
                                   :cancel-token (:cancel-token (turn-record sid tid))
                                   :extra-body extra-body
                                   :turn-features turn-features
-                                  :workspace workspace
                                   :engine-opts engine-opts
                                   :attachments attachments
                                   :display-request display-request})

@@ -744,7 +744,7 @@
 (defn image-reference
   "The optional composer token naming an image, or nil for an invalid label."
   [attachment]
-  (let [reference (or (:reference attachment) (get attachment "reference"))]
+  (let [reference (:reference attachment)]
     (when (and (string? reference) (re-matches #"\[IMAGE #[1-9][0-9]*\]" reference)) reference)))
 
 (defn prepare-inline-attachments
@@ -768,17 +768,16 @@
      (fn [acc att]
        (try
          (let [^String payload
-               (strip-data-url-prefix (str (or (:base64 att) (get att "base64"))))
+               (strip-data-url-prefix (str (:base64 att)))
 
                label
-               (or (not-empty (str (or (:filename att) (get att "filename")))) "image")
+               (or (not-empty (str (:filename att))) "image")
 
                ^bytes raw
                (.decode (Base64/getDecoder) payload)
 
                mime
-               (or (detect-media-mime raw)
-                   (detect-text-mime raw label (or (:media-type att) (get att "media_type"))))
+               (or (detect-media-mime raw) (detect-text-mime raw label (:media-type att)))
 
                reference
                (when (and mime (str/starts-with? mime "image/")) (image-reference att))
