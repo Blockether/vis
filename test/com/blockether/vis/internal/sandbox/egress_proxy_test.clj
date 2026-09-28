@@ -841,7 +841,7 @@
            (ep/register-network-filter! o2
                                         (fn [c]
                                           (when (= "POST" (:method c))
-                                            {"marker" "block" "reason" "no POST"})))
+                                            {:allow? false :reason "no POST"})))
            (ep/register-network-filter! o3
                                         (fn [_]
                                           (throw (ex-info "boom" {}))))

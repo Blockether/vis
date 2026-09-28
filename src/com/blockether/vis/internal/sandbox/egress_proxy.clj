@@ -384,10 +384,10 @@
    `{:phase :method :host :path :headers}`, on the way BACK it is the upstream
    response `{:phase :method :host :path :status :headers}` (`:phase`
    distinguishes them; headers a lower-cased name->value map). `f` returns nil /
-   `{:allow? true}` to allow, or `{:allow? false :reason s}` (or a `vis.block`
-   marker map) to DENY — a denied response yields a 403 so the child never sees
-   the body. Only fires on MITM'd HTTPS + plain HTTP (a tunnelled/excluded host
-   is encrypted and opaque). `{:descriptor? true}` marks a filter installed from
+   `{:allow? true}` to allow, or `{:allow? false :reason s}` to DENY — a denied
+   response yields a 403 so the child never sees the body. Only fires on MITM'd
+   HTTPS + plain HTTP (a tunnelled/excluded host is encrypted and opaque).
+   `{:descriptor? true}` marks a filter installed from
    an extension descriptor; sessions supply those themselves (see
    `non-extension-network-filters`)."
   ([owner f] (register-network-filter! owner f nil))
@@ -470,22 +470,13 @@
 
 (defn- filter-decision
   "Interpret ONE filter's return value into `{:allow? bool :reason str}`.
-   nil / `{:allow? true}` ⇒ allow; a `block` marker or `:allow?`/`allow` false
-   ⇒ deny; any other value ⇒ allow."
+   nil / `{:allow? true}` ⇒ allow; `{:allow? false}` or `false` ⇒ deny; any other
+   value ⇒ allow."
   [res]
   (cond (nil? res) {:allow? true}
-        (map? res) (let [marker
-                         (or (get res "marker") (get res :marker))
-
-                         allow
-                         (if (contains? res :allow?) (:allow? res) (get res "allow"))
-
-                         reason
-                         (or (get res :reason) (get res "reason"))]
-
-                     (if (or (= "block" (str marker)) (false? allow))
-                       {:allow? false :reason (str (or reason "blocked by filter"))}
-                       {:allow? true}))
+        (map? res) (if (false? (:allow? res))
+                     {:allow? false :reason (str (or (:reason res) "blocked by filter"))}
+                     {:allow? true})
         (false? res) {:allow? false :reason "blocked by filter"}
         :else {:allow? true}))
 
@@ -517,7 +508,7 @@
   "Pull a structured error out of a filter's RAW return (the network-filter
    adapter carries `:error {:message :trace}` when a Python filter threw)."
   [raw]
-  (when (map? raw) (or (get raw :error) (get raw "error"))))
+  (when (map? raw) (:error raw)))
 
 (defn probe
   "DEV/DEBUG probe: run Tier-1 `decide` then EACH registered network filter
