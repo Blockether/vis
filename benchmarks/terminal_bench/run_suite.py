@@ -1,4 +1,4 @@
-"""Run remaining CPU Terminal-Bench tasks in resumable Harbor batches."""
+"""Run remaining CPU Terminal-Bench tasks as a resumable pool of Harbor jobs."""
 
 import argparse
 import gzip
@@ -8,7 +8,8 @@ import shutil
 import subprocess
 import sys
 import tomllib
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from pathlib import Path
 from typing import IO
@@ -20,6 +21,10 @@ MODEL = "zai-coding-plan/glm-5.3-flash"
 ROOT = Path(__file__).resolve().parent
 DATASET = ROOT / "artifacts/datasets/terminal-bench"
 JOBS = ROOT / "jobs"
+CONCURRENCY = 2
+MEMORY_BUDGET_MB = 16384
+# Provider or setup breakage fails fast; observed model failures took over 20 minutes.
+FAST_ERROR_MS = 600_000
 
 
 def catalog(dataset: Path) -> tuple[list[dict], list[str]]:
@@ -161,20 +166,17 @@ def accounted_tasks(jobs: Path) -> tuple[set[str], set[str], set[str]]:
     return completed, in_flight, failed
 
 
-def next_batch(pending: list[dict]) -> list[dict]:
-    """Reserve the high-memory tasks for single-trial Harbor jobs."""
-    first = pending.pop(0)
-    batch = [first]
-    if first["memory_mb"] >= 16384:
-        return batch
+def next_task(pending: list[dict], running: list[dict]) -> dict | None:
+    """Start the first pending task that fits beside the running trials."""
     for index, task in enumerate(pending):
-        if (
-            task["memory_mb"] < 16384
-            and first["memory_mb"] + task["memory_mb"] <= 16384
+        peers = [*running, task]
+        if not running or (
+            len(peers) <= CONCURRENCY
+            and all(peer["memory_mb"] < MEMORY_BUDGET_MB for peer in peers)
+            and sum(peer["memory_mb"] for peer in peers) <= MEMORY_BUDGET_MB
         ):
-            batch.append(pending.pop(index))
-            break
-    return batch
+            return pending.pop(index)
+    return None
 
 
 def free_gb(machine: str) -> tuple[float, float]:
@@ -191,36 +193,30 @@ def free_gb(machine: str) -> tuple[float, float]:
     return host, vm
 
 
-def job_name(prefix: str, jobs: Path) -> str:
-    """Never overwrite a previous job, including incomplete attempts."""
+def job_name(prefix: str, jobs: Path, taken: Collection[str] = ()) -> str:
+    """Never overwrite a previous job, including incomplete or starting attempts."""
     number = 1
-    while (jobs / f"{prefix}-{number:03}").exists():
+    while (name := f"{prefix}-{number:03}") in taken or (jobs / name).exists():
         number += 1
-    return f"{prefix}-{number:03}"
+    return name
 
 
-def batch_results(job: Path, tasks: list[dict]) -> list[dict]:
+def job_result(job: Path, task: dict) -> dict:
     """Treat missing metrics or a missing verifier as a runner failure."""
-    expected = {task["name"] for task in tasks}
-    found = {}
     for path in job.glob("*/result.json"):
         result = json.loads(path.read_text(encoding="utf-8"))
         name = str(result.get("task_name") or "").removeprefix("terminal-bench/")
-        if name in expected:
-            found[name] = (path.parent, result)
-    if set(found) != expected:
-        raise RuntimeError(
-            f"Incomplete job {job.name}: missing results for {sorted(expected - set(found))}"
-        )
-    for name, (trial, result) in found.items():
-        if not is_scored_attempt(result, trial):
+        if name != task["name"]:
+            continue
+        if not is_scored_attempt(result, path.parent):
             raise RuntimeError(
                 f"Incomplete metrics in {job.name}/{name}; inspect the trial"
             )
-    return [found[task["name"]][1] for task in tasks]
+        return result
+    raise RuntimeError(f"Incomplete job {job.name}: missing result for {task['name']}")
 
 
-def archive_batch_traces(job: Path) -> None:
+def archive_job_traces(job: Path) -> None:
     """Archive finished gzip traces, preserving any incomplete streams."""
     for source in sorted(job.glob("*/agent/vis-trace.jsonl.gz")):
         try:
@@ -238,11 +234,58 @@ def archive_batch_traces(job: Path) -> None:
         )
 
 
+def harbor_command(name: str, task: dict) -> list[str]:
+    """Give each task its own Harbor job so a free slot can start the next task."""
+    return [
+        str(Path(sys.executable).parent / "harbor"),
+        "run",
+        "-p",
+        str(DATASET),
+        "-a",
+        "vis_agent:VisAgent",
+        "-m",
+        MODEL,
+        "-e",
+        "podman",
+        "-k",
+        "1",
+        "-n",
+        "1",
+        "-o",
+        str(JOBS),
+        "--job-name",
+        name,
+        "-i",
+        task["name"],
+    ]
+
+
+def finish_job(name: str, task: dict, returncode: int) -> bool:
+    """Validate, archive and report a job; return whether Vis failed fast."""
+    if returncode:
+        raise RuntimeError(
+            f"Harbor exited {returncode} in {name}; inspect runs/{name}.log"
+        )
+    result = job_result(JOBS / name, task)
+    archive_job_traces(JOBS / name)
+    agent = result.get("agent_result") or {}
+    metadata = (agent.get("metadata") or {}).get("vis") or {}
+    is_error = metadata.get("status") == "error"
+    is_timeout = exception_type(result) == "AgentTimeoutError"
+    reward = (result["verifier_result"].get("rewards") or {}).get("reward")
+    print(
+        f"Finished {name}/{task['name']}: reward={reward}, "
+        f"agent_error={is_error}, agent_timeout={is_timeout}",
+        flush=True,
+    )
+    return is_error and (metadata.get("duration_ms") or 0) < FAST_ERROR_MS
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--machine", default="vis-amd64")
     parser.add_argument("--job-prefix", default="suite")
-    parser.add_argument("--max-batches", type=int)
+    parser.add_argument("--max-tasks", type=int)
     parser.add_argument("--min-free-gb", type=float, default=12.0)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
@@ -276,72 +319,53 @@ def main() -> None:
         return
     if not os.environ.get("ZAI_CODING_API_KEY"):
         raise RuntimeError("ZAI_CODING_API_KEY is required in the Harbor host")
-    if args.max_batches is not None and args.max_batches < 1:
-        parser.error("--max-batches must be positive")
-    batch_count = 0
-    errors_in_a_row = 0
+    if args.max_tasks is not None and args.max_tasks < 1:
+        parser.error("--max-tasks must be positive")
     (ROOT / "runs").mkdir(exist_ok=True)
-    while pending and (args.max_batches is None or batch_count < args.max_batches):
-        host, vm = free_gb(args.machine)
-        if min(host, vm) < args.min_free_gb:
-            raise RuntimeError(
-                f"Low disk space (host {host:.1f} GB, VM {vm:.1f} GB); "
-                "reclaim finished artifacts/images and resume"
-            )
-        batch = next_batch(pending)
-        name = job_name(args.job_prefix, JOBS)
-        command = [
-            str(Path(sys.executable).parent / "harbor"),
-            "run",
-            "-p",
-            str(DATASET),
-            "-a",
-            "vis_agent:VisAgent",
-            "-m",
-            MODEL,
-            "-e",
-            "podman",
-            "-k",
-            "1",
-            "-n",
-            str(len(batch)),
-            "-o",
-            str(JOBS),
-            "--job-name",
-            name,
-        ]
-        for task in batch:
-            command.extend(("-i", task["name"]))
-        print(
-            f"Starting {name}: {', '.join(task['name'] for task in batch)}", flush=True
-        )
-        returncode = capture(command, ROOT / "runs" / f"{name}.log", cwd=ROOT)
-        if returncode:
-            raise RuntimeError(
-                f"Harbor exited {returncode} in {name}; inspect runs/{name}.log"
-            )
-        results = batch_results(JOBS / name, batch)
-        archive_batch_traces(JOBS / name)
-        for task, trial in zip(batch, results, strict=True):
-            agent = trial.get("agent_result") or {}
-            metadata = (agent.get("metadata") or {}).get("vis") or {}
-            is_error = metadata.get("status") == "error"
-            is_timeout = exception_type(trial) == "AgentTimeoutError"
-            errors_in_a_row = errors_in_a_row + 1 if is_error else 0
-            reward = (trial["verifier_result"].get("rewards") or {}).get("reward")
-            print(
-                f"Finished {name}/{task['name']}: reward={reward}, "
-                f"agent_error={is_error}, agent_timeout={is_timeout}",
-                flush=True,
-            )
-        if errors_in_a_row >= 2:
-            raise RuntimeError(
-                "Two consecutive agent errors; inspect the traces before continuing"
-            )
-        batch_count += 1
+    running: dict[Future, tuple[str, dict]] = {}
+    failures = []
+    started = 0
+    fast_errors = 0
+    with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
+        while True:
+            while not failures and (args.max_tasks is None or started < args.max_tasks):
+                task = next_task(pending, [peer for _, peer in running.values()])
+                if task is None:
+                    break
+                host, vm = free_gb(args.machine)
+                if min(host, vm) < args.min_free_gb:
+                    failures.append(
+                        f"Low disk space (host {host:.1f} GB, VM {vm:.1f} GB); "
+                        "reclaim finished artifacts/images and resume"
+                    )
+                    break
+                name = job_name(
+                    args.job_prefix, JOBS, [job for job, _ in running.values()]
+                )
+                print(f"Starting {name}: {task['name']}", flush=True)
+                log = ROOT / "runs" / f"{name}.log"
+                future = pool.submit(capture, harbor_command(name, task), log, cwd=ROOT)
+                running[future] = (name, task)
+                started += 1
+            if not running:
+                break
+            done, _ = wait(running, return_when=FIRST_COMPLETED)
+            for future in done:
+                name, task = running.pop(future)
+                try:
+                    fast_error = finish_job(name, task, future.result())
+                except RuntimeError as error:
+                    failures.append(str(error))
+                    continue
+                fast_errors = fast_errors + 1 if fast_error else 0
+                if fast_errors == 2:
+                    failures.append(
+                        "Two consecutive fast agent errors; inspect the traces before continuing"
+                    )
+    if failures:
+        raise RuntimeError("; ".join(failures))
     print(
-        f"Batch limit or remaining tasks reached; batches completed: {batch_count}",
-        flush=True,
+        f"Task limit or remaining tasks reached; tasks started: {started}", flush=True
     )
 
 

@@ -40,17 +40,17 @@ Some tasks require a GPU. Do not interpret an unsupported Podman run or missing 
 
 ## Continue across CPU tasks
 
-Once a trial has completed with a Vis result and verifier result, preview the remaining tasks and run a small batch before letting the CPU queue continue:
+Once a trial has completed with a Vis result and verifier result, preview the remaining tasks and run a couple of tasks before letting the CPU queue continue:
 
 ```sh
 uv run python run_suite.py --dry-run
-uv run python run_suite.py --max-batches 1
+uv run python run_suite.py --max-tasks 2
 uv run python run_suite.py
 ```
 
 The queue skips completed trials, currently running trials, and model attempts that exited without a final result. It retries setup-only failures and trials canceled when a peer fails; keep those attempts separate from scored results. An attempt that reaches the task's agent time limit after calling the model still counts as scored, because Harbor runs the verifier after the timeout; the queue reports it with `agent_timeout=True` and does not run it again. Without a verifier result, that timeout counts as a failed model attempt instead. If infrastructure interrupted an attempt after it called the model, inspect its trace and retry it explicitly with `--retry-task NAME` (repeat the option for multiple tasks). Preview that selection with `--dry-run` first; the option rejects tasks without a failed attempt, completed tasks, and active tasks. Selected retries run before new tasks, get new Harbor job names, and retain the original attempt and its partial trace.
 
-The queue runs at most two tasks at once (one for high-memory tasks). Each batch gets a new Harbor job and an ignored `runs/suite-NNN.log`; interrupted runs keep their previous results. After validating a batch, it archives complete gzip traces with zstd and preserves incomplete streams. Run only one queue process at a time. Stopping a container inside a two-task Harbor job can cancel its peer, so rerun that peer in a separate job. The queue stops rather than inventing scores when Harbor omits results, two consecutive agent errors occur, or free space falls below 12 GB on the host or Podman VM. Reclaim completed task images when needed, then rerun it; it does not delete images automatically. Three GPU-only tasks stay unattempted on this Podman machine.
+The queue keeps up to two tasks running and starts the next one as soon as a slot frees. Each task gets its own Harbor job and an ignored `runs/suite-NNN.log`; interrupted runs keep their previous results. A task that needs 16 GB of memory runs alone, and two tasks share the Podman machine only when their combined memory fits within 16 GB. After validating a job, the queue archives complete gzip traces with zstd and preserves incomplete streams. Run only one queue process at a time. The queue stops rather than inventing scores when Harbor omits results, two consecutive agent errors each end within 10 minutes, or free space falls below 12 GB on the host or Podman VM; it starts no new tasks and waits for running tasks to finish before exiting. Slower agent errors, such as reaching the output-token limit or losing the response stream mid-answer, count as scored attempts and do not stop the queue. Reclaim completed task images when needed, then rerun it; it does not delete images automatically. Three GPU-only tasks stay unattempted on this Podman machine.
 
 ## Review results and check the adapter
 
