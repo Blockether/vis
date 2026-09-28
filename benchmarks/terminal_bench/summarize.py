@@ -52,6 +52,10 @@ def trace_summary(path: Path, root: Path) -> dict | None:
     trailing_error_type = None
     trailing_errors = 0
     truncated = False
+    # Vis reports usage only for calls it parsed; each stream chunk is about one output token.
+    # `call` holds [reasoning chunks, content chunks, parsed] for the latest provider call.
+    call = None
+    failed_call_output = 0
     process = None
     if path.suffix == ".zst":
         process = subprocess.Popen(
@@ -88,6 +92,13 @@ def trace_summary(path: Path, root: Path) -> dict | None:
                 tools[payload["tool-name"]] += 1
             if phase == "provider-call":
                 providers[f"{payload.get('provider')}/{payload.get('model')}"] += 1
+                if call and not call[2]:
+                    failed_call_output += max(call[:2])
+                call = [0, 0, False]
+            elif call and phase in ("reasoning", "content"):
+                call[0 if phase == "reasoning" else 1] += 1
+            elif call and phase == "response-parse":
+                call[2] = True
             if phase == "iteration-final":
                 trailing_error_type, trailing_errors = None, 0
             if phase == "iteration-error":
@@ -134,6 +145,8 @@ def trace_summary(path: Path, root: Path) -> dict | None:
                             } or None
                         break
 
+    if call and not call[2]:
+        failed_call_output += max(call[:2])
     if process is not None and process.wait() != 0:
         truncated = True
     return {
@@ -156,6 +169,7 @@ def trace_summary(path: Path, root: Path) -> dict | None:
         "vis_result_status": result_status,
         "vis_error_type": result_error_type,
         "last_provider_error_usage": last_provider_error_usage,
+        "failed_call_output_tokens_estimate": failed_call_output,
     }
 
 

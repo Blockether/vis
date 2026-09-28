@@ -435,6 +435,21 @@ def test_result_error_records_only_safe_provider_usage(tmp_path):
     assert "private" not in json.dumps(summary)
 
 
+def test_trace_summary_estimates_output_of_calls_vis_did_not_parse(tmp_path):
+    # Vis omits unparsed calls, such as max-token stops, from its reported usage.
+    phases = (
+        ["provider-call", *["reasoning"] * 3, *["content"] * 4, "response-parse"]
+        + ["provider-call", *["reasoning"] * 5, *["content"] * 2]
+        + ["provider-call", *["reasoning"] * 3]
+    )
+    with gzip.open(tmp_path / "vis-trace.jsonl.gz", "wt") as stream:
+        for phase in phases:
+            frame = {"event": "trace-chunk", "payload": {"phase": phase}}
+            stream.write(json.dumps(frame) + "\n")
+    summary = trace_summary(tmp_path / "vis-trace.jsonl", tmp_path)
+    assert summary["failed_call_output_tokens_estimate"] == 8
+
+
 def test_long_window_archived_trace_reads_without_losing_events(tmp_path):
     zstd = shutil.which("zstd")
     if not zstd:
