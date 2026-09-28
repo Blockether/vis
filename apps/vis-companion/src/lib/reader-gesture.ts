@@ -113,6 +113,21 @@ function forgetLandings(): void {
   landings.clear();
 }
 
+/**
+ * Everything under the fingers and buttons now down, as it stood when each came down.
+ * A press drags only the scrollers it landed in: a finger resting on Stop, in the
+ * composer, cannot move the transcript, so a scroll the transcript makes under it is
+ * the layout's doing. Measured on the simulator, a streaming re-layout clamped the
+ * transcript 32 px while Stop was pressed; read as the reader's drag, that clamp
+ * dropped the follow and left the reader above the end. The path is taken at the
+ * press, so the element under a finger may leave the document without its scroller.
+ */
+const pressed = new Set<EventTarget>();
+
+function notePress(event: Event): void {
+  for (const target of event.composedPath()) pressed.add(target);
+}
+
 /** A new scroll surface cannot inherit the gesture that owned the previous one. */
 export function releaseReaderScroll(): void {
   lastGestureAt = Number.NEGATIVE_INFINITY;
@@ -120,6 +135,7 @@ export function releaseReaderScroll(): void {
   pointerHeld = false;
   dragging = false;
   forgetLandings();
+  pressed.clear();
 }
 
 /** When the last finger or button lets go, a drag it made keeps the grace. */
@@ -127,11 +143,13 @@ function letGo(): void {
   if (touchesDown > 0 || pointerHeld) return;
   if (dragging) noteReaderGesture();
   dragging = false;
+  pressed.clear();
 }
 
 function onTouchStart(event: Event): void {
   touchesDown = (event as TouchEvent).touches?.length ?? touchesDown + 1;
   listenForLift(event.target);
+  notePress(event);
 }
 
 // `touchcancel` counts as a lift so the count can never leak into a permanent
@@ -148,7 +166,9 @@ function onTouchEnd(event: Event): void {
 
 // Touch has its own count above, which survives WebKit taking the drag over.
 function onPointerDown(event: Event): void {
-  if ((event as PointerEvent).pointerType !== 'touch') pointerHeld = true;
+  if ((event as PointerEvent).pointerType === 'touch') return;
+  pointerHeld = true;
+  notePress(event);
 }
 
 function onPointerUp(event: Event): void {
@@ -157,8 +177,10 @@ function onPointerUp(event: Event): void {
   letGo();
 }
 
-function onScroll(): void {
+function onScroll(event: Event): void {
   if (touchesDown === 0 && !pointerHeld) return;
+  // The document scrolls under any press; an element only under one that landed in it.
+  if (event.target instanceof Element && !pressed.has(event.target)) return;
   dragging = true;
   noteReaderGesture();
 }

@@ -87,6 +87,39 @@ describe('reader gestures', () => {
     expect(readerOwnsScroll()).toBe(true);
   });
 
+  // A finger resting on Stop, in the composer, cannot drag the transcript: the clamp a
+  // streaming re-layout left under that press was read as a drag and dropped the follow.
+  it('credits a press only with the scrollers it landed in', () => {
+    const transcript = mount('div');
+    const stop = mount('button');
+    send('touchstart', { touches: [{}] }, stop);
+    send('scroll', {}, transcript);
+
+    expect(readerOwnsScroll()).toBe(false);
+    expect(readerMayBeScrolling()).toBe(false);
+
+    send('scroll', {}, document);
+    expect(readerOwnsScroll()).toBe(true);
+  });
+
+  it('keeps crediting the scroller a finger landed in after its element left', () => {
+    const transcript = mount('div');
+    const line = transcript.appendChild(document.createElement('p'));
+    send('touchstart', { touches: [{}] }, line);
+    line.remove();
+    send('scroll', {}, transcript);
+
+    expect(readerOwnsScroll()).toBe(true);
+  });
+
+  it('credits a held mouse button only with the scrollers it pressed in', () => {
+    const transcript = mount('div');
+    send('pointerdown', { pointerType: 'mouse', buttons: 1 }, mount('button'));
+    send('scroll', {}, transcript);
+
+    expect(readerMayBeScrolling()).toBe(false);
+  });
+
   it('treats a held mouse button that moves the scroller as a drag', () => {
     send('pointerdown', { pointerType: 'mouse', buttons: 1 });
     send('scroll');
