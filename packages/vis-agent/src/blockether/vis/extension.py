@@ -1264,6 +1264,277 @@ def _callable_contract(fn, name, tag, doc):
     }
 
 
+#: A value that cannot take an argument shape; `_rebuilt_value` keeps it as is.
+_UNFIT = object()
+
+
+def _call_arguments(fn, args, kwargs):
+    """Rebuild the records a host call carried as JSON data, keeping its call shape.
+
+    An argument crosses the host boundary as JSON, so a record arrives as a dict
+    of its public fields. A parameter annotated with a dataclass gets that
+    dataclass back, built through its constructor, also inside a union, list,
+    tuple, set or dict annotation (Blockether/vis#289). Annotations resolve
+    statically, as for tool contracts. A value that does not fit its annotation
+    stays as it arrived, and so does every argument of a call the signature
+    cannot bind: the call itself reports that mistake.
+    """
+    try:
+        # A wrapper around a bound method must not unwrap past the binding.
+        target = inspect.unwrap(
+            fn, stop=lambda f: hasattr(f, "__signature__") or inspect.ismethod(f)
+        )
+        signature = _inert_signature(target)
+        signature.bind(*args, **kwargs)
+    except (TypeError, ValueError):
+        return args, kwargs
+    namespace = getattr(_annotation_target(target), "__globals__", {})
+    parameters = list(signature.parameters.values())
+    positional = [
+        p for p in parameters if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+    ]
+    named = {
+        p.name: p
+        for p in parameters
+        if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+    }
+    extra = next((p for p in parameters if p.kind is p.VAR_POSITIONAL), None)
+    keywords = next((p for p in parameters if p.kind is p.VAR_KEYWORD), None)
+    shapes = {}
+
+    def rebuilt(parameter, value):
+        if parameter is None:
+            return value
+        if parameter.name not in shapes:
+            shapes[parameter.name] = _argument_shape(parameter.annotation, namespace)
+        return _rebuilt_value(shapes[parameter.name], value)
+
+    return (
+        [
+            rebuilt(positional[i] if i < len(positional) else extra, value)
+            for i, value in enumerate(args)
+        ],
+        {
+            key: rebuilt(named.get(key, keywords), value)
+            for key, value in kwargs.items()
+        },
+    )
+
+
+def _argument_shape(annotation, namespace, seen=()):
+    """Where `annotation` expects records, as a tuple tree `_fitted_argument` reads.
+
+    Kinds: ("any",), ("plain", cls), ("literal", values), ("record", cls,
+    namespace), ("union", members), ("sequence", container, item), ("fixed",
+    items) and ("mapping", value). Names resolve as for tool contracts, without
+    importing modules or running annotation expressions.
+    """
+    if annotation is inspect.Signature.empty or annotation is Any:
+        return ("any",)
+    if annotation is None or annotation is type(None):
+        return ("plain", type(None))
+    if isinstance(annotation, str):
+        if annotation in seen:
+            return ("any",)
+        try:
+            node = ast.parse(annotation, mode="eval").body
+        except (SyntaxError, ValueError):
+            return ("any",)
+        return _argument_node_shape(node, namespace, (*seen, annotation))
+    origin, args = get_origin(annotation), get_args(annotation)
+    if origin is Annotated:
+        return _argument_shape(args[0], namespace, seen)
+    if origin in (Union, UnionType):
+        return ("union", tuple(_argument_shape(a, namespace, seen) for a in args))
+    if origin is Literal:
+        return ("literal", args)
+    if origin is not None:
+        variadic = origin is tuple and len(args) == 2 and args[1] is Ellipsis
+        items = args[:1] if variadic else args
+        return _container_shape(
+            origin,
+            [_argument_shape(a, namespace, seen) for a in items],
+            variadic,
+            namespace,
+        )
+    if inspect.isclass(annotation):
+        if is_dataclass(annotation):
+            return ("record", annotation, namespace)
+        return ("plain", annotation)
+    return ("any",)
+
+
+def _argument_node_shape(node, namespace, seen):
+    """`_argument_shape` of one parsed annotation expression."""
+    if isinstance(node, ast.Constant):
+        if node.value is None or isinstance(node.value, str):
+            return _argument_shape(node.value, namespace, seen)
+        return ("any",)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return (
+            "union",
+            tuple(
+                _argument_node_shape(n, namespace, seen)
+                for n in (node.left, node.right)
+            ),
+        )
+    if isinstance(node, ast.Subscript):
+        base = _annotation_name(node.value, namespace)
+        nodes = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+        if base is Annotated and nodes:
+            return _argument_node_shape(nodes[0], namespace, seen)
+        if base is Literal:
+            return (
+                "literal",
+                tuple(n.value for n in nodes if isinstance(n, ast.Constant)),
+            )
+        if base is Union or base is Optional:
+            members = [_argument_node_shape(n, namespace, seen) for n in nodes]
+            if base is Optional:
+                members.append(("plain", type(None)))
+            return ("union", tuple(members))
+        if base is inspect.Signature.empty:
+            return ("any",)
+        variadic = (
+            len(nodes) == 2
+            and isinstance(nodes[1], ast.Constant)
+            and nodes[1].value is Ellipsis
+        )
+        items = nodes[:1] if variadic else nodes
+        return _container_shape(
+            base,
+            [_argument_node_shape(n, namespace, seen) for n in items],
+            variadic,
+            namespace,
+        )
+    return _argument_shape(_annotation_name(node, namespace), namespace, seen)
+
+
+def _container_shape(base, items, variadic, namespace):
+    """A generic annotation's shape from its item shapes, a variadic `...` dropped."""
+    actual = get_origin(base) or base
+    if actual is tuple and not variadic:
+        return ("fixed", tuple(items))
+    if actual in (list, tuple, set, frozenset, Sequence):
+        return (
+            "sequence",
+            list if actual is Sequence else actual,
+            items[0] if items else ("any",),
+        )
+    if actual in (dict, Mapping, _MutableMapping):
+        return ("mapping", items[1] if len(items) == 2 else ("any",))
+    if inspect.isclass(actual):
+        if is_dataclass(actual):
+            return ("record", actual, namespace)
+        return ("plain", actual)
+    return ("any",)
+
+
+def _holds_record(shape):
+    """Whether `shape` expects a record anywhere, so a value can need rebuilding."""
+    kind = shape[0]
+    if kind == "record":
+        return True
+    if kind in ("union", "fixed"):
+        return any(_holds_record(member) for member in shape[1])
+    if kind == "sequence":
+        return _holds_record(shape[2])
+    if kind == "mapping":
+        return _holds_record(shape[1])
+    return False
+
+
+def _rebuilt_value(shape, value):
+    """`value` with the records `shape` expects rebuilt; as is when it does not fit."""
+    if not _holds_record(shape):
+        return value
+    result = _fitted_argument(shape, value)
+    return value if result is _UNFIT else result
+
+
+def _fitted_argument(shape, value):
+    """`value` in `shape`, or `_UNFIT`; a union takes its first fitting member."""
+    kind = shape[0]
+    if kind == "any":
+        return value
+    if kind == "plain":
+        try:
+            return value if isinstance(value, shape[1]) else _UNFIT
+        except TypeError:  # Protocols and TypedDicts refuse isinstance checks.
+            return value
+    if kind == "literal":
+        return (
+            value
+            if any(type(v) is type(value) and v == value for v in shape[1])
+            else _UNFIT
+        )
+    if kind == "record":
+        return _rebuilt_record(shape[1], value, shape[2])
+    if kind == "union":
+        for member in shape[1]:
+            result = _fitted_argument(member, value)
+            if result is not _UNFIT:
+                return result
+        return _UNFIT
+    if kind == "mapping":
+        if not isinstance(value, Mapping):
+            return _UNFIT
+        if not _holds_record(shape):
+            return value
+        return {key: _rebuilt_value(shape[1], item) for key, item in value.items()}
+    if not isinstance(value, (list, tuple)):
+        return _UNFIT
+    if kind == "fixed":
+        if len(value) != len(shape[1]):
+            return _UNFIT
+        if not _holds_record(shape):
+            return value
+        return tuple(
+            _rebuilt_value(s, item) for s, item in zip(shape[1], value, strict=True)
+        )
+    if not _holds_record(shape):
+        return value
+    items = [_rebuilt_value(shape[2], item) for item in value]
+    try:
+        return shape[1](items)
+    except TypeError:  # A set cannot hold unhashable records.
+        return items
+
+
+def _rebuilt_record(cls, value, namespace):
+    """A `cls` record from a mapping of its fields, or `_UNFIT` for any other value.
+
+    The mapping may leave out fields with defaults and may carry `init=False`
+    fields, which the record computes itself. Constructor errors propagate: they
+    are the record's own validation.
+    """
+    if isinstance(value, cls):
+        return value
+    if not isinstance(value, Mapping):
+        return _UNFIT
+    declared = {f.name: f for f in fields(cls)}
+    if not all(isinstance(key, str) and key in declared for key in value):
+        return _UNFIT
+    initial = [f for f in declared.values() if f.init]
+    if any(
+        f.name not in value and f.default is MISSING and f.default_factory is MISSING
+        for f in initial
+    ):
+        return _UNFIT
+    module = sys.modules.get(cls.__module__)
+    scope = getattr(module, "__dict__", None) or {}
+    # An extension file's module may be missing or replaced: use the tool's globals.
+    if scope.get(cls.__name__) is not cls:
+        scope = namespace
+    return cls(
+        **{
+            f.name: _rebuilt_value(_argument_shape(f.type, scope), value[f.name])
+            for f in initial
+            if f.name in value
+        }
+    )
+
+
 class _SignatureSource(str):
     """Inert source that `inspect.Signature` prints as written, not quoted."""
 

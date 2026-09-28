@@ -5821,6 +5821,87 @@ vis.register_extension(vis.Extension(
               (finally (ep/dispose-python-context! ctx)))))))))
 
 (defdescribe
+  python-record-argument-test
+  ;; #289: a record a tool answered, or one the model built, reaches a parameter
+  ;; annotated with that record as the record itself, also after reload.
+  (it
+    "rebuilds record arguments for functions and methods in both sandboxes across reload"
+    (doseq [worker? [false true]]
+      (with-fresh-loaded
+        {"record_arguments.py"
+         (str
+           "import blockether.vis.extension as vis\n"
+           "from dataclasses import dataclass, field\n" "@dataclass(frozen=True)\n"
+           "class Job:\n" "    number: int\n"
+           "@dataclass(frozen=True)\n" "class TriggerResult:\n"
+           "    http_code: int\n" "    job_path: str\n"
+           "    jobs: list[Job] = field(default_factory=list)\n"
+           "def trigger(job_path: str) -> TriggerResult:\n"
+           "    'Trigger a build.'\n" "    return TriggerResult(201, job_path, [Job(7)])\n"
+           "def checked(result, jobs=()):\n"
+           "    if not isinstance(result, TriggerResult) or not all(isinstance(job, Job) for job in [*result.jobs, *jobs]):\n"
+           "        raise TypeError(f'result must be a TriggerResult, not {type(result).__name__}')\n"
+           "    return result\n"
+           "def status(result: TriggerResult, *, jobs: list[Job] | None = None) -> str:\n"
+           "    'Read a triggered build.'\n"
+           "    checked(result, jobs or [])\n"
+           "    return f'{result.http_code} {result.job_path} {[job.number for job in result.jobs]} {[job.number for job in jobs or []]}'\n"
+           "def render(**_):\n" "    return None\n"
+           "class Builds:\n"
+           "    @vis.method(activity=vis.Activity(label='Read build path', show_start=False, render=render))\n"
+           "    def read(self, result: TriggerResult) -> str:\n"
+           "        'Read the job path of a triggered build.'\n"
+           "        return checked(result).job_path\n"
+           "vis.register_extension(vis.Extension(name='record-arguments', description='Pass records between tools', alias='record_probe', symbols=[vis.Symbol(trigger, name='ci_trigger'), vis.Symbol(status, name='ci_status'), vis.Symbol(Builds(), name='ci_builds')]))\n")}
+        (fn [result {:keys [ext-dir]}]
+          (expect (= 1 (:loaded result)))
+          (let [made (ep/create-python-context {} nil {:worker? worker?} nil)
+                ctx (:python-context made)
+                env {:python-context ctx :extensions (atom []) :active-extensions (atom [])}]
+
+            (try
+              (dotimes [iteration 2]
+                (let [ext (registered "record-arguments")]
+                  (reset! (:extensions env) [ext])
+                  (if worker?
+                    (loop-env/sync-active-extension-symbols! env [ext])
+                    ;; A local test context has no owning worker; use the registration context.
+                    (loop-env/sync-extension-symbols-into! ctx (dissoc env :python-context) [ext]))
+                  (let [answer
+                        (ep/run-python-block
+                          ctx
+                          (str "import dataclasses\n" "result = await ci_trigger('a/b')\n"
+                               "assert type(result).__name__ == 'TriggerResult', type(result)\n"
+                               ;; `kept` stays the first load's record, sent to the reloaded tools.
+                               "try:\n"
+                               "    kept\n" "except NameError:\n"
+                               "    kept = result\n" "@dataclasses.dataclass\n"
+                               "class Built:\n" "    http_code: int\n"
+                               "    job_path: str\n" "    jobs: list\n"
+                               "print(await ci_status(result))\n" "print(await ci_status(kept))\n"
+                               "print(await ci_status(result=result, jobs=result.jobs))\n"
+                               "print(await ci_builds.read(kept))\n"
+                               "print(await ci_status(Built(203, 'c/d', [{'number': 9}])))\n"
+                               "print(await ci_status({'http_code': 204, 'job_path': 'e/f'}))\n"))
+                        code (if (zero? iteration) "201" "202")]
+
+                    (expect (nil? (:error answer))
+                            (str "worker? " worker? " iteration " iteration " " (pr-str answer)))
+                    (expect (= (str code
+                                    " a/b [7] []\n"
+                                    "201 a/b [7] []\n" code
+                                    " a/b [7] [7]\n" "a/b\n"
+                                    "203 c/d [9] []\n" "204 e/f [] []\n")
+                               (:stdout answer)))))
+                (when (zero? iteration)
+                  (write-ext!
+                    ext-dir
+                    "record_arguments.py"
+                    (str/replace (slurp (io/file ext-dir "record_arguments.py")) "201" "202"))
+                  (expect (= 1 (:loaded (pyx/reload-python-extensions! {:dirs [(str ext-dir)]}))))))
+              (finally (ep/dispose-python-context! ctx)))))))))
+
+(defdescribe
   bounded-symbol-contract-doc-test
   ;; Issue #234: compact docs and the complete schema must survive the real host boundary.
   (it

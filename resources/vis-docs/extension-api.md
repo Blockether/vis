@@ -151,6 +151,53 @@ with `TypeError`. Field assignment remains unsupported. These records are not ma
 names such as `items`, `keys` and `get` remain available for your fields rather than
 becoming mapping methods.
 
+### Accept records as arguments
+
+A tool can take a record that another tool returned. Annotate the parameter with
+the dataclass, and your function receives an instance of that class:
+
+```python
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class TriggerResult:
+    http_code: int
+    job_path: str
+
+
+def trigger(job_path: str) -> TriggerResult:
+    """Start a build."""
+    return TriggerResult(201, job_path)
+
+
+def status(result: TriggerResult) -> str:
+    """Report the job of a started build."""
+    return f"{result.job_path}: {result.http_code}"
+```
+
+Sandbox code can pass the result straight back, as in
+`await status(await trigger("docs/build"))`. Arguments cross the sandbox boundary
+as JSON, so the record travels as a dict of its public fields. Before your function
+runs, Vis rebuilds the record with your dataclass's constructor. A dataclass defined
+in sandbox code, or a dict with the record's field names, is rebuilt the same way.
+
+- Records are also rebuilt inside `Optional`, unions, `list`, `tuple`, `set`,
+  `frozenset` and `dict` annotations, and in nested record fields. A union uses
+  the first member that fits, in the order you declared.
+- The dict can leave out fields that have defaults. Vis skips fields declared with
+  `field(init=False)`, because the constructor sets them.
+- A value that does not match the record, such as a dict with unknown keys or
+  without a required field, reaches your function unchanged. An error raised by
+  the constructor, for example in `__post_init__`, fails the call.
+- Private fields, whose names start with `_`, do not cross the boundary. Give them
+  defaults if the record must be rebuilt.
+- After you reload the extension, a record returned before the reload is rebuilt
+  as the reloaded class, so `isinstance` checks keep working.
+- Vis resolves the annotation the same way as for
+  [tool contracts](#supported-types-and-unresolved-annotations). If it cannot
+  resolve the class, the argument stays a dict.
+
 ### Field-backed sequences
 
 If your result wraps a collection, use `@vis.sequence(field="results")` to let sandbox
@@ -566,10 +613,12 @@ remote tool schemas remain separate from the dispatcher's `server`, `tool` and
 `args` parameters.
 
 The original host classes and their identity do not cross the sandbox boundary.
-Type names describe host annotations. Sandbox sequences are list-like: use `len()`,
-indexing or iteration, not `isinstance(value, tuple)`. The callable's `.contract`
-is a dictionary; select `['parameters']` or `['returns']` for type discovery instead
-of trying to reconstruct host annotations.
+Type names describe host annotations. A record that sandbox code passes back to an
+extension tool becomes an instance of the tool's own class again, as described in
+[Accept records as arguments](#accept-records-as-arguments). Sandbox sequences are
+list-like: use `len()`, indexing or iteration, not `isinstance(value, tuple)`. The
+callable's `.contract` is a dictionary; select `['parameters']` or `['returns']` for
+type discovery instead of trying to reconstruct host annotations.
 
 ### Supported types and unresolved annotations
 
@@ -832,7 +881,9 @@ other package's class. Results with the same class name and fields share one
 class.
 
 Pass JSON-compatible arguments: strings, numbers, booleans, `None`, lists and
-dicts. A dataclass argument is sent as a dict of its public fields.
+dicts. A dataclass argument is sent as a dict of its public fields. An extension
+tool that annotates the parameter with a dataclass receives an instance of its own
+class, as described in [Accept records as arguments](#accept-records-as-arguments).
 
 A failed call raises `VisToolError`, a `RuntimeError` whose message carries the
 tool's own error, such as `ValueError: no browser available`. An unknown name

@@ -75,6 +75,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the Activity band could keep counting `1 running` under a failed step.
 - The companion shows `(interrupted)` beside CODE for a stopped execution
   instead of adding a separate Interrupted result band beneath its code.
+- A record returned by an extension tool can be passed back to a tool whose
+  parameter is annotated with that dataclass, also after the extension is
+  reloaded. The tool receives an instance of its own class, rebuilt from the
+  record's fields, and a dataclass created in the sandbox works the same way.
+  Before, the tool received the record as text or as a dict, so an `isinstance`
+  check failed with a `TypeError`.
 
 ## [v0.2.29] - 2026-09-25
 

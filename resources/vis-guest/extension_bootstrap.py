@@ -104,10 +104,18 @@ def __vis_unseal_host__(value):
 
 
 def __vis_call__(cid, args_json, kwargs_json):
-    """Invoke a sealed callable, await its completion, then seal the public result."""
-    args = __vis_unseal_host__(_vis_json.loads(args_json))
-    kwargs = __vis_unseal_host__(_vis_json.loads(kwargs_json))
-    result = _vis_callables[cid](*args, **kwargs)
+    """Invoke a sealed callable, await its completion, then seal the public result.
+
+    A record argument arrives as a dict of its fields; the SDK rebuilds the
+    records the callable's annotations declare before the call.
+    """
+    fn = _vis_callables[cid]
+    args, kwargs = _vis_mod._call_arguments(
+        fn,
+        __vis_unseal_host__(_vis_json.loads(args_json)),
+        __vis_unseal_host__(_vis_json.loads(kwargs_json)),
+    )
+    result = fn(*args, **kwargs)
     if _vis_inspect.isawaitable(result):
 
         async def resolve():
