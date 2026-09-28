@@ -147,13 +147,7 @@
                     (let [process (.start builder)]
                       (try (expect (.waitFor process 180 TimeUnit/SECONDS)
                                    "native sandbox run timed out")
-                           (let [tool-results
-                                 (for [request @asked
-                                       message (:messages
-                                                 (json/read-json (:body request) :key-fn keyword))
-                                       :when (= "tool" (:role message))]
-
-                                   (:content message))
+                           (let [tool-results (#'native/provider-result-messages @asked)
                                  output (str (slurp log)
                                              "\n" (pr-str tool-results)
                                              "\n" (str/join

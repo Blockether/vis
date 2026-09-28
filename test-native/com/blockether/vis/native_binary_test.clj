@@ -308,6 +308,22 @@
     (.start server)
     {:server server :asked asked :port (.getPort (.getAddress server))}))
 
+(defn- provider-result-messages
+  "Read tool output and scoped failure text, not prompts or assistant code."
+  [requests]
+  (for [request
+        requests
+
+        message
+        (get (json/read-json (:body request)) "messages")
+
+        :let [{:strs [role content]}
+              message]
+        :when (and (string? content)
+                   (or (= "tool" role) (and (= "user" role) (re-find #"^# t\d+/i\d+\n" content))))]
+
+    content))
+
 (defn- overlay!
   "Writes `<dir>/.vis/config.yml`: a provider that exists nowhere but here.
 
@@ -968,6 +984,25 @@
                       (finally (.stop server 0))))))
            (finally (delete-tree! dir))))))
 
+(defdescribe provider-result-messages-test
+             (it "keeps successful and failed results without treating prompts as output"
+                 (let [success
+                       "# t1/i1\nNATIVE_OUTPUT"
+
+                       failure
+                       "# t1/i2\nTime limit reached"
+
+                       messages
+                       [{:role "system" :content failure}
+                        {:role "user" :content "Run the probe; # t1/i2 is not its result."}
+                        {:role "assistant" :content failure}
+                        {:role "user" :content [{:type "text" :text failure}]}
+                        {:role "tool" :content success} {:role "user" :content failure}]]
+
+                   (expect (= [success failure]
+                              (provider-result-messages [{:body (json/write-json-str
+                                                                  {:messages messages})}]))))))
+
 (defdescribe
   native-python-interrupt-control-test
   (it
@@ -1008,10 +1043,7 @@
                                          (.getAbsolutePath (io/file dir "sessions")) "--raw"
                                          "Run the supplied Python fixtures and finish."]
                                         420)
-                            tools (->> @asked
-                                       (mapcat #(get (json/read-json (:body %)) "messages"))
-                                       (filter #(= "tool" (get % "role")))
-                                       (map #(str (get % "content"))))]
+                            tools (provider-result-messages @asked)]
 
                         (expect finished? "A Python timeout must not wedge the linked agent")
                         (expect (= 0 exit) output)
@@ -1076,10 +1108,7 @@
                       ;; beside that worker's own log.
                       reports (->> (file-seq (io/file dir ".vis/logs"))
                                    (filter #(= "hang.edn" (.getName ^File %))))
-                      tools (->> @asked
-                                 (mapcat #(get (json/read-json (:body %)) "messages"))
-                                 (filter #(= "tool" (get % "role")))
-                                 (map #(str (get % "content"))))]
+                      tools (provider-result-messages @asked)]
 
                   (expect finished? "A GIL-held worker must not wedge the linked agent")
                   (expect (= 0 exit) output)
@@ -1165,10 +1194,7 @@
                                    (.getAbsolutePath (io/file dir "sessions")) "--raw"
                                    "Run the supplied Python fixtures and finish."]
                                   180)
-                      tools (->> @asked
-                                 (mapcat #(get (json/read-json (:body %)) "messages"))
-                                 (filter #(= "tool" (get % "role")))
-                                 (map #(str (get % "content"))))]
+                      tools (provider-result-messages @asked)]
 
                   (expect finished? output)
                   (expect (= 0 exit) output)
@@ -2049,7 +2075,9 @@
                      "\n"
                      local-source
                      "\n"))
-          (expect (not (str/includes? (checked registration-command) "Package example.")))
+          ;; Managed loads prepare declared project environments before registration.
+          (expect (str/includes? (checked registration-command) "Package example."))
+          (checked "vis-agent python uv sync --project ./einmal --check")
           (checked (commands 0))
           (checked (commands 1))
           (expect
