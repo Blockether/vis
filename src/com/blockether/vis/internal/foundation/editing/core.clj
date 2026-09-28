@@ -3896,12 +3896,6 @@
 
     (diff/head-tail-cap rows patch-edit-rows-max "edit rows" "row")))
 
-(defn- edit-field
-  "One `edits` entry's value for `k`, whichever key form it arrived in: string keys
-   off the Python call, keyword keys when Clojure code builds the batch itself."
-  [entry ^String k]
-  (if (contains? entry k) (get entry k) (get entry (keyword k))))
-
 (defn- patch-edits-shape!
   "Refuse — before the file is even read — every BATCH SHAPE that would damage it
    silently, and answer the batch as `[{:index :from :to :replace}]`.
@@ -3918,38 +3912,36 @@
       (patch-refusal! rel
                       {:reason :edits-missing}
                       [(str "  " rel ": edits must be a non-empty list of maps.")]))
-    (into
-      []
-      (map-indexed
-        (fn [i entry]
-          (let [at (str "  " rel ": edit " (inc (long i)) "/" (count batch) " ")]
-            (when-not (map? entry)
-              (patch-refusal! rel
-                              {:reason :edit-not-a-map :edit-index i}
-                              [(str at "must be a map.")]))
-            (let [unknown (remove #{"from" "to" "replace"}
-                            (map #(if (keyword? %) (name %) (str %)) (keys entry)))
-                  from (edit-field entry "from")
-                  replacement (edit-field entry "replace")]
+    (into []
+          (map-indexed
+            (fn [i entry]
+              (let [at (str "  " rel ": edit " (inc (long i)) "/" (count batch) " ")]
+                (when-not (map? entry)
+                  (patch-refusal! rel
+                                  {:reason :edit-not-a-map :edit-index i}
+                                  [(str at "must be a map.")]))
+                (let [unknown (remove #{"from" "to" "replace"} (keys entry))
+                      from (get entry "from")
+                      replacement (get entry "replace")]
 
-              (when (seq unknown)
-                (patch-refusal!
-                  rel
-                  {:reason :edit-unknown-key :edit-index i :unknown-keys (vec unknown)}
-                  [(str at
-                        "unknown keys: "
-                        (str/join ", " (map pr-str unknown))
-                        "; allowed: from, to, replace.")]))
-              (when (nil? from)
-                (patch-refusal! rel
-                                {:reason :anchor-missing :edit-index i}
-                                [(str at "missing `from`.")]))
-              (when (nil? replacement)
-                (patch-refusal! rel
-                                {:reason :replacement-missing :edit-index i}
-                                [(str at "missing `replace`.")]))
-              {:index i :from from :to (or (edit-field entry "to") from) :replace replacement})))
-        batch))))
+                  (when (seq unknown)
+                    (patch-refusal!
+                      rel
+                      {:reason :edit-unknown-key :edit-index i :unknown-keys (vec unknown)}
+                      [(str at
+                            "unknown keys: "
+                            (str/join ", " (map pr-str unknown))
+                            "; allowed: from, to, replace.")]))
+                  (when (nil? from)
+                    (patch-refusal! rel
+                                    {:reason :anchor-missing :edit-index i}
+                                    [(str at "missing `from`.")]))
+                  (when (nil? replacement)
+                    (patch-refusal! rel
+                                    {:reason :replacement-missing :edit-index i}
+                                    [(str at "missing `replace`.")]))
+                  {:index i :from from :to (or (get entry "to") from) :replace replacement})))
+            batch))))
 
 (defn- patch-overlap!
   "Refuse a batch whose spans touch the same line. Two edits over one line have no

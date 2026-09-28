@@ -996,3 +996,31 @@
                              (expect (= before
                                         (:root (ws/for-session (:db-info env)
                                                                (:session/state-id env)))))))))))))
+
+(defdescribe
+  draft-arguments-test
+  (it "reads Python arguments under their string names only (#291)"
+      (with-session
+        "vis-draft-arguments"
+        (fn [_base env]
+          (expect (extension/envelope-success? (drafts/draft-create env "arguments")))
+          (let [calls (atom [])]
+            (with-redefs [lifecycle/sync! (fn [_ options]
+                                            (swap! calls conj
+                                              (select-keys options [:action :message]))
+                                            {:status :synced :repositories []})
+                          lifecycle/approve! (fn [_ options]
+                                               (swap! calls conj (select-keys options [:message]))
+                                               {:status :approved})]
+
+              (expect (extension/envelope-success?
+                        (drafts/draft-sync env {"action" "continue" "message" " fix: sync "})))
+              (expect (not (extension/envelope-success? (drafts/draft-sync env :continue))))
+              (expect (extension/envelope-success? (drafts/draft-approve env
+                                                                         {"message" "feat: land"})))
+              (expect (= [{:action :continue :message "fix: sync"} {:message "feat: land"}]
+                         @calls))))
+          (expect (= {:filename "D.json" :since "abc"}
+                     (#'drafts/diff-arguments {"filename" "D.json" "since" "abc"} nil)))
+          (expect (= {:filename "D.json" :since {"/repo" "abc"}}
+                     (#'drafts/diff-arguments "D.json" {"/repo" "abc"})))))))

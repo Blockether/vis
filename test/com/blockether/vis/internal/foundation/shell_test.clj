@@ -3137,3 +3137,12 @@
               (try (expect (str/ends-with? (str (get done "out")) "granted"))
                    (expect (= 0 (get done "exit")))
                    (finally (shell/jailed-shell nil {"op" "stop" "id" (get started "id")})))))))))
+
+(defdescribe shell-option-keys-test
+             (it "reads shell options under their string names and near-miss aliases only (#291)"
+                 (let [opt @#'shell/opt]
+                   (expect (= "/a" (opt {"cwd" "/a"} :cwd)))
+                   (expect (nil? (opt {:cwd "/a"} :cwd)))
+                   (expect (= 5 (opt {"secs" 5} :seconds :secs :timeout)))
+                   (expect (false? (opt {"is_enter" false} :is_enter)))
+                   (expect (= "/m" (opt (java.util.HashMap. {"cwd" "/m"}) :cwd))))))

@@ -1590,6 +1590,9 @@
                [[{"from" a1}] :replacement-missing "edit 1/1 missing `replace`" 2]
                [[{"from" a1 "replacement" "x"}] :edit-unknown-key
                 "unknown keys: \"replacement\"; allowed: from, to, replace" 2]
+               ;; #291: an edit is read under its JSON names only; keyword keys are named.
+               [[{:from a1 :replace "x"}] :edit-unknown-key
+                "unknown keys: :from, :replace; allowed: from, to, replace" 2]
                [[{"from" large-input "replace" "x"}] :anchor-malformed
                 "invalid from anchor; expected line:hash" 2]
                [[{"from" a1 "to" "2" "replace" "x"}] :anchor-malformed

@@ -555,8 +555,7 @@
    pre-exec hijack, a source that produced nothing) denies that command by name
    instead of running it without the variable it asked for."
   [env opts]
-  (process-jail/with-call-env (jail-policy env)
-                              (process-jail/call-env-values (or (get opts "env") (get opts :env)))))
+  (process-jail/with-call-env (jail-policy env) (process-jail/call-env-values (get opts "env"))))
 
 (defn- command-note
   "The single advisory line a command result carries. Truncation wins — it changes
@@ -1910,10 +1909,10 @@
         ;; The handle is named after the program, exactly as a `wait=0` start is,
         ;; and never hijacks an id a live shell already holds.
         id
-        (or (some-> (or (get opts "id") (get opts :id))
+        (or (some-> (get opts "id")
                     str
                     not-empty)
-            (auto-bg-id env session command (or (get opts "cwd") (get opts :cwd))))
+            (auto-bg-id env session command (get opts "cwd")))
 
         ;; The log is a FILE, opened BEFORE the spawn so not one byte of a fast
         ;; command's output can be printed before there is somewhere to keep it.
@@ -2341,7 +2340,7 @@
          (bg-entry session id)
 
          enter?
-         (let [e (first (remove nil? (map #(get opts %) ["is_enter" :is_enter "enter" :enter])))]
+         (let [e (first (remove nil? (map #(get opts %) ["is_enter" "enter"])))]
            (if (nil? e) true (boolean e)))]
 
      (authorize-origin! env session id)
@@ -2379,8 +2378,8 @@
   (or (map? x) (instance? java.util.Map x)))
 
 (defn- opt
-  "Read `k` — or the first of its near-miss ALIASES that is present — from an
-   options map that may be string- or keyword-keyed.
+  "Read `k` — or the first of its near-miss ALIASES that is present — from a
+   string-keyed options map.
 
    A shell option map refuses nothing: a key nobody reads is silently DROPPED, so
    a near-miss spelling costs the caller the whole option and says nothing. The
@@ -2389,10 +2388,7 @@
   (when (some? opts)
     (loop [ks (cons k aliases)]
       (when (seq ks)
-        (let [kk (first ks)
-              v (let [v (get opts (name kk))]
-                  (if (nil? v) (get opts (keyword kk)) v))]
-
+        (let [v (get opts (name (first ks)))]
           (if (some? v) v (recur (rest ks))))))))
 
 (defn- shell-stop-impl
@@ -2482,7 +2478,7 @@
         ;; mechanically reuses the start shape may still carry `command`; it is not
         ;; relevant to these stages and must not make an otherwise valid call fail.
         opts
-        (if (#{"logs" "wait" "send" "stop"} op) (dissoc raw-opts "command" :command) raw-opts)
+        (if (#{"logs" "wait" "send" "stop"} op) (dissoc raw-opts "command") raw-opts)
 
         command
         (opt opts :command)

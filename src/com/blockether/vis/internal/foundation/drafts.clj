@@ -85,7 +85,7 @@
   "`draft_approve(\"subject\")` or `draft_approve({\"message\": ...})` — the subject, or nil."
   [x]
   (some-> (cond (string? x) x
-                (map? x) (or (get x "message") (:message x))
+                (map? x) (get x "message")
                 :else nil)
           str
           str/trim
@@ -159,7 +159,7 @@
   "Normalize optional Python keywords without treating a checkpoint map as keywords."
   [filename since]
   (let [keyword-map?
-        #(and (map? %) (some (set (keys %)) ["filename" :filename "since" :since]))
+        #(and (map? %) (some (set (keys %)) ["filename" "since"]))
 
         options
         (into {}
@@ -347,7 +347,7 @@
         (current-workspace env)]
 
     (cond (not (workspace/draft? ws)) (not-in-draft "draft_sync()")
-          (not (contains? #{"start" "continue" "abort" :start :continue :abort} action))
+          (not (contains? #{"start" "continue" "abort"} action))
           (failure "Use draft_sync(action=\"start\"), \"continue\" or \"abort\".")
           :else
           (try (let [result (dissoc (drafts/sync! (boundary-env env)
