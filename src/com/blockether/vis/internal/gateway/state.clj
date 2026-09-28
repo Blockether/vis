@@ -3921,7 +3921,7 @@
     (if-let [idx (->> (map-indexed vector messages)
                       reverse
                       (some (fn [[i m]]
-                              (when (contains? #{"user" :user} (:role m)) i))))]
+                              (when (= "user" (:role m)) i))))]
       (assoc-in messages [idx :content] text)
       messages)
     messages))

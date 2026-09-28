@@ -1724,9 +1724,9 @@
   (it "replaces the last user message content"
       (let [messages [{:role "system" :content "rules"} {:role "user" :content "old prompt"}
                       {:role "assistant" :content "old answer"}
-                      {:role :user :content "queued old"}]]
+                      {:role "user" :content "queued old"}]]
         (expect (= [{:role "system" :content "rules"} {:role "user" :content "old prompt"}
-                    {:role "assistant" :content "old answer"} {:role :user :content "queued new"}]
+                    {:role "assistant" :content "old answer"} {:role "user" :content "queued new"}]
                    (#'state/replace-last-user-message-content messages "queued new"))))))
 
 (defdescribe

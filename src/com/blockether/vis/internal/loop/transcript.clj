@@ -267,7 +267,7 @@
 (defn- model-live-record?
   "True for a semantic extension-owned live-view record."
   [attachment]
-  (= live-record-media-type (or (:media-type attachment) (:media_type attachment))))
+  (= live-record-media-type (:media-type attachment)))
 
 (defn- live-record-context-line
   "Tell a later model where one settled live-view record can be reopened."
@@ -1429,7 +1429,7 @@
 
                 records
                 (filter (fn [att]
-                          (let [owner (or (:tool-call-id att) (:tool_call_id att))]
+                          (let [owner (:tool-call-id att)]
                             (if owner (= (str owner) (str (:id tc))) (zero? (long idx)))))
                         live-records)
 
@@ -2257,10 +2257,7 @@
    every block refuses one."
   [content]
   (last (keep-indexed (fn [i blk]
-                        (when-not (and (map? blk)
-                                       (contains? UNCACHEABLE_BLOCK_TYPES
-                                                  (some-> (or (:type blk) (get blk "type"))
-                                                          name)))
+                        (when-not (and (map? blk) (contains? UNCACHEABLE_BLOCK_TYPES (:type blk)))
                           i))
                       content)))
 

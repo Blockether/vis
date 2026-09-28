@@ -7292,7 +7292,6 @@
                   (or (:status data)
                       (:body data)
                       (:request-id data)
-                      (:request_id data)
                       (not= :generic (perr/provider-error-kind error)))
 
                   hdr-label

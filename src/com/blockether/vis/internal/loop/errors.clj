@@ -372,9 +372,6 @@
                  (:request-id ed)
                  (assoc :request-id (:request-id ed))
 
-                 (:request_id ed)
-                 (assoc :request-id (:request_id ed))
-
                  (and body (not (str/blank? body)))
                  (assoc :body-snippet (util/truncate body 1000))))}
       (cond

@@ -553,8 +553,7 @@
                                                      provider? (and (map? data)
                                                                     (or (:status data)
                                                                         (:body data)
-                                                                        (:request-id data)
-                                                                        (:request_id data)))]
+                                                                        (:request-id data)))]
 
                                                  (+ 4
                                                     (prose-rows-est (str (or (:message err) err))

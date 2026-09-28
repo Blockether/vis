@@ -1002,12 +1002,12 @@
           last-user-idx (->> (map-indexed vector messages)
                              reverse
                              (some (fn [[i m]]
-                                     (when (contains? #{"user" :user} (:role m)) i))))
+                                     (when (= "user" (:role m)) i))))
           last-user-message (when last-user-idx (nth messages last-user-idx))
           user-request (or (some-> last-user-message
                                    :content
                                    extract-text)
-                           ;; Fallback: no :user role found (malformed caller) -
+                           ;; Fallback: no user message found (malformed caller) -
                            ;; use the last message's text. Better than an empty user request.
                            (some-> messages
                                    last

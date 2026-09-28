@@ -1101,7 +1101,6 @@
 
         request-id
         (or (:request-id data)
-            (:request_id data)
             ;; A gateway that answers with nothing but a correlation id leaves it in
             ;; the message; svar already knows how to read it out (issue #69).
             (:request-id (svar-classification err)))
@@ -1179,7 +1178,7 @@
         (:status data)
 
         request-id
-        (or (:request-id data) (:request_id data))
+        (:request-id data)
 
         provider-message
         (provider-body-message body-raw)]
