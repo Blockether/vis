@@ -180,6 +180,14 @@ A native installation starts a native gateway; dev or an explicit `--jvm` launch
 starts it with the same JVM and engine classpath. A compatible gateway already
 serving other clients is reused, never killed to change its runtime.
 
+You do not need to start a gateway before you run `vis-agent tui`. Starting one
+can take a while, most of all with `--jvm`, which runs Vis from source.
+`vis-agent tui` waits while the new gateway is still starting, and when the start
+takes longer than 15 seconds it prints the path of the gateway's boot log under
+`~/.vis/logs/`. If the gateway exits before it is ready, or is still not ready
+after 10 minutes, `vis-agent tui` stops and shows the last lines of that boot log
+so you can see what went wrong.
+
 The launcher holds a client lease until the TUI exits. The TUI also registers its
 local PID so crashed clients and their event streams can be reaped. A managed
 gateway stops after its last client disconnects and no work remains. Closing one
@@ -187,9 +195,11 @@ TUI does not stop another TUI, the companion, or an active turn. Manually starte
 gateways remain user-owned.
 
 `--gateway` or `VIS_GATEWAY_URL` selects an explicit gateway: the TUI only connects
-to it and never starts or stops a local replacement. Help and version commands do
-not start a gateway. Direct `vis-tui` execution remains a connection-only client;
-use `vis-agent tui` for automatic local lifecycle management.
+to it and never starts or stops a local replacement. If your shell profile sets
+`VIS_GATEWAY_URL`, unset it to let `vis-agent tui` start a local gateway again.
+Help and version commands do not start a gateway. Direct `vis-tui` execution
+remains a connection-only client; use `vis-agent tui` for automatic local
+lifecycle management.
 
 <a id="windows-app"></a>
 

@@ -448,6 +448,16 @@
 
 (defn- interactive-tty? [] (some? (System/console)))
 
+(def ^:private startup-max-wait-ms
+  "Longest wait for a managed gateway that is still starting. A cold JVM start
+   compiles the engine from source and a first start may prepare extensions, so a
+   slow machine can need minutes; a daemon that exits ends the wait at once."
+  600000)
+
+(def ^:private slow-start-note-ms
+  "Elapsed wait after which the progress display names the starting daemon's boot log."
+  15000)
+
 (defn- progress-reporter
   "Build an `:on-event` callback for [[discovery/discover-or-start!]] that surfaces
    cold-start progress on stderr so a user is never left wondering whether vis
@@ -455,8 +465,9 @@
    DISTINGUISHES 'this process is starting the gateway' from 'another vis is
    already starting it — we're waiting' so a herd of clients reads as one boot,
    not N frozen screens. On a TTY it renders a single spinner line that rewrites
-   in place with the elapsed seconds; off a TTY it logs one line per milestone.
-   Never throws."
+   in place with the elapsed seconds; off a TTY it logs one line per milestone. A
+   start still running after [[slow-start-note-ms]] names the daemon's boot log
+   once. Never throws."
   []
   (let [tty
         (interactive-tty?)
@@ -465,7 +476,7 @@
         ^java.io.PrintStream System/err
 
         state
-        (atom {:label nil :frame 0 :active false})
+        (atom {:label nil :frame 0 :active false :boot-log nil :noted false})
 
         clear
         (fn []
@@ -485,12 +496,23 @@
             (clear)
             (.println err line)
             (.flush err)
-            (swap! state assoc :active false)))]
+            (swap! state assoc :active false)))
 
-    (fn [{:keys [phase mode elapsed-ms]}]
-      (try (case phase
+        note-slow-start
+        (fn [elapsed-ms]
+          (let [{:keys [active noted] log :boot-log} @state]
+            (when
+              (and active log (not noted) (>= (long (or elapsed-ms 0)) (long slow-start-note-ms)))
+              (swap! state assoc :noted true)
+              (clear)
+              (.println err (str "vis-agent: the gateway is still starting; boot log: " log))
+              (.flush err))))]
+
+    (fn [{:keys [phase mode elapsed-ms boot-log]}]
+      (try (when (= :tick phase) (note-slow-start elapsed-ms))
+           (case phase
              :spawning
-             (start "starting vis" "starting vis…")
+             (do (swap! state assoc :boot-log boot-log) (start "starting vis" "starting vis…"))
 
              :awaiting
              (start "another vis is starting up — waiting" "another vis is starting up — waiting…")
@@ -516,6 +538,9 @@
              :ready
              (finish (str "✓ vis ready" (when (= mode :awaited) " (started by another vis)")))
 
+             :exited
+             (finish "✗ vis stopped while starting")
+
              :timeout
              (finish "✗ vis did not become ready in time")
 
@@ -535,12 +560,14 @@
     (discovery/discover-or-start! {:db db :port target-port :host target-host}
                                   :probe probe-entry?
                                   :on-event (progress-reporter)
-                                  :timeout-ms (if (util/native-image?) 15000 60000))
+                                  :timeout-ms (if (util/native-image?) 15000 60000)
+                                  :max-wait-ms startup-max-wait-ms)
     (if (port-free? target-host target-port)
       (discovery/discover-or-start! {:db db :port target-port :host target-host}
                                     :probe probe-entry?
                                     :on-event (progress-reporter)
-                                    :timeout-ms (if (util/native-image?) 15000 60000))
+                                    :timeout-ms (if (util/native-image?) 15000 60000)
+                                    :max-wait-ms startup-max-wait-ms)
       (if-let [entry (discovery/await-registry! db
                                                 probe-entry?
                                                 {:timeout-ms occupied-port-registry-wait-ms
@@ -1092,6 +1119,29 @@
 
     (when fresh? (assert-compatible! cached))))
 
+(defn- startup-failure
+  "The user-facing error for a managed gateway start that produced no daemon: what
+   happened, the end of the daemon's boot log and where the whole log is."
+  [{:keys [mode pid boot-log] :as result}]
+  (let [exited?
+        (= :exited mode)
+
+        tail
+        (discovery/boot-log-tail boot-log 20)]
+
+    (ex-info (str (if exited?
+                    "The Vis gateway stopped while it was starting."
+                    "The Vis gateway did not become ready in time.")
+                  (when (and pid (not exited?) (discovery/pid-alive? pid))
+                    (str " Its process " pid " is still running."))
+                  (when (seq tail) (str "\n\nLast lines of its boot log:\n" (str/join "\n" tail)))
+                  (when boot-log (str "\n\nBoot log: " boot-log))
+                  (when exited?
+                    "\n\nFix the problem the boot log reports, then run the command again."))
+             (assoc result
+               :type (if exited? :gateway/start-failed :gateway/start-timeout)
+               :vis/user-error true))))
+
 (defn ensure-gateway!
   "Return a fresh daemon registry entry for the current DB, auto-starting the
    detached gateway if needed. `:memory` is a programmer error for this client;
@@ -1127,32 +1177,31 @@
        (when (discovery/memory-db? db)
          (throw (ex-info "gateway daemon is disabled for :memory DB" {:type :gateway/no-daemon})))
        (or (cached-entry-if-fresh)
-           (call-with-ensure-lock
-             db
-             (fn []
-               ;; Another caller may have completed discovery while this one waited.
-               (or (cached-entry-if-fresh)
-                   (let [target-port (or port DEFAULT_PORT)
-                         target-host (or host DEFAULT_HOST)
-                         ;; First recover the exact failure mode where a live standard daemon
-                         ;; owns 7890 but its registry was removed. Never enter discovery's
-                         ;; spawn path while the requested port already has a listener.
-                         {:keys [entry] :as result}
-                         (discover-or-recover! db target-host target-port)]
+           (call-with-ensure-lock db
+                                  (fn []
+                                    ;; Another caller may have completed discovery while this one waited.
+                                    (or (cached-entry-if-fresh)
+                                        (let [target-port (or port DEFAULT_PORT)
+                                              target-host (or host DEFAULT_HOST)
+                                              ;; First recover the exact failure mode where a live standard daemon
+                                              ;; owns 7890 but its registry was removed. Never enter discovery's
+                                              ;; spawn path while the requested port already has a listener.
+                                              {:keys [entry] :as result}
+                                              (discover-or-recover! db target-host target-port)]
 
-                     (if entry
-                       (do (reset! cached-entry entry)
-                           (reset! entry-fresh-until-ns (+ (System/nanoTime)
-                                                           (* (long entry-probe-ttl-ms) 1000000)))
-                           ;; Staleness BEFORE compatibility: a daemon too old to speak this
-                           ;; build's wire protocol is exactly the one worth replacing, and
-                           ;; the mismatch screen is for the daemon somebody is still using.
-                           (if (:bounced? (bounce-stale-daemon! entry))
-                             ;; The old image released the port; start this build in its place.
-                             (ensure-gateway! opts)
-                             (assert-compatible! entry)))
-                       (throw (ex-info "gateway daemon did not become ready"
-                                       (assoc result :type :gateway/start-timeout)))))))))))))
+                                          (if entry
+                                            (do (reset! cached-entry entry)
+                                                (reset! entry-fresh-until-ns
+                                                  (+ (System/nanoTime)
+                                                     (* (long entry-probe-ttl-ms) 1000000)))
+                                                ;; Staleness BEFORE compatibility: a daemon too old to speak this
+                                                ;; build's wire protocol is exactly the one worth replacing, and
+                                                ;; the mismatch screen is for the daemon somebody is still using.
+                                                (if (:bounced? (bounce-stale-daemon! entry))
+                                                  ;; The old image released the port; start this build in its place.
+                                                  (ensure-gateway! opts)
+                                                  (assert-compatible! entry)))
+                                            (throw (startup-failure result))))))))))))
 
 (defn- send-json!
   ([method path] (send-json! method path nil))

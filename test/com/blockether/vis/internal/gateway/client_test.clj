@@ -419,6 +419,73 @@
          (finally (reset! cached-atom previous-cached)
                   (reset! fresh-until-atom previous-fresh-until)))))
 
+;; Regression #290: a managed gateway that exits while starting is a user-facing
+;; failure naming its boot log, not an opaque "did not become ready".
+(deftest ensure-gateway!-names-the-boot-log-when-the-daemon-exits-at-start
+  (let [cached-atom
+        @(rv 'cached-entry)
+
+        fresh-until-atom
+        @(rv 'entry-fresh-until-ns)
+
+        previous-cached
+        @cached-atom
+
+        previous-fresh-until
+        @fresh-until-atom
+
+        boot-log
+        (java.io.File/createTempFile "gateway-boot-" ".log")]
+
+    (spit boot-log "starting\n\njava.lang.IllegalStateException: config is invalid\n")
+    (try (reset! cached-atom nil)
+         (reset! fresh-until-atom 0)
+         (with-redefs-fn {(rv 'remote-gateway) (constantly nil)
+                          (rv 'db-target) (constantly "/tmp/boot-exit/vis.db")
+                          (rv 'discover-or-recover!) (constantly {:mode :exited
+                                                                  :pid 2147483646
+                                                                  :boot-log (.getPath boot-log)})}
+           (fn []
+             (let [failure
+                   (try (client/ensure-gateway!) nil (catch clojure.lang.ExceptionInfo e e))
+
+                   data
+                   (ex-data failure)]
+
+               (is (true? (:vis/user-error data)))
+               (is (= :gateway/start-failed (:type data)))
+               (is (str/includes? (ex-message failure) "stopped while it was starting"))
+               (is (str/includes? (ex-message failure) "config is invalid"))
+               (is (str/includes? (ex-message failure) (.getPath boot-log))))))
+         (finally (reset! cached-atom previous-cached)
+                  (reset! fresh-until-atom previous-fresh-until)
+                  (.delete boot-log)))))
+
+;; Regression #290: a start still running after the slow-start threshold names the
+;; daemon's boot log once, so a cold `--jvm` start is not a silent wait.
+(deftest progress-reporter-names-the-boot-log-of-a-slow-start
+  (let [buf
+        (java.io.ByteArrayOutputStream.)
+
+        previous-err
+        System/err]
+
+    (System/setErr (java.io.PrintStream. buf true "UTF-8"))
+    (try (with-redefs-fn {(rv 'interactive-tty?) (constantly false)}
+           (fn []
+             (let [report ((rv 'progress-reporter))]
+               (report {:phase :spawning :pid 4242 :boot-log "/tmp/gateway-boot-290.log"})
+               (report {:phase :tick :elapsed-ms 1000})
+               (is (not (str/includes? (.toString buf "UTF-8") "boot log"))
+                   "not before the threshold")
+               (report {:phase :tick :elapsed-ms 16000})
+               (report {:phase :tick :elapsed-ms 17000})
+               (report {:phase :exited :pid 4242 :boot-log "/tmp/gateway-boot-290.log"}))))
+         (finally (System/setErr previous-err)))
+    (let [out (.toString buf "UTF-8")]
+      (is (= 1 (count (re-seq #"boot log: /tmp/gateway-boot-290\.log" out))) "named once")
+      (is (str/includes? out "✗ vis stopped while starting")))))
+
 (deftest authenticated-loopback-orphan-is-stopped-and-replaced
   (let [token-file
         (java.io.File/createTempFile "vis-gateway-token-" ".txt")

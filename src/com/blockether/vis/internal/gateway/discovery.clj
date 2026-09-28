@@ -29,7 +29,7 @@
            (java.lang ProcessBuilder$Redirect ProcessHandle)
            (java.lang.management ManagementFactory)
            (java.net InetSocketAddress Socket)
-           (java.nio.channels FileChannel FileLock)
+           (java.nio.channels FileChannel FileLock OverlappingFileLockException)
            (java.nio.file AtomicMoveNotSupportedException Files StandardCopyOption)
            (java.nio.file.attribute FileAttribute)))
 
@@ -385,7 +385,10 @@
 
 (defn unix-launch-cmd
   "Full command vector of a shell, its `-c` flag, and a script that backgrounds
-   `argv` with its stdio in `log-path`. On Linux/WSL, `setsid` gives the daemon a new session and process
+   `argv` with its stdio in `log-path`, then prints the background job's pid. Every
+   step `exec`s in place, and `setsid` forks only for a process-group leader, which
+   an asynchronous job of a non-interactive shell never is, so that pid is the
+   daemon's own. On Linux/WSL, `setsid` gives the daemon a new session and process
    group, so terminal job-control signals aimed at the TUI cannot stop it. HUP and
    TSTP are also ignored across every exec as a defensive fallback. Bash preserves
    the readable `vis <subcommand> …` argv0; plain `sh` keeps the executable path.
@@ -407,7 +410,7 @@
                :else (str "exec " quoted-argv))
 
          script
-         (str "{ trap '' HUP TSTP; " detached-exec "; } >" (sh-quote log-path) " 2>&1 &")]
+         (str "{ trap '' HUP TSTP; " detached-exec "; } >" (sh-quote log-path) " 2>&1 & echo $!")]
 
      [(or bash "sh") "-c" script])))
 
@@ -415,11 +418,12 @@
   "Fire-and-forget launch of a gateway daemon for `db`, fully DETACHED so closing
    the spawner's terminal (SIGHUP) does NOT kill it (D4). On unix this runs the
    argv inside a throwaway shell that backgrounds and disowns it (the daemon is
-   reparented to init) and renames it to `vis-agent gateway start …`; elsewhere it
-   falls back to a plain detached ProcessBuilder. The daemon
-   SELF-REGISTERS its pid/port on startup, so we never need its pid here. Its
-   stdout+stderr are captured to a unique per-start boot log under
-   `~/.vis/logs/YYYY-MM-DD/` (UTC). Returns nil."
+   reparented to init) and renames it to `vis-agent gateway start …`. The daemon
+   SELF-REGISTERS its pid/port on startup. Its stdout+stderr are captured to a
+   unique per-start boot log under `~/.vis/logs/YYYY-MM-DD/` (UTC). Returns
+   `{:pid daemon-pid :boot-log path}`: the throwaway shell reports the pid so a
+   waiter can tell a slow start from a daemon that already exited. `:pid` is nil
+   when no pid was reported; the registry is then the only readiness signal."
   [{:keys [db] :as opts}]
   (let [argv
         (spawn-argv opts)
@@ -433,17 +437,26 @@
         pb
         (ProcessBuilder. ^java.util.List (vec (unix-launch-cmd argv (.getPath log))))]
 
-    ;; The daemon's own stdio is redirected to `log` by the shell command;
-    ;; discard only the throwaway wrapper shell's stdio.
-    (doto pb
-      (.redirectOutput ProcessBuilder$Redirect/DISCARD)
-      (.redirectError ProcessBuilder$Redirect/DISCARD))
+    ;; The daemon's own stdio is redirected to `log` by the shell command; the
+    ;; throwaway wrapper shell prints only the daemon pid.
+    (.redirectError pb ProcessBuilder$Redirect/DISCARD)
     ;; Marks this `vis-agent gateway start` as client-managed rather than a user-owned
     ;; foreground daemon. The daemon should self-reap when the last client dies;
     ;; a manually-run `vis-agent gateway start` must not.
     (.put (.environment pb) "VIS_GATEWAY_MANAGED" "1")
-    (.start pb)
-    nil))
+    (let [wrapper (.start pb)]
+      ;; Read one line, not to EOF: the wrapper prints the pid before it exits.
+      {:pid (with-open [r (io/reader (.getInputStream wrapper))]
+              (parse-long (str/trim (str (.readLine ^java.io.BufferedReader r)))))
+       :boot-log (.getPath log)})))
+
+(defn boot-log-tail
+  "The last `n` non-blank lines of the boot log at `path`, or [] when it is missing
+   or unreadable."
+  [path n]
+  (try (let [f (io/file (str path))]
+         (if (.isFile f) (vec (take-last n (remove str/blank? (str/split-lines (slurp f))))) []))
+       (catch Throwable _ [])))
 
 ;; Cross-process spawn lock (thundering-herd guard)
 
@@ -474,30 +487,61 @@
   (when lock (try (.release lock) (catch Throwable _ nil)))
   (when channel (try (.close channel) (catch Throwable _ nil))))
 
+(defn spawn-lock-held?
+  "True while another holder keeps the spawn lock for `db`, i.e. its spawner is
+   still launching or awaiting a daemon. Probes by taking and at once releasing
+   the lock; an unusable lock file reads as not held. Never throws."
+  [db]
+  (try (with-open [ch (.getChannel (RandomAccessFile. (lock-file db) "rw"))]
+         (if-let [^FileLock lk (.tryLock ch)]
+           (do (.release lk) false)
+           true))
+       (catch OverlappingFileLockException _ true)
+       (catch Throwable _ false)))
+
 ;; Orchestration
 
 (defn await-registry!
   "Poll for a FRESH registry entry for `db` up to `timeout-ms`, checking every
-   `poll-ms`. `:on-tick` (optional) is called before each sleep with the elapsed
-   millis so a caller can render live 'still waiting…' feedback; it never breaks
-   the poll loop. Returns the entry or nil on timeout."
+   `poll-ms`. `:alive?` (optional) says whether the start being awaited is still
+   in progress: once it answers false the wait ends after one last registry read,
+   and while it answers true the wait continues past `timeout-ms` up to
+   `max-wait-ms` (default `timeout-ms`), so a slow cold start is not abandoned.
+   `:on-tick` (optional) is called before each sleep with the elapsed millis so a
+   caller can render live 'still waiting…' feedback. Neither callback ever breaks
+   the poll loop. Returns the entry or nil."
   ([db probe] (await-registry! db probe {}))
-  ([db probe {:keys [timeout-ms poll-ms on-tick] :or {timeout-ms 8000 poll-ms 100}}]
+  ([db probe
+    {:keys [timeout-ms max-wait-ms poll-ms alive? on-tick] :or {timeout-ms 8000 poll-ms 100}}]
    (let [start
          (util/now-ms)
 
          deadline
-         (+ start (long timeout-ms))]
+         (+ start (long timeout-ms))
+
+         hard-deadline
+         (+ start (max (long timeout-ms) (long (or max-wait-ms timeout-ms))))
+
+         fresh
+         (fn []
+           (let [entry (read-registry db)]
+             (when (registry-fresh? entry probe) entry)))]
 
      (loop []
 
-       (let [entry (read-registry db)]
-         (cond (registry-fresh? entry probe) entry
-               (< (util/now-ms) deadline)
-               (do (when on-tick (try (on-tick (- (util/now-ms) start)) (catch Throwable _ nil)))
-                   (Thread/sleep (long poll-ms))
-                   (recur))
-               :else nil))))))
+       (or (fresh)
+           (let [now
+                 (util/now-ms)
+
+                 alive
+                 (when alive? (try (boolean (alive?)) (catch Throwable _ nil)))]
+
+             (cond (false? alive) (fresh)
+                   (or (< now deadline) (and alive (< now hard-deadline)))
+                   (do (when on-tick (try (on-tick (- now start)) (catch Throwable _ nil)))
+                       (Thread/sleep (long poll-ms))
+                       (recur))
+                   :else nil)))))))
 
 (defn discover-or-start!
   "Resolve a gateway for `db`. Returns:
@@ -506,20 +550,30 @@
    - `{:mode :spawned :entry {…}}`            WE spawned one and it self-registered;
    - `{:mode :awaited :entry {…}}`            ANOTHER process was spawning — we waited
                                               on its daemon instead of piling on;
-   - `{:mode :timeout}`                       nobody came up in time.
+   - `{:mode :exited :pid p :boot-log f}`     the daemon WE spawned exited before it
+                                              registered;
+   - `{:mode :timeout}`                       nobody came up in time (with `:pid` and
+                                              `:boot-log` when WE spawned the daemon).
 
    `probe` is the port+secret liveness check (defaults to pid-liveness alone).
    `spawn` (default [[spawn-detached!]]) and `now` are injectable for tests.
 
+   `timeout-ms` bounds a wait that nothing reports progress on. While the daemon
+   WE spawned is alive, or another process still holds the spawn lock, the wait
+   continues up to `max-wait-ms`: a cold JVM start compiles the engine from source
+   and a first start may prepare extensions, so a daemon that is still booting is
+   not abandoned to exit unused. A spawned daemon that exits ends the wait at once.
+
    `:on-event` (optional) is a side-effecting callback the caller uses to surface
    live progress so waiters are NEVER left staring at a frozen screen. It fires
    only on the SLOW path (never on a plain `:attach`) with maps:
-   `{:phase :spawning}`           WE won the lock and are launching the daemon;
+   `{:phase :spawning :pid p :boot-log f}` WE won the lock and launched the daemon;
    `{:phase :awaiting}`           another vis is starting it — we wait, not spawn;
    `{:phase :recovering}`         a live registered owner missed a probe — preserve
                                   it and wait for recovery instead of deleting it;
    `{:phase :tick :elapsed-ms n}` a poll heartbeat while awaiting either of those;
    `{:phase :ready :mode m :entry e}` the daemon came up;
+   `{:phase :exited :pid p :boot-log f}` the daemon WE spawned exited while starting;
    `{:phase :timeout}`            nobody came up in time. It never throws upward.
 
    THUNDERING-HERD GUARD (see [[acquire-spawn-lock!]]): when the registry is not
@@ -534,7 +588,7 @@
    and time out forever. The lock is re-checked against a double-read so a daemon
    that came up between our read and the lock is attached, not re-spawned."
   [{:keys [db] :as opts} &
-   {:keys [probe spawn timeout-ms poll-ms on-event]
+   {:keys [probe spawn timeout-ms max-wait-ms poll-ms on-event]
     :or {probe (constantly true) spawn spawn-detached!}}]
   (let [emit (fn [ev]
                (when on-event (try (on-event ev) (catch Throwable _ nil))))]
@@ -547,6 +601,9 @@
                                                (emit {:phase :tick :elapsed-ms elapsed-ms}))}
                              timeout-ms
                              (assoc :timeout-ms timeout-ms)
+
+                             max-wait-ms
+                             (assoc :max-wait-ms max-wait-ms)
 
                              poll-ms
                              (assoc :poll-ms poll-ms))]
@@ -573,17 +630,35 @@
                                 ;; Ownership-safe: a successor that registers between
                                 ;; `again` and this mutation is not deleted.
                                 (when again (delete-registry-if! db #(= again %)))
-                                (emit {:phase :spawning})
-                                (spawn opts)
-                                (if-let [entry (await-registry! db probe await-opts)]
-                                  (do (emit {:phase :ready :mode :spawned :entry entry})
-                                      {:mode :spawned :entry entry})
-                                  (do (emit {:phase :timeout}) {:mode :timeout})))))
+                                (let [launch (spawn opts)
+                                      {:keys [pid boot-log]} (when (map? launch) launch)
+                                      launched (cond-> {}
+                                                 pid
+                                                 (assoc :pid pid)
+
+                                                 boot-log
+                                                 (assoc :boot-log boot-log))
+                                      alive-opts (cond-> await-opts
+                                                   pid
+                                                   (assoc :alive? #(pid-alive? pid)))]
+
+                                  (emit (assoc launched :phase :spawning))
+                                  (if-let [entry (await-registry! db probe alive-opts)]
+                                    (do (emit {:phase :ready :mode :spawned :entry entry})
+                                        {:mode :spawned :entry entry})
+                                    (let [mode
+                                          (if (and pid (not (pid-alive? pid))) :exited :timeout)]
+                                      (emit (assoc launched :phase mode))
+                                      (assoc launched :mode mode)))))))
                 (finally (release-spawn-lock! holder)))
               ;; Lock is held by another process that's already spawning — don't
-              ;; pile on a competing daemon, just wait for it to self-register.
+              ;; pile on a competing daemon, just wait for it to self-register
+              ;; for as long as that process still holds the lock.
               (do (emit {:phase :awaiting})
-                  (if-let [entry (await-registry! db probe await-opts)]
+                  (if-let [entry (await-registry! db
+                                                  probe
+                                                  (assoc await-opts
+                                                    :alive? #(spawn-lock-held? db)))]
                     (do (emit {:phase :ready :mode :awaited :entry entry})
                         {:mode :awaited :entry entry})
                     (do (emit {:phase :timeout}) {:mode :timeout}))))))))))

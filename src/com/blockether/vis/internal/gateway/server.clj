@@ -1682,9 +1682,9 @@
   "Run Jetty, tolerating a TRANSIENT bind failure until `deadline-ms`. A daemon
    spawned right after its predecessor stopped can find the port still held while
    the old Jetty finishes draining the exiting client's parked SSE connection;
-   dying here would leave the client's `await-registry!` to time out with
-   \"gateway daemon did not become ready\". Instead we back off and retry until
-   the port frees or the deadline passes, then let the original failure surface."
+   dying here would fail the client's start with \"The Vis gateway stopped while
+   it was starting.\" Instead we back off and retry until the port frees or the
+   deadline passes, then let the original failure surface."
   [handler opts deadline-ms]
   (loop []
 

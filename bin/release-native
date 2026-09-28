@@ -130,7 +130,7 @@ build_macos_arm64() {
   target/release-bundle/vis-agent help >/dev/null
   local out
   out="$(target/release-bundle/vis-agent providers status anthropic 2>&1 || true)"
-  if printf '%s\n' "$out" | grep -q 'did not become ready'; then
+  if printf '%s\n' "$out" | grep -qE 'did not become ready|stopped while it was starting'; then
     printf '%s\n' "$out" >&2
     die "the gateway daemon failed to boot — not shipping this binary"
   fi

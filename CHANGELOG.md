@@ -81,6 +81,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   record's fields, and a dataclass created in the sandbox works the same way.
   Before, the tool received the record as text or as a dict, so an `isinstance`
   check failed with a `TypeError`.
+- `vis-agent tui` starts a gateway reliably when none is running, including a
+  slow first start with `--jvm`. It waits while the gateway it started is still
+  starting, and after 15 seconds it prints the path of the gateway's boot log.
+  If the gateway exits before it is ready, the command stops at once and shows
+  the last lines of the boot log. Before, `vis-agent tui` gave up after 15
+  seconds, or 60 seconds with `--jvm`, with an error that did not say why, and
+  the gateway that finished starting afterwards shut down because no client was
+  connected (#290).
 
 ## [v0.2.29] - 2026-09-25
 

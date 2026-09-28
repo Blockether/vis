@@ -191,12 +191,11 @@
       (flush))
     (ex-info
       (str
-        "Could not connect to the Vis gateway at "
-        endpoint
-        ".\n"
-        reason
+        "Could not connect to the Vis gateway at " endpoint
+        ".\n" reason
         "\n"
-        "Check that the gateway is running (start a local gateway with `vis-agent gateway start`).\n"
+        "Check that the gateway is running. `vis-agent tui` starts a local gateway itself unless "
+        "--gateway or VIS_GATEWAY_URL names one to connect to; to start one by hand, use `vis-agent gateway start`.\n"
         "Check --gateway / VIS_GATEWAY_URL and the port; for a remote gateway, check network/VPN access.\n"
         "Diagnostic log: " (paths/log-file))
       {:type :gateway/connection-failed :vis/user-error true :endpoint endpoint}

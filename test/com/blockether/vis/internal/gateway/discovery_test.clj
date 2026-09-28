@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.gateway.discovery-test
   "Unit tests for the gateway discovery/registry (build order step 1). Effects
    (registry dir, pid-liveness, spawn) are redirected/injected so nothing touches
-   the real `~/.vis` or launches a process."
+   the real `~/.vis`; only the spawn pid test launches a process, a short `sleep`."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [lazytest.core :as lt]
@@ -126,7 +126,7 @@
     (is (= "-c" flag))
     (is (str/includes? script "'/opt/vis'"))
     (is (str/includes? script "'/tmp/boot.log'"))
-    (is (str/ends-with? script "2>&1 &") "stays backgrounded so the spawner never blocks")
+    (is (str/ends-with? script "2>&1 & echo $!") "stays backgrounded and reports the daemon pid")
     (is (str/includes? script "trap '' HUP TSTP")
         "the daemon must ignore terminal hangup and stop signals across exec")
     (is (str/includes? script "exec -a 'vis' '/opt/vis' 'gateway' 'start'")))
@@ -281,6 +281,121 @@
              (is (= 9100 (get-in res [:entry :port])))
              (is (zero? @spawned) "no competing daemon is spawned while another holds the lock")))
          (finally (disco/release-spawn-lock! holder)))))
+
+;; Regression #290: a cold JVM daemon still booting when a fixed timeout ran out
+;; was abandoned and then exited unused, so `vis-agent tui --jvm` found no gateway.
+(deftest discover-or-start!-keeps-waiting-while-the-spawned-daemon-boots
+  (let [db
+        "/tmp/slow-boot/vis.db"
+
+        events
+        (atom [])
+
+        spawn
+        (fn [_]
+          (future (Thread/sleep 300)
+                  (disco/write-registry! db {:pid 4242 :port 8100 :host "127.0.0.1" :secret "s"}))
+          {:pid 4242 :boot-log "/tmp/slow-boot.log"})]
+
+    (with-redefs [disco/pid-alive? (fn [_]
+                                     true)]
+      (let [res (disco/discover-or-start! {:db db}
+                                          :probe (constantly true)
+                                          :spawn spawn
+                                          :on-event #(swap! events conj %)
+                                          :timeout-ms 50
+                                          :max-wait-ms 10000
+                                          :poll-ms 10)]
+        (is (= :spawned (:mode res)) "a live daemon is awaited past timeout-ms")
+        (is (= 8100 (get-in res [:entry :port])))
+        (is (= {:phase :spawning :pid 4242 :boot-log "/tmp/slow-boot.log"} (first @events)))))))
+
+;; Regression #290: a daemon that dies while booting fails the start at once and
+;; names its boot log instead of holding the caller for the whole wait.
+(deftest discover-or-start!-reports-a-spawned-daemon-that-exits
+  (let [events
+        (atom [])
+
+        started
+        (System/nanoTime)
+
+        res
+        (disco/discover-or-start! {:db "/tmp/boot-crash/vis.db"}
+                                  :probe (constantly true)
+                                  :spawn (fn [_]
+                                           {:pid dead-pid :boot-log "/tmp/boot-crash.log"})
+                                  :on-event #(swap! events conj %)
+                                  :timeout-ms 10000
+                                  :max-wait-ms 10000
+                                  :poll-ms 10)]
+
+    (is (= {:mode :exited :pid dead-pid :boot-log "/tmp/boot-crash.log"} res))
+    (is (= {:phase :exited :pid dead-pid :boot-log "/tmp/boot-crash.log"} (last @events)))
+    (is (< (/ (- (System/nanoTime) started) 1e6) 5000) "the wait ends when the daemon exits")))
+
+;; Regression #290: a concurrent starter waits as long as the spawner holds the
+;; lock, and stops as soon as the spawner lets go without a daemon.
+(deftest discover-or-start!-awaits-while-another-spawner-holds-the-lock
+  (testing "a slow daemon started by the lock holder is awaited past timeout-ms"
+    (let [db
+          "/tmp/herd-slow/vis.db"
+
+          holder
+          (disco/acquire-spawn-lock! db)]
+
+      (try (with-redefs [disco/pid-alive? (fn [_]
+                                            true)]
+             (future (Thread/sleep 300)
+                     (disco/write-registry! db {:pid 778 :port 9200 :host "127.0.0.1" :secret "s"}))
+             (let [res (disco/discover-or-start! {:db db}
+                                                 :probe (constantly true)
+                                                 :timeout-ms 50
+                                                 :max-wait-ms 10000
+                                                 :poll-ms 10)]
+               (is (= :awaited (:mode res)))
+               (is (= 9200 (get-in res [:entry :port])))))
+           (finally (disco/release-spawn-lock! holder)))))
+  (testing "a holder that lets go without a daemon ends the wait"
+    (let [db
+          "/tmp/herd-gone/vis.db"
+
+          holder
+          (disco/acquire-spawn-lock! db)
+
+          started
+          (System/nanoTime)]
+
+      (future (Thread/sleep 100) (disco/release-spawn-lock! holder))
+      (let [res (disco/discover-or-start! {:db db}
+                                          :probe (constantly true)
+                                          :timeout-ms 50
+                                          :max-wait-ms 10000
+                                          :poll-ms 10)]
+        (is (= :timeout (:mode res)))
+        (is (< (/ (- (System/nanoTime) started) 1e6) 5000))))))
+
+;; Regression #290: the pid the spawner reports is the daemon's own, so a waiter
+;; can tell a slow start from an exited one. Launches a short real `sleep`.
+(deftest spawn-detached!-reports-the-daemon-pid
+  (with-redefs [paths/logs-dir
+                #(.getPath (io/file *tmp* "logs"))
+
+                disco/spawn-argv
+                (constantly ["/bin/sleep" "30"])]
+
+    (let [{:keys [pid boot-log]}
+          (disco/spawn-detached! {:db "/tmp/pid-report/vis.db"})
+
+          _
+          (Thread/sleep 300)
+
+          ^java.lang.ProcessHandle handle
+          (when pid (.orElse (java.lang.ProcessHandle/of (long pid)) nil))]
+
+      (try (is (pos-int? pid))
+           (is (and handle (.isAlive handle)) "the wrapper shell has exited; the daemon runs on")
+           (is (.isFile (io/file boot-log)))
+           (finally (when handle (.destroy handle)))))))
 
 (deftest discover-or-start!-emits-nothing-on-the-fast-attach-path
   (let [db
