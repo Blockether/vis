@@ -257,7 +257,9 @@ export const Settled: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const toggle = canvas.getByRole('button', { name: 'Expand Activity' });
-    const summary = within(toggle).getByText(/mutation/).parentElement!;
+    const summary = within(toggle).getByText((_, node) =>
+      /^\d+ mutations?$/.test(node?.textContent ?? ''),
+    ).parentElement!;
     for (const expanded of [false, true]) {
       await expect(toggle).toHaveAttribute('aria-expanded', String(expanded));
       // The count remains part of the same full-row pointer and keyboard target.

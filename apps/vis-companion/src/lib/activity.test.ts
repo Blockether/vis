@@ -4,6 +4,9 @@ import {
   activityCopyText,
   activityHistoryCopyText,
   mergeActivity,
+  settleActivity,
+  type ActivityProjection,
+  type ActivityRow,
   argumentGroups,
   operationGroups,
   activityProjectionFromWire,
@@ -571,5 +574,57 @@ describe('complete retained Activity copy', () => {
 describe('Activity verdicts', () => {
   it('uses the canonical verdicts', () => {
     expect(ACTIVITY_VERDICTS).toEqual(contract.$defs.verdict.enum);
+  });
+});
+
+describe('settling a snapshot its form outlived', () => {
+  const row = (id: string, state: ActivityRow['state'], children?: ActivityRow[]): ActivityRow => ({
+    id,
+    sequence: 0,
+    operation: 'suite',
+    presenter: 'tests',
+    signal: 'verification',
+    state,
+    summary: id,
+    resources: [],
+    evidence: [],
+    ...(children ? { children } : {}),
+  });
+  const snapshot: ActivityProjection = {
+    state: 'running',
+    counts: { running: 2, succeeded: 1, failed: 0, cancelled: 0 },
+    rows: [row('done', 'succeeded'), row('group', 'running', [row('child', 'running')])],
+    omitted: { rows: 0, by_classification: {} },
+  };
+
+  const outcomes = ['failed', 'cancelled'] as const;
+
+  it.each(outcomes)('closes every running row as %s, as the engine does', (outcome) => {
+    const settled = settleActivity(snapshot, outcome);
+
+    expect(settled.state).toBe(outcome);
+    expect(settled.counts).toEqual({
+      running: 0,
+      succeeded: 1,
+      failed: 0,
+      cancelled: 0,
+      [outcome]: 2,
+    });
+    expect(settled.rows.map((each) => each.state)).toEqual(['succeeded', outcome]);
+    expect(settled.rows[1].children?.[0].state).toBe(outcome);
+    // The wire snapshot stays untouched.
+    expect(snapshot.counts.running).toBe(2);
+    expect(snapshot.rows[1].state).toBe('running');
+  });
+
+  it('returns a snapshot with nothing running as it is', () => {
+    const settled: ActivityProjection = {
+      ...snapshot,
+      state: 'succeeded',
+      counts: { running: 0, succeeded: 1, failed: 0, cancelled: 0 },
+      rows: [row('done', 'succeeded')],
+    };
+
+    expect(settleActivity(settled, 'failed')).toBe(settled);
   });
 });

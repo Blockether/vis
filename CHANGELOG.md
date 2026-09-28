@@ -44,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   models from the list it saved for that provider. OpenCode Go now includes MiMo
   V2.6 Pro and MiMo V2.6 Flash in its built-in list, and the Alibaba Coding Plan
   and OpenRouter presets start with current models.
+- On a phone, the companion's Activity band abbreviates its counts to `mut`,
+  `obs` and `ext`, such as `3 mut · 9 obs · 1 ext`, so they fit on one line.
+  Wider screens still show `mutations`, `observations` and `external actions`.
 
 ### Fixed
 - A GitHub workflow watch now follows a newer run that replaces the watched
@@ -66,6 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - The companion and the TUI session lists mark a session as stopped when its
   newest turn failed and you have not read it yet, for example after Python was
   shut down. Before, the session only showed as new.
+- The companion no longer shows Activity as running after its step has failed,
+  been interrupted or finished, or after the turn has ended. Calls left running
+  are shown as failed when the step failed and as cancelled otherwise. Before,
+  the Activity band could keep counting `1 running` under a failed step.
 
 ## [v0.2.29] - 2026-09-25
 

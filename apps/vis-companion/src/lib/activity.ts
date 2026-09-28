@@ -418,6 +418,31 @@ export function mergeActivity(activities: readonly ActivityProjection[]): Activi
   return { state, counts, rows, omitted };
 }
 
+/**
+ * Close every invocation a snapshot still reports running, as the engine's
+ * `settle-running` does when the enclosing evaluation ends. A snapshot taken before
+ * that settlement can outlive its form, and a finished step must not count work
+ * that nothing is doing any more. Returns the same object when nothing is running.
+ */
+export function settleActivity(
+  activity: ActivityProjection,
+  outcome: 'failed' | 'cancelled',
+): ActivityProjection {
+  const running = activity.counts.running;
+  if (running === 0) return activity;
+  const settleRow = (row: ActivityRow): ActivityRow => ({
+    ...row,
+    ...(row.state === 'running' ? { state: outcome } : {}),
+    ...(row.children ? { children: row.children.map(settleRow) } : {}),
+  });
+  return {
+    ...activity,
+    state: outcome,
+    counts: { ...activity.counts, running: 0, [outcome]: activity.counts[outcome] + running },
+    rows: activity.rows.map(settleRow),
+  };
+}
+
 /** Copy retained invocations, not the visible grouping or viewport. Never include identity keys. */
 export function activityCopyText(activity: ActivityProjection): string {
   const contentText = (block: ActivityContent): string => {

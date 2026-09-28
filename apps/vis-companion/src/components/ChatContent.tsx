@@ -27,6 +27,7 @@ import { liveOwnerMatches, type LiveView as LiveViewModel } from '../lib/live-vi
 import { ActivityPanel, ActivityAttachmentContext } from './ActivityPanel';
 import {
   mergeActivity,
+  settleActivity,
   type ActivityProjection,
 } from '../lib/activity';
 import { usePythonCodeShown, useStepsSummarized } from '../lib/transcript-display';
@@ -1587,6 +1588,25 @@ function pythonFormState(
 type StepMark = 'running' | 'failed' | 'halted' | 'done';
 
 /**
+ * THE FORM'S ACTIVITY, CLOSED ONCE THE FORM IS OVER.
+ *
+ * The engine settles every invocation still running when its block ends, but the
+ * snapshot on a form can predate that receipt: a frame that lands after the turn
+ * stopped listening never replaces it. A form that measured itself, failed, or
+ * belongs to a turn that is no longer live cannot still be running anything, so its
+ * leftover running rows take the engine's own outcome — failed after an error,
+ * cancelled otherwise — instead of counting as work in progress.
+ */
+function formActivity(form: TranscriptForm, live: boolean): ActivityProjection | undefined {
+  const activity = form.activity;
+  if (!activity || (live && form.duration_ms == null && form.error == null)) return activity;
+  return settleActivity(
+    activity,
+    form.error != null && !interruptedPython(form) ? 'failed' : 'cancelled',
+  );
+}
+
+/**
  * WHAT A FORM'S ROW SAYS, AND WHETHER IT IS STILL MOVING.
  *
  * Read ONCE, because two things paint it: the receipt row, in words, and the
@@ -1616,7 +1636,7 @@ function formStep(
   // is loaded by ActivityPanel without replacing the form's source identity.
   // The form's own `duration_ms` is the elapsed time; Activity does not keep
   // separate window timestamps. The settled duration is what the terminal measured.
-  const activity = form.activity;
+  const activity = formActivity(form, live);
   const detected = Boolean(
     activity &&
       (activity.rows.length > 0 ||
@@ -1647,7 +1667,8 @@ function formStep(
 /** A display-only group. Source forms and their wire projections stay untouched. */
 function executionGroup(forms: TranscriptForm[], live: boolean): TranscriptForm {
   if (forms.length === 1) return forms[0];
-  const states = forms.map((form) => pythonFormState(form, live, form.activity?.state));
+  const activities = forms.map((form) => formActivity(form, live));
+  const states = forms.map((form, index) => pythonFormState(form, live, activities[index]?.state));
   const state = states.includes('RUNNING')
     ? 'running'
     : states.includes('FAILED')
@@ -1662,7 +1683,7 @@ function executionGroup(forms: TranscriptForm[], live: boolean): TranscriptForm 
     duration_ms: forms.every((form) => formatDuration(form.duration_ms) != null)
       ? forms.reduce((total, form) => total + form.duration_ms!, 0)
       : undefined,
-    activity: { ...mergeActivity(forms.flatMap((form) => form.activity ?? [])), state },
+    activity: { ...mergeActivity(activities.flatMap((activity) => activity ?? [])), state },
   };
 }
 
@@ -1743,7 +1764,7 @@ const FormTrace = memo(function FormTrace({
         >
           {status && <span className="sr-only">{status}</span>}
           {detectedActivity && (
-            <ActivityPanel activity={forms.flatMap((source) => source.activity ?? [])} />
+            <ActivityPanel activity={forms.flatMap((source) => formActivity(source, live) ?? [])} />
           )}
         </div>
         {client && sid && (

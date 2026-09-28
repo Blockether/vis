@@ -855,6 +855,32 @@ describe('what the iteration cost', () => {
     expect(parts.at(-1)?.tone).toBe('text-code-syntax-special');
   });
 
+  // Regression, user screenshot: on a phone `3 mutations · 9 observations · 1 external
+  // action` wrapped onto a second line, so there the band abbreviates the three nouns.
+  it('abbreviates the three nouns on a phone and spells them out where there is room', () => {
+    const projection = activityProjection();
+    const [first, ...rest] = projection.rows;
+    const activity = {
+      ...projection,
+      rows: [{ ...first, signal: 'external' as const }, ...rest],
+      omitted: { rows: 1, by_classification: { observation: 1 } },
+    };
+    expect(activityCostParts(activity).map((part) => part.short)).toEqual([
+      '0 mut',
+      '1 obs',
+      undefined,
+      '1 ext',
+    ]);
+
+    render(<ActivityPanel activity={activity} />);
+    const band = screen.getByRole('button', { name: /^(Expand|Collapse) Activity$/ });
+    // The words stay whole in the document; a phone hides what follows each abbreviation.
+    expect(band).toHaveTextContent('0 mutations · 1 observation · 1 check · 1 external action');
+    const phone = band.cloneNode(true) as HTMLElement;
+    phone.querySelectorAll('.max-sm\\:hidden').forEach((node) => node.remove());
+    expect(phone).toHaveTextContent('0 mut · 1 obs · 1 check · 1 ext');
+  });
+
   // A check can find problems inside a call that succeeded; only its verdict says so.
   it('says how many checks found failures inside calls that succeeded', () => {
     const projection = activityProjection();
@@ -897,7 +923,9 @@ describe('what the iteration cost', () => {
 
     expect(toggle).toHaveTextContent('1 mutation · 1 check · 1 failed');
     expect(toggle).not.toHaveTextContent('operation');
-    expect(within(toggle).getByText('1 mutation')).toHaveClass('text-accent-ink');
+    // The phone hides the tail of the noun, so the words span two text nodes.
+    const mutations = within(toggle).getByText((_, node) => node?.textContent === '1 mutation');
+    expect(mutations).toHaveClass('text-accent-ink');
   });
 
   // Rows past the first page have not arrived, so the rows present cannot say what

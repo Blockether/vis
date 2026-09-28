@@ -90,6 +90,11 @@ function activityStepHeadline(row: ActivityRow): string {
 /** One counter in the margin: the words, and the tone that repeats them. */
 export interface ActivityCostPart {
   readonly text: string;
+  /**
+   * The phone's abbreviation (`3 mut`), a prefix of `text`: a narrow band hides the rest
+   * of the word and keeps its counts on one line, while the words stay whole for a copy.
+   */
+  readonly short?: string;
   /** Empty for the margin's own ink — a count that needs no colour to be read. */
   readonly tone: string;
 }
@@ -133,19 +138,27 @@ export function activityCostParts(activity?: ActivityProjection): readonly Activ
   ).length;
   const checkText = noun(checks, 'check') + (failing ? `, ${failing} failing` : '');
   const external = tally('external');
+  const mutations = tally('mutation');
   return [
-    { text: noun(tally('mutation'), 'mutation'), tone: 'text-accent-ink' },
+    { text: noun(mutations, 'mutation'), short: `${mutations} mut`, tone: 'text-accent-ink' },
     ...(observations
       ? [
           {
             text: noun(observations, 'observation'),
+            short: `${observations} obs`,
             tone: 'text-code-syntax-keyword',
           },
         ]
       : []),
     ...(checks ? [{ text: checkText, tone: '' }] : []),
     ...(external
-      ? [{ text: noun(external, 'external action'), tone: 'text-code-syntax-special' }]
+      ? [
+          {
+            text: noun(external, 'external action'),
+            short: `${external} ext`,
+            tone: 'text-code-syntax-special',
+          },
+        ]
       : []),
   ];
 }
@@ -1375,7 +1388,12 @@ export function ActivityPanel({
               {tally.map((part, index) => (
                 <Fragment key={part.text}>
                   {index ? ' · ' : null}
-                  <span className={part.tone || undefined}>{part.text}</span>
+                  <span className={part.tone || undefined}>
+                    {part.short ?? part.text}
+                    {part.short && (
+                      <span className="max-sm:hidden">{part.text.slice(part.short.length)}</span>
+                    )}
+                  </span>
                 </Fragment>
               ))}
             </BandTally>

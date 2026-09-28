@@ -74,7 +74,14 @@ function activityEvent(turn: RunningTurn, activity: ActivityProjection): Running
 }
 
 function trace(turn: RunningTurn) {
-  return <IterationTrace iterations={turn.iterations} showCode={false} whole />;
+  return (
+    <IterationTrace
+      iterations={turn.iterations}
+      showCode={false}
+      whole
+      live={turn.status === 'running'}
+    />
+  );
 }
 
 it.each(outcomes.flatMap((outcome) => [false, true].map((history) => ({ outcome, history }))))(
@@ -161,4 +168,37 @@ it('accepts a newer running invocation without reopening an already settled oper
   next.counts.succeeded = 1;
   const updated = activityEvent(settled, next);
   expect(updated.iterations[0].forms?.[0].activity).toEqual(next);
+});
+
+// Regression, user screenshot: a failed step's Activity band still counted `1 running`,
+// because the last snapshot on the form predated the engine's settlement.
+it.each([
+  {
+    name: 'a failed form of a live turn',
+    status: 'running',
+    form: { error: 'boom', duration_ms: 42 },
+    outcome: 'failed',
+  },
+  {
+    name: 'an interrupted form',
+    status: 'running',
+    form: { error: 'java.lang.InterruptedException' },
+    outcome: 'cancelled',
+  },
+  { name: 'an unfinished form of an ended turn', status: 'failed', form: {}, outcome: 'cancelled' },
+] as const)('counts no running work in $name', ({ status, form, outcome }) => {
+  const running = activityEvent(start(), snapshot('running'));
+  const [iteration] = running.iterations;
+  const ended: RunningTurn = {
+    ...running,
+    status,
+    iterations: [{ ...iteration, forms: [{ ...iteration.forms![0], ...form }] }],
+  };
+  render(trace(ended));
+  const expand = screen.queryByRole('button', { name: 'Expand Activity' });
+  if (expand) fireEvent.click(expand);
+
+  expect(screen.queryByText('1 running')).toBeNull();
+  expect(screen.getByText(`1 ${outcome}`)).toBeVisible();
+  expect(screen.queryByLabelText('Running')).toBeNull();
 });
