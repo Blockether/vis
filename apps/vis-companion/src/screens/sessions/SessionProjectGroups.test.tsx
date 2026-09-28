@@ -620,6 +620,23 @@ describe('ProjectGroup groups', () => {
     await waitFor(() => expect(client.createSessionGroup).toHaveBeenCalledWith(ROOT, 'Receipts'));
   });
 
+  // Regression, user report: creating a group showed a redundant dark title band
+  // between the Groups heading and the name field.
+  it('shows the name field without a second heading and still lets you go back', async () => {
+    const { user } = mount();
+    await band('Wallet work');
+    await user.click(screen.getByRole('button', { name: `Actions for groups in ${ROOT}` }));
+    await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('New group'));
+    const menu = sheet(`Groups in ${ROOT}`);
+
+    expect(menu.querySelector('header')).toBeNull();
+    expect(within(menu).getByRole('textbox', { name: 'Group name' })).toBeInTheDocument();
+    await user.click(
+      within(menu).getByRole('button', { name: `Back to groups in ${STORY_NEWER_PROJECT.name}` }),
+    );
+    expect(within(menu).getByText('New group')).toBeInTheDocument();
+  });
+
   // The Groups menu offers its verbs without repeating the list of groups below it.
   it('offers the verb without naming the project back or listing its groups', async () => {
     const { user } = mount();

@@ -41,6 +41,9 @@ export const PANEL_SIZES = {
 
 export type PanelSize = keyof typeof PANEL_SIZES;
 
+/** The clearance needed to keep a field and its action usable beside the trigger. */
+const MIN_KEYBOARD_ROOM = 80;
+
 /** The width in px the panel paints where the screen has room for it. */
 export const MENU_WIDTH = PANEL_SIZES.menu.width;
 
@@ -77,19 +80,18 @@ export function AnchoredPanel({
   onDismiss: () => void;
   children: ReactNode;
 }) {
-  // The panel is PORTALED to the document, so the app shell's keyboard pin never
-  // moves it: on iOS the webview stays full height and a panel hanging under a
-  // control low on the screen disappeared under the software keyboard - with the
-  // name field of a new group inside it. It STANDS on the keyboard instead, keeping
-  // the column its anchor gave it, and the cap it paints trims it to what is left.
+  // A portaled panel does not move with the shell when the iOS keyboard opens.
+  // Keep it beside its trigger while there is room for a field and an action;
+  // only a trigger too close to the keys needs its panel lifted above them.
   const keyboardInset = useKeyboardInset();
-  const isLifted = keyboardInset > 0;
-  // A panel whose control has not been measured yet still belongs on the screen, so
-  // it keeps the margin every placement keeps rather than the corner of the document.
   const place = at ?? { left: EDGE_MARGIN, top: EDGE_MARGIN };
-  const top = isLifted ? undefined : place.top;
-  const bottom = isLifted ? keyboardInset + EDGE_MARGIN : place.bottom;
-
+  const keyboardEdge = window.innerHeight - keyboardInset - EDGE_MARGIN;
+  const top = keyboardInset > 0 && place.top !== undefined && keyboardEdge - place.top < MIN_KEYBOARD_ROOM
+    ? undefined
+    : place.top;
+  const bottom = keyboardInset > 0 && top === undefined
+    ? Math.max(place.bottom ?? 0, keyboardInset + EDGE_MARGIN)
+    : place.bottom;
   return createPortal(
     <div
       className="fixed inset-0 z-50"
@@ -100,7 +102,7 @@ export function AnchoredPanel({
         role={role}
         aria-modal={role === 'dialog' ? true : undefined}
         aria-label={label}
-        className={`absolute bottom-[var(--menu-bottom,auto)] left-[var(--menu-left)] top-[var(--menu-top,auto)] flex max-h-[min(var(--menu-max-height,70vh),calc(100vh-var(--menu-keyboard,0px)-24px))] flex-col overflow-hidden rounded-none border border-dialog-edge bg-panel shadow-float transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none ${PANEL_SIZES[size].className}`}
+        className={`absolute bottom-[var(--menu-bottom,auto)] left-[var(--menu-left)] top-[var(--menu-top,auto)] flex max-h-[min(var(--menu-max-height,70vh),calc(100vh-var(--menu-keyboard,0px)-var(--menu-top,0px)-24px))] flex-col overflow-hidden rounded-none border border-dialog-edge bg-panel shadow-float transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none ${PANEL_SIZES[size].className}`}
         style={
           {
             '--menu-keyboard': `${keyboardInset}px`,

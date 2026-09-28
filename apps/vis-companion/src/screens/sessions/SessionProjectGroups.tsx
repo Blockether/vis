@@ -31,7 +31,7 @@ import {
   ProjectStatusCounts,
   SectionHeader,
 } from '../../components/SessionNavigator';
-import { Menu, MenuBack, MenuItem, MenuNote, MENU_WIDTH } from '../../components/Menu';
+import { Menu, MenuItem, MenuNote, MENU_WIDTH } from '../../components/Menu';
 import {
   ArchiveIcon,
   ChevronIcon,
@@ -139,18 +139,22 @@ function Swatch({ color }: { color: string | null }) {
 /** The one field a group action needs, committed by Enter or by the cell beside it. */
 function NameForm({
   label,
+  backLabel,
   value,
   commit,
   isBusy,
+  onBack,
   onChange,
   onCommit,
 }: {
   /** What is being typed, for a reader who cannot see the field: `Group name`. */
   label: string;
+  backLabel: string;
   value: string;
   /** The verb on the commit: `Create`. */
   commit: string;
   isBusy: boolean;
+  onBack: () => void;
   onChange: (value: string) => void;
   onCommit: () => void;
 }) {
@@ -162,6 +166,9 @@ function NameForm({
         if (value.trim() !== '') onCommit();
       }}
     >
+      <IconButton label={backLabel} variant="secondary" onClick={onBack}>
+        <ChevronIcon back className="size-3.5" />
+      </IconButton>
       <Input
         autoFocus
         aria-label={label}
@@ -1969,14 +1976,10 @@ export const ProjectGroup = memo(function ProjectGroup({
             if (step.kind === 'new')
               return (
                 <>
-                  <MenuBack
-                    label={`Back to groups in ${project}`}
-                    onBack={() => goTo({ kind: 'root' })}
-                  >
-                    New group
-                  </MenuBack>
                   <NameForm
                     label="Group name"
+                    backLabel={`Back to groups in ${project}`}
+                    onBack={() => goTo({ kind: 'root' })}
                     value={typed}
                     commit="Create"
                     isBusy={isBusy}
