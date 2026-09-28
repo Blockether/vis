@@ -98,8 +98,9 @@
             (expect
               (= {"running_position" 42 "running_created_at" 1234 "running_started_at" 1000}
                  (select-keys soul ["running_position" "running_created_at" "running_started_at"])))
-            (expect (= [[42 1234] [42 1234]]
-                       (mapv (juxt #(get % "position") #(get % "created_at"))
+            ;; A settled turn replays its lifecycle frames only; its stream stays out.
+            (expect (= [["turn.completed" 42 1234]]
+                       (mapv (juxt #(get % "type") #(get % "position") #(get % "created_at"))
                              (rest (state/events-since sid 0)))))
             (expect (= 2 @reads) "Known metadata is cached, not queried for every streamed event.")
             ;; Reopening a running session need not wait for another stream event.

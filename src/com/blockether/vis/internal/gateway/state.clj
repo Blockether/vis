@@ -596,12 +596,37 @@
                        (materialize-form-activity descriptor))
         :else entry))
 
+(def ^:private unknown-chunk-type-prefix
+  "Event type prefix of an iteration chunk whose phase has no dedicated wire event."
+  "chunk.")
+
+(defn- settled-turn-stream?
+  "Predicate over one replay `window`: true for a stream frame of a turn whose terminal
+   frame is in the same window. Clients render a settled turn from its transcript, so
+   replaying its stream only delays the terminal frame a returning client waits for."
+  [window]
+  (let [settled (into #{}
+                      (keep #(when (contains? gateway-contract/turn-terminal-event-types
+                                              (get % "type"))
+                               (get % "turn_id")))
+                      window)]
+    (fn [descriptor]
+      (let [type (str (get descriptor "type"))]
+        (and (contains? settled (get descriptor "turn_id"))
+             (or (contains? gateway-contract/turn-stream-event-types type)
+                 (str/starts-with? type unknown-chunk-type-prefix)))))))
+
 (defn- read-replay!
-  "Read under the event lock. A damaged file invalidates the window, never a partial tail."
+  "Read under the event lock. A damaged file invalidates the window, never a partial tail.
+   A turn that settled inside the window replays only its lifecycle frames."
   [sid cursor]
-  (let [entry (session-entry sid)]
-    (try (mapv event-store/read-event
-               (filter #(> (long (get % "seq")) (long (or cursor 0))) (:events entry)))
+  (let [entry
+        (session-entry sid)
+
+        window
+        (filterv #(> (long (get % "seq")) (long (or cursor 0))) (:events entry))]
+
+    (try (mapv event-store/read-event (remove (settled-turn-stream? window) window))
          (catch Exception e
            (update-session! sid
                             #(assoc %
@@ -1887,7 +1912,7 @@
       (form-activity-chunk->event chunk)
       (let [{:keys [type payload]} (get chunk-events
                                         phase
-                                        {:type (str "chunk." (name phase))
+                                        {:type (str unknown-chunk-type-prefix (name phase))
                                          :payload unknown-chunk-payload})]
         ;; Block deltas are replayable: reconnect applies the same ordered event
         ;; sequence instead of reconstructing text from renderer state.

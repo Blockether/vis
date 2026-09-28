@@ -180,12 +180,16 @@
         (expect (not (document/valid-json? "gateway" "subscription_ready" (dissoc event "goal"))))
         (expect
           (not (document/valid-json? "gateway" "subscription_ready" (assoc event "cursor" "0"))))))
-  (it "derives terminal and queue behavior from event schema annotations"
+  (it "derives terminal, queue and stream behavior from event schema annotations"
       (expect (= #{"turn.completed" "turn.failed" "turn.cancelled"}
                  contract/turn-terminal-event-types))
       (expect (= #{"turn.queued" "turn.queued.deleted" "turn.queued.updated" "turn.queued.drained"
                    "queue.paused" "queue.resumed"}
-                 contract/queue-mirror-event-types)))
+                 contract/queue-mirror-event-types))
+      (expect (= #{"block.activity" "block.output" "block.preview" "block.started"
+                   "content.block.completed" "content.block.delta" "content.block.started"
+                   "iteration.completed" "iteration.error" "provider.retry" "turn.progress"}
+                 contract/turn-stream-event-types)))
   (it "keeps the session-group palette closed, ordered and derived from the schema"
       ;; BLO-167: a group carries a palette TOKEN, never a hex colour, so every
       ;; surface can ink it in its own theme.

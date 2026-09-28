@@ -179,3 +179,47 @@
                                        (state/append-event! sid "block.output" {:output "observed"})
                                        (expect (false? @lock-held?))
                                        (finally (state/remove-event-tap! tap-id))))))))
+
+(defdescribe
+  settled-turn-replay-test
+  (it
+    "replays a turn that settled while the client was away without its stream"
+    (with-replay
+      (fn [sid registry]
+        (with-redefs-fn {#'state/EVENT_RING_MAX (delay 20)}
+          (fn []
+            (doseq [[type payload]
+                    [["turn.started" {:turn_id "settled"}]
+                     ["content.block.delta" {:turn_id "settled" :cumulative "Seen"}]
+                     ["content.block.delta" {:turn_id "settled" :cumulative "Seen, then more"}]
+                     ["block.output" {:turn_id "settled" :output "form"}]
+                     ["chunk.response-parse" {:turn_id "settled"}]
+                     ["context.updated" {:turn_id "settled"}]
+                     ["turn.completed" {:turn_id "settled"}] ["block.output" {:output "unscoped"}]
+                     ["turn.started" {:turn_id "running"}]
+                     ["content.block.delta" {:turn_id "running" :cumulative "Live"}]]]
+              (state/append-event! sid type payload))
+            (let [frames
+                  #(mapv (juxt (fn [event]
+                                 (get event "type"))
+                               (fn [event]
+                                 (get event "turn_id")))
+                         %)
+
+                  resumed
+                  [["context.updated" "settled"] ["turn.completed" "settled"] ["block.output" nil]
+                   ["turn.started" "running"] ["content.block.delta" "running"]]]
+
+              ;; The client saw the turn start and its first delta, then left.
+              (expect (= resumed (frames (state/events-since sid 2))))
+              (expect (= resumed
+                         (frames (state/subscribe! sid
+                                                   "sink"
+                                                   (fn [_])
+                                                   2))))
+              (expect (= (into [["turn.started" "settled"]] resumed)
+                         (frames (state/events-since sid 0))))
+              ;; A cursor inside the running turn still gets every frame.
+              (expect (= [["content.block.delta" "running"]] (frames (state/events-since sid 9))))
+              ;; Only the read is filtered; the ring keeps every stored frame.
+              (expect (= 10 (count (get-in @registry [sid :events])))))))))))

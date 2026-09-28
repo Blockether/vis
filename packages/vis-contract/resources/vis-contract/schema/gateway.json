@@ -2004,37 +2004,47 @@
     "session_event_type": {
       "oneOf": [
         {
-          "const": "block.activity"
+          "const": "block.activity",
+          "x-vis-turn-stream": true
         },
         {
-          "const": "block.output"
+          "const": "block.output",
+          "x-vis-turn-stream": true
         },
         {
-          "const": "block.preview"
+          "const": "block.preview",
+          "x-vis-turn-stream": true
         },
         {
-          "const": "block.started"
+          "const": "block.started",
+          "x-vis-turn-stream": true
         },
         {
-          "const": "content.block.completed"
+          "const": "content.block.completed",
+          "x-vis-turn-stream": true
         },
         {
-          "const": "content.block.delta"
+          "const": "content.block.delta",
+          "x-vis-turn-stream": true
         },
         {
-          "const": "content.block.started"
+          "const": "content.block.started",
+          "x-vis-turn-stream": true
         },
         {
           "const": "context.updated"
         },
         {
-          "const": "iteration.completed"
+          "const": "iteration.completed",
+          "x-vis-turn-stream": true
         },
         {
-          "const": "iteration.error"
+          "const": "iteration.error",
+          "x-vis-turn-stream": true
         },
         {
-          "const": "provider.retry"
+          "const": "provider.retry",
+          "x-vis-turn-stream": true
         },
         {
           "const": "queue.paused",
@@ -2078,7 +2088,8 @@
           "x-vis-turn-terminal": true
         },
         {
-          "const": "turn.progress"
+          "const": "turn.progress",
+          "x-vis-turn-stream": true
         },
         {
           "const": "turn.queued",

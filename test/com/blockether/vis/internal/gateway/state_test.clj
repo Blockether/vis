@@ -27,6 +27,7 @@
             [com.blockether.vis.internal.workspace.drafts :as drafts]
             [com.blockether.vis.internal.workspace.git :as git]
             [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.gateway.event-store :as event-store]
             [lazytest.core :refer [defdescribe expect it]]
             [taoensso.telemere :as tel]))
 
@@ -4477,6 +4478,12 @@
             (expect (not= ::pending res))
             (expect (nil? (get res "error"))))))))
 
+(defn- stored-events
+  "Every frame the replay ring stores for `sid`, including the stream of a settled
+   turn, which client replay omits."
+  [sid]
+  (mapv event-store/read-event (:events (get @@#'state/registry sid))))
+
 (defdescribe
   live-block-close-per-iteration-test
   "A live reasoning/prose block must be CLOSED at the iteration boundary that
@@ -4527,7 +4534,7 @@
                                                 (str/ends-with? (str (get event "block_id"))
                                                                 (str ":" iteration)))
                                        idx))
-                                   (state/events-since sid 0))))
+                                   (stored-events sid))))
 
             idx-of
             (fn [type]
@@ -6009,7 +6016,7 @@
                       {:status :ok :answer nil})]
         (#'state/run-turn! sid tid "hi" {}))
       (let [events
-            (state/events-since sid 0)
+            (stored-events sid)
 
             of-type
             (fn [type]

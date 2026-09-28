@@ -111,6 +111,13 @@
         (comp (filter #(get % "x-vis-turn-terminal")) (map #(get % "const")))
         session-event-variants))
 
+(def turn-stream-event-types
+  "Built-in event types that stream a running turn's body. The turn's transcript
+   supersedes them once it settles."
+  (into #{}
+        (comp (filter #(get % "x-vis-turn-stream")) (map #(get % "const")))
+        session-event-variants))
+
 (def queue-mirror-event-types
   "Queue lifecycle events mirrored by attached channels."
   (into #{}
