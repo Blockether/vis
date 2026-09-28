@@ -370,3 +370,61 @@
               (is (= ["cached"]
                      (mapv #(get % "status")
                            (pyx/sync-packages! {:trust true :project true}))))))))))))
+
+(deftest sync-reports-removed-declaration-as-orphaned
+  (#'fixtures/with-shared-packages
+   (fn [_]
+     (#'fixtures/with-fresh-loaded
+      {}
+      (fn [_ {:keys [ext-dir]}]
+        (let [source
+              (doto (io/file ext-dir "source") .mkdirs)
+
+              directory
+              (str (io/file ext-dir ".vis/extensions"))
+
+              yaml
+              (io/file ext-dir "vis.yml")
+
+              empty-root
+              (doto (io/file ext-dir "empty") .mkdirs)
+
+              statuses
+              #(mapv (fn [result]
+                       (get result "status"))
+                     (pyx/sync-packages! %))]
+
+          (spit (io/file source "pyproject.toml")
+                (str "[project]\nname='vis-orphan-fixture'\nversion='1.0.0'\n"
+                     "description='Orphan extension fixture'\nrequires-python='>=3.11'\n"
+                     "dependencies=['vis-agent>=0.1.0']\n[tool.vis]\ncategory='tools'\n"))
+          (spit (io/file source "extension.py") "# Source admission must not import this file.\n")
+          (spit yaml "extensions: {}\n")
+          (with-redefs [workspace/cwd
+                        (constantly (str ext-dir))
+
+                        config/config-dir
+                        (constantly (str (io/file ext-dir "global")))
+
+                        python-runtime/ensure-project!
+                        identity]
+
+            (pyx/install-package! (str source)
+                                  {:trust true :save true :project true :directory directory})
+            (is (= ["cached"] (statuses {:trust true :project true})))
+            (spit yaml "extensions: {}\n")
+            (is (= ["orphaned"] (statuses {:trust true :project true}))
+                "Removing a declaration reports the installed package without --prune")
+            (is (.exists (io/file directory "vis-orphan-fixture" "current"))
+                "Sync without --prune keeps the installed link"))
+          (with-redefs [workspace/cwd
+                        (constantly (str empty-root))
+
+                        config/config-dir
+                        (constantly (str (io/file empty-root "global")))]
+
+            (spit (io/file empty-root "vis.yml") "extensions: {}\n")
+            (is (= [] (statuses {:trust true})))
+            (is (not (.exists (io/file empty-root ".vis")))
+                "An empty scope without a sync receipt creates no directory or lock")
+            (is (not (.exists (io/file empty-root "global")))))))))))
