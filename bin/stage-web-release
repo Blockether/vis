@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Stage the Companion web app archive. The gateway serves this static build for
+# `vis-agent web`, so installations need no Node. One archive serves every platform.
+#
+#   bin/stage-web-release apps/vis-companion/dist-web vis-web.tar.gz
+#
+# Archive layout:
+#   vis-web/   static web build: index.html, assets/, ...
+set -euo pipefail
+
+die() { printf 'stage-web-release: %s\n' "$@" >&2; exit 1; }
+
+repo_root="$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
+bundle="${VIS_WEB_BUNDLE_DIR:-$repo_root/target/web-release-bundle}"
+build="${1:-}"
+asset="${2:-}"
+
+[[ -n "$build" && -n "$asset" && $# -eq 2 ]] || die "usage: stage-web-release <web-build-dir> <asset.tar.gz>"
+[[ -f "$build/index.html" ]] || die "missing web app build: $build/index.html" \
+  "Build it in apps/vis-companion with: npm run build:web"
+[[ "$asset" == *.tar.gz ]] || die "asset must end in .tar.gz: $asset"
+
+rm -rf "$bundle"
+mkdir -p "$bundle"
+cp -R "$build" "$bundle/vis-web"
+rm -f "$asset"
+tar -C "$bundle" -czf "$asset" vis-web
+printf 'stage-web-release: %s (%s)\n' "$asset" "$(du -sh "$asset" | cut -f1)"

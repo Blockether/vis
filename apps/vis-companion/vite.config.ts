@@ -6,12 +6,13 @@ import pkg from './package.json' with { type: 'json' };
 import {
   devConnectionStorageScript,
   discoverDevGatewayConnections,
+  sameOriginConnectionStorageScript,
 } from './scripts/dev-gateway.ts';
 import { companionBuildInfo } from './scripts/build-info.ts';
 
 const buildInfo = companionBuildInfo();
 // https://vite.dev/config/
-export default defineConfig(async ({ command }) => {
+export default defineConfig(async ({ command, mode }) => {
   const devGateways = command === 'serve' ? await discoverDevGatewayConnections() : [];
   if (command === 'serve') {
     console.info(
@@ -32,12 +33,26 @@ export default defineConfig(async ({ command }) => {
       __VIS_APP_BUILD_NUMBER__: JSON.stringify(buildInfo.buildNumber),
       __VIS_APP_BUILD_COMMIT__: JSON.stringify(buildInfo.commit),
     },
+    // `vite build --mode web` is the bundle a gateway serves from its own root
+    // (`vis-agent web`, attached to every release as vis-web.tar.gz). It gets its
+    // own folder so it never mixes with the Capacitor build in `dist/`.
+    build: { outDir: mode === 'web' ? 'dist-web' : 'dist' },
     plugins: [
       {
         name: 'vis-dev-gateway-autoconnect',
         apply: 'serve',
         transformIndexHtml() {
           const children = devConnectionStorageScript(devGateways);
+          return children ? [{ tag: 'script', children, injectTo: 'head-prepend' as const }] : [];
+        },
+      },
+      {
+        // Only the gateway-served bundle knows its origin is a gateway. Capacitor
+        // builds run on `https://localhost` and must never save that as a machine.
+        name: 'vis-gateway-same-origin',
+        apply: 'build',
+        transformIndexHtml() {
+          const children = mode === 'web' ? sameOriginConnectionStorageScript() : '';
           return children ? [{ tag: 'script', children, injectTo: 'head-prepend' as const }] : [];
         },
       },

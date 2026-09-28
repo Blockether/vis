@@ -2,6 +2,8 @@ node_modules
 .npm-cache
 dist
 dist-ssr
+# `npm run build:web` output: the bundle `vis-agent web` serves from a gateway.
+dist-web
 
 # `storybook build` output. The gallery is READ from source by `npm run
 # storybook`; a built copy is a screenshot of the tree at some past minute.

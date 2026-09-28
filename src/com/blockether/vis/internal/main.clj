@@ -2080,6 +2080,7 @@
      :cmd/doc "Inspect or run an extension-contributed CLI command."
      :cmd/usage "vis-agent extension <list|install|sync|versions|update|rollback|...> [args...]"
      :cmd/subcommands #(registry/registered-under ["extension"])} gateway-cli/command
+    gateway-cli/web-command
     {:cmd/name "python"
      :cmd/doc
      "Run embedded Python, or pass commands unchanged to bundled uv: vis-agent python uv [ARGS...]"
@@ -2392,7 +2393,7 @@
   "Defer gateway Python loading; keep declarative sync free of entrypoint imports
    and the standalone interpreter free of extension loading and its output."
   [args]
-  (or (contains? #{"stdio" "python"} (first args))
+  (or (contains? #{"stdio" "python" "web"} (first args))
       (contains? #{["gateway" "start"] ["gateway" "tui"] ["extension" "sync"]}
                  (vec (take 2 args)))))
 
@@ -2449,6 +2450,8 @@
      "GATEWAY (WHICH DAEMON RUNS THE WORK)"
      (help-row "--gateway HOST[:PORT]|URL" "Drive another machine's gateway (VIS_GATEWAY_URL).")
      (help-row "--gateway-token TOKEN" "Bearer token that gateway requires (VIS_GATEWAY_TOKEN).") ""
+     "WEB APP"
+     (help-row "vis-agent web" "Start the local gateway and open the web app in a browser.") ""
      "DESKTOP APP"
      (help-row "vis-agent desktop" "Open the selected track: release download or dev source build.")
      (help-row "vis-agent desktop --update"

@@ -146,3 +146,45 @@ export function devConnectionStorageScript(connections: DevGatewayConnection[]):
   for (const [key, value] of Object.entries(values)) localStorage.setItem(key, value);
 })();`;
 }
+
+/**
+ * Seed the gateway that served this page as a saved connection before React imports.
+ *
+ * `vite build --mode web` produces the bundle a gateway serves from its own root
+ * (`vis-agent web`), so `location.origin` is always a live gateway. Add that address
+ * when it is missing and make it the default only when nothing is selected yet:
+ * other saved machines, their tokens and names, and the user's current choice stay
+ * as they are. A loopback gateway needs no token; a token-gated one asks for it
+ * through the app's normal pairing flow.
+ */
+export function sameOriginConnectionStorageScript(): string {
+  return `(() => {
+  const origin = location.origin;
+  const read = (key) => {
+    try {
+      return localStorage.getItem('CapacitorStorage.' + key) || localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  };
+  const write = (key, value) => {
+    try {
+      localStorage.setItem(key, value);
+      localStorage.setItem('CapacitorStorage.' + key, value);
+    } catch {}
+  };
+  let stored = [];
+  try {
+    stored = JSON.parse(read('vis.connections') || '[]');
+  } catch {}
+  const saved = (Array.isArray(stored) ? stored : []).filter(
+    (conn) => conn && typeof conn.url === 'string',
+  );
+  if (!saved.some((conn) => conn.url === origin)) {
+    write('vis.connections', JSON.stringify([{ url: origin }, ...saved]));
+  }
+  for (const key of ['vis.primaryConnection', 'vis.activeConnection']) {
+    if (!read(key)) write(key, origin);
+  }
+})();`;
+}

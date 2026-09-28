@@ -18,6 +18,7 @@ def required_assets(tag: str) -> set[str]:
         names.update(
             f"{product}-{platform}.tar.gz" for product in ("vis-agent", "vis-tui")
         )
+    names.add("vis-web.tar.gz")
     names.add(f"vis-companion-{version}-macos-universal.dmg")
     names.add(f"vis-companion-{version}-windows-x64.msi")
     for arch in ("x64", "arm64"):

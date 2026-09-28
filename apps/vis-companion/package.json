@@ -11,6 +11,8 @@
     "predev": "node scripts/version.mjs",
     "build": "tsc -b && vite build",
     "prebuild": "node scripts/version.mjs",
+    "build:web": "tsc -b && vite build --mode web",
+    "prebuild:web": "node scripts/version.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",

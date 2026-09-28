@@ -52,6 +52,37 @@
           (try (client/run-tui! ["/nonexistent/vis-tui"]) false (catch java.io.IOException _ true)))
         (is (= 1 @released))))))
 
+(deftest web-app-holds-the-lease-until-its-gateway-stops-answering
+  ;; `vis-agent web` is the only client an auto-started gateway sees while the
+  ;; browser tab is open, so it keeps its lease until the gateway itself is gone.
+  (let [calls
+        (atom [])
+
+        answers
+        (atom [200 503 200 :down 500 404])]
+
+    (with-redefs-fn {(rv 'ensure-gateway-serving!) (fn [path]
+                                                     (swap! calls conj [:serve path])
+                                                     fake-entry)
+                     (rv 'ensure-client!) (fn [entry]
+                                            (is (= fake-entry entry))
+                                            (swap! calls conj :acquire))
+                     (rv 'gw-send!) (fn [entry method path _]
+                                      (is (= [fake-entry "GET" "/healthz"] [entry method path]))
+                                      (let [[answer] @answers]
+                                        (swap! answers rest)
+                                        (swap! calls conj :check)
+                                        (if (= :down answer)
+                                          (throw (java.net.ConnectException. "refused"))
+                                          {:status answer})))
+                     (rv 'release-client!) #(swap! calls conj :release)}
+      (fn []
+        (is (= 1 (client/run-web! #(swap! calls conj [:ready %]) 0)))
+        (is (= [[:serve "/"] :acquire [:ready "http://127.0.0.1:7890/"] :check :check :check :check
+                :check :check :release]
+               @calls))
+        (is (empty? @answers))))))
+
 ;; Regression: direct API debugging reimplemented registry discovery and authentication
 ;; instead of using the gateway client's canonical transport.
 (deftest request-uses-the-canonical-authenticated-client

@@ -48,6 +48,7 @@
     [com.blockether.vis.internal.gateway.server.transcripts :as transcripts-api]
     [com.blockether.vis.internal.gateway.server.turns :as turns-api]
     [com.blockether.vis.internal.gateway.server.views :as views-api]
+    [com.blockether.vis.internal.gateway.server.web :as web]
     [com.blockether.vis.internal.sandbox.gateway :as gateway-sandbox]
     [com.blockether.vis.internal.gateway.resources :as resources]
     [com.blockether.vis.internal.python.extensions :as python-extensions]
@@ -1593,6 +1594,10 @@
       (wrap-protocol contribs)
       (wrap-scoped-params contribs)
       (wrap-scoped-multipart contribs)
+      ;; The Companion web app is public content like /docs, and a browser
+      ;; navigation carries neither the token nor the protocol header: its files
+      ;; are answered before both gates. Everything else falls through.
+      (web/wrap-web)
       (ring-cookies/wrap-cookies)
       (wrap-errors)
       (wrap-cors)))

@@ -123,6 +123,21 @@ The gateway runs your sessions on the computer where your projects live. See
 [Desktop setup](resources/vis-docs/distributions.md#open-the-desktop-app) for installation
 and launcher options.
 
+## Web app (browser)
+
+Open Vis in a browser on the computer where it is installed:
+
+```bash
+vis-agent web
+```
+
+This starts the gateway if needed and opens the web app in your default browser. The
+gateway serves the web app itself, so you do not need Node.js or another download. Keep
+the command running while you use the app, and press Ctrl-C when you are done. If the
+command reports that the web app is not installed, run `vis-agent update`. See
+[Web app setup](resources/vis-docs/distributions.md#open-the-web-app) for launcher
+options and source checkouts.
+
 ## Companion app (iPhone / Android)
 
 Use your phone to check progress or continue a conversation on the same gateway.

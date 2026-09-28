@@ -135,6 +135,7 @@ jobs:
           expected = {f'{name}-{platform}.tar.gz'
                       for name in ('vis-agent', 'vis-tui')
                       for platform in ('linux-x64', 'linux-arm64', 'macos-arm64')}
+          expected.add('vis-web.tar.gz')
           assets = release['assets']
           assert release['draft'] is True and release['tag_name'] == os.environ['TAG']
           assert release['prerelease'] is True

@@ -803,7 +803,7 @@ update_native() {
   local target="${1:-latest}" track="${2:-release}"
   require_cmd curl "the native runtime"
   require_cmd tar "the native runtime"
-  local asset api dl json archive unpack native_dir tui_asset tui_dl tui_archive tui_unpack
+  local asset api dl json archive unpack native_dir tui_asset tui_dl tui_archive tui_unpack web_dl web_archive web_unpack
   local native_version native_commit _native_metadata
   asset="$(vis_platform_asset)"
   # A named beta build is installed as named; only an unpinned beta resolves the
@@ -832,6 +832,9 @@ update_native() {
   tui_dl="$(vis_asset_url "$json" "$tui_asset")"
   [[ -n "$tui_dl" ]] || die "update: incomplete release: missing $tui_asset" \
       "The engine and terminal client must come from the same release."
+  # One web app build serves every platform. Releases that predate it install
+  # without one; `vis-agent web` then explains how to get it.
+  web_dl="$(vis_asset_url "$json" vis-web.tar.gz)"
   # Where the private runtime belongs: beside an installed launcher, or in Vis
   # state when the launcher is a tracked checkout file we must never overwrite.
   if (( launcher_is_git_owned )); then
@@ -848,19 +851,27 @@ update_native() {
   unpack="$(mktemp -d "${TMPDIR:-/tmp}/vis-agent-unpack.XXXXXX")"
   tui_archive="$(mktemp "${TMPDIR:-/tmp}/vis-tui-bundle.XXXXXX.tar.gz")"
   tui_unpack="$(mktemp -d "${TMPDIR:-/tmp}/vis-tui-unpack.XXXXXX")"
-  trap 'rm -rf "$unpack" "$archive" "$tui_unpack" "$tui_archive"' EXIT
+  web_archive="$(mktemp "${TMPDIR:-/tmp}/vis-web-bundle.XXXXXX.tar.gz")"
+  web_unpack="$(mktemp -d "${TMPDIR:-/tmp}/vis-web-unpack.XXXXXX")"
+  trap 'rm -rf "$unpack" "$archive" "$tui_unpack" "$tui_archive" "$web_unpack" "$web_archive"' EXIT
   say "downloading $dl"
   curl -fSL "$dl" -o "$archive" || exit 1
   tar -xzf "$archive" -C "$unpack" || exit 1
   say "downloading $tui_dl"
   curl -fSL "$tui_dl" -o "$tui_archive" || exit 1
   tar -xzf "$tui_archive" -C "$tui_unpack" || exit 1
+  if [[ -n "$web_dl" ]]; then
+    say "downloading $web_dl"
+    curl -fSL "$web_dl" -o "$web_archive" || exit 1
+    tar -xzf "$web_archive" -C "$web_unpack" || exit 1
+  fi
   [[ -x "$unpack/vis-agent" && -x "$unpack/vis-agent-native" && -s "$unpack/vis-agent-native.build" ]] || \
     die "update: the release bundle is missing its launcher, native runtime or build stamp"
   if [[ ! -d "$unpack/vis-agent-python/python" ]] || ! compgen -G "$unpack/vis-agent-python/libvispython.*" >/dev/null; then
     die "update: the release bundle is missing its Python runtime"
   fi
   [[ -x "$tui_unpack/vis-tui" ]] || die "update: the release bundle is missing its terminal client"
+  [[ -z "$web_dl" || -f "$web_unpack/vis-web/index.html" ]] || die "update: the release web app bundle is missing its index.html"
   read -r native_version native_commit _native_metadata < "$unpack/vis-agent-native.build" || \
     die "update: invalid build stamp; native installation unchanged."
   say "selected native $native_version revision $native_commit ($track)"
@@ -888,6 +899,10 @@ update_native() {
   # downgrade and hand the runtime an interpreter it was not built against.
   rm -rf "$native_dir/vis-agent-python"
   mv -f "$unpack/vis-agent-python" "$native_dir/vis-agent-python"
+  # The gateway serves the web app from beside its runtime. Clear it the same way,
+  # so a release without one never serves an app built for another version.
+  rm -rf "$native_dir/vis-web"
+  [[ -z "$web_dl" ]] || mv -f "$web_unpack/vis-web" "$native_dir/vis-web"
   if (( launcher_is_git_owned )); then
     # Never overwrite a tracked development launcher: the released one lives in
     # Vis state; source stays the checkout's responsibility.
@@ -899,9 +914,9 @@ update_native() {
     mv -f "$unpack/vis-agent" "$launcher_path"
     [[ ! -f "$unpack/install-vis-agent" ]] || mv -f "$unpack/install-vis-agent" "$bin_dir/install-vis-agent"
   fi
-  rm -rf "$unpack" "$archive" "$tui_unpack" "$tui_archive"
+  rm -rf "$unpack" "$archive" "$tui_unpack" "$tui_archive" "$web_unpack" "$web_archive"
   trap - EXIT
-  say "installed launcher + native runtime + Python + TUI: $native_version revision $native_commit ($track)"
+  say "installed launcher + native runtime + Python + TUI${web_dl:+ + web app}: $native_version revision $native_commit ($track)"
 }
 
 vis_update_usage() {
@@ -1442,6 +1457,37 @@ vis_update_desktop() {
   fi
 }
 
+# `vis-agent web` from a source checkout: the gateway serves the Companion's static
+# web build, so build it when it is missing or older than its sources. Release
+# installations ship that build prebuilt and need no Node.
+vis_prepare_dev_web() {
+  local source="$1" companion build cmd
+  companion="$source/apps/vis-companion"
+  build="$companion/dist-web"
+  [[ -f "$companion/package.json" ]] || die "web: no Companion source in $source"
+  if [[ -f "$build/index.html" && -z "$(find "$companion/src" "$companion/public" "$companion/index.html" \
+        "$companion/package.json" "$companion/package-lock.json" "$companion/vite.config.ts" \
+        "$companion"/tsconfig*.json "$companion/scripts/dev-gateway.ts" "$source/VIS_VERSION" \
+        -newer "$build/index.html" -print -quit 2>/dev/null)" ]]; then
+    export VIS_WEB_DIR="$build"
+    return 0
+  fi
+  for cmd in node npm; do
+    command -v "$cmd" >/dev/null 2>&1 || die "web: building the web app from source needs '$cmd' on PATH" \
+      "Install Node.js and npm, or use a release installation: vis-agent update"
+  done
+  say "building the web app from $companion"
+  if ! (
+    cd "$companion" &&
+      { [[ node_modules/.package-lock.json -nt package-lock.json ]] || npm ci; } &&
+      npm run build:web
+  ); then
+    die "web: the web app build failed; nothing was opened"
+  fi
+  [[ -f "$build/index.html" ]] || die "web: the build did not produce $build/index.html"
+  export VIS_WEB_DIR="$build"
+}
+
 # ── Wrapper-owned commands. The Vis app never sees these. ────────────────────
 case "${1:-}" in
   runtime) die "unknown command: runtime" "Run: vis-agent update --help" ;;
@@ -1531,6 +1577,10 @@ case "$runtime" in
         [[ -z "${VIS_PYTHON_NATIVE_PATH:-}" ]] || break
       done
     fi
+    # The gateway serves the web app from the static build installed beside this
+    # runtime, so `vis-agent web` needs no Node. The folder is named even before
+    # `vis-agent update` installs it: the gateway looks it up per request.
+    export VIS_WEB_DIR="${VIS_WEB_DIR:-$native_home/vis-web}"
     stream_trace_args=()
     if stream_trace_on; then stream_trace_args=("-Dsvar.stream.trace=true"); fi
     run_measured_or_exec "process native runtime" "$native_runtime" "-Duser.home=${HOME:-$vis_home}" ${trust_native_args[@]+"${trust_native_args[@]}"} ${stream_trace_args[@]+"${stream_trace_args[@]}"} "$@"
@@ -1548,6 +1598,17 @@ case "$runtime" in
     if ! ensure_clojure_cli; then
       die "the source runtime needs the Clojure CLI" \
           "Automatic installation failed; set VIS_NO_AUTO_INSTALL=1 to disable it"
+    fi
+    # A source checkout serves its own Companion web build, and `vis-agent web`
+    # builds it first when it is missing or stale. Every other command names the
+    # build folder too: the gateway looks it up per request, so a gateway started
+    # before the first build serves it without a restart.
+    if [[ -z "${VIS_WEB_DIR:-}" ]]; then
+      if [[ "${1:-}" == web && " $* " != *" --help "* && " $* " != *" -h "* ]]; then
+        vis_prepare_dev_web "$source_root"
+      else
+        export VIS_WEB_DIR="$source_root/apps/vis-companion/dist-web"
+      fi
     fi
     ;;
 esac

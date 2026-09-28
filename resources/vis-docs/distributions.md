@@ -21,6 +21,8 @@ the same gateway from Windows, macOS or Linux.
   running](#how-you-learn-that-a-newer-version-is-running).
 - **You want the desktop app.** [Open the desktop app](#open-the-desktop-app) for
   your platform and release track.
+- **You want Vis in a browser.** [Open the web app](#open-the-web-app) that your gateway
+  serves.
 
 To add Java or Clojure code inside the engine, see [Native builds for Java and
 Clojure extensions](jvm-native-image.md).
@@ -220,6 +222,28 @@ Help and version commands do not start a gateway. Direct `vis-tui` execution
 remains a connection-only client; use `vis-agent tui` for automatic local
 lifecycle management.
 
+## Open the web app
+
+The web app is the Companion app, served by your own gateway. Use it when you want Vis
+in a browser on the computer where it is installed, without installing a desktop app.
+
+```bash
+vis-agent web             # start the gateway if needed and open the web app
+vis-agent web --no-open   # print the address without opening a browser
+```
+
+The command prints the address it opens. Keep it running while you use the app, and
+press Ctrl-C when you are done. If the gateway stops answering, the command ends and
+tells you.
+
+Release and beta builds include the web app, and `vis-agent update` installs it beside
+the native runtime, so you do not need Node.js. If `vis-agent web` reports that the web
+app is not installed, run `vis-agent update`. On the dev track, which runs Vis from
+source, the first `vis-agent web` builds the web app with Node.js and npm, and later
+runs rebuild it only after the Companion sources change. A gateway that is already
+running serves the new build without a restart. To serve a different build, set
+`VIS_WEB_DIR` to a directory that contains its `index.html` before the gateway starts.
+
 <a id="windows-app"></a>
 
 ## Open the desktop app
@@ -369,6 +393,7 @@ stable release, and does not publish mobile or desktop applications.
 | `~/.local/bin/vis-agent-native` | Installed native engine |
 | `~/.local/bin/vis-agent-python/` | Its bundled Python worker and interpreter |
 | `~/.local/bin/vis-tui` | Matching native terminal client |
+| `~/.local/bin/vis-web/` | Web app that the gateway serves |
 | `~/.vis/install/desktop/` | Downloaded desktop apps, grouped by platform and version |
 | `~/.vis/install/track` | Selection used for subsequent launches |
 | `~/.vis/install/src` | Managed dev checkout at a detached main commit |

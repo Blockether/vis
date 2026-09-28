@@ -32,6 +32,7 @@
     [com.blockether.vis.internal.gateway.server.transcripts :as transcripts-api]
     [com.blockether.vis.internal.gateway.server.turns :as turns-api]
     [com.blockether.vis.internal.gateway.server.views :as views-api]
+    [com.blockether.vis.internal.gateway.server.web :as web]
     [com.blockether.vis.internal.gateway.state :as state]
     [com.blockether.vis.internal.gateway.view :as gw-view]
     [com.blockether.vis.internal.gateway.wiring :as wiring]
@@ -3060,6 +3061,62 @@
 (defn- bound-port
   [^org.eclipse.jetty.server.Server server]
   (.getLocalPort ^org.eclipse.jetty.server.ServerConnector (first (.getConnectors server))))
+
+(deftest web-app-is-served-before-the-token-gate
+  ;; `vis-agent web` opens a browser on the gateway root. A navigation carries no
+  ;; token and no protocol header, so the app's files answer before both gates,
+  ;; through the real Jetty adapter, while the API behind them stays token-gated.
+  (let [dir (io/file (System/getProperty "java.io.tmpdir") (str "vis-web-" (random-uuid)))]
+    (try (io/make-parents (io/file dir "assets" "index-abc123.js"))
+         (spit (io/file dir "index.html") "<!doctype html><title>Vis</title>")
+         (spit (io/file dir "assets" "index-abc123.js") "console.log('vis');")
+         (with-server-state!
+           {:require-token? true}
+           (fn []
+             (with-redefs [web/configured-dir (constantly (str dir))]
+               (let [server (jetty/run-jetty ((rv 'app) "sekret" [])
+                                             {:port 0 :host "127.0.0.1" :join? false})
+                     base (str "http://127.0.0.1:" (bound-port server))]
+
+                 (try (let [page (http/get (str base "/") {:throw false})
+                            head (http/head (str base "/") {:throw false})
+                            asset (http/get (str base "/assets/index-abc123.js") {:throw false})
+                            api (http/get (str base "/v1/sessions")
+                                          {:headers {"X-Vis-Protocol"
+                                                     (str gateway-contract/protocol-version)}
+                                           :throw false})]
+
+                        (is (= 200 (:status page)))
+                        (is (= "<!doctype html><title>Vis</title>" (:body page)))
+                        (is (= "text/html; charset=utf-8" (get-in page [:headers "content-type"])))
+                        (is (= "no-cache" (get-in page [:headers "cache-control"])))
+                        (is (= "DENY" (get-in page [:headers "x-frame-options"])))
+                        (is (= 200 (:status head)))
+                        (is (str/blank? (:body head)))
+                        (is (= 200 (:status asset)))
+                        (is (= "text/javascript; charset=utf-8"
+                               (get-in asset [:headers "content-type"])))
+                        (is (= "public, max-age=31536000, immutable"
+                               (get-in asset [:headers "cache-control"])))
+                        (is (= 401 (:status api))))
+                      (finally (.stop server)))))))
+         (finally (run! io/delete-file (reverse (file-seq dir)))))))
+
+(deftest attachment-bytes-never-run-as-the-gateway-origin
+  ;; The web app shares the gateway origin and keeps saved gateway tokens there,
+  ;; so an agent-made HTML file opened from its URL must render sandboxed.
+  (with-redefs [state/user-iteration-attachments
+                (constantly [{:media-type "text/html"}])
+
+                state/attachment-bytes
+                (constantly (.getBytes "<script>alert(1)</script>" "UTF-8"))]
+
+    (let [response (#'turns-api/attachment-bytes-handler
+                    {:path-params {:sid (str (random-uuid)) :iid "iteration" :idx "0"}})]
+      (is (= 200 (:status response)))
+      (is (= "text/html" (get-in response [:headers "Content-Type"])))
+      (is (= "sandbox" (get-in response [:headers "Content-Security-Policy"])))
+      (is (= "nosniff" (get-in response [:headers "X-Content-Type-Options"]))))))
 
 (deftest pair-bind-still-answers-on-loopback
   (testing

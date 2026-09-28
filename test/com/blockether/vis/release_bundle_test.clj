@@ -224,8 +224,8 @@
 
 (defn- with-native-install-fixture
   "Exercise installed commands with local release archives; Git/JVM are denied by default."
-  [{:keys [installer? installed? missing-worker? missing-tui? track previous-track prepare!
-           build-commit extra-env target desktop desktop-fail?]} f]
+  [{:keys [installer? installed? missing-worker? missing-tui? web? broken-web? stale-web? track
+           previous-track prepare! build-commit extra-env target desktop desktop-fail?]} f]
   (let [root
         (.toFile (Files/createTempDirectory "vis-native-install-" (make-array FileAttribute 0)))
 
@@ -259,6 +259,12 @@
         tui-archive
         (io/file root "tui.tar.gz")
 
+        web
+        (io/file root "web")
+
+        web-archive
+        (io/file root "web.tar.gz")
+
         desktop-dir
         (io/file home ".vis/install/desktop/linux-x64")
 
@@ -270,6 +276,7 @@
          "VIS_TEST_URLS" (.getAbsolutePath urls)
          "VIS_TEST_ARCHIVE" (.getAbsolutePath archive)
          "VIS_TEST_TUI_ARCHIVE" (.getAbsolutePath tui-archive)
+         "VIS_TEST_WEB_ARCHIVE" (.getAbsolutePath web-archive)
          "VIS_TEST_DESKTOP_FAIL" (if desktop-fail? "1" "0")}
 
         env
@@ -301,6 +308,19 @@
       (doseq [[dir dest] [[payload archive] [tui tui-archive]]]
         (let [{:keys [exit output]} (run-bash ["tar" "-czf" (.getAbsolutePath ^java.io.File dest)
                                                "-C" (.getAbsolutePath ^java.io.File dir) "."]
+                                              {})]
+          (expect (zero? exit) output)))
+      (when stale-web?
+        (let [app (io/file bin "vis-web/index.html")]
+          (io/make-parents app)
+          (spit app "stale-web")))
+      ;; Staged like bin/stage-web-release: one top-level `vis-web/` directory.
+      (when (or web? broken-web?)
+        (let [app (io/file web "vis-web" (if broken-web? "app.js" "index.html"))]
+          (io/make-parents app)
+          (spit app "web-app"))
+        (let [{:keys [exit output]} (run-bash ["tar" "-czf" (.getAbsolutePath web-archive) "-C"
+                                               (.getAbsolutePath web) "vis-web"]
                                               {})]
           (expect (zero? exit) output)))
       (doseq [tool ["git" "java" "clojure"]]
@@ -336,9 +356,12 @@
           "  */releases/latest|*/releases/tags/v9.9.9) printf '%s' '"
           "{\"assets\":[{\"browser_download_url\":\"https://github.com/example/vis/releases/download/v9.9.9/vis-agent-linux-x64.tar.gz\"},"
           "{\"browser_download_url\":\"https://github.com/example/vis/releases/download/v9.9.9/vis-companion-9.9.9-linux-x64.AppImage\"},"
+          (when (or web? broken-web?)
+            "{\"browser_download_url\":\"https://github.com/example/vis/releases/download/v9.9.9/vis-web.tar.gz\"},")
           "{\"browser_download_url\":\"https://github.com/example/vis/releases/download/v9.9.9/vis-tui-linux-x64.tar.gz\"}]}' ;;\n"
           "  */vis-agent-linux-x64.tar.gz) cp \"$VIS_TEST_ARCHIVE\" \"$dest\" ;;\n"
           "  */vis-tui-linux-x64.tar.gz) cp \"$VIS_TEST_TUI_ARCHIVE\" \"$dest\" ;;\n"
+          "  */vis-web.tar.gz) cp \"$VIS_TEST_WEB_ARCHIVE\" \"$dest\" ;;\n"
           "  */vis-companion-9.9.9-linux-x64.AppImage)\n"
           "    [[ ${VIS_TEST_DESKTOP_FAIL:-0} != 1 ]] || exit 22\n"
           "    printf '#!/usr/bin/env bash\\necho desktop-app\\n' > \"$dest\" ;;\n"
@@ -537,8 +560,38 @@
                                    (fn [{:keys [exit output urls]}]
                                      (expect (zero? exit) output)
                                      (expect (str/includes? urls "/releases/latest") urls))))
+  (it "installs the release web app beside the native runtime and serves it without Node"
+      (with-native-install-fixture
+        {:installed? true :web? true :stale-web? true}
+        (fn [{:keys [exit output bin native launcher env urls]}]
+          (expect (zero? exit) output)
+          (expect (str/includes? urls "/vis-web.tar.gz") urls)
+          (expect (str/includes? output "TUI + web app:") output)
+          (expect (= "web-app" (slurp (io/file bin "vis-web/index.html"))))
+          (write-executable! native
+                             "#!/usr/bin/env bash\nprintf 'web=%s\\n' \"${VIS_WEB_DIR:-}\"\n")
+          (let [{:keys [output]} (run-bash ["bash" (.getAbsolutePath launcher) "web" "--no-open"]
+                                           env)]
+            (expect (str/includes? output (str "web=" (.getCanonicalPath (io/file bin "vis-web"))))
+                    output)))))
+  (it "removes an installed web app when the new release publishes none"
+      (with-native-install-fixture
+        {:installed? true :stale-web? true}
+        (fn [{:keys [exit output bin native launcher env urls]}]
+          (expect (zero? exit) output)
+          (expect (not (str/includes? urls "vis-web")) urls)
+          (expect (not (str/includes? output "web app")) output)
+          (expect (not (.exists (io/file bin "vis-web"))))
+          ;; The folder is still named, so a gateway started now serves the web app
+          ;; that a later update installs.
+          (write-executable! native
+                             "#!/usr/bin/env bash\nprintf 'web=%s\\n' \"${VIS_WEB_DIR:-}\"\n")
+          (let [{:keys [output]} (run-bash ["bash" (.getAbsolutePath launcher) "web" "--no-open"]
+                                           env)]
+            (expect (str/includes? output (str "web=" (.getCanonicalPath (io/file bin "vis-web"))))
+                    output)))))
   (it "rejects incomplete bundles before replacing any installed component"
-      (doseq [missing [:missing-worker? :missing-tui?]]
+      (doseq [missing [:missing-worker? :missing-tui? :broken-web?]]
         (with-native-install-fixture {:installed? true missing true}
                                      (fn [{:keys [exit output native]}]
                                        (expect (not (zero? exit)) output)
@@ -829,6 +882,49 @@
                         (->> (.listFiles bundle-dir)
                              (map #(.getName ^java.io.File %))
                              set))))
+           (finally (delete-tree! root))))))
+
+(defdescribe
+  stage-web-release-test
+  (it
+    "packs the web build under one vis-web directory and rejects a missing build"
+    (let [root
+          (.toFile (Files/createTempDirectory "vis-web-release-test-" (make-array FileAttribute 0)))
+
+          build
+          (io/file root "dist-web")
+
+          bundle-dir
+          (io/file root "bundle")
+
+          asset
+          (io/file root "vis-web.tar.gz")
+
+          stage!
+          (fn []
+            (run-bash ["bash" "bin/stage-web-release" (.getAbsolutePath build)
+                       (.getAbsolutePath asset)]
+                      {"VIS_WEB_BUNDLE_DIR" (.getAbsolutePath bundle-dir)}))]
+
+      (try (let [{:keys [exit output]} (stage!)]
+             (expect (not= 0 exit) output)
+             (expect (str/includes? output "missing web app build") output))
+           (doseq [path ["index.html" "assets/index.js"]]
+             (let [file (io/file build path)]
+               (io/make-parents file)
+               (spit file path)))
+           (let [{:keys [exit output]} (stage!)]
+             (expect (= 0 exit) output)
+             (expect (.isFile asset) output)
+             (expect (= #{"vis-web"}
+                        (->> (.listFiles bundle-dir)
+                             (map #(.getName ^java.io.File %))
+                             set))))
+           ;; The launcher installs `vis-web/` from the archive as one directory.
+           (let [{:keys [exit output]} (run-bash ["tar" "-tzf" (.getAbsolutePath asset)] {})]
+             (expect (= 0 exit) output)
+             (expect (str/includes? output "vis-web/index.html") output)
+             (expect (str/includes? output "vis-web/assets/index.js") output))
            (finally (delete-tree! root))))))
 
 ;; Regression #148: keep build provenance in the bundle, not a second CLI surface.
@@ -1477,7 +1573,7 @@
 (defdescribe
   native-asset-upload-test
   (it
-    "uploads native assets to a verified draft without rewriting release metadata"
+    "uploads native and web assets to a verified draft without rewriting release metadata"
     ;; Native beta jobs passed their checks but GitHub rejected the release metadata PATCH.
     (let [workflow
           (slurp ".github/workflows/native-release.yml")
@@ -1485,7 +1581,9 @@
           uploads
           (re-seq #"(?ms)^      - name: Verify draft before attaching\n(.*?)(?=^  \S|\z)" workflow)]
 
-      (expect (= 2 (count uploads)))
+      ;; Linux and macOS attach engine and TUI; one job attaches the platform-independent web app.
+      (expect (= {false 2 true 1}
+                 (frequencies (map #(str/includes? (second %) "vis-web.tar.gz") uploads))))
       (expect (not (str/includes? workflow "softprops/action-gh-release")))
       (doseq [[_ steps] uploads]
         (expect (= 2 (count (re-seq #"if: steps.target.outputs.publish == 'true'" steps))))
@@ -1493,7 +1591,9 @@
                           "tag: ${{ inputs.tag || github.ref_name }}"
                           "GH_TOKEN: ${{ github.token }}"
                           "RELEASE_TAG: ${{ inputs.tag || github.ref_name }}" "set -euo pipefail"
-                          "gh release upload \"$RELEASE_TAG\" \"$VIS_ASSET\" \"$VIS_TUI_ASSET\""
+                          (if (str/includes? steps "vis-web.tar.gz")
+                            "gh release upload \"$RELEASE_TAG\" vis-web.tar.gz"
+                            "gh release upload \"$RELEASE_TAG\" \"$VIS_ASSET\" \"$VIS_TUI_ASSET\"")
                           "--repo \"$GITHUB_REPOSITORY\" --clobber"]]
           (expect (str/includes? steps contract) contract))
         (expect (< (.indexOf ^String steps "require-draft-release")
@@ -1521,8 +1621,11 @@
                                "TEST_CALLS" (.getAbsolutePath calls)
                                "TEST_UPLOAD_EXIT" (str status)})]
                 (expect (= status exit) output)
-                (expect (= ["release" "upload" "beta-fixture" "engine archive.tar.gz"
-                            "tui archive.tar.gz" "--repo" "example/vis" "--clobber"]
+                (expect (= (concat ["release" "upload" "beta-fixture"]
+                                   (if (str/includes? steps "vis-web.tar.gz")
+                                     ["vis-web.tar.gz"]
+                                     ["engine archive.tar.gz" "tui archive.tar.gz"])
+                                   ["--repo" "example/vis" "--clobber"])
                            (str/split-lines (slurp calls))))))
             (finally (delete-tree! dir))))))))
 
@@ -1816,13 +1919,14 @@
             (apply str (repeat 40 "a"))
 
             assets
-            (vec (for [name
-                       ["vis-agent" "vis-tui"]
+            (conj (vec (for [name
+                             ["vis-agent" "vis-tui"]
 
-                       platform
-                       ["linux-x64" "linux-arm64" "macos-arm64"]]
+                             platform
+                             ["linux-x64" "linux-arm64" "macos-arm64"]]
 
-                   {:name (str name "-" platform ".tar.gz") :size 123 :state "uploaded"}))
+                         {:name (str name "-" platform ".tar.gz") :size 123 :state "uploaded"}))
+                  {:name "vis-web.tar.gz" :size 123 :state "uploaded"})
 
             metadata
             {:tag_name (str "beta-" sha) :draft true :prerelease true :assets assets}]
@@ -2752,6 +2856,126 @@
             (expect (= "release\n" (slurp track-file)))))
         (finally (delete-tree! root))))))
 
+;; `vis-agent web` serves the Companion's static build. Releases ship it; a source
+;; checkout builds it only when it is missing or older than its sources.
+(defdescribe
+  source-web-app-test
+  (it
+    "builds the source web app only when missing or stale and points the engine at it"
+    (let [root
+          (.toFile (Files/createTempDirectory "vis-source-web-" (make-array FileAttribute 0)))
+
+          home
+          (doto (io/file root "home") .mkdirs)
+
+          bin
+          (doto (io/file root "bin") .mkdirs)
+
+          source
+          (doto (io/file home ".vis/install/src") .mkdirs)
+
+          companion
+          (io/file source "apps/vis-companion")
+
+          index
+          (io/file companion "dist-web/index.html")
+
+          npm-log
+          (io/file root "npm-calls")
+
+          launcher
+          (io/file bin "vis-agent")
+
+          env
+          {"HOME" (.getAbsolutePath home)
+           "VIS_HOME" (.getAbsolutePath (io/file home ".vis"))
+           "VIS_GATEWAY_URL" ""
+           "VIS_NO_AUTO_INSTALL" "1"
+           "VIS_TEST_NPM_CALLS" (.getAbsolutePath npm-log)
+           "PATH" (str (.getAbsolutePath bin) ":" (System/getenv "PATH"))}
+
+          launch!
+          (fn [args extra-env]
+            (run-bash (into ["bash" (.getAbsolutePath launcher)] args) (merge env extra-env)))
+
+          served
+          (fn [output]
+            (some->> (re-find #"web=(\S+)" output)
+                     second
+                     io/file
+                     .getCanonicalPath))
+
+          npm-calls
+          (fn []
+            (if (.exists npm-log) (str/split-lines (slurp npm-log)) []))
+
+          now
+          (System/currentTimeMillis)]
+
+      (try
+        (io/copy (io/file "bin/vis-agent") launcher)
+        (spit (io/file source "deps.edn") "{}")
+        (io/make-parents (io/file companion "src/main.ts"))
+        (doseq [path ["package.json" "package-lock.json" "src/main.ts"]]
+          (spit (io/file companion path) "{}"))
+        (doseq [path ["package.json" "package-lock.json" "src/main.ts" "src"]]
+          (.setLastModified (io/file companion path) (- now 60000)))
+        (write-executable!
+          (io/file bin "clojure")
+          (str
+            "#!/usr/bin/env bash\n"
+            "for arg in \"$@\"; do if [[ \"$arg\" == -Spath ]]; then printf src:resources; exit 0; fi; done\n"
+            "printf '<%s>' \"$@\"\nprintf ' web=%s\\n' \"${VIS_WEB_DIR:-}\"\n"))
+        (write-executable! (io/file bin "node") "#!/usr/bin/env bash\nexit 0\n")
+        (write-executable!
+          (io/file bin "npm")
+          (str "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$VIS_TEST_NPM_CALLS\"\n"
+               "case \"$*\" in\n"
+               "  ci) mkdir -p node_modules && : > node_modules/.package-lock.json ;;\n"
+               "  'run build:web') [[ ${VIS_TEST_NPM_FAIL:-0} != 1 ]] || exit 1\n"
+               "    mkdir -p dist-web && printf built > dist-web/index.html ;;\nesac\n"))
+        ;; Before the first build every other command still names the build folder,
+        ;; so a gateway it starts serves the build once `vis-agent web` makes it.
+        (let [{:keys [exit output]} (launch! ["--version" "--jvm"] {})]
+          (expect (zero? exit) output)
+          (expect (not (.exists index)) output)
+          (expect (= (.getCanonicalPath (.getParentFile index)) (served output)) output)
+          (expect (= [] (npm-calls)) output))
+        ;; Missing: install dependencies, build, then hand the build to the engine.
+        (let [{:keys [exit output]} (launch! ["web" "--no-open" "--jvm"] {})]
+          (expect (zero? exit) output)
+          (expect (str/includes? output "<-M:vis><web><--no-open>") output)
+          (expect (= (.getCanonicalPath (.getParentFile index)) (served output)) output)
+          (expect (= ["ci" "run build:web"] (npm-calls))))
+        ;; Current: serve the existing build without running npm.
+        (.setLastModified index (+ now 60000))
+        (let [{:keys [exit output]} (launch! ["web" "--jvm"] {})]
+          (expect (zero? exit) output)
+          (expect (= (.getCanonicalPath (.getParentFile index)) (served output)) output)
+          (expect (= ["ci" "run build:web"] (npm-calls))))
+        ;; Stale: rebuild with the dependencies already installed.
+        (.setLastModified (io/file companion "src/main.ts") (+ now 120000))
+        (let [{:keys [exit output]} (launch! ["web" "--jvm"] {})]
+          (expect (zero? exit) output)
+          (expect (= ["ci" "run build:web" "run build:web"] (npm-calls))))
+        ;; Help, other commands and an explicit directory never build.
+        (doseq [[args extra-env expected] [[["web" "--help" "--jvm"] {} "<-M:vis><web><--help>"]
+                                           [["--version" "--jvm"] {} "<-M:vis><--version>"]
+                                           [["web" "--jvm"] {"VIS_WEB_DIR" "/srv/vis-web"}
+                                            "<-M:vis><web> web=/srv/vis-web"]]]
+          (let [{:keys [exit output]} (launch! args extra-env)]
+            (expect (zero? exit) output)
+            (expect (str/includes? output expected) output)
+            (expect (= 3 (count (npm-calls))) output)))
+        (let [{:keys [output]} (launch! ["--version" "--jvm"] {})]
+          (expect (= (.getCanonicalPath (.getParentFile index)) (served output)) output))
+        ;; A failed build opens nothing.
+        (let [{:keys [exit output]} (launch! ["web" "--jvm"] {"VIS_TEST_NPM_FAIL" "1"})]
+          (expect (not (zero? exit)) output)
+          (expect (str/includes? output "the web app build failed") output)
+          (expect (not (str/includes? output "<-M:vis>")) output))
+        (finally (delete-tree! root))))))
+
 ;; Regression: source launches accepted old Java and coupled users to the native-build pin.
 (defdescribe
   java-runtime-selection-test
@@ -3399,9 +3623,9 @@
        (run-bash
          ["python3" "-c"
           (str
-            "import runpy\n"
-            "m = runpy.run_path('bin/verify-release-assets.py')\n" "tag = 'v9.8.7'\n"
-            "names = m['required_assets'](tag)\n" "assert len(names) == 16, names\n"
+            "import runpy\n" "m = runpy.run_path('bin/verify-release-assets.py')\n"
+            "tag = 'v9.8.7'\n" "names = m['required_assets'](tag)\n"
+            "assert len(names) == 17, names\n" "assert 'vis-web.tar.gz' in names, names\n"
             "windows = 'vis-companion-9.8.7-windows-x64.msi'\n" "assert windows in names, names\n"
             "release = {'tag_name': tag, 'draft': True, 'prerelease': False, 'assets': "
             "[{'name': n, 'size': 42, 'state': 'uploaded'} for n in names]}\n"

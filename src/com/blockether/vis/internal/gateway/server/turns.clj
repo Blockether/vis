@@ -390,7 +390,12 @@
          :headers {"Content-Type" (or (not-empty (str (:media-type att)))
                                       "application/octet-stream")
                    "Content-Length" (str (alength bs))
-                   "Cache-Control" "private, max-age=31536000, immutable"}
+                   "Cache-Control" "private, max-age=31536000, immutable"
+                   ;; The web app shares this origin (`vis-agent web`) and keeps its
+                   ;; saved gateway tokens there. An agent-made HTML or SVG file opened
+                   ;; straight from this URL must not run script as that origin.
+                   "Content-Security-Policy" "sandbox"
+                   "X-Content-Type-Options" "nosniff"}
          :body (java.io.ByteArrayInputStream. bs)}
         (http/error-response 404
                              :attachment-not-found "unknown attachment"

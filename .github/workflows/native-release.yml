@@ -6,6 +6,7 @@ name: Native Release
 #
 #   vis-agent-<os>-<arch>.tar.gz — engine wrapper, native runtime and CPython
 #   vis-tui-<os>-<arch>.tar.gz              — standalone HTTP/SSE terminal client
+#   vis-web.tar.gz                          — Companion web app the gateway serves
 #
 # Speech models download on first use. Each artifact carries only its build host's
 # native libraries. No JVM uberjar is published; libraries still go to Clojars.
@@ -326,6 +327,65 @@ jobs:
         run: |
           set -euo pipefail
           gh release upload "$RELEASE_TAG" "$VIS_ASSET" "$VIS_TUI_ASSET" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
+  # ── Web app ────────────────────────────────────────────────────────────────
+  # The Companion's static web build, served by the gateway for `vis-agent web`.
+  # One archive serves every platform, so installations never need Node.
+  web:
+    name: web / vis-web.tar.gz
+    if: inputs.only != 'macos'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Branch dispatches are dry runs; version tags may attach only to a draft.
+      - name: Decide where this build lands
+        id: target
+        shell: bash
+        run: |
+          ref='${{ inputs.tag || github.ref_name }}'
+          case "$ref" in
+            v[0-9]*) echo 'publish=true' >> "$GITHUB_OUTPUT"; echo 'track=release' >> "$GITHUB_OUTPUT" ;;
+            beta-*)
+              [[ "$ref" =~ ^beta-[0-9a-f]{40}$ ]] || exit 1
+              echo 'publish=true' >> "$GITHUB_OUTPUT"; echo 'track=beta' >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo 'publish=false' >> "$GITHUB_OUTPUT"; echo 'track=dry-run' >> "$GITHUB_OUTPUT" ;;
+          esac
+      # Tag recovery builds the immutable tag's source and may update only its draft.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: ./.github/actions/require-draft-release
+        if: steps.target.outputs.publish == 'true'
+        with:
+          tag: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/vis-companion/package-lock.json
+      - name: Build the web app
+        working-directory: apps/vis-companion
+        run: |
+          npm ci
+          npm run build:web
+      - name: Stage the web app
+        run: bin/stage-web-release apps/vis-companion/dist-web vis-web.tar.gz
+      - name: Verify draft before attaching
+        if: steps.target.outputs.publish == 'true'
+        uses: ./.github/actions/require-draft-release
+        with:
+          tag: ${{ inputs.tag || github.ref_name }}
+      - name: Attach to release
+        if: steps.target.outputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" vis-web.tar.gz \
             --repo "$GITHUB_REPOSITORY" --clobber
 
   # ── macOS arm64 ────────────────────────────────────────────────────────────

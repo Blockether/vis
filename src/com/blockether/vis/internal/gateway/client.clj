@@ -2131,6 +2131,36 @@
                         {:type :gateway/route-missing :path path})))
              entry)))))))
 
+(def ^:private web-watch-interval-ms
+  "How often `vis-agent web` checks that its gateway still answers. Each check also
+   refreshes this client's lease, the only liveness a remote lease has."
+  5000)
+
+(defn run-web!
+  "Serve the Companion web app from this runtime's gateway while holding a client
+   lease, as [[run-tui!]] does for the terminal client. `on-ready` receives the app
+   URL once the gateway serves it. Blocks while the gateway answers and returns
+   exit code 1 after three failed checks in a row; Ctrl-C ends the process, and the
+   shutdown hook releases the lease."
+  ([on-ready] (run-web! on-ready web-watch-interval-ms))
+  ([on-ready interval-ms]
+   (try (let [entry (ensure-gateway-serving! "/")]
+          (ensure-client! entry)
+          (on-ready (str (base-url entry) "/"))
+          (loop [misses 0]
+            (if (>= misses 3)
+              1
+              (do (Thread/sleep (long interval-ms))
+                  (recur (if (try (= 200
+                                     (:status (gw-send! entry
+                                                        "GET"
+                                                        "/healthz"
+                                                        {:timeout-ms health-probe-timeout-ms})))
+                                  (catch Throwable _ false))
+                           0
+                           (inc misses)))))))
+        (finally (release-client!)))))
+
 (defn provider-status
   [provider-id]
   (let [path

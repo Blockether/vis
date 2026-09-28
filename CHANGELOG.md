@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   accepts it. The block's output starts with a note that names Python's error
   and each fix, and the block is marked as repaired. When the repair cannot make
   the block parse, the error lists the quotes and brackets that are wrong.
+- `vis-agent web` opens Vis in your browser. It starts the gateway when needed, and
+  the gateway serves the web app itself, so you do not need Node.js. Release and beta
+  builds include the web app, and `vis-agent update` installs it with the native
+  runtime. On the dev track, the command builds the web app with npm when it is
+  missing or out of date, and a gateway that is already running serves the new build
+  without a restart.
 
 ### Changed
 - Documentation is easier to find. `apropos()` also matches documentation pages
@@ -27,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `apropos()` also matches a hyphenated guide name written as words, so `human input`
   finds `human-input`. Guide openings now use the terms readers search for, such as
   slash commands, daemon, systemd, pip, ONNX and OpenAI.
+- The gateway serves attachments with a sandboxing content security policy, so an
+  uploaded HTML or SVG file cannot run scripts with the web app's access.
 - The gateway formats Python code for the TUI and the companion with a built-in
   formatter that lays out code the way `ruff format` does. Code with formatter
   suppression comments such as `fmt: off` is shown as written. Vis no longer

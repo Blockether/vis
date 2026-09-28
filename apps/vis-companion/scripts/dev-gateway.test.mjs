@@ -2,7 +2,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { devConnectionStorageScript, discoverDevGatewayConnections } from './dev-gateway.ts';
+import {
+  devConnectionStorageScript,
+  discoverDevGatewayConnections,
+  sameOriginConnectionStorageScript,
+} from './dev-gateway.ts';
 
 const tempDirs = [];
 
@@ -141,5 +145,67 @@ describe('companion dev gateway discovery', () => {
         id: 'be2c15686eaef0f4',
       },
     ]);
+  });
+});
+
+describe('companion web build served by a gateway', () => {
+  const origin = 'http://127.0.0.1:7890';
+
+  function runSeed(entries) {
+    const values = new Map(entries);
+    const localStorage = {
+      getItem(key) {
+        return values.has(key) ? values.get(key) : null;
+      },
+      setItem(key, value) {
+        values.set(key, value);
+      },
+    };
+    new Function('localStorage', 'location', sameOriginConnectionStorageScript())(localStorage, {
+      origin,
+    });
+    return values;
+  }
+
+  it('opens connected to the gateway that served the page', () => {
+    const values = runSeed([]);
+
+    const encoded = JSON.stringify([{ url: origin }]);
+    expect(values.get('vis.connections')).toBe(encoded);
+    expect(values.get('CapacitorStorage.vis.connections')).toBe(encoded);
+    expect(values.get('vis.primaryConnection')).toBe(origin);
+    expect(values.get('CapacitorStorage.vis.primaryConnection')).toBe(origin);
+    expect(values.get('vis.activeConnection')).toBe(origin);
+    expect(values.get('CapacitorStorage.vis.activeConnection')).toBe(origin);
+  });
+
+  it('keeps other machines, their tokens and the current choice', () => {
+    const remote = { url: 'https://gateway.example.com', token: 'remote-token', label: 'tower' };
+    const values = runSeed([
+      ['CapacitorStorage.vis.connections', JSON.stringify([remote])],
+      ['CapacitorStorage.vis.primaryConnection', remote.url],
+      ['CapacitorStorage.vis.activeConnection', remote.url],
+    ]);
+
+    expect(JSON.parse(values.get('CapacitorStorage.vis.connections'))).toEqual([
+      { url: origin },
+      remote,
+    ]);
+    expect(values.get('vis.connections')).toBe(values.get('CapacitorStorage.vis.connections'));
+    expect(values.get('CapacitorStorage.vis.primaryConnection')).toBe(remote.url);
+    expect(values.get('CapacitorStorage.vis.activeConnection')).toBe(remote.url);
+  });
+
+  it('leaves an already saved gateway untouched', () => {
+    const saved = JSON.stringify([{ url: origin, token: 'kept-token', label: 'laptop' }]);
+    const values = runSeed([
+      ['vis.connections', saved],
+      ['vis.primaryConnection', origin],
+      ['vis.activeConnection', origin],
+    ]);
+
+    expect(values.get('vis.connections')).toBe(saved);
+    expect(values.has('CapacitorStorage.vis.connections')).toBe(false);
+    expect(values.get('vis.activeConnection')).toBe(origin);
   });
 });

@@ -6,10 +6,12 @@
             [com.blockether.vis.internal.commandline :as commandline]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.external-opener :as external-opener]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.internal.gateway.pairing :as pairing]
             [com.blockether.vis.internal.gateway.runtime :as gateway-runtime]
-            [com.blockether.vis.internal.gateway.server :as gateway-server]))
+            [com.blockether.vis.internal.gateway.server :as gateway-server]
+            [com.blockether.vis.internal.gateway.server.web :as web]))
 
 (defn- advertise-option
   "The address the pairing link must lead with, in precedence order: `--advertise`
@@ -285,6 +287,54 @@
               :else (str "gateway stop requested" (when pid (str " (pid " pid ")"))
                          " - it reported no final state. Check it with:\n"
                          "  vis-agent gateway status"))))))
+
+(def ^:private web-app-missing
+  (str "The Vis web app is not installed.\n"
+       "  Run `vis-agent update` to install it with the native runtime, or build it in a\n"
+       "  source checkout with `npm run build:web` in apps/vis-companion."))
+
+(defn- cli-web!
+  "Start or reuse the local gateway, open the web app it serves, and hold a client
+   lease until Ctrl-C so an auto-started gateway stays up while the app is in use."
+  [parsed _residual]
+  (config/init-cli!)
+  (when-let [db (get parsed "db")]
+    (System/setProperty "vis.db.path" db))
+  (when-not (or (gateway-client/remote-gateway) (web/configured-root))
+    (throw (ex-info web-app-missing {:vis/user-error true})))
+  (let [exit
+        (try (gateway-client/run-web!
+               (fn [url]
+                 (commandline/stdout! (str "Vis web app: " url "\nPress Ctrl-C to stop."))
+                 (when-not (or (get parsed "no-open") (= :ok (:status (external-opener/open! url))))
+                   (commandline/stdout! "Could not open a browser; open the address above."))))
+             (catch clojure.lang.ExceptionInfo e
+               (throw (if (= :gateway/route-missing-busy (:type (ex-data e)))
+                        (ex-info
+                          (str
+                            "The running gateway was started without the web app and is in use.\n"
+                            "  Close the Vis sessions using it, or run `vis-agent gateway stop`,\n"
+                            "  then run `vis-agent web` again.")
+                          {:vis/user-error true}
+                          e)
+                        e))))]
+    (commandline/stdout! "The gateway stopped answering; the web app is closed.")
+    (shutdown-agents)
+    (System/exit (int exit))))
+
+(def web-command
+  {:cmd/name "web"
+   :cmd/doc
+   "Start the local gateway and open the Vis web app it serves. Keep it running while you use the app; Ctrl-C stops it."
+   :cmd/usage "vis-agent web [--no-open] [--db PATH]"
+   :cmd/args
+   [{:name "no-open" :kind :flag :type :boolean :doc "Print the address without opening a browser."}
+    {:name "db"
+     :kind :flag
+     :type :string
+     :doc "SQLite DB path whose gateway serves the app (default ~/.vis/vis.mdb or VIS_DB_PATH)."}]
+   :cmd/examples ["vis-agent web" "vis-agent web --no-open"]
+   :cmd/run-fn cli-web!})
 
 (def command
   {:cmd/name "gateway"
