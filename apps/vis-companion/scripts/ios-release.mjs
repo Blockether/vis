@@ -57,23 +57,9 @@ import {
   installProfile,
   stampManualSigning,
 } from './ios-signing.mjs';
+import { keychain, secret } from './keychain.mjs';
 import { distribute, planDistribution } from './testflight.mjs';
 import { syncPackageVersion } from './version.mjs';
-
-// Release credentials live in the macOS login keychain (scripts/secrets.mjs),
-// never in a dotfile or this repo. An env var still wins, so CI can inject one.
-// `security -w` prints hex whenever the stored password is not plain printable
-// ASCII, which a multi-line PEM never is.
-const unhex = (s) =>
-  /^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s;
-const keychain = (service, account) => {
-  if (process.platform !== 'darwin') return undefined;
-  const res = spawnSync('security', ['find-generic-password', '-s', service, '-a', account, '-w'], {
-    encoding: 'utf8',
-  });
-  return res.status === 0 && res.stdout.trim() ? unhex(res.stdout.trim()) : undefined;
-};
-const secret = (envName, account) => process.env[envName]?.trim() || keychain('vis-ios', account);
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -84,7 +70,7 @@ const notifyBundleId = `${appBundleId}.notify`;
 const iosDir = join(appDir, 'ios');
 const projectDir = join(iosDir, 'App');
 const exportOptions = join(iosDir, 'ExportOptions.plist');
-const teamId = secret('VIS_IOS_TEAM_ID', 'team_id') ?? 'JSZTFUBUBB';
+const teamId = secret('VIS_IOS_TEAM_ID', 'vis-ios', 'team_id') ?? 'JSZTFUBUBB';
 
 const args = process.argv.slice(2);
 const flag = (name) => {
@@ -291,8 +277,8 @@ if (has('prepare')) {
 }
 
 // App Store Connect API key: also lets xcodebuild create signing assets itself.
-const keyId = secret('VIS_ASC_KEY_ID', 'asc_key_id');
-const issuerId = secret('VIS_ASC_ISSUER_ID', 'asc_issuer_id');
+const keyId = secret('VIS_ASC_KEY_ID', 'vis-ios', 'asc_key_id');
+const issuerId = secret('VIS_ASC_ISSUER_ID', 'vis-ios', 'asc_issuer_id');
 const keyPem = process.env.VIS_ASC_KEY_PATH ? undefined : keychain('vis-ios', 'asc_key');
 
 // xcodebuild and altool both insist on a FILE. Materialise the keychain copy in
@@ -451,8 +437,8 @@ if (hasApiKey) {
     },
   );
 } else if (
-  secret('VIS_ASC_APPLE_ID', 'apple_id') &&
-  secret('VIS_ASC_APP_PASSWORD', 'app_password')
+  secret('VIS_ASC_APPLE_ID', 'vis-ios', 'apple_id') &&
+  secret('VIS_ASC_APP_PASSWORD', 'vis-ios', 'app_password')
 ) {
   run(
     'xcrun',
@@ -462,14 +448,17 @@ if (hasApiKey) {
       ipa,
       '--wait',
       '-u',
-      secret('VIS_ASC_APPLE_ID', 'apple_id'),
+      secret('VIS_ASC_APPLE_ID', 'vis-ios', 'apple_id'),
       '-p',
       '@env:VIS_ASC_APP_PASSWORD',
     ],
     // Through the environment, never argv: an app-specific password on a command
     // line is readable by every process on the machine.
     {
-      env: { ...process.env, VIS_ASC_APP_PASSWORD: secret('VIS_ASC_APP_PASSWORD', 'app_password') },
+      env: {
+        ...process.env,
+        VIS_ASC_APP_PASSWORD: secret('VIS_ASC_APP_PASSWORD', 'vis-ios', 'app_password'),
+      },
     },
   );
 } else {

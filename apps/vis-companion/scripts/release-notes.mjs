@@ -16,6 +16,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appIdFor, asc, ascToken, waitForBuild } from './asc.mjs';
+import { ascCredentials } from './keychain.mjs';
 import { syncPackageVersion } from './version.mjs';
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -228,21 +229,6 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   };
   const has = (name) => args.includes(`--${name}`);
 
-  // Same keychain-first credential rule as scripts/ios-release.mjs: env wins, then the
-  // macOS login keychain, never a dotfile in the repo.
-  const unhex = (s) =>
-    /^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s;
-  const keychain = (account) => {
-    if (process.platform !== 'darwin') return undefined;
-    const res = spawnSync(
-      'security',
-      ['find-generic-password', '-s', 'vis-ios', '-a', account, '-w'],
-      { encoding: 'utf8' },
-    );
-    return res.status === 0 && res.stdout.trim() ? unhex(res.stdout.trim()) : undefined;
-  };
-  const secret = (envName, account) => process.env[envName]?.trim() || keychain(account);
-
   // Repo-root VIS_VERSION is the source of truth; npm metadata mirrors it.
   const version = flag('version') ?? syncPackageVersion();
   const build = flag('build') ?? capture('git', ['rev-list', '--count', 'HEAD']);
@@ -267,11 +253,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   if (has('print')) process.exit(0);
 
   const result = await publishNotes({
-    keyId: secret('VIS_ASC_KEY_ID', 'asc_key_id'),
-    issuerId: secret('VIS_ASC_ISSUER_ID', 'asc_issuer_id'),
-    keyPem: process.env.VIS_ASC_KEY_PATH
-      ? readFileSync(process.env.VIS_ASC_KEY_PATH, 'utf8')
-      : keychain('asc_key'),
+    ...ascCredentials(),
     bundleId: flag('bundle-id') ?? 'com.blockether.viscompanion',
     version,
     build,

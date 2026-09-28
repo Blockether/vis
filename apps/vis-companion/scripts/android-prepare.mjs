@@ -50,6 +50,7 @@ import { syncPackageVersion } from './version.mjs';
 import { configureAndroidPushPlugin } from './android-push-plugin.mjs';
 import { prepareAndroidOAuth } from './oauth-native.mjs';
 import { brandLaunchTheme, prepareAndroidSplash } from './android-splash.mjs';
+import { secret } from './keychain.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = resolve(root, '..', '..');
 const args = process.argv.slice(2);
@@ -63,21 +64,6 @@ const die = (msg) => {
   console.error(`\n\u2717 ${msg}\n`);
   process.exit(1);
 };
-
-// `security -w` prints hex for anything that is not plain printable ASCII.
-const unhex = (s) =>
-  /^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s;
-
-const keychain = (service, account) => {
-  if (process.platform !== 'darwin') return undefined;
-  const res = spawnSync('security', ['find-generic-password', '-s', service, '-a', account, '-w'], {
-    encoding: 'utf8',
-  });
-  return res.status === 0 && res.stdout.trim() ? unhex(res.stdout.trim()) : undefined;
-};
-// Env first so CI (which has no keychain) injects the same values as GitHub secrets.
-const secret = (envName, service, account) =>
-  process.env[envName]?.trim() || keychain(service, account);
 
 const home = process.env.HOME ?? '';
 const expand = (p) => resolve(p.replace(/^~/, home));

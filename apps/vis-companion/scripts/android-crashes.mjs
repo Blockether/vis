@@ -18,9 +18,9 @@
  *   npm run diagnostics:android -- --days 28 --out /tmp/vis-android
  *   npm run diagnostics:android -- --check          # preflight only, writes nothing
  */
-import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { secret } from './keychain.mjs';
 import { playToken } from './play.mjs';
 
 const REPORTING = 'https://playdeveloperreporting.googleapis.com/v1beta1';
@@ -32,21 +32,8 @@ const DEFAULT_LIMIT = 20;
 const DEFAULT_REPORTS_PER_ISSUE = 3;
 const STACK_LINES = 40;
 
-// `security -w` prints hex whenever the stored secret is not plain printable ASCII.
-const unhex = (s) =>
-  /^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s;
-
-const keychain = (service, account) => {
-  if (process.platform !== 'darwin') return undefined;
-  const res = spawnSync('security', ['find-generic-password', '-s', service, '-a', account, '-w'], {
-    encoding: 'utf8',
-  });
-  return res.status === 0 && res.stdout.trim() ? unhex(res.stdout.trim()) : undefined;
-};
-
 /** The publishing service account, from the environment or the login keychain — never from disk. */
-const credentials = () =>
-  process.env.VIS_PLAY_SERVICE_ACCOUNT?.trim() || keychain('vis-play', 'service_account');
+const credentials = () => secret('VIS_PLAY_SERVICE_ACCOUNT', 'vis-play', 'service_account');
 
 /**
  * Google answers a project-level "this API is off" with a structured ErrorInfo whose metadata

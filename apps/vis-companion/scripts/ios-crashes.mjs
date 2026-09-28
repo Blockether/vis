@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appIdFor, asc, ascToken } from './asc.mjs';
+import { ascCredentials } from './keychain.mjs';
 
 const APP_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_BUNDLE_ID = 'com.blockether.viscompanion';
@@ -30,29 +31,8 @@ const DIAGNOSTIC_FILTER =
   "Name BEGINSWITH 'App-' OR Name BEGINSWITH 'JetsamEvent-' OR Name BEGINSWITH 'stacks-'";
 const DIAGNOSTIC_NAME = /^(App-|JetsamEvent-|stacks-)/i;
 
-const unhex = (value) =>
-  /^[0-9a-f]{32,}$/i.test(value) && value.length % 2 === 0
-    ? Buffer.from(value, 'hex').toString('utf8')
-    : value;
-
-const keychain = (account) => {
-  if (process.platform !== 'darwin') return undefined;
-  const result = spawnSync(
-    'security',
-    ['find-generic-password', '-s', 'vis-ios', '-a', account, '-w'],
-    { encoding: 'utf8' },
-  );
-  return result.status === 0 && result.stdout.trim() ? unhex(result.stdout.trim()) : undefined;
-};
-
 const credentials = () => {
-  const keyId = process.env.VIS_ASC_KEY_ID?.trim() || keychain('asc_key_id');
-  const issuerId = process.env.VIS_ASC_ISSUER_ID?.trim() || keychain('asc_issuer_id');
-  const keyPem =
-    process.env.VIS_ASC_KEY?.trim() ||
-    (process.env.VIS_ASC_KEY_PATH
-      ? readFileSync(process.env.VIS_ASC_KEY_PATH, 'utf8')
-      : keychain('asc_key'));
+  const { keyId, issuerId, keyPem } = ascCredentials();
   if (!keyId || !issuerId || !keyPem) {
     throw new Error(
       'no App Store Connect API key; run `npm run secrets asc <AuthKey_XXXX.p8> --issuer <uuid> --team <id>`',

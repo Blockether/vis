@@ -38,6 +38,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appIdFor, asc, ascToken, waitForBuild } from './asc.mjs';
+import { ascCredentials } from './keychain.mjs';
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -356,21 +357,6 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   };
   const has = (name) => args.includes(`--${name}`);
 
-  // Keychain-first, same rule as ios-release.mjs: env wins so CI can inject, otherwise the
-  // macOS login keychain, never a dotfile in the repo.
-  const unhex = (s) =>
-    /^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s;
-  const keychain = (account) => {
-    if (process.platform !== 'darwin') return undefined;
-    const res = spawnSync(
-      'security',
-      ['find-generic-password', '-s', 'vis-ios', '-a', account, '-w'],
-      { encoding: 'utf8' },
-    );
-    return res.status === 0 && res.stdout.trim() ? unhex(res.stdout.trim()) : undefined;
-  };
-  const secret = (envName, account) => process.env[envName]?.trim() || keychain(account);
-
   const build =
     flag('build') ??
     spawnSync('git', ['rev-list', '--count', 'HEAD'], {
@@ -381,11 +367,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
     flag('bundle') ?? JSON.parse(readFileSync(join(appDir, 'capacitor.config.json'), 'utf8')).appId;
 
   const res = await distribute({
-    keyId: secret('VIS_ASC_KEY_ID', 'asc_key_id'),
-    issuerId: secret('VIS_ASC_ISSUER_ID', 'asc_issuer_id'),
-    keyPem: process.env.VIS_ASC_KEY_PATH
-      ? readFileSync(process.env.VIS_ASC_KEY_PATH, 'utf8')
-      : keychain('asc_key'),
+    ...ascCredentials(),
     bundleId,
     build,
     group: flag('group') ?? 'Public',

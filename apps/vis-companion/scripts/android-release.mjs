@@ -47,6 +47,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { androidPublishRefusal } from './android-publish-freeze.mjs';
 import { JDK, jdkHelp, pickJdk } from './jdk.mjs';
+import { secret } from './keychain.mjs';
 import { planRelease, promoteBundle, publishBundle, tracks as readTracks } from './play.mjs';
 import { buildNotes } from './release-notes.mjs';
 import { syncPackageVersion } from './version.mjs';
@@ -88,19 +89,7 @@ const capture = (cmd, cmdArgs, opts = {}) => {
   return res.status === 0 ? res.stdout.trim() : '';
 };
 
-// `security -w` prints hex whenever the stored secret is not plain printable ASCII.
-const unhex = (s) =>
-  /^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s;
-const keychain = (service, account) => {
-  if (process.platform !== 'darwin') return undefined;
-  const res = spawnSync('security', ['find-generic-password', '-s', service, '-a', account, '-w'], {
-    encoding: 'utf8',
-  });
-  return res.status === 0 && res.stdout.trim() ? unhex(res.stdout.trim()) : undefined;
-};
-
-const serviceAccount =
-  process.env.VIS_PLAY_SERVICE_ACCOUNT?.trim() || keychain('vis-play', 'service_account');
+const serviceAccount = secret('VIS_PLAY_SERVICE_ACCOUNT', 'vis-play', 'service_account');
 const packageName = JSON.parse(readFileSync(join(appDir, 'capacitor.config.json'), 'utf8')).appId;
 
 // ── read-only probe ───────────────────────────────────────────────────────────────────

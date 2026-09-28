@@ -36,6 +36,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
+import { keychain } from './keychain.mjs';
 
 if (process.platform !== 'darwin') {
   console.error('\n✗ keychain storage is macOS-only; use environment variables elsewhere\n');
@@ -118,16 +119,9 @@ const put = (name, value) => {
   console.log(`· stored ${name}  (${service} / ${account})`);
 };
 
-// `security -w` prints hex for anything that is not plain printable ASCII.
-const unhex = (s) =>
-  /^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s;
-
 const peek = (name) => {
   const [service, account] = entry(name);
-  const res = spawnSync('security', ['find-generic-password', '-s', service, '-a', account, '-w'], {
-    encoding: 'utf8',
-  });
-  return res.status === 0 && res.stdout.trim() ? unhex(res.stdout.trim()) : undefined;
+  return keychain(service, account);
 };
 
 const stdin = () => {
