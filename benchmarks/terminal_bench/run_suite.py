@@ -50,6 +50,14 @@ def catalog(dataset: Path) -> tuple[list[dict], list[str]]:
                     environment.get("memory_mb") or 0,
                     verifier.get("memory_mb") or 0,
                 ),
+                "images": [
+                    image
+                    for image in (
+                        environment.get("docker_image"),
+                        verifier.get("docker_image"),
+                    )
+                    if image
+                ],
             }
         )
     tasks.sort(key=lambda task: (task["hours"], task["name"]))
@@ -207,6 +215,28 @@ def free_gb(machine: str) -> tuple[float, float]:
     return host, vm
 
 
+def reclaim_images(machine: str, task: dict) -> None:
+    """Remove a finished task's images, then return freed VM blocks to the host."""
+    steps = (
+        (
+            "remove images",
+            ["podman", "--connection", machine, "rmi", "--ignore", *task["images"]],
+        ),
+        (
+            "trim the VM disk",
+            ["podman", "machine", "ssh", machine, "--"]
+            + ["sudo", "fstrim", "/var/lib/containers"],
+        ),
+    )
+    for step, command in steps:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+        if result.returncode:
+            print(
+                f"Could not {step} after {task['name']}: {result.stderr.strip()}",
+                flush=True,
+            )
+
+
 def job_name(prefix: str, jobs: Path, taken: Collection[str] = ()) -> str:
     """Never overwrite a previous job, including incomplete or starting attempts."""
     number = 1
@@ -340,6 +370,12 @@ def main() -> None:
     failures = []
     started = 0
     fast_errors = 0
+
+    def stop_starting(reason: str) -> None:
+        """Start no more tasks, and say why while running trials finish."""
+        failures.append(reason)
+        print(f"Not starting more tasks: {reason}", flush=True)
+
     with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
         while True:
             while not failures and (args.max_tasks is None or started < args.max_tasks):
@@ -348,7 +384,7 @@ def main() -> None:
                     break
                 host, vm = free_gb(args.machine)
                 if min(host, vm) < args.min_free_gb:
-                    failures.append(
+                    stop_starting(
                         f"Low disk space (host {host:.1f} GB, VM {vm:.1f} GB); "
                         "reclaim finished artifacts/images and resume"
                     )
@@ -369,11 +405,12 @@ def main() -> None:
                 try:
                     fast_error = finish_job(name, task, future.result())
                 except RuntimeError as error:
-                    failures.append(str(error))
+                    stop_starting(str(error))
                     continue
+                reclaim_images(args.machine, task)
                 fast_errors = fast_errors + 1 if fast_error else 0
                 if fast_errors == 2:
-                    failures.append(
+                    stop_starting(
                         "Two consecutive fast agent errors; inspect the traces before continuing"
                     )
     if failures:

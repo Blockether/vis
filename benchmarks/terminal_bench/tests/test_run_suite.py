@@ -3,6 +3,7 @@
 import gzip
 import json
 import shutil
+import subprocess
 import threading
 
 import pytest
@@ -58,10 +59,13 @@ def test_catalog_skips_gpu_and_reserves_high_memory(tmp_path):
         (folder / "task.toml").write_text(
             f"[metadata]\nexpert_time_estimate_hours = {hours}\n"
             f"[environment]\nmemory_mb = {memory}\ngpus = {gpu}\n"
+            f'docker_image = "{name}-environment"\n'
+            f'[verifier.environment]\ndocker_image = "{name}-verifier"\n'
         )
     tasks, gpu = catalog(tmp_path)
     assert [task["name"] for task in tasks] == ["small", "heavy", "medium"]
     assert gpu == ["gpu-only"]
+    assert tasks[0]["images"] == ["small-environment", "small-verifier"]
     running = [next_task(tasks, [])]
     running.append(next_task(tasks, running))
     assert [task["name"] for task in running] == ["small", "medium"]
@@ -361,6 +365,7 @@ def one_task_queue(tmp_path, monkeypatch):
     monkeypatch.setattr(run_suite, "catalog", lambda _: ([task], []))
     monkeypatch.setattr(run_suite, "accounted_tasks", lambda _: (set(), set(), set()))
     monkeypatch.setattr(run_suite, "free_gb", lambda _: (32, 32))
+    monkeypatch.setattr(run_suite, "reclaim_images", lambda *_: None)
     return task
 
 
@@ -477,3 +482,59 @@ def test_queue_stops_after_two_fast_agent_errors_but_not_slow_ones(
     assert "Finished suite-001/slow: reward=0.0, agent_error=True" in output
     assert "Finished suite-003/faster: reward=0.0, agent_error=True" in output
     assert "never" not in output
+
+
+def test_reclaim_images_removes_task_images_and_reports_failures(monkeypatch, capsys):
+    commands = []
+
+    def run(command, **_):
+        commands.append(command)
+        failed = "fstrim" in command
+        return subprocess.CompletedProcess(command, int(failed), "", "trim refused")
+
+    monkeypatch.setattr(run_suite.subprocess, "run", run)
+    task = {"name": "sample", "images": ["sample-environment", "sample-verifier"]}
+    run_suite.reclaim_images("vis-amd64", task)
+    assert commands[0] == [
+        "podman",
+        "--connection",
+        "vis-amd64",
+        "rmi",
+        "--ignore",
+        "sample-environment",
+        "sample-verifier",
+    ]
+    assert commands[1][-3:] == ["sudo", "fstrim", "/var/lib/containers"]
+    assert capsys.readouterr().out == (
+        "Could not trim the VM disk after sample: trim refused\n"
+    )
+
+
+def test_queue_reclaims_images_after_each_validated_job(
+    tmp_path, monkeypatch, one_task_queue
+):
+    reclaimed = []
+    monkeypatch.setattr(run_suite, "archive_job_traces", lambda _: None)
+    monkeypatch.setattr(
+        run_suite,
+        "reclaim_images",
+        lambda machine, task: reclaimed.append((machine, task["name"])),
+    )
+
+    def capture(command, path, *, cwd):
+        write_job_attempt(tmp_path / "jobs", command, status="success")
+        return 0
+
+    monkeypatch.setattr(run_suite, "capture", capture)
+    run_suite.main()
+    assert reclaimed == [("vis-amd64", "sample")]
+
+
+def test_queue_says_why_it_stops_starting_tasks(monkeypatch, capsys, one_task_queue):
+    monkeypatch.setattr(run_suite, "free_gb", lambda _: (5, 50))
+    with pytest.raises(RuntimeError, match="Low disk space"):
+        run_suite.main()
+    assert (
+        "Not starting more tasks: Low disk space (host 5.0 GB, VM 50.0 GB)"
+        in capsys.readouterr().out
+    )
