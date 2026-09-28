@@ -619,13 +619,6 @@
           not-empty
           (clip BODY_LIMIT)))
 
-(defn- document-field
-  "One value of a View document, whichever spelling the caller holds: an event
-   carries the wire (string-keyed) document, a read of the open-View registry
-   the engine's own keyword map."
-  [document k]
-  (not-blank (or (get document (name k)) (get document k))))
-
 (defn answer-alert
   "The banner a finished turn raises: the session's own name, and WHAT vis said.
 
@@ -639,15 +632,15 @@
 
 (defn question-alert
   "The banner a run PARKED on a human raises: what it asked, and the request's
-   own description. `document` is that input View, from the `view.open` event
-   or from the open-View registry; nil when the run is parked on nothing this
-   gateway can still name."
+   own description. `document` is that input View in its wire (string-keyed)
+   form, from the `view.open` event or the open-View registry; nil when the run
+   is parked on nothing this gateway can still name."
   [document]
   (let [asked
-        (document-field document :title)
+        (not-blank (get document "title"))
 
         description
-        (document-field document :description)]
+        (not-blank (get document "description"))]
 
     {:title (clip (if asked (str "Action needed — " asked) "Action needed") TITLE_LIMIT)
      :body (clip (or description "Vis is waiting on your answer.") BODY_LIMIT)}))

@@ -349,11 +349,10 @@
     (is (= {:title "Vis" :body "Turn finished."} (push/answer-alert {:answer "  \n "})))
     (is (= {:title "notes" :body "Turn failed."}
            (push/answer-alert {:title "notes" :answer nil :is-failed true}))))
-  (testing "a parked run is the question it asked, in either spelling of the View"
-    (doseq [document [{"title" "Which branch?" "description" "main is two commits ahead."}
-                      {:title "Which branch?" :description "main is two commits ahead."}]]
-      (is (= {:title "Action needed — Which branch?" :body "main is two commits ahead."}
-             (push/question-alert document)))))
+  (testing "a parked run is the question its wire View asked (#291)"
+    (is (= {:title "Action needed — Which branch?" :body "main is two commits ahead."}
+           (push/question-alert {"title" "Which branch?"
+                                 "description" "main is two commits ahead."}))))
   (testing "a request that names nothing still asks for the human"
     (is (= {:title "Action needed" :body "Vis is waiting on your answer."}
            (push/question-alert nil)))))

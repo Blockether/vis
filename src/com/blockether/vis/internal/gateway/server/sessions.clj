@@ -3,6 +3,7 @@
    session's metadata, model, usage, context, forks, alerts, slash commands,
    suggestions and background resources."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.channel.file-picker :as file-picker]
             [com.blockether.vis.internal.channel.slash :as slash]
             [com.blockether.vis.internal.extension.client :as client-extensions]
@@ -609,7 +610,8 @@
 
     (if session
       (http/json-response (if (= "question" (get-in request [:query-params "reason"]))
-                            (push/question-alert (first (gw-view/input-views sid)))
+                            (push/question-alert (some-> (first (gw-view/input-views sid))
+                                                         wire/canonical))
                             (push/answer-alert {:title (get session "title")
                                                 :answer (state/newest-answer-text sid)})))
       (http/session-404 (get-in request [:path-params :sid])))))
