@@ -202,6 +202,85 @@ def test_report_scores_each_task_by_latest_verified_model_attempt(tmp_path):
     assert report["unscored_model_tasks"] == ["killed"]
 
 
+def test_report_groups_scored_tasks_by_how_their_latest_attempt_ended(tmp_path):
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    jobs = tmp_path / "jobs"
+    provider_call = {
+        "event": "trace-chunk",
+        "payload": {
+            "phase": "provider-call",
+            "provider": "zai-coding-plan",
+            "model": "glm-5.3-flash",
+        },
+    }
+    capped = {
+        "event": "result",
+        "payload": {
+            "status": "error",
+            "trace": [{"iteration": 0, "error": {"type": "max-tokens-exceeded"}}],
+        },
+    }
+    vis = {"metadata": {"vis": {"model": "zai-coding-plan/glm-5.3-flash"}}}
+    for job, task, finished, exception, agent, frames, reward in (
+        ("first", "solved", "2026-01-01T01:00:00Z", None, vis, [], 1.0),
+        ("first", "tests", "2026-01-01T01:00:00Z", None, vis, [], 0.0),
+        (
+            "first",
+            "timed-out",
+            "2026-01-01T08:00:00Z",
+            "AgentTimeoutError",
+            {"metadata": None},
+            [],
+            0.0,
+        ),
+        (
+            "first",
+            "capped",
+            "2026-01-01T01:00:00Z",
+            "NonZeroAgentExitCodeError",
+            vis,
+            [capped],
+            0.0,
+        ),
+        (
+            "first",
+            "retried",
+            "2026-01-01T01:00:00Z",
+            "NonZeroAgentExitCodeError",
+            vis,
+            [capped],
+            0.0,
+        ),
+        ("second", "retried", "2026-01-01T02:00:00Z", None, vis, [], 1.0),
+    ):
+        trial = jobs / job / f"{task}__abcd"
+        (trial / "agent").mkdir(parents=True)
+        (trial / "result.json").write_text(
+            json.dumps(
+                {
+                    "task_name": f"terminal-bench/{task}",
+                    "finished_at": finished,
+                    "exception_info": {"exception_type": exception}
+                    if exception
+                    else None,
+                    "agent_result": agent,
+                    "verifier_result": {"rewards": {"reward": reward}},
+                }
+            )
+        )
+        (trial / "agent/vis-trace.jsonl").write_text(
+            "".join(json.dumps(frame) + "\n" for frame in [provider_call, *frames])
+        )
+    report = make_report(jobs, dataset)
+    assert report["task_outcomes"] == {
+        "agent_timeout": ["timed-out"],
+        "failed_tests": ["tests"],
+        "solved": ["retried", "solved"],
+        "vis_error:max-tokens-exceeded": ["capped"],
+    }
+
+
 def test_compressed_trace_and_invalid_line(tmp_path):
     path = tmp_path / "vis-trace.jsonl.gz"
     with gzip.open(path, "wt") as stream:

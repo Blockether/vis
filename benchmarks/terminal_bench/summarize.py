@@ -217,6 +217,18 @@ def trial_summary(result_path: Path, root: Path) -> dict:
     }
 
 
+def task_outcome(trial: dict) -> str:
+    """Name how a scored attempt ended, taking Vis errors from its trace."""
+    if trial["reward"] == 1:
+        return "solved"
+    if trial["exception_type"] == "AgentTimeoutError":
+        return "agent_timeout"
+    trace = trial["trace"] or {}
+    if trace.get("vis_result_status") == "error":
+        return f"vis_error:{trace.get('vis_error_type') or 'unknown'}"
+    return "failed_tests"
+
+
 def make_report(jobs_dir: Path, dataset_dir: Path) -> dict:
     root = jobs_dir.parent
     trials = [
@@ -256,6 +268,9 @@ def make_report(jobs_dir: Path, dataset_dir: Path) -> dict:
         if trial["model_attempt"] and isinstance(trial["task"], str)
     }
     solved = sorted(name for name, trial in scored.items() if trial["reward"] == 1)
+    outcomes = {}
+    for name, trial in sorted(scored.items()):
+        outcomes.setdefault(task_outcome(trial), []).append(name)
     return redact_value(
         {
             "dataset": "terminal-bench/terminal-bench@4.0.0",
@@ -273,6 +288,7 @@ def make_report(jobs_dir: Path, dataset_dir: Path) -> dict:
             "scored_tasks": len(scored),
             "solved_tasks": solved,
             "task_pass_rate": len(solved) / len(scored) if scored else None,
+            "task_outcomes": dict(sorted(outcomes.items())),
             "unscored_model_tasks": sorted(model_tasks - set(scored)),
             "trials": trials,
         }
