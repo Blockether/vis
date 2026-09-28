@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.decisions.core-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
+            [lazytest.core :refer [defdescribe expect it]]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.decisions.assets :as assets]
             [com.blockether.vis.internal.decisions.cache :as cache]
@@ -13,47 +13,55 @@
            [java.io File FileInputStream]
            [java.security MessageDigest]))
 
-(deftest request-parser-retains-choice-and-question-order
-  (let [labels
-        ["z" "r" "a" "b" "c" "d" "e" "f" "g" "x"]
+(defdescribe
+  request-parser-retains-choice-and-question-order
+  (it "request parser retains choice and question order"
+      (let [labels
+            ["z" "r" "a" "b" "c" "d" "e" "f" "g" "x"]
 
-        criteria
-        (str "{" (str/join "," (map #(str "\"" % "\":null") labels)) "}")
+            criteria
+            (str "{" (str/join "," (map #(str "\"" % "\":null") labels)) "}")
 
-        input
-        (str "{\"model\":\"laya-typed-decisions\",\"state\":\"hello\",\"questions\":{"
-             "\"first\":{\"type\":\"choice\",\"instructions\":\"choose\",\"criteria\":" criteria
-             "}," "\"second\":{\"type\":\"noul\",\"instructions\":\"answer\"}}}")
+            input
+            (str "{\"model\":\"laya-typed-decisions\",\"state\":\"hello\",\"questions\":{"
+                 "\"first\":{\"type\":\"choice\",\"instructions\":\"choose\",\"criteria\":" criteria
+                 "}," "\"second\":{\"type\":\"noul\",\"instructions\":\"answer\"}}}")
 
-        questions
-        (get (decisions/parse-body input) "questions")]
+            questions
+            (get (decisions/parse-body input) "questions")]
 
-    (is (= ["first" "second"] (vec (keys questions))))
-    (is (= labels (vec (keys (get-in questions ["first" "criteria"])))))))
+        (expect (= ["first" "second"] (vec (keys questions))))
+        (expect (= labels (vec (keys (get-in questions ["first" "criteria"]))))))))
 
-(deftest model-selection-refuses-unknown-and-uninstalled-bundles
-  (let [request (decisions/parse-body
-                  "{\"model\":\"not-a-model\",\"state\":\"hello\",\"questions\":{}}")]
-    (is (= :decisions/unknown-model
-           (:type (ex-data (try (decisions/infer! request)
-                                (catch clojure.lang.ExceptionInfo e e))))))
-    (is (= :decisions/model-not-installed
-           (:type (ex-data (try (decisions/infer! (assoc (into {} request)
-                                                    "model" "laya-typed-decisions"))
-                                (catch clojure.lang.ExceptionInfo e e))))))))
+(defdescribe
+  model-selection-refuses-unknown-and-uninstalled-bundles
+  (it "model selection refuses unknown and uninstalled bundles"
+      (let [request (decisions/parse-body
+                      "{\"model\":\"not-a-model\",\"state\":\"hello\",\"questions\":{}}")]
+        (expect (= :decisions/unknown-model
+                   (:type (ex-data (try (decisions/infer! request)
+                                        (catch clojure.lang.ExceptionInfo e e))))))
+        (expect (= :decisions/model-not-installed
+                   (:type (ex-data (try (decisions/infer! (assoc (into {} request)
+                                                            "model" "laya-typed-decisions"))
+                                        (catch clojure.lang.ExceptionInfo e e)))))))))
 
-(deftest gliner-empty-request-routes-to-explicit-family
-  (doseq [id ["gliner2.5-base" "gliner2.5-decide"]]
-    (let [model {:id id
-                 :revision (apply str (repeat 64 "a"))
-                 :artifacts {:inference {:sha256 (apply str (repeat 64 "b")) :requires []}}}]
-      (with-redefs [assets/manifest (constantly [model])
-                    assets/install-dir (fn [& _]
-                                         "/tmp/gliner-not-installed")
-                    assets/installed? (fn [& _]
-                                        true)]
+(defdescribe
+  gliner-empty-request-routes-to-explicit-family
+  (it "gliner empty request routes to explicit family"
+      (doseq [id ["gliner2.5-base" "gliner2.5-decide"]]
+        (let [model {:id id
+                     :revision (apply str (repeat 64 "a"))
+                     :artifacts {:inference {:sha256 (apply str (repeat 64 "b")) :requires []}}}]
+          (with-redefs [assets/manifest (constantly [model])
+                        assets/install-dir (fn [& _]
+                                             "/tmp/gliner-not-installed")
+                        assets/installed? (fn [& _]
+                                            true)]
 
-        (is (= id (get (decisions/infer! {"model" id "state" "hello" "questions" {}}) "model")))))))
+            (expect (= id
+                       (get (decisions/infer! {"model" id "state" "hello" "questions" {}})
+                            "model"))))))))
 
 (defn- gliner-definition
   [{:strs [type instructions options]}]
@@ -74,185 +82,206 @@
                 "noul"
                 nil)})
 
-(deftest gliner-reference-tokenization-logits-and-typed-answers
-  ;; Generated by fastino-ai/GLiNER2@1a80c9c from the two pinned official checkpoints.
-  ;; Supply -Dvis.test.gliner.{base,decide}.fp32.dir=<complete local inference dir>.
-  (let [reference (wire/parse-json
-                    (slurp (io/resource
-                             "com/blockether/vis/internal/decisions/gliner_reference.json")))]
-    (doseq [name ["base" "decide"]
-            :let [dir (System/getProperty (str "vis.test.gliner." name ".fp32.dir"))]
-            :when dir]
+(defdescribe
+  gliner-reference-tokenization-logits-and-typed-answers
+  (it
+    "gliner reference tokenization logits and typed answers"
+    ;; Generated by fastino-ai/GLiNER2@1a80c9c from the two pinned official checkpoints.
+    ;; Supply -Dvis.test.gliner.{base,decide}.fp32.dir=<complete local inference dir>.
+    (let [reference (wire/parse-json
+                      (slurp (io/resource
+                               "com/blockether/vis/internal/decisions/gliner_reference.json")))]
+      (doseq [name ["base" "decide"]
+              :let [dir (System/getProperty (str "vis.test.gliner." name ".fp32.dir"))]
+              :when dir]
 
-      (let [model-id (str "gliner2.5-" name)
-            provenance (wire/parse-json (slurp (io/file dir "PROVENANCE.json")))
-            model {:id model-id
-                   :revision (get provenance "revision")
-                   :artifacts {:inference {:sha256 (apply str (repeat 64 "a"))
-                                           :requires (assets/inference-required model-id)}}}
-            cases (get reference "cases")
-            expected (get-in reference ["models" name "outputs"])
-            loaded (#'decisions/open-model! model (io/file dir))]
+        (let [model-id (str "gliner2.5-" name)
+              provenance (wire/parse-json (slurp (io/file dir "PROVENANCE.json")))
+              model {:id model-id
+                     :revision (get provenance "revision")
+                     :artifacts {:inference {:sha256 (apply str (repeat 64 "a"))
+                                             :requires (assets/inference-required model-id)}}}
+              cases (get reference "cases")
+              expected (get-in reference ["models" name "outputs"])
+              loaded (#'decisions/open-model! model (io/file dir))]
 
-        (try
-          (is (= (get-in reference ["models" name "architecture"]) (get provenance "architecture")))
-          (decisions/validate-runtime! model (io/file dir))
-          (let [items (mapv (fn [example]
-                              (let [q (get example "question")]
-                                (#'decisions/gliner-sequence-item
-                                 (:tokenizer loaded)
-                                 (:config loaded)
-                                 (get example "state")
-                                 (#'decisions/question (get q "id") (gliner-definition q)))))
-                            cases)
-                batched (#'decisions/run-gliner-batch
-                         (:environment loaded)
-                         (:session loaded)
-                         items
-                         (:special loaded))]
+          (try
+            (expect (= (get-in reference ["models" name "architecture"])
+                       (get provenance "architecture")))
+            (decisions/validate-runtime! model (io/file dir))
+            (let [items (mapv (fn [example]
+                                (let [q (get example "question")]
+                                  (#'decisions/gliner-sequence-item
+                                   (:tokenizer loaded)
+                                   (:config loaded)
+                                   (get example "state")
+                                   (#'decisions/question (get q "id") (gliner-definition q)))))
+                              cases)
+                  batched (#'decisions/run-gliner-batch
+                           (:environment loaded)
+                           (:session loaded)
+                           items
+                           (:special loaded))]
 
-            (doseq [[example expected-item item] (map vector cases expected items)]
-              (let [q (get example "question")
-                    id (get q "id")
-                    task (str (get q "type") ": " (get q "instructions"))
-                    logits (get-in batched [:logits id])
-                    result (get-in batched [:answers id])
-                    public (with-redefs [assets/manifest (constantly [model])
-                                         assets/install-dir (fn [& _]
-                                                              dir)
-                                         assets/installed? (fn [& _]
-                                                             true)]
+              (doseq [[example expected-item item] (map vector cases expected items)]
+                (let [q (get example "question")
+                      id (get q "id")
+                      task (str (get q "type") ": " (get q "instructions"))
+                      logits (get-in batched [:logits id])
+                      result (get-in batched [:answers id])
+                      public (with-redefs [assets/manifest (constantly [model])
+                                           assets/install-dir (fn [& _]
+                                                                dir)
+                                           assets/installed? (fn [& _]
+                                                               true)]
 
-                             (decisions/infer! {"model" model-id
-                                                "state" (get example "state")
-                                                "questions" (array-map id (gliner-definition q))}))
-                    winner (get-in expected-item ["official" task "label"])
-                    expected-key (some (fn [[key display]]
-                                         (when (= display winner) key))
-                                       (get q "options"))
-                    act-confidence (get-in expected-item ["official" "action" "confidence"])
-                    expected-act (if (= "act" (get-in expected-item ["official" "action" "label"]))
-                                   act-confidence
-                                   (- 1.0 act-confidence))]
+                               (decisions/infer! {"model" model-id
+                                                  "state" (get example "state")
+                                                  "questions" (array-map id
+                                                                         (gliner-definition q))}))
+                      winner (get-in expected-item ["official" task "label"])
+                      expected-key (some (fn [[key display]]
+                                           (when (= display winner) key))
+                                         (get q "options"))
+                      act-confidence (get-in expected-item ["official" "action" "confidence"])
+                      expected-act (if (= "act"
+                                          (get-in expected-item ["official" "action" "label"]))
+                                     act-confidence
+                                     (- 1.0 act-confidence))]
 
-                (testing (str model-id " / " id)
-                  (is (= (get expected-item "ids") (:ids item)))
-                  (is (= (get expected-item "markers") (:markers item)))
-                  (is (= (count (get expected-item "logits")) (count logits)))
-                  (is (every? true?
-                              (map #(< (Math/abs (- (double %1) (double %2))) 0.002)
-                                   logits
-                                   (get expected-item "logits"))))
-                  (is (= model-id (get public "model")))
-                  (is (= model-id (get-in public ["routing" "model_ref"])))
-                  (is (= result (get-in public ["answers" id])))
-                  (is (< (Math/abs (- (double (get-in result ["action" "act_probability"]))
-                                      (double expected-act)))
-                         0.002))
+                  (expect (= (get expected-item "ids") (:ids item)) (str model-id " / " id))
+                  (expect (= (get expected-item "markers") (:markers item)) (str model-id " / " id))
+                  (expect (= (count (get expected-item "logits")) (count logits))
+                          (str model-id " / " id))
+                  (expect (every? true?
+                                  (map #(< (Math/abs (- (double %1) (double %2))) 0.002)
+                                       logits
+                                       (get expected-item "logits")))
+                          (str model-id " / " id))
+                  (expect (= model-id (get public "model")) (str model-id " / " id))
+                  (expect (= model-id (get-in public ["routing" "model_ref"]))
+                          (str model-id " / " id))
+                  (expect (= result (get-in public ["answers" id])) (str model-id " / " id))
+                  (expect (< (Math/abs (- (double (get-in result ["action" "act_probability"]))
+                                          (double expected-act)))
+                             0.002)
+                          (str model-id " / " id))
                   (case (get q "type")
                     "choice"
-                    (is (= expected-key (get result "choice")))
+                    (expect (= expected-key (get result "choice")) (str model-id " / " id))
 
                     "score"
-                    (is (<= 0.0 (double (get result "score")) 2.0))
+                    (expect (<= 0.0 (double (get result "score")) 2.0) (str model-id " / " id))
 
                     "noul"
-                    (is (<= 0.0 (double (get result "noul")) 1.0))))))
-            (is (= :decisions/invalid-request
-                   (:type (ex-data (try (#'decisions/gliner-sequence-item
-                                         (:tokenizer loaded)
-                                         (:config loaded)
-                                         (apply str (repeat 600 "billing "))
-                                         (first items))
-                                        (catch clojure.lang.ExceptionInfo e e)))))))
-          (finally ((:close loaded)) (cache/release-idle!)))))))
+                    (expect (<= 0.0 (double (get result "noul")) 1.0) (str model-id " / " id)))))
+              (expect (= :decisions/invalid-request
+                         (:type (ex-data (try (#'decisions/gliner-sequence-item
+                                               (:tokenizer loaded)
+                                               (:config loaded)
+                                               (apply str (repeat 600 "billing "))
+                                               (first items))
+                                              (catch clojure.lang.ExceptionInfo e e)))))))
+            (finally ((:close loaded)) (cache/release-idle!))))))))
 
-(deftest catalog-distinguishes-installed-files-from-resident-sessions
-  (let [missing (str (System/getProperty "java.io.tmpdir") "/missing-laya-" (random-uuid))]
-    (with-redefs [assets/install-dir (fn [& _]
-                                       missing)]
-      (is (= [{"model_ref" "laya-typed-decisions"
-               "revision" "dd079950600224fb459af2a0cb1d74e1e57ee9cf"
-               "installed" false
-               "residency" "cold"}
-              {"model_ref" "gliner2.5-base"
-               "revision" "7f1ae80f150e9d3e262ec1684d0d78208e2595d0"
-               "installed" false
-               "residency" "cold"}
-              {"model_ref" "gliner2.5-decide"
-               "revision" "bbe10ff77ebb238777c17d3a8ac9260e30929057"
-               "installed" false
-               "residency" "cold"}]
-             (decisions/models-status))))))
+(defdescribe catalog-distinguishes-installed-files-from-resident-sessions
+             (it "catalog distinguishes installed files from resident sessions"
+                 (let [missing
+                       (str (System/getProperty "java.io.tmpdir") "/missing-laya-" (random-uuid))]
+                   (with-redefs [assets/install-dir (fn [& _]
+                                                      missing)]
+                     (expect (= [{"model_ref" "laya-typed-decisions"
+                                  "revision" "dd079950600224fb459af2a0cb1d74e1e57ee9cf"
+                                  "installed" false
+                                  "residency" "cold"}
+                                 {"model_ref" "gliner2.5-base"
+                                  "revision" "7f1ae80f150e9d3e262ec1684d0d78208e2595d0"
+                                  "installed" false
+                                  "residency" "cold"}
+                                 {"model_ref" "gliner2.5-decide"
+                                  "revision" "bbe10ff77ebb238777c17d3a8ac9260e30929057"
+                                  "installed" false
+                                  "residency" "cold"}]
+                                (decisions/models-status)))))))
 
-(deftest tokenizer-ids-match-djl-without-encoding-metadata
-  ;; The production path must not request unused character spans through JNI.
-  (when-let [dir (System/getProperty "vis.test.laya.fp32.dir")]
-    (with-open [^HuggingFaceTokenizer tokenizer
-                (HuggingFaceTokenizer/newInstance
-                  (.toPath ^java.io.File (io/file dir "tokenizer/tokenizer.json")))]
-      (doseq [text ["A refund for a damaged item." " Piñata [MASK] refund" ""]]
-        (is (= (vec (.getIds (.encode tokenizer (str/replace text "[MASK]" " ") false false)))
-               (#'decisions/token-ids tokenizer text)))))))
+(defdescribe tokenizer-ids-match-djl-without-encoding-metadata
+             (it "tokenizer ids match djl without encoding metadata"
+                 ;; The production path must not request unused character spans through JNI.
+                 (when-let [dir (System/getProperty "vis.test.laya.fp32.dir")]
+                   (with-open [^HuggingFaceTokenizer tokenizer
+                               (HuggingFaceTokenizer/newInstance
+                                 (.toPath ^java.io.File (io/file dir "tokenizer/tokenizer.json")))]
+                     (doseq [text ["A refund for a damaged item." " Piñata [MASK] refund" ""]]
+                       (expect
+                         (= (vec (.getIds
+                                   (.encode tokenizer (str/replace text "[MASK]" " ") false false)))
+                            (#'decisions/token-ids tokenizer text))))))))
 
-(deftest local-fp32-parity-across-all-typed-heads
-  ;; Supply the verified release bundle with -Dvis.test.laya.fp32.dir=<installed inference dir>.
-  (when-let [dir (System/getProperty "vis.test.laya.fp32.dir")]
-    (let
-      [request
-       (decisions/parse-body
-         (str
-           "{\"model\":\"laya-typed-decisions\","
-           "\"state\":\"The customer requests a refund after receiving a broken item.\","
-           "\"questions\":{"
-           "\"intent\":{\"type\":\"choice\",\"instructions\":\"What is the customer asking for?\","
-           "\"criteria\":{\"refund\":\"A refund\",\"repair\":\"A repair\"}},"
-           "\"priority\":{\"type\":\"score\",\"instructions\":\"Rate urgency\","
-           "\"criteria\":[\"not urgent\",\"soon\",\"immediate\"]},"
-           "\"policy\":{\"type\":\"noul\",\"instructions\":\"Can the purchase be refunded?\","
-           "\"criteria\":{\"false\":\"not refundable\",\"true\":\"refundable\"}}}}"))]
-      (with-redefs [assets/install-dir (fn [& _]
-                                         dir)]
-        (let [result (decisions/infer! request)]
-          (testing "Laya FP32 and JVM tokenizer agree on all three question types and action head"
-            (is (= "laya-typed-decisions" (get-in result ["routing" "model"])))
-            (is (= 108 (get-in result ["usage" "input_tokens"])))
-            (is (= "refund" (get-in result ["answers" "intent" "choice"])))
-            (is (= {"refund" 0.9427 "repair" 0.0573}
-                   (get-in result ["answers" "intent" "probabilities"])))
-            (is (= 1.5357 (get-in result ["answers" "priority" "score"])))
-            (is (= 0.5466 (get-in result ["answers" "policy" "noul"])))
-            (is (= 1.0 (get-in result ["answers" "intent" "action" "act_probability"])))
-            (is (= [true "ready"]
-                   ((juxt #(get % "installed") #(get % "residency"))
-                     (first (decisions/models-status)))))))))))
+(defdescribe
+  local-fp32-parity-across-all-typed-heads
+  (it
+    "Laya FP32 and JVM tokenizer agree on all three question types and action head"
+    ;; Supply the verified release bundle with -Dvis.test.laya.fp32.dir=<installed inference dir>.
+    (when-let [dir (System/getProperty "vis.test.laya.fp32.dir")]
+      (let
+        [request
+         (decisions/parse-body
+           (str
+             "{\"model\":\"laya-typed-decisions\","
+             "\"state\":\"The customer requests a refund after receiving a broken item.\","
+             "\"questions\":{"
+             "\"intent\":{\"type\":\"choice\",\"instructions\":\"What is the customer asking for?\","
+             "\"criteria\":{\"refund\":\"A refund\",\"repair\":\"A repair\"}},"
+             "\"priority\":{\"type\":\"score\",\"instructions\":\"Rate urgency\","
+             "\"criteria\":[\"not urgent\",\"soon\",\"immediate\"]},"
+             "\"policy\":{\"type\":\"noul\",\"instructions\":\"Can the purchase be refunded?\","
+             "\"criteria\":{\"false\":\"not refundable\",\"true\":\"refundable\"}}}}"))]
+        (with-redefs [assets/install-dir (fn [& _]
+                                           dir)]
+          (let [result (decisions/infer! request)]
+            (expect (= "laya-typed-decisions" (get-in result ["routing" "model"])))
+            (expect (= 108 (get-in result ["usage" "input_tokens"])))
+            (expect (= "refund" (get-in result ["answers" "intent" "choice"])))
+            (expect (= {"refund" 0.9427 "repair" 0.0573}
+                       (get-in result ["answers" "intent" "probabilities"])))
+            (expect (= 1.5357 (get-in result ["answers" "priority" "score"])))
+            (expect (= 0.5466 (get-in result ["answers" "policy" "noul"])))
+            (expect (= 1.0 (get-in result ["answers" "intent" "action" "act_probability"])))
+            (expect (= [true "ready"]
+                       ((juxt #(get % "installed") #(get % "residency"))
+                         (first (decisions/models-status)))))))))))
 
-(deftest imported-release-bundle-runs-both-heads-without-changing-the-baseline
-  ;; Supply -Dvis.test.laya.fp32.archive=<assets-pack FP32 zip> for the full import gate.
-  (when-let [archive (System/getProperty "vis.test.laya.fp32.archive")]
-    (let [root (io/file (System/getProperty "java.io.tmpdir")
-                        (str "vis-decision-real-import-" (random-uuid)))
-          sha (:sha256 (assets/artifact (assets/entry "laya-typed-decisions") :inference))]
+(defdescribe
+  imported-release-bundle-runs-both-heads-without-changing-the-baseline
+  (it
+    "imported release bundle runs both heads without changing the baseline"
+    ;; Supply -Dvis.test.laya.fp32.archive=<assets-pack FP32 zip> for the full import gate.
+    (when-let [archive (System/getProperty "vis.test.laya.fp32.archive")]
+      (let [root (io/file (System/getProperty "java.io.tmpdir")
+                          (str "vis-decision-real-import-" (random-uuid)))
+            sha (:sha256 (assets/artifact (assets/entry "laya-typed-decisions") :inference))]
 
-      (try (with-redefs [assets/models-root (constantly (str root))]
-             (let [registered (registry/register! (io/file archive) sha decisions/validate-runtime!)
-                   ref (get registered "model_ref")
-                   answer (decisions/infer!
-                            {"model" ref
-                             "state" "broken item refund"
-                             "questions"
-                             (array-map
-                               "intent" {"type" "choice"
-                                         "instructions" "Choose an intent"
-                                         "criteria" (array-map "refund" "refund" "repair" "repair")}
-                               "policy" {"type" "noul" "instructions" "Is this refundable?"})})]
+        (try
+          (with-redefs [assets/models-root (constantly (str root))]
+            (let [registered (registry/register! (io/file archive) sha decisions/validate-runtime!)
+                  ref (get registered "model_ref")
+                  answer (decisions/infer!
+                           {"model" ref
+                            "state" "broken item refund"
+                            "questions"
+                            (array-map
+                              "intent" {"type" "choice"
+                                        "instructions" "Choose an intent"
+                                        "criteria" (array-map "refund" "refund" "repair" "repair")}
+                              "policy" {"type" "noul" "instructions" "Is this refundable?"})})]
 
-               (is (= ref (get-in answer ["routing" "model_ref"])))
-               (is (number? (get-in answer ["answers" "intent" "action" "act_probability"])))
-               (is (number? (get-in answer ["answers" "policy" "noul"])))
-               (is (= ref (get (first (registry/versions)) "model_ref")))
-               (is (= "laya-typed-decisions" (get (first (decisions/models-status)) "model_ref")))))
-           (finally (cache/release-idle!) (files/delete-dir! root))))))
+              (expect (= ref (get-in answer ["routing" "model_ref"])))
+              (expect (number? (get-in answer ["answers" "intent" "action" "act_probability"])))
+              (expect (number? (get-in answer ["answers" "policy" "noul"])))
+              (expect (= ref (get (first (registry/versions)) "model_ref")))
+              (expect (= "laya-typed-decisions"
+                         (get (first (decisions/models-status)) "model_ref")))))
+          (finally (cache/release-idle!) (files/delete-dir! root)))))))
 
 (defn- sha256-file
   [^File archive]
@@ -266,70 +295,75 @@
           (when (pos? n) (.update digest buffer 0 n) (recur))))
       (util/bytes->hex (.digest digest)))))
 
-(deftest gliner-fp32-archives-import-warm-and-survive-cache-restart
-  ;; Supply both -Dvis.test.gliner.{base,decide}.fp32.archive=<complete FP32 zip>.
-  (doseq [name
-          ["base" "decide"]
+(defdescribe
+  gliner-fp32-archives-import-warm-and-survive-cache-restart
+  (it
+    "gliner fp32 archives import warm and survive cache restart"
+    ;; Supply both -Dvis.test.gliner.{base,decide}.fp32.archive=<complete FP32 zip>.
+    (doseq [name
+            ["base" "decide"]
 
-          :let [archive-path
-                (System/getProperty (str "vis.test.gliner." name ".fp32.archive"))]
-          :when archive-path]
+            :let [archive-path
+                  (System/getProperty (str "vis.test.gliner." name ".fp32.archive"))]
+            :when archive-path]
 
-    (let [root
-          (io/file (System/getProperty "java.io.tmpdir")
-                   (str "vis-gliner-real-import-" (random-uuid)))
+      (let [root
+            (io/file (System/getProperty "java.io.tmpdir")
+                     (str "vis-gliner-real-import-" (random-uuid)))
 
-          archive
-          (io/file archive-path)
+            archive
+            (io/file archive-path)
 
-          model-id
-          (str "gliner2.5-" name)
+            model-id
+            (str "gliner2.5-" name)
 
-          alias
-          (str "local-" name)
+            alias
+            (str "local-" name)
 
-          sha
-          (sha256-file archive)
+            sha
+            (sha256-file archive)
 
-          request
-          {"model" alias
-           "state" "A damaged item needs a refund."
-           "questions" (array-map "intent" {"type" "choice"
-                                            "instructions" "Select intent"
-                                            "criteria" (array-map "refund" "A refund"
-                                                                  "repair" "A repair")}
-                                  "priority" {"type" "score"
-                                              "instructions" "Rate urgency"
-                                              "criteria" ["not urgent" "soon" "immediate"]}
-                                  "policy" {"type" "noul" "instructions" "Is refund available?"})}]
+            request
+            {"model" alias
+             "state" "A damaged item needs a refund."
+             "questions" (array-map
+                           "intent" {"type" "choice"
+                                     "instructions" "Select intent"
+                                     "criteria" (array-map "refund" "A refund" "repair" "A repair")}
+                           "priority" {"type" "score"
+                                       "instructions" "Rate urgency"
+                                       "criteria" ["not urgent" "soon" "immediate"]}
+                           "policy" {"type" "noul" "instructions" "Is refund available?"})}]
 
-      (try (with-redefs [assets/models-root (constantly (str root))]
-             (let [registered (registry/register! archive sha decisions/validate-runtime!)
-                   ref (get registered "model_ref")]
+        (try
+          (with-redefs [assets/models-root (constantly (str root))]
+            (let [registered (registry/register! archive sha decisions/validate-runtime!)
+                  ref (get registered "model_ref")]
 
-               (is (= model-id (get-in (registry/resolve-model ref) [:model :id])))
-               (is (= :decisions/unknown-model
-                      (:type (ex-data (try (decisions/infer! request)
-                                           (catch clojure.lang.ExceptionInfo e e))))))
-               (is (nil? (registry/get-alias alias)))
-               (is (= ref (get (registry/activate! alias ref nil) "model_ref")))
-               (is (= ref (get (decisions/warm! alias) "model_ref")))
-               (is (= "ready"
-                      (get (some #(when (= ref (get % "model_ref")) %) (decisions/models-status))
-                           "residency")))
-               (let [answer (decisions/infer! request)]
-                 (is (= model-id (get answer "model")))
-                 (is (= alias (get-in answer ["routing" "model"])))
-                 (is (= ref (get-in answer ["routing" "model_ref"])))
-                 (is (= #{"intent" "priority" "policy"} (set (keys (get answer "answers")))))
-                 (is (contains? #{"refund" "repair"} (get-in answer ["answers" "intent" "choice"])))
-                 (is (number? (get-in answer ["answers" "priority" "score"])))
-                 (is (number? (get-in answer ["answers" "policy" "noul"])))
-                 (is (number? (get-in answer ["answers" "policy" "action" "act_probability"]))))
-               (cache/release-idle!)
-               (is (= "cold"
-                      (get (some #(when (= ref (get % "model_ref")) %) (decisions/models-status))
-                           "residency")))
-               (is (= ref (get-in (decisions/infer! request) ["routing" "model_ref"])))
-               (is (= ref (get-in (registry/resolve-model alias) [:model-ref])))))
-           (finally (cache/release-idle!) (files/delete-dir! root))))))
+              (expect (= model-id (get-in (registry/resolve-model ref) [:model :id])))
+              (expect (= :decisions/unknown-model
+                         (:type (ex-data (try (decisions/infer! request)
+                                              (catch clojure.lang.ExceptionInfo e e))))))
+              (expect (nil? (registry/get-alias alias)))
+              (expect (= ref (get (registry/activate! alias ref nil) "model_ref")))
+              (expect (= ref (get (decisions/warm! alias) "model_ref")))
+              (expect (= "ready"
+                         (get (some #(when (= ref (get % "model_ref")) %) (decisions/models-status))
+                              "residency")))
+              (let [answer (decisions/infer! request)]
+                (expect (= model-id (get answer "model")))
+                (expect (= alias (get-in answer ["routing" "model"])))
+                (expect (= ref (get-in answer ["routing" "model_ref"])))
+                (expect (= #{"intent" "priority" "policy"} (set (keys (get answer "answers")))))
+                (expect (contains? #{"refund" "repair"}
+                                   (get-in answer ["answers" "intent" "choice"])))
+                (expect (number? (get-in answer ["answers" "priority" "score"])))
+                (expect (number? (get-in answer ["answers" "policy" "noul"])))
+                (expect (number? (get-in answer ["answers" "policy" "action" "act_probability"]))))
+              (cache/release-idle!)
+              (expect (= "cold"
+                         (get (some #(when (= ref (get % "model_ref")) %) (decisions/models-status))
+                              "residency")))
+              (expect (= ref (get-in (decisions/infer! request) ["routing" "model_ref"])))
+              (expect (= ref (get-in (registry/resolve-model alias) [:model-ref])))))
+          (finally (cache/release-idle!) (files/delete-dir! root)))))))

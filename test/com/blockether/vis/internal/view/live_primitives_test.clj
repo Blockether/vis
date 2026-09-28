@@ -8,7 +8,7 @@
             [com.blockether.vis.internal.view.materializer :as materializer]
             [com.blockether.vis.internal.view.sink :as sink]
             [com.blockether.vis.view :as v]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
+            [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- nodes [view] (mapcat #(tree-seq :fields :fields %) (:nodes view)))
 
@@ -42,355 +42,392 @@
                        (doseq [file (reverse (file-seq dir))]
                          (io/delete-file file true))))))))
 
-(deftest all-primitives-contract-test
-  (let [wire-view
-        (json/read-json (slurp (io/resource "vis-contract/fixtures/live-primitives.json")))
+(defdescribe
+  all-primitives-contract-test
+  (it
+    "all primitives contract"
+    (let [wire-view
+          (json/read-json (slurp (io/resource "vis-contract/fixtures/live-primitives.json")))
 
-        ;; Normalize the wire declaration before materializing the complete vocabulary.
-        declared
-        (update wire-view
-                "nodes"
-                (fn strip [items]
-                  (mapv (fn [n]
-                          (cond-> (dissoc n "clicks" "total_lines")
-                            (get n "fields")
-                            (update "fields" strip)))
-                        items)))
+          ;; Normalize the wire declaration before materializing the complete vocabulary.
+          declared
+          (update wire-view
+                  "nodes"
+                  (fn strip [items]
+                    (mapv (fn [n]
+                            (cond-> (dissoc n "clicks" "total_lines")
+                              (get n "fields")
+                              (update "fields" strip)))
+                          items)))
 
-        raw
-        (select-keys declared ["title" "description" "nodes"])
+          raw
+          (select-keys declared ["title" "description" "nodes"])
 
-        view
-        (materializer/materialize (engine/normalize-live-view (engine/spec<-json raw)))]
+          view
+          (materializer/materialize (engine/normalize-live-view (engine/spec<-json raw)))]
 
-    (is (nil? (spec/live-view-error view)))
-    (is (= (set (vals spec/live-node-types))
-           (set (map :type (remove #(= :group (:type %)) (nodes view))))))
-    (is (= #{1 2 3 4 5 6} (set (map :level (filter #(= :heading (:type %)) (nodes view))))))
-    (is (= (set (vals spec/spinner-variants))
-           (set (map :variant (filter #(= :spinner (:type %)) (nodes view))))))
-    (is (= 0 (:clicks (node view "refresh"))))
-    (is (= "button" (get (wire/->wire (node view "refresh")) "type")))
-    (is (str/includes? (materializer/->markdown view) "<button> is literal text"))
-    (let [markdown
-          (materializer/->markdown view)
+      (expect (nil? (spec/live-view-error view)))
+      (expect (= (set (vals spec/live-node-types))
+                 (set (map :type (remove #(= :group (:type %)) (nodes view))))))
+      (expect (= #{1 2 3 4 5 6} (set (map :level (filter #(= :heading (:type %)) (nodes view))))))
+      (expect (= (set (vals spec/spinner-variants))
+                 (set (map :variant (filter #(= :spinner (:type %)) (nodes view))))))
+      (expect (= 0 (:clicks (node view "refresh"))))
+      (expect (= "button" (get (wire/->wire (node view "refresh")) "type")))
+      (expect (str/includes? (materializer/->markdown view) "<button> is literal text"))
+      (let [markdown
+            (materializer/->markdown view)
 
-          parsed
-          (materializer/parse-markdown markdown)]
+            parsed
+            (materializer/parse-markdown markdown)]
 
-      (is (= markdown (materializer/->markdown (:view parsed)))))))
+        (expect (= markdown (materializer/->markdown (:view parsed))))))))
 
-(deftest builders-and-validation-test
-  (is (= "heading" (:type (v/heading "Form heading"))))
-  (is (= "paragraph" (:type (v/paragraph "Form prose"))))
-  (doseq [bad [{:type :heading :id "x" :text "Heading" :level 0}
-               {:type :heading :id "x" :text "Heading" :level 7}
-               {:type :spinner :id "x" :text "Wait" :variant "unknown"}
-               {:type :button :id "x" :label "Go" :clicks 10}
-               {:type :log :id "x" :default-expanded "yes"} {:type :code :id "x" :text 4}]]
-    (is (try (engine/normalize-live-view {:title "Invalid" :nodes [bad]})
-             false
-             (catch clojure.lang.ExceptionInfo _ true))))
-  (is (empty? (:text (v/code "empty" "")))))
+(defdescribe builders-and-validation-test
+             (it "builders and validation"
+                 (expect (= "heading" (:type (v/heading "Form heading"))))
+                 (expect (= "paragraph" (:type (v/paragraph "Form prose"))))
+                 (doseq [bad [{:type :heading :id "x" :text "Heading" :level 0}
+                              {:type :heading :id "x" :text "Heading" :level 7}
+                              {:type :spinner :id "x" :text "Wait" :variant "unknown"}
+                              {:type :button :id "x" :label "Go" :clicks 10}
+                              {:type :log :id "x" :default-expanded "yes"}
+                              {:type :code :id "x" :text 4}]]
+                   (expect (try (engine/normalize-live-view {:title "Invalid" :nodes [bad]})
+                                false
+                                (catch clojure.lang.ExceptionInfo _ true))))
+                 (expect (empty? (:text (v/code "empty" ""))))))
 
-(deftest live-primitives-lifecycle-test
-  (watching
-    (fn [view]
-      (let [id (:id view)]
-        (is (= :dots (:variant (node view "wait"))))
-        (is (false? (:is-accepted (engine/action! id {:action :activate :node-id "disabled"}))))
-        (is (try (engine/action! id {:action :activate :node-id "a"})
-                 false
-                 (catch clojure.lang.ExceptionInfo _ true)))
-        (let [presses (mapv (fn [_]
-                              (future (engine/action! id
-                                                      {:action :activate :node-id "refresh"})))
-                            (range 12))]
-          (is (every? :is-accepted (map deref presses))))
-        (is (= 12 (:clicks (node (engine/live-view id) "refresh"))))
-        (engine/patch-live! id
-                            [{:op :set :node-id "source" :text ""}
-                             {:op :set :node-id "title" :text "Finished" :level 3}
-                             {:op :set :node-id "intro" :text "Updated paragraph"}
-                             {:op :set :node-id "wait" :variant :pulse :is-active false}
-                             {:op :set :node-id "refresh" :is-disabled true}
-                             {:op :append :node-id "a" :lines ["new line"]}])
-        ;; Regression #189: visibility never clears either log's retained lines.
-        (is (= ["retained" "new line"] (:lines (node (engine/live-view id) "a"))))
-        (is (= ["independent"] (:lines (node (engine/live-view id) "b"))))
-        (is (false? (:is-accepted (engine/action! id {:action :activate :node-id "refresh"}))))
-        (let [result (engine/close-live! id)
-              entries (sink/read-range (sink/view-file (:session-id view) id) 0 100)]
+(defdescribe
+  live-primitives-lifecycle-test
+  (it
+    "live primitives lifecycle"
+    (watching
+      (fn [view]
+        (let [id (:id view)]
+          (expect (= :dots (:variant (node view "wait"))))
+          (expect (false? (:is-accepted (engine/action! id
+                                                        {:action :activate :node-id "disabled"}))))
+          (expect (try (engine/action! id {:action :activate :node-id "a"})
+                       false
+                       (catch clojure.lang.ExceptionInfo _ true)))
+          (let [presses (mapv (fn [_]
+                                (future (engine/action! id {:action :activate :node-id "refresh"})))
+                              (range 12))]
+            (expect (every? :is-accepted (map deref presses))))
+          (expect (= 12 (:clicks (node (engine/live-view id) "refresh"))))
+          (engine/patch-live! id
+                              [{:op :set :node-id "source" :text ""}
+                               {:op :set :node-id "title" :text "Finished" :level 3}
+                               {:op :set :node-id "intro" :text "Updated paragraph"}
+                               {:op :set :node-id "wait" :variant :pulse :is-active false}
+                               {:op :set :node-id "refresh" :is-disabled true}
+                               {:op :append :node-id "a" :lines ["new line"]}])
+          ;; Regression #189: visibility never clears either log's retained lines.
+          (expect (= ["retained" "new line"] (:lines (node (engine/live-view id) "a"))))
+          (expect (= ["independent"] (:lines (node (engine/live-view id) "b"))))
+          (expect (false? (:is-accepted (engine/action! id
+                                                        {:action :activate :node-id "refresh"}))))
+          (let [result (engine/close-live! id)
+                entries (sink/read-range (sink/view-file (:session-id view) id) 0 100)]
 
-          (is (:is-completed result))
-          (is (= 12 (:clicks (node (:view result) "refresh"))))
-          (is (nil? (spec/live-result-error result)))
-          (is (= 12 (count (filter #(some :clicks (get-in % [:patch :ops])) entries))))
-          (is (false? (:is-accepted (engine/action! id
-                                                    {:action :activate :node-id "refresh"})))))))))
+            (expect (:is-completed result))
+            (expect (= 12 (:clicks (node (:view result) "refresh"))))
+            (expect (nil? (spec/live-result-error result)))
+            (expect (= 12 (count (filter #(some :clicks (get-in % [:patch :ops])) entries))))
+            (expect (false? (:is-accepted
+                              (engine/action! id {:action :activate :node-id "refresh"}))))))))))
 
-(deftest nested-history-test
-  ;; Regression #189: nesting a log does not remove its opening lines from history.
-  (watching
-    (fn [view]
-      (let [id
-            (:id view)
+(defdescribe
+  nested-history-test
+  (it "nested history"
+      ;; Regression #189: nesting a log does not remove its opening lines from history.
+      (watching
+        (fn [view]
+          (let [id
+                (:id view)
 
-            file
-            (sink/view-file (:session-id view) id)
+                file
+                (sink/view-file (:session-id view) id)
 
-            lines
-            (mapv #(str "line " %) (range 40))]
+                lines
+                (mapv #(str "line " %) (range 40))]
 
-        (is (= ["retained"] (:lines (sink/log-range file "a" 0 100))))
-        (engine/patch-live! id [{:op :append :node-id "a" :lines lines}])
-        (is (= (into ["retained"] lines) (:lines (sink/log-range file "a" 0 100))))
-        (engine/patch-live! id
-                            [{:op :add-node
-                              :node-spec (v/disclosure "late"
-                                                       "Added section"
-                                                       [(v/log "late-log"
-                                                               {:lines lines :window-lines 2})])}
-                             {:op :append :node-id "late-log" :lines ["next"]}])
-        (is (= ["line 39" "next"] (:lines (node (engine/live-view id) "late-log"))))
-        (is (= (conj lines "next") (:lines (sink/log-range file "late-log" 0 100))))))))
+            (expect (= ["retained"] (:lines (sink/log-range file "a" 0 100))))
+            (engine/patch-live! id [{:op :append :node-id "a" :lines lines}])
+            (expect (= (into ["retained"] lines) (:lines (sink/log-range file "a" 0 100))))
+            (engine/patch-live! id
+                                [{:op :add-node
+                                  :node-spec (v/disclosure
+                                               "late"
+                                               "Added section"
+                                               [(v/log "late-log" {:lines lines :window-lines 2})])}
+                                 {:op :append :node-id "late-log" :lines ["next"]}])
+            (expect (= ["line 39" "next"] (:lines (node (engine/live-view id) "late-log"))))
+            (expect (= (conj lines "next") (:lines (sink/log-range file "late-log" 0 100)))))))))
 
-(deftest receipt-retains-disclosure-tree-test
-  ;; Regression #189: the human receipt is not the model's flattened picture.
-  (watching
-    (fn [view]
-      (let [id
-            (:id view)
+(defdescribe
+  receipt-retains-disclosure-tree-test
+  (it "receipt retains disclosure tree"
+      ;; Regression #189: the human receipt is not the model's flattened picture.
+      (watching
+        (fn [view]
+          (let [id
+                (:id view)
 
-            file
-            (sink/view-file (:session-id view) id)
+                file
+                (sink/view-file (:session-id view) id)
 
-            _
-            (engine/patch-live! id [{:op :append :node-id "a" :lines (mapv str (range 200))}])
+                _
+                (engine/patch-live! id [{:op :append :node-id "a" :lines (mapv str (range 200))}])
 
-            model
+                model
+                (engine/close-live! id)
+
+                receipt
+                (:result (last (sink/read-range file 0 100)))]
+
+            (expect (nil? (spec/live-result-error (update receipt :reason keyword))))
+            (expect (not-any? #(= :group (:type %)) (get-in model [:view :nodes])))
+            (expect (= "group" (:type (node (:view receipt) "details"))))
+            (expect (= 201 (count (:lines (node (:view receipt) "a")))))
+            (expect (seq (:elided model)))
+            (expect (nil? (:elided receipt))))))))
+
+(defdescribe
+  initial-history-exceeds-hot-window-test
+  (it "initial history exceeds hot window"
+      ;; Regression #189: the display window never limits the durable record.
+      (watching
+        (fn [view]
+          (let [lines
+                (mapv #(str "line " %) (range 40))
+
+                declared
+                (v/view {:title "Initial history" :session-id (:session-id view)}
+                        (v/disclosure "section"
+                                      "Section"
+                                      [(v/log "nested" {:lines lines :window-lines 2})]))
+
+                opened
+                (engine/open-live! declared)]
+
+            (try
+              (expect (= ["line 38" "line 39"] (:lines (node opened "nested"))))
+              (expect (= 40 (:total-lines (node opened "nested"))))
+              (engine/patch-live! (:id opened) [{:op :append :node-id "nested" :lines ["later"]}])
+              (expect (= 2 (count (:lines (node (engine/live-view (:id opened)) "nested")))))
+              (expect (= (conj lines "later")
+                         (:lines (sink/log-range (sink/view-file (:session-id opened) (:id opened))
+                                                 "nested"
+                                                 0
+                                                 100))))
+              (engine/close-live! (:id opened))
+              (expect (= (conj lines "later")
+                         (:lines (sink/log-range (sink/view-file (:session-id opened) (:id opened))
+                                                 "nested"
+                                                 0
+                                                 100))))
+              (finally (engine/close-live! (:id opened)))))))))
+
+(defdescribe literal-markdown-roundtrip-test
+             (it "literal markdown roundtrip"
+                 (doseq [type
+                         [:paragraph :code]
+
+                         text
+                         ["**looks like status**"
+                          "# literal\n\n<!-- vis:heading 1 -->\n# still literal\n```\n\n"]]
+
+                   (let [view
+                         {:title "Literal content" :nodes [{:id "text" :type type :text text}]}
+
+                         markdown
+                         (materializer/->markdown view)
+
+                         parsed
+                         (:view (materializer/parse-markdown markdown))]
+
+                     (expect (= text (get-in parsed [:nodes 0 :text])))
+                     (expect (= markdown (materializer/->markdown parsed)))))))
+
+(defdescribe
+  retained-log-search-test
+  (it "retained log search"
+      ;; #189: search the record, including nested logs, not just the painted window.
+      (watching
+        (fn [view]
+          (let [id
+                (:id view)
+
+                file
+                (sink/view-file (:session-id view) id)
+
+                search
+                #(sink/log-range file "a" %1 %2 %3)]
+
+            (engine/patch-live!
+              id
+              [{:op :append :node-id "a" :lines ["ERROR [disk]" "ok" "error [disk] again" "ŁÓDŹ"]}])
+            (expect (= {:node-id "a"
+                        :from 1
+                        :total 5
+                        :matched 2
+                        :lines ["error [disk] again"]
+                        :line-numbers [4]}
+                       (search 1 1 "[DISK]")))
+            (expect (= [5] (:line-numbers (search 0 10 "łódź"))))
+            (expect (= 0 (:matched (search 0 10 ".*"))))
+            (expect (= 5 (:matched (search 0 10 ""))))
+            (expect (= [] (:lines (search 8 2 "error"))))
+            (engine/patch-live! id
+                                [{:op :clear :node-id "a"}
+                                 {:op :append :node-id "a" :lines ["ERROR fresh"]}])
+            (expect (= [1] (:line-numbers (search 0 10 "error"))))
+            (expect (= 1 (:total (search 0 10 "error"))))
             (engine/close-live! id)
+            (expect (= ["ERROR fresh"] (:lines (search 0 10 "error")))))))))
 
-            receipt
-            (:result (last (sink/read-range file 0 100)))]
+(defdescribe
+  retained-log-search-is-bounded-beyond-the-hot-window-test
+  (it "retained log search is bounded beyond the hot window"
+      (watching
+        (fn [view]
+          (let [id
+                (:id view)
 
-        (is (nil? (spec/live-result-error (update receipt :reason keyword))))
-        (is (not-any? #(= :group (:type %)) (get-in model [:view :nodes])))
-        (is (= "group" (:type (node (:view receipt) "details"))))
-        (is (= 201 (count (:lines (node (:view receipt) "a")))))
-        (is (seq (:elided model)))
-        (is (nil? (:elided receipt)))))))
+                lines
+                (mapv #(str (if (even? %) "ERROR " "ok ") %) (range 2500))
 
-(deftest initial-history-exceeds-hot-window-test
-  ;; Regression #189: the display window never limits the durable record.
-  (watching
-    (fn [view]
-      (let [lines
-            (mapv #(str "line " %) (range 40))
+                file
+                (sink/view-file (:session-id view) id)]
 
-            declared
-            (v/view
-              {:title "Initial history" :session-id (:session-id view)}
-              (v/disclosure "section" "Section" [(v/log "nested" {:lines lines :window-lines 2})]))
+            (doseq [chunk (partition-all 100 lines)]
+              ;; #209: styling processes only arriving chunks, never the retained file.
+              (engine/patch-live! id [{:op :append :node-id "a" :lines (vec chunk) :tone :error}]))
+            (let [page (sink/log-range file "a" 0 2 "error")]
+              (expect (= 2501 (:total page)))
+              (expect (= 1250 (:matched page)))
+              (expect (= ["ERROR 0" "ERROR 2"] (:lines page)))
+              (expect (= [2 4] (:line-numbers page)))
+              (expect (= ["error" "error"] (:line-tones page)))
+              (expect (= 2000 (count (:line-tones (node (engine/live-view id) "a"))))))
+            (engine/patch-live! id [{:op :set :node-id "wait" :text "Failed promptly"}])
+            (expect (= "Failed promptly" (:text (node (engine/live-view id) "wait"))))
+            (expect (:is-accepted (engine/action! id {:action :interrupt}))))))))
 
-            opened
-            (engine/open-live! declared)]
+(defdescribe
+  styled-output-history-test
+  (it "styled output history"
+      ;; #209: styles stay alongside complete text through appends, redaction and closure.
+      (watching
+        (fn [view]
+          (let [id
+                (:id view)
 
-        (try (is (= ["line 38" "line 39"] (:lines (node opened "nested"))))
-             (is (= 40 (:total-lines (node opened "nested"))))
-             (engine/patch-live! (:id opened) [{:op :append :node-id "nested" :lines ["later"]}])
-             (is (= 2 (count (:lines (node (engine/live-view (:id opened)) "nested")))))
-             (is (= (conj lines "later")
-                    (:lines (sink/log-range (sink/view-file (:session-id opened) (:id opened))
-                                            "nested"
-                                            0
-                                            100))))
-             (engine/close-live! (:id opened))
-             (is (= (conj lines "later")
-                    (:lines (sink/log-range (sink/view-file (:session-id opened) (:id opened))
-                                            "nested"
-                                            0
-                                            100))))
-             (finally (engine/close-live! (:id opened))))))))
+                file
+                (sink/view-file (:session-id view) id)]
 
-(deftest literal-markdown-roundtrip-test
-  (doseq [type
-          [:paragraph :code]
+            (engine/patch-live!
+              id
+              [{:op :append
+                :node-id "a"
+                :lines ["WARN disk" "password=fixture-log-secret"]
+                :tone :warn}
+               {:op :append :node-id "a" :lines ["ERROR <script>literal</script>"] :tone :error}
+               {:op :append :node-id "a" :lines ["last"]}])
+            (let [log
+                  (node (engine/live-view id) "a")
 
-          text
-          ["**looks like status**" "# literal\n\n<!-- vis:heading 1 -->\n# still literal\n```\n\n"]]
+                  page
+                  (sink/log-range file "a" 0 10)]
 
-    (let [view
-          {:title "Literal content" :nodes [{:id "text" :type type :text text}]}
+              (expect (= [nil :warn :warn :error nil] (:line-tones log)))
+              (expect (= [nil "warn" "warn" "error" nil] (:line-tones page)))
+              (expect (= (:lines log) (:lines page)))
+              (expect (= "password=[REDACTED]" (nth (:lines log) 2)))
+              (expect (= log
+                         (node (engine/live-view<-wire (wire/->wire (engine/live-view id))) "a")))
+              (expect (= [4] (:line-numbers (sink/log-range file "a" 0 2 "error"))))
+              (expect (= ["error"] (:line-tones (sink/log-range file "a" 0 2 "error"))))
+              (expect (not (str/includes? (slurp file) "fixture-log-secret")))
+              (engine/close-live! id)
+              (expect (= page (sink/log-range file "a" 0 10)))))))))
 
-          markdown
-          (materializer/->markdown view)
+(defdescribe log-controls-and-tone-validation-test
+             (it "log controls and tone validation"
+                 (let [log
+                       (engine/normalize-live-node
+                         {:type :log :id "safe" :lines [(str "literal" (char 27) "[2J" (char 7))]})]
+                   (expect (= ["literal\\u001b[2J\\u0007"] (:lines log))))
+                 (doseq [tones [[:unknown] []]]
+                   (expect (try (engine/normalize-live-node
+                                  {:type :log :id "bad" :lines ["x"] :line-tones tones})
+                                false
+                                (catch clojure.lang.ExceptionInfo _ true))))))
 
-          parsed
-          (:view (materializer/parse-markdown markdown))]
+(defdescribe
+  divider-contract-test
+  (it "divider contract"
+      (expect (= {:id "section-break" :type "divider"} (v/divider "section-break")))
+      (let [divider
+            (engine/normalize-live-node {:id "section-break" :type "divider"})
 
-      (is (= text (get-in parsed [:nodes 0 :text])))
-      (is (= markdown (materializer/->markdown parsed))))))
+            view
+            (materializer/materialize
+              (engine/normalize-live-view
+                {:title "Build sections"
+                 :nodes [{:id "sections"
+                          :type "group"
+                          :direction "column"
+                          :fields [{:id "before" :type "paragraph" :text "Build finished"} divider
+                                   {:id "after" :type "paragraph" :text "Review results"}]}]}))
 
-(deftest retained-log-search-test
-  ;; #189: search the record, including nested logs, not just the painted window.
-  (watching
-    (fn [view]
-      (let [id
-            (:id view)
+            markdown
+            (materializer/->markdown view)]
 
-            file
-            (sink/view-file (:session-id view) id)
+        (expect (= {:id "section-break" :type :divider} divider))
+        (expect (nil? (spec/live-node-error divider)))
+        (expect (= {"id" "section-break" "type" "divider"} (wire/->wire divider)))
+        (expect (= divider (node (engine/live-view<-wire (wire/->wire view)) "section-break")))
+        (expect (str/includes? markdown "\n---\n"))
+        (expect (= markdown
+                   (materializer/->markdown (:view (materializer/parse-markdown markdown)))))
+        (expect (= 1
+                   (count (filter #(= :divider (:type %))
+                                  (nodes (:view (materializer/parse-markdown markdown))))))))
+      (doseq [[key value] [[:label "Section"] [:text "---"] [:tone :idle] [:level 2] [:fields []]
+                           [:style "dashed"]]]
+        (expect (try (engine/normalize-live-node {:id "bad" :type :divider key value})
+                     false
+                     (catch clojure.lang.ExceptionInfo _ true)))
+        (expect (some? (spec/live-node-error {:id "bad" :type :divider key value}))))))
 
-            search
-            #(sink/log-range file "a" %1 %2 %3)]
+(defdescribe divider-lifecycle-test
+             (it "divider lifecycle"
+                 (watching
+                   (fn [view]
+                     (let [id
+                           (:id view)
 
-        (engine/patch-live!
-          id
-          [{:op :append :node-id "a" :lines ["ERROR [disk]" "ok" "error [disk] again" "ŁÓDŹ"]}])
-        (is (= {:node-id "a"
-                :from 1
-                :total 5
-                :matched 2
-                :lines ["error [disk] again"]
-                :line-numbers [4]}
-               (search 1 1 "[DISK]")))
-        (is (= [5] (:line-numbers (search 0 10 "łódź"))))
-        (is (= 0 (:matched (search 0 10 ".*"))))
-        (is (= 5 (:matched (search 0 10 ""))))
-        (is (= [] (:lines (search 8 2 "error"))))
-        (engine/patch-live! id
-                            [{:op :clear :node-id "a"}
-                             {:op :append :node-id "a" :lines ["ERROR fresh"]}])
-        (is (= [1] (:line-numbers (search 0 10 "error"))))
-        (is (= 1 (:total (search 0 10 "error"))))
-        (engine/close-live! id)
-        (is (= ["ERROR fresh"] (:lines (search 0 10 "error"))))))))
+                           divider
+                           {:id "section-break" :type :divider}]
 
-(deftest retained-log-search-is-bounded-beyond-the-hot-window-test
-  (watching
-    (fn [view]
-      (let [id
-            (:id view)
-
-            lines
-            (mapv #(str (if (even? %) "ERROR " "ok ") %) (range 2500))
-
-            file
-            (sink/view-file (:session-id view) id)]
-
-        (doseq [chunk (partition-all 100 lines)]
-          ;; #209: styling processes only arriving chunks, never the retained file.
-          (engine/patch-live! id [{:op :append :node-id "a" :lines (vec chunk) :tone :error}]))
-        (let [page (sink/log-range file "a" 0 2 "error")]
-          (is (= 2501 (:total page)))
-          (is (= 1250 (:matched page)))
-          (is (= ["ERROR 0" "ERROR 2"] (:lines page)))
-          (is (= [2 4] (:line-numbers page)))
-          (is (= ["error" "error"] (:line-tones page)))
-          (is (= 2000 (count (:line-tones (node (engine/live-view id) "a"))))))
-        (engine/patch-live! id [{:op :set :node-id "wait" :text "Failed promptly"}])
-        (is (= "Failed promptly" (:text (node (engine/live-view id) "wait"))))
-        (is (:is-accepted (engine/action! id {:action :interrupt})))))))
-
-(deftest styled-output-history-test
-  ;; #209: styles stay alongside complete text through appends, redaction and closure.
-  (watching
-    (fn [view]
-      (let [id
-            (:id view)
-
-            file
-            (sink/view-file (:session-id view) id)]
-
-        (engine/patch-live!
-          id
-          [{:op :append :node-id "a" :lines ["WARN disk" "password=fixture-log-secret"] :tone :warn}
-           {:op :append :node-id "a" :lines ["ERROR <script>literal</script>"] :tone :error}
-           {:op :append :node-id "a" :lines ["last"]}])
-        (let [log
-              (node (engine/live-view id) "a")
-
-              page
-              (sink/log-range file "a" 0 10)]
-
-          (is (= [nil :warn :warn :error nil] (:line-tones log)))
-          (is (= [nil "warn" "warn" "error" nil] (:line-tones page)))
-          (is (= (:lines log) (:lines page)))
-          (is (= "password=[REDACTED]" (nth (:lines log) 2)))
-          (is (= log (node (engine/live-view<-wire (wire/->wire (engine/live-view id))) "a")))
-          (is (= [4] (:line-numbers (sink/log-range file "a" 0 2 "error"))))
-          (is (= ["error"] (:line-tones (sink/log-range file "a" 0 2 "error"))))
-          (is (not (str/includes? (slurp file) "fixture-log-secret")))
-          (engine/close-live! id)
-          (is (= page (sink/log-range file "a" 0 10))))))))
-
-(deftest log-controls-and-tone-validation-test
-  (let [log (engine/normalize-live-node
-              {:type :log :id "safe" :lines [(str "literal" (char 27) "[2J" (char 7))]})]
-    (is (= ["literal\\u001b[2J\\u0007"] (:lines log))))
-  (doseq [tones [[:unknown] []]]
-    (is (try (engine/normalize-live-node {:type :log :id "bad" :lines ["x"] :line-tones tones})
-             false
-             (catch clojure.lang.ExceptionInfo _ true)))))
-
-(deftest divider-contract-test
-  (is (= {:id "section-break" :type "divider"} (v/divider "section-break")))
-  (let [divider
-        (engine/normalize-live-node {:id "section-break" :type "divider"})
-
-        view
-        (materializer/materialize
-          (engine/normalize-live-view
-            {:title "Build sections"
-             :nodes [{:id "sections"
-                      :type "group"
-                      :direction "column"
-                      :fields [{:id "before" :type "paragraph" :text "Build finished"} divider
-                               {:id "after" :type "paragraph" :text "Review results"}]}]}))
-
-        markdown
-        (materializer/->markdown view)]
-
-    (is (= {:id "section-break" :type :divider} divider))
-    (is (nil? (spec/live-node-error divider)))
-    (is (= {"id" "section-break" "type" "divider"} (wire/->wire divider)))
-    (is (= divider (node (engine/live-view<-wire (wire/->wire view)) "section-break")))
-    (is (str/includes? markdown "\n---\n"))
-    (is (= markdown (materializer/->markdown (:view (materializer/parse-markdown markdown)))))
-    (is (= 1
-           (count (filter #(= :divider (:type %))
-                          (nodes (:view (materializer/parse-markdown markdown))))))))
-  (doseq [[key value] [[:label "Section"] [:text "---"] [:tone :idle] [:level 2] [:fields []]
-                       [:style "dashed"]]]
-    (is (try (engine/normalize-live-node {:id "bad" :type :divider key value})
-             false
-             (catch clojure.lang.ExceptionInfo _ true)))
-    (is (some? (spec/live-node-error {:id "bad" :type :divider key value})))))
-
-(deftest divider-lifecycle-test
-  (watching
-    (fn [view]
-      (let [id
-            (:id view)
-
-            divider
-            {:id "section-break" :type :divider}]
-
-        (engine/patch-live! id [{:op :add-node :after "intro" :node-spec divider}])
-        (is (= divider (node (engine/live-view id) "section-break")))
-        (doseq [op [{:op :set} {:op :set :label "Heading"} {:op :set :text "Changed"}
-                    {:op :append :lines ["line"]} {:op :clear} {:op :remove :item-ids ["x"]}]]
-          (is (try (engine/patch-live! id [(assoc op :node-id "section-break")])
-                   false
-                   (catch clojure.lang.ExceptionInfo _ true)))
-          (is (= divider (node (engine/live-view id) "section-break"))))
-        (is (try (engine/action! id {:action :activate :node-id "section-break"})
-                 false
-                 (catch clojure.lang.ExceptionInfo _ true)))
-        (engine/patch-live! id [{:op :remove-node :node-id "section-break"}])
-        (is (nil? (node (engine/live-view id) "section-break")))
-        (engine/patch-live! id [{:op :add-node :after "intro" :node-spec divider}])
-        (let [receipt (engine/close-live! id)]
-          (is (= divider (node (:view receipt) "section-break")))
-          (is (nil? (spec/live-result-error receipt))))))))
+                       (engine/patch-live! id [{:op :add-node :after "intro" :node-spec divider}])
+                       (expect (= divider (node (engine/live-view id) "section-break")))
+                       (doseq [op [{:op :set} {:op :set :label "Heading"} {:op :set :text "Changed"}
+                                   {:op :append :lines ["line"]} {:op :clear}
+                                   {:op :remove :item-ids ["x"]}]]
+                         (expect (try (engine/patch-live! id [(assoc op :node-id "section-break")])
+                                      false
+                                      (catch clojure.lang.ExceptionInfo _ true)))
+                         (expect (= divider (node (engine/live-view id) "section-break"))))
+                       (expect (try (engine/action! id {:action :activate :node-id "section-break"})
+                                    false
+                                    (catch clojure.lang.ExceptionInfo _ true)))
+                       (engine/patch-live! id [{:op :remove-node :node-id "section-break"}])
+                       (expect (nil? (node (engine/live-view id) "section-break")))
+                       (engine/patch-live! id [{:op :add-node :after "intro" :node-spec divider}])
+                       (let [receipt (engine/close-live! id)]
+                         (expect (= divider (node (:view receipt) "section-break")))
+                         (expect (nil? (spec/live-result-error receipt)))))))))

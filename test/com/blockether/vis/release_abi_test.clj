@@ -2,7 +2,7 @@
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.string :as str]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]])
+            [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -45,20 +45,21 @@
       (finally (doseq [file (reverse (file-seq dir))]
                  (io/delete-file file true))))))
 
-(deftest complete-bundle-glibc-check-test
-  ;; Regression: checking only the launcher missed libvispython's glibc 2.38 requirement.
-  (doseq [[files expected token]
-          [[{"vis" ["GLIBC_2.2.5" "GLIBC_2.9" "GLIBC_2.35"]
-             "python/lib/libpython.so" ["GLIBC_2.17"]} 0 "2 ELF files"]
-           [{"vis-python-worker" []} 0 "1 ELF files"]
-           [{"libvispython.so" ["GLIBC_2.38"]} 1 "libvispython.so requires GLIBC_2.38"]
-           [{"vis" ["GLIBC_2.35"] "vis-python-worker" ["GLIBC_2.36"]} 1
-            "vis-python-worker requires"] [{"vis-tui" ["GLIBC_2.38"]} 1 "vis-tui requires"]
-           [{"python/lib/lib-dynload/_ssl.so" ["GLIBC_2.36"]} 1 "_ssl.so requires"]
-           [{"libvisjail.so" ["GLIBC_ABI_DT_RELR"]} 1 "GLIBC_ABI_DT_RELR"]
-           [{"libvispython.so" ["GLIBC_3.0"]} 1 "GLIBC_3.0"] [{"broken.so" nil} 1 ".versions"]
-           [{} 1 "no ELF files found"]]]
-    (testing (pr-str files)
-      (let [{:keys [exit out err]} (check-bundle files)]
-        (is (= expected exit) (str out err))
-        (is (str/includes? (str out err) token) (str out err))))))
+(defdescribe complete-bundle-glibc-check-test
+             ;; Regression: checking only the launcher missed libvispython's glibc 2.38 requirement.
+             (doseq [[files expected token]
+                     [[{"vis" ["GLIBC_2.2.5" "GLIBC_2.9" "GLIBC_2.35"]
+                        "python/lib/libpython.so" ["GLIBC_2.17"]} 0 "2 ELF files"]
+                      [{"vis-python-worker" []} 0 "1 ELF files"]
+                      [{"libvispython.so" ["GLIBC_2.38"]} 1 "libvispython.so requires GLIBC_2.38"]
+                      [{"vis" ["GLIBC_2.35"] "vis-python-worker" ["GLIBC_2.36"]} 1
+                       "vis-python-worker requires"]
+                      [{"vis-tui" ["GLIBC_2.38"]} 1 "vis-tui requires"]
+                      [{"python/lib/lib-dynload/_ssl.so" ["GLIBC_2.36"]} 1 "_ssl.so requires"]
+                      [{"libvisjail.so" ["GLIBC_ABI_DT_RELR"]} 1 "GLIBC_ABI_DT_RELR"]
+                      [{"libvispython.so" ["GLIBC_3.0"]} 1 "GLIBC_3.0"]
+                      [{"broken.so" nil} 1 ".versions"] [{} 1 "no ELF files found"]]]
+               (it (pr-str files)
+                   (let [{:keys [exit out err]} (check-bundle files)]
+                     (expect (= expected exit) (str out err))
+                     (expect (str/includes? (str out err) token) (str out err))))))

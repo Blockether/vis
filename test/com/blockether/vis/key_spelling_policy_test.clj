@@ -4,7 +4,7 @@
    falls back from one spelling of a key to another."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
+            [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private source-roots ["src" "apps/vis-tui/src" "packages/vis-contract/src"])
 
@@ -62,24 +62,26 @@
        sort
        vec))
 
-(deftest mixed-spelling-detector-test
-  (testing "flags a fallback between spellings of one key"
-    (is (= [1] (mixed-spellings ["(or (:repo-root ws)" "    (get ws \"repo_root\"))"] 3)))
-    (is (= [1] (mixed-spellings ["(or (:tool_call_id m) (:tool-call-id m))"] 3))))
-  (testing "ignores distinct keys, distinct subjects and distant reads"
-    (is (= [] (mixed-spellings ["(or (get ws \"repo_root\") (get ws \"root\"))"] 3)))
-    (is (= [] (mixed-spellings ["(or (:root a) (get b \"root\"))"] 3)))
-    (is (= [] (mixed-spellings ["(:root ws)" "" "" "(get ws \"root\")"] 3)))))
+(defdescribe
+  mixed-spelling-detector-test
+  (it "flags a fallback between spellings of one key"
+      (expect (= [1] (mixed-spellings ["(or (:repo-root ws)" "    (get ws \"repo_root\"))"] 3)))
+      (expect (= [1] (mixed-spellings ["(or (:tool_call_id m) (:tool-call-id m))"] 3))))
+  (it "ignores distinct keys, distinct subjects and distant reads"
+      (expect (= [] (mixed-spellings ["(or (get ws \"repo_root\") (get ws \"root\"))"] 3)))
+      (expect (= [] (mixed-spellings ["(or (:root a) (get b \"root\"))"] 3)))
+      (expect (= [] (mixed-spellings ["(:root ws)" "" "" "(get ws \"root\")"] 3)))))
 
-(deftest one-key-spelling-per-read-test
-  (testing "production Clojure reads each key of a subject under one spelling"
-    (is (every? #(.isDirectory (io/file ^String %)) source-roots))
-    (let [offenders (->> (clojure-sources)
-                         (mapcat (fn [^java.io.File file]
-                                   (map #(str (.getPath file) ":" %)
-                                        (mixed-spellings (str/split-lines (slurp file)) 3))))
-                         vec)]
-      (is (= [] offenders)
-          (str "Convert the map once at its seam (wire/->engine or wire/->wire) and read one "
-               "spelling. Mixed spellings found at: "
-               (str/join ", " offenders))))))
+(defdescribe
+  one-key-spelling-per-read-test
+  (it "production Clojure reads each key of a subject under one spelling"
+      (expect (every? #(.isDirectory (io/file ^String %)) source-roots))
+      (let [offenders (->> (clojure-sources)
+                           (mapcat (fn [^java.io.File file]
+                                     (map #(str (.getPath file) ":" %)
+                                          (mixed-spellings (str/split-lines (slurp file)) 3))))
+                           vec)]
+        (expect (= [] offenders)
+                (str "Convert the map once at its seam (wire/->engine or wire/->wire) and read one "
+                     "spelling. Mixed spellings found at: "
+                     (str/join ", " offenders))))))

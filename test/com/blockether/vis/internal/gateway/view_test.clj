@@ -23,7 +23,7 @@
             [com.blockether.vis.internal.view.core :as hi]
             [com.blockether.vis.internal.view.materializer :as live]
             [com.blockether.vis.contract.view :as hi-spec]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
+            [lazytest.core :refer [defdescribe expect it]]
             [reitit.ring :as ring]
             [ring.adapter.jetty9 :as jetty])
   (:import [java.net URLEncoder]
@@ -67,148 +67,158 @@
                   (= view-id (or (get-in event ["view" "id"]) (get event "view_id")))))
     @seen))
 
-(deftest human-input-request-shape-test
-  (testing "a request reaches BOTH surfaces unless the caller narrows it"
-    (is (= [:tui :app] (:channel-ids (hi/normalize-request (spec)))))
-    (is (= [:tui] (:channel-ids (hi/normalize-request (spec :channel-ids [:tui])))))
-    (is (= [:app] (:channel-ids (hi/normalize-request (spec :channel-id :app))))))
-  (testing "the request names its session, in Clojure or as converted JSON"
-    (is (= "sid-1" (:session-id (hi/normalize-request (spec :session-id "sid-1")))))
-    (is (= "sid-2"
-           (:session-id (hi/normalize-request (hi/spec<-json (assoc (spec)
-                                                               "session_id" "sid-2"))))))
-    (is (nil? (:session-id (hi/normalize-request (spec))))))
-  (testing "the channel/wire view keeps the session — the app routes on it"
-    (is (= "sid-3"
-           (:session-id (hi/request->view (hi/normalize-request (spec :session-id "sid-3"))))))))
+(defdescribe
+  human-input-request-shape-test
+  (it "a request reaches BOTH surfaces unless the caller narrows it"
+      (expect (= [:tui :app] (:channel-ids (hi/normalize-request (spec)))))
+      (expect (= [:tui] (:channel-ids (hi/normalize-request (spec :channel-ids [:tui])))))
+      (expect (= [:app] (:channel-ids (hi/normalize-request (spec :channel-id :app))))))
+  (it "the request names its session, in Clojure or as converted JSON"
+      (expect (= "sid-1" (:session-id (hi/normalize-request (spec :session-id "sid-1")))))
+      (expect (= "sid-2"
+                 (:session-id (hi/normalize-request (hi/spec<-json (assoc (spec)
+                                                                     "session_id" "sid-2"))))))
+      (expect (nil? (:session-id (hi/normalize-request (spec))))))
+  (it "the channel/wire view keeps the session — the app routes on it"
+      (expect (= "sid-3"
+                 (:session-id (hi/request->view (hi/normalize-request (spec :session-id
+                                                                            "sid-3"))))))))
 
-(deftest app-sees-and-answers-a-blocked-run-test
-  (gw-hi/install!)
-  (let [sid
-        (str (random-uuid))
+(defdescribe
+  app-sees-and-answers-a-blocked-run-test
+  (it "app sees and answers a blocked run"
+      (gw-hi/install!)
+      (let [sid
+            (str (random-uuid))
 
-        rid
-        (str "req-" (random-uuid))]
+            rid
+            (str "req-" (random-uuid))]
 
-    (with-events
-      (fn [seen]
-        (let [answer (future (hi/request! (spec :id rid :session-id sid)))]
-          (try (testing "the pause becomes a session event, so SSE + replay carry it"
-                 (is (await-true #(seq (events-of seen "view.open" rid))))
-                 (let [[event-sid event] (first (events-of seen "view.open" rid))]
-                   (is (= sid event-sid))
-                   (is (= "input" (get event "kind")))
-                   (is (= "Deploy?" (get-in event ["view" "title"])))
-                   (is (= sid (get-in event ["view" "session_id"])))
-                   (is (= ["confirm"] (mapv #(get % "id") (get-in event ["view" "fields"]))))))
-               (testing "a client that connects later still finds the open form"
-                 (let [view (first (filterv #(= rid (:id %)) (gw-hi/input-views sid)))]
-                   (is (some? view))
-                   (is (= "Deploy?" (:title view)))))
-               (testing "an answer is scoped to the session that owns the request"
-                 (is (some? (gw-hi/input-view-of sid rid)))
-                 (is (nil? (gw-hi/input-view-of (str (random-uuid)) rid))))
-               (testing "the app's answer releases the blocked extension"
-                 (is (true? (:is-accepted
-                              (gw-hi/action! rid {:action :submit :values {"confirm" true}}))))
-                 (let [result (deref answer 2000 ::timeout)]
-                   (is (true? (:is-submitted result)))
-                   (is (= true (get-in result [:values "confirm"])))))
-               (testing "the close event tells every OTHER client to drop the form"
-                 (is (await-true #(seq (events-of seen "view.close" rid))))
-                 (let [[event-sid event] (first (events-of seen "view.close" rid))]
-                   (is (= sid event-sid))
-                   (is (= "input" (get event "kind")))
-                   (is (= "submitted" (get-in event ["result" "reason"])))))
-               (finally (hi/cancel! rid "cleanup"))))))))
+        (with-events
+          (fn [seen]
+            (let [answer (future (hi/request! (spec :id rid :session-id sid)))]
+              (try
+                ;; the pause becomes a session event, so SSE + replay carry it
+                (expect (await-true #(seq (events-of seen "view.open" rid))))
+                (let [[event-sid event] (first (events-of seen "view.open" rid))]
+                  (expect (= sid event-sid))
+                  (expect (= "input" (get event "kind")))
+                  (expect (= "Deploy?" (get-in event ["view" "title"])))
+                  (expect (= sid (get-in event ["view" "session_id"])))
+                  (expect (= ["confirm"] (mapv #(get % "id") (get-in event ["view" "fields"])))))
+                ;; a client that connects later still finds the open form
+                (let [view (first (filterv #(= rid (:id %)) (gw-hi/input-views sid)))]
+                  (expect (some? view))
+                  (expect (= "Deploy?" (:title view))))
+                ;; an answer is scoped to the session that owns the request
+                (expect (some? (gw-hi/input-view-of sid rid)))
+                (expect (nil? (gw-hi/input-view-of (str (random-uuid)) rid)))
+                ;; the app's answer releases the blocked extension
+                (expect (true? (:is-accepted
+                                 (gw-hi/action! rid {:action :submit :values {"confirm" true}}))))
+                (let [result (deref answer 2000 ::timeout)]
+                  (expect (true? (:is-submitted result)))
+                  (expect (= true (get-in result [:values "confirm"]))))
+                ;; the close event tells every OTHER client to drop the form
+                (expect (await-true #(seq (events-of seen "view.close" rid))))
+                (let [[event-sid event] (first (events-of seen "view.close" rid))]
+                  (expect (= sid event-sid))
+                  (expect (= "input" (get event "kind")))
+                  (expect (= "submitted" (get-in event ["result" "reason"]))))
+                (finally (hi/cancel! rid "cleanup")))))))))
 
-(deftest rejected-answer-keeps-the-request-open-test
-  (gw-hi/install!)
-  (let [sid
-        (str (random-uuid))
+(defdescribe rejected-answer-keeps-the-request-open-test
+             (it "rejected answer keeps the request open"
+                 (gw-hi/install!)
+                 (let [sid
+                       (str (random-uuid))
 
-        rid
-        (str "req-" (random-uuid))
+                       rid
+                       (str "req-" (random-uuid))
 
-        answer
-        (future (hi/request! {:title "Key?"
-                              :id rid
-                              :session-id sid
-                              :timeout-ms 4000
-                              :fields [{:id "key" :type "plaintext" :is-required true}]}))]
+                       answer
+                       (future (hi/request! {:title "Key?"
+                                             :id rid
+                                             :session-id sid
+                                             :timeout-ms 4000
+                                             :fields
+                                             [{:id "key" :type "plaintext" :is-required true}]}))]
 
-    (try (is (await-true #(some? (gw-hi/input-view-of sid rid))))
-         (testing "validation is the engine's, so app and TUI accept the same answers"
-           (let [outcome (gw-hi/action! rid {:action :submit :values {"key" "   "}})]
-             (is (false? (:is-accepted outcome)))
-             (is (contains? (:errors outcome) "key")))
-           (is (some? (gw-hi/input-view-of sid rid))))
-         (testing "cancelling releases the waiter"
-           (is (true? (:is-accepted (gw-hi/action! rid {:action :cancel}))))
-           (is (false? (:is-submitted (deref answer 2000 ::timeout))))
-           (is (nil? (gw-hi/input-view-of sid rid))))
-         (finally (hi/cancel! rid "cleanup")))))
+                   (try (expect (await-true #(some? (gw-hi/input-view-of sid rid))))
+                        ;; validation is the engine's, so app and TUI accept the same answers
+                        (let [outcome (gw-hi/action! rid {:action :submit :values {"key" "   "}})]
+                          (expect (false? (:is-accepted outcome)))
+                          (expect (contains? (:errors outcome) "key")))
+                        (expect (some? (gw-hi/input-view-of sid rid)))
+                        ;; cancelling releases the waiter
+                        (expect (true? (:is-accepted (gw-hi/action! rid {:action :cancel}))))
+                        (expect (false? (:is-submitted (deref answer 2000 ::timeout))))
+                        (expect (nil? (gw-hi/input-view-of sid rid)))
+                        (finally (hi/cancel! rid "cleanup"))))))
 
-(deftest sessionless-request-is-refused-test
-  ;; Regression, issue #104: a request that named no session was dropped here in
-  ;; silence — the companion app never learned the run was parked and nothing in
-  ;; the logs said a request had been thrown away. Issue #113: it is refused at
-  ;; the source now, so no caller ever parks on a dialog only this process could
-  ;; answer.
-  (gw-hi/install!)
-  (let [rid (str "req-" (random-uuid))]
-    (with-events
-      (fn [seen]
-        (let [ex (try (hi/request! (spec :id rid)) nil (catch clojure.lang.ExceptionInfo e e))]
-          (testing "the engine refuses it before anything blocks"
-            (is (= :vis/view-invalid-request (:type (ex-data ex))))
-            (is (nil? (hi/pending-request rid)))
-            (is (empty? (events-of seen "view.open" rid)))))))))
+(defdescribe sessionless-request-is-refused-test
+             (it "the engine refuses it before anything blocks"
+                 ;; Regression, issue #104: a request that named no session was dropped here in
+                 ;; silence — the companion app never learned the run was parked and nothing in
+                 ;; the logs said a request had been thrown away. Issue #113: it is refused at
+                 ;; the source now, so no caller ever parks on a dialog only this process could
+                 ;; answer.
+                 (gw-hi/install!)
+                 (let [rid (str "req-" (random-uuid))]
+                   (with-events (fn [seen]
+                                  (let [ex (try (hi/request! (spec :id rid))
+                                                nil
+                                                (catch clojure.lang.ExceptionInfo e e))]
+                                    (expect (= :vis/view-invalid-request (:type (ex-data ex))))
+                                    (expect (nil? (hi/pending-request rid)))
+                                    (expect (empty? (events-of seen "view.open" rid)))))))))
 
-(deftest push-alerts-a-parked-run-test
-  ;; The describer stays installed for every case below: a session title is
-  ;; minted from whatever opened the session, so it must never reach the alert.
-  (let [prev @@#'push/describe-session]
-    (try (push/set-session-describer! (fn [_sid _tid]
-                                        {:title "Ship the parser"}))
-         (testing "the title demands action and then asks the question; the body is the detail"
-           (let [n (#'push/input-view-notification
-                    "sid-9"
-                    {"type" "view.open"
-                     "kind" "input"
-                     "view" {"id" "req-1"
-                             "title" "Approve the deploy"
-                             "description" "v1.2.3 to production"}})]
-             (is (= "Action needed — Approve the deploy" (:title n)))
-             (is (= "v1.2.3 to production" (:body n)))
-             (is (= "sid-9" (:thread-id n)))
-             (is (= "sid-9:input-view" (:collapse-id n)))
-             (is (= "view.open" (get-in n [:data :type])))
-             (is (= "req-1" (get-in n [:data :view_id])))
-             (is (= "sid-9" (get-in n [:data :session_id])))))
-         (testing "a question with no detail under it is never repeated in the body"
-           (let [n (#'push/input-view-notification
-                    "sid-9"
-                    {"type" "view.open"
-                     "kind" "input"
-                     "view" {"id" "req-2" "title" "Approve the deploy"}})]
-             (is (= "Action needed — Approve the deploy" (:title n)))
-             (is (= "Vis is waiting on your answer." (:body n)))))
-         (testing "a request carrying only a description still says what it wants"
-           (let [n (#'push/input-view-notification
-                    "sid-9"
-                    {"type" "view.open"
-                     "kind" "input"
-                     "view" {"id" "req-3" "description" "Approve the deploy"}})]
-             (is (= "Action needed" (:title n)))
-             (is (= "Approve the deploy" (:body n)))))
-         (testing "an unlabelled request is still a demand, never blank"
-           (let [n (#'push/input-view-notification
-                    "sid-9"
-                    {"type" "view.open" "kind" "input" "view" {"id" "req-4"}})]
-             (is (= "Action needed" (:title n)))
-             (is (= "Vis is waiting on your answer." (:body n)))))
-         (finally (push/set-session-describer! prev)))))
+(defdescribe
+  push-alerts-a-parked-run-test
+  (it "push alerts a parked run"
+      ;; The describer stays installed for every case below: a session title is
+      ;; minted from whatever opened the session, so it must never reach the alert.
+      (let [prev @@#'push/describe-session]
+        (try (push/set-session-describer! (fn [_sid _tid]
+                                            {:title "Ship the parser"}))
+             ;; the title demands action and then asks the question; the body is the detail
+             (let [n (#'push/input-view-notification
+                      "sid-9"
+                      {"type" "view.open"
+                       "kind" "input"
+                       "view" {"id" "req-1"
+                               "title" "Approve the deploy"
+                               "description" "v1.2.3 to production"}})]
+               (expect (= "Action needed — Approve the deploy" (:title n)))
+               (expect (= "v1.2.3 to production" (:body n)))
+               (expect (= "sid-9" (:thread-id n)))
+               (expect (= "sid-9:input-view" (:collapse-id n)))
+               (expect (= "view.open" (get-in n [:data :type])))
+               (expect (= "req-1" (get-in n [:data :view_id])))
+               (expect (= "sid-9" (get-in n [:data :session_id]))))
+             ;; a question with no detail under it is never repeated in the body
+             (let [n (#'push/input-view-notification
+                      "sid-9"
+                      {"type" "view.open"
+                       "kind" "input"
+                       "view" {"id" "req-2" "title" "Approve the deploy"}})]
+               (expect (= "Action needed — Approve the deploy" (:title n)))
+               (expect (= "Vis is waiting on your answer." (:body n))))
+             ;; a request carrying only a description still says what it wants
+             (let [n (#'push/input-view-notification
+                      "sid-9"
+                      {"type" "view.open"
+                       "kind" "input"
+                       "view" {"id" "req-3" "description" "Approve the deploy"}})]
+               (expect (= "Action needed" (:title n)))
+               (expect (= "Approve the deploy" (:body n))))
+             ;; an unlabelled request is still a demand, never blank
+             (let [n (#'push/input-view-notification
+                      "sid-9"
+                      {"type" "view.open" "kind" "input" "view" {"id" "req-4"}})]
+               (expect (= "Action needed" (:title n)))
+               (expect (= "Vis is waiting on your answer." (:body n))))
+             (finally (push/set-session-describer! prev))))))
 
 ;; The endpoints the phone actually calls
 ;;
@@ -233,81 +243,86 @@
   (#'views-api/view-action-handler
    {:path-params {:sid sid :view-id view-id} :body (body-stream action)}))
 
-(deftest the-app-answers-a-parked-run-over-http-test
-  (gw-hi/install!)
-  (let [sid
-        (str (random-uuid))
+(defdescribe
+  the-app-answers-a-parked-run-over-http-test
+  (it
+    "the app answers a parked run over http"
+    (gw-hi/install!)
+    (let [sid
+          (str (random-uuid))
 
-        rid
-        (str "req-" (random-uuid))
+          rid
+          (str "req-" (random-uuid))
 
-        answer
-        (future (hi/request!
-                  (spec :id rid
-                        :session-id sid
-                        :fields [{:id "note" :type "plaintext" :label "Note" :is-required true}])))]
+          answer
+          (future (hi/request!
+                    (spec :id rid
+                          :session-id sid
+                          :fields
+                          [{:id "note" :type "plaintext" :label "Note" :is-required true}])))]
 
-    (try (is (await-true #(some? (gw-hi/input-view-of sid rid))))
-         (testing "a phone that starts cold still finds the open form, snake_case"
+      (try (expect (await-true #(some? (gw-hi/input-view-of sid rid))))
+           ;; a phone that starts cold still finds the open form, snake_case
            (let [response
                  (#'views-api/list-input-views-handler {:path-params {:sid sid}})
 
                  request
                  (first (get (json-body response) "requests"))]
 
-             (is (= 200 (:status response)))
-             (is (= "application/json" (get-in response [:headers "Content-Type"])))
-             (is (= rid (get request "id")))
-             (is (= sid (get request "session_id")))
-             (is (= "Deploy?" (get request "title")))
-             (is (= ["note"] (mapv #(get % "id") (get request "fields"))))
-             (is (true? (get-in request ["fields" 0 "is_required"])))))
-         (testing "the engine's validation answers the app, and the run stays parked"
+             (expect (= 200 (:status response)))
+             (expect (= "application/json" (get-in response [:headers "Content-Type"])))
+             (expect (= rid (get request "id")))
+             (expect (= sid (get request "session_id")))
+             (expect (= "Deploy?" (get request "title")))
+             (expect (= ["note"] (mapv #(get % "id") (get request "fields"))))
+             (expect (true? (get-in request ["fields" 0 "is_required"]))))
+           ;; the engine's validation answers the app, and the run stays parked
            (let [body (json-body
                         (view-action-response sid rid {:action "submit" :values {"note" "   "}}))]
-             (is (false? (get body "is_accepted")))
-             (is (= "submit" (get body "action")))
-             (is (= rid (get body "view_id")))
-             (is (contains? (get body "errors") "note"))
-             (is (some? (gw-hi/input-view-of sid rid)))))
-         (testing "another session may not answer this View"
-           (is (= 404
-                  (:status (view-action-response (str (random-uuid))
-                                                 rid
-                                                 {:action "submit" :values {"note" "ship"}})))))
-         (testing "an accepted answer releases the blocked extension"
+             (expect (false? (get body "is_accepted")))
+             (expect (= "submit" (get body "action")))
+             (expect (= rid (get body "view_id")))
+             (expect (contains? (get body "errors") "note"))
+             (expect (some? (gw-hi/input-view-of sid rid))))
+           ;; another session may not answer this View
+           (expect (= 404
+                      (:status (view-action-response (str (random-uuid))
+                                                     rid
+                                                     {:action "submit" :values {"note" "ship"}}))))
+           ;; an accepted answer releases the blocked extension
            (let [body
                  (json-body
                    (view-action-response sid rid {:action "submit" :values {"note" "ship it"}}))]
-             (is (true? (get body "is_accepted")))
-             (is (= "submit" (get body "action")))
-             (is (= "ship it" (get-in (deref answer 2000 ::timeout) [:values "note"])))))
-         (testing "a settled request is gone from the snapshot and answerable no more"
-           (is (empty? (get (json-body (#'views-api/list-input-views-handler
-                                        {:path-params {:sid sid}}))
-                            "requests")))
-           (is (= 404 (:status (view-action-response sid rid {:action "cancel"})))))
-         (finally (hi/cancel! rid "cleanup")))))
+             (expect (true? (get body "is_accepted")))
+             (expect (= "submit" (get body "action")))
+             (expect (= "ship it" (get-in (deref answer 2000 ::timeout) [:values "note"]))))
+           ;; a settled request is gone from the snapshot and answerable no more
+           (expect (empty? (get (json-body (#'views-api/list-input-views-handler
+                                            {:path-params {:sid sid}}))
+                                "requests")))
+           (expect (= 404 (:status (view-action-response sid rid {:action "cancel"}))))
+           (finally (hi/cancel! rid "cleanup"))))))
 
-(deftest the-app-cancels-a-parked-run-over-http-test
-  (gw-hi/install!)
-  (let [sid
-        (str (random-uuid))
+(defdescribe the-app-cancels-a-parked-run-over-http-test
+             (it "the app cancels a parked run over http"
+                 (gw-hi/install!)
+                 (let [sid
+                       (str (random-uuid))
 
-        rid
-        (str "req-" (random-uuid))
+                       rid
+                       (str "req-" (random-uuid))
 
-        answer
-        (future (hi/request! (spec :id rid :session-id sid)))]
+                       answer
+                       (future (hi/request! (spec :id rid :session-id sid)))]
 
-    (try (is (await-true #(some? (gw-hi/input-view-of sid rid))))
-         (let [body (json-body (view-action-response sid rid {:action "cancel"}))]
-           (is (true? (get body "is_accepted")))
-           (is (= "cancel" (get body "action")))
-           (is (= rid (get body "view_id")))
-           (is (false? (:is-submitted (deref answer 2000 ::timeout))))
-           (is (empty? (gw-hi/input-views sid))))
-         (finally (hi/cancel! rid "cleanup")))))
+                   (try (expect (await-true #(some? (gw-hi/input-view-of sid rid))))
+                        (let [body (json-body (view-action-response sid rid {:action "cancel"}))]
+                          (expect (true? (get body "is_accepted")))
+                          (expect (= "cancel" (get body "action")))
+                          (expect (= rid (get body "view_id")))
+                          (expect (false? (:is-submitted (deref answer 2000 ::timeout))))
+                          (expect (empty? (gw-hi/input-views sid))))
+                        (finally (hi/cancel! rid "cleanup"))))))
 
 ;; Cross-language contract
 ;;
@@ -387,195 +402,212 @@
                   (cons type (node-types fields))))
         fields))
 
-(deftest the-app-fixture-is-the-engines-own-projection-test
-  (let [view (hi/request->view (hi/normalize-request fixture-spec))]
-    (testing "the companion parses engine bytes, not a hand-written lookalike"
-      (let [file (fixture-file)]
-        (is (some? file))
-        (when file (is (= (wire/parse-json (slurp file)) (wire/parse-json (wire/json-str view)))))))
-    ;; The app's own suite renders this fixture and asserts a control for every
-    ;; node in it. That proof is only worth the vocabulary it covers, so the
-    ;; fixture holds ONE OF EVERY KIND the engine can send: a type added to the
-    ;; spec and left out of the fixture would otherwise ship an app that paints
-    ;; a hole in a dialog which has already stopped somebody's run.
-    (testing "and holds one node of every kind the engine can send"
-      (is (= (conj (into (set (vals hi-spec/field-types)) (vals hi-spec/decor-types))
-                   hi-spec/group-type)
-             (node-types (:fields view)))))))
+(defdescribe
+  the-app-fixture-is-the-engines-own-projection-test
+  (it "the app fixture is the engines own projection"
+      (let [view (hi/request->view (hi/normalize-request fixture-spec))]
+        ;; the companion parses engine bytes, not a hand-written lookalike
+        (let [file (fixture-file)]
+          (expect (some? file))
+          (when file
+            (expect (= (wire/parse-json (slurp file)) (wire/parse-json (wire/json-str view))))))
+        ;; The app's own suite renders this fixture and asserts a control for every
+        ;; node in it. That proof is only worth the vocabulary it covers, so the
+        ;; fixture holds ONE OF EVERY KIND the engine can send: a type added to the
+        ;; spec and left out of the fixture would otherwise ship an app that paints
+        ;; a hole in a dialog which has already stopped somebody's run.
+        ;; and holds one node of every kind the engine can send
+        (expect (= (conj (into (set (vals hi-spec/field-types)) (vals hi-spec/decor-types))
+                         hi-spec/group-type)
+                   (node-types (:fields view)))))))
 
-(deftest the-companion-urls-route-to-the-shared-view-action-handler-test
-  (testing "the URLs `gateway.ts` builds are the URLs this router serves"
-    (let [match-by-path
-          (requiring-resolve 'reitit.core/match-by-path)
+(defdescribe the-companion-urls-route-to-the-shared-view-action-handler-test
+             (it "the URLs `gateway.ts` builds are the URLs this router serves"
+                 (let [match-by-path
+                       (requiring-resolve 'reitit.core/match-by-path)
 
-          router
-          ((rv 'router) "token" [])
+                       router
+                       ((rv 'router) "token" [])
 
-          sid
+                       sid
+                       (str (random-uuid))
+
+                       rid
+                       "req 1"
+
+                       ;; `encodeURIComponent`, exactly as the companion client escapes an id.
+                       encoded
+                       "req%201"
+
+                       match
+                       (fn [path]
+                         (match-by-path router path))]
+
+                   (expect (= @#'views-api/list-input-views-handler
+                              (get-in (match (str "/v1/sessions/" sid "/views/input"))
+                                      [:data :get :handler])))
+                   (let [m (match (str "/v1/sessions/" sid "/views/" encoded "/actions"))]
+                     (expect (= @#'views-api/view-action-handler (get-in m [:data :post :handler])))
+                     ;; and hand the shared handler the View id it acts on
+                     (expect (= sid (str (get-in m [:path-params :sid]))))
+                     (expect (= rid (get-in m [:path-params :view-id])))))))
+
+(defdescribe
+  a-hostile-body-cannot-park-or-settle-a-run-test
+  (it
+    "a hostile body cannot park or settle a run"
+    (gw-hi/install!)
+    (let [sid
+          (str (random-uuid))
+
+          ;; An extension may name its own request, including characters the app has
+          ;; to `encodeURIComponent` before it can even build the URL.
+          rid
+          "req/one two"
+
+          answer
+          (future (hi/request! (spec :id rid
+                                     :session-id sid
+                                     :fields [{:id "note" :type "plaintext" :label "Note"}])))]
+
+      (try (expect (await-true #(some? (gw-hi/input-view-of sid rid))))
+           ;; a malformed body is a 400 — never a 500, never a settled run
+           (doseq [body [{:action "submit" :values "text"} {:action "submit" :values [1 2]}
+                         {:action "submit" :values 42} {:action "submit" :values nil}
+                         {:values {"note" "missing action"}} {:action "unknown"} nil]]
+             (expect (= 400 (:status (view-action-response sid rid body)))))
+           (expect (= 400
+                      (:status (#'views-api/view-action-handler
+                                {:path-params {:sid sid :view-id rid}}))))
+           (expect (= 400
+                      (:status (#'views-api/view-action-handler
+                                {:path-params {:sid sid :view-id rid}
+                                 :body (java.io.ByteArrayInputStream. (.getBytes "not json"
+                                                                                 "UTF-8"))}))))
+           (expect (some? (gw-hi/input-view-of sid rid)))
+           ;; a structured value is rejected, not stringified into the answer
+           (let [body (json-body
+                        (view-action-response sid rid {:action "submit" :values {"note" {"a" 1}}}))]
+             (expect (false? (get body "is_accepted")))
+             (expect (= "must be text" (get-in body ["errors" "note"])))
+             (expect (some? (gw-hi/input-view-of sid rid))))
+           ;; the escaped id still routes, and the same handler answers it
+           (let [match ((requiring-resolve 'reitit.core/match-by-path)
+                         ((rv 'router) "token" [])
+                         (str "/v1/sessions/" sid "/views/req%2Fone%20two/actions"))]
+             (expect (= rid (get-in match [:path-params :view-id])))
+             (expect (= @#'views-api/view-action-handler (get-in match [:data :post :handler])))
+             (expect (true? (get (json-body (#'views-api/view-action-handler
+                                             {:path-params (:path-params match)
+                                              :body (body-stream {:action "submit"
+                                                                  :values {"note" "typed"}})}))
+                                 "is_accepted"))))
+           (expect
+             (= {:is-submitted true :reason "submitted" :request-id rid :values {"note" "typed"}}
+                (deref answer 2000 ::stuck)))
+           (finally (hi/cancel! rid))))))
+
+(defdescribe
+  a-storm-of-answers-settles-a-parked-run-exactly-once-test
+  (it
+    "a storm of answers settles a parked run exactly once"
+    (gw-hi/install!)
+    (with-events
+      (fn [seen]
+        (let [sid
+              (str (random-uuid))
+
+              rid
+              (str "storm-" (random-uuid))
+
+              answer
+              (future (hi/request! (spec :id rid
+                                         :session-id sid
+                                         :timeout-ms 10000
+                                         :fields
+                                         [{:id "note" :type "plaintext" :is-required true}])))
+
+              _
+              (expect (await-true #(some? (gw-hi/input-view-of sid rid))))
+
+              ;; Every surface fires at once: valid answers, blank ones, cancels.
+              gate
+              (java.util.concurrent.CountDownLatch. 1)
+
+              racers
+              (doall
+                (concat
+                  (for [i (range 6)]
+                    (future (.await gate)
+                            [:submit
+                             (gw-hi/action! rid {:action :submit :values {"note" (str "v" i)}})]))
+                  (for [_ (range 3)]
+                    (future (.await gate)
+                            [:blank (gw-hi/action! rid {:action :submit :values {"note" "   "}})]))
+                  (for [_ (range 3)]
+                    (future (.await gate) [:cancel (gw-hi/action! rid {:action :cancel})]))))
+
+              _
+              (.countDown gate)
+
+              results
+              (mapv deref racers)
+
+              winners
+              (filterv (fn [[_ outcome]]
+                         (true? (:is-accepted outcome)))
+                results)
+
+              final
+              (deref answer 5000 ::stuck)]
+
+          ;; exactly one answer wins and the extension is released once
+          (expect (= 1 (count winners)))
+          (expect (= rid (:request-id final)))
+          (expect (= (if (= :cancel (ffirst winners)) "cancelled" "submitted") (:reason final)))
+          ;; and every surface is told exactly once that the form is gone
+          (expect (await-true #(= 1 (count (events-of seen "view.close" rid)))))
+          (expect (= 1 (count (events-of seen "view.open" rid))))
+          (expect (empty? (gw-hi/input-views sid)))
+          (expect (nil? (gw-hi/input-view-of sid rid)))
+          (expect (= {:action :submit :view-id rid :is-accepted false :reason "unknown"}
+                     (gw-hi/action! rid {:action :submit :values {"note" "late"}})))
+          (expect
+            (= 404
+               (:status
+                 (view-action-response sid rid {:action "submit" :values {"note" "late"}})))))))))
+
+(defdescribe
+  a-request-that-refuses-cancellation-refuses-the-app-too-test
+  (it
+    "a request that refuses cancellation refuses the app too"
+    (gw-hi/install!)
+    (let [sid
           (str (random-uuid))
 
           rid
-          "req 1"
+          (str "must-answer-" (random-uuid))
 
-          ;; `encodeURIComponent`, exactly as the companion client escapes an id.
-          encoded
-          "req%201"
+          answer
+          (future (hi/request! (spec :id rid
+                                     :session-id sid
+                                     :is-cancellable false
+                                     :fields [{:id "note" :type "plaintext" :is-required true}])))]
 
-          match
-          (fn [path]
-            (match-by-path router path))]
-
-      (is (= @#'views-api/list-input-views-handler
-             (get-in (match (str "/v1/sessions/" sid "/views/input")) [:data :get :handler])))
-      (let [m (match (str "/v1/sessions/" sid "/views/" encoded "/actions"))]
-        (is (= @#'views-api/view-action-handler (get-in m [:data :post :handler])))
-        (testing "and hand the shared handler the View id it acts on"
-          (is (= sid (str (get-in m [:path-params :sid]))))
-          (is (= rid (get-in m [:path-params :view-id]))))))))
-
-(deftest a-hostile-body-cannot-park-or-settle-a-run-test
-  (gw-hi/install!)
-  (let [sid
-        (str (random-uuid))
-
-        ;; An extension may name its own request, including characters the app has
-        ;; to `encodeURIComponent` before it can even build the URL.
-        rid
-        "req/one two"
-
-        answer
-        (future (hi/request! (spec :id rid
-                                   :session-id sid
-                                   :fields [{:id "note" :type "plaintext" :label "Note"}])))]
-
-    (try
-      (is (await-true #(some? (gw-hi/input-view-of sid rid))))
-      (testing "a malformed body is a 400 — never a 500, never a settled run"
-        (doseq [body [{:action "submit" :values "text"} {:action "submit" :values [1 2]}
-                      {:action "submit" :values 42} {:action "submit" :values nil}
-                      {:values {"note" "missing action"}} {:action "unknown"} nil]]
-          (is (= 400 (:status (view-action-response sid rid body)))))
-        (is (= 400
-               (:status (#'views-api/view-action-handler {:path-params {:sid sid :view-id rid}}))))
-        (is (= 400
-               (:status (#'views-api/view-action-handler
-                         {:path-params {:sid sid :view-id rid}
-                          :body (java.io.ByteArrayInputStream. (.getBytes "not json" "UTF-8"))}))))
-        (is (some? (gw-hi/input-view-of sid rid))))
-      (testing "a structured value is rejected, not stringified into the answer"
-        (let [body (json-body
-                     (view-action-response sid rid {:action "submit" :values {"note" {"a" 1}}}))]
-          (is (false? (get body "is_accepted")))
-          (is (= "must be text" (get-in body ["errors" "note"])))
-          (is (some? (gw-hi/input-view-of sid rid)))))
-      (testing "the escaped id still routes, and the same handler answers it"
-        (let [match ((requiring-resolve 'reitit.core/match-by-path)
-                      ((rv 'router) "token" [])
-                      (str "/v1/sessions/" sid "/views/req%2Fone%20two/actions"))]
-          (is (= rid (get-in match [:path-params :view-id])))
-          (is (= @#'views-api/view-action-handler (get-in match [:data :post :handler])))
-          (is (true? (get (json-body (#'views-api/view-action-handler
-                                      {:path-params (:path-params match)
-                                       :body (body-stream {:action "submit"
-                                                           :values {"note" "typed"}})}))
-                          "is_accepted")))))
-      (is (= {:is-submitted true :reason "submitted" :request-id rid :values {"note" "typed"}}
-             (deref answer 2000 ::stuck)))
-      (finally (hi/cancel! rid)))))
-
-(deftest a-storm-of-answers-settles-a-parked-run-exactly-once-test
-  (gw-hi/install!)
-  (with-events
-    (fn [seen]
-      (let [sid
-            (str (random-uuid))
-
-            rid
-            (str "storm-" (random-uuid))
-
-            answer
-            (future (hi/request! (spec :id rid
-                                       :session-id sid
-                                       :timeout-ms 10000
-                                       :fields [{:id "note" :type "plaintext" :is-required true}])))
-
-            _
-            (is (await-true #(some? (gw-hi/input-view-of sid rid))))
-
-            ;; Every surface fires at once: valid answers, blank ones, cancels.
-            gate
-            (java.util.concurrent.CountDownLatch. 1)
-
-            racers
-            (doall
-              (concat
-                (for [i (range 6)]
-                  (future (.await gate)
-                          [:submit
-                           (gw-hi/action! rid {:action :submit :values {"note" (str "v" i)}})]))
-                (for [_ (range 3)]
-                  (future (.await gate)
-                          [:blank (gw-hi/action! rid {:action :submit :values {"note" "   "}})]))
-                (for [_ (range 3)]
-                  (future (.await gate) [:cancel (gw-hi/action! rid {:action :cancel})]))))
-
-            _
-            (.countDown gate)
-
-            results
-            (mapv deref racers)
-
-            winners
-            (filterv (fn [[_ outcome]]
-                       (true? (:is-accepted outcome)))
-              results)
-
-            final
-            (deref answer 5000 ::stuck)]
-
-        (testing "exactly one answer wins and the extension is released once"
-          (is (= 1 (count winners)))
-          (is (= rid (:request-id final)))
-          (is (= (if (= :cancel (ffirst winners)) "cancelled" "submitted") (:reason final))))
-        (testing "and every surface is told exactly once that the form is gone"
-          (is (await-true #(= 1 (count (events-of seen "view.close" rid)))))
-          (is (= 1 (count (events-of seen "view.open" rid))))
-          (is (empty? (gw-hi/input-views sid)))
-          (is (nil? (gw-hi/input-view-of sid rid)))
-          (is (= {:action :submit :view-id rid :is-accepted false :reason "unknown"}
-                 (gw-hi/action! rid {:action :submit :values {"note" "late"}})))
-          (is (= 404
-                 (:status
-                   (view-action-response sid rid {:action "submit" :values {"note" "late"}})))))))))
-
-(deftest a-request-that-refuses-cancellation-refuses-the-app-too-test
-  (gw-hi/install!)
-  (let [sid
-        (str (random-uuid))
-
-        rid
-        (str "must-answer-" (random-uuid))
-
-        answer
-        (future (hi/request! (spec :id rid
-                                   :session-id sid
-                                   :is-cancellable false
-                                   :fields [{:id "note" :type "plaintext" :is-required true}])))]
-
-    (try (is (await-true #(some? (gw-hi/input-view-of sid rid))))
-         (testing "the app is refused the escape hatch the TUI dialog also denies"
+      (try (expect (await-true #(some? (gw-hi/input-view-of sid rid))))
+           ;; the app is refused the escape hatch the TUI dialog also denies
            (let [response (view-action-response sid rid {:action "cancel"})]
-             (is (= 409 (:status response)))
-             (is (= "view-action-refused" (get-in (json-body response) ["error" "type"])))
-             (is (false? (:is-cancellable (gw-hi/input-view-of sid rid))))
-             (is (some? (gw-hi/input-view-of sid rid)))))
-         (testing "answering it is still the way out"
-           (is (true? (get
-                        (json-body
-                          (view-action-response sid rid {:action "submit" :values {"note" "yes"}}))
-                        "is_accepted")))
-           (is (true? (:is-submitted (deref answer 2000 ::stuck)))))
-         (finally (hi/cancel! rid)))))
+             (expect (= 409 (:status response)))
+             (expect (= "view-action-refused" (get-in (json-body response) ["error" "type"])))
+             (expect (false? (:is-cancellable (gw-hi/input-view-of sid rid))))
+             (expect (some? (gw-hi/input-view-of sid rid))))
+           ;; answering it is still the way out
+           (expect
+             (true? (get (json-body
+                           (view-action-response sid rid {:action "submit" :values {"note" "yes"}}))
+                         "is_accepted")))
+           (expect (true? (:is-submitted (deref answer 2000 ::stuck))))
+           (finally (hi/cancel! rid))))))
 
 ;; -- A live view: the interaction the app WATCHES -----------------------------
 ;;
@@ -615,185 +647,198 @@
   [f]
   (with-redefs-fn {live-flush-ms (* 60 1000)} f))
 
-(deftest the-app-watches-a-live-view-test
-  (gw-hi/install!)
-  (recorded
-    (fn []
-      (with-events
-        (fn [seen]
-          (let [sid
-                (str (random-uuid))
+(defdescribe
+  the-app-watches-a-live-view-test
+  (it
+    "the app watches a live view"
+    (gw-hi/install!)
+    (recorded
+      (fn []
+        (with-events
+          (fn [seen]
+            (let [sid
+                  (str (random-uuid))
 
-                view
-                (hi/open-live! {:title "CI"
-                                :description "Blockether/vis · 42"
-                                :session-id sid
-                                :nodes [{:id "now" :type "status" :text "Polling…" :tone "running"}
-                                        {:id "tail" :type "log"}]})
+                  view
+                  (hi/open-live! {:title "CI"
+                                  :description "Blockether/vis · 42"
+                                  :session-id sid
+                                  :nodes
+                                  [{:id "now" :type "status" :text "Polling…" :tone "running"}
+                                   {:id "tail" :type "log"}]})
 
-                view-id
-                (:id view)]
+                  view-id
+                  (:id view)]
 
-            (try (testing "the open crosses as an ordinary session event, in snake_case"
-                   (is (await-true
-                         #(seq (live-events-of seen gateway-contract/view-open-event view-id))))
-                   (let [[[event-sid event]]
-                         (live-events-of seen gateway-contract/view-open-event view-id)]
-                     (is (= sid event-sid))
-                     (is (= "CI" (get-in event ["view" "title"])))
-                     (is (= ["now" "tail"] (mapv #(get % "id") (get-in event ["view" "nodes"]))))))
-                 (hi/patch-live! view-id [{:op "append" :node-id "tail" :lines ["one" "two"]}])
-                 (hi/patch-live! view-id
-                                 [{:op "append" :node-id "tail" :lines ["three"]}
-                                  {:op "set" :node-id "now" :text "Building"}])
-                 (testing "patches ride ONE coalesced frame that says which of them it carries"
-                   (gw-hi/flush-live-patches!)
-                   (is (await-true
-                         #(seq (live-events-of seen gateway-contract/view-patch-event view-id))))
-                   (let [frames
-                         (live-events-of seen gateway-contract/view-patch-event view-id)
+              (try
+                ;; the open crosses as an ordinary session event, in snake_case
+                (expect (await-true
+                          #(seq (live-events-of seen gateway-contract/view-open-event view-id))))
+                (let [[[event-sid event]]
+                      (live-events-of seen gateway-contract/view-open-event view-id)]
+                  (expect (= sid event-sid))
+                  (expect (= "CI" (get-in event ["view" "title"])))
+                  (expect (= ["now" "tail"] (mapv #(get % "id") (get-in event ["view" "nodes"])))))
+                (hi/patch-live! view-id [{:op "append" :node-id "tail" :lines ["one" "two"]}])
+                (hi/patch-live! view-id
+                                [{:op "append" :node-id "tail" :lines ["three"]}
+                                 {:op "set" :node-id "now" :text "Building"}])
+                ;; patches ride ONE coalesced frame that says which of them it carries
+                (gw-hi/flush-live-patches!)
+                (expect (await-true
+                          #(seq (live-events-of seen gateway-contract/view-patch-event view-id))))
+                (let [frames
+                      (live-events-of seen gateway-contract/view-patch-event view-id)
 
-                         [_ event]
-                         (first frames)]
+                      [_ event]
+                      (first frames)]
 
-                     (is (= 1 (count frames)))
-                     (is (= 1 (get event "first_seq")))
-                     (is (= 2 (get-in event ["patch" "seq"])))
-                     ;; Two appends on one node became one; the `set` on the OTHER node
-                     ;; kept its place, because merging across nodes would reorder the run.
-                     (is (= [["append" "tail"] ["set" "now"]]
-                            (mapv (juxt #(get % "op") #(get % "node_id"))
-                                  (get-in event ["patch" "ops"]))))
-                     (is (= ["one" "two" "three"] (get-in event ["patch" "ops" 0 "lines"])))))
-                 (finally (hi/close-live! view-id)))
-            (testing "and the ending carries the picture the model reads, not a rendering of it"
-              (is (await-true #(seq
-                                 (live-events-of seen gateway-contract/view-close-event view-id))))
+                  (expect (= 1 (count frames)))
+                  (expect (= 1 (get event "first_seq")))
+                  (expect (= 2 (get-in event ["patch" "seq"])))
+                  ;; Two appends on one node became one; the `set` on the OTHER node
+                  ;; kept its place, because merging across nodes would reorder the run.
+                  (expect (= [["append" "tail"] ["set" "now"]]
+                             (mapv (juxt #(get % "op") #(get % "node_id"))
+                                   (get-in event ["patch" "ops"]))))
+                  (expect (= ["one" "two" "three"] (get-in event ["patch" "ops" 0 "lines"]))))
+                (finally (hi/close-live! view-id)))
+              ;; and the ending carries the picture the model reads, not a rendering of it
+              (expect (await-true
+                        #(seq (live-events-of seen gateway-contract/view-close-event view-id))))
               (let [[[_ event]] (live-events-of seen gateway-contract/view-close-event view-id)]
-                (is (true? (get-in event ["result" "is_completed"])))
-                (is (= "completed" (get-in event ["result" "reason"])))
-                (is (= ["now" "tail"]
-                       (mapv #(get % "id") (get-in event ["result" "view" "nodes"]))))
-                (is (nil? (get-in event ["result" "markdown"])))))))))))
+                (expect (true? (get-in event ["result" "is_completed"])))
+                (expect (= "completed" (get-in event ["result" "reason"])))
+                (expect (= ["now" "tail"]
+                           (mapv #(get % "id") (get-in event ["result" "view" "nodes"]))))
+                (expect (nil? (get-in event ["result" "markdown"])))))))))))
 
 ;; The bridge holds a view's patches for one flush window, so a gateway that goes
 ;; away mid-stream would swallow whatever the window still had. `stop!` in
 ;; `com.blockether.vis.internal.gateway.server` is [[gw-hi/uninstall!]]'s one
 ;; caller, and this is what calling it buys.
-(deftest a-gateway-going-away-publishes-what-it-still-holds-test
-  (gw-hi/install!)
-  (recorded
-    (fn []
-      (unhurried
+(defdescribe
+  a-gateway-going-away-publishes-what-it-still-holds-test
+  (it "a gateway going away publishes what it still holds"
+      (gw-hi/install!)
+      (recorded
         (fn []
-          (with-events
-            (fn [seen]
-              (let [sid
-                    (str (random-uuid))
+          (unhurried
+            (fn []
+              (with-events
+                (fn [seen]
+                  (let [sid
+                        (str (random-uuid))
 
-                    view
-                    (hi/open-live! {:title "CI" :session-id sid :nodes [{:id "tail" :type "log"}]})
+                        view
+                        (hi/open-live!
+                          {:title "CI" :session-id sid :nodes [{:id "tail" :type "log"}]})
 
-                    view-id
-                    (:id view)]
+                        view-id
+                        (:id view)]
 
-                (try (hi/patch-live! view-id [{:op "append" :node-id "tail" :lines ["one"]}])
-                     (testing "a patch waits for the tick, and the tick is nowhere near due"
-                       (is (empty?
-                             (live-events-of seen gateway-contract/view-patch-event view-id))))
-                     (testing "so the gateway leaving is what publishes it"
-                       ;; Subscribe again at once: the bus is process-local, so this one
-                       ;; listener is also serving every sibling test's view.
-                       (gw-hi/uninstall!)
-                       (gw-hi/install!)
-                       (let [frames
-                             (live-events-of seen gateway-contract/view-patch-event view-id)
+                    (try (hi/patch-live! view-id [{:op "append" :node-id "tail" :lines ["one"]}])
+                         ;; a patch waits for the tick, and the tick is nowhere near due
+                         (expect (empty?
+                                   (live-events-of seen gateway-contract/view-patch-event view-id)))
+                         ;; so the gateway leaving is what publishes it
+                         ;; Subscribe again at once: the bus is process-local, so this one
+                         ;; listener is also serving every sibling test's view.
+                         (gw-hi/uninstall!)
+                         (gw-hi/install!)
+                         (let [frames
+                               (live-events-of seen gateway-contract/view-patch-event view-id)
 
-                             [[_ event]]
-                             frames]
+                               [[_ event]]
+                               frames]
 
-                         (is (= 1 (count frames)))
-                         (is (= ["one"] (get-in event ["patch" "ops" 0 "lines"])))))
-                     (finally (hi/close-live! view-id)))))))))))
+                           (expect (= 1 (count frames)))
+                           (expect (= ["one"] (get-in event ["patch" "ops" 0 "lines"]))))
+                         (finally (hi/close-live! view-id))))))))))))
 
-(deftest the-app-reads-a-live-view-back-over-http-test
-  (gw-hi/install!)
-  (recorded
-    (fn []
-      (let [sid
-            (str (random-uuid))
+(defdescribe
+  the-app-reads-a-live-view-back-over-http-test
+  (it
+    "the app reads a live view back over http"
+    (gw-hi/install!)
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
 
-            view
-            (hi/open-live! {:title "CI" :session-id sid :nodes [{:id "tail" :type "log"}]})
+              view
+              (hi/open-live! {:title "CI" :session-id sid :nodes [{:id "tail" :type "log"}]})
 
-            view-id
-            (:id view)]
+              view-id
+              (:id view)]
 
-        (try (hi/patch-live!
-               view-id
-               [{:op "append" :node-id "tail" :lines (mapv #(str "line " %) (range 1 21))}])
-             (testing "a phone that starts cold reads the CURRENT picture, not a stream it missed"
-               (let [response
-                     (#'views-api/list-live-views-handler {:path-params {:sid sid}})
+          (try
+            (hi/patch-live!
+              view-id
+              [{:op "append" :node-id "tail" :lines (mapv #(str "line " %) (range 1 21))}])
+            ;; a phone that starts cold reads the CURRENT picture, not a stream it missed
+            (let [response
+                  (#'views-api/list-live-views-handler {:path-params {:sid sid}})
 
-                     answered
-                     (first (get (json-body response) "views"))]
+                  answered
+                  (first (get (json-body response) "views"))]
 
-                 (is (= 200 (:status response)))
-                 (is (= "application/json" (get-in response [:headers "Content-Type"])))
-                 (is (= view-id (get answered "id")))
-                 (is (= sid (get answered "session_id")))
-                 (is (= ["tail"] (mapv #(get % "id") (get answered "nodes"))))))
-             (testing "and scrolls back through output whose patches it never received"
-               (let [body (json-body (#'views-api/live-view-log-handler
-                                      {:path-params {:sid sid :view-id view-id}
-                                       :query-params {"node" "tail" "from" "5" "limit" "3"}}))]
-                 (is (= "tail" (get body "node_id")))
-                 (is (= 5 (get body "from")))
-                 (is (= 20 (get body "total")))
-                 (is (= ["line 6" "line 7" "line 8"] (get body "lines")))))
-             (testing "search pages use match offsets and retain original line numbers"
-               (let [body (json-body (#'views-api/live-view-log-handler
-                                      {:path-params {:sid sid :view-id view-id}
-                                       :query-params
-                                       {"node" "tail" "query" "LINE 1" "from" "1" "limit" "2"}}))]
-                 (is (= 11 (get body "matched")))
-                 (is (= 20 (get body "total")))
-                 (is (= [10 11] (get body "line_numbers")))
-                 (is (= ["line 10" "line 11"] (get body "lines")))))
-             (testing "a view id belonging to another session is not stoppable from here"
-               (is (= 404
-                      (:status
-                        (view-action-response (str (random-uuid)) view-id {:action "interrupt"})))))
-             (testing "the app's stop action carries the words typed with it"
-               (let [body (json-body (view-action-response sid
-                                                           view-id
-                                                           {:action "interrupt"
-                                                            :note "wrong subnet"}))]
-                 (is (true? (get body "is_accepted")))
-                 (is (= "interrupt" (get body "action")))
-                 (is (= view-id (get body "view_id")))
-                 (is (nil? (gw-hi/live-view-of sid view-id)))
-                 (is (empty? (gw-hi/live-views sid)))))
-             (testing "a view that already ended answers 404 instead of pretending to stop again"
-               (is (= 404 (:status (view-action-response sid view-id {:action "interrupt"})))))
-             (testing "and its record still answers, which is what makes a finished log readable"
-               (let [body (json-body (#'views-api/live-view-log-handler
-                                      {:path-params {:sid sid :view-id view-id}
-                                       :query-params {"node" "tail"}}))]
-                 (is (= 20 (get body "total")))
-                 (is (= 20 (count (get body "lines"))))))
-             (testing "a closed record remains searchable"
-               (let [body (json-body (#'views-api/live-view-log-handler
-                                      {:path-params {:sid sid :view-id view-id}
-                                       :query-params {"node" "tail" "query" "LINE 20"}}))]
-                 (is (= ["line 20"] (get body "lines")))
-                 (is (= [20] (get body "line_numbers")))
-                 (is (= 1 (get body "matched")))))
-             (finally (hi/close-live! view-id)))))))
+              (expect (= 200 (:status response)))
+              (expect (= "application/json" (get-in response [:headers "Content-Type"])))
+              (expect (= view-id (get answered "id")))
+              (expect (= sid (get answered "session_id")))
+              (expect (= ["tail"] (mapv #(get % "id") (get answered "nodes")))))
+            ;; and scrolls back through output whose patches it never received
+            (let [body (json-body (#'views-api/live-view-log-handler
+                                   {:path-params {:sid sid :view-id view-id}
+                                    :query-params {"node" "tail" "from" "5" "limit" "3"}}))]
+              (expect (= "tail" (get body "node_id")))
+              (expect (= 5 (get body "from")))
+              (expect (= 20 (get body "total")))
+              (expect (= ["line 6" "line 7" "line 8"] (get body "lines"))))
+            ;; search pages use match offsets and retain original line numbers
+            (let [body (json-body (#'views-api/live-view-log-handler
+                                   {:path-params {:sid sid :view-id view-id}
+                                    :query-params
+                                    {"node" "tail" "query" "LINE 1" "from" "1" "limit" "2"}}))]
+              (expect (= 11 (get body "matched")))
+              (expect (= 20 (get body "total")))
+              (expect (= [10 11] (get body "line_numbers")))
+              (expect (= ["line 10" "line 11"] (get body "lines"))))
+            ;; a view id belonging to another session is not stoppable from here
+            (expect (= 404
+                       (:status
+                         (view-action-response (str (random-uuid)) view-id {:action "interrupt"}))))
+            ;; the app's stop action carries the words typed with it
+            (let [body
+                  (json-body
+                    (view-action-response sid view-id {:action "interrupt" :note "wrong subnet"}))]
+              (expect (true? (get body "is_accepted")))
+              (expect (= "interrupt" (get body "action")))
+              (expect (= view-id (get body "view_id")))
+              (expect (nil? (gw-hi/live-view-of sid view-id)))
+              (expect (empty? (gw-hi/live-views sid))))
+            ;; a view that already ended answers 404 instead of pretending to stop again
+            (expect (= 404 (:status (view-action-response sid view-id {:action "interrupt"}))))
+            ;; and its record still answers, which is what makes a finished log readable
+            (let [body (json-body (#'views-api/live-view-log-handler
+                                   {:path-params {:sid sid :view-id view-id}
+                                    :query-params {"node" "tail"}}))]
+              (expect (= 20 (get body "total")))
+              (expect (= 20 (count (get body "lines")))))
+            ;; a closed record remains searchable
+            (let [body (json-body (#'views-api/live-view-log-handler
+                                   {:path-params {:sid sid :view-id view-id}
+                                    :query-params {"node" "tail" "query" "LINE 20"}}))]
+              (expect (= ["line 20"] (get body "lines")))
+              (expect (= [20] (get body "line_numbers")))
+              (expect (= 1 (get body "matched"))))
+            (finally (hi/close-live! view-id))))))))
 
-(deftest a-log-node-named-like-a-path-still-answers-over-http-test
-  (testing "the node rides the query string: a `/` in a node id is no route business"
+(defdescribe
+  a-log-node-named-like-a-path-still-answers-over-http-test
+  (it
+    "the node rides the query string: a `/` in a node id is no route business"
     (gw-hi/install!)
     (recorded
       (fn []
@@ -845,121 +890,131 @@
                                 #'client/ensure-client! (constantly "test-client")}
                  (fn []
                    (let [{:keys [status json]} (log-page "node" node-id "query" "finished")]
-                     (is (= 200 status) (pr-str json))
-                     (is (= node-id (get json "node_id")))
-                     (is (= ["Finished: SUCCESS"] (get json "lines")))
-                     (is (= [3] (get json "line_numbers")))
-                     (is (= 3 (get json "total"))))
-                   (testing "a page without a node is a bad request, not a mystery 404"
-                     (is (= 400 (:status (log-page "query" "finished")))))))
+                     (expect (= 200 status) (pr-str json))
+                     (expect (= node-id (get json "node_id")))
+                     (expect (= ["Finished: SUCCESS"] (get json "lines")))
+                     (expect (= [3] (get json "line_numbers")))
+                     (expect (= 3 (get json "total"))))
+                   ;; a page without a node is a bad request, not a mystery 404
+                   (expect (= 400 (:status (log-page "query" "finished"))))))
                (finally (.stop ^Server gateway) (hi/close-live! view-id))))))))
 
 ;; Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: tapping a CI job
 ;; had no engine action, so the visible selection and the log could never follow the tap.
-(deftest the-app-selects-a-live-table-row-over-http-test
-  (gw-hi/install!)
-  (let [sid
-        (str (random-uuid))
+(defdescribe
+  the-app-selects-a-live-table-row-over-http-test
+  (it
+    "the app selects a live table row over http"
+    (gw-hi/install!)
+    (let [sid
+          (str (random-uuid))
 
-        view
-        (hi/open-live! {:title "CI"
-                        :session-id sid
-                        :nodes [{:id "jobs"
-                                 :type "table"
-                                 :is-selectable true
-                                 :selected-ids ["a"]
-                                 :columns [{:id "job" :label "Job"}]
-                                 :rows [{:id "a" :cells ["A"]} {:id "b" :cells ["B"]}]}]})
+          view
+          (hi/open-live! {:title "CI"
+                          :session-id sid
+                          :nodes [{:id "jobs"
+                                   :type "table"
+                                   :is-selectable true
+                                   :selected-ids ["a"]
+                                   :columns [{:id "job" :label "Job"}]
+                                   :rows [{:id "a" :cells ["A"]} {:id "b" :cells ["B"]}]}]})
 
-        view-id
-        (:id view)]
+          view-id
+          (:id view)]
 
-    (try
-      (testing "the selected ids become ordinary durable live state"
+      (try
+        ;; the selected ids become ordinary durable live state
         (let [response
               (view-action-response sid view-id {:action "select" :node_id "jobs" :item_ids ["b"]})
 
               body
               (json-body response)]
 
-          (is (= 200 (:status response)))
-          (is (true? (get body "is_accepted")))
-          (is (= "select" (get body "action")))
-          (is (= ["b"] (get body "item_ids")))
-          (is (= ["b"] (get-in (gw-hi/live-view-of sid view-id) [:nodes 0 :selected-ids])))))
-      (testing "a stale row id is refused without moving the selection"
+          (expect (= 200 (:status response)))
+          (expect (true? (get body "is_accepted")))
+          (expect (= "select" (get body "action")))
+          (expect (= ["b"] (get body "item_ids")))
+          (expect (= ["b"] (get-in (gw-hi/live-view-of sid view-id) [:nodes 0 :selected-ids]))))
+        ;; a stale row id is refused without moving the selection
         (let [response (view-action-response
                          sid
                          view-id
                          {:action "select" :node_id "jobs" :item_ids ["missing"]})]
-          (is (= 400 (:status response)))
-          (is (= ["b"] (get-in (gw-hi/live-view-of sid view-id) [:nodes 0 :selected-ids])))))
-      (testing "another session cannot select in this view"
-        (is (= 404
-               (:status (view-action-response
-                          (str (random-uuid))
-                          view-id
-                          {:action "select" :node_id "jobs" :item_ids ["a"]})))))
-      (finally (hi/close-live! view-id)))))
+          (expect (= 400 (:status response)))
+          (expect (= ["b"] (get-in (gw-hi/live-view-of sid view-id) [:nodes 0 :selected-ids]))))
+        ;; another session cannot select in this view
+        (expect (= 404
+                   (:status (view-action-response
+                              (str (random-uuid))
+                              view-id
+                              {:action "select" :node_id "jobs" :item_ids ["a"]}))))
+        (finally (hi/close-live! view-id))))))
 
-(deftest a-live-view-is-always-stoppable-and-the-stop-carries-its-words-test
-  (gw-hi/install!)
-  (recorded
-    (fn []
-      (with-events
-        (fn [seen]
-          (let [sid
-                (str (random-uuid))
+(defdescribe
+  a-live-view-is-always-stoppable-and-the-stop-carries-its-words-test
+  (it
+    "a live view is always stoppable and the stop carries its words"
+    (gw-hi/install!)
+    (recorded
+      (fn []
+        (with-events
+          (fn [seen]
+            (let [sid
+                  (str (random-uuid))
 
-                view
-                (hi/open-live! {:title "Migration"
-                                :session-id sid
-                                :nodes
-                                [{:id "now" :type "status" :text "Writing rows" :tone "running"}]})
+                  view
+                  (hi/open-live!
+                    {:title "Migration"
+                     :session-id sid
+                     :nodes [{:id "now" :type "status" :text "Writing rows" :tone "running"}]})
 
-                view-id
-                (:id view)]
+                  view-id
+                  (:id view)]
 
-            (try
-              (testing "no view refuses the stop: it asks nothing, so nothing is left unanswered"
+              (try
+                ;; no view refuses the stop: it asks nothing, so nothing is left unanswered
                 (let [body (json-body (view-action-response sid
                                                             view-id
                                                             {:action "interrupt"
                                                              :note
                                                              "wrong subnet — I will re-run it"}))]
-                  (is (true? (get body "is_accepted")))
-                  (is (= "interrupt" (get body "action")))
-                  (is (nil? (gw-hi/live-view-of sid view-id)))))
-              (testing "and the run reads WHO stopped it, and why, before it reads the picture"
-                (is (await-true
-                      #(seq (live-events-of seen gateway-contract/view-close-event view-id))))
+                  (expect (true? (get body "is_accepted")))
+                  (expect (= "interrupt" (get body "action")))
+                  (expect (nil? (gw-hi/live-view-of sid view-id))))
+                ;; and the run reads WHO stopped it, and why, before it reads the picture
+                (expect (await-true
+                          #(seq (live-events-of seen gateway-contract/view-close-event view-id))))
                 (let [[[_ event]] (live-events-of seen gateway-contract/view-close-event view-id)]
-                  (is (= "interrupted" (get-in event ["result" "reason"])))
-                  (is (true? (get-in event ["result" "is_from_human"])))
-                  (is (= "wrong subnet — I will re-run it" (get-in event ["result" "note"])))
-                  (is (= ["now"] (mapv #(get % "id") (get-in event ["result" "view" "nodes"]))))))
-              (finally (hi/close-live! view-id))))
-          (let [sid
-                (str (random-uuid))
+                  (expect (= "interrupted" (get-in event ["result" "reason"])))
+                  (expect (true? (get-in event ["result" "is_from_human"])))
+                  (expect (= "wrong subnet — I will re-run it" (get-in event ["result" "note"])))
+                  (expect (= ["now"]
+                             (mapv #(get % "id") (get-in event ["result" "view" "nodes"])))))
+                (finally (hi/close-live! view-id))))
+            (let [sid
+                  (str (random-uuid))
 
-                bare
-                (:id (hi/open-live! {:title "Sweep"
-                                     :session-id sid
-                                     :nodes [{:id "now" :type "status" :text "Sweeping"}]}))]
+                  bare
+                  (:id (hi/open-live! {:title "Sweep"
+                                       :session-id sid
+                                       :nodes [{:id "now" :type "status" :text "Sweeping"}]}))]
 
-            (try (testing "a stop with no note still says a person sent it"
-                   (let [body (json-body (view-action-response sid bare {:action "interrupt"}))]
-                     (is (true? (get body "is_accepted")))
-                     (is (= "interrupt" (get body "action"))))
-                   (is (await-true
-                         #(seq (live-events-of seen gateway-contract/view-close-event bare))))
-                   (let [[[_ event]] (live-events-of seen gateway-contract/view-close-event bare)]
-                     (is (true? (get-in event ["result" "is_from_human"])))
-                     (is (nil? (get-in event ["result" "note"])))))
-                 (finally (hi/close-live! bare)))))))))
+              (try
+                ;; a stop with no note still says a person sent it
+                (let [body (json-body (view-action-response sid bare {:action "interrupt"}))]
+                  (expect (true? (get body "is_accepted")))
+                  (expect (= "interrupt" (get body "action"))))
+                (expect (await-true
+                          #(seq (live-events-of seen gateway-contract/view-close-event bare))))
+                (let [[[_ event]] (live-events-of seen gateway-contract/view-close-event bare)]
+                  (expect (true? (get-in event ["result" "is_from_human"])))
+                  (expect (nil? (get-in event ["result" "note"]))))
+                (finally (hi/close-live! bare))))))))))
 
-(deftest view-actions-use-one-kind-independent-route-test
-  (testing "a View kind is policy, not part of the action resource address"
+(defdescribe
+  view-actions-use-one-kind-independent-route-test
+  (it
+    "a View kind is policy, not part of the action resource address"
     (let [match-by-path
           (requiring-resolve 'reitit.core/match-by-path)
 
@@ -982,16 +1037,16 @@
           action-match
           (match (str "/v1/sessions/" sid "/views/" view-id "/actions"))]
 
-      (is (some? action-handler))
-      (is (some? action-match))
-      (is (= (some-> action-handler
-                     deref)
-             (get-in action-match [:data :post :handler])))
-      (testing "the obsolete kind/action-specific endpoints are gone"
-        (is (nil? (match (str "/v1/sessions/" sid "/views/input/" view-id "/actions/submit"))))
-        (is (nil? (match (str "/v1/sessions/" sid "/views/live/" view-id "/actions/focus"))))
-        (is (nil? (match
-                    (str "/v1/sessions/" sid "/views/live/" view-id "/actions/interrupt"))))))))
+      (expect (some? action-handler))
+      (expect (some? action-match))
+      (expect (= (some-> action-handler
+                         deref)
+                 (get-in action-match [:data :post :handler])))
+      ;; the obsolete kind/action-specific endpoints are gone
+      (expect (nil? (match (str "/v1/sessions/" sid "/views/input/" view-id "/actions/submit"))))
+      (expect (nil? (match (str "/v1/sessions/" sid "/views/live/" view-id "/actions/focus"))))
+      (expect (nil? (match
+                      (str "/v1/sessions/" sid "/views/live/" view-id "/actions/interrupt")))))))
 
 ;; The companion's own unit tests parse `live-view.fixture.json`, exactly as they
 ;; parse the form fixture above. That file is not written by hand either: it is
@@ -1065,110 +1120,119 @@
   [m]
   (dissoc m "id" "created_at"))
 
-(deftest the-app-live-fixture-is-the-engines-own-projection-test
-  (let [view
-        (live/materialize (hi/normalize-live-view live-fixture-spec))
+(defdescribe
+  the-app-live-fixture-is-the-engines-own-projection-test
+  (it "the app live fixture is the engines own projection"
+      (let [view
+            (live/materialize (hi/normalize-live-view live-fixture-spec))
 
-        file
-        (live-fixture-file)
+            file
+            (live-fixture-file)
 
-        fixture
-        (some-> file
-                slurp
-                wire/parse-json)]
+            fixture
+            (some-> file
+                    slurp
+                    wire/parse-json)]
 
-    (is (some? file))
-    (when fixture
-      (testing "the companion parses engine bytes, not a hand-written lookalike"
-        (is (= (without-mint (wire/parse-json (wire/json-str view))) (without-mint fixture))))
-      (testing "the two minted values are still there, because the app keys on them"
-        (is (some? (parse-uuid (get fixture "id"))))
-        (is (pos-int? (get fixture "created_at"))))
-      (testing "the engine and shared presentation fixtures cover every node type"
-        (let [presentation (wire/parse-json
-                             (slurp (io/resource "vis-contract/fixtures/live-primitives.json")))]
-          (is (= (conj (set (keys hi-spec/live-node-types)) hi-spec/group-type-name)
-                 (set (map #(get % "type")
-                           (mapcat #(tree-seq map?
-                                              (fn [node]
-                                                (get node "fields"))
-                                              %)
-                                   (concat (get fixture "nodes")
-                                           (get presentation "nodes"))))))))))))
+        (expect (some? file))
+        (when fixture
+          ;; the companion parses engine bytes, not a hand-written lookalike
+          (expect (= (without-mint (wire/parse-json (wire/json-str view))) (without-mint fixture)))
+          ;; the two minted values are still there, because the app keys on them
+          (expect (some? (parse-uuid (get fixture "id"))))
+          (expect (pos-int? (get fixture "created_at")))
+          ;; the engine and shared presentation fixtures cover every node type
+          (let [presentation (wire/parse-json
+                               (slurp (io/resource "vis-contract/fixtures/live-primitives.json")))]
+            (expect (= (conj (set (keys hi-spec/live-node-types)) hi-spec/group-type-name)
+                       (set (map #(get % "type")
+                                 (mapcat #(tree-seq map?
+                                                    (fn [node]
+                                                      (get node "fields"))
+                                                    %)
+                                         (concat (get fixture "nodes")
+                                                 (get presentation "nodes"))))))))))))
 
-(deftest the-app-activity-fixture-is-the-host-projection-test
-  (let [state
-        {:state :running
-         :counts {:running 1 :succeeded 1 :failed 0 :cancelled 0}
-         :rows [{:id "call-1"
-                 :sequence 1
-                 :operation :grep
-                 :presenter :observation
-                 :classification :observation
-                 :state :succeeded
-                 :summary "18 matches"
-                 :duration-ms 41
-                 :resources []
-                 :evidence [{:kind :arguments :text "[{query: needle}]"}
-                            {:kind :result :text "18 matches"}]}
-                {:id "call-2"
-                 :sequence 2
-                 :operation :suite
-                 :presenter :tests
-                 :classification :verification
-                 :state :running
-                 :summary "suite"
-                 :result-summary "24 passed"
-                 :resources []
-                 :evidence [{:kind :arguments :text "suite"}]}]
-         :omitted {:rows 0 :by-classification {}}}
+(defdescribe
+  the-app-activity-fixture-is-the-host-projection-test
+  (it
+    "the app activity fixture is the host projection"
+    (let [state
+          {:state :running
+           :counts {:running 1 :succeeded 1 :failed 0 :cancelled 0}
+           :rows [{:id "call-1"
+                   :sequence 1
+                   :operation :grep
+                   :presenter :observation
+                   :classification :observation
+                   :state :succeeded
+                   :summary "18 matches"
+                   :duration-ms 41
+                   :resources []
+                   :evidence [{:kind :arguments :text "[{query: needle}]"}
+                              {:kind :result :text "18 matches"}]}
+                  {:id "call-2"
+                   :sequence 2
+                   :operation :suite
+                   :presenter :tests
+                   :classification :verification
+                   :state :running
+                   :summary "suite"
+                   :result-summary "24 passed"
+                   :resources []
+                   :evidence [{:kind :arguments :text "suite"}]}]
+           :omitted {:rows 0 :by-classification {}}}
 
-        file
-        (io/resource "vis-contract/fixtures/activity.json")
+          file
+          (io/resource "vis-contract/fixtures/activity.json")
 
-        fixture
-        (some-> file
-                slurp
-                wire/parse-json)]
+          fixture
+          (some-> file
+                  slurp
+                  wire/parse-json)]
 
-    (is (some? file))
-    (when fixture
-      ;; Activity does not know its owner: the fixture IS the whole snapshot.
-      (is (= (wire/parse-json (wire/json-str (activity/presentation state))) fixture)))))
+      (expect (some? file))
+      (when fixture
+        ;; Activity does not know its owner: the fixture IS the whole snapshot.
+        (expect (= (wire/parse-json (wire/json-str (activity/presentation state))) fixture))))))
 
-(deftest live-buttons-use-the-shared-http-action-test
-  (gw-hi/install!)
-  (recorded
-    (fn []
-      (let [sid
-            (str (random-uuid))
+(defdescribe
+  live-buttons-use-the-shared-http-action-test
+  (it "live buttons use the shared http action"
+      (gw-hi/install!)
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
 
-            view
-            (hi/open-live! {:title "Review"
-                            :session-id sid
-                            :nodes
-                            [{:id "go" :type :button :label "Continue"}
-                             {:id "off" :type :button :label "Unavailable" :is-disabled true}]})
+                view
+                (hi/open-live! {:title "Review"
+                                :session-id sid
+                                :nodes
+                                [{:id "go" :type :button :label "Continue"}
+                                 {:id "off" :type :button :label "Unavailable" :is-disabled true}]})
 
-            id
-            (:id view)]
+                id
+                (:id view)]
 
-        (try (is (= 404
-                    (:status (view-action-response (str (random-uuid))
-                                                   id
-                                                   {:action "activate" :node_id "go"}))))
-             (is (= 0 (get-in (gw-hi/live-view-of sid id) [:nodes 0 :clicks])))
-             (let [response (view-action-response sid id {:action "activate" :node_id "go"})]
-               (is (= 200 (:status response)))
-               (is (true? (get (json-body response) "is_accepted")))
-               (is (= 1 (get-in (gw-hi/live-view-of sid id) [:nodes 0 :clicks]))))
-             (let [response (view-action-response sid id {:action "activate" :node_id "off"})]
-               (is (= 200 (:status response)))
-               (is (false? (get (json-body response) "is_accepted")))
-               (is (= 0 (get-in (gw-hi/live-view-of sid id) [:nodes 1 :clicks]))))
-             (is (= 400
-                    (:status
-                      (view-action-response sid id {:action "activate" :node_id "missing"}))))
-             (hi/close-live! id)
-             (is (= 404 (:status (view-action-response sid id {:action "activate" :node_id "go"}))))
-             (finally (hi/close-live! id)))))))
+            (try
+              (expect (= 404
+                         (:status (view-action-response (str (random-uuid))
+                                                        id
+                                                        {:action "activate" :node_id "go"}))))
+              (expect (= 0 (get-in (gw-hi/live-view-of sid id) [:nodes 0 :clicks])))
+              (let [response (view-action-response sid id {:action "activate" :node_id "go"})]
+                (expect (= 200 (:status response)))
+                (expect (true? (get (json-body response) "is_accepted")))
+                (expect (= 1 (get-in (gw-hi/live-view-of sid id) [:nodes 0 :clicks]))))
+              (let [response (view-action-response sid id {:action "activate" :node_id "off"})]
+                (expect (= 200 (:status response)))
+                (expect (false? (get (json-body response) "is_accepted")))
+                (expect (= 0 (get-in (gw-hi/live-view-of sid id) [:nodes 1 :clicks]))))
+              (expect (= 400
+                         (:status
+                           (view-action-response sid id {:action "activate" :node_id "missing"}))))
+              (hi/close-live! id)
+              (expect
+                (= 404 (:status (view-action-response sid id {:action "activate" :node_id "go"}))))
+              (finally (hi/close-live! id))))))))

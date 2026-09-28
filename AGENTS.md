@@ -159,9 +159,11 @@ registry, copy secrets or hand-build curl/httpx authentication. Responses are no
 
 ### Tests and native builds
 
-Vis uses Lazytest, **not `clojure.test`** (which is silently undiscovered here):
-`[lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]`.
-Use `lazytest.core/set-ns-context!` and `around-each` instead of `use-fixtures`.
+Vis tests use Lazytest's own API: `[lazytest.core :refer [defdescribe describe it expect]]`.
+`clojure.test` (silently undiscovered here) and Lazytest's experimental interfaces, including
+`lazytest.experimental.interfaces.clojure-test`, are not allowed; `lazytest_policy_test` enforces this.
+Group cases with `describe`: an `it` inside another `it` never runs. Use `lazytest.core/set-ns-context!`
+and `around-each` instead of `use-fixtures`.
 
 Run the affected namespaces in a clean JVM with `clojure -M:test`, optionally
 `--namespace my.ns-test` or `--var my.ns-test/my-test`.

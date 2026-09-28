@@ -5,7 +5,7 @@
    token is attributed to its session's policy while an unknown/missing token is denied
    \u2014 one shared listener, many sessions, no external network."
   (:require [clojure.string :as str]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
+            [lazytest.core :refer [defdescribe expect it]]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.sandbox.egress-proxy :as ep]
             [com.blockether.vis.internal.sandbox.gateway :as gs])
@@ -16,80 +16,86 @@
 (defn- run-wire-test
   [f]
   (if (runtime/jailed?)
-    (is true "conditional skip: inherited Seatbelt forbids test listeners")
+    (expect true "conditional skip: inherited Seatbelt forbids test listeners")
     (f)))
 
 ;; Registry + resolver — pure, cross-platform (runs on Linux CI too)
 
-(deftest register-resolve-fail-closed
-  (try (testing "unknown token ⇒ auth-required deny-all sentinel"
-         (let [p (gs/resolve-policy "nope")]
-           (is (:deny-all? p))
-           (is (:proxy-auth-required? p))
-           (is (not (:allow? (ep/decide p "GET" "example.com" "/"))))
-           (is (not (:allow? (ep/decide p nil "example.com" nil))))))
-       (testing "nil token (missing Proxy-Authorization) ⇒ auth-required deny-all"
-         (let [p (gs/resolve-policy nil)]
-           (is (:deny-all? p))
-           (is (:proxy-auth-required? p))))
-       (testing "a registered token resolves to THAT session's policy"
-         (let [tok
-               "sess-A"
+(defdescribe
+  register-resolve-fail-closed
+  (it
+    "register resolve fail closed"
+    (try
+      ;; unknown token ⇒ auth-required deny-all sentinel
+      (let [p (gs/resolve-policy "nope")]
+        (expect (:deny-all? p))
+        (expect (:proxy-auth-required? p))
+        (expect (not (:allow? (ep/decide p "GET" "example.com" "/"))))
+        (expect (not (:allow? (ep/decide p nil "example.com" nil)))))
+      ;; nil token (missing Proxy-Authorization) ⇒ auth-required deny-all
+      (let [p (gs/resolve-policy nil)]
+        (expect (:deny-all? p))
+        (expect (:proxy-auth-required? p)))
+      ;; a registered token resolves to THAT session's policy
+      (let [tok
+            "sess-A"
 
-               pol
-               (ep/compile-policy {:allowed-domains ["example.com"]})]
+            pol
+            (ep/compile-policy {:allowed-domains ["example.com"]})]
 
-           (is (not (gs/registered? tok)))
-           (gs/register-session! tok
-                                 (fn []
-                                   pol))
-           (is (gs/registered? tok))
-           (is (= (assoc pol :reserved-loopback-ports (#'gs/reserved-loopback-ports))
-                  (gs/resolve-policy tok)))
-           (is (:allow? (ep/decide (gs/resolve-policy tok) "GET" "example.com" "/")))
-           (is (not (:allow? (ep/decide (gs/resolve-policy tok) "GET" "other.com" "/"))))))
-       (testing "sessions are isolated — one token never resolves another's policy"
-         (gs/register-session! "sess-B"
-                               (fn []
-                                 (ep/compile-policy {:allowed-domains ["beta.test"]})))
-         (is (:allow? (ep/decide (gs/resolve-policy "sess-B") "GET" "beta.test" "/")))
-         ;; sess-A's policy (example.com) must NOT admit sess-B's host.
-         (is (not (:allow? (ep/decide (gs/resolve-policy "sess-A") "GET" "beta.test" "/")))))
-       (testing "unregister drops a session back to fail-closed"
-         (gs/unregister-session! "sess-A")
-         (is (not (gs/registered? "sess-A")))
-         (is (:deny-all? (gs/resolve-policy "sess-A"))))
-       (finally (gs/shutdown!))))
+        (expect (not (gs/registered? tok)))
+        (gs/register-session! tok
+                              (fn []
+                                pol))
+        (expect (gs/registered? tok))
+        (expect (= (assoc pol :reserved-loopback-ports (#'gs/reserved-loopback-ports))
+                   (gs/resolve-policy tok)))
+        (expect (:allow? (ep/decide (gs/resolve-policy tok) "GET" "example.com" "/")))
+        (expect (not (:allow? (ep/decide (gs/resolve-policy tok) "GET" "other.com" "/")))))
+      ;; sessions are isolated — one token never resolves another's policy
+      (gs/register-session! "sess-B"
+                            (fn []
+                              (ep/compile-policy {:allowed-domains ["beta.test"]})))
+      (expect (:allow? (ep/decide (gs/resolve-policy "sess-B") "GET" "beta.test" "/")))
+      ;; sess-A's policy (example.com) must NOT admit sess-B's host.
+      (expect (not (:allow? (ep/decide (gs/resolve-policy "sess-A") "GET" "beta.test" "/"))))
+      ;; unregister drops a session back to fail-closed
+      (gs/unregister-session! "sess-A")
+      (expect (not (gs/registered? "sess-A")))
+      (expect (:deny-all? (gs/resolve-policy "sess-A")))
+      (finally (gs/shutdown!)))))
 
-(deftest denied-egress-diagnostics-omit-private-request-data
-  (let [denied {:phase :connect
-                :host "repo.clojars.org"
-                :allow? false
-                :reason "private detail"
-                :path "/?token=secret"
-                :headers {"proxy-authorization" "secret"}}]
-    (is (= {:source :vis-proxy :phase :connect :host "repo.clojars.org"}
-           (#'gs/denial-details denied)))
-    (is (nil? (#'gs/denial-details (assoc denied :allow? true))))))
+(defdescribe denied-egress-diagnostics-omit-private-request-data
+             (it "denied egress diagnostics omit private request data"
+                 (let [denied {:phase :connect
+                               :host "repo.clojars.org"
+                               :allow? false
+                               :reason "private detail"
+                               :path "/?token=secret"
+                               :headers {"proxy-authorization" "secret"}}]
+                   (expect (= {:source :vis-proxy :phase :connect :host "repo.clojars.org"}
+                              (#'gs/denial-details denied)))
+                   (expect (nil? (#'gs/denial-details (assoc denied :allow? true)))))))
 
-(deftest both-proxies-install-denial-logging
-  (let [started
-        (atom [])
+(defdescribe both-proxies-install-denial-logging
+             (it "both proxies install denial logging"
+                 (let [started
+                       (atom [])
 
-        token
-        "log-test"]
+                       token
+                       "log-test"]
 
-    (with-redefs [ep/start! (fn [options]
-                              (swap! started conj options)
-                              {:port (+ 10000 (count @started))
-                               :stop! (fn []
-                                        nil)})]
-      (try (gs/register-session! token (constantly nil))
-           (gs/ensure-proxy!)
-           (gs/ensure-session-proxy! token)
-           (is (= 2 (count @started)))
-           (is (every? (comp fn? :on-log) @started))
-           (finally (gs/shutdown!))))))
+                   (with-redefs [ep/start! (fn [options]
+                                             (swap! started conj options)
+                                             {:port (+ 10000 (count @started))
+                                              :stop! (fn []
+                                                       nil)})]
+                     (try (gs/register-session! token (constantly nil))
+                          (gs/ensure-proxy!)
+                          (gs/ensure-session-proxy! token)
+                          (expect (= 2 (count @started)))
+                          (expect (every? (comp fn? :on-log) @started))
+                          (finally (gs/shutdown!)))))))
 
 ;; Wire round-trip — token attribution through the ONE shared proxy
 
@@ -146,23 +152,26 @@
       (.flush (.getOutputStream s))
       (str (.readLine (BufferedReader. (InputStreamReader. (.getInputStream s))))))))
 
-(deftest wire-token-attribution
-  (run-wire-test
-    (fn []
-      (let [origin
-            (start-origin!)
+(defdescribe
+  wire-token-attribution
+  (it "wire token attribution"
+      (run-wire-test
+        (fn []
+          (let [origin
+                (start-origin!)
 
-            tok
-            (str (java.util.UUID/randomUUID))]
+                tok
+                (str (java.util.UUID/randomUUID))]
 
-        (gs/register-session! tok
-                              (fn []
-                                (ep/compile-policy {:allowed-domains ["localhost"]})))
-        (let [port (gs/ensure-proxy!)]
-          (try (testing "registered token ⇒ its policy applies; allowed host forwarded (200)"
-                 (is (str/includes? (get-status port (:port origin) tok) "200")))
-               (testing "unknown token ⇒ fail-closed auth challenge (407), never reaches origin"
-                 (is (str/includes? (get-status port (:port origin) "bogus-token") "407")))
-               (testing "missing token ⇒ fail-closed auth challenge (407)"
-                 (is (str/includes? (get-status port (:port origin) nil) "407")))
-               (finally ((:stop! origin)) (gs/shutdown!))))))))
+            (gs/register-session! tok
+                                  (fn []
+                                    (ep/compile-policy {:allowed-domains ["localhost"]})))
+            (let [port (gs/ensure-proxy!)]
+              (try
+                ;; registered token ⇒ its policy applies; allowed host forwarded (200)
+                (expect (str/includes? (get-status port (:port origin) tok) "200"))
+                ;; unknown token ⇒ fail-closed auth challenge (407), never reaches origin
+                (expect (str/includes? (get-status port (:port origin) "bogus-token") "407"))
+                ;; missing token ⇒ fail-closed auth challenge (407)
+                (expect (str/includes? (get-status port (:port origin) nil) "407"))
+                (finally ((:stop! origin)) (gs/shutdown!)))))))))

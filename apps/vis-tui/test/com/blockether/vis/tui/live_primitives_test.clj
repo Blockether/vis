@@ -13,7 +13,7 @@
             [com.blockether.vis.tui.view-materializer :as materializer]
             [com.blockether.vis.tui.theme :as theme]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
+            [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.html HtmlTerminal]))
@@ -25,94 +25,102 @@
 
 (defn- entries [pane] (tree-seq #(seq (:cells %)) :cells {:cells (lv/plan pane 80)}))
 
-(deftest all-primitives-paint-plan-test
-  (let [view
-        (fixture)
+(defdescribe
+  all-primitives-paint-plan-test
+  (it "all primitives paint plan"
+      (let [view
+            (fixture)
 
-        pane
-        (lv/opened view)
+            pane
+            (lv/opened view)
 
-        rows
-        (entries pane)]
+            rows
+            (entries pane)]
 
-    (is (nil? (spec/live-view-error view)))
-    (is (= 6 (count (set (map :node-id (filter #(= :heading (:kind %)) rows))))))
-    (is (= 4 (count (filter #(= :spinner (:kind %)) rows))))
-    (is (str/includes? (str/join "\n" (map :text rows)) "# <button> is literal text"))
-    (is (lv/animating? [pane]))
-    (is (= #{"refresh" "details" "table"} (set (map :node-id (lv/controls [pane])))))
-    (is (not (lv/animating? [(lv/settled pane {:reason :completed})])))
-    (is (not (lv/animating? [(lv/minimized pane)])))
-    (is (str/includes? (materializer/->markdown view) "Heading level 6"))
-    (let [markdown (materializer/->markdown view)]
-      (is (= markdown (materializer/->markdown (:view (materializer/parse-markdown markdown))))))))
+        (expect (nil? (spec/live-view-error view)))
+        (expect (= 6 (count (set (map :node-id (filter #(= :heading (:kind %)) rows))))))
+        (expect (= 4 (count (filter #(= :spinner (:kind %)) rows))))
+        (expect (str/includes? (str/join "\n" (map :text rows)) "# <button> is literal text"))
+        (expect (lv/animating? [pane]))
+        (expect (= #{"refresh" "details" "table"} (set (map :node-id (lv/controls [pane])))))
+        (expect (not (lv/animating? [(lv/settled pane {:reason :completed})])))
+        (expect (not (lv/animating? [(lv/minimized pane)])))
+        (expect (str/includes? (materializer/->markdown view) "Heading level 6"))
+        (let [markdown (materializer/->markdown view)]
+          (expect (= markdown
+                     (materializer/->markdown (:view (materializer/parse-markdown markdown)))))))))
 
-(deftest disclosures-retain-state-and-output-test
-  ;; Regression #189: independent folds survive patches and nested parent folds.
-  (let [view
-        (fixture)
+(defdescribe
+  disclosures-retain-state-and-output-test
+  (it "disclosures retain state and output"
+      ;; Regression #189: independent folds survive patches and nested parent folds.
+      (let [view
+            (fixture)
 
-        pane
-        (-> (lv/opened view)
-            (lv/expanded "details")
-            (lv/expanded "a"))
+            pane
+            (-> (lv/opened view)
+                (lv/expanded "details")
+                (lv/expanded "a"))
 
-        pane
-        (lv/patched
-          pane
-          {:view-id (:id view) :seq 1 :ops [{:op :append :node-id "a" :lines ["A updated"]}]})]
+            pane
+            (lv/patched
+              pane
+              {:view-id (:id view) :seq 1 :ops [{:op :append :node-id "a" :lines ["A updated"]}]})]
 
-    (is (some #(= "A updated" (:text %)) (entries pane)))
-    (is (not-any? #(= "B started" (:text %)) (entries pane)))
-    (is (some #(= "A updated" (:text %))
-              (entries (-> pane
-                           (lv/expanded "details")
-                           (lv/expanded "details")))))
-    (let [closed
-          (lv/expanded pane "a")
+        (expect (some #(= "A updated" (:text %)) (entries pane)))
+        (expect (not-any? #(= "B started" (:text %)) (entries pane)))
+        (expect (some #(= "A updated" (:text %))
+                      (entries (-> pane
+                                   (lv/expanded "details")
+                                   (lv/expanded "details")))))
+        (let [closed
+              (lv/expanded pane "a")
 
-          updated
-          (lv/patched
-            closed
-            {:view-id (:id view) :seq 2 :ops [{:op :append :node-id "a" :lines ["later"]}]})]
+              updated
+              (lv/patched
+                closed
+                {:view-id (:id view) :seq 2 :ops [{:op :append :node-id "a" :lines ["later"]}]})]
 
-      (is (not-any? #(= :log (:kind %)) (entries updated)))
-      (is (some #(= "later" (:text %)) (entries (lv/expanded updated "a")))))
-    (let [receipt (lv/settled pane {:reason :completed})]
-      (is (empty? (:disclosures receipt)))
-      (is (not-any? #(= :log (:kind %)) (entries receipt)))
-      (is (every? :is-disabled (filter #(= :button (:kind %)) (entries receipt)))))))
+          (expect (not-any? #(= :log (:kind %)) (entries updated)))
+          (expect (some #(= "later" (:text %)) (entries (lv/expanded updated "a")))))
+        (let [receipt (lv/settled pane {:reason :completed})]
+          (expect (empty? (:disclosures receipt)))
+          (expect (not-any? #(= :log (:kind %)) (entries receipt)))
+          (expect (every? :is-disabled (filter #(= :button (:kind %)) (entries receipt))))))))
 
-(deftest primitives-paint-real-terminal-test
-  (doseq [cols [40 80 120]]
-    (let [view (update (fixture)
-                       :nodes
-                       #(filterv (fn [n]
-                                   (contains? #{"h1" "code" "spinners" "actions" "details" "links"}
-                                              (:id n)))
-                          %))
-          pane (assoc (lv/opened view) :is-following false)
-          captured (capture/capture!
-                     {:cols cols
-                      :rows 80
-                      :paint!
-                      (fn [{:keys [screen]}]
-                        (.beginFrame interactions/hit-map)
-                        (lv/paint! (.newTextGraphics ^TerminalScreen screen) cols 80 [pane] 1 3)
-                        (.commitFrame interactions/hit-map)
-                        (.refresh ^TerminalScreen screen)
-                        (vec (.current interactions/hit-map)))})
-          text (capture/frame-text (last (:frames captured)))]
+(defdescribe
+  primitives-paint-real-terminal-test
+  (it "primitives paint real terminal"
+      (doseq [cols [40 80 120]]
+        (let [view (update (fixture)
+                           :nodes
+                           #(filterv (fn [n]
+                                       (contains? #{"h1" "code" "spinners" "actions" "details"
+                                                    "links"}
+                                                  (:id n)))
+                              %))
+              pane (assoc (lv/opened view) :is-following false)
+              captured (capture/capture!
+                         {:cols cols
+                          :rows 80
+                          :paint!
+                          (fn [{:keys [screen]}]
+                            (.beginFrame interactions/hit-map)
+                            (lv/paint! (.newTextGraphics ^TerminalScreen screen) cols 80 [pane] 1 3)
+                            (.commitFrame interactions/hit-map)
+                            (.refresh ^TerminalScreen screen)
+                            (vec (.current interactions/hit-map)))})
+              text (capture/frame-text (last (:frames captured)))]
 
-      (is (str/includes? text "Heading level 1"))
-      (is (str/includes? text "Refresh results"))
-      (is (str/includes? text "Details"))
-      (is (str/includes? text "F3"))
-      (is (str/includes? text "Braille"))
-      (is (str/includes? text "Documentation"))
-      (is (some #(= :url (:kind %)) (:ret captured)))
-      (is (some #(= :live-activate (:kind %)) (:ret captured)))
-      (is (not-any? #(= "disabled" (:node-id %)) (:ret captured))))))
+          (expect (str/includes? text "Heading level 1"))
+          (expect (str/includes? text "Refresh results"))
+          (expect (str/includes? text "Details"))
+          (expect (str/includes? text "F3"))
+          (expect (str/includes? text "Braille"))
+          (expect (str/includes? text "Documentation"))
+          (expect (some #(= :url (:kind %)) (:ret captured)))
+          (expect (some #(= :live-activate (:kind %)) (:ret captured)))
+          (expect (not-any? #(= "disabled" (:node-id %)) (:ret captured)))))))
 
 (defn write-review!
   "Render the shared fixture with the production terminal painter for browser review."
@@ -147,521 +155,561 @@
       (.writeHtml terminal (.toPath (io/file path)) (int rows))
       path)))
 
-(deftest button-control-routes-through-the-shared-gateway-action-test
-  (let [pane
-        (lv/opened (fixture))
+(defdescribe button-control-routes-through-the-shared-gateway-action-test
+             (it "button control routes through the shared gateway action"
+                 (let [pane
+                       (lv/opened (fixture))
 
-        control
-        (first (filter #(= "refresh" (:node-id %)) (lv/controls [pane])))
+                       control
+                       (first (filter #(= "refresh" (:node-id %)) (lv/controls [pane])))
 
-        called
-        (promise)]
+                       called
+                       (promise)]
 
-    (with-redefs [client/gateway-view-action! (fn [& args]
-                                                (deliver called args)
-                                                {:is-accepted true})]
-      (is (true? (#'screen/activate-live-region! {:live-views [pane]} control)))
-      (is (= [(get-in pane [:view :session-id]) (lv/view-id pane)
-              {:action :activate :node-id "refresh"}]
-             (deref called 3000 ::timeout))))))
+                   (with-redefs [client/gateway-view-action! (fn [& args]
+                                                               (deliver called args)
+                                                               {:is-accepted true})]
+                     (expect (true? (#'screen/activate-live-region! {:live-views [pane]} control)))
+                     (expect (= [(get-in pane [:view :session-id]) (lv/view-id pane)
+                                 {:action :activate :node-id "refresh"}]
+                                (deref called 3000 ::timeout)))))))
 
-(deftest human-record-retains-independent-disclosures-test
-  ;; Regression #189: restore the full human snapshot through the archive reader.
-  (let [raw
-        (json/read-json (slurp (io/resource "vis-contract/fixtures/live-primitives.json")))
+(defdescribe human-record-retains-independent-disclosures-test
+             (it "human record retains independent disclosures"
+                 ;; Regression #189: restore the full human snapshot through the archive reader.
+                 (let [raw
+                       (json/read-json (slurp (io/resource
+                                                "vis-contract/fixtures/live-primitives.json")))
 
-        source
-        (str/join "\n"
-                  (map json/write-json-str
-                       [{:kind "open" :view raw}
-                        {:kind "close"
-                         :at 20
-                         :result {:reason "completed"
-                                  :is_completed true
-                                  :view (select-keys raw ["title" "nodes"])}}]))
+                       source
+                       (str/join "\n"
+                                 (map json/write-json-str
+                                      [{:kind "open" :view raw}
+                                       {:kind "close"
+                                        :at 20
+                                        :result {:reason "completed"
+                                                 :is_completed true
+                                                 :view (select-keys raw ["title" "nodes"])}}]))
 
-        pane
-        (lv/recorded-pane source "fixture")
+                       pane
+                       (lv/recorded-pane source "fixture")
 
-        open
-        (-> pane
-            (lv/expanded "details")
-            (lv/expanded "a"))]
+                       open
+                       (-> pane
+                           (lv/expanded "details")
+                           (lv/expanded "a"))]
 
-    (is (= #{"details"} (set (map :node-id (lv/controls [pane])))))
-    (is (not-any? #(= :log (:kind %)) (entries pane)))
-    (is (some #(= "A started" (:text %)) (entries open)))
-    (is (not-any? #(= "B started" (:text %)) (entries open)))
-    (is (every? :is-disabled (filter #(= :button (:kind %)) (entries open))))
-    (is (not (lv/animating? [open])))))
+                   (expect (= #{"details"} (set (map :node-id (lv/controls [pane])))))
+                   (expect (not-any? #(= :log (:kind %)) (entries pane)))
+                   (expect (some #(= "A started" (:text %)) (entries open)))
+                   (expect (not-any? #(= "B started" (:text %)) (entries open)))
+                   (expect (every? :is-disabled (filter #(= :button (:kind %)) (entries open))))
+                   (expect (not (lv/animating? [open]))))))
 
-(deftest logs-offer-read-only-search-controls-test
-  (doseq [pane [(lv/opened (fixture))
-                (lv/reopened (lv/settled (lv/opened (fixture)) {:reason :completed}))]]
-    (let [opened (-> pane
-                     (lv/expanded "details")
-                     (lv/expanded "a"))
-          search (filter #(= :live-log-search (:kind %)) (lv/controls [opened]))]
+(defdescribe logs-offer-read-only-search-controls-test
+             (it "logs offer read only search controls"
+                 (doseq [pane [(lv/opened (fixture))
+                               (lv/reopened (lv/settled (lv/opened (fixture))
+                                                        {:reason :completed}))]]
+                   (let [opened (-> pane
+                                    (lv/expanded "details")
+                                    (lv/expanded "a"))
+                         search (filter #(= :live-log-search (:kind %)) (lv/controls [opened]))]
 
-      (is (= ["a"] (mapv :node-id search)))
-      (is (= "Search Build A logs" (:label (first search)))))))
+                     (expect (= ["a"] (mapv :node-id search)))
+                     (expect (= "Search Build A logs" (:label (first search))))))))
 
-(deftest log-search-renders-real-terminal-and-receipt-controls-test
-  ;; Regression #189: search remains reachable in live output and reopened receipts.
-  (doseq [cols
-          [40 80 120]
-
-          settled?
-          [false true]]
-
-    (let [view
-          (update (fixture)
-                  :nodes
-                  #(filterv (fn [n]
-                              (= "details" (:id n)))
-                     %))
-
-          pane
-          (cond-> (lv/opened view)
-            settled?
-            (lv/settled {:reason :completed})
+(defdescribe
+  log-search-renders-real-terminal-and-receipt-controls-test
+  (it
+    "log search renders real terminal and receipt controls"
+    ;; Regression #189: search remains reachable in live output and reopened receipts.
+    (doseq [cols
+            [40 80 120]
 
             settled?
-            lv/reopened)
+            [false true]]
 
-          pane
-          (-> pane
-              (lv/expanded "details")
-              (lv/expanded "a")
-              (assoc :is-following false))
+      (let [view
+            (update (fixture)
+                    :nodes
+                    #(filterv (fn [n]
+                                (= "details" (:id n)))
+                       %))
 
-          captured
-          (capture/capture!
-            {:cols cols
-             :rows 24
-             :paint! (fn [{:keys [screen]}]
-                       (.beginFrame interactions/hit-map)
-                       (lv/paint! (.newTextGraphics ^TerminalScreen screen) cols 24 [pane] 1 3)
-                       (.commitFrame interactions/hit-map)
-                       (.refresh ^TerminalScreen screen)
-                       {:hits (vec (.current interactions/hit-map))
-                        :button-bg [(.getRed theme/button-bg) (.getGreen theme/button-bg)
-                                    (.getBlue theme/button-bg)]})})
+            pane
+            (cond-> (lv/opened view)
+              settled?
+              (lv/settled {:reason :completed})
 
-          lines
-          (str/split-lines (capture/frame-text captured))
+              settled?
+              lv/reopened)
 
-          search
-          (first (filter #(and (= :live-log-search (:kind %)) (= "a" (:node-id %)))
-                         (get-in captured [:ret :hits])))
+            pane
+            (-> pane
+                (lv/expanded "details")
+                (lv/expanded "a")
+                (assoc :is-following false))
 
-          disclosure
-          (first (filter #(and (= :live-expand (:kind %)) (= "a" (:node-id %)))
-                         (get-in captured [:ret :hits])))
+            captured
+            (capture/capture!
+              {:cols cols
+               :rows 24
+               :paint! (fn [{:keys [screen]}]
+                         (.beginFrame interactions/hit-map)
+                         (lv/paint! (.newTextGraphics ^TerminalScreen screen) cols 24 [pane] 1 3)
+                         (.commitFrame interactions/hit-map)
+                         (.refresh ^TerminalScreen screen)
+                         {:hits (vec (.current interactions/hit-map))
+                          :button-bg [(.getRed theme/button-bg) (.getGreen theme/button-bg)
+                                      (.getBlue theme/button-bg)]})})
 
-          {:keys [row col width]}
-          (:bounds search)]
+            lines
+            (str/split-lines (capture/frame-text captured))
 
-      (is (nil? (:error captured)))
-      (is (some? search))
-      ;; #250: Search is a filled header action, not a full-width text row.
-      (is (= (get-in disclosure [:bounds :row]) row) "Search belongs to the log header")
-      (is (= 8 width) "only the padded Search button is clickable")
-      (is (not (str/includes? (capture/frame-text captured) "Search Build A logs")))
-      (when search
-        (is (= " Search " (subs (nth lines row) col (+ col width))))
-        (is (= (get-in captured [:ret :button-bg])
-               (:bg (get-in (last (:frames captured)) [row col]))))))))
+            search
+            (first (filter #(and (= :live-log-search (:kind %)) (= "a" (:node-id %)))
+                           (get-in captured [:ret :hits])))
 
-(deftest inline-log-search-renders-results-empty-error-and-loading-test
-  ;; #235 moved retained-log search into the viewer; exercise its real frame.
-  (doseq [cols
-          [40 80 120]
+            disclosure
+            (first (filter #(and (= :live-expand (:kind %)) (= "a" (:node-id %)))
+                           (get-in captured [:ret :hits])))
 
-          [response expected]
-          [[{:page {"from" 0
-                    "total" 503
-                    "matched" 2
-                    "lines" ["ERROR [disk] cache write failed" "error retry completed"]
-                    "line_numbers" [7 9]}}
-            ["7: ERROR [disk] cache write failed" "9: error retry completed"]]
-           [{:page {"from" 0 "total" 503 "matched" 0 "lines" [] "line_numbers" []}}
-            ["No matching lines"]] [{:error "Log unavailable"} ["Could not read log."]]
-           [nil ["Searching…"]]]]
+            {:keys [row col width]}
+            (:bounds search)]
 
-    (let [search
-          (lv/log-search-requested (lv/log-search-opened "a") 0 "request")
+        (expect (nil? (:error captured)))
+        (expect (some? search))
+        ;; #250: Search is a filled header action, not a full-width text row.
+        (expect (= (get-in disclosure [:bounds :row]) row) "Search belongs to the log header")
+        (expect (= 8 width) "only the padded Search button is clickable")
+        (expect (not (str/includes? (capture/frame-text captured) "Search Build A logs")))
+        (when search
+          (expect (= " Search " (subs (nth lines row) col (+ col width))))
+          (expect (= (get-in captured [:ret :button-bg])
+                     (:bg (get-in (last (:frames captured)) [row col])))))))))
 
-          pane
-          (assoc (lv/opened (fixture))
-            :is-viewer true
-            :log-search (if response (lv/log-search-loaded search "request" response) search))
+(defdescribe
+  inline-log-search-renders-results-empty-error-and-loading-test
+  (it "inline log search renders results empty error and loading"
+      ;; #235 moved retained-log search into the viewer; exercise its real frame.
+      (doseq [cols
+              [40 80 120]
 
-          captured
-          (capture/capture!
-            {:cols cols
-             :rows 24
-             :paint! (fn [{:keys [screen]}]
-                       (.beginFrame interactions/hit-map)
-                       (lv/paint! (.newTextGraphics ^TerminalScreen screen) cols 24 [pane] 1 3)
-                       (.commitFrame interactions/hit-map)
-                       (.refresh ^TerminalScreen screen))})
+              [response expected]
+              [[{:page {"from" 0
+                        "total" 503
+                        "matched" 2
+                        "lines" ["ERROR [disk] cache write failed" "error retry completed"]
+                        "line_numbers" [7 9]}}
+                ["7: ERROR [disk] cache write failed" "9: error retry completed"]]
+               [{:page {"from" 0 "total" 503 "matched" 0 "lines" [] "line_numbers" []}}
+                ["No matching lines"]] [{:error "Log unavailable"} ["Could not read log."]]
+               [nil ["Searching…"]]]]
 
-          ;; Join wrapped rows without their frame edges or terminal padding.
-          text
-          (-> (capture/frame-text captured)
-              (str/replace "│" "")
-              (str/replace #"\s+" " "))]
+        (let [search
+              (lv/log-search-requested (lv/log-search-opened "a") 0 "request")
 
-      (is (nil? (:error captured)))
-      (is (str/includes? text "Search Build A logs"))
-      (doseq [copy expected]
-        (is (str/includes? text copy)))
-      (when (and (>= cols 80) (:page response))
-        (is (str/includes? text (str (get (:page response) "matched") " matches / 503 lines"))))
-      (when (and (>= cols 80) (:error response)) (is (str/includes? text "Enter to retry.")))
-      (is (seq (:frames captured)))
-      (is (every? #(and (= 24 (count %))
-                        (every? (fn [row]
-                                  (= cols (count row)))
-                                %))
-                  (:frames captured))))))
-
-;; #250: the query must not touch the left gutter, even while horizontally scrolled.
-(deftest log-search-input-aligns-with-content-test
-  (doseq [cols
-          [24 40 80 120]
-
-          query
-          ["" "ERROR" (apply str (repeat 100 "x"))]]
-
-    (let [pane
-          (assoc (lv/opened (fixture))
-            :is-viewer true
-            :log-search (assoc (lv/log-search-opened "a")
-                          :input (input/paste-text (input/empty-input) query)))
-
-          captured
-          (capture/capture!
-            {:cols cols
-             :rows 24
-             :paint!
-             (fn [{:keys [screen]}]
-               (let [painted
-                     (lv/paint! (.newTextGraphics ^TerminalScreen screen) cols 24 [pane] 1 3)]
-                 (.refresh ^TerminalScreen screen)
-                 painted))})
-
-          lines
-          (str/split-lines (capture/frame-text captured))
-
-          heading-col
-          (some #(str/index-of % "Search") lines)
-
-          ^TerminalPosition cursor
-          (get-in captured [:ret :cursor])]
-
-      (is (nil? (:error captured)))
-      (is (some? cursor))
-      (when cursor
-        (let [line
-              (nth lines (.getRow cursor))
-
-              prompt-col
-              (str/index-of line "› ")]
-
-          (is (= heading-col prompt-col) "the prompt uses the same left padding as the heading")
-          (is (= \space (get line (dec (long heading-col)))) "leave the gutter clear")
-          (is (<= (+ (long heading-col) 2) (.getColumn cursor) (- cols 4)))
-          (when (empty? query) (is (= (+ (long heading-col) 2) (.getColumn cursor)))))))))
-
-(deftest log-search-client-encodes-literal-query-test
-  ;; A Jenkins job is `folder/job`: the node id rides the query string, where an
-  ;; encoded `/` is ordinary text instead of a path separator the gateway refuses.
-  (let [called (atom nil)]
-    (with-redefs-fn {#'client/send-json! (fn [& args]
-                                           (reset! called args)
-                                           {"matched" 0})}
-      #(client/live-view-log "sid" "view" "jobs/glms#6064 · console" 200 200 "[disk]&Ł"))
-    (is (= ["GET"
-            (str "/v1/sessions/sid/views/live/view/log"
-                 "?node=jobs%2Fglms%236064+%C2%B7+console"
-                 "&from=200&limit=200&query=%5Bdisk%5D%26%C5%81")]
-           @called))))
-
-(deftest styled-log-wire-patches-and-receipts-test
-  ;; #209: whole-line severity never replaces literal text or changes line order.
-  (let [view
-        (hi/live-view<-wire {"id" "styled"
-                             "kind" "live"
-                             "version" 1
-                             "seq" 0
-                             "title" "Build output"
-                             "nodes" [{"id" "log"
-                                       "type" "log"
-                                       "lines" ["WARN before"]
-                                       "line_tones" ["warn"]
-                                       "window_lines" 2
-                                       "total_lines" 1
-                                       "default_expanded" true}]})
-
-        pane
-        (lv/patched (lv/opened view)
-                    (hi/live-patch<-wire
-                      {"view_id" "styled"
-                       "seq" 1
-                       "ops"
-                       [{"op" "append" "node_id" "log" "lines" ["ERROR compiler"] "tone" "error"}
-                        {"op" "append" "node_id" "log" "lines" ["plain"]}]}))
-
-        logs
-        #(filterv (fn [row]
-                    (= :log (:kind row)))
-           (entries %))]
-
-    (is (= :warn (get-in view [:nodes 0 :line-tones 0])))
-    (is (= ["WARN before" "ERROR compiler" "plain"] (mapv :text (logs pane))))
-    (is (= [:warn :error nil] (mapv :tone (logs pane))))
-    (is (= (logs pane) (logs (lv/expanded (lv/settled pane {:reason :completed}) "log"))))))
-
-(deftest log-keeps-every-line-past-its-window-test
-  ;; A window is what the producer holds hot, never a cut: the pane paints the whole
-  ;; log it was handed, with no "earlier lines" note standing in for dropped text.
-  (let [view
-        (hi/live-view<-wire {"id" "whole"
-                             "kind" "live"
-                             "version" 1
-                             "seq" 0
-                             "title" "Build output"
-                             "nodes" [{"id" "log"
-                                       "type" "log"
-                                       "lines" ["line 1"]
-                                       "window_lines" 2
-                                       "total_lines" 1
-                                       "default_expanded" true}]})
-
-        pane
-        (lv/patched (lv/opened view)
-                    (hi/live-patch<-wire {"view_id" "whole"
-                                          "seq" 1
-                                          "ops" [{"op" "append"
-                                                  "node_id" "log"
-                                                  "lines" ["line 2" "line 3" "line 4"]}]}))
-
-        rows
-        (entries pane)]
-
-    (is (= ["line 1" "line 2" "line 3" "line 4"] (mapv :text (filterv #(= :log (:kind %)) rows))))
-    (is (not-any? #(str/includes? (str (:text %)) "earlier lines") rows))))
-
-(deftest log-reads-the-record-back-instead-of-counting-earlier-lines-test
-  ;; Attaching mid-run is what the "earlier lines" note used to paper over: the pane
-  ;; asks the record for the lines it was never sent, page by page to the first one,
-  ;; and paints them in front of the window instead of counting them.
-  (let [view
-        (hi/live-view<-wire {"id" "late"
-                             "kind" "live"
-                             "version" 1
-                             "seq" 0
-                             "title" "Build output"
-                             "nodes" [{"id" "log"
-                                       "type" "log"
-                                       "lines" ["line 4499" "line 4500" "line 4501"]
-                                       "line_tones" ["warn" "warn" "warn"]
-                                       "window_lines" 100
-                                       "total_lines" 4501
-                                       "default_expanded" true}]})
-
-        page
-        (fn [from limit]
-          {"lines" (mapv #(str "line " (+ (long from) (long %) 1)) (range limit))
-           "line_tones" (vec (repeat limit "error"))})
-
-        read-back
-        (fn [pane]
-          (loop [pane
-                 pane
-
-                 reads
-                 []]
-
-            (if-let [{:keys [node-id from limit]} (lv/log-fill-request pane)]
-              (let [request-id (random-uuid)]
-                (recur (lv/log-filled (lv/log-fill-requested pane node-id request-id)
-                                      request-id
-                                      {:page (page from limit)})
-                       (conj reads [from limit])))
-              {:pane pane :reads reads})))
-
-        {:keys [pane reads]}
-        (read-back (lv/opened view))
-
-        lines
-        #(filterv (fn [row]
-                    (= :log (:kind row)))
-           (entries %))]
-
-    (is (= [[2498 2000] [498 2000] [0 498]] reads)
-        "the newest missing page first, walking back to the first line")
-    (is (= 4501 (count (lines pane))))
-    (is (= ["line 1" "line 2"] (mapv :text (take 2 (lines pane)))))
-    (is (= ["line 4500" "line 4501"] (mapv :text (take-last 2 (lines pane)))))
-    (is (= [:error :error] (mapv :tone (take 2 (lines pane))))
-        "a page read back keeps the tones it was written with")
-    (is (= [:warn :warn] (mapv :tone (take-last 2 (lines pane)))))
-    (is (not-any? #(str/includes? (str (:text %)) "earlier lines") (entries pane)))
-    (is (nil? (lv/log-fill-request pane)) "nothing left to read")
-    ;; A page that arrives twice cannot duplicate the head.
-    (is (= 4501
-           (count (lines (lv/log-filled (lv/log-fill-requested pane "log" :again)
-                                        :again
-                                        {:page (page 0 498)})))))
-    ;; While the walk is still running, the pane says what it is doing…
-    (is (some #(str/includes? (str (:text %)) "reading 4498 earlier lines")
-              (entries (lv/opened view))))
-    ;; …and a refused read says THAT instead of promising lines nothing is fetching.
-    (let [refused
-          (lv/log-filled (lv/log-fill-requested (lv/opened view) "log" :read) :read {:error true})]
-      (is (some #(str/includes? (str (:text %)) "reading them failed") (entries refused)))
-      (is (nil? (lv/log-fill-request refused)) "a failed read waits for the next line of output")
-      (is (some? (lv/log-fill-request
-                   (lv/patched refused
-                               (hi/live-patch<-wire
-                                 {"view_id" "late"
-                                  "seq" 1
-                                  "ops" [{"op" "append" "node_id" "log" "lines" ["line 4502"]}]}))))
-          "and new output retries it"))))
-
-(deftest styled-log-narrow-terminal-test
-  (doseq [cols [24 40 80]]
-    (let [view {:id "styled"
-                :title "Build output"
-                :seq 0
-                :nodes [{:id "log"
-                         :type :log
-                         :lines ["ERROR compiler"]
-                         :line-tones [:error]
-                         :total-lines 1
-                         :window-lines 200
-                         :default-expanded true}]}
-          captured (capture/capture! {:cols cols
-                                      :rows 16
-                                      :paint! (fn [{:keys [screen]}]
-                                                (lv/paint! (.newTextGraphics ^TerminalScreen screen)
-                                                           cols
-                                                           16 [(lv/opened view)]
-                                                           1 3))})]
-
-      (is (nil? (:error captured)))
-      (let [frame (last (:frames captured))
-            ;; #219: the disclosure inset leaves less room; preserve the visible error tone.
-            line (first (filter #(str/includes? (apply str (map :ch %)) "ERROR") frame))
-            start (str/index-of (apply str (map :ch line)) "ERROR")
-            color theme/footer-error-fg]
-
-        (is (some? start))
-        (is (= [(.getRed ^com.googlecode.lanterna.TextColor color)
-                (.getGreen ^com.googlecode.lanterna.TextColor color)
-                (.getBlue ^com.googlecode.lanterna.TextColor color)]
-               (:fg (get line start))))))))
-
-(deftest styled-log-theme-contrast-test
-  ;; #209: a theme's accent is not necessarily readable as small log text.
-  (let [original
-        @theme/active-theme-id
-
-        luminance
-        (fn [rgb]
-          (reduce +
-                  0.0
-                  (map (fn [c weight]
-                         (let [v (/ (double c) 255.0)]
-                           (*
-                             (double weight)
-                             (if (<= v 0.04045) (/ v 12.92) (Math/pow (/ (+ v 0.055) 1.055) 2.4)))))
-                       rgb
-                       [0.2126 0.7152 0.0722])))]
-
-    (try
-      (doseq [id
-              (shared-theme/available-theme-ids)
-
-              tone
-              [:idle :running :ok :warn :error]]
-
-        (theme/apply-theme! id)
-        (let [view
-              {:id "contrast"
-               :title "Build output"
-               :seq 0
-               :nodes [{:id "log"
-                        :type :log
-                        :lines ["LEVEL output"]
-                        :line-tones [tone]
-                        :total-lines 1
-                        :window-lines 200
-                        :default-expanded true}]}
+              pane
+              (assoc (lv/opened (fixture))
+                :is-viewer true
+                :log-search (if response (lv/log-search-loaded search "request" response) search))
 
               captured
-              (capture/capture! {:cols 40
-                                 :rows 16
-                                 :paint! (fn [{:keys [g]}]
-                                           (lv/paint! g 40 16 [(lv/opened view)] 1 3))})
+              (capture/capture!
+                {:cols cols
+                 :rows 24
+                 :paint! (fn [{:keys [screen]}]
+                           (.beginFrame interactions/hit-map)
+                           (lv/paint! (.newTextGraphics ^TerminalScreen screen) cols 24 [pane] 1 3)
+                           (.commitFrame interactions/hit-map)
+                           (.refresh ^TerminalScreen screen))})
 
-              line
-              (first (filter #(str/includes? (apply str (map :ch %)) "LEVEL output")
-                             (last (:frames captured))))
+              ;; Join wrapped rows without their frame edges or terminal padding.
+              text
+              (-> (capture/frame-text captured)
+                  (str/replace "│" "")
+                  (str/replace #"\s+" " "))]
 
-              start
-              (str/index-of (apply str (map :ch line)) "LEVEL output")
+          (expect (nil? (:error captured)))
+          (expect (str/includes? text "Search Build A logs"))
+          (doseq [copy expected]
+            (expect (str/includes? text copy)))
+          (when (and (>= cols 80) (:page response))
+            (expect (str/includes? text
+                                   (str (get (:page response) "matched") " matches / 503 lines"))))
+          (when (and (>= cols 80) (:error response))
+            (expect (str/includes? text "Enter to retry.")))
+          (expect (seq (:frames captured)))
+          (expect (every? #(and (= 24 (count %))
+                                (every? (fn [row]
+                                          (= cols (count row)))
+                                        %))
+                          (:frames captured)))))))
 
-              cell
-              (get line start)
+;; #250: the query must not touch the left gutter, even while horizontally scrolled.
+(defdescribe
+  log-search-input-aligns-with-content-test
+  (it
+    "log search input aligns with content"
+    (doseq [cols
+            [24 40 80 120]
 
-              foreground
-              (double (luminance (:fg cell)))
+            query
+            ["" "ERROR" (apply str (repeat 100 "x"))]]
 
-              background
-              (double (luminance (:bg cell)))]
+      (let [pane
+            (assoc (lv/opened (fixture))
+              :is-viewer true
+              :log-search (assoc (lv/log-search-opened "a")
+                            :input (input/paste-text (input/empty-input) query)))
 
-          (is (some? cell))
-          (is (>= (/ (+ (max foreground background) 0.05) (+ (min foreground background) 0.05)) 4.5)
+            captured
+            (capture/capture!
+              {:cols cols
+               :rows 24
+               :paint!
+               (fn [{:keys [screen]}]
+                 (let [painted
+                       (lv/paint! (.newTextGraphics ^TerminalScreen screen) cols 24 [pane] 1 3)]
+                   (.refresh ^TerminalScreen screen)
+                   painted))})
+
+            lines
+            (str/split-lines (capture/frame-text captured))
+
+            heading-col
+            (some #(str/index-of % "Search") lines)
+
+            ^TerminalPosition cursor
+            (get-in captured [:ret :cursor])]
+
+        (expect (nil? (:error captured)))
+        (expect (some? cursor))
+        (when cursor
+          (let [line
+                (nth lines (.getRow cursor))
+
+                prompt-col
+                (str/index-of line "› ")]
+
+            (expect (= heading-col prompt-col)
+                    "the prompt uses the same left padding as the heading")
+            (expect (= \space (get line (dec (long heading-col)))) "leave the gutter clear")
+            (expect (<= (+ (long heading-col) 2) (.getColumn cursor) (- cols 4)))
+            (when (empty? query) (expect (= (+ (long heading-col) 2) (.getColumn cursor))))))))))
+
+(defdescribe
+  log-search-client-encodes-literal-query-test
+  (it "log search client encodes literal query"
+      ;; A Jenkins job is `folder/job`: the node id rides the query string, where an
+      ;; encoded `/` is ordinary text instead of a path separator the gateway refuses.
+      (let [called (atom nil)]
+        (with-redefs-fn {#'client/send-json! (fn [& args]
+                                               (reset! called args)
+                                               {"matched" 0})}
+          #(client/live-view-log "sid" "view" "jobs/glms#6064 · console" 200 200 "[disk]&Ł"))
+        (expect (= ["GET"
+                    (str "/v1/sessions/sid/views/live/view/log"
+                         "?node=jobs%2Fglms%236064+%C2%B7+console"
+                         "&from=200&limit=200&query=%5Bdisk%5D%26%C5%81")]
+                   @called)))))
+
+(defdescribe
+  styled-log-wire-patches-and-receipts-test
+  (it "styled log wire patches and receipts"
+      ;; #209: whole-line severity never replaces literal text or changes line order.
+      (let [view
+            (hi/live-view<-wire {"id" "styled"
+                                 "kind" "live"
+                                 "version" 1
+                                 "seq" 0
+                                 "title" "Build output"
+                                 "nodes" [{"id" "log"
+                                           "type" "log"
+                                           "lines" ["WARN before"]
+                                           "line_tones" ["warn"]
+                                           "window_lines" 2
+                                           "total_lines" 1
+                                           "default_expanded" true}]})
+
+            pane
+            (lv/patched
+              (lv/opened view)
+              (hi/live-patch<-wire
+                {"view_id" "styled"
+                 "seq" 1
+                 "ops" [{"op" "append" "node_id" "log" "lines" ["ERROR compiler"] "tone" "error"}
+                        {"op" "append" "node_id" "log" "lines" ["plain"]}]}))
+
+            logs
+            #(filterv (fn [row]
+                        (= :log (:kind row)))
+               (entries %))]
+
+        (expect (= :warn (get-in view [:nodes 0 :line-tones 0])))
+        (expect (= ["WARN before" "ERROR compiler" "plain"] (mapv :text (logs pane))))
+        (expect (= [:warn :error nil] (mapv :tone (logs pane))))
+        (expect (= (logs pane)
+                   (logs (lv/expanded (lv/settled pane {:reason :completed}) "log")))))))
+
+(defdescribe log-keeps-every-line-past-its-window-test
+             (it "log keeps every line past its window"
+                 ;; A window is what the producer holds hot, never a cut: the pane paints the whole
+                 ;; log it was handed, with no "earlier lines" note standing in for dropped text.
+                 (let [view
+                       (hi/live-view<-wire {"id" "whole"
+                                            "kind" "live"
+                                            "version" 1
+                                            "seq" 0
+                                            "title" "Build output"
+                                            "nodes" [{"id" "log"
+                                                      "type" "log"
+                                                      "lines" ["line 1"]
+                                                      "window_lines" 2
+                                                      "total_lines" 1
+                                                      "default_expanded" true}]})
+
+                       pane
+                       (lv/patched (lv/opened view)
+                                   (hi/live-patch<-wire {"view_id" "whole"
+                                                         "seq" 1
+                                                         "ops" [{"op" "append"
+                                                                 "node_id" "log"
+                                                                 "lines" ["line 2" "line 3"
+                                                                          "line 4"]}]}))
+
+                       rows
+                       (entries pane)]
+
+                   (expect (= ["line 1" "line 2" "line 3" "line 4"]
+                              (mapv :text (filterv #(= :log (:kind %)) rows))))
+                   (expect (not-any? #(str/includes? (str (:text %)) "earlier lines") rows)))))
+
+(defdescribe
+  log-reads-the-record-back-instead-of-counting-earlier-lines-test
+  (it "log reads the record back instead of counting earlier lines"
+      ;; Attaching mid-run is what the "earlier lines" note used to paper over: the pane
+      ;; asks the record for the lines it was never sent, page by page to the first one,
+      ;; and paints them in front of the window instead of counting them.
+      (let [view
+            (hi/live-view<-wire {"id" "late"
+                                 "kind" "live"
+                                 "version" 1
+                                 "seq" 0
+                                 "title" "Build output"
+                                 "nodes" [{"id" "log"
+                                           "type" "log"
+                                           "lines" ["line 4499" "line 4500" "line 4501"]
+                                           "line_tones" ["warn" "warn" "warn"]
+                                           "window_lines" 100
+                                           "total_lines" 4501
+                                           "default_expanded" true}]})
+
+            page
+            (fn [from limit]
+              {"lines" (mapv #(str "line " (+ (long from) (long %) 1)) (range limit))
+               "line_tones" (vec (repeat limit "error"))})
+
+            read-back
+            (fn [pane]
+              (loop [pane
+                     pane
+
+                     reads
+                     []]
+
+                (if-let [{:keys [node-id from limit]} (lv/log-fill-request pane)]
+                  (let [request-id (random-uuid)]
+                    (recur (lv/log-filled (lv/log-fill-requested pane node-id request-id)
+                                          request-id
+                                          {:page (page from limit)})
+                           (conj reads [from limit])))
+                  {:pane pane :reads reads})))
+
+            {:keys [pane reads]}
+            (read-back (lv/opened view))
+
+            lines
+            #(filterv (fn [row]
+                        (= :log (:kind row)))
+               (entries %))]
+
+        (expect (= [[2498 2000] [498 2000] [0 498]] reads)
+                "the newest missing page first, walking back to the first line")
+        (expect (= 4501 (count (lines pane))))
+        (expect (= ["line 1" "line 2"] (mapv :text (take 2 (lines pane)))))
+        (expect (= ["line 4500" "line 4501"] (mapv :text (take-last 2 (lines pane)))))
+        (expect (= [:error :error] (mapv :tone (take 2 (lines pane))))
+                "a page read back keeps the tones it was written with")
+        (expect (= [:warn :warn] (mapv :tone (take-last 2 (lines pane)))))
+        (expect (not-any? #(str/includes? (str (:text %)) "earlier lines") (entries pane)))
+        (expect (nil? (lv/log-fill-request pane)) "nothing left to read")
+        ;; A page that arrives twice cannot duplicate the head.
+        (expect (= 4501
+                   (count (lines (lv/log-filled (lv/log-fill-requested pane "log" :again)
+                                                :again
+                                                {:page (page 0 498)})))))
+        ;; While the walk is still running, the pane says what it is doing…
+        (expect (some #(str/includes? (str (:text %)) "reading 4498 earlier lines")
+                      (entries (lv/opened view))))
+        ;; …and a refused read says THAT instead of promising lines nothing is fetching.
+        (let [refused (lv/log-filled (lv/log-fill-requested (lv/opened view) "log" :read)
+                                     :read
+                                     {:error true})]
+          (expect (some #(str/includes? (str (:text %)) "reading them failed") (entries refused)))
+          (expect (nil? (lv/log-fill-request refused))
+                  "a failed read waits for the next line of output")
+          (expect (some? (lv/log-fill-request (lv/patched refused
+                                                          (hi/live-patch<-wire
+                                                            {"view_id" "late"
+                                                             "seq" 1
+                                                             "ops" [{"op" "append"
+                                                                     "node_id" "log"
+                                                                     "lines" ["line 4502"]}]}))))
+                  "and new output retries it")))))
+
+(defdescribe
+  styled-log-narrow-terminal-test
+  (it "styled log narrow terminal"
+      (doseq [cols [24 40 80]]
+        (let [view {:id "styled"
+                    :title "Build output"
+                    :seq 0
+                    :nodes [{:id "log"
+                             :type :log
+                             :lines ["ERROR compiler"]
+                             :line-tones [:error]
+                             :total-lines 1
+                             :window-lines 200
+                             :default-expanded true}]}
+              captured (capture/capture! {:cols cols
+                                          :rows 16
+                                          :paint! (fn [{:keys [screen]}]
+                                                    (lv/paint! (.newTextGraphics ^TerminalScreen
+                                                                                 screen)
+                                                               cols
+                                                               16 [(lv/opened view)]
+                                                               1 3))})]
+
+          (expect (nil? (:error captured)))
+          (let [frame (last (:frames captured))
+                ;; #219: the disclosure inset leaves less room; preserve the visible error tone.
+                line (first (filter #(str/includes? (apply str (map :ch %)) "ERROR") frame))
+                start (str/index-of (apply str (map :ch line)) "ERROR")
+                color theme/footer-error-fg]
+
+            (expect (some? start))
+            (expect (= [(.getRed ^com.googlecode.lanterna.TextColor color)
+                        (.getGreen ^com.googlecode.lanterna.TextColor color)
+                        (.getBlue ^com.googlecode.lanterna.TextColor color)]
+                       (:fg (get line start)))))))))
+
+(defdescribe
+  styled-log-theme-contrast-test
+  (it
+    "styled log theme contrast"
+    ;; #209: a theme's accent is not necessarily readable as small log text.
+    (let [original
+          @theme/active-theme-id
+
+          luminance
+          (fn [rgb]
+            (reduce +
+                    0.0
+                    (map (fn [c weight]
+                           (let [v (/ (double c) 255.0)]
+                             (* (double weight)
+                                (if (<= v 0.04045)
+                                  (/ v 12.92)
+                                  (Math/pow (/ (+ v 0.055) 1.055) 2.4)))))
+                         rgb
+                         [0.2126 0.7152 0.0722])))]
+
+      (try
+        (doseq [id
+                (shared-theme/available-theme-ids)
+
+                tone
+                [:idle :running :ok :warn :error]]
+
+          (theme/apply-theme! id)
+          (let [view
+                {:id "contrast"
+                 :title "Build output"
+                 :seq 0
+                 :nodes [{:id "log"
+                          :type :log
+                          :lines ["LEVEL output"]
+                          :line-tones [tone]
+                          :total-lines 1
+                          :window-lines 200
+                          :default-expanded true}]}
+
+                captured
+                (capture/capture! {:cols 40
+                                   :rows 16
+                                   :paint! (fn [{:keys [g]}]
+                                             (lv/paint! g 40 16 [(lv/opened view)] 1 3))})
+
+                line
+                (first (filter #(str/includes? (apply str (map :ch %)) "LEVEL output")
+                               (last (:frames captured))))
+
+                start
+                (str/index-of (apply str (map :ch line)) "LEVEL output")
+
+                cell
+                (get line start)
+
+                foreground
+                (double (luminance (:fg cell)))
+
+                background
+                (double (luminance (:bg cell)))]
+
+            (expect (some? cell))
+            (expect
+              (>= (/ (+ (max foreground background) 0.05) (+ (min foreground background) 0.05)) 4.5)
               (str id " " tone))))
-      (finally (theme/apply-theme! original)))))
+        (finally (theme/apply-theme! original))))))
 
-(deftest divider-markdown-roundtrip-test
-  (let [view
-        (assoc (fixture) :nodes [{:id "section-break" :type :divider}])
+(defdescribe divider-markdown-roundtrip-test
+             (it "divider markdown roundtrip"
+                 (let [view
+                       (assoc (fixture) :nodes [{:id "section-break" :type :divider}])
 
-        markdown
-        (materializer/->markdown view)
+                       markdown
+                       (materializer/->markdown view)
 
-        parsed
-        (:view (materializer/parse-markdown markdown))]
+                       parsed
+                       (:view (materializer/parse-markdown markdown))]
 
-    (is (str/includes? markdown "<!-- vis:divider 1 -->\n---"))
-    (is (= [:divider] (mapv :type (:nodes parsed))))
-    (is (= markdown (materializer/->markdown parsed)))
-    (doseq [invalid ["<!-- vis:divider 1 -->\ntext" "<!-- vis:divider 2 -->\n---\n---"]]
-      (is (try (materializer/parse-markdown
-                 (str/replace markdown "<!-- vis:divider 1 -->\n---" invalid))
-               false
-               (catch clojure.lang.ExceptionInfo _ true))))))
+                   (expect (str/includes? markdown "<!-- vis:divider 1 -->\n---"))
+                   (expect (= [:divider] (mapv :type (:nodes parsed))))
+                   (expect (= markdown (materializer/->markdown parsed)))
+                   (doseq [invalid ["<!-- vis:divider 1 -->\ntext"
+                                    "<!-- vis:divider 2 -->\n---\n---"]]
+                     (expect (try (materializer/parse-markdown
+                                    (str/replace markdown "<!-- vis:divider 1 -->\n---" invalid))
+                                  false
+                                  (catch clojure.lang.ExceptionInfo _ true)))))))
 
-(deftest scrollbar-belongs-to-the-open-log-test
-  ;; The band's scrollbar starts on the log's own row — the one carrying Search —
-  ;; and measures the log alone, never the prose and status rows above it.
-  (let [rows [{:node-id "p"} {:node-id "q"} {:node-id "a" :search-label "Search A"} {:node-id "a"}
-              {:node-id "a"} {:node-id "a"} {:node-id "b"}]]
-    (is (nil? (lv/log-span [{:node-id "p"} {:node-id "q"}])))
-    (is (= [2 6] (lv/log-span rows)))
-    ;; Four body rows from the top, the body at row 10: the bar starts two rows
-    ;; down and tracks the two log rows on screen out of four.
-    (is (= {:row 12 :track 2 :total 4 :start 0} (#'lv/bar-shape rows 0 4 10)))
-    ;; Scrolled one row into the log: the bar starts at the body top.
-    (is (= {:row 10 :track 3 :total 4 :start 1} (#'lv/bar-shape rows 3 3 10)))
-    ;; The whole log fits: no bar at all.
-    (is (nil? (#'lv/bar-shape rows 0 7 10)))
-    ;; Without an open log the body itself is the scrolled thing.
-    (is (= {:row 10 :track 1 :total 2 :start 0}
-           (#'lv/bar-shape [{:node-id "p"} {:node-id "q"}] 0 1 10)))))
+(defdescribe scrollbar-belongs-to-the-open-log-test
+             (it "scrollbar belongs to the open log"
+                 ;; The band's scrollbar starts on the log's own row — the one carrying Search —
+                 ;; and measures the log alone, never the prose and status rows above it.
+                 (let [rows [{:node-id "p"} {:node-id "q"} {:node-id "a" :search-label "Search A"}
+                             {:node-id "a"} {:node-id "a"} {:node-id "a"} {:node-id "b"}]]
+                   (expect (nil? (lv/log-span [{:node-id "p"} {:node-id "q"}])))
+                   (expect (= [2 6] (lv/log-span rows)))
+                   ;; Four body rows from the top, the body at row 10: the bar starts two rows
+                   ;; down and tracks the two log rows on screen out of four.
+                   (expect (= {:row 12 :track 2 :total 4 :start 0} (#'lv/bar-shape rows 0 4 10)))
+                   ;; Scrolled one row into the log: the bar starts at the body top.
+                   (expect (= {:row 10 :track 3 :total 4 :start 1} (#'lv/bar-shape rows 3 3 10)))
+                   ;; The whole log fits: no bar at all.
+                   (expect (nil? (#'lv/bar-shape rows 0 7 10)))
+                   ;; Without an open log the body itself is the scrolled thing.
+                   (expect (= {:row 10 :track 1 :total 2 :start 0}
+                              (#'lv/bar-shape [{:node-id "p"} {:node-id "q"}] 0 1 10))))))

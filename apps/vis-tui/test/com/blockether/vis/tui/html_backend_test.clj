@@ -20,7 +20,7 @@
             [com.blockether.vis.tui.theme :as theme]
             [com.blockether.vis.tui.theme-test :as theme-test]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
+            [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.gui2 Button GridLayout Panel TextGraphicsComponent]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
@@ -150,210 +150,219 @@
                                  [:toggle-detail (:session-id region) (:node-id region)
                                   (:collapsed? region)]))))
 
-(deftest activity-group-disclosure-isolation-test
-  (doseq [cols
-          [40 80 120]
+(defdescribe
+  activity-group-disclosure-isolation-test
+  (it
+    "activity group disclosure isolation"
+    (doseq [cols
+            [40 80 120]
 
-          repeated?
-          [false true]]
+            repeated?
+            [false true]]
 
-    (with-open [terminal
-                (DefaultVirtualTerminal. (TerminalSize. cols 80))
+      (with-open [terminal
+                  (DefaultVirtualTerminal. (TerminalSize. cols 80))
 
-                screen
-                (doto (TerminalScreen. terminal) (.startScreen))]
+                  screen
+                  (doto (TerminalScreen. terminal) (.startScreen))]
 
-      (let [rows
-            (mapv (fn [i]
-                    (cond-> {:id (str "read-" i)
-                             :sequence i
-                             :operation "cat"
-                             :state "succeeded"
-                             :presentation {:headline "Read"
-                                            :summary (str "file-" i ".clj")
-                                            :content [{:type "text" :text (str "BODY_" i)}]}}
-                      repeated?
-                      (assoc :argument-key "same-arguments")))
-                  (range 2))
+        (let [rows
+              (mapv (fn [i]
+                      (cond-> {:id (str "read-" i)
+                               :sequence i
+                               :operation "cat"
+                               :state "succeeded"
+                               :presentation {:headline "Read"
+                                              :summary (str "file-" i ".clj")
+                                              :content [{:type "text" :text (str "BODY_" i)}]}}
+                        repeated?
+                        (assoc :argument-key "same-arguments")))
+                    (range 2))
 
-            expansions
-            (atom {})
+              expansions
+              (atom {})
 
-            paint!
-            #(paint-activity-review! screen rows @expansions)
+              paint!
+              #(paint-activity-review! screen rows @expansions)
 
-            region
-            (fn [suffix]
-              (first (filter #(and (= :toggle-details (:kind %))
-                                   (str/ends-with? (str (:node-id %)) suffix))
-                             (.current interactions/hit-map))))
+              region
+              (fn [suffix]
+                (first (filter #(and (= :toggle-details (:kind %))
+                                     (str/ends-with? (str (:node-id %)) suffix))
+                               (.current interactions/hit-map))))
 
-            click!
-            (fn [suffix]
-              (let [hit
-                    (region suffix)
+              click!
+              (fn [suffix]
+                (let [hit
+                      (region suffix)
 
-                    {:keys [row col]}
-                    (:bounds hit)]
+                      {:keys [row col]}
+                      (:bounds hit)]
 
-                (is (some? hit))
-                (when hit (is (= hit (.lookup interactions/hit-map (int (+ col 2)) (int row)))))
-                (swap! expansions toggle-review-region hit)
-                (paint!)))
+                  (expect (some? hit))
+                  (when hit
+                    (expect (= hit (.lookup interactions/hit-map (int (+ col 2)) (int row)))))
+                  (swap! expansions toggle-review-region hit)
+                  (paint!)))
 
-            bodies
-            (fn []
-              (set (re-seq #"BODY_\d" (:text (paint!)))))]
+              bodies
+              (fn []
+                (set (re-seq #"BODY_\d" (:text (paint!)))))]
 
-        (paint!)
-        (click! ":#band")
-        ;; A group click must not recursively open every invocation body.
-        (click! "#group")
-        (click! "#group")
-        (is (empty? (bodies)))
-        (when repeated?
-          (is (true? (:collapsed? (region "#arguments"))))
-          (click! "#arguments")
-          (is (empty? (bodies))))
-        (is (true? (:collapsed? (region ":read-0"))))
-        (is (true? (:collapsed? (region ":read-1"))))
-        (click! ":read-0")
-        (is (= #{"BODY_0"} (bodies)))
-        (is (true? (:collapsed? (region ":read-1"))))
-        ;; Reopening a parent preserves the one child the reader chose.
-        (click! "#group")
-        (is (empty? (bodies)))
-        (click! "#group")
-        (is (= #{"BODY_0"} (bodies)))
-        (reset! expansions {:vis.channel-tui/baseline :expand})
-        (is (= #{"BODY_0" "BODY_1"} (bodies)))))))
+          (paint!)
+          (click! ":#band")
+          ;; A group click must not recursively open every invocation body.
+          (click! "#group")
+          (click! "#group")
+          (expect (empty? (bodies)))
+          (when repeated?
+            (expect (true? (:collapsed? (region "#arguments"))))
+            (click! "#arguments")
+            (expect (empty? (bodies))))
+          (expect (true? (:collapsed? (region ":read-0"))))
+          (expect (true? (:collapsed? (region ":read-1"))))
+          (click! ":read-0")
+          (expect (= #{"BODY_0"} (bodies)))
+          (expect (true? (:collapsed? (region ":read-1"))))
+          ;; Reopening a parent preserves the one child the reader chose.
+          (click! "#group")
+          (expect (empty? (bodies)))
+          (click! "#group")
+          (expect (= #{"BODY_0"} (bodies)))
+          (reset! expansions {:vis.channel-tui/baseline :expand})
+          (expect (= #{"BODY_0" "BODY_1"} (bodies))))))))
 
-(deftest activity-lint-sequence-disclosure-test
-  ;; Issue #270: a lint run that found something and its clean rerun join one
-  ;; `Lint ×2` block. Each run has to name its place in the sequence, and closing
-  ;; Activity has to keep every disclosure the reader left open or closed inside it.
-  (with-open [terminal
-              (DefaultVirtualTerminal. (TerminalSize. 100 80))
+(defdescribe
+  activity-lint-sequence-disclosure-test
+  (it "activity lint sequence disclosure"
+      ;; Issue #270: a lint run that found something and its clean rerun join one
+      ;; `Lint ×2` block. Each run has to name its place in the sequence, and closing
+      ;; Activity has to keep every disclosure the reader left open or closed inside it.
+      (with-open [terminal
+                  (DefaultVirtualTerminal. (TerminalSize. 100 80))
 
-              screen
-              (doto (TerminalScreen. terminal) (.startScreen))]
+                  screen
+                  (doto (TerminalScreen. terminal) (.startScreen))]
 
-    (let [rows
-          [{:id "lint-0"
-            :sequence 0
-            :operation "lint"
-            :state "succeeded"
-            :presentation {:headline "Linted"
-                           :summary "1 error · 0 warnings · 0 info · 2 files checked"
-                           :content [{:type "text" :text "BODY_0"}]}}
-           {:id "lint-1"
-            :sequence 1
-            :operation "lint"
-            :state "succeeded"
-            :presentation {:headline "Linted"
-                           :summary "No lint findings · 2 files checked"
-                           :content []
-                           :sections [{:headline "Lint details"
-                                       :summary ""
-                                       :content [{:type "text" :text "BODY_1"}]}]}}]
+        (let [rows
+              [{:id "lint-0"
+                :sequence 0
+                :operation "lint"
+                :state "succeeded"
+                :presentation {:headline "Linted"
+                               :summary "1 error · 0 warnings · 0 info · 2 files checked"
+                               :content [{:type "text" :text "BODY_0"}]}}
+               {:id "lint-1"
+                :sequence 1
+                :operation "lint"
+                :state "succeeded"
+                :presentation {:headline "Linted"
+                               :summary "No lint findings · 2 files checked"
+                               :content []
+                               :sections [{:headline "Lint details"
+                                           :summary ""
+                                           :content [{:type "text" :text "BODY_1"}]}]}}]
 
-          expansions
-          (atom {})
+              expansions
+              (atom {})
 
-          paint!
-          #(paint-activity-review! screen rows @expansions)
+              paint!
+              #(paint-activity-review! screen rows @expansions)
 
-          region
-          (fn [suffix]
-            (first (filter #(and (= :toggle-details (:kind %))
-                                 (str/ends-with? (str (:node-id %)) suffix))
-                           (.current interactions/hit-map))))
+              region
+              (fn [suffix]
+                (first (filter #(and (= :toggle-details (:kind %))
+                                     (str/ends-with? (str (:node-id %)) suffix))
+                               (.current interactions/hit-map))))
 
-          click!
-          (fn [suffix]
-            (swap! expansions toggle-review-region (region suffix))
-            (paint!))
+              click!
+              (fn [suffix]
+                (swap! expansions toggle-review-region (region suffix))
+                (paint!))
 
-          bodies
-          (fn []
-            (set (re-seq #"BODY_\d" (:text (paint!)))))
+              bodies
+              (fn []
+                (set (re-seq #"BODY_\d" (:text (paint!)))))
 
-          text
-          (fn []
-            (str/join "\n" (:lines (paint!))))]
+              text
+              (fn []
+                (str/join "\n" (:lines (paint!))))]
 
-      (paint!)
-      (click! ":#band")
-      ;; The group counts its runs; each run says which one it is and how it ended.
-      (is (re-find #"Linted ×2" (text)))
-      (is (re-find #"1: Linted" (text)))
-      (is (re-find #"2: Linted" (text)))
-      (is (empty? (bodies)))
-      ;; Opening one run leaves the other run and the clean run's details closed.
-      (click! ":0:lint-0")
-      (is (= #{"BODY_0"} (bodies)))
-      (click! ":#band")
-      (click! ":#band")
-      (is (= #{"BODY_0"} (bodies)))
-      ;; A collapsed run exposes nothing nested, not even its section header.
-      (is (nil? (region ":0:lint-1:section:0")))
-      ;; And a run the reader collapsed stays collapsed the next time Activity opens.
-      (click! ":0:lint-0")
-      (click! ":#band")
-      (click! ":#band")
-      (is (empty? (bodies)))
-      (is (true? (:collapsed? (region ":0:lint-0"))))
-      ;; Nested content folds away with the run that holds it, and opening the run
-      ;; again restores exactly the disclosures the reader left inside it.
-      (click! ":0:lint-1")
-      (click! ":0:lint-1:section:0")
-      (is (= #{"BODY_1"} (bodies)))
-      (click! ":0:lint-1")
-      (is (empty? (bodies)))
-      (is (nil? (region ":0:lint-1:section:0")))
-      (click! ":0:lint-1")
-      (is (= #{"BODY_1"} (bodies))))))
+          (paint!)
+          (click! ":#band")
+          ;; The group counts its runs; each run says which one it is and how it ended.
+          (expect (re-find #"Linted ×2" (text)))
+          (expect (re-find #"1: Linted" (text)))
+          (expect (re-find #"2: Linted" (text)))
+          (expect (empty? (bodies)))
+          ;; Opening one run leaves the other run and the clean run's details closed.
+          (click! ":0:lint-0")
+          (expect (= #{"BODY_0"} (bodies)))
+          (click! ":#band")
+          (click! ":#band")
+          (expect (= #{"BODY_0"} (bodies)))
+          ;; A collapsed run exposes nothing nested, not even its section header.
+          (expect (nil? (region ":0:lint-1:section:0")))
+          ;; And a run the reader collapsed stays collapsed the next time Activity opens.
+          (click! ":0:lint-0")
+          (click! ":#band")
+          (click! ":#band")
+          (expect (empty? (bodies)))
+          (expect (true? (:collapsed? (region ":0:lint-0"))))
+          ;; Nested content folds away with the run that holds it, and opening the run
+          ;; again restores exactly the disclosures the reader left inside it.
+          (click! ":0:lint-1")
+          (click! ":0:lint-1:section:0")
+          (expect (= #{"BODY_1"} (bodies)))
+          (click! ":0:lint-1")
+          (expect (empty? (bodies)))
+          (expect (nil? (region ":0:lint-1:section:0")))
+          (click! ":0:lint-1")
+          (expect (= #{"BODY_1"} (bodies)))))))
 
-(deftest result-first-html-native-parity-test
-  (doseq [cols [40 80 120]]
-    (with-open [html (activity-review-terminal cols 80)
-                terminal (DefaultVirtualTerminal. (TerminalSize. cols 80))
-                hs (doto (TerminalScreen. html) (.startScreen))
-                ts (doto (TerminalScreen. terminal) (.startScreen))]
+(defdescribe
+  result-first-html-native-parity-test
+  (it
+    "result first html native parity"
+    (doseq [cols [40 80 120]]
+      (with-open [html (activity-review-terminal cols 80)
+                  terminal (DefaultVirtualTerminal. (TerminalSize. cols 80))
+                  hs (doto (TerminalScreen. html) (.startScreen))
+                  ts (doto (TerminalScreen. terminal) (.startScreen))]
 
-      (let [rows (activity-result-rows)
-            _ (paint-activity-review! hs rows {:vis.channel-tui/baseline :collapse})
-            band (first (filter #(str/ends-with? (str (:node-id %)) ":#band")
-                                (.current interactions/hit-map)))
-            opened (toggle-review-region {:vis.channel-tui/baseline :collapse} band)]
+        (let [rows (activity-result-rows)
+              _ (paint-activity-review! hs rows {:vis.channel-tui/baseline :collapse})
+              band (first (filter #(str/ends-with? (str (:node-id %)) ":#band")
+                                  (.current interactions/hit-map)))
+              opened (toggle-review-region {:vis.channel-tui/baseline :collapse} band)]
 
-        (is (= 6 (count rows)))
-        (let [painted (paint-activity-review! hs rows opened)]
-          (is (= 2 (count (re-seq #"presenter\.clj" (str/join "\n" (:lines painted)))))))
-        (doseq [[row expected disclosure?] (map vector
-                                                rows
-                                                ["presenter.clj" "Hi" "greeting_test.clj"
-                                                 "retained result" "disclosure" "disclosure"]
-                                                [false true true true true true])]
-          (paint-activity-review! hs rows opened)
-          (let [step (first (filter #(str/ends-with? (str (:node-id %)) (str ":" (:id row)))
-                                    (.current interactions/hit-map)))
-                expanded (if step (toggle-review-region opened step) opened)
-                _ (paint-activity-review! hs rows expanded)
-                _ (paint-activity-review! ts rows expanded)
-                grid (cell-grid terminal cols 80)
-                text (str/join "\n"
-                               (map #(apply str
-                                       (map (fn [cell]
-                                              (.getCharacterString cell))
-                                            %))
-                                    grid))]
+          (expect (= 6 (count rows)))
+          (let [painted (paint-activity-review! hs rows opened)]
+            (expect (= 2 (count (re-seq #"presenter\.clj" (str/join "\n" (:lines painted)))))))
+          (doseq [[row expected disclosure?] (map vector
+                                                  rows
+                                                  ["presenter.clj" "Hi" "greeting_test.clj"
+                                                   "retained result" "disclosure" "disclosure"]
+                                                  [false true true true true true])]
+            (paint-activity-review! hs rows opened)
+            (let [step (first (filter #(str/ends-with? (str (:node-id %)) (str ":" (:id row)))
+                                      (.current interactions/hit-map)))
+                  expanded (if step (toggle-review-region opened step) opened)
+                  _ (paint-activity-review! hs rows expanded)
+                  _ (paint-activity-review! ts rows expanded)
+                  grid (cell-grid terminal cols 80)
+                  text (str/join "\n"
+                                 (map #(apply str
+                                         (map (fn [cell]
+                                                (.getCharacterString cell))
+                                              %))
+                                      grid))]
 
-            (is (= disclosure? (some? step)))
-            (is (= (cell-grid html cols 80) grid))
-            (is (str/includes? text expected))
-            (is (not (re-find #"Thread id|Is pass" text)))
-            (is (not (re-find #"12:abc|13:def|\[\"src/com" text)))))))))
+              (expect (= disclosure? (some? step)))
+              (expect (= (cell-grid html cols 80) grid))
+              (expect (str/includes? text expected))
+              (expect (not (re-find #"Thread id|Is pass" text)))
+              (expect (not (re-find #"12:abc|13:def|\[\"src/com" text))))))))))
 
 (defn activity-table-rows
   "Repeated-table fixture shared with Companion; unequal labels and multiline Unicode."
@@ -364,753 +373,809 @@
       activity-contract/from-wire
       :rows))
 
-(deftest activity-tables-html-native-parity-test
-  (doseq [cols [40 80 120]]
-    (with-open [html (activity-review-terminal cols 80)
-                terminal (DefaultVirtualTerminal. (TerminalSize. cols 80))
-                hs (doto (TerminalScreen. html) (.startScreen))
-                ts (doto (TerminalScreen. terminal) (.startScreen))]
-
-      (let [rows (activity-table-rows)
-            expansions {:vis.channel-tui/expand-execution-details? true
-                        :vis.channel-tui/expand-all-details? true}]
-
-        (paint-activity-review! hs rows expansions)
-        (paint-activity-review! ts rows expansions)
-        (let [grid (cell-grid terminal cols 80)
-              headers (keep-indexed (fn [y row]
-                                      (let [text (apply str
-                                                   (map #(.getCharacterString
-                                                           ^com.googlecode.lanterna.TextCharacter %)
-                                                        row))]
-                                        (when-let [x (str/index-of text "Result")]
-                                          [x y])))
-                                    grid)]
-
-          (is (= (cell-grid html cols 80) grid))
-          (is (= 3 (count headers)))
-          (is (apply = (map first headers)))
-          (doseq [[x y] headers]
-            (is (.isBold ^com.googlecode.lanterna.TextCharacter (get-in grid [y x])))))))))
-
-(deftest execution-result-html-native-parity-test
-  (let [rows (-> (io/resource "vis-contract/fixtures/activity-execution.json")
-                 slurp
-                 json/read-str
-                 activity-contract/from-wire
-                 :rows)]
-    (doseq [cols [40 80 120]]
-      (with-open [html (activity-review-terminal cols 100)
-                  terminal (DefaultVirtualTerminal. (TerminalSize. cols 100))
-                  hs (doto (TerminalScreen. html) (.startScreen))
-                  ts (doto (TerminalScreen. terminal) (.startScreen))]
-
-        (paint-activity-review! hs rows {:vis.channel-tui/baseline :collapse})
-        (let [band (first (filter #(str/ends-with? (str (:node-id %)) ":#band")
-                                  (.current interactions/hit-map)))
-              band-opened (toggle-review-region {:vis.channel-tui/baseline :collapse} band)
-              _ (paint-activity-review! hs rows band-opened)
-              group (first (filter #(str/ends-with? (str (:node-id %)) "#group")
-                                   (.current interactions/hit-map)))
-              opened (toggle-review-region band-opened group)]
-
-          (doseq [row rows]
-            (paint-activity-review! hs rows opened)
-            (let [step (first (filter #(str/ends-with? (str (:node-id %)) (str ":" (:id row)))
-                                      (.current interactions/hit-map)))
-                  expanded (toggle-review-region opened step)]
-
-              (is (some? step))
-              (paint-activity-review! hs rows expanded)
-              (paint-activity-review! ts rows expanded)
-              (is (= (cell-grid html cols 100) (cell-grid terminal cols 100))))))))))
-
-(deftest nested-result-execution-disclosures-test
-  ;; Result stays inside Code; Activity remains independent through every fold state.
-  (try
-    (doseq [theme-id (map keyword (shared-theme/available-theme-ids))]
-      (theme/apply-theme! theme-id)
-      (doseq [cols [40 80 160]
-              status ["running" "succeeded" "failed"]]
-
-        (with-open [html (activity-review-terminal cols 50)
+(defdescribe
+  activity-tables-html-native-parity-test
+  (it "activity tables html native parity"
+      (doseq [cols [40 80 120]]
+        (with-open [html (activity-review-terminal cols 80)
+                    terminal (DefaultVirtualTerminal. (TerminalSize. cols 80))
                     hs (doto (TerminalScreen. html) (.startScreen))
-                    terminal (DefaultVirtualTerminal. (TerminalSize. cols 50))
                     ts (doto (TerminalScreen. terminal) (.startScreen))]
 
-          (let [rows (activity-review-rows status)
-                _ (paint-activity-review! hs rows {})
-                code-region (first (filter #(str/ends-with? (str (:node-id %)) ":code")
-                                           (.current interactions/hit-map)))
-                _ (paint-activity-review! hs rows (toggle-review-region {} code-region))
-                regions (into [code-region]
-                              (map (fn [suffix]
-                                     (first (filter #(str/ends-with? (str (:node-id %)) suffix)
-                                                    (.current interactions/hit-map))))
-                                   [":result" ":#band"]))]
+          (let [rows (activity-table-rows)
+                expansions {:vis.channel-tui/expand-execution-details? true
+                            :vis.channel-tui/expand-all-details? true}]
 
-            (is (every? some? regions))
-            (doseq [result-open? [false true]
-                    code-open? [false true]
-                    activity-open? [false true]]
+            (paint-activity-review! hs rows expansions)
+            (paint-activity-review! ts rows expansions)
+            (let [grid (cell-grid terminal cols 80)
+                  headers (keep-indexed (fn [y row]
+                                          (let [text
+                                                (apply str
+                                                  (map #(.getCharacterString
+                                                          ^com.googlecode.lanterna.TextCharacter %)
+                                                       row))]
+                                            (when-let [x (str/index-of text "Result")]
+                                              [x y])))
+                                        grid)]
 
-              (let [open-states [code-open? result-open? activity-open?]
-                    expansions (reduce (fn [folds [region open?]]
-                                         (assoc folds
-                                           [(:session-id region) (:node-id region)] open?))
-                                       {:vis.channel-tui/baseline :collapse}
-                                       (map vector regions open-states))
-                    _ (paint-activity-review! hs rows expansions)
-                    _ (paint-activity-review! ts rows expansions)
-                    grid (cell-grid terminal cols 50)
-                    lines (mapv (fn [row]
-                                  (apply str
-                                    (map #(.getCharacterString
-                                            ^com.googlecode.lanterna.TextCharacter %)
-                                         row)))
-                                grid)
-                    row-of (fn [label]
-                             (first (keep-indexed #(when (str/includes? %2 label) %1) lines)))
-                    labels (if code-open? ["CODE" "RESULT" "ACTIVITY"] ["CODE" "ACTIVITY"])
-                    positions (mapv row-of labels)
-                    text (str/join "\n" lines)
-                    code-bg theme/code-block-bg]
+              (expect (= (cell-grid html cols 80) grid))
+              (expect (= 3 (count headers)))
+              (expect (apply = (map first headers)))
+              (doseq [[x y] headers]
+                (expect (.isBold ^com.googlecode.lanterna.TextCharacter (get-in grid [y x]))))))))))
 
-                (is (= (cell-grid html cols 50) grid))
-                (is (every? some? positions))
-                (is (apply < positions))
-                (is (not-any? #(str/starts-with? % " │") lines))
-                (is (= (and code-open? result-open?) (str/includes? text "Read 3 files.")))
-                (is (= code-open? (some? (row-of "RESULT"))))
-                (is (= code-open? (str/includes? text "inspect_files()")))
-                (is (= activity-open? (str/includes? text "Read ×3")))
-                (when activity-open?
-                  (let [header-row (row-of "ACTIVITY")]
-                    (is (str/blank? (nth lines (inc header-row))))
-                    (is (= (mapv #(+ header-row %) [2 3 4])
-                           (mapv row-of ["Read ×3" "Patch ×2" "Shell ×2"])))))
-                (let [y (row-of "ACTIVITY")
-                      x (str/index-of (nth lines y) "ACTIVITY")]
+(defdescribe
+  execution-result-html-native-parity-test
+  (it "execution result html native parity"
+      (let [rows (-> (io/resource "vis-contract/fixtures/activity-execution.json")
+                     slurp
+                     json/read-str
+                     activity-contract/from-wire
+                     :rows)]
+        (doseq [cols [40 80 120]]
+          (with-open [html (activity-review-terminal cols 100)
+                      terminal (DefaultVirtualTerminal. (TerminalSize. cols 100))
+                      hs (doto (TerminalScreen. html) (.startScreen))
+                      ts (doto (TerminalScreen. terminal) (.startScreen))]
 
-                  (is (= theme/code-block-fg
-                         (.getForegroundColor ^com.googlecode.lanterna.TextCharacter
-                                              (get-in grid [y x])))))
-                (doseq [y (range (row-of "CODE") (inc (long (row-of "ACTIVITY"))))]
-                  (is (= code-bg
-                         (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
-                                              (get-in grid [y 2])))))
-                (doseq [[label row open?]
-                        (map vector
-                             labels
-                             positions
-                             (if code-open? open-states [code-open? activity-open?]))]
-                  (let [col (str/index-of (nth lines row) label)
-                        hit (.lookup interactions/hit-map (TerminalPosition. (int col) (int row)))
-                        background-at (fn [y]
-                                        (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
-                                                             (get-in grid [y col])))]
+            (paint-activity-review! hs rows {:vis.channel-tui/baseline :collapse})
+            (let [band (first (filter #(str/ends-with? (str (:node-id %)) ":#band")
+                                      (.current interactions/hit-map)))
+                  band-opened (toggle-review-region {:vis.channel-tui/baseline :collapse} band)
+                  _ (paint-activity-review! hs rows band-opened)
+                  group (first (filter #(str/ends-with? (str (:node-id %)) "#group")
+                                       (.current interactions/hit-map)))
+                  opened (toggle-review-region band-opened group)]
 
-                    ;; Expanding Code must retain a single filled band, including Result
-                    ;; and the blank row above each disclosure.
-                    (is (str/blank? (nth lines (dec row))))
-                    (is (= code-bg (background-at (dec row))))
-                    (is (= code-bg (background-at row)))
-                    (is (= :toggle-details (:kind hit)))
-                    (is (= (not open?) (:collapsed? hit)))))))))))
-    (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
+              (doseq [row rows]
+                (paint-activity-review! hs rows opened)
+                (let [step (first (filter #(str/ends-with? (str (:node-id %)) (str ":" (:id row)))
+                                          (.current interactions/hit-map)))
+                      expanded (toggle-review-region opened step)]
 
-(deftest execution-header-copy-and-right-inset-test
-  ;; Copy uses the header button style without moving its six-cell click target.
-  (try
-    (doseq [theme-id (map keyword (shared-theme/available-theme-ids))]
-      (theme/apply-theme! theme-id)
-      (doseq [cols [40 80 160]]
-        (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. cols 50))
-                    ts (doto (TerminalScreen. terminal) (.startScreen))]
+                  (expect (some? step))
+                  (paint-activity-review! hs rows expanded)
+                  (paint-activity-review! ts rows expanded)
+                  (expect (= (cell-grid html cols 100) (cell-grid terminal cols 100)))))))))))
 
-          (paint-activity-review! ts (activity-review-rows "succeeded") {})
-          (components/button! (.newTextGraphics ts) 0 0 " COPY " :copy-code {:register? false})
-          (.refresh ts)
-          (let [grid (cell-grid terminal cols 50)
-                row-text (fn [row]
-                           (apply str
-                             (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %)
-                                  row)))
-                code-row (first (filter #(str/includes? (row-text %) "CODE") grid))
-                activity-row (first (filter #(str/includes? (row-text %) "ACTIVITY") grid))]
+(defdescribe
+  nested-result-execution-disclosures-test
+  (it
+    "nested result execution disclosures"
+    ;; Result stays inside Code; Activity remains independent through every fold state.
+    (try
+      (doseq [theme-id (map keyword (shared-theme/available-theme-ids))]
+        (theme/apply-theme! theme-id)
+        (doseq [cols [40 80 160]
+                status ["running" "succeeded" "failed"]]
 
-            (is (= (- cols 6) (count (str/trimr (row-text code-row)))))
-            (is (= (- cols 6) (count (str/trimr (row-text activity-row)))))
-            (is (str/ends-with? (str/trimr (row-text code-row)) " COPY"))
-            (is (= (subvec (first grid) 0 6) (subvec code-row (- cols 11) (- cols 5))))
-            (is (str/ends-with? (str/trimr (row-text activity-row)) " COPY"))
-            (is (= (subvec code-row (- cols 11) (- cols 5))
-                   (subvec activity-row (- cols 11) (- cols 5))))
-            (doseq [x (range (- cols 11) (- cols 5))]
-              (is (= :copy-disclosure
-                     (:kind (.lookup interactions/hit-map
-                                     (TerminalPosition. (int x)
-                                                        (.indexOf ^java.util.List grid
-                                                                  activity-row)))))))
-            (doseq [x (range (- cols 11) (- cols 5))]
-              (is (= :copy-disclosure
-                     (:kind (.lookup interactions/hit-map
-                                     (TerminalPosition. (int x)
-                                                        (.indexOf ^java.util.List grid
-                                                                  code-row)))))))
-            (doseq [cell (subvec code-row (- cols 11) (- cols 5))]
-              (is (not (.isBold ^com.googlecode.lanterna.TextCharacter cell)))
-              (is (= theme/button-fg
-                     (.getForegroundColor ^com.googlecode.lanterna.TextCharacter cell)))
-              (is (= theme/button-bg
-                     (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter cell)))
-              (is (not= theme/code-block-bg
-                        (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter cell))))))))
-    (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
+          (with-open [html (activity-review-terminal cols 50)
+                      hs (doto (TerminalScreen. html) (.startScreen))
+                      terminal (DefaultVirtualTerminal. (TerminalSize. cols 50))
+                      ts (doto (TerminalScreen. terminal) (.startScreen))]
 
-(deftest activity-row-tail-aligns-with-copy-button-test
-  ;; #236: the live ellipsis and settled duration end at COPY's padded button edge.
-  (doseq [cols
-          [40 80 160]
+            (let [rows (activity-review-rows status)
+                  _ (paint-activity-review! hs rows {})
+                  code-region (first (filter #(str/ends-with? (str (:node-id %)) ":code")
+                                             (.current interactions/hit-map)))
+                  _ (paint-activity-review! hs rows (toggle-review-region {} code-region))
+                  regions (into [code-region]
+                                (map (fn [suffix]
+                                       (first (filter #(str/ends-with? (str (:node-id %)) suffix)
+                                                      (.current interactions/hit-map))))
+                                     [":result" ":#band"]))]
 
-          [row-state suffix]
-          [[{:state "running"} "…"] [{:state "succeeded" :duration-ms 1420} "1.4s"]]]
+              (expect (every? some? regions))
+              (doseq [result-open? [false true]
+                      code-open? [false true]
+                      activity-open? [false true]]
 
-    (with-open [terminal
-                (DefaultVirtualTerminal. (TerminalSize. cols 50))
+                (let [open-states [code-open? result-open? activity-open?]
+                      expansions (reduce (fn [folds [region open?]]
+                                           (assoc folds
+                                             [(:session-id region) (:node-id region)] open?))
+                                         {:vis.channel-tui/baseline :collapse}
+                                         (map vector regions open-states))
+                      _ (paint-activity-review! hs rows expansions)
+                      _ (paint-activity-review! ts rows expansions)
+                      grid (cell-grid terminal cols 50)
+                      lines (mapv (fn [row]
+                                    (apply str
+                                      (map #(.getCharacterString
+                                              ^com.googlecode.lanterna.TextCharacter %)
+                                           row)))
+                                  grid)
+                      row-of (fn [label]
+                               (first (keep-indexed #(when (str/includes? %2 label) %1) lines)))
+                      labels (if code-open? ["CODE" "RESULT" "ACTIVITY"] ["CODE" "ACTIVITY"])
+                      positions (mapv row-of labels)
+                      text (str/join "\n" lines)
+                      code-bg theme/code-block-bg]
 
-                ts
-                (doto (TerminalScreen. terminal) (.startScreen))]
+                  (expect (= (cell-grid html cols 50) grid))
+                  (expect (every? some? positions))
+                  (expect (apply < positions))
+                  (expect (not-any? #(str/starts-with? % " │") lines))
+                  (expect (= (and code-open? result-open?) (str/includes? text "Read 3 files.")))
+                  (expect (= code-open? (some? (row-of "RESULT"))))
+                  (expect (= code-open? (str/includes? text "inspect_files()")))
+                  (expect (= activity-open? (str/includes? text "Read ×3")))
+                  (when activity-open?
+                    (let [header-row (row-of "ACTIVITY")]
+                      (expect (str/blank? (nth lines (inc header-row))))
+                      (expect (= (mapv #(+ header-row %) [2 3 4])
+                                 (mapv row-of ["Read ×3" "Patch ×2" "Shell ×2"])))))
+                  (let [y (row-of "ACTIVITY")
+                        x (str/index-of (nth lines y) "ACTIVITY")]
 
-      (paint-activity-review!
-        ts
-        [(merge
-           {:id "run-tests" :sequence 0 :operation "suite" :presentation {:headline "Run tests"}}
-           row-state)]
-        {:vis.channel-tui/baseline :expand})
-      (let [lines
-            (mapv (fn [row]
-                    (apply str
-                      (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %) row)))
-                  (cell-grid terminal cols 50))
+                    (expect (= theme/code-block-fg
+                               (.getForegroundColor ^com.googlecode.lanterna.TextCharacter
+                                                    (get-in grid [y x])))))
+                  (doseq [y (range (row-of "CODE") (inc (long (row-of "ACTIVITY"))))]
+                    (expect (= code-bg
+                               (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
+                                                    (get-in grid [y 2])))))
+                  (doseq [[label row open?]
+                          (map vector
+                               labels
+                               positions
+                               (if code-open? open-states [code-open? activity-open?]))]
+                    (let [col (str/index-of (nth lines row) label)
+                          hit (.lookup interactions/hit-map (TerminalPosition. (int col) (int row)))
+                          background-at (fn [y]
+                                          (.getBackgroundColor
+                                            ^com.googlecode.lanterna.TextCharacter
+                                            (get-in grid [y col])))]
 
-            activity-row
-            (first (filter #(str/includes? % "Run tests") lines))
+                      ;; Expanding Code must retain a single filled band, including Result
+                      ;; and the blank row above each disclosure.
+                      (expect (str/blank? (nth lines (dec row))))
+                      (expect (= code-bg (background-at (dec row))))
+                      (expect (= code-bg (background-at row)))
+                      (expect (= :toggle-details (:kind hit)))
+                      (expect (= (not open?) (:collapsed? hit)))))))))))
+      (finally (theme/apply-theme! (keyword shared-theme/default-theme-id))))))
 
-            copy-regions
-            (filter #(= :copy-disclosure (:kind %)) (.current interactions/hit-map))]
+(defdescribe
+  execution-header-copy-and-right-inset-test
+  (it "execution header copy and right inset"
+      ;; Copy uses the header button style without moving its six-cell click target.
+      (try
+        (doseq [theme-id (map keyword (shared-theme/available-theme-ids))]
+          (theme/apply-theme! theme-id)
+          (doseq [cols [40 80 160]]
+            (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. cols 50))
+                        ts (doto (TerminalScreen. terminal) (.startScreen))]
 
-        (is (= 2 (count copy-regions)))
-        (is (str/ends-with? (str/trimr activity-row) suffix))
-        (doseq [{:keys [bounds]} copy-regions]
-          (is (= (+ (:col bounds) (:width bounds)) (count (str/trimr activity-row)))
-              (str "Activity tail must align with COPY at " cols
-                   " columns: " (pr-str activity-row))))))))
+              (paint-activity-review! ts (activity-review-rows "succeeded") {})
+              (components/button! (.newTextGraphics ts) 0 0 " COPY " :copy-code {:register? false})
+              (.refresh ts)
+              (let [grid (cell-grid terminal cols 50)
+                    row-text
+                    (fn [row]
+                      (apply str
+                        (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %) row)))
+                    code-row (first (filter #(str/includes? (row-text %) "CODE") grid))
+                    activity-row (first (filter #(str/includes? (row-text %) "ACTIVITY") grid))]
 
-(deftest execution-header-copy-hover-test
-  ;; #223: live and persisted COPY caps react independently and reset on leave.
-  (try
-    (doseq [theme-id
-            (map keyword (shared-theme/available-theme-ids))
+                (expect (= (- cols 6) (count (str/trimr (row-text code-row)))))
+                (expect (= (- cols 6) (count (str/trimr (row-text activity-row)))))
+                (expect (str/ends-with? (str/trimr (row-text code-row)) " COPY"))
+                (expect (= (subvec (first grid) 0 6) (subvec code-row (- cols 11) (- cols 5))))
+                (expect (str/ends-with? (str/trimr (row-text activity-row)) " COPY"))
+                (expect (= (subvec code-row (- cols 11) (- cols 5))
+                           (subvec activity-row (- cols 11) (- cols 5))))
+                (doseq [x (range (- cols 11) (- cols 5))]
+                  (expect (= :copy-disclosure
+                             (:kind (.lookup interactions/hit-map
+                                             (TerminalPosition. (int x)
+                                                                (.indexOf ^java.util.List grid
+                                                                          activity-row)))))))
+                (doseq [x (range (- cols 11) (- cols 5))]
+                  (expect (= :copy-disclosure
+                             (:kind (.lookup interactions/hit-map
+                                             (TerminalPosition. (int x)
+                                                                (.indexOf ^java.util.List grid
+                                                                          code-row)))))))
+                (doseq [cell (subvec code-row (- cols 11) (- cols 5))]
+                  (expect (not (.isBold ^com.googlecode.lanterna.TextCharacter cell)))
+                  (expect (= theme/button-fg
+                             (.getForegroundColor ^com.googlecode.lanterna.TextCharacter cell)))
+                  (expect (= theme/button-bg
+                             (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter cell)))
+                  (expect (not= theme/code-block-bg
+                                (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
+                                                     cell))))))))
+        (finally (theme/apply-theme! (keyword shared-theme/default-theme-id))))))
 
-            cols
+(defdescribe
+  activity-row-tail-aligns-with-copy-button-test
+  (it
+    "activity row tail aligns with copy button"
+    ;; #236: the live ellipsis and settled duration end at COPY's padded button edge.
+    (doseq [cols
             [40 80 160]
 
-            status
-            ["running" "succeeded"]]
+            [row-state suffix]
+            [[{:state "running"} "…"] [{:state "succeeded" :duration-ms 1420} "1.4s"]]]
 
-      (theme/apply-theme! theme-id)
-      (binding [interactions/hit-map (interactions/create-hit-map)]
-        (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. cols 50))
-                    ts (doto (TerminalScreen. terminal) (.startScreen))]
-
-          (let [paint! #(paint-activity-review! ts (activity-review-rows status) {})
-                _ (paint!)
-                baseline (cell-grid terminal cols 50)
-                targets (filter #(= :copy-disclosure (:kind %)) (.current interactions/hit-map))]
-
-            (is (= 2 (count targets)))
-            (doseq [{:keys [bounds]} targets
-                    x (range (:col bounds) (+ (:col bounds) (:width bounds)))]
-
-              (is (.updateHovered interactions/hit-map
-                                  (MouseAction. MouseActionType/MOVE
-                                                0
-                                                (TerminalPosition. (int x) (int (:row bounds))))))
-              (paint!)
-              (let [grid (cell-grid terminal cols 50)
-                    y (:row bounds)
-                    col (:col bounds)]
-
-                (is (= (subvec (nth baseline y) 0 col) (subvec (nth grid y) 0 col)))
-                (doseq [cell (subvec (nth grid y) col (+ col 6))]
-                  (is (.isBold ^com.googlecode.lanterna.TextCharacter cell))
-                  (is (= theme/header-active-tab-accent
-                         (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter cell))))
-                (is (= (vec (concat (subvec baseline 0 y) (subvec baseline (inc y))))
-                       (vec (concat (subvec grid 0 y) (subvec grid (inc y)))))))
-              (.updateHovered interactions/hit-map
-                              (MouseAction. MouseActionType/MOVE 0 (TerminalPosition. 0 0)))
-              (paint!)
-              (is (= baseline (cell-grid terminal cols 50))))))))
-    (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
-
-(deftest joined-activity-html-native-parity-test
-  (doseq [cols
-          [40 80 120]
-
-          status
-          ["running" "succeeded" "failed"]]
-
-    (let [size
-          (TerminalSize. cols 50)
-
-          rows
-          (activity-review-rows status)]
-
-      (with-open [html
-                  (activity-review-terminal cols 50)
-
-                  terminal
-                  (DefaultVirtualTerminal. size)
-
-                  hs
-                  (doto (TerminalScreen. html) (.startScreen))
+      (with-open [terminal
+                  (DefaultVirtualTerminal. (TerminalSize. cols 50))
 
                   ts
                   (doto (TerminalScreen. terminal) (.startScreen))]
 
-        (paint-activity-review! hs rows {:vis.channel-tui/baseline :collapse})
-        (let [band
-              (first (filter #(str/ends-with? (str (:node-id %)) ":#band")
-                             (.current interactions/hit-map)))
-
-              opened-band
-              (toggle-review-region {:vis.channel-tui/baseline :collapse} band)
-
-              _
-              (paint-activity-review! hs rows opened-band)
-
-              read-group
-              (first (filter #(str/ends-with? (str (:node-id %)) "call-0#group")
-                             (.current interactions/hit-map)))
-
-              expanded
-              (toggle-review-region opened-band read-group)
-
-              collapsed
-              {:vis.channel-tui/baseline :collapse}]
-
-          (is (some? band))
-          (is (some? read-group))
-          (doseq [expansions [{} expanded collapsed]]
-            (paint-activity-review! hs rows expansions)
-            (paint-activity-review! ts rows expansions)
-            (is (= (cell-grid html cols 50) (cell-grid terminal cols 50)))
-            (is (str/includes? (.renderHtml html) "ACTIVITY")))
-          (paint-activity-review! hs rows expanded)
-          (let [rendered (paint-activity-review! ts rows expanded)]
-            (is (some #(str/includes? % "src/file-0.clj") (:lines rendered)))
-            (when (= status "failed")
-              (is (some #(str/includes? % "Test suite failed") (:lines rendered)))))
-          ;; A streamed replacement keeps the group's manual expansion.
-          (let [replacement (paint-activity-review! ts (activity-review-rows "succeeded") expanded)]
-            (is (some #(str/includes? % "src/file-0.clj") (:lines replacement)))))))))
-
-(deftest joined-execution-text-left-edge-test
-  ;; Code, Result and Activity share the transcript edge without a rail.
-  (doseq [cols [40 80 120]]
-    (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. cols 50))
-                screen (doto (TerminalScreen. terminal) (.startScreen))]
-
-      (let [rows (activity-review-rows "failed")
-            _ (paint-activity-review! screen rows {})
-            hits (.current interactions/hit-map)
-            code (first (filter #(str/ends-with? (str (:node-id %)) ":code") hits))
-            band (first (filter #(str/ends-with? (str (:node-id %)) ":#band") hits))
-            opened-band (toggle-review-region {} band)
-            expanded (toggle-review-region opened-band code)]
-
-        (is (some? code))
-        (is (some? band))
-        ;; Activity starts collapsed; open it before comparing its child rows.
-        (doseq [[code-expanded? expansions] [[false opened-band] [true expanded]]]
-          (paint-activity-review! screen rows expansions)
-          (let [lines (mapv (fn [row]
-                              (apply str
-                                (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %)
-                                     row)))
-                            (cell-grid terminal cols 50))
-                column (fn [text]
-                         (some #(when (str/includes? % text) (str/index-of % text)) lines))]
-
-            (is (= (+ 2 (column "Vis")) (column "Inspect files")))
-            (doseq [label (if code-expanded? ["CODE" "RESULT" "ACTIVITY"] ["CODE" "ACTIVITY"])]
-              (is (= (+ 2 (column "Vis")) (column label))))
-            (is (= (column "ACTIVITY") (column "Read ×3")))
-            (is (some? (column "Command failed")))
-            (is (not-any? #(str/includes? % "│") lines))
-            (if code-expanded?
-              (do (is (= (column "CODE") (column "inspect_files()")))
-                  (is (some #(re-find #"RESULT  \+2 more ▸" %) lines)))
-              (do (is (nil? (column "RESULT")))
-                  (is (some #(re-find #"CODE  \+3 more ▸" %) lines))))))))))
-
-(deftest joined-execution-background-and-disclosure-test
-  ;; Removing the rail preserves filled execution bands and their disclosures.
-  (doseq [cols
-          [40 80 160]
-
-          expanded?
-          [false true]]
-
-    (with-open [terminal
-                (DefaultVirtualTerminal. (TerminalSize. cols 50))
-
-                screen
-                (doto (TerminalScreen. terminal) (.startScreen))]
-
-      (paint-activity-review! screen
-                              (activity-review-rows "succeeded")
-                              {:vis.channel-tui/baseline (if expanded? :expand :collapse)})
-      (let [grid
-            (cell-grid terminal cols 50)
-
-            lines
-            (mapv (fn [row]
-                    (apply str
-                      (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %) row)))
-                  grid)
-
-            band-rows
-            (keep-indexed (fn [row cells]
-                            (when (= theme/code-block-bg
-                                     (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
-                                                          (nth cells 1)))
-                              row))
-                          grid)
-
-            bottom
-            (last band-rows)
-
-            chevron
-            (if expanded? "▾" "▸")]
-
-        (is (seq band-rows))
-        (is (= #{theme/code-block-bg}
-               (set (for [row
-                          band-rows
-
-                          col
-                          (range 1 4)]
-
-                      (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
-                                           (get-in grid [row col])))))
-            "Execution fills reach the left text edge")
-        (doseq [label ["CODE" "ACTIVITY"]]
-          (let [row (first (keep-indexed #(when (str/includes? %2 label) %1) lines))
-                line (nth lines row)
-                col (+ (str/index-of line label) (count label) 1)
-                hit (.lookup interactions/hit-map (TerminalPosition. (int col) (int row)))]
-
-            (is (re-find (re-pattern (str
-                                       label
-                                       (if (and (= label "CODE") (not expanded?)) "  \\+3 more" "")
-                                       " "
-                                       chevron))
-                         line))
-            (is (= :toggle-details (:kind hit)))
-            (is (= (not expanded?) (:collapsed? hit)))))
-        (is (str/blank? (subs (nth lines bottom) 2))
-            "One empty execution row remains below the last content row")
-        (is (= #{theme/code-block-bg}
-               (set (map #(.getBackgroundColor ^com.googlecode.lanterna.TextCharacter %)
-                         (subvec (nth grid bottom) 1 (- cols 3))))))))))
-
-(deftest live-execution-bottom-padding-test
-  ;; Live margin trimming must not remove the filled Activity bottom edge.
-  (doseq [status
-          ["running" "succeeded" "failed"]
-
-          expanded?
-          [false true]]
-
-    (let [payload
-          (render/progress->lines-data
-            {:iterations [{:forms [{:code "inspect_files()"
-                                    :activity {:state status
-                                               :rows (activity-review-rows status)}}]}]}
-            80
-            {:show-iterations true}
-            {:session-id "live-padding"
-             :now-ms 1000
-             :detail-expansions {:vis.channel-tui/expand-all-details? expanded?}})
-
-          lines
-          (:lines payload)
-
-          last-band-row
-          (last (keep-indexed #(when (str/starts-with? %2 @#'render/activity-marker) %1) lines))]
-
-      (is (= @#'render/activity-marker (nth lines last-band-row)))
-      (is (= "" (nth lines (inc last-band-row))))
-      (is (str/includes? (nth lines (+ last-band-row 2)) "Esc to cancel")))))
-
-(deftest screen-accepts-a-transport-neutral-html-terminal-test
-  (with-open [terminal (-> (HtmlTerminal/builder)
-                           (.build))]
-    (is (identical? terminal (#'screen/create-terminal! {:html-terminal terminal})))
-    (is (.contains (.renderLiveHtml terminal "/tui") "data-endpoint-prefix=\"/tui\""))
-    (let [method-names (set (map #(.getName ^java.lang.reflect.Method %)
-                                 (.getMethods HtmlTerminal)))]
-      (is (not-any? method-names ["getUrl" "getUri" "getPort" "hasEmbeddedServer"])))))
-
-(deftest html-media-uses-the-resolved-image-cell-box-test
-  (let [terminal
-        (-> (HtmlTerminal/builder)
-            (.initialSize (TerminalSize. 40 12))
-            (.build))
-
-        active
-        (deref #'screen/active-html-terminal)
-
-        region
-        {:row 3
-         :col 4
-         :img {:id "turn-1-image-1" :path "/tmp/preview.png" :mime "image/png" :cols 8 :rows 5}}]
-
-    (try (reset! active terminal)
-         (timg/set-backend! :html)
-         (with-redefs [timg/video-source?
-                       (constantly false)
-
-                       timg/html-png-data
-                       (fn [_ _]
-                         (byte-array [1 2 3]))]
-
-           (#'screen/paint-terminal-images! [region])
-           (let [media (first (.getMedia terminal))]
-             (is (= 1 (count (.getMedia terminal))))
-             (is (= "turn-1-image-1" (.getId media)))
-             (is (= HtmlMedia$Kind/IMAGE (.getKind media)))
-             (is (= (TerminalPosition. 4 3) (.getPosition media)))
-             (is (= (TerminalSize. 8 5) (.getSize media))))
-           (#'screen/drop-terminal-images!)
-           (is (empty? (.getMedia terminal))))
-         (finally (reset! active nil) (timg/set-backend! :native) (.close terminal)))))
-
-(deftest html-backend-reserves-inline-image-layout-test
-  (try (timg/set-backend! :html)
-       (is (= :html (timg/images-protocol)))
-       (is (true? (timg/graphical-terminal?)))
-       (finally (timg/set-backend! :native))))
-
-(deftest header-actions-use-lanterna-grid-and-render-alone-test
-  (let [panel
-        (header/header-actions-component)
-
-        preferred
-        (.getPreferredSize ^Panel panel)
-
-        html
-        (HtmlTerminalView/render panel preferred "Vis header actions")]
-
-    (is (instance? GridLayout (.getLayoutManager ^Panel panel)))
-    (is (every? #(instance? Button %) (.getChildrenList ^Panel panel)))
-    (is (= 1 (.getRows preferred)))
-    (is (.contains html "Vis header actions"))
-    (is (.contains html "help ("))
-    (is (.contains html "data-live=\"false\""))))
-
-(deftest header-actions-run-as-an-interactive-html-component-test
-  (let [triggered
-        (promise)
-
-        panel
-        (header/header-actions-component #(deliver triggered %))
-
-        view
-        (HtmlTerminalView/start panel (.getPreferredSize ^Panel panel) "Interactive Vis header")]
-
-    (try (.addInput (.getTerminal view) (KeyStroke. KeyType/Enter))
-         (is (= :header-help (deref triggered 3000 ::timeout)))
-         (is (.contains (.renderHtml view) "help ("))
-         (finally (.close view)))))
-
-(deftest all-terminal-surfaces-enter-through-the-grid-test
-  (let [source-root
-        (-> (io/resource "com/blockether/vis/tui/frame.clj")
-            .toURI
-            io/file
-            .getParentFile)
-
-        calls-by-file
-        (into (sorted-map)
-              (keep (fn [file]
-                      (when (and (.isFile file) (.endsWith (.getName file) ".clj"))
-                        (let [calls (count (re-seq #"\.newTextGraphics" (slurp file)))]
-                          (when (pos? calls) [(.getName file) calls])))))
-              (file-seq source-root))]
-
-    ;; `render` and `screen` only create child clips from grid-owned graphics.
-    ;; Every terminal-screen root and section clip is centralized in `frame`.
-    (is (= {"frame.clj" 5 "render.clj" 1 "screen.clj" 1} calls-by-file))))
-
-(deftest full-screen-surfaces-use-one-lanterna-grid-test
-  (let [{:keys [panel sections]}
-        (frame/layout 80 30 {:header 3 :attachments 2 :composer 3 :footer 2})
-
-        bounds
-        (update-vals sections frame/bounds)]
-
-    (is (instance? GridLayout (.getLayoutManager ^Panel panel)))
-    (is (= [:header :header-gap :transcript :echo :attachments :composer :footer]
-           (vec (keys sections))))
-    (is (every? #(instance? TextGraphicsComponent %) (vals sections)))
-    (is (= {:col 0 :row 0 :cols 80 :rows 3} (:header bounds)))
-    (is (= {:col 0 :row 4 :cols 80 :rows 18} (:transcript bounds)))
-    (is (= {:col 0 :row 22 :cols 80 :rows 1} (:echo bounds)))
-    (is (= {:col 0 :row 23 :cols 80 :rows 2} (:attachments bounds)))
-    (is (= {:col 0 :row 25 :cols 80 :rows 3} (:composer bounds)))
-    (is (= {:col 0 :row 28 :cols 80 :rows 2} (:footer bounds)))))
-
-(deftest grid-sections-fill-every-supported-column-count-test
-  (doseq [cols (range 20 401)]
-    (let [sections (:sections
-                     (frame/layout cols 40 {:header 3 :attachments 2 :composer 4 :footer 2}))
-          bounds (mapv (comp frame/bounds sections) frame/section-order)]
-
-      (is (every? #(= {:col 0 :cols cols} (select-keys % [:col :cols])) bounds)
-          (str "every section fills " cols " columns"))
-      (is (= (mapv :row bounds) (vec (butlast (reductions + 0 (map :rows bounds)))))
-          (str "sections are contiguous at " cols " columns"))
-      (is (= 40 (reduce + (map :rows bounds)))
-          (str "sections fill every row at " cols " columns")))))
-
-(deftest laid-out-section-painters-stay-inside-their-grid-cell-test
-  (let [terminal
-        (DefaultVirtualTerminal. (TerminalSize. 12 5))
-
-        screen
-        (doto (TerminalScreen. terminal) (.startScreen))
-
-        root
-        (frame/layout 12
-                      5
-                      {:header 1 :attachments 0 :composer 0 :footer 0}
-                      {:transcript (fn [graphics _]
-                                     (.putString graphics 0 1 "above")
-                                     (.putString graphics 0 2 "inside")
-                                     (.putString graphics 0 4 "below"))})]
-
-    (try (frame/paint! (.newTextGraphics screen) root :transcript)
-         (.refresh screen)
-         (is (= \space (.getCharacter (.getCharacter terminal (TerminalPosition. 0 1)))))
-         (is (= \i (.getCharacter (.getCharacter terminal (TerminalPosition. 0 2)))))
-         (is (= \space (.getCharacter (.getCharacter terminal (TerminalPosition. 0 4)))))
-         (finally (.stopScreen screen)))))
-
-(deftest complete-frame-cells-match-html-and-terminal-at-every-width-test
-  (let [rows
-        32
-
-        initial-size
-        (TerminalSize. 20 rows)
-
-        terminal
-        (DefaultVirtualTerminal. initial-size)
-
-        html
-        (-> (HtmlTerminal/builder)
-            (.initialSize initial-size)
-            (.columnRange 20 400)
-            (.rowRange rows rows)
-            (.browserResize false)
-            (.build))
-
-        terminal-screen
-        (doto (TerminalScreen. terminal) (.startScreen))
-
-        html-screen
-        (doto (TerminalScreen. html) (.startScreen))
-
-        db
-        {:config nil
-         :session nil
-         :title "Grid parity"
-         :messages [{:id "user" :role :user :text "Zażółć gęślą — grid 界"}
-                    {:id "assistant"
-                     :role :assistant
-                     :text "The same cells reach both backends."
-                     :traces [{:forms [{:code "first_call()\nfirst_detail()" :success? true}
-                                       {:code "second_call()" :success? true}]}]}]
-         :scroll scroll/follow
-         :input (input/paste-text (input/empty-input) "interactive draft")
-         :settings {}
-         :pending-sends []
-         :detail-expansions {}
-         :live-views []
-         :loading? false
-         :cancelling? false
-         :progress nil
-         :channel-status {}
-         :tabs []
-         :tab-locals {}
-         :slash-command-index 0
-         :render-version 0}]
-
-    (try (doseq [cols (range 20 401)]
-           (let [size (TerminalSize. cols rows)]
-             (.setTerminalSize terminal size)
-             (.setTerminalSize html size)
-             (.doResizeIfNecessary terminal-screen)
-             (.doResizeIfNecessary html-screen)
-             ;; Compare one metadata snapshot, not two sides of an async footer refresh.
-             (with-redefs [timg/images-protocol (constantly nil)
-                           client/get-router (constantly nil)]
-
-               (#'screen/render-frame! terminal-screen cols rows db 1000)
-               (#'screen/render-frame! html-screen cols rows db 1000))
-             (is (= (cell-grid terminal cols rows) (cell-grid html cols rows))
-                 (str "HTML and terminal cells differ at " cols " columns"))))
-         (finally (.stopScreen terminal-screen)
-                  (.stopScreen html-screen)
-                  (.close html)
-                  (.close terminal)))))
-
-(deftest any-grid-view-renders-as-standalone-html-test
-  (let [view
-        (frame/view 18
-                    2
-                    (fn [graphics _]
-                      (.putString graphics 0 0 "Standalone view")))
-
-        html
-        (HtmlTerminalView/render view (TerminalSize. 18 2) "Standalone Vis view")]
-
-    (is (instance? GridLayout (.getLayoutManager ^Panel view)))
-    (is (= 1 (count (.getChildrenList ^Panel view))))
-    (is (.contains html ">Standalone</span>"))
-    (is (.contains html ">view</span>"))
-    (is (.contains html "Standalone Vis view"))))
-
-(deftest grid-surface-owns-size-and-clipping-test
-  (let [terminal
-        (DefaultVirtualTerminal. (TerminalSize. 12 5))
-
-        screen
-        (doto (TerminalScreen. terminal) (.startScreen))]
-
-    (try (let [base (.newTextGraphics screen)]
-           (.putString base 0 0 "K")
-           (let [graphics (frame/surface-graphics screen 8 3)]
-             (is (= (TerminalSize. 8 3) (.getSize graphics)))
-             (.putString graphics 7 2 "XY")
+        (paint-activity-review!
+          ts
+          [(merge
+             {:id "run-tests" :sequence 0 :operation "suite" :presentation {:headline "Run tests"}}
+             row-state)]
+          {:vis.channel-tui/baseline :expand})
+        (let [lines
+              (mapv (fn [row]
+                      (apply str
+                        (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %) row)))
+                    (cell-grid terminal cols 50))
+
+              activity-row
+              (first (filter #(str/includes? % "Run tests") lines))
+
+              copy-regions
+              (filter #(= :copy-disclosure (:kind %)) (.current interactions/hit-map))]
+
+          (expect (= 2 (count copy-regions)))
+          (expect (str/ends-with? (str/trimr activity-row) suffix))
+          (doseq [{:keys [bounds]} copy-regions]
+            (expect (= (+ (:col bounds) (:width bounds)) (count (str/trimr activity-row)))
+                    (str "Activity tail must align with COPY at " cols
+                         " columns: " (pr-str activity-row)))))))))
+
+(defdescribe
+  execution-header-copy-hover-test
+  (it
+    "execution header copy hover"
+    ;; #223: live and persisted COPY caps react independently and reset on leave.
+    (try
+      (doseq [theme-id
+              (map keyword (shared-theme/available-theme-ids))
+
+              cols
+              [40 80 160]
+
+              status
+              ["running" "succeeded"]]
+
+        (theme/apply-theme! theme-id)
+        (binding [interactions/hit-map (interactions/create-hit-map)]
+          (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. cols 50))
+                      ts (doto (TerminalScreen. terminal) (.startScreen))]
+
+            (let [paint! #(paint-activity-review! ts (activity-review-rows status) {})
+                  _ (paint!)
+                  baseline (cell-grid terminal cols 50)
+                  targets (filter #(= :copy-disclosure (:kind %)) (.current interactions/hit-map))]
+
+              (expect (= 2 (count targets)))
+              (doseq [{:keys [bounds]} targets
+                      x (range (:col bounds) (+ (:col bounds) (:width bounds)))]
+
+                (expect (.updateHovered interactions/hit-map
+                                        (MouseAction. MouseActionType/MOVE
+                                                      0
+                                                      (TerminalPosition. (int x)
+                                                                         (int (:row bounds))))))
+                (paint!)
+                (let [grid (cell-grid terminal cols 50)
+                      y (:row bounds)
+                      col (:col bounds)]
+
+                  (expect (= (subvec (nth baseline y) 0 col) (subvec (nth grid y) 0 col)))
+                  (doseq [cell (subvec (nth grid y) col (+ col 6))]
+                    (expect (.isBold ^com.googlecode.lanterna.TextCharacter cell))
+                    (expect (= theme/header-active-tab-accent
+                               (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter cell))))
+                  (expect (= (vec (concat (subvec baseline 0 y) (subvec baseline (inc y))))
+                             (vec (concat (subvec grid 0 y) (subvec grid (inc y)))))))
+                (.updateHovered interactions/hit-map
+                                (MouseAction. MouseActionType/MOVE 0 (TerminalPosition. 0 0)))
+                (paint!)
+                (expect (= baseline (cell-grid terminal cols 50))))))))
+      (finally (theme/apply-theme! (keyword shared-theme/default-theme-id))))))
+
+(defdescribe
+  joined-activity-html-native-parity-test
+  (it
+    "joined activity html native parity"
+    (doseq [cols
+            [40 80 120]
+
+            status
+            ["running" "succeeded" "failed"]]
+
+      (let [size
+            (TerminalSize. cols 50)
+
+            rows
+            (activity-review-rows status)]
+
+        (with-open [html
+                    (activity-review-terminal cols 50)
+
+                    terminal
+                    (DefaultVirtualTerminal. size)
+
+                    hs
+                    (doto (TerminalScreen. html) (.startScreen))
+
+                    ts
+                    (doto (TerminalScreen. terminal) (.startScreen))]
+
+          (paint-activity-review! hs rows {:vis.channel-tui/baseline :collapse})
+          (let [band
+                (first (filter #(str/ends-with? (str (:node-id %)) ":#band")
+                               (.current interactions/hit-map)))
+
+                opened-band
+                (toggle-review-region {:vis.channel-tui/baseline :collapse} band)
+
+                _
+                (paint-activity-review! hs rows opened-band)
+
+                read-group
+                (first (filter #(str/ends-with? (str (:node-id %)) "call-0#group")
+                               (.current interactions/hit-map)))
+
+                expanded
+                (toggle-review-region opened-band read-group)
+
+                collapsed
+                {:vis.channel-tui/baseline :collapse}]
+
+            (expect (some? band))
+            (expect (some? read-group))
+            (doseq [expansions [{} expanded collapsed]]
+              (paint-activity-review! hs rows expansions)
+              (paint-activity-review! ts rows expansions)
+              (expect (= (cell-grid html cols 50) (cell-grid terminal cols 50)))
+              (expect (str/includes? (.renderHtml html) "ACTIVITY")))
+            (paint-activity-review! hs rows expanded)
+            (let [rendered (paint-activity-review! ts rows expanded)]
+              (expect (some #(str/includes? % "src/file-0.clj") (:lines rendered)))
+              (when (= status "failed")
+                (expect (some #(str/includes? % "Test suite failed") (:lines rendered)))))
+            ;; A streamed replacement keeps the group's manual expansion.
+            (let [replacement
+                  (paint-activity-review! ts (activity-review-rows "succeeded") expanded)]
+              (expect (some #(str/includes? % "src/file-0.clj") (:lines replacement))))))))))
+
+(defdescribe
+  joined-execution-text-left-edge-test
+  (it "joined execution text left edge"
+      ;; Code, Result and Activity share the transcript edge without a rail.
+      (doseq [cols [40 80 120]]
+        (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. cols 50))
+                    screen (doto (TerminalScreen. terminal) (.startScreen))]
+
+          (let [rows (activity-review-rows "failed")
+                _ (paint-activity-review! screen rows {})
+                hits (.current interactions/hit-map)
+                code (first (filter #(str/ends-with? (str (:node-id %)) ":code") hits))
+                band (first (filter #(str/ends-with? (str (:node-id %)) ":#band") hits))
+                opened-band (toggle-review-region {} band)
+                expanded (toggle-review-region opened-band code)]
+
+            (expect (some? code))
+            (expect (some? band))
+            ;; Activity starts collapsed; open it before comparing its child rows.
+            (doseq [[code-expanded? expansions] [[false opened-band] [true expanded]]]
+              (paint-activity-review! screen rows expansions)
+              (let [lines (mapv (fn [row]
+                                  (apply str
+                                    (map #(.getCharacterString
+                                            ^com.googlecode.lanterna.TextCharacter %)
+                                         row)))
+                                (cell-grid terminal cols 50))
+                    column (fn [text]
+                             (some #(when (str/includes? % text) (str/index-of % text)) lines))]
+
+                (expect (= (+ 2 (column "Vis")) (column "Inspect files")))
+                (doseq [label (if code-expanded? ["CODE" "RESULT" "ACTIVITY"] ["CODE" "ACTIVITY"])]
+                  (expect (= (+ 2 (column "Vis")) (column label))))
+                (expect (= (column "ACTIVITY") (column "Read ×3")))
+                (expect (some? (column "Command failed")))
+                (expect (not-any? #(str/includes? % "│") lines))
+                (if code-expanded?
+                  (do (expect (= (column "CODE") (column "inspect_files()")))
+                      (expect (some #(re-find #"RESULT  \+2 more ▸" %) lines)))
+                  (do (expect (nil? (column "RESULT")))
+                      (expect (some #(re-find #"CODE  \+3 more ▸" %) lines)))))))))))
+
+(defdescribe
+  joined-execution-background-and-disclosure-test
+  (it
+    "joined execution background and disclosure"
+    ;; Removing the rail preserves filled execution bands and their disclosures.
+    (doseq [cols
+            [40 80 160]
+
+            expanded?
+            [false true]]
+
+      (with-open [terminal
+                  (DefaultVirtualTerminal. (TerminalSize. cols 50))
+
+                  screen
+                  (doto (TerminalScreen. terminal) (.startScreen))]
+
+        (paint-activity-review! screen
+                                (activity-review-rows "succeeded")
+                                {:vis.channel-tui/baseline (if expanded? :expand :collapse)})
+        (let [grid
+              (cell-grid terminal cols 50)
+
+              lines
+              (mapv (fn [row]
+                      (apply str
+                        (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %) row)))
+                    grid)
+
+              band-rows
+              (keep-indexed (fn [row cells]
+                              (when (= theme/code-block-bg
+                                       (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
+                                                            (nth cells 1)))
+                                row))
+                            grid)
+
+              bottom
+              (last band-rows)
+
+              chevron
+              (if expanded? "▾" "▸")]
+
+          (expect (seq band-rows))
+          (expect (= #{theme/code-block-bg}
+                     (set (for [row
+                                band-rows
+
+                                col
+                                (range 1 4)]
+
+                            (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
+                                                 (get-in grid [row col])))))
+                  "Execution fills reach the left text edge")
+          (doseq [label ["CODE" "ACTIVITY"]]
+            (let [row (first (keep-indexed #(when (str/includes? %2 label) %1) lines))
+                  line (nth lines row)
+                  col (+ (str/index-of line label) (count label) 1)
+                  hit (.lookup interactions/hit-map (TerminalPosition. (int col) (int row)))]
+
+              (expect (re-find (re-pattern
+                                 (str label
+                                      (if (and (= label "CODE") (not expanded?)) "  \\+3 more" "")
+                                      " "
+                                      chevron))
+                               line))
+              (expect (= :toggle-details (:kind hit)))
+              (expect (= (not expanded?) (:collapsed? hit)))))
+          (expect (str/blank? (subs (nth lines bottom) 2))
+                  "One empty execution row remains below the last content row")
+          (expect (= #{theme/code-block-bg}
+                     (set (map #(.getBackgroundColor ^com.googlecode.lanterna.TextCharacter %)
+                               (subvec (nth grid bottom) 1 (- cols 3)))))))))))
+
+(defdescribe
+  live-execution-bottom-padding-test
+  (it "live execution bottom padding"
+      ;; Live margin trimming must not remove the filled Activity bottom edge.
+      (doseq [status
+              ["running" "succeeded" "failed"]
+
+              expanded?
+              [false true]]
+
+        (let [payload
+              (render/progress->lines-data
+                {:iterations [{:forms [{:code "inspect_files()"
+                                        :activity {:state status
+                                                   :rows (activity-review-rows status)}}]}]}
+                80
+                {:show-iterations true}
+                {:session-id "live-padding"
+                 :now-ms 1000
+                 :detail-expansions {:vis.channel-tui/expand-all-details? expanded?}})
+
+              lines
+              (:lines payload)
+
+              last-band-row
+              (last (keep-indexed #(when (str/starts-with? %2 @#'render/activity-marker) %1)
+                                  lines))]
+
+          (expect (= @#'render/activity-marker (nth lines last-band-row)))
+          (expect (= "" (nth lines (inc last-band-row))))
+          (expect (str/includes? (nth lines (+ last-band-row 2)) "Esc to cancel"))))))
+
+(defdescribe
+  screen-accepts-a-transport-neutral-html-terminal-test
+  (it "screen accepts a transport neutral html terminal"
+      (with-open [terminal (-> (HtmlTerminal/builder)
+                               (.build))]
+        (expect (identical? terminal (#'screen/create-terminal! {:html-terminal terminal})))
+        (expect (.contains (.renderLiveHtml terminal "/tui") "data-endpoint-prefix=\"/tui\""))
+        (let [method-names (set (map #(.getName ^java.lang.reflect.Method %)
+                                     (.getMethods HtmlTerminal)))]
+          (expect (not-any? method-names ["getUrl" "getUri" "getPort" "hasEmbeddedServer"]))))))
+
+(defdescribe
+  html-media-uses-the-resolved-image-cell-box-test
+  (it
+    "html media uses the resolved image cell box"
+    (let [terminal
+          (-> (HtmlTerminal/builder)
+              (.initialSize (TerminalSize. 40 12))
+              (.build))
+
+          active
+          (deref #'screen/active-html-terminal)
+
+          region
+          {:row 3
+           :col 4
+           :img {:id "turn-1-image-1" :path "/tmp/preview.png" :mime "image/png" :cols 8 :rows 5}}]
+
+      (try (reset! active terminal)
+           (timg/set-backend! :html)
+           (with-redefs [timg/video-source?
+                         (constantly false)
+
+                         timg/html-png-data
+                         (fn [_ _]
+                           (byte-array [1 2 3]))]
+
+             (#'screen/paint-terminal-images! [region])
+             (let [media (first (.getMedia terminal))]
+               (expect (= 1 (count (.getMedia terminal))))
+               (expect (= "turn-1-image-1" (.getId media)))
+               (expect (= HtmlMedia$Kind/IMAGE (.getKind media)))
+               (expect (= (TerminalPosition. 4 3) (.getPosition media)))
+               (expect (= (TerminalSize. 8 5) (.getSize media))))
+             (#'screen/drop-terminal-images!)
+             (expect (empty? (.getMedia terminal))))
+           (finally (reset! active nil) (timg/set-backend! :native) (.close terminal))))))
+
+(defdescribe html-backend-reserves-inline-image-layout-test
+             (it "html backend reserves inline image layout"
+                 (try (timg/set-backend! :html)
+                      (expect (= :html (timg/images-protocol)))
+                      (expect (true? (timg/graphical-terminal?)))
+                      (finally (timg/set-backend! :native)))))
+
+(defdescribe header-actions-use-lanterna-grid-and-render-alone-test
+             (it "header actions use lanterna grid and render alone"
+                 (let [panel
+                       (header/header-actions-component)
+
+                       preferred
+                       (.getPreferredSize ^Panel panel)
+
+                       html
+                       (HtmlTerminalView/render panel preferred "Vis header actions")]
+
+                   (expect (instance? GridLayout (.getLayoutManager ^Panel panel)))
+                   (expect (every? #(instance? Button %) (.getChildrenList ^Panel panel)))
+                   (expect (= 1 (.getRows preferred)))
+                   (expect (.contains html "Vis header actions"))
+                   (expect (.contains html "help ("))
+                   (expect (.contains html "data-live=\"false\"")))))
+
+(defdescribe header-actions-run-as-an-interactive-html-component-test
+             (it "header actions run as an interactive html component"
+                 (let [triggered
+                       (promise)
+
+                       panel
+                       (header/header-actions-component #(deliver triggered %))
+
+                       view
+                       (HtmlTerminalView/start panel
+                                               (.getPreferredSize ^Panel panel)
+                                               "Interactive Vis header")]
+
+                   (try (.addInput (.getTerminal view) (KeyStroke. KeyType/Enter))
+                        (expect (= :header-help (deref triggered 3000 ::timeout)))
+                        (expect (.contains (.renderHtml view) "help ("))
+                        (finally (.close view))))))
+
+(defdescribe all-terminal-surfaces-enter-through-the-grid-test
+             (it "all terminal surfaces enter through the grid"
+                 (let [source-root
+                       (-> (io/resource "com/blockether/vis/tui/frame.clj")
+                           .toURI
+                           io/file
+                           .getParentFile)
+
+                       calls-by-file
+                       (into (sorted-map)
+                             (keep (fn [file]
+                                     (when (and (.isFile file) (.endsWith (.getName file) ".clj"))
+                                       (let [calls (count (re-seq #"\.newTextGraphics"
+                                                                  (slurp file)))]
+                                         (when (pos? calls) [(.getName file) calls])))))
+                             (file-seq source-root))]
+
+                   ;; `render` and `screen` only create child clips from grid-owned graphics.
+                   ;; Every terminal-screen root and section clip is centralized in `frame`.
+                   (expect (= {"frame.clj" 5 "render.clj" 1 "screen.clj" 1} calls-by-file)))))
+
+(defdescribe full-screen-surfaces-use-one-lanterna-grid-test
+             (it "full screen surfaces use one lanterna grid"
+                 (let [{:keys [panel sections]}
+                       (frame/layout 80 30 {:header 3 :attachments 2 :composer 3 :footer 2})
+
+                       bounds
+                       (update-vals sections frame/bounds)]
+
+                   (expect (instance? GridLayout (.getLayoutManager ^Panel panel)))
+                   (expect (= [:header :header-gap :transcript :echo :attachments :composer :footer]
+                              (vec (keys sections))))
+                   (expect (every? #(instance? TextGraphicsComponent %) (vals sections)))
+                   (expect (= {:col 0 :row 0 :cols 80 :rows 3} (:header bounds)))
+                   (expect (= {:col 0 :row 4 :cols 80 :rows 18} (:transcript bounds)))
+                   (expect (= {:col 0 :row 22 :cols 80 :rows 1} (:echo bounds)))
+                   (expect (= {:col 0 :row 23 :cols 80 :rows 2} (:attachments bounds)))
+                   (expect (= {:col 0 :row 25 :cols 80 :rows 3} (:composer bounds)))
+                   (expect (= {:col 0 :row 28 :cols 80 :rows 2} (:footer bounds))))))
+
+(defdescribe
+  grid-sections-fill-every-supported-column-count-test
+  (it "grid sections fill every supported column count"
+      (doseq [cols (range 20 401)]
+        (let [sections (:sections
+                         (frame/layout cols 40 {:header 3 :attachments 2 :composer 4 :footer 2}))
+              bounds (mapv (comp frame/bounds sections) frame/section-order)]
+
+          (expect (every? #(= {:col 0 :cols cols} (select-keys % [:col :cols])) bounds)
+                  (str "every section fills " cols " columns"))
+          (expect (= (mapv :row bounds) (vec (butlast (reductions + 0 (map :rows bounds)))))
+                  (str "sections are contiguous at " cols " columns"))
+          (expect (= 40 (reduce + (map :rows bounds)))
+                  (str "sections fill every row at " cols " columns"))))))
+
+(defdescribe
+  laid-out-section-painters-stay-inside-their-grid-cell-test
+  (it "laid out section painters stay inside their grid cell"
+      (let [terminal
+            (DefaultVirtualTerminal. (TerminalSize. 12 5))
+
+            screen
+            (doto (TerminalScreen. terminal) (.startScreen))
+
+            root
+            (frame/layout 12
+                          5
+                          {:header 1 :attachments 0 :composer 0 :footer 0}
+                          {:transcript (fn [graphics _]
+                                         (.putString graphics 0 1 "above")
+                                         (.putString graphics 0 2 "inside")
+                                         (.putString graphics 0 4 "below"))})]
+
+        (try (frame/paint! (.newTextGraphics screen) root :transcript)
              (.refresh screen)
-             (is (= \K (.getCharacter (.getCharacter terminal (TerminalPosition. 0 0)))))
-             (is (= \X (.getCharacter (.getCharacter terminal (TerminalPosition. 7 2)))))
-             (is (= \space (.getCharacter (.getCharacter terminal (TerminalPosition. 8 2)))))))
-         (finally (.stopScreen screen)))))
+             (expect (= \space (.getCharacter (.getCharacter terminal (TerminalPosition. 0 1)))))
+             (expect (= \i (.getCharacter (.getCharacter terminal (TerminalPosition. 0 2)))))
+             (expect (= \space (.getCharacter (.getCharacter terminal (TerminalPosition. 0 4)))))
+             (finally (.stopScreen screen))))))
+
+(defdescribe
+  complete-frame-cells-match-html-and-terminal-at-every-width-test
+  (it
+    "complete frame cells match html and terminal at every width"
+    (let [rows
+          32
+
+          initial-size
+          (TerminalSize. 20 rows)
+
+          terminal
+          (DefaultVirtualTerminal. initial-size)
+
+          html
+          (-> (HtmlTerminal/builder)
+              (.initialSize initial-size)
+              (.columnRange 20 400)
+              (.rowRange rows rows)
+              (.browserResize false)
+              (.build))
+
+          terminal-screen
+          (doto (TerminalScreen. terminal) (.startScreen))
+
+          html-screen
+          (doto (TerminalScreen. html) (.startScreen))
+
+          db
+          {:config nil
+           :session nil
+           :title "Grid parity"
+           :messages [{:id "user" :role :user :text "Zażółć gęślą — grid 界"}
+                      {:id "assistant"
+                       :role :assistant
+                       :text "The same cells reach both backends."
+                       :traces [{:forms [{:code "first_call()\nfirst_detail()" :success? true}
+                                         {:code "second_call()" :success? true}]}]}]
+           :scroll scroll/follow
+           :input (input/paste-text (input/empty-input) "interactive draft")
+           :settings {}
+           :pending-sends []
+           :detail-expansions {}
+           :live-views []
+           :loading? false
+           :cancelling? false
+           :progress nil
+           :channel-status {}
+           :tabs []
+           :tab-locals {}
+           :slash-command-index 0
+           :render-version 0}]
+
+      (try (doseq [cols (range 20 401)]
+             (let [size (TerminalSize. cols rows)]
+               (.setTerminalSize terminal size)
+               (.setTerminalSize html size)
+               (.doResizeIfNecessary terminal-screen)
+               (.doResizeIfNecessary html-screen)
+               ;; Compare one metadata snapshot, not two sides of an async footer refresh.
+               (with-redefs [timg/images-protocol (constantly nil)
+                             client/get-router (constantly nil)]
+
+                 (#'screen/render-frame! terminal-screen cols rows db 1000)
+                 (#'screen/render-frame! html-screen cols rows db 1000))
+               (expect (= (cell-grid terminal cols rows) (cell-grid html cols rows))
+                       (str "HTML and terminal cells differ at " cols " columns"))))
+           (finally (.stopScreen terminal-screen)
+                    (.stopScreen html-screen)
+                    (.close html)
+                    (.close terminal))))))
+
+(defdescribe any-grid-view-renders-as-standalone-html-test
+             (it "any grid view renders as standalone html"
+                 (let [view
+                       (frame/view 18
+                                   2
+                                   (fn [graphics _]
+                                     (.putString graphics 0 0 "Standalone view")))
+
+                       html
+                       (HtmlTerminalView/render view (TerminalSize. 18 2) "Standalone Vis view")]
+
+                   (expect (instance? GridLayout (.getLayoutManager ^Panel view)))
+                   (expect (= 1 (count (.getChildrenList ^Panel view))))
+                   (expect (.contains html ">Standalone</span>"))
+                   (expect (.contains html ">view</span>"))
+                   (expect (.contains html "Standalone Vis view")))))
+
+(defdescribe
+  grid-surface-owns-size-and-clipping-test
+  (it "grid surface owns size and clipping"
+      (let [terminal
+            (DefaultVirtualTerminal. (TerminalSize. 12 5))
+
+            screen
+            (doto (TerminalScreen. terminal) (.startScreen))]
+
+        (try (let [base (.newTextGraphics screen)]
+               (.putString base 0 0 "K")
+               (let [graphics (frame/surface-graphics screen 8 3)]
+                 (expect (= (TerminalSize. 8 3) (.getSize graphics)))
+                 (.putString graphics 7 2 "XY")
+                 (.refresh screen)
+                 (expect (= \K (.getCharacter (.getCharacter terminal (TerminalPosition. 0 0)))))
+                 (expect (= \X (.getCharacter (.getCharacter terminal (TerminalPosition. 7 2)))))
+                 (expect (= \space
+                            (.getCharacter (.getCharacter terminal (TerminalPosition. 8 2)))))))
+             (finally (.stopScreen screen))))))
 
 (defn- caption-count
   "How many times one caption stands on a single painted row."
@@ -1125,75 +1190,77 @@
       (recur (+ (long at) (count (str phrase))) (inc n))
       n)))
 
-(deftest activity-history-window-states-html-test
-  ;; A paged Activity record stays readable in every fetch state: the search
-  ;; offer, a search in flight, a changed record and a failed window all say
-  ;; what happened and what one press does next.
-  (let [rows
-        (activity-review-rows "succeeded")
+(defdescribe
+  activity-history-window-states-html-test
+  (it "activity history window states html"
+      ;; A paged Activity record stays readable in every fetch state: the search
+      ;; offer, a search in flight, a changed record and a failed window all say
+      ;; what happened and what one press does next.
+      (let [rows
+            (activity-review-rows "succeeded")
 
-        history
-        {:id "history-1" :revision 3 :total 90 :after 0 :next-after 7}
+            history
+            {:id "history-1" :revision 3 :total 90 :after 0 :next-after 7}
 
-        states
-        [[{} ["search every operation" "7 of 90 operations"]]
-         [{"history-1" {:status :loading :after 0 :query "patch"}}
-          ["searching every operation" "matching"]]
-         [{"history-1" {:status :stale :after 0}} ["Activity changed" "show it again"]]
-         [{"history-1" {:status :failed :after 7}} ["could not load"]]
-         [{"history-1" {:query "patch"}}
-          ["clear search" "showing 7 operations matching" "show more matching operations"]]]]
+            states
+            [[{} ["search every operation" "7 of 90 operations"]]
+             [{"history-1" {:status :loading :after 0 :query "patch"}}
+              ["searching every operation" "matching"]]
+             [{"history-1" {:status :stale :after 0}} ["Activity changed" "show it again"]]
+             [{"history-1" {:status :failed :after 7}} ["could not load"]]
+             [{"history-1" {:query "patch"}}
+              ["clear search" "showing 7 operations matching" "show more matching operations"]]]]
 
-    (doseq [cols
-            [80 120]
+        (doseq [cols
+                [80 120]
 
-            [fetch expected]
-            states]
+                [fetch expected]
+                states]
 
-      (with-open [html
-                  (activity-review-terminal cols 60)
+          (with-open [html
+                      (activity-review-terminal cols 60)
 
-                  terminal
-                  (DefaultVirtualTerminal. (TerminalSize. cols 60))
+                      terminal
+                      (DefaultVirtualTerminal. (TerminalSize. cols 60))
 
-                  hs
-                  (doto (TerminalScreen. html) (.startScreen))
+                      hs
+                      (doto (TerminalScreen. html) (.startScreen))
 
-                  ts
-                  (doto (TerminalScreen. terminal) (.startScreen))]
+                      ts
+                      (doto (TerminalScreen. terminal) (.startScreen))]
 
-        (let [extra
-              {:history history :vis.channel-tui/fetch fetch}
+            (let [extra
+                  {:history history :vis.channel-tui/fetch fetch}
 
-              _
-              (paint-activity-review! hs rows {:vis.channel-tui/baseline :collapse} extra)
+                  _
+                  (paint-activity-review! hs rows {:vis.channel-tui/baseline :collapse} extra)
 
-              band
-              (first (filter #(str/ends-with? (str (:node-id %)) ":#band")
-                             (.current interactions/hit-map)))
+                  band
+                  (first (filter #(str/ends-with? (str (:node-id %)) ":#band")
+                                 (.current interactions/hit-map)))
 
-              opened
-              (toggle-review-region {:vis.channel-tui/baseline :collapse} band)]
+                  opened
+                  (toggle-review-region {:vis.channel-tui/baseline :collapse} band)]
 
-          (is (some? band))
-          (paint-activity-review! hs rows opened extra)
-          (paint-activity-review! ts rows opened extra)
-          (let [text (str/join "\n"
-                               (map (fn [row]
-                                      (apply str
-                                        (map #(.getCharacterString
-                                                ^com.googlecode.lanterna.TextCharacter %)
-                                             row)))
-                                    (cell-grid terminal cols 60)))]
-            (doseq [phrase expected]
-              (is (str/includes? text phrase)
-                  (str "missing " (pr-str phrase) " at " cols " columns"))
-              ;; A rule paints its caption in the gap it cuts and the overlay only
-              ;; recolors that copy: the same words twice on one row is the bug.
-              (is (every? #(<= (long (caption-count % phrase)) 1) (str/split-lines text))
-                  (str "duplicated " (pr-str phrase) " on one row at " cols " columns")))
-            (is (= (cell-grid html cols 60) (cell-grid terminal cols 60)))
-            (is (str/includes? (.renderHtml html) "ACTIVITY"))))))))
+              (expect (some? band))
+              (paint-activity-review! hs rows opened extra)
+              (paint-activity-review! ts rows opened extra)
+              (let [text (str/join "\n"
+                                   (map (fn [row]
+                                          (apply str
+                                            (map #(.getCharacterString
+                                                    ^com.googlecode.lanterna.TextCharacter %)
+                                                 row)))
+                                        (cell-grid terminal cols 60)))]
+                (doseq [phrase expected]
+                  (expect (str/includes? text phrase)
+                          (str "missing " (pr-str phrase) " at " cols " columns"))
+                  ;; A rule paints its caption in the gap it cuts and the overlay only
+                  ;; recolors that copy: the same words twice on one row is the bug.
+                  (expect (every? #(<= (long (caption-count % phrase)) 1) (str/split-lines text))
+                          (str "duplicated " (pr-str phrase) " on one row at " cols " columns")))
+                (expect (= (cell-grid html cols 60) (cell-grid terminal cols 60)))
+                (expect (str/includes? (.renderHtml html) "ACTIVITY")))))))))
 
 (def ^:private improve-payload
   {"records" [{"id" 1 "title" "Slow startup" "status" "open" "project_id" "p1"}
@@ -1227,56 +1294,61 @@
       (.refresh screen)
       (when (instance? TerminalPosition caret) caret))))
 
-(deftest improve-register-and-mode-chooser-html-native-parity-test
-  ;; The Improve register and its mode chooser are ONE pure paint: the HTML view
-  ;; a reviewer opens has to carry the same cells and the same words the
-  ;; terminal shows, at a wide and at a narrow width.
-  (doseq [cols
-          [96 60]
+(defdescribe
+  improve-register-and-mode-chooser-html-native-parity-test
+  (it "improve register and mode chooser html native parity"
+      ;; The Improve register and its mode chooser are ONE pure paint: the HTML view
+      ;; a reviewer opens has to carry the same cells and the same words the
+      ;; terminal shows, at a wide and at a narrow width.
+      (doseq [cols
+              [96 60]
 
-          [component phrase]
-          [[(improve/browser-modal-component (improve/records improve-payload)
-                                             (improve/project-names improve-payload)
-                                             nil
-                                             {:mode :human}) "Editor · 2 open of 3"]
-           [(improve/settings-modal-component
-              {:mode :automatic :provider "anthropic" :model "claude" :interval-minutes 30})
-            "Reviews every 30 minutes"]
-           [(improve/analysis-editor-component "Analysis" "Wolny start\n\nDruga linia")
-            "Druga linia"]]]
+              [component phrase]
+              [[(improve/browser-modal-component (improve/records improve-payload)
+                                                 (improve/project-names improve-payload)
+                                                 nil
+                                                 {:mode :human}) "Editor · 2 open of 3"]
+               [(improve/settings-modal-component
+                  {:mode :automatic :provider "anthropic" :model "claude" :interval-minutes 30})
+                "Reviews every 30 minutes"]
+               [(improve/analysis-editor-component "Analysis" "Wolny start\n\nDruga linia")
+                "Druga linia"]]]
 
-    (with-open [html
-                (activity-review-terminal cols 24)
+        (with-open [html
+                    (activity-review-terminal cols 24)
 
-                terminal
-                (DefaultVirtualTerminal. (TerminalSize. cols 24))
+                    terminal
+                    (DefaultVirtualTerminal. (TerminalSize. cols 24))
 
-                hs
-                (doto (TerminalScreen. html) (.startScreen))
+                    hs
+                    (doto (TerminalScreen. html) (.startScreen))
 
-                ts
-                (doto (TerminalScreen. terminal) (.startScreen))]
+                    ts
+                    (doto (TerminalScreen. terminal) (.startScreen))]
 
-      (let [caret
-            (paint-improve-modal! hs component cols 24)
+          (let [caret
+                (paint-improve-modal! hs component cols 24)
 
-            native-caret
-            (paint-improve-modal! ts component cols 24)
+                native-caret
+                (paint-improve-modal! ts component cols 24)
 
-            text
-            (str/join "\n"
-                      (map (fn [row]
-                             (apply str
-                               (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %)
-                                    row)))
-                           (cell-grid terminal cols 24)))]
+                text
+                (str/join "\n"
+                          (map (fn [row]
+                                 (apply str
+                                   (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter
+                                                              %)
+                                        row)))
+                               (cell-grid terminal cols 24)))]
 
-        (is (str/includes? text phrase) (str "missing " (pr-str phrase) " at " cols " columns"))
-        (is (= (cell-grid html cols 24) (cell-grid terminal cols 24)))
-        (is (= caret native-caret) (str "the caret lands in a different cell at " cols " columns"))
-        (when caret
-          (is (= caret (.getCursorPosition hs)))
-          (is (= caret (.getCursorPosition ts))))))))
+            (expect (str/includes? text phrase)
+                    (str "missing " (pr-str phrase) " at " cols " columns"))
+            (expect (= (cell-grid html cols 24) (cell-grid terminal cols 24)))
+            (expect (= caret native-caret)
+                    (str "the caret lands in a different cell at " cols " columns"))
+            (when caret
+              (expect (= caret (.getCursorPosition hs)))
+              (expect (= caret (.getCursorPosition ts)))))))))
 
 (defn activity-live-records
   "Owned live receipt fixture for the production Activity renderer (#222)."
@@ -1305,79 +1377,82 @@
     :evidence []}])
 
 ;; #222, #235: sibling ACTIVITY and LIVE share alignment, hit targets and background.
-(deftest activity-live-sibling-grid-test
-  (doseq [cols
-          [40 80]
+(defdescribe
+  activity-live-sibling-grid-test
+  (it
+    "activity live sibling grid"
+    (doseq [cols
+            [40 80]
 
-          recorded?
-          [false true]]
+            recorded?
+            [false true]]
 
-    (with-open [html
-                (activity-review-terminal cols 50)
+      (with-open [html
+                  (activity-review-terminal cols 50)
 
-                terminal
-                (DefaultVirtualTerminal. (TerminalSize. cols 50))
+                  terminal
+                  (DefaultVirtualTerminal. (TerminalSize. cols 50))
 
-                hs
-                (doto (TerminalScreen. html) (.startScreen))
+                  hs
+                  (doto (TerminalScreen. html) (.startScreen))
 
-                ts
-                (doto (TerminalScreen. terminal) (.startScreen))]
+                  ts
+                  (doto (TerminalScreen. terminal) (.startScreen))]
 
-      (let [records
-            (cond-> (activity-live-records)
-              (not recorded?)
-              (dissoc :attachments))
+        (let [records
+              (cond-> (activity-live-records)
+                (not recorded?)
+                (dissoc :attachments))
 
-            rows
-            (activity-live-rows)]
+              rows
+              (activity-live-rows)]
 
-        (paint-activity-review! hs rows {} nil records)
-        (paint-activity-review! ts rows {} nil records)
-        (is (= (cell-grid html cols 50) (cell-grid terminal cols 50)))
-        (let [grid
-              (cell-grid terminal cols 50)
+          (paint-activity-review! hs rows {} nil records)
+          (paint-activity-review! ts rows {} nil records)
+          (expect (= (cell-grid html cols 50) (cell-grid terminal cols 50)))
+          (let [grid
+                (cell-grid terminal cols 50)
 
-              lines
-              (mapv #(apply str
-                       (map (fn [^com.googlecode.lanterna.TextCharacter cell]
-                              (.getCharacterString cell))
-                            %))
-                    grid)
+                lines
+                (mapv #(apply str
+                         (map (fn [^com.googlecode.lanterna.TextCharacter cell]
+                                (.getCharacterString cell))
+                              %))
+                      grid)
 
-              header-y
-              (first (keep-indexed #(when (str/includes? %2 "ACTIVITY") %1) lines))
+                header-y
+                (first (keep-indexed #(when (str/includes? %2 "ACTIVITY") %1) lines))
 
-              live-y
-              (first (keep-indexed #(when (str/includes? %2 "LIVE") %1) lines))
+                live-y
+                (first (keep-indexed #(when (str/includes? %2 "LIVE") %1) lines))
 
-              live-x
-              (.indexOf ^String (nth lines live-y) "LIVE")
+                live-x
+                (.indexOf ^String (nth lines live-y) "LIVE")
 
-              hit
-              (.lookup interactions/hit-map live-x live-y)]
+                hit
+                (.lookup interactions/hit-map live-x live-y)]
 
-          (is (< header-y live-y))
-          (is (= live-x (.indexOf ^String (nth lines header-y) "ACTIVITY")))
-          (is (str/blank? (nth lines (dec live-y))))
-          (let [kind
-                (if recorded? :artifact :live-reopen)
+            (expect (< header-y live-y))
+            (expect (= live-x (.indexOf ^String (nth lines header-y) "ACTIVITY")))
+            (expect (str/blank? (nth lines (dec live-y))))
+            (let [kind
+                  (if recorded? :artifact :live-reopen)
 
-                button
-                (first (filter #(= kind (:kind %)) (.current interactions/hit-map)))
+                  button
+                  (first (filter #(= kind (:kind %)) (.current interactions/hit-map)))
 
-                {:keys [row col width]}
-                (:bounds button)]
+                  {:keys [row col width]}
+                  (:bounds button)]
 
-            (is (not= kind (:kind hit)))
-            (is (= live-y row))
-            (is (= " Recorded " (subs (nth lines row) col (+ col width))))
-            (is (= button (.lookup interactions/hit-map col row))))
-          (doseq [y (range header-y (inc live-y))]
-            (is (= theme/code-block-bg
-                   (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
-                                        (get-in grid [y live-x])))))
-          (is (not-any? #(str/includes? % "┌─ Live view") lines)))))))
+              (expect (not= kind (:kind hit)))
+              (expect (= live-y row))
+              (expect (= " Recorded " (subs (nth lines row) col (+ col width))))
+              (expect (= button (.lookup interactions/hit-map col row))))
+            (doseq [y (range header-y (inc live-y))]
+              (expect (= theme/code-block-bg
+                         (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
+                                              (get-in grid [y live-x])))))
+            (expect (not-any? #(str/includes? % "┌─ Live view") lines))))))))
 
 (defn paint-disclosure-review!
   "Paint a compact receipt or the full nested nodes in the transient band."
@@ -1406,190 +1481,203 @@
     (.refresh screen)))
 
 ;; #219: only transient views expose nested nodes; both backends share their geometry.
-(deftest live-disclosure-html-native-parity-test
-  (try
-    (doseq [theme-id
-            (map keyword (shared-theme/available-theme-ids))
+(defdescribe
+  live-disclosure-html-native-parity-test
+  (it
+    "live disclosure html native parity"
+    (try
+      (doseq [theme-id
+              (map keyword (shared-theme/available-theme-ids))
 
-            cols
-            [40 80 120]
+              cols
+              [40 80 120]
 
-            recorded?
-            [false true]
+              recorded?
+              [false true]
 
-            inline?
-            [false true]]
+              inline?
+              [false true]]
 
-      (theme/apply-theme! theme-id)
-      (with-open [html
-                  (activity-review-terminal cols 32)
+        (theme/apply-theme! theme-id)
+        (with-open [html
+                    (activity-review-terminal cols 32)
 
-                  terminal
-                  (DefaultVirtualTerminal. (TerminalSize. cols 32))
+                    terminal
+                    (DefaultVirtualTerminal. (TerminalSize. cols 32))
 
-                  hs
-                  (doto (TerminalScreen. html) (.startScreen))
+                    hs
+                    (doto (TerminalScreen. html) (.startScreen))
 
-                  ts
-                  (doto (TerminalScreen. terminal) (.startScreen))]
+                    ts
+                    (doto (TerminalScreen. terminal) (.startScreen))]
 
-        (let [pane (live-fixture/disclosure-review-pane recorded?)]
-          (paint-disclosure-review! hs pane inline?)
-          (paint-disclosure-review! ts pane inline?)
-          (is (= (cell-grid html cols 32) (cell-grid terminal cols 32)))
-          (let [lines (mapv #(apply str
-                               (map (fn [^com.googlecode.lanterna.TextCharacter cell]
-                                      (.getCharacterString cell))
-                                    %))
-                            (cell-grid terminal cols 32))
-                col-of (fn [text]
-                         (some #(str/index-of % text) lines))]
-
-            (if inline?
-              (do (is (nil? (col-of "Pool state")))
-                  (is (nil? (col-of "Observed workers")))
-                  (is (nil? (col-of "Other checks")))
-                  (is (every? #(= :live-reopen (:kind %)) (.current interactions/hit-map))))
-              (do (is (= (+ 2 (long (col-of "▾ Pool state"))) (col-of "▾ Observed")))
-                  (is (= (+ 2 (long (col-of "▾ Observed"))) (col-of "monitor revision=42")))
-                  ;; #250: both backends keep the Search button on the log header.
-                  (is (some #(and (str/includes? % "▾ Observed") (str/includes? % " Search "))
-                            lines))
-                  (is (= (col-of "▾ Pool state") (col-of "Other checks")))))))))
-    (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
-
-(deftest live-link-grid-html-native-parity-test
-  ;; #221: one framed link group has identical cells and hit targets in both backends.
-  (try
-    (doseq [theme-id
-            (map keyword (shared-theme/available-theme-ids))
-
-            cols
-            [40 80 120]
-
-            recorded?
-            [false true]
-
-            inline?
-            [false true]]
-
-      (theme/apply-theme! theme-id)
-      (with-open [html
-                  (activity-review-terminal cols 32)
-
-                  terminal
-                  (DefaultVirtualTerminal. (TerminalSize. cols 32))
-
-                  hs
-                  (doto (TerminalScreen. html) (.startScreen))
-
-                  ts
-                  (doto (TerminalScreen. terminal) (.startScreen))]
-
-        (let [pane (live-fixture/link-grid-review-pane recorded?)]
-          (paint-disclosure-review! hs pane inline?)
-          (let [html-hits (.current interactions/hit-map)]
+          (let [pane (live-fixture/disclosure-review-pane recorded?)]
+            (paint-disclosure-review! hs pane inline?)
             (paint-disclosure-review! ts pane inline?)
-            (is (= html-hits (.current interactions/hit-map))))
-          (is (= (cell-grid html cols 32) (cell-grid terminal cols 32)))
-          (let [lines (mapv #(apply str
-                               (map (fn [^com.googlecode.lanterna.TextCharacter cell]
-                                      (.getCharacterString cell))
-                                    %))
-                            (cell-grid terminal cols 32))
-                text (str/join "\n" lines)]
+            (expect (= (cell-grid html cols 32) (cell-grid terminal cols 32)))
+            (let [lines (mapv #(apply str
+                                 (map (fn [^com.googlecode.lanterna.TextCharacter cell]
+                                        (.getCharacterString cell))
+                                      %))
+                              (cell-grid terminal cols 32))
+                  col-of (fn [text]
+                           (some #(str/index-of % text) lines))]
 
-            (if inline?
-              (do (is (not (str/includes? text "SUCCESS")))
-                  (is (every? #(= :live-reopen (:kind %)) (.current interactions/hit-map))))
-              (do (is (every? #(str/includes? text (str "Build " % " · SUCCESS")) (range 1 7)))
-                  (is (some #(str/includes? % "┌") lines))
-                  (is (some #(str/includes? % "└") lines))
-                  (when (>= (long cols) 80)
-                    (is (some #(and (str/includes? % "Build 1") (str/includes? % "Build 2"))
-                              lines)))))))))
-    (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
+              (if inline?
+                (do (expect (nil? (col-of "Pool state")))
+                    (expect (nil? (col-of "Observed workers")))
+                    (expect (nil? (col-of "Other checks")))
+                    (expect (every? #(= :live-reopen (:kind %)) (.current interactions/hit-map))))
+                (do (expect (= (+ 2 (long (col-of "▾ Pool state"))) (col-of "▾ Observed")))
+                    (expect (= (+ 2 (long (col-of "▾ Observed"))) (col-of "monitor revision=42")))
+                    ;; #250: both backends keep the Search button on the log header.
+                    (expect (some #(and (str/includes? % "▾ Observed") (str/includes? % " Search "))
+                                  lines))
+                    (expect (= (col-of "▾ Pool state") (col-of "Other checks")))))))))
+      (finally (theme/apply-theme! (keyword shared-theme/default-theme-id))))))
 
-(deftest compact-live-dividers-stay-in-the-transient
-  (try (doseq [theme-id
-               (map keyword (shared-theme/available-theme-ids))
+(defdescribe
+  live-link-grid-html-native-parity-test
+  (it "live link grid html native parity"
+      ;; #221: one framed link group has identical cells and hit targets in both backends.
+      (try
+        (doseq [theme-id
+                (map keyword (shared-theme/available-theme-ids))
 
-               cols
-               [40 80 120]
+                cols
+                [40 80 120]
 
-               recorded?
-               [false true]]
+                recorded?
+                [false true]
 
-         (theme/apply-theme! theme-id)
-         (with-open [html
-                     (activity-review-terminal cols 32)
+                inline?
+                [false true]]
 
-                     terminal
-                     (DefaultVirtualTerminal. (TerminalSize. cols 32))
+          (theme/apply-theme! theme-id)
+          (with-open [html
+                      (activity-review-terminal cols 32)
 
-                     hs
-                     (doto (TerminalScreen. html) (.startScreen))
+                      terminal
+                      (DefaultVirtualTerminal. (TerminalSize. cols 32))
 
-                     ts
-                     (doto (TerminalScreen. terminal) (.startScreen))]
+                      hs
+                      (doto (TerminalScreen. html) (.startScreen))
 
-           (let [pane (live-fixture/divider-review-pane recorded?)]
-             (paint-disclosure-review! hs pane true)
-             (paint-disclosure-review! ts pane true)
-             (is (= (cell-grid html cols 32) (cell-grid terminal cols 32)))
-             (is (= 1 (count (live-view/inline-entries pane cols))))
-             (is (= [:live-reopen] (mapv :kind (.current interactions/hit-map))))
-             (is (every? #(not= "─" (.getCharacterString ^com.googlecode.lanterna.TextCharacter %))
+                      ts
+                      (doto (TerminalScreen. terminal) (.startScreen))]
+
+            (let [pane (live-fixture/link-grid-review-pane recorded?)]
+              (paint-disclosure-review! hs pane inline?)
+              (let [html-hits (.current interactions/hit-map)]
+                (paint-disclosure-review! ts pane inline?)
+                (expect (= html-hits (.current interactions/hit-map))))
+              (expect (= (cell-grid html cols 32) (cell-grid terminal cols 32)))
+              (let [lines (mapv #(apply str
+                                   (map (fn [^com.googlecode.lanterna.TextCharacter cell]
+                                          (.getCharacterString cell))
+                                        %))
+                                (cell-grid terminal cols 32))
+                    text (str/join "\n" lines)]
+
+                (if inline?
+                  (do (expect (not (str/includes? text "SUCCESS")))
+                      (expect (every? #(= :live-reopen (:kind %)) (.current interactions/hit-map))))
+                  (do (expect (every? #(str/includes? text (str "Build " % " · SUCCESS"))
+                                      (range 1 7)))
+                      (expect (some #(str/includes? % "┌") lines))
+                      (expect (some #(str/includes? % "└") lines))
+                      (when (>= (long cols) 80)
+                        (expect (some #(and (str/includes? % "Build 1") (str/includes? % "Build 2"))
+                                      lines)))))))))
+        (finally (theme/apply-theme! (keyword shared-theme/default-theme-id))))))
+
+(defdescribe
+  compact-live-dividers-stay-in-the-transient
+  (it
+    "compact live dividers stay in the transient"
+    (try (doseq [theme-id
+                 (map keyword (shared-theme/available-theme-ids))
+
+                 cols
+                 [40 80 120]
+
+                 recorded?
+                 [false true]]
+
+           (theme/apply-theme! theme-id)
+           (with-open [html
+                       (activity-review-terminal cols 32)
+
+                       terminal
+                       (DefaultVirtualTerminal. (TerminalSize. cols 32))
+
+                       hs
+                       (doto (TerminalScreen. html) (.startScreen))
+
+                       ts
+                       (doto (TerminalScreen. terminal) (.startScreen))]
+
+             (let [pane (live-fixture/divider-review-pane recorded?)]
+               (paint-disclosure-review! hs pane true)
+               (paint-disclosure-review! ts pane true)
+               (expect (= (cell-grid html cols 32) (cell-grid terminal cols 32)))
+               (expect (= 1 (count (live-view/inline-entries pane cols))))
+               (expect (= [:live-reopen] (mapv :kind (.current interactions/hit-map))))
+               (expect (every?
+                         #(not= "─" (.getCharacterString ^com.googlecode.lanterna.TextCharacter %))
                          (mapcat identity (cell-grid terminal cols 32)))))))
-       (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
+         (finally (theme/apply-theme! (keyword shared-theme/default-theme-id))))))
 
-(deftest live-divider-html-native-parity-test
-  (try
-    (doseq [theme-id
-            (map keyword (shared-theme/available-theme-ids))
+(defdescribe
+  live-divider-html-native-parity-test
+  (it
+    "live divider html native parity"
+    (try
+      (doseq [theme-id
+              (map keyword (shared-theme/available-theme-ids))
 
-            cols
-            [40 80 120]
+              cols
+              [40 80 120]
 
-            recorded?
-            [false true]]
+              recorded?
+              [false true]]
 
-      (theme/apply-theme! theme-id)
-      (with-open [html
-                  (activity-review-terminal cols 32)
+        (theme/apply-theme! theme-id)
+        (with-open [html
+                    (activity-review-terminal cols 32)
 
-                  terminal
-                  (DefaultVirtualTerminal. (TerminalSize. cols 32))
+                    terminal
+                    (DefaultVirtualTerminal. (TerminalSize. cols 32))
 
-                  hs
-                  (doto (TerminalScreen. html) (.startScreen))
+                    hs
+                    (doto (TerminalScreen. html) (.startScreen))
 
-                  ts
-                  (doto (TerminalScreen. terminal) (.startScreen))]
+                    ts
+                    (doto (TerminalScreen. terminal) (.startScreen))]
 
-        (let [pane (live-fixture/divider-review-pane recorded?)]
-          (paint-disclosure-review! hs pane false)
-          (let [html-hits (.current interactions/hit-map)]
-            (paint-disclosure-review! ts pane false)
-            (is (= html-hits (.current interactions/hit-map)))
-            (is (not-any? #(#{"results-break" "review-break"} (:node-id %)) html-hits)))
-          (let [grid (cell-grid terminal cols 32)
-                rules (keep (fn [row]
-                              (let [glyph (fn [^com.googlecode.lanterna.TextCharacter cell]
-                                            (.getCharacterString cell))
-                                    text (apply str (map glyph row))]
+          (let [pane (live-fixture/divider-review-pane recorded?)]
+            (paint-disclosure-review! hs pane false)
+            (let [html-hits (.current interactions/hit-map)]
+              (paint-disclosure-review! ts pane false)
+              (expect (= html-hits (.current interactions/hit-map)))
+              (expect (not-any? #(#{"results-break" "review-break"} (:node-id %)) html-hits)))
+            (let [grid (cell-grid terminal cols 32)
+                  rules (keep (fn [row]
+                                (let [glyph (fn [^com.googlecode.lanterna.TextCharacter cell]
+                                              (.getCharacterString cell))
+                                      text (apply str (map glyph row))]
 
-                                ;; Section rules have right padding; outer dialog rails do not.
-                                (when (re-matches #"\s*(?:│\s*)?─+\s+(?:│\s*)?" text)
-                                  (filter #(= "─" (glyph %)) row))))
-                            grid)]
+                                  ;; Section rules have right padding; outer dialog rails do not.
+                                  (when (re-matches #"\s*(?:│\s*)?─+\s+(?:│\s*)?" text)
+                                    (filter #(= "─" (glyph %)) row))))
+                              grid)]
 
-            (is (= (cell-grid html cols 32) grid))
-            (is (= 2 (count rules)) "both section rules survive the available height")
-            (doseq [^com.googlecode.lanterna.TextCharacter cell (mapcat identity rules)]
-              (is (>= (#'theme-test/contrast-ratio
-                       (.getForegroundColor cell)
-                       (.getBackgroundColor cell))
-                      3.0)
-                  (str theme-id " divider contrast")))))))
-    (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
+              (expect (= (cell-grid html cols 32) grid))
+              (expect (= 2 (count rules)) "both section rules survive the available height")
+              (doseq [^com.googlecode.lanterna.TextCharacter cell (mapcat identity rules)]
+                (expect (>= (#'theme-test/contrast-ratio
+                             (.getForegroundColor cell)
+                             (.getBackgroundColor cell))
+                            3.0)
+                        (str theme-id " divider contrast")))))))
+      (finally (theme/apply-theme! (keyword shared-theme/default-theme-id))))))

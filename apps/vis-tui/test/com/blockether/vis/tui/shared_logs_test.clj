@@ -8,7 +8,7 @@
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.theme :as theme]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
+            [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna.screen TerminalScreen]
            [java.nio.file Files]
            [java.util Base64]))
@@ -72,44 +72,49 @@
       (.refresh screen)
       (+ top 3))))
 
-(deftest shared-logs-grid
-  (doseq [cols [40 80]]
-    (let [capture (cap/capture! {:cols cols
-                                 :rows 24
-                                 :paint! (fn [{:keys [screen]}]
-                                           (paint-shared-logs! screen))})
-          text (cap/frame-text capture)]
+(defdescribe shared-logs-grid
+             (it "shared logs grid"
+                 (doseq [cols [40 80]]
+                   (let [capture (cap/capture! {:cols cols
+                                                :rows 24
+                                                :paint! (fn [{:keys [screen]}]
+                                                          (paint-shared-logs! screen))})
+                         text (cap/frame-text capture)]
 
-      (is (nil? (:error capture)))
-      (is (str/includes? text "vis-diagnostics.jsonl.gz"))
-      (is (str/includes? text "vis-diagnostics.jsonl"))
-      (is (= 2
-             (count (filter #(= :attachment-remove (:kind %)) (.current interactions/hit-map))))))))
+                     (expect (nil? (:error capture)))
+                     (expect (str/includes? text "vis-diagnostics.jsonl.gz"))
+                     (expect (str/includes? text "vis-diagnostics.jsonl"))
+                     (expect (= 2
+                                (count (filter #(= :attachment-remove (:kind %))
+                                               (.current interactions/hit-map)))))))))
 
-(deftest shared-logs-paste-roundtrip
-  (let [dir
-        (Files/createTempDirectory "vis-shared-logs"
-                                   (make-array java.nio.file.attribute.FileAttribute 0))
+(defdescribe shared-logs-paste-roundtrip
+             (it "shared logs paste roundtrip"
+                 (let [dir
+                       (Files/createTempDirectory "vis-shared-logs"
+                                                  (make-array java.nio.file.attribute.FileAttribute
+                                                              0))
 
-        contract
-        {"enabled" true
-         "media_types" ["application/gzip" "application/x-ndjson"]
-         "max_files" 8
-         "max_file_bytes" 1024
-         "max_video_bytes" 1024
-         "max_audio_bytes" 1024}]
+                       contract
+                       {"enabled" true
+                        "media_types" ["application/gzip" "application/x-ndjson"]
+                        "max_files" 8
+                        "max_file_bytes" 1024
+                        "max_video_bytes" 1024
+                        "max_audio_bytes" 1024}]
 
-    (try (doseq [file log-files]
-           (let [path (.resolve dir ^String (:filename file))
-                 bytes (.decode (Base64/getDecoder) ^String (:base64 file))]
+                   (try (doseq [file log-files]
+                          (let [path (.resolve dir ^String (:filename file))
+                                bytes (.decode (Base64/getDecoder) ^String (:base64 file))]
 
-             (Files/write path bytes (make-array java.nio.file.OpenOption 0))
-             (let [out (intake/file-drop contract [] (str "'" path "'") (str dir))]
-               (is (:handled? out))
-               (is (empty? (:rejected out)))
-               (is (= (:media-type file) (:media-type (first (:added out)))))
-               (is (str/includes? (chat/user-request-with-staged-attachments "" (:added out))
-                                  (:filename file))))))
-         (finally (doseq [file log-files]
-                    (Files/deleteIfExists (.resolve dir ^String (:filename file))))
-                  (Files/deleteIfExists dir)))))
+                            (Files/write path bytes (make-array java.nio.file.OpenOption 0))
+                            (let [out (intake/file-drop contract [] (str "'" path "'") (str dir))]
+                              (expect (:handled? out))
+                              (expect (empty? (:rejected out)))
+                              (expect (= (:media-type file) (:media-type (first (:added out)))))
+                              (expect (str/includes?
+                                        (chat/user-request-with-staged-attachments "" (:added out))
+                                        (:filename file))))))
+                        (finally (doseq [file log-files]
+                                   (Files/deleteIfExists (.resolve dir ^String (:filename file))))
+                                 (Files/deleteIfExists dir))))))

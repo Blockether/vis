@@ -11,7 +11,7 @@
             [com.blockether.vis.tui.state-test :as state-test]
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.virtual :as virtual]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
+            [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna TerminalSize]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
@@ -73,119 +73,125 @@
         assistant-top
         (nth (:offsets layout) 1)]
 
-    (is (number? row))
+    (expect (number? row))
     (state/dispatch [:set-scroll (+ assistant-top row)])
     (paint! terminal)))
 
 (defn- assert-following
   [layout]
-  (is (= :follow (get-in @state/app-db [:scroll :mode])))
-  (is (= (:eff-scroll layout) (max 0 (- (:total-h layout) (:inner-h layout))))))
+  (expect (= :follow (get-in @state/app-db [:scroll :mode])))
+  (expect (= (:eff-scroll layout) (max 0 (- (:total-h layout) (:inner-h layout))))))
 
-(deftest terminal-handoff-keeps-the-painted-trace
-  ;; #233: loading stops before the worker replaces the pending assistant. The
-  ;; parked terminal trace must paint throughout that real intermediate state.
-  (doseq [[source status]
-          [[:terminal :cancelled] [:terminal :completed] [:cancel-ack :cancelled]]
+(defdescribe
+  terminal-handoff-keeps-the-painted-trace
+  (it "terminal handoff keeps the painted trace"
+      ;; #233: loading stops before the worker replaces the pending assistant. The
+      ;; parked terminal trace must paint throughout that real intermediate state.
+      (doseq [[source status]
+              [[:terminal :cancelled] [:terminal :completed] [:cancel-ack :cancelled]]
 
-          follow?
-          [false true]]
+              follow?
+              [false true]]
 
-    (virtual/invalidate-heights!)
-    (render/invalidate-cache!)
-    (with-open [terminal
-                (DefaultVirtualTerminal. (TerminalSize. 100 44))
+        (virtual/invalidate-heights!)
+        (render/invalidate-cache!)
+        (with-open [terminal
+                    (DefaultVirtualTerminal. (TerminalSize. 100 44))
 
-                ts
-                (doto (TerminalScreen. terminal) (.startScreen))]
+                    ts
+                    (doto (TerminalScreen. terminal) (.startScreen))]
 
-      (binding [interactions/hit-map (interactions/create-hit-map)]
-        (with-redefs [state/app-db (atom (lifecycle-db nil))
-                      client/get-router (constantly nil)
-                      client/notify! (fn [& _])
-                      client/worker-future (fn [_ _]
-                                             (future nil))
-                      timg/images-protocol (constantly nil)]
+          (binding [interactions/hit-map (interactions/create-hit-map)]
+            (with-redefs [state/app-db (atom (lifecycle-db nil))
+                          client/get-router (constantly nil)
+                          client/notify! (fn [& _])
+                          client/worker-future (fn [_ _]
+                                                 (future nil))
+                          timg/images-protocol (constantly nil)]
 
-          (let [before (if follow? (paint! ts) (park-at-checkpoint! ts))
-                row-before (painted-row ts checkpoint)
-                code-row-before (painted-row ts "CODE")]
+              (let [before (if follow? (paint! ts) (park-at-checkpoint! ts))
+                    row-before (painted-row ts checkpoint)
+                    code-row-before (painted-row ts "CODE")]
 
-            (when-not follow? (is (number? row-before)))
-            (if (= :cancel-ack source)
-              (do
-                ;; Cancel ACK parks only :trace, without the terminal event's :status.
-                (swap! state/app-db assoc :cancelling? true :cancelling-at-ms 1000)
-                (state/dispatch [:gateway-cancel-result 1000 {:status "cancelling"}])
-                (is (nil? (get-in @state/app-db [:messages 1 :terminal-pending :status]))))
-              (#'state-test/sync-terminal-without-timer! {:turn-id "t1" :status (name status)}))
-            (is (false? (:loading? @state/app-db)))
-            (is (nil? (get-in @state/app-db [:messages 1 :traces])))
-            (is (= 12 (count (get-in @state/app-db [:messages 1 :terminal-pending :trace]))))
-            (let [pending (paint! ts)
-                  pending-again (paint! ts)]
+                (when-not follow? (expect (number? row-before)))
+                (if (= :cancel-ack source)
+                  (do
+                    ;; Cancel ACK parks only :trace, without the terminal event's :status.
+                    (swap! state/app-db assoc :cancelling? true :cancelling-at-ms 1000)
+                    (state/dispatch [:gateway-cancel-result 1000 {:status "cancelling"}])
+                    (expect (nil? (get-in @state/app-db [:messages 1 :terminal-pending :status]))))
+                  (#'state-test/sync-terminal-without-timer! {:turn-id "t1" :status (name status)}))
+                (expect (false? (:loading? @state/app-db)))
+                (expect (nil? (get-in @state/app-db [:messages 1 :traces])))
+                (expect (= 12
+                           (count (get-in @state/app-db [:messages 1 :terminal-pending :trace]))))
+                (let [pending (paint! ts)
+                      pending-again (paint! ts)]
 
-              (is (= (:eff-scroll pending) (:eff-scroll pending-again)))
-              (is (number? (painted-row ts "CODE")))
-              (is (> (:total-h pending) (:inner-h pending)))
-              (is (number? (painted-row ts (if follow? "Reasoning checkpoint 11" checkpoint))))
-              (if follow?
-                (assert-following pending)
-                (do (is (= row-before (painted-row ts checkpoint)))
-                    (is (= code-row-before (painted-row ts "CODE")))
-                    (is (= (:eff-scroll before) (:eff-scroll pending)))))
-              (if (= :cancel-ack source)
-                (state/dispatch [:message-received nil ""
-                                 {:client-turn-id "c1" :status :cancelled}])
-                (#'state-test/settle-marked-terminal!))
-              (is (false? (boolean (get-in @state/app-db [:messages 1 :pending?]))))
-              (let [settled (paint! ts)
-                    again (paint! ts)]
+                  (expect (= (:eff-scroll pending) (:eff-scroll pending-again)))
+                  (expect (number? (painted-row ts "CODE")))
+                  (expect (> (:total-h pending) (:inner-h pending)))
+                  (expect (number? (painted-row ts
+                                                (if follow? "Reasoning checkpoint 11" checkpoint))))
+                  (if follow?
+                    (assert-following pending)
+                    (do (expect (= row-before (painted-row ts checkpoint)))
+                        (expect (= code-row-before (painted-row ts "CODE")))
+                        (expect (= (:eff-scroll before) (:eff-scroll pending)))))
+                  (if (= :cancel-ack source)
+                    (state/dispatch [:message-received nil ""
+                                     {:client-turn-id "c1" :status :cancelled}])
+                    (#'state-test/settle-marked-terminal!))
+                  (expect (false? (boolean (get-in @state/app-db [:messages 1 :pending?]))))
+                  (let [settled (paint! ts)
+                        again (paint! ts)]
 
-                (is (= (:eff-scroll settled) (:eff-scroll again)))
-                (if follow?
-                  (do (assert-following settled) (assert-following again))
-                  (do (is (= row-before (painted-row ts checkpoint)))
-                      (is (= code-row-before (painted-row ts "CODE")))))))))))))
+                    (expect (= (:eff-scroll settled) (:eff-scroll again)))
+                    (if follow?
+                      (do (assert-following settled) (assert-following again))
+                      (do (expect (= row-before (painted-row ts checkpoint)))
+                          (expect (= code-row-before (painted-row ts "CODE"))))))))))))))
 
-(deftest retained-live-view-keeps-the-reading-position
-  ;; #233, #248: Live keeps a compact sibling receipt through settlement. Closing
-  ;; it must preserve transcript height and the screen coordinates of code/reasoning.
-  (doseq [reason
-          [:cancelled :completed]
+(defdescribe
+  retained-live-view-keeps-the-reading-position
+  (it "retained live view keeps the reading position"
+      ;; #233, #248: Live keeps a compact sibling receipt through settlement. Closing
+      ;; it must preserve transcript height and the screen coordinates of code/reasoning.
+      (doseq [reason
+              [:cancelled :completed]
 
-          follow?
-          [false true]]
+              follow?
+              [false true]]
 
-    (virtual/invalidate-heights!)
-    (render/invalidate-cache!)
-    (with-open [terminal
-                (DefaultVirtualTerminal. (TerminalSize. 100 44))
+        (virtual/invalidate-heights!)
+        (render/invalidate-cache!)
+        (with-open [terminal
+                    (DefaultVirtualTerminal. (TerminalSize. 100 44))
 
-                ts
-                (doto (TerminalScreen. terminal) (.startScreen))]
+                    ts
+                    (doto (TerminalScreen. terminal) (.startScreen))]
 
-      (binding [interactions/hit-map (interactions/create-hit-map)]
-        (with-redefs [state/app-db (atom (lifecycle-db (active-live/review-pane)))
-                      client/get-router (constantly nil)
-                      timg/images-protocol (constantly nil)]
+          (binding [interactions/hit-map (interactions/create-hit-map)]
+            (with-redefs [state/app-db (atom (lifecycle-db (active-live/review-pane)))
+                          client/get-router (constantly nil)
+                          timg/images-protocol (constantly nil)]
 
-          (let [before (if follow? (paint! ts) (park-at-checkpoint! ts))
-                row-before (painted-row ts checkpoint)
-                code-row-before (painted-row ts "CODE")
-                view-id (lv/view-id (first (:live-views @state/app-db)))]
+              (let [before (if follow? (paint! ts) (park-at-checkpoint! ts))
+                    row-before (painted-row ts checkpoint)
+                    code-row-before (painted-row ts "CODE")
+                    view-id (lv/view-id (first (:live-views @state/app-db)))]
 
-            (when-not follow? (is (number? row-before)))
-            (state/dispatch [:live-view-close view-id {:reason reason}])
-            (is (true? (:loading? @state/app-db)))
-            (is (lv/dormant? (first (:live-views @state/app-db))))
-            (let [after (paint! ts)
-                  again (paint! ts)]
+                (when-not follow? (expect (number? row-before)))
+                (state/dispatch [:live-view-close view-id {:reason reason}])
+                (expect (true? (:loading? @state/app-db)))
+                (expect (lv/dormant? (first (:live-views @state/app-db))))
+                (let [after (paint! ts)
+                      again (paint! ts)]
 
-              (is (number? (painted-row ts "CODE")))
-              (is (= (:total-h after) (:total-h before)))
-              (is (= (:eff-scroll after) (:eff-scroll again)))
-              (if follow?
-                (do (assert-following after) (assert-following again))
-                (do (is (= row-before (painted-row ts checkpoint)))
-                    (is (= code-row-before (painted-row ts "CODE"))))))))))))
+                  (expect (number? (painted-row ts "CODE")))
+                  (expect (= (:total-h after) (:total-h before)))
+                  (expect (= (:eff-scroll after) (:eff-scroll again)))
+                  (if follow?
+                    (do (assert-following after) (assert-following again))
+                    (do (expect (= row-before (painted-row ts checkpoint)))
+                        (expect (= code-row-before (painted-row ts "CODE")))))))))))))

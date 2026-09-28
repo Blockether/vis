@@ -5,38 +5,39 @@
             [com.blockether.vis.internal.foundation.core]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.test-python-context :as tpc]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
+            [lazytest.core :refer [defdescribe expect it]]))
 
-(deftest compact-tool-refusals-test
-  (tpc/with-own
-    [ctx (extension/builtin-sandbox-bindings (constantly {}))]
-    (doseq [[code expected]
-            [["cat({})" "cat: use cat(path, start?, end?); not an options map."]
-             ["patch({})" "patch: wrong number of arguments; see doc(\"patch\")."]
-             ["patch({}, [])" "patch: use patch(path, edits); see doc(\"patch\") for edit keys."]
-             ["grep({'query': 'x', 'paths': ['resources'], 'wat': True})"
-              "grep: unknown keys: wat. See doc(\"grep\")."]
-             ["await shell('')" "shell: command required; use shell(command)."]
-             ["await _shell_logs('missing-handle')"
-              "shell: unknown id 'missing-handle'; use the handle returned by shell()."]
-             ["await draft_approve('test')"
-              "draft_approve(): not in a draft; use draft_create(\"name\") first."]
-             ["await council.read()"
-              "Council requires a persisted session with a project or workspace"]]]
-      (testing code
+(defdescribe
+  compact-tool-refusals-test
+  (it
+    "compact tool refusals"
+    (tpc/with-own
+      [ctx (extension/builtin-sandbox-bindings (constantly {}))]
+      (doseq [[code expected]
+              [["cat({})" "cat: use cat(path, start?, end?); not an options map."]
+               ["patch({})" "patch: wrong number of arguments; see doc(\"patch\")."]
+               ["patch({}, [])" "patch: use patch(path, edits); see doc(\"patch\") for edit keys."]
+               ["grep({'query': 'x', 'paths': ['resources'], 'wat': True})"
+                "grep: unknown keys: wat. See doc(\"grep\")."]
+               ["await shell('')" "shell: command required; use shell(command)."]
+               ["await _shell_logs('missing-handle')"
+                "shell: unknown id 'missing-handle'; use the handle returned by shell()."]
+               ["await draft_approve('test')"
+                "draft_approve(): not in a draft; use draft_create(\"name\") first."]
+               ["await council.read()"
+                "Council requires a persisted session with a project or workspace"]]]
         (let [out (ep/run-python-block ctx (str code "\nprint('unreachable')") "t1/i1")]
-          (is (= expected (get-in out [:error :message])))
-          (is (= :python/host (get-in out [:error :data :phase])))
-          (is (not (str/includes? (str (:stdout out)) "unreachable"))))))
-    ;; CI checkout paths differ in length across operating systems.
-    (doseq [missing-path
-            ["resources/__vis_missing_file__"
-             (str "resources/" (apply str (repeat 160 "x")) "/__vis_missing_file__")]
+          (expect (= expected (get-in out [:error :message])) code)
+          (expect (= :python/host (get-in out [:error :data :phase])) code)
+          (expect (not (str/includes? (str (:stdout out)) "unreachable")) code)))
+      ;; CI checkout paths differ in length across operating systems.
+      (doseq [missing-path
+              ["resources/__vis_missing_file__"
+               (str "resources/" (apply str (repeat 160 "x")) "/__vis_missing_file__")]
 
-            tool
-            ["cat" "patch"]]
+              tool
+              ["cat" "patch"]]
 
-      (testing (str tool " missing file: " missing-path)
         (let [code
               (str tool "('" missing-path "'" (when (= tool "patch") ", []") ")")
 
@@ -50,5 +51,7 @@
               (second (re-matches #"File not found: ([^\r\n]+); use grep to find the path\."
                                   message))]
 
-          (is (= :python/host (get-in out [:error :data :phase])))
-          (is (and reported-path (str/ends-with? reported-path missing-path)) message))))))
+          (expect (= :python/host (get-in out [:error :data :phase]))
+                  (str tool " missing file: " missing-path))
+          (expect (and reported-path (str/ends-with? reported-path missing-path))
+                  (str tool " missing file: " missing-path "\n" message)))))))

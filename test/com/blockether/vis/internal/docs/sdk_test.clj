@@ -5,83 +5,91 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
+            [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io ByteArrayOutputStream]
            [javax.tools ToolProvider]))
 
-(deftest java-sdk-guide-compiles-test
-  (let [document
-        (slurp (io/resource "vis-docs/jvm-sdk.md"))
+(defdescribe
+  java-sdk-guide-compiles-test
+  (it
+    "java sdk guide compiles"
+    (let [document
+          (slurp (io/resource "vis-docs/jvm-sdk.md"))
 
-        source
-        (second (re-find #"(?s)```java\n// VisExample.java\n(.*?)\n```" document))
+          source
+          (second (re-find #"(?s)```java\n// VisExample.java\n(.*?)\n```" document))
 
-        directory
-        (fs/create-temp-dir {:prefix "vis-java-guide-"})
+          directory
+          (fs/create-temp-dir {:prefix "vis-java-guide-"})
 
-        source-file
-        (fs/file directory "VisExample.java")
+          source-file
+          (fs/file directory "VisExample.java")
 
-        compiler
-        (ToolProvider/getSystemJavaCompiler)]
+          compiler
+          (ToolProvider/getSystemJavaCompiler)]
 
-    (try (is (some? source) "The guide must keep its runnable Java example")
-         (is (some? compiler) "The JVM guide requires a JDK, not a JRE")
-         (when (and source compiler)
-           (spit source-file source)
-           (with-open [errors (ByteArrayOutputStream.)]
-             (is (= {:exit 0 :diagnostics ""}
-                    {:exit (.run compiler
-                                 nil
-                                 nil
-                                 errors
-                                 (into-array String
-                                             ["-classpath" (System/getProperty "java.class.path")
-                                              "-d" (str directory) (str source-file)]))
-                     :diagnostics (.toString errors "UTF-8")})))
-           (doseq [[_ function-name] (re-seq #"api\(\"([^\"]+)\"\)" source)]
-             (let [v (ns-resolve 'com.blockether.vis.core (symbol function-name))]
-               (is (some? v) (str "Missing public API: " function-name))
-               (is (not (:private (meta v))) function-name))))
-         (finally (fs/delete-tree directory)))))
+      (try (expect (some? source) "The guide must keep its runnable Java example")
+           (expect (some? compiler) "The JVM guide requires a JDK, not a JRE")
+           (when (and source compiler)
+             (spit source-file source)
+             (with-open [errors (ByteArrayOutputStream.)]
+               (expect (= {:exit 0 :diagnostics ""}
+                          {:exit (.run compiler
+                                       nil
+                                       nil
+                                       errors
+                                       (into-array String
+                                                   ["-classpath"
+                                                    (System/getProperty "java.class.path") "-d"
+                                                    (str directory) (str source-file)]))
+                           :diagnostics (.toString errors "UTF-8")})))
+             (doseq [[_ function-name] (re-seq #"api\(\"([^\"]+)\"\)" source)]
+               (let [v (ns-resolve 'com.blockether.vis.core (symbol function-name))]
+                 (expect (some? v) (str "Missing public API: " function-name))
+                 (expect (not (:private (meta v))) function-name))))
+           (finally (fs/delete-tree directory))))))
 
-(deftest jvm-sdk-guide-published-dependencies-test
-  (let [document
-        (slurp (io/resource "vis-docs/jvm-sdk.md"))
+(defdescribe jvm-sdk-guide-published-dependencies-test
+             (it "jvm sdk guide published dependencies"
+                 (let [document
+                       (slurp (io/resource "vis-docs/jvm-sdk.md"))
 
-        source
-        (second (re-find #"(?s)```edn\n(.*?)\n```" document))
+                       source
+                       (second (re-find #"(?s)```edn\n(.*?)\n```" document))
 
-        dependencies
-        (when source (edn/read-string source))
+                       dependencies
+                       (when source (edn/read-string source))
 
-        library
-        (get-in dependencies [:deps 'com.blockether/vis])]
+                       library
+                       (get-in dependencies [:deps 'com.blockether/vis])]
 
-    (is (some? source) "The guide must keep its runnable deps.edn example")
-    (is (= #{:mvn/version} (set (keys library))))
-    (is (not (str/blank? (:mvn/version library))))
-    (is (= (:mvn/repos (edn/read-string (slurp "deps.edn"))) (:mvn/repos dependencies))
-        "tools.deps does not inherit Maven repositories from dependencies")))
+                   (expect (some? source) "The guide must keep its runnable deps.edn example")
+                   (expect (= #{:mvn/version} (set (keys library))))
+                   (expect (not (str/blank? (:mvn/version library))))
+                   (expect (= (:mvn/repos (edn/read-string (slurp "deps.edn")))
+                              (:mvn/repos dependencies))
+                           "tools.deps does not inherit Maven repositories from dependencies"))))
 
-(deftest native-build-guide-is-for-jvm-extension-authors-test
-  (let [document
-        (slurp (io/resource "vis-docs/jvm-native-image.md"))
+(defdescribe
+  native-build-guide-is-for-jvm-extension-authors-test
+  (it "native build guide is for jvm extension authors"
+      (let [document
+            (slurp (io/resource "vis-docs/jvm-native-image.md"))
 
-        site
-        (edn/read-string (slurp (io/resource "vis-docs/site.edn")))
+            site
+            (edn/read-string (slurp (io/resource "vis-docs/site.edn")))
 
-        sections
-        (for [{:keys [section pages]}
-              (:nav site)
+            sections
+            (for [{:keys [section pages]}
+                  (:nav site)
 
-              :when (some #(= "jvm-native-image" (:page %)) pages)]
+                  :when (some #(= "jvm-native-image" (:page %)) pages)]
 
-          section)]
+              section)]
 
-    (is (= ["Extensions"] (vec sections)))
-    (is (str/starts-with? document "# Native builds for Java and Clojure extensions"))
-    (is (str/includes? document "not a drop-in JAR plugin system"))
-    (is (str/includes? document "You do **not** need a native build to use the Python SDK"))
-    (is (str/includes? document "resources/META-INF/vis/manifest.edn"))
-    (is (str/includes? document "clojure -M:test-native"))))
+        (expect (= ["Extensions"] (vec sections)))
+        (expect (str/starts-with? document "# Native builds for Java and Clojure extensions"))
+        (expect (str/includes? document "not a drop-in JAR plugin system"))
+        (expect (str/includes? document "You do **not** need a native build to use the Python SDK"))
+        (expect (str/includes? document "resources/META-INF/vis/manifest.edn"))
+        (expect (str/includes? document "clojure -M:test-native")))))

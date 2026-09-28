@@ -4,91 +4,95 @@
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
+            [lazytest.core :refer [defdescribe expect it]]))
 
 (h/use-mem-store! {"subagents" false})
 
-(deftest independent-peers-wake-on-explicit-ping-test
-  ;; Regression: an explicit ping stopped resuming an idle peer once every wake
-  ;; required an experimental subagent team.
-  (let [db
-        (h/store)
+(defdescribe
+  independent-peers-wake-on-explicit-ping-test
+  (it "independent peers wake on explicit ping"
+      ;; Regression: an explicit ping stopped resuming an idle peer once every wake
+      ;; required an experimental subagent team.
+      (let [db
+            (h/store)
 
-        gid
-        (str (:id (ps/db-create-project! db {:name "Leaders"})))
+            gid
+            (str (:id (ps/db-create-project! db {:name "Leaders"})))
 
-        a
-        (str (h/store-session! db {:channel :api}))
+            a
+            (str (h/store-session! db {:channel :api}))
 
-        b
-        (str (h/store-session! db {:channel :api}))
+            b
+            (str (h/store-session! db {:channel :api}))
 
-        fleet
-        (atom {a {:activation-id "a" :group-id gid}})
+            fleet
+            (atom {a {:activation-id "a" :group-id gid}})
 
-        wakes
-        (atom [])
+            wakes
+            (atom [])
 
-        actor
-        {:session-id a :activation-id "a" :source "host"}]
+            actor
+            {:session-id a :activation-id "a" :source "host"}]
 
-    (doseq [sid [a b]]
-      (ps/db-set-session-project! db sid gid))
-    (with-redefs-fn {#'toggles/enabled? #(not= "subagents" %)
-                     (ns-resolve 'com.blockether.vis.internal.council.core 'runtime-waker)
-                     (atom {:eligible? (constantly true)
-                            :wake! (fn [_ sid _]
-                                     (swap! wakes conj sid))})}
-      (fn []
-        (let [request (council/publish! db
-                                        #(deref fleet)
-                                        actor
-                                        {:kind "coordination"
-                                         :content "Existing findings?"
-                                         :ping [b]
-                                         :reply_required true})]
-          (is (= [b] @wakes) "An explicit ping resumes an idle peer of the group")
-          (is (not= "unavailable" (get-in request [:replies 0 :state])))
-          (reset! wakes [])
-          ;; The woken peer answers its requester after that requester has gone idle.
-          (swap! fleet assoc b {:activation-id "b" :group-id gid :wake? true})
-          (swap! fleet dissoc a)
-          (council/publish!
+        (doseq [sid [a b]]
+          (ps/db-set-session-project! db sid gid))
+        (with-redefs-fn {#'toggles/enabled? #(not= "subagents" %)
+                         (ns-resolve 'com.blockether.vis.internal.council.core 'runtime-waker)
+                         (atom {:eligible? (constantly true)
+                                :wake! (fn [_ sid _]
+                                         (swap! wakes conj sid))})}
+          (fn []
+            (let [request (council/publish! db
+                                            #(deref fleet)
+                                            actor
+                                            {:kind "coordination"
+                                             :content "Existing findings?"
+                                             :ping [b]
+                                             :reply_required true})]
+              (expect (= [b] @wakes) "An explicit ping resumes an idle peer of the group")
+              (expect (not= "unavailable" (get-in request [:replies 0 :state])))
+              (reset! wakes [])
+              ;; The woken peer answers its requester after that requester has gone idle.
+              (swap! fleet assoc b {:activation-id "b" :group-id gid :wake? true})
+              (swap! fleet dissoc a)
+              (council/publish!
+                db
+                #(deref fleet)
+                {:session-id b :activation-id "b" :source "host"}
+                {:kind "informational" :content "Findings" :reply_to (:entry_id request)})
+              (expect (= [a] @wakes) "A reply reaches a requester that has gone idle")))))))
+
+(defdescribe
+  council-turns-do-not-count-as-human-answers-test
+  (it "council turns do not count as human answers"
+      ;; Regression: unread badges counted settled Council turns as new human answers.
+      (let [db
+            (h/store)
+
+            sid
+            (h/store-session! db {:channel :api})
+
+            entry
+            (ps/db-council-insert! db
+                                   {:group_id (council/default-group db sid)
+                                    :author_sid (str sid)
+                                    :activation_id "fixture"
+                                    :source "host"
+                                    :kind "coordination"
+                                    :title "Work"
+                                    :content "Work"
+                                    :created_at 1
+                                    :idempotency_key "seed"
+                                    :fingerprint "seed"}
+                                   []
+                                   false)]
+
+        (doseq [[kind status] [[:user :success] [:council :success] [:user :running]]]
+          (ps/db-store-session-turn!
             db
-            #(deref fleet)
-            {:session-id b :activation-id "b" :source "host"}
-            {:kind "informational" :content "Findings" :reply_to (:entry_id request)})
-          (is (= [a] @wakes) "A reply reaches a requester that has gone idle"))))))
-
-(deftest council-turns-do-not-count-as-human-answers-test
-  ;; Regression: unread badges counted settled Council turns as new human answers.
-  (let [db
-        (h/store)
-
-        sid
-        (h/store-session! db {:channel :api})
-
-        entry
-        (ps/db-council-insert! db
-                               {:group_id (council/default-group db sid)
-                                :author_sid (str sid)
-                                :activation_id "fixture"
-                                :source "host"
-                                :kind "coordination"
-                                :title "Work"
-                                :content "Work"
-                                :created_at 1
-                                :idempotency_key "seed"
-                                :fingerprint "seed"}
-                               []
-                               false)]
-
-    (doseq [[kind status] [[:user :success] [:council :success] [:user :running]]]
-      (ps/db-store-session-turn!
-        db
-        (cond-> {:parent-session-id sid :user-request "Work" :request-kind kind :status status}
-          (= :council kind)
-          (assoc :council-entry-id (get-in entry [:entry :entry_id])))))
-    (is (= 3 (:turn-count (ps/db-session-turn-stats db sid))))
-    (is (= 1 (:answer-count (ps/db-session-turn-stats db sid))))
-    (is (= 1 (get-in (ps/db-session-turn-stats db) [(str sid) :answer-count])))))
+            (cond-> {:parent-session-id sid :user-request "Work" :request-kind kind :status status}
+              (= :council kind)
+              (assoc :council-entry-id (get-in entry [:entry :entry_id])))))
+        (expect (= 3 (:turn-count (ps/db-session-turn-stats db sid))))
+        (expect (= 1 (:answer-count (ps/db-session-turn-stats db sid))))
+        (expect (= 1 (get-in (ps/db-session-turn-stats db) [(str sid) :answer-count]))))))

@@ -12,7 +12,7 @@
             [com.blockether.vis.internal.gateway.provider-auth-test :as auth-test]
             [com.blockether.vis.internal.provider.limits :as limits]
             [com.blockether.vis.internal.provider.vendor.openai-codex :as codex]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
+            [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- with-codex-backend
   [f]
@@ -49,15 +49,16 @@
 
                     http/get
                     (fn [url _]
-                      (is (= "https://chatgpt.com/backend-api/wham/usage" url))
+                      (expect (= "https://chatgpt.com/backend-api/wham/usage" url))
                       {:status 200
                        :body (json/write-json-str {:rate_limit_reset_credits {:available_count
                                                                               @remaining}})})
 
                     http/post
                     (fn [url opts]
-                      (is (= "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
-                             url))
+                      (expect
+                        (= "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
+                           url))
                       (let [key
                             (get (json/read-json (:body opts)) "redeem_request_id")
 
@@ -84,61 +85,70 @@
                                   {:body body :timeout-ms 3000})]
     {:status (:status response) :json (wire/parse-json (:body response))}))
 
-(deftest read-confirm-consume-refresh-and-lost-response-retry
-  (with-codex-backend
-    (fn [{:keys [remaining calls lose-response?]}]
-      (let [report
-            (client/provider-limits :openai-codex)
+(defdescribe
+  read-confirm-consume-refresh-and-lost-response-retry
+  (it "read confirm consume refresh and lost response retry"
+      (with-codex-backend
+        (fn [{:keys [remaining calls lose-response?]}]
+          (let [report
+                (client/provider-limits :openai-codex)
 
-            key
-            "a11fd916-28a8-4b38-842d-37cdb463d552"]
+                key
+                "a11fd916-28a8-4b38-842d-37cdb463d552"]
 
-        (is (contract-provider/report-valid? report))
-        (is (= {:status :ok :available-count 2 :account-id "test-account"}
-               (get-in report [:dynamic :reset-credits])))
-        (is (empty? @calls) "reading never consumes a reset")
-        (reset! lose-response? true)
-        (let [failed (request-reset {:account_id "test-account" :idempotency_key key})]
-          (is (= 502 (:status failed)))
-          (is (not (.contains (pr-str failed) "test-private-upstream-response"))))
-        (is (= 1 @remaining))
-        (is (= {:outcome "already_redeemed"}
-               (client/consume-provider-reset-credit! :openai-codex "test-account" key)))
-        (is (= [key key] @calls))
-        (is (= 1 @remaining))
-        (is (= 1
-               (get-in (client/provider-limits :openai-codex)
-                       [:dynamic :reset-credits :available-count])))
-        (is (= {:outcome "reset"}
-               (client/consume-provider-reset-credit! :openai-codex
-                                                      "test-account"
-                                                      "5df9a275-fde7-435e-977d-40b3a9a20de9")))
-        (is (zero? (get-in (client/provider-limits :openai-codex)
-                           [:dynamic :reset-credits :available-count])))))))
+            (expect (contract-provider/report-valid? report))
+            (expect (= {:status :ok :available-count 2 :account-id "test-account"}
+                       (get-in report [:dynamic :reset-credits])))
+            (expect (empty? @calls) "reading never consumes a reset")
+            (reset! lose-response? true)
+            (let [failed (request-reset {:account_id "test-account" :idempotency_key key})]
+              (expect (= 502 (:status failed)))
+              (expect (not (.contains (pr-str failed) "test-private-upstream-response"))))
+            (expect (= 1 @remaining))
+            (expect (= {:outcome "already_redeemed"}
+                       (client/consume-provider-reset-credit! :openai-codex "test-account" key)))
+            (expect (= [key key] @calls))
+            (expect (= 1 @remaining))
+            (expect (= 1
+                       (get-in (client/provider-limits :openai-codex)
+                               [:dynamic :reset-credits :available-count])))
+            (expect (= {:outcome "reset"}
+                       (client/consume-provider-reset-credit!
+                         :openai-codex
+                         "test-account"
+                         "5df9a275-fde7-435e-977d-40b3a9a20de9")))
+            (expect (zero? (get-in (client/provider-limits :openai-codex)
+                                   [:dynamic :reset-credits :available-count]))))))))
 
-(deftest malformed-requests-and-account-switches-never-reach-codex
-  (with-codex-backend
-    (fn [{:keys [calls account]}]
-      (doseq [body [{} {:account_id "test-account" :idempotency_key ""}
-                    {:account_id [] :idempotency_key "attempt"}]]
-        (is (= 400 (:status (request-reset body)))))
-      (reset! account "other-account")
-      (is (= 409 (:status (request-reset {:account_id "test-account" :idempotency_key "attempt"}))))
-      (is (empty? @calls)))))
+(defdescribe malformed-requests-and-account-switches-never-reach-codex
+             (it "malformed requests and account switches never reach codex"
+                 (with-codex-backend
+                   (fn [{:keys [calls account]}]
+                     (doseq [body [{} {:account_id "test-account" :idempotency_key ""}
+                                   {:account_id [] :idempotency_key "attempt"}]]
+                       (expect (= 400 (:status (request-reset body)))))
+                     (reset! account "other-account")
+                     (expect (= 409
+                                (:status (request-reset {:account_id "test-account"
+                                                         :idempotency_key "attempt"}))))
+                     (expect (empty? @calls))))))
 
-(deftest reset-summary-and-callback-contracts
-  (let [base
-        {:provider-id :openai-codex :status :ok :fetched-at-ms 1 :static {} :dynamic {:limits []}}
+(defdescribe
+  reset-summary-and-callback-contracts
+  (it
+    "reset summary and callback contracts"
+    (let [base
+          {:provider-id :openai-codex :status :ok :fetched-at-ms 1 :static {} :dynamic {:limits []}}
 
-        descriptor
-        {:provider/id :example :provider/label "Example"}]
+          descriptor
+          {:provider/id :example :provider/label "Example"}]
 
-    (doseq [credits [{:status :ok :account-id "account"}
-                     {:status :ok :account-id "account" :available-count -1}
-                     {:status :error :available-count 0}]]
-      (is (not (contract-provider/report-valid?
-                 (assoc-in base [:dynamic :reset-credits] credits)))))
-    (is (registry/provider? (assoc descriptor :provider/consume-reset-credit-fn identity)))
-    (is (not (registry/provider? (assoc descriptor :provider/consume-reset-credit-fn 1))))
-    (is (not (#'extension/provider-entry?
-              (assoc descriptor :provider/consume-reset-credit-fn 1))))))
+      (doseq [credits [{:status :ok :account-id "account"}
+                       {:status :ok :account-id "account" :available-count -1}
+                       {:status :error :available-count 0}]]
+        (expect (not (contract-provider/report-valid?
+                       (assoc-in base [:dynamic :reset-credits] credits)))))
+      (expect (registry/provider? (assoc descriptor :provider/consume-reset-credit-fn identity)))
+      (expect (not (registry/provider? (assoc descriptor :provider/consume-reset-credit-fn 1))))
+      (expect (not (#'extension/provider-entry?
+                    (assoc descriptor :provider/consume-reset-credit-fn 1)))))))

@@ -11,7 +11,7 @@
             [com.blockether.vis.tui.virtual :as virtual]
             [com.blockether.vis.tui.theme :as theme]
             [com.blockether.vis.tui.shared-theme :as shared]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]])
+            [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
@@ -60,245 +60,273 @@
 
       {:capture capture :regions (vec (.current interactions/hit-map))})))
 
-(deftest persisted-answer-has-a-fork-button-after-the-date
-  (let [{:keys [capture regions]}
-        (header-frame review-message 76 {:viewport-top 4})
+(defdescribe persisted-answer-has-a-fork-button-after-the-date
+             (it "persisted answer has a fork button after the date"
+                 (let [{:keys [capture regions]}
+                       (header-frame review-message 76 {:viewport-top 4})
 
-        header
-        (second (str/split-lines (cap/frame-text capture)))
+                       header
+                       (second (str/split-lines (cap/frame-text capture)))
 
-        hit
-        (first regions)
+                       hit
+                       (first regions)
 
-        date
-        (client/format-date (:timestamp review-message))]
+                       date
+                       (client/format-date (:timestamp review-message))]
 
-    (is (nil? (:error capture)))
-    (is (re-matches #"\d{2}/\d{2}/\d{4}, \d{2}:\d{2}:\d{2}" date))
-    (is (str/includes? header (str date " /  Fork from this turn")))
-    (is (= 1 (count regions)))
-    (is (= {:kind :fork-at-turn :session-id "session-1" :turn-id "turn-2"}
-           (select-keys hit [:kind :session-id :turn-id])))
-    (is (= 5 (get-in hit [:bounds :row])))
-    (is (= (.indexOf ^String header " Fork from this turn") (get-in hit [:bounds :col])))
-    (is (= (count " Fork from this turn ") (get-in hit [:bounds :width])))))
+                   (expect (nil? (:error capture)))
+                   (expect (re-matches #"\d{2}/\d{2}/\d{4}, \d{2}:\d{2}:\d{2}" date))
+                   (expect (str/includes? header (str date " /  Fork from this turn")))
+                   (expect (= 1 (count regions)))
+                   (expect (= {:kind :fork-at-turn :session-id "session-1" :turn-id "turn-2"}
+                              (select-keys hit [:kind :session-id :turn-id])))
+                   (expect (= 5 (get-in hit [:bounds :row])))
+                   (expect (= (.indexOf ^String header " Fork from this turn")
+                              (get-in hit [:bounds :col])))
+                   (expect (= (count " Fork from this turn ") (get-in hit [:bounds :width]))))))
 
-(deftest date-precedes-the-turn-and-fork-for-every-message-state
-  (doseq [role
-          [:user :assistant]
+(defdescribe
+  date-precedes-the-turn-and-fork-for-every-message-state
+  (it "date precedes the turn and fork for every message state"
+      (doseq [role
+              [:user :assistant]
 
-          status
-          [:running :completed :failed :cancelled]]
+              status
+              [:running :completed :failed :cancelled]]
 
-    (let [message
+        (let [message
+              (assoc review-message
+                :role role
+                :status status
+                :turn-position 42)
+
+              {:keys [capture]}
+              (header-frame message 76 {})
+
+              header
+              (second (str/split-lines (cap/frame-text capture)))]
+
+          (expect (nil? (:error capture)))
+          (expect (str/includes? header (str (client/format-date (:timestamp message)) " / T42")))
+          (when (str/includes? header "Fork")
+            (expect (str/includes? header "T42 /  Fork from this turn")))))))
+
+(defdescribe
+  narrow-header-keeps-the-turn-number-and-date
+  (it "narrow header keeps the turn number and date"
+      (let [message
+            (assoc review-message :turn-position 123)
+
+            {:keys [capture regions]}
+            (header-frame message 32 {})
+
+            header
+            (second (str/split-lines (cap/frame-text capture)))]
+
+        (expect (nil? (:error capture)))
+        (expect (str/includes? header (str (client/format-date (:timestamp message)) " / T123")))
+        (expect (empty? regions)))))
+
+(defdescribe history-keeps-the-persisted-turn-number-not-the-page-index
+             (it "history keeps the persisted turn number not the page index"
+                 (let [messages (@#'chat/turns->messages
+                                 [{"turn_id" "turn-42"
+                                   "position" 42
+                                   "status" "completed"
+                                   "request" "Check the change"
+                                   "created_at" 1789115400000
+                                   "content" [{"id" "answer" "type" "prose" "markdown" "Ready"}]}])]
+                   (expect (= [42 42] (mapv :turn-position messages)))
+                   (expect (= [(java.util.Date. 1789115400000) (java.util.Date. 1789115400000)]
+                              (mapv :timestamp messages))))))
+
+(defdescribe live-metadata-arrives-even-without-visible-progress
+             (it "live metadata arrives even without visible progress"
+                 (let [chunks (atom [])]
+                   (with-redefs [client/gateway-attach-turn-sync!
+                                 (fn [_ _ {:keys [on-event]}]
+                                   (on-event {"type" "content.block.started"
+                                              "turn_id" "turn-42"
+                                              "position" 42
+                                              "created_at" 1789115400000})
+                                   {"content" []})]
+                     (chat/attach! {:id "session-1"} "turn-42" {:on-chunk #(swap! chunks conj %)}))
+                   (expect (= [{:phase :turn-metadata
+                                :turn-id "turn-42"
+                                :turn-position 42
+                                :created-at-ms 1789115400000}]
+                              @chunks)))))
+
+(defdescribe
+  live-turn-metadata-stays-with-its-message-pair-after-completion
+  (it
+    "live turn metadata stays with its message pair after completion"
+    (let [before
+          @state/app-db
+
+          old
           (assoc review-message
-            :role role
-            :status status
-            :turn-position 42)
+            :session-turn-id "old"
+            :client-turn-id "old")
 
-          {:keys [capture]}
-          (header-frame message 76 {})
+          messages
+          [old (assoc (chat/user-message "Check") :client-turn-id "local-42")
+           (assoc (chat/assistant-message [])
+             :client-turn-id "local-42"
+             :pending? true)]]
 
-          header
-          (second (str/split-lines (cap/frame-text capture)))]
+      (try (reset! state/app-db {:session {:id "session-1"}
+                                 :active-tab-id "session-1"
+                                 :render-version 0
+                                 :loading? true
+                                 :gateway-turn-id "turn-42"
+                                 :live-turn-client-id "local-42"
+                                 :messages messages})
+           (state/dispatch [:sync-turn-metadata nil
+                            {:turn-id "foreign" :turn-position 99 :created-at-ms 1}])
+           (expect (= messages (:messages @state/app-db)))
+           (state/dispatch [:sync-turn-metadata nil
+                            {:turn-id "turn-42" :turn-position 42 :created-at-ms 1789115400000}])
+           (let [stamped
+                 (:messages @state/app-db)
 
-      (is (nil? (:error capture)))
-      (is (str/includes? header (str (client/format-date (:timestamp message)) " / T42")))
-      (when (str/includes? header "Fork")
-        (is (str/includes? header "T42 /  Fork from this turn"))))))
+                 completed
+                 (@#'state/replace-pending-assistant
+                  stamped
+                  (assoc (chat/assistant-message []) :client-turn-id "local-42"))]
 
-(deftest narrow-header-keeps-the-turn-number-and-date
-  (let [message
-        (assoc review-message :turn-position 123)
+             (expect (= old (first stamped)))
+             (expect (= [42 42] (mapv :turn-position (rest stamped))))
+             (expect (= ["turn-42" "turn-42"] (mapv :session-turn-id (rest stamped))))
+             (expect (= [(java.util.Date. 1789115400000) (java.util.Date. 1789115400000)]
+                        (mapv :timestamp (rest completed))))
+             (expect (= [42 42] (mapv :turn-position (rest completed)))))
+           (finally (reset! state/app-db before))))))
 
-        {:keys [capture regions]}
-        (header-frame message 32 {})
+(defdescribe
+  reopened-running-turn-keeps-its-number-and-canonical-date
+  (it
+    "reopened running turn keeps its number and canonical date"
+    (let [before
+          @state/app-db
 
-        header
-        (second (str/split-lines (cap/frame-text capture)))]
+          sid
+          (str (random-uuid))
 
-    (is (nil? (:error capture)))
-    (is (str/includes? header (str (client/format-date (:timestamp message)) " / T123")))
-    (is (empty? regions))))
+          created-at
+          1789115400000]
 
-(deftest history-keeps-the-persisted-turn-number-not-the-page-index
-  (let [messages (@#'chat/turns->messages
-                  [{"turn_id" "turn-42"
-                    "position" 42
-                    "status" "completed"
-                    "request" "Check the change"
-                    "created_at" 1789115400000
-                    "content" [{"id" "answer" "type" "prose" "markdown" "Ready"}]}])]
-    (is (= [42 42] (mapv :turn-position messages)))
-    (is (= [(java.util.Date. 1789115400000) (java.util.Date. 1789115400000)]
-           (mapv :timestamp messages)))))
+      (try (doseq [source [:soul :turn]]
+             (with-redefs [client/gateway-soul (constantly (cond-> {"id" sid
+                                                                    "status" "running"
+                                                                    "current_turn_id" "turn-42"
+                                                                    "running_request" "Check"
+                                                                    "running_started_at"
+                                                                    (+ created-at 10000)}
+                                                             (= source :soul)
+                                                             (assoc "running_position"
+                                                               42 "running_created_at"
+                                                               created-at)))
+                           client/gateway-list-turns (constantly (if (= source :turn)
+                                                                   [{"turn_id" "turn-42"
+                                                                     "status" "running"
+                                                                     "position" 42
+                                                                     "created_at" created-at}]
+                                                                   []))
+                           chat/history-page (fn [& _]
+                                               {:messages []})
+                           client/worker-future (fn [& _])
+                           client/cancellation-set-future! (fn [& _])]
 
-(deftest live-metadata-arrives-even-without-visible-progress
-  (let [chunks (atom [])]
-    (with-redefs [client/gateway-attach-turn-sync! (fn [_ _ {:keys [on-event]}]
-                                                     (on-event {"type" "content.block.started"
-                                                                "turn_id" "turn-42"
-                                                                "position" 42
-                                                                "created_at" 1789115400000})
-                                                     {"content" []})]
-      (chat/attach! {:id "session-1"} "turn-42" {:on-chunk #(swap! chunks conj %)}))
-    (is
-      (= [{:phase :turn-metadata :turn-id "turn-42" :turn-position 42 :created-at-ms 1789115400000}]
-         @chunks))))
+               (let [resumed (chat/resume-session sid)]
+                 (reset! state/app-db {:session resumed :active-tab-id sid :render-version 0})
+                 (state/dispatch [:attach-running-turn nil resumed])
+                 (expect (= [42 42] (mapv :turn-position (:messages @state/app-db))))
+                 (expect (= [(java.util.Date. created-at) (java.util.Date. created-at)]
+                            (mapv :timestamp (:messages @state/app-db)))))))
+           (finally (reset! state/app-db before))))))
 
-(deftest live-turn-metadata-stays-with-its-message-pair-after-completion
-  (let [before
-        @state/app-db
+(defdescribe
+  fork-hover-matches-copy-and-only-highlights-the-target-turn
+  (it "fork hover matches copy and only highlights the target turn"
+      (let [original @theme/active-theme-id]
+        (try (doseq [id (keys shared/built-in-themes)]
+               (theme/apply-theme! id)
+               (doseq [turn-id [nil "turn-2" "another-turn"]
+                       width [36 76]]
 
-        old
-        (assoc review-message
-          :session-turn-id "old"
-          :client-turn-id "old")
+                 (let [{:keys [capture regions]}
+                       (header-frame review-message width {:hover-turn-id turn-id})
+                       col (get-in (first regions) [:bounds :col])
+                       hovered? (= "turn-2" turn-id)
+                       ink (if hovered? theme/header-active-tab-fg theme/button-fg)
+                       background (if hovered? theme/header-active-tab-accent theme/button-bg)]
 
-        messages
-        [old (assoc (chat/user-message "Check") :client-turn-id "local-42")
-         (assoc (chat/assistant-message [])
-           :client-turn-id "local-42"
-           :pending? true)]]
+                   (doseq [x (range col (+ col (get-in (first regions) [:bounds :width])))]
+                     (let [cell (get-in capture [:frames 0 1 x])]
+                       (expect (= [(.getRed ink) (.getGreen ink) (.getBlue ink)] (:fg cell)))
+                       (expect (= [(.getRed background) (.getGreen background)
+                                   (.getBlue background)]
+                                  (:bg cell)))
+                       (expect (= hovered? (:bold cell)))
+                       (expect (not (:underline cell))))))))
+             (finally (theme/apply-theme! original))))))
 
-    (try (reset! state/app-db {:session {:id "session-1"}
-                               :active-tab-id "session-1"
-                               :render-version 0
-                               :loading? true
-                               :gateway-turn-id "turn-42"
-                               :live-turn-client-id "local-42"
-                               :messages messages})
-         (state/dispatch [:sync-turn-metadata nil
-                          {:turn-id "foreign" :turn-position 99 :created-at-ms 1}])
-         (is (= messages (:messages @state/app-db)))
-         (state/dispatch [:sync-turn-metadata nil
-                          {:turn-id "turn-42" :turn-position 42 :created-at-ms 1789115400000}])
-         (let [stamped
-               (:messages @state/app-db)
+(defdescribe narrow-header-keeps-the-date-and-shortens-the-fork-label
+             (it "narrow header keeps the date and shortens the fork label"
+                 (let [{:keys [capture regions]}
+                       (header-frame review-message 40 {:agent-name "助手 with a long name"})
 
-               completed
-               (@#'state/replace-pending-assistant
-                stamped
-                (assoc (chat/assistant-message []) :client-turn-id "local-42"))]
+                       header
+                       (second (str/split-lines (cap/frame-text capture)))]
 
-           (is (= old (first stamped)))
-           (is (= [42 42] (mapv :turn-position (rest stamped))))
-           (is (= ["turn-42" "turn-42"] (mapv :session-turn-id (rest stamped))))
-           (is (= [(java.util.Date. 1789115400000) (java.util.Date. 1789115400000)]
-                  (mapv :timestamp (rest completed))))
-           (is (= [42 42] (mapv :turn-position (rest completed)))))
-         (finally (reset! state/app-db before)))))
+                   (expect (nil? (:error capture)))
+                   (expect (str/includes? header
+                                          (str (client/format-date (:timestamp review-message))
+                                               " /  Fork")))
+                   (expect (= 1 (count regions)))
+                   (expect (<= 2 (get-in (first regions) [:bounds :col])))
+                   (expect (= 6 (get-in (first regions) [:bounds :width]))))))
 
-(deftest reopened-running-turn-keeps-its-number-and-canonical-date
-  (let [before
-        @state/app-db
+(defdescribe compact-action-preserves-the-agent-name-at-the-width-boundary
+             (it "compact action preserves the agent name at the width boundary"
+                 (doseq [width [46 47 48]]
+                   (let [{:keys [capture regions]} (header-frame review-message width {})
+                         header (second (str/split-lines (cap/frame-text capture)))]
 
-        sid
-        (str (random-uuid))
+                     (expect (str/starts-with? header "  Vis "))
+                     (expect (= (if (< width 48) 6 21)
+                                (get-in (first regions) [:bounds :width])))))))
 
-        created-at
-        1789115400000]
+(defdescribe fork-button-does-not-depend-on-timestamps
+             (it "fork button does not depend on timestamps"
+                 (let [{:keys [capture regions]}
+                       (header-frame review-message 76 {:timestamps? false})
 
-    (try (doseq [source [:soul :turn]]
-           (with-redefs [client/gateway-soul (constantly (cond-> {"id" sid
-                                                                  "status" "running"
-                                                                  "current_turn_id" "turn-42"
-                                                                  "running_request" "Check"
-                                                                  "running_started_at" (+ created-at
-                                                                                          10000)}
-                                                           (= source :soul)
-                                                           (assoc "running_position"
-                                                             42 "running_created_at"
-                                                             created-at)))
-                         client/gateway-list-turns (constantly (if (= source :turn)
-                                                                 [{"turn_id" "turn-42"
-                                                                   "status" "running"
-                                                                   "position" 42
-                                                                   "created_at" created-at}]
-                                                                 []))
-                         chat/history-page (fn [& _]
-                                             {:messages []})
-                         client/worker-future (fn [& _])
-                         client/cancellation-set-future! (fn [& _])]
+                       header
+                       (second (str/split-lines (cap/frame-text capture)))]
 
-             (let [resumed (chat/resume-session sid)]
-               (reset! state/app-db {:session resumed :active-tab-id sid :render-version 0})
-               (state/dispatch [:attach-running-turn nil resumed])
-               (is (= [42 42] (mapv :turn-position (:messages @state/app-db))))
-               (is (= [(java.util.Date. created-at) (java.util.Date. created-at)]
-                      (mapv :timestamp (:messages @state/app-db)))))))
-         (finally (reset! state/app-db before)))))
+                   (expect (str/includes? header "Fork from this turn"))
+                   (expect (not (str/includes? header " / ")))
+                   (expect (= 1 (count regions))))))
 
-(deftest fork-hover-matches-copy-and-only-highlights-the-target-turn
-  (let [original @theme/active-theme-id]
-    (try (doseq [id (keys shared/built-in-themes)]
-           (theme/apply-theme! id)
-           (doseq [turn-id [nil "turn-2" "another-turn"]
-                   width [36 76]]
+(defdescribe
+  only-persisted-assistant-turns-offer-forking
+  (it "only persisted assistant turns offer forking"
+      (doseq [message [(dissoc review-message :session-turn-id) (assoc review-message :role :user)
+                       (assoc review-message :pending? true) (assoc review-message :status :queued)
+                       (assoc review-message :status :running)]]
+        (let [{:keys [capture regions]} (header-frame message 76 {})]
+          (expect (nil? (:error capture)))
+          (expect (not (str/includes? (cap/frame-text capture) "Fork")))
+          (expect (empty? regions))))
+      (doseq [status [:completed :cancelled :failed]]
+        (let [{:keys [regions]} (header-frame (assoc review-message :status status) 76 {})]
+          (expect (= 1 (count regions)))))))
 
-             (let [{:keys [capture regions]}
-                   (header-frame review-message width {:hover-turn-id turn-id})
-                   col (get-in (first regions) [:bounds :col])
-                   hovered? (= "turn-2" turn-id)
-                   ink (if hovered? theme/header-active-tab-fg theme/button-fg)
-                   background (if hovered? theme/header-active-tab-accent theme/button-bg)]
-
-               (doseq [x (range col (+ col (get-in (first regions) [:bounds :width])))]
-                 (let [cell (get-in capture [:frames 0 1 x])]
-                   (is (= [(.getRed ink) (.getGreen ink) (.getBlue ink)] (:fg cell)))
-                   (is (= [(.getRed background) (.getGreen background) (.getBlue background)]
-                          (:bg cell)))
-                   (is (= hovered? (:bold cell)))
-                   (is (not (:underline cell))))))))
-         (finally (theme/apply-theme! original)))))
-
-(deftest narrow-header-keeps-the-date-and-shortens-the-fork-label
-  (let [{:keys [capture regions]}
-        (header-frame review-message 40 {:agent-name "助手 with a long name"})
-
-        header
-        (second (str/split-lines (cap/frame-text capture)))]
-
-    (is (nil? (:error capture)))
-    (is (str/includes? header (str (client/format-date (:timestamp review-message)) " /  Fork")))
-    (is (= 1 (count regions)))
-    (is (<= 2 (get-in (first regions) [:bounds :col])))
-    (is (= 6 (get-in (first regions) [:bounds :width])))))
-
-(deftest compact-action-preserves-the-agent-name-at-the-width-boundary
-  (doseq [width [46 47 48]]
-    (let [{:keys [capture regions]} (header-frame review-message width {})
-          header (second (str/split-lines (cap/frame-text capture)))]
-
-      (is (str/starts-with? header "  Vis "))
-      (is (= (if (< width 48) 6 21) (get-in (first regions) [:bounds :width]))))))
-
-(deftest fork-button-does-not-depend-on-timestamps
-  (let [{:keys [capture regions]}
-        (header-frame review-message 76 {:timestamps? false})
-
-        header
-        (second (str/split-lines (cap/frame-text capture)))]
-
-    (is (str/includes? header "Fork from this turn"))
-    (is (not (str/includes? header " / ")))
-    (is (= 1 (count regions)))))
-
-(deftest only-persisted-assistant-turns-offer-forking
-  (doseq [message [(dissoc review-message :session-turn-id) (assoc review-message :role :user)
-                   (assoc review-message :pending? true) (assoc review-message :status :queued)
-                   (assoc review-message :status :running)]]
-    (let [{:keys [capture regions]} (header-frame message 76 {})]
-      (is (nil? (:error capture)))
-      (is (not (str/includes? (cap/frame-text capture) "Fork")))
-      (is (empty? regions))))
-  (doseq [status [:completed :cancelled :failed]]
-    (let [{:keys [regions]} (header-frame (assoc review-message :status status) 76 {})]
-      (is (= 1 (count regions))))))
-
-(deftest clipped-headers-never-register-invisible-buttons
-  (doseq [opts [{:start -1} {:start 12} {:viewport-h 0}]]
-    (testing (str opts) (is (empty? (:regions (header-frame review-message 76 opts)))))))
+(defdescribe clipped-headers-never-register-invisible-buttons
+             (doseq [opts [{:start -1} {:start 12} {:viewport-h 0}]]
+               (it (str opts) (expect (empty? (:regions (header-frame review-message 76 opts)))))))
 
 (defn await-value
   "Wait for a production render or input transition, returning its observed value."
@@ -394,35 +422,38 @@
                (deref runner 5000 nil)
                (reset! state/app-db before))}))
 
-(deftest clicking-a-header-forks-that-turn-once-and-opens-a-new-tab
-  (doseq [[gesture fail?] [[[MouseActionType/CLICK_DOWN MouseActionType/CLICK_RELEASE] false]
-                           [[MouseActionType/CLICK_RELEASE] false]
-                           [[MouseActionType/CLICK_DOWN MouseActionType/CLICK_RELEASE] true]]]
-    (let [terminal (DefaultVirtualTerminal. (TerminalSize. 100 30))
-          {:keys [source-id forked-id history requests notices error close!]}
-          (start-fork-screen! terminal fail?)]
+(defdescribe
+  clicking-a-header-forks-that-turn-once-and-opens-a-new-tab
+  (it "clicking a header forks that turn once and opens a new tab"
+      (doseq [[gesture fail?] [[[MouseActionType/CLICK_DOWN MouseActionType/CLICK_RELEASE] false]
+                               [[MouseActionType/CLICK_RELEASE] false]
+                               [[MouseActionType/CLICK_DOWN MouseActionType/CLICK_RELEASE] true]]]
+        (let [terminal (DefaultVirtualTerminal. (TerminalSize. 100 30))
+              {:keys [source-id forked-id history requests notices error close!]}
+              (start-fork-screen! terminal fail?)]
 
-      (try
-        (let [hit (await-value
-                    #(some (fn [r]
-                             (when (and (= :fork-at-turn (:kind r)) (= "turn-1" (:turn-id r))) r))
-                           (.current interactions/hit-map)))
-              {:keys [col row]} (:bounds hit)]
+          (try (let [hit (await-value #(some (fn [r]
+                                               (when (and (= :fork-at-turn (:kind r))
+                                                          (= "turn-1" (:turn-id r)))
+                                                 r))
+                                             (.current interactions/hit-map)))
+                     {:keys [col row]} (:bounds hit)]
 
-          (is (some? hit))
-          (when hit
-            (doseq [action gesture]
-              (.addInput terminal (MouseAction. action 1 (TerminalPosition. (int col) (int row))))))
-          (is (some? (await-value #(seq @notices))))
-          (is (= [[source-id "turn-1"]] @requests))
-          (if fail?
-            (do (is (= source-id (get-in @state/app-db [:session :id])))
-                (is (= 1 (count (:tabs @state/app-db))))
-                (is (= history (:messages @state/app-db)))
-                (is (= ["Fork unavailable"] @notices)))
-            (do (is (= forked-id (get-in @state/app-db [:session :id])))
-                (is (= 2 (count (:tabs @state/app-db))))
-                (is (= [(first history)] (:messages @state/app-db)))
-                (is (= ["Forked session at turn"] @notices)))))
-        (finally (close!)))
-      (is (nil? @error)))))
+                 (expect (some? hit))
+                 (when hit
+                   (doseq [action gesture]
+                     (.addInput terminal
+                                (MouseAction. action 1 (TerminalPosition. (int col) (int row))))))
+                 (expect (some? (await-value #(seq @notices))))
+                 (expect (= [[source-id "turn-1"]] @requests))
+                 (if fail?
+                   (do (expect (= source-id (get-in @state/app-db [:session :id])))
+                       (expect (= 1 (count (:tabs @state/app-db))))
+                       (expect (= history (:messages @state/app-db)))
+                       (expect (= ["Fork unavailable"] @notices)))
+                   (do (expect (= forked-id (get-in @state/app-db [:session :id])))
+                       (expect (= 2 (count (:tabs @state/app-db))))
+                       (expect (= [(first history)] (:messages @state/app-db)))
+                       (expect (= ["Forked session at turn"] @notices)))))
+               (finally (close!)))
+          (expect (nil? @error))))))

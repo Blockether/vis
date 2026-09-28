@@ -3,7 +3,7 @@
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.extension :as ext]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]])
+            [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io File PushbackReader]))
 
 (def ^:private facade 'com.blockether.vis.core)
@@ -53,16 +53,17 @@
 
     ns-sym))
 
-(deftest internal-namespaces-never-load-the-facade-test
-  (testing "engine namespaces call owners or the authoring API, never the public facade"
-    (let [offenders (->> (internal-sources)
-                         (keep (fn [^File file]
-                                 (when (or (some #{facade} (required-namespaces (ns-form file)))
-                                           (re-find runtime-facade-lookup (slurp file)))
-                                   (.getPath file))))
-                         vec)]
-      (is (= [] offenders)
-          (str "Internal namespaces loading " facade ": " (str/join ", " offenders))))))
+(defdescribe
+  internal-namespaces-never-load-the-facade-test
+  (it "engine namespaces call owners or the authoring API, never the public facade"
+      (let [offenders (->> (internal-sources)
+                           (keep (fn [^File file]
+                                   (when (or (some #{facade} (required-namespaces (ns-form file)))
+                                             (re-find runtime-facade-lookup (slurp file)))
+                                     (.getPath file))))
+                           vec)]
+        (expect (= [] offenders)
+                (str "Internal namespaces loading " facade ": " (str/join ", " offenders))))))
 
 (def ^:private internal-prefix "com.blockether.vis.internal.")
 
@@ -115,28 +116,31 @@
 
 (defn- layer-name [layer] (first (nth layers layer)))
 
-(deftest every-engine-namespace-has-a-layer-test
-  (let [unplaced (->> (internal-sources)
-                      (map (comp second ns-form))
-                      (remove layer-of)
-                      vec)]
-    (is (= [] unplaced) (str "Place these namespaces in `layers`: " (str/join ", " unplaced)))))
+(defdescribe every-engine-namespace-has-a-layer-test
+             (it "every engine namespace has a layer"
+                 (let [unplaced (->> (internal-sources)
+                                     (map (comp second ns-form))
+                                     (remove layer-of)
+                                     vec)]
+                   (expect (= [] unplaced)
+                           (str "Place these namespaces in `layers`: " (str/join ", " unplaced))))))
 
-(deftest engine-namespaces-never-require-a-higher-layer-test
-  (testing "a static require points to the requiring namespace's layer or a lower one"
-    (let [upward
-          (vec
-            (for [file (internal-sources)
-                  :let [form (ns-form file)
-                        own (second form)
-                        own-layer (layer-of own)]
-                  dep (required-namespaces form)
-                  :let [dep-layer (when (str/starts-with? (str dep) internal-prefix)
-                                    (layer-of dep))]
-                  :when (and own-layer dep-layer (> dep-layer own-layer))]
+(defdescribe
+  engine-namespaces-never-require-a-higher-layer-test
+  (it "a static require points to the requiring namespace's layer or a lower one"
+      (let [upward
+            (vec
+              (for [file (internal-sources)
+                    :let [form (ns-form file)
+                          own (second form)
+                          own-layer (layer-of own)]
+                    dep (required-namespaces form)
+                    :let [dep-layer (when (str/starts-with? (str dep) internal-prefix)
+                                      (layer-of dep))]
+                    :when (and own-layer dep-layer (> dep-layer own-layer))]
 
-              (str own " (" (layer-name own-layer) ") -> " dep " (" (layer-name dep-layer) ")")))]
-      (is (= [] upward) (str "Upward requires:\n" (str/join "\n" upward))))))
+                (str own " (" (layer-name own-layer) ") -> " dep " (" (layer-name dep-layer) ")")))]
+        (expect (= [] upward) (str "Upward requires:\n" (str/join "\n" upward))))))
 
 (def ^:private runtime-lookup
   "A quoted engine namespace handed to a runtime loader."
@@ -147,14 +151,15 @@
   '#{com.blockether.vis.internal.jfr com.blockether.vis.internal.speech.engine
      com.blockether.vis.internal.speech.synthesis})
 
-(deftest engine-namespaces-require-instead-of-resolving-at-runtime-test
-  (testing "a runtime lookup hides a dependency from the require graph, so only lazy loads use one"
-    (let [lookups (vec (for [^File file (internal-sources)
-                             [_ target] (re-seq runtime-lookup (slurp file))
-                             :when (not (contains? lazily-loaded (symbol target)))]
+(defdescribe
+  engine-namespaces-require-instead-of-resolving-at-runtime-test
+  (it "a runtime lookup hides a dependency from the require graph, so only lazy loads use one"
+      (let [lookups (vec (for [^File file (internal-sources)
+                               [_ target] (re-seq runtime-lookup (slurp file))
+                               :when (not (contains? lazily-loaded (symbol target)))]
 
-                         (str (.getPath file) " -> " target)))]
-      (is (= [] lookups) (str "Runtime lookups:\n" (str/join "\n" lookups))))))
+                           (str (.getPath file) " -> " target)))]
+        (expect (= [] lookups) (str "Runtime lookups:\n" (str/join "\n" lookups))))))
 
 (def ^:private wiring 'com.blockether.vis.internal.gateway.wiring)
 
@@ -188,21 +193,22 @@
 
           [(or as as-alias) (first spec)])))
 
-(deftest only-the-wiring-fills-slots-test
-  (testing "slots are filled once at startup by the wiring, never at namespace load"
-    (let [fills (vec (for [^File file (internal-sources)
-                           :let [form (ns-form file)
-                                 own (second form)
-                                 alias->ns (aliases form)]
-                           :when (not= wiring own)
-                           [_ qualifier fn-name] (re-seq #"\(([A-Za-z][\w.\-]*)/([^\s()\[\]{}]+)"
-                                                         (slurp file))
-                           :let [target (symbol (str (get alias->ns (symbol qualifier) qualifier))
-                                                fn-name)]
-                           :when (contains? slots target)]
+(defdescribe
+  only-the-wiring-fills-slots-test
+  (it "slots are filled once at startup by the wiring, never at namespace load"
+      (let [fills (vec (for [^File file (internal-sources)
+                             :let [form (ns-form file)
+                                   own (second form)
+                                   alias->ns (aliases form)]
+                             :when (not= wiring own)
+                             [_ qualifier fn-name] (re-seq #"\(([A-Za-z][\w.\-]*)/([^\s()\[\]{}]+)"
+                                                           (slurp file))
+                             :let [target (symbol (str (get alias->ns (symbol qualifier) qualifier))
+                                                  fn-name)]
+                             :when (contains? slots target)]
 
-                       (str own " -> " target)))]
-      (is (= [] fills) (str "Slot fills outside " wiring ":\n" (str/join "\n" fills))))))
+                         (str own " -> " target)))]
+        (expect (= [] fills) (str "Slot fills outside " wiring ":\n" (str/join "\n" fills))))))
 
 (def ^:private authored
   (ext/extension {:ext/name "test.layering-authoring"
@@ -213,11 +219,14 @@
   (vis/extension
     {:ext/name "test.layering-facade" :ext/description "Facade fixture." :ext/prompt-fn "Probe."}))
 
-(deftest facade-re-exports-the-authoring-api-test
-  (testing "every authoring function is the same value through either namespace"
-    (doseq [sym '[symbol value render-prompt register-extension! register-toggle!]]
-      (is (identical? @(ns-resolve 'com.blockether.vis.extension sym) @(ns-resolve facade sym))
-          (str sym))))
-  (testing "both `extension` macros stamp the namespace that declared the extension"
-    (is (= '[com.blockether.vis.namespace-layering-test] (:ext/source-nses authored)))
-    (is (= '[com.blockether.vis.namespace-layering-test] (:ext/source-nses facade-authored)))))
+(defdescribe facade-re-exports-the-authoring-api-test
+             (it "every authoring function is the same value through either namespace"
+                 (doseq [sym '[symbol value render-prompt register-extension! register-toggle!]]
+                   (expect (identical? @(ns-resolve 'com.blockether.vis.extension sym)
+                                       @(ns-resolve facade sym))
+                           (str sym))))
+             (it "both `extension` macros stamp the namespace that declared the extension"
+                 (expect (= '[com.blockether.vis.namespace-layering-test]
+                            (:ext/source-nses authored)))
+                 (expect (= '[com.blockether.vis.namespace-layering-test]
+                            (:ext/source-nses facade-authored)))))

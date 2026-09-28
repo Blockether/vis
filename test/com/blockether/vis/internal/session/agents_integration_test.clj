@@ -13,8 +13,7 @@
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.session.model :as smodel]
-            [lazytest.core :refer [around-each set-ns-context!]]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
 
 (set-ns-context! [(around-each [f]
                                (let [enabled?
@@ -80,217 +79,233 @@
     (loop-env/create-environment (:router parent)
                                  {:db {:datasource (:datasource db)} :session child})))
 
-(deftest inherited-checkpoint-fresh-sandbox-and-durable-budget-test
-  (let [parent
-        (loop-env/create-environment (router) {:db :memory})
+(defdescribe
+  inherited-checkpoint-fresh-sandbox-and-durable-budget-test
+  (it
+    "inherited checkpoint fresh sandbox and durable budget"
+    (let [parent
+          (loop-env/create-environment (router) {:db :memory})
 
-        parent-calls
-        (atom 0)]
+          parent-calls
+          (atom 0)]
 
-    (try
-      (with-redefs [svar/ask-code!
-                    (fn [_ _]
-                      (case (swap! parent-calls inc)
-                        1
-                        (code-response
-                          "parent_only = object()\nprint('Raw parent evidence to fold')")
+      (try
+        (with-redefs [svar/ask-code!
+                      (fn [_ _]
+                        (case (swap! parent-calls inc)
+                          1
+                          (code-response
+                            "parent_only = object()\nprint('Raw parent evidence to fold')")
 
-                        2
-                        (code-response
-                          "print(fold_session('-t1/i1', 'Accepted folded parent conclusion'))")
+                          2
+                          (code-response
+                            "print(fold_session('-t1/i1', 'Accepted folded parent conclusion'))")
 
-                        {:stop-reason :end :content "Parent result"}))]
-        (turn/run-turn! parent "Preserve the accepted conclusion and delegate." {}))
-      (let [checkpoint
-            (:agent-checkpoint (ctx-loop/read-turn-state parent))
+                          {:stop-reason :end :content "Parent result"}))]
+          (turn/run-turn! parent "Preserve the accepted conclusion and delegate." {}))
+        (let [checkpoint
+              (:agent-checkpoint (ctx-loop/read-turn-state parent))
 
-            child
-            (child-environment parent checkpoint 2 nil)
+              child
+              (child-environment parent checkpoint 2 nil)
 
-            calls
-            (atom [])]
+              calls
+              (atom [])]
 
-        (is (str/includes? (str/join "\n" (map message-text checkpoint))
-                           "Accepted folded parent conclusion"))
-        (is (not (str/includes? (str/join "\n" (map message-text checkpoint))
-                                "Raw parent evidence to fold")))
-        (try
-          (with-redefs
-            [svar/ask-code!
-             (fn [_ opts]
-               (swap! calls conj (:messages opts))
-               (if (= 1 (count @calls))
-                 (code-response
-                   "print('parent_only' in globals())\nprint(session['agent']['role'])\nprint(session['agent']['parent_id'])")
-                 {:stop-reason :end :content "Delegated result"}))]
-            (let [result (turn/run-turn! child "Verify the delegated boundary only" {})]
-              (is (= "Delegated result" (get-in result [:answer :answer]))))
-            (is (= 2 (count @calls)))
-            ;; Provider cache markers may wrap text blocks without changing their contents.
-            (is (boolean (= (mapv message-text checkpoint)
-                            (mapv message-text (take (count checkpoint) (first @calls))))))
-            (is (boolean (str/includes? (str/join "\n" (map message-text (first @calls)))
-                                        "\"role\": \"subagent\"")))
-            (is (str/includes? (pr-str (first @calls)) "Verify the delegated boundary only"))
-            (is (str/includes? (str/join "\n" (map message-text (second @calls)))
-                               "False\nsubagent\n"))
-            (is (str/includes? (pr-str (second @calls)) (str (:session-id parent))))
-            (is (= 2 (:iterations_used (agents/info (:db-info child) (:session-id child)))))
-            (turn/run-turn! child "An exhausted child cannot make another paid request" {})
-            (is (= 2 (count @calls)))
-            (is (= "budget_limited" (:status (agents/info (:db-info child) (:session-id child)))))
-            (h/fork-session! (:db-info child) (:session-id child) {})
-            (is
-              (nil? (agents/inherited-base child 2 [{:role "user" :content "Post-fold task"}] []))
-              "A later state must not reinherit the parent's checkpoint at a repeated turn position"))
-          (finally (loop-env/dispose-environment! child))))
-      (finally (loop-env/dispose-environment! parent)))))
+          (expect (str/includes? (str/join "\n" (map message-text checkpoint))
+                                 "Accepted folded parent conclusion"))
+          (expect (not (str/includes? (str/join "\n" (map message-text checkpoint))
+                                      "Raw parent evidence to fold")))
+          (try
+            (with-redefs
+              [svar/ask-code!
+               (fn [_ opts]
+                 (swap! calls conj (:messages opts))
+                 (if (= 1 (count @calls))
+                   (code-response
+                     "print('parent_only' in globals())\nprint(session['agent']['role'])\nprint(session['agent']['parent_id'])")
+                   {:stop-reason :end :content "Delegated result"}))]
+              (let [result (turn/run-turn! child "Verify the delegated boundary only" {})]
+                (expect (= "Delegated result" (get-in result [:answer :answer]))))
+              (expect (= 2 (count @calls)))
+              ;; Provider cache markers may wrap text blocks without changing their contents.
+              (expect (boolean (= (mapv message-text checkpoint)
+                                  (mapv message-text (take (count checkpoint) (first @calls))))))
+              (expect (boolean (str/includes? (str/join "\n" (map message-text (first @calls)))
+                                              "\"role\": \"subagent\"")))
+              (expect (str/includes? (pr-str (first @calls)) "Verify the delegated boundary only"))
+              (expect (str/includes? (str/join "\n" (map message-text (second @calls)))
+                                     "False\nsubagent\n"))
+              (expect (str/includes? (pr-str (second @calls)) (str (:session-id parent))))
+              (expect (= 2 (:iterations_used (agents/info (:db-info child) (:session-id child)))))
+              (turn/run-turn! child "An exhausted child cannot make another paid request" {})
+              (expect (= 2 (count @calls)))
+              (expect (= "budget_limited"
+                         (:status (agents/info (:db-info child) (:session-id child)))))
+              (h/fork-session! (:db-info child) (:session-id child) {})
+              (expect
+                (nil? (agents/inherited-base child 2 [{:role "user" :content "Post-fold task"}] []))
+                "A later state must not reinherit the parent's checkpoint at a repeated turn position"))
+            (finally (loop-env/dispose-environment! child))))
+        (finally (loop-env/dispose-environment! parent))))))
 
-(deftest session-route-changes-at-the-next-model-request-test
-  (let [shared
-        (router)
+(defdescribe session-route-changes-at-the-next-model-request-test
+             (it "session route changes at the next model request"
+                 (let [shared
+                       (router)
 
-        env
-        (loop-env/create-environment shared {:db :memory})
+                       env
+                       (loop-env/create-environment shared {:db :memory})
 
-        calls
-        (atom [])]
+                       calls
+                       (atom [])]
 
-    (try (with-redefs [loop-router/get-router
-                       (constantly shared)
+                   (try (with-redefs [loop-router/get-router
+                                      (constantly shared)
 
-                       svar/ask-code!
-                       (fn [request-router opts]
-                         (swap! calls conj [request-router (:routing opts)])
-                         (if (= 1 (count @calls))
-                           (do (smodel/set-model! (:db-info env)
-                                                  (:session-id env)
-                                                  "fixture"
-                                                  "large"
-                                                  :agent-routing)
-                               (code-response "print('Route selected')"))
-                           {:stop-reason :end :content "Routed result"}))]
+                                      svar/ask-code!
+                                      (fn [request-router opts]
+                                        (swap! calls conj [request-router (:routing opts)])
+                                        (if (= 1 (count @calls))
+                                          (do (smodel/set-model! (:db-info env)
+                                                                 (:session-id env)
+                                                                 "fixture"
+                                                                 "large"
+                                                                 :agent-routing)
+                                              (code-response "print('Route selected')"))
+                                          {:stop-reason :end :content "Routed result"}))]
 
-           (turn/run-turn! env "Verify a local route change" {}))
-         (is (= 2 (count @calls)))
-         (is (= "large" (get-in @calls [1 1 :model])))
-         (is (= "small" (get-in shared [:providers 0 :root])))
-         (is (= 2 (count (get-in shared [:providers 0 :models]))))
-         (finally (loop-env/dispose-environment! env)))))
+                          (turn/run-turn! env "Verify a local route change" {}))
+                        (expect (= 2 (count @calls)))
+                        (expect (= "large" (get-in @calls [1 1 :model])))
+                        (expect (= "small" (get-in shared [:providers 0 :root])))
+                        (expect (= 2 (count (get-in shared [:providers 0 :models]))))
+                        (finally (loop-env/dispose-environment! env))))))
 
-(deftest session-route-change-is-visible-to-a-retry-test
-  (let [shared
-        (router)
+(defdescribe
+  session-route-change-is-visible-to-a-retry-test
+  (it
+    "session route change is visible to a retry"
+    (let [shared
+          (router)
 
-        env
-        (loop-env/create-environment shared {:db :memory})
+          env
+          (loop-env/create-environment shared {:db :memory})
 
-        calls
-        (atom [])]
+          calls
+          (atom [])]
 
-    (try (with-redefs [iteration/MAX_MAX_TOKENS_EXCEEDED_RETRIES
-                       2
+      (try (with-redefs [iteration/MAX_MAX_TOKENS_EXCEEDED_RETRIES
+                         2
 
-                       loop-router/get-router
-                       (constantly shared)
+                         loop-router/get-router
+                         (constantly shared)
 
-                       svar/ask-code!
-                       (fn [request-router opts]
-                         (swap! calls conj
-                           (or (get-in opts [:routing :model])
-                               (get-in request-router [:providers 0 :root])))
-                         (if (< (count @calls) 3)
-                           (do (smodel/set-model! (:db-info env)
-                                                  (:session-id env)
-                                                  "fixture"
-                                                  (if (= 1 (count @calls)) "large" "small")
-                                                  :agent-routing)
-                               (throw (ex-info "Reasoning exhausted the output budget"
-                                               {:type :svar.llm/max-tokens-exceeded
-                                                :output-tokens 32})))
-                           {:stop-reason :end :content "Retried result"}))]
+                         svar/ask-code!
+                         (fn [request-router opts]
+                           (swap! calls conj
+                             (or (get-in opts [:routing :model])
+                                 (get-in request-router [:providers 0 :root])))
+                           (if (< (count @calls) 3)
+                             (do (smodel/set-model! (:db-info env)
+                                                    (:session-id env)
+                                                    "fixture"
+                                                    (if (= 1 (count @calls)) "large" "small")
+                                                    :agent-routing)
+                                 (throw (ex-info "Reasoning exhausted the output budget"
+                                                 {:type :svar.llm/max-tokens-exceeded
+                                                  :output-tokens 32})))
+                             {:stop-reason :end :content "Retried result"}))]
 
-           (smodel/set-model! (:db-info env) (:session-id env) "fixture" "small" :agent-routing)
-           (turn/run-turn! env "Observe routing at every model request boundary" {}))
-         (is (= ["small" "large" "small"] @calls))
-         (is (= "small" (get-in shared [:providers 0 :root])))
-         (finally (loop-env/dispose-environment! env)))))
+             (smodel/set-model! (:db-info env) (:session-id env) "fixture" "small" :agent-routing)
+             (turn/run-turn! env "Observe routing at every model request boundary" {}))
+           (expect (= ["small" "large" "small"] @calls))
+           (expect (= "small" (get-in shared [:providers 0 :root])))
+           (finally (loop-env/dispose-environment! env))))))
 
-(deftest registered-python-agent-bindings-reach-host-test
-  (let [env
-        (loop-env/create-environment (router) {:db :memory})
+(defdescribe
+  registered-python-agent-bindings-reach-host-test
+  (it
+    "registered python agent bindings reach host"
+    (let [env
+          (loop-env/create-environment (router) {:db :memory})
 
-        calls
-        (atom [])
+          calls
+          (atom [])
 
-        requests
-        (atom 0)]
+          requests
+          (atom 0)]
 
-    (try
-      (with-redefs
-        [agents/operation!
-         (fn [host op opts]
-           (swap! calls conj [(:session-id host) op opts])
-           {:status "observed"})
+      (try
+        (with-redefs
+          [agents/operation!
+           (fn [host op opts]
+             (swap! calls conj [(:session-id host) op opts])
+             {:status "observed"})
 
-         svar/ask-code!
-         (fn [_ _]
-           (if (= 1 (swap! requests inc))
-             (code-response
-               "assert 'agents' not in globals()\nassert callable(council.members)\nassert council.subagents()['op'] == 'council.subagents'\nassert council.publish_spawn('Verify only the boundary', iteration_budget=2)['op'] == 'council.publish_spawn'\nassert council.route('small', provider='fixture')['op'] == 'council.route'\nassert council.cancel('fixture-child')['op'] == 'council.cancel'")
-             {:stop-reason :end :content "Bindings invoked"}))]
+           svar/ask-code!
+           (fn [_ _]
+             (if (= 1 (swap! requests inc))
+               (code-response
+                 "assert 'agents' not in globals()\nassert callable(council.members)\nassert council.subagents()['op'] == 'council.subagents'\nassert council.publish_spawn('Verify only the boundary', iteration_budget=2)['op'] == 'council.publish_spawn'\nassert council.route('small', provider='fixture')['op'] == 'council.route'\nassert council.cancel('fixture-child')['op'] == 'council.cancel'")
+               {:stop-reason :end :content "Bindings invoked"}))]
 
-        (turn/run-turn! env "Exercise registered Python methods" {}))
-      (is (= [:list :spawn :route :cancel] (mapv second @calls)))
-      (is (= [{} {:task "Verify only the boundary" :iteration_budget 2}
-              {:model "small" :provider "fixture"} {:session_id "fixture-child"}]
-             (mapv #(nth % 2) @calls)))
-      (is (every? #(= (:session-id env) (first %)) @calls))
-      (finally (loop-env/dispose-environment! env)))))
+          (turn/run-turn! env "Exercise registered Python methods" {}))
+        (expect (= [:list :spawn :route :cancel] (mapv second @calls)))
+        (expect (= [{} {:task "Verify only the boundary" :iteration_budget 2}
+                    {:model "small" :provider "fixture"} {:session_id "fixture-child"}]
+                   (mapv #(nth % 2) @calls)))
+        (expect (every? #(= (:session-id env) (first %)) @calls))
+        (finally (loop-env/dispose-environment! env))))))
 
-(deftest child-allowlist-survives-router-rehydration-and-retries-test
-  (let [shared
-        (router)
+(defdescribe
+  child-allowlist-survives-router-rehydration-and-retries-test
+  (it
+    "child allowlist survives router rehydration and retries"
+    (let [shared
+          (router)
 
-        parent
-        (loop-env/create-environment shared {:db :memory})]
+          parent
+          (loop-env/create-environment shared {:db :memory})]
 
-    (try (with-redefs [svar/ask-code! (fn [_ _]
-                                        {:stop-reason :end :content "Parent result"})]
-           (turn/run-turn! parent "Prepare the delegation checkpoint" {}))
-         (let [child
-               (child-environment parent
-                                  (:agent-checkpoint (ctx-loop/read-turn-state parent))
-                                  10
-                                  [{:provider "fixture" :model "small"}])
+      (try (with-redefs [svar/ask-code! (fn [_ _]
+                                          {:stop-reason :end :content "Parent result"})]
+             (turn/run-turn! parent "Prepare the delegation checkpoint" {}))
+           (let [child
+                 (child-environment parent
+                                    (:agent-checkpoint (ctx-loop/read-turn-state parent))
+                                    10
+                                    [{:provider "fixture" :model "small"}])
 
-               calls
-               (atom [])]
+                 calls
+                 (atom [])]
 
-           (try
-             (with-redefs [loop-router/get-router
-                           (constantly shared)
+             (try
+               (with-redefs [loop-router/get-router
+                             (constantly shared)
 
-                           svar/ask-code!
-                           (fn [request-router opts]
-                             (swap! calls conj [request-router (:routing opts)])
-                             (if (= 1 (count @calls))
-                               (throw (ex-info "Retry within inherited policy"
-                                               {:type :svar.llm/max-tokens-exceeded
-                                                :output-tokens 32}))
-                               {:stop-reason :end :content "Allowed model result"}))]
+                             svar/ask-code!
+                             (fn [request-router opts]
+                               (swap! calls conj [request-router (:routing opts)])
+                               (if (= 1 (count @calls))
+                                 (throw (ex-info "Retry within inherited policy"
+                                                 {:type :svar.llm/max-tokens-exceeded
+                                                  :output-tokens 32}))
+                                 {:stop-reason :end :content "Allowed model result"}))]
 
-               (turn/run-turn! child "Retry only within the inherited model allowlist" {})
-               (is (= 2 (count @calls)))
-               (is (every? #(= ["small"] (mapv :name (get-in % [0 :providers 0 :models]))) @calls))
-               (smodel/set-model! (:db-info child)
-                                  (:session-id child)
-                                  "fixture"
-                                  "large"
-                                  :agent-routing)
-               (turn/run-turn! child "A disallowed persisted pin cannot bypass the allowlist" {})
-               (is (every? #(not= "large" (get-in % [1 :model])) @calls))
-               (is (every? #(= ["small"] (mapv :name (get-in % [0 :providers 0 :models]))) @calls))
-               (is (= 2 (count (get-in shared [:providers 0 :models])))))
-             (finally (loop-env/dispose-environment! child))))
-         (finally (loop-env/dispose-environment! parent)))))
+                 (turn/run-turn! child "Retry only within the inherited model allowlist" {})
+                 (expect (= 2 (count @calls)))
+                 (expect (every? #(= ["small"] (mapv :name (get-in % [0 :providers 0 :models])))
+                                 @calls))
+                 (smodel/set-model! (:db-info child)
+                                    (:session-id child)
+                                    "fixture"
+                                    "large"
+                                    :agent-routing)
+                 (turn/run-turn! child "A disallowed persisted pin cannot bypass the allowlist" {})
+                 (expect (every? #(not= "large" (get-in % [1 :model])) @calls))
+                 (expect (every? #(= ["small"] (mapv :name (get-in % [0 :providers 0 :models])))
+                                 @calls))
+                 (expect (= 2 (count (get-in shared [:providers 0 :models])))))
+               (finally (loop-env/dispose-environment! child))))
+           (finally (loop-env/dispose-environment! parent))))))

@@ -9,7 +9,7 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
+            [lazytest.core :refer [defdescribe expect it]])
   (:import (java.io File)
            (java.nio.file Files FileVisitOption Path)
            (java.nio.file.attribute FileAttribute)
@@ -219,22 +219,26 @@
           (doseq [^Path path (reverse (iterator-seq (.iterator paths)))]
             (Files/deleteIfExists path)))))))
 
-(deftest cold-gateway-startup-test
-  (dotimes [n (Long/parseLong (System/getProperty "vis.startup.runs" "1"))]
-    (let [result (cold-start! (inc n))]
-      (println "Gateway startup" (pr-str (dissoc result :loaded-namespaces)))
-      (is (= 200 (:health-status result)))
-      (is (= 200 (:capabilities-status result)) (str "capabilities: " (:capabilities-error result)))
-      (when (System/getProperty "vis.startup.jar") (is (:aot? result)))
-      (is (= (str (:home result) "/.vis/native/sqlite") (:sqlite-tmpdir result)))
-      (is (every? (set (:extensions result)) ["foundation-core"]))
-      ;; Registration must keep callable handlers, not eagerly load the speech
-      ;; backends. A fresh JVM is essential: other tests may already have used them.
-      (doseq [ns-sym '[com.blockether.vis.internal.speech.asr com.blockether.vis.internal.speech.tts
-                       com.blockether.vis.internal.speech.sherpa]]
-        (is (not (contains? (:loaded-namespaces result) ns-sym)) (str ns-sym)))
-      (is (= "parakeet-local" (get-in result [:speech-features "voice" "selected"])))
-      (is (= "piper-local" (get-in result [:speech-features "speech" "selected"])))
-      (is (= "absent" (get-in result [:speech-features "voice" "model" "status"])))
-      (is (= "absent" (get-in result [:speech-features "speech" "model" "status"])))
-      (is (some #(= :database (first %)) (:timings result))))))
+(defdescribe
+  cold-gateway-startup-test
+  (it "cold gateway startup"
+      (dotimes [n (Long/parseLong (System/getProperty "vis.startup.runs" "1"))]
+        (let [result (cold-start! (inc n))]
+          (println "Gateway startup" (pr-str (dissoc result :loaded-namespaces)))
+          (expect (= 200 (:health-status result)))
+          (expect (= 200 (:capabilities-status result))
+                  (str "capabilities: " (:capabilities-error result)))
+          (when (System/getProperty "vis.startup.jar") (expect (:aot? result)))
+          (expect (= (str (:home result) "/.vis/native/sqlite") (:sqlite-tmpdir result)))
+          (expect (every? (set (:extensions result)) ["foundation-core"]))
+          ;; Registration must keep callable handlers, not eagerly load the speech
+          ;; backends. A fresh JVM is essential: other tests may already have used them.
+          (doseq [ns-sym '[com.blockether.vis.internal.speech.asr
+                           com.blockether.vis.internal.speech.tts
+                           com.blockether.vis.internal.speech.sherpa]]
+            (expect (not (contains? (:loaded-namespaces result) ns-sym)) (str ns-sym)))
+          (expect (= "parakeet-local" (get-in result [:speech-features "voice" "selected"])))
+          (expect (= "piper-local" (get-in result [:speech-features "speech" "selected"])))
+          (expect (= "absent" (get-in result [:speech-features "voice" "model" "status"])))
+          (expect (= "absent" (get-in result [:speech-features "speech" "model" "status"])))
+          (expect (some #(= :database (first %)) (:timings result)))))))

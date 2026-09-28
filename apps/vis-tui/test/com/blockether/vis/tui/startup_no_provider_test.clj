@@ -8,7 +8,7 @@
             [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.terminals :as term]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
+            [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna TerminalSize]
            [com.googlecode.lanterna.input KeyStroke KeyType]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
@@ -110,49 +110,51 @@
                (reset! closed (deref runner 5000 ::running))
                (reset! state/app-db before))}))
 
-(deftest startup-without-a-provider-opens-providers-and-binds-after-saving
-  (let [terminal
-        (DefaultVirtualTerminal. (TerminalSize. 100 30))
+(defdescribe startup-without-a-provider-opens-providers-and-binds-after-saving
+             (it "startup without a provider opens providers and binds after saving"
+                 (let [terminal
+                       (DefaultVirtualTerminal. (TerminalSize. 100 30))
 
-        fail?
-        (atom true)
+                       fail?
+                       (atom true)
 
-        {:keys [session-id dialogs error closed close!]}
-        (start-screen! terminal fail? true)]
+                       {:keys [session-id dialogs error closed close!]}
+                       (start-screen! terminal fail? true)]
 
-    (try (is (= ["Providers"] (await-value #(seq @dialogs))))
-         ;; The dialog saved a provider, so the same deferred startup is re-armed
-         ;; and the session it builds lands in the waiting tab.
-         (is (= session-id (await-value #(get-in @state/app-db [:session :id]))))
-         (finally (close!)))
-    (is (not= ::running @closed))
-    (is (nil? @error))))
+                   (try (expect (= ["Providers"] (await-value #(seq @dialogs))))
+                        ;; The dialog saved a provider, so the same deferred startup is re-armed
+                        ;; and the session it builds lands in the waiting tab.
+                        (expect (= session-id (await-value #(get-in @state/app-db [:session :id]))))
+                        (finally (close!)))
+                   (expect (not= ::running @closed))
+                   (expect (nil? @error)))))
 
-(deftest a-provider-that-never-answers-leaves-the-tui-open
-  ;; Regression: startup used to throw here, which printed "make-router requires
-  ;; at least one provider" and exited the application with status 2, so the user
-  ;; could never reach the dialog that fixes it.
-  (let [terminal
-        (DefaultVirtualTerminal. (TerminalSize. 100 30))
+(defdescribe a-provider-that-never-answers-leaves-the-tui-open
+             (it "a provider that never answers leaves the tui open"
+                 ;; Regression: startup used to throw here, which printed "make-router requires
+                 ;; at least one provider" and exited the application with status 2, so the user
+                 ;; could never reach the dialog that fixes it.
+                 (let [terminal
+                       (DefaultVirtualTerminal. (TerminalSize. 100 30))
 
-        fail?
-        (atom true)
+                       fail?
+                       (atom true)
 
-        {:keys [session-id dialogs notices error closed runner close!]}
-        (start-screen! terminal fail? false)]
+                       {:keys [session-id dialogs notices error closed runner close!]}
+                       (start-screen! terminal fail? false)]
 
-    (try (is (some? (await-value #(seq @notices))))
-         (is (some #(str/includes? % "provider") @notices))
-         (is (= ["Providers"] @dialogs))
-         (is (nil? (get-in @state/app-db [:session :id])))
-         (is (false? (future-done? runner)))
-         (is (nil? @error))
-         ;; The user adds a provider and reopens Providers with C-x o: startup is
-         ;; retried from the live screen instead of a restart.
-         (reset! fail? false)
-         (.addInput terminal (KeyStroke. (Character/valueOf \x) true false false))
-         (.addInput terminal (term/keystroke \o))
-         (is (= session-id (await-value #(get-in @state/app-db [:session :id]))))
-         (finally (close!)))
-    (is (not= ::running @closed))
-    (is (nil? @error))))
+                   (try (expect (some? (await-value #(seq @notices))))
+                        (expect (some #(str/includes? % "provider") @notices))
+                        (expect (= ["Providers"] @dialogs))
+                        (expect (nil? (get-in @state/app-db [:session :id])))
+                        (expect (false? (future-done? runner)))
+                        (expect (nil? @error))
+                        ;; The user adds a provider and reopens Providers with C-x o: startup is
+                        ;; retried from the live screen instead of a restart.
+                        (reset! fail? false)
+                        (.addInput terminal (KeyStroke. (Character/valueOf \x) true false false))
+                        (.addInput terminal (term/keystroke \o))
+                        (expect (= session-id (await-value #(get-in @state/app-db [:session :id]))))
+                        (finally (close!)))
+                   (expect (not= ::running @closed))
+                   (expect (nil? @error)))))
