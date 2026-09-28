@@ -602,8 +602,8 @@
 
 (defn- settled-turn-stream?
   "Predicate over one replay `window`: true for a stream frame of a turn whose terminal
-   frame is in the same window. Clients render a settled turn from its transcript, so
-   replaying its stream only delays the terminal frame a returning client waits for."
+   frame is in the same window. A rendering client shows a settled turn from its
+   transcript, so replaying its stream only delays the terminal frame it waits for."
   [window]
   (let [settled (into #{}
                       (keep #(when (contains? gateway-contract/turn-terminal-event-types
@@ -618,15 +618,19 @@
 
 (defn- read-replay!
   "Read under the event lock. A damaged file invalidates the window, never a partial tail.
-   A turn that settled inside the window replays only its lifecycle frames."
-  [sid cursor]
+   `replay` `:settled` replays a turn that settled inside the window as its lifecycle
+   frames only; `:full` replays every stored frame for clients that follow the stream."
+  [sid cursor replay]
   (let [entry
         (session-entry sid)
 
         window
         (filterv #(> (long (get % "seq")) (long (or cursor 0))) (:events entry))]
 
-    (try (mapv event-store/read-event (remove (settled-turn-stream? window) window))
+    (try (mapv event-store/read-event
+               (cond->> window
+                 (= :settled replay)
+                 (remove (settled-turn-stream? window))))
          (catch Exception e
            (update-session! sid
                             #(assoc %
@@ -883,20 +887,22 @@
    already-mirrored turn isn't re-delivered to existing subscribers. This
    materializes the running turn's row + ring HERE, so a watcher joining a turn
    in flight elsewhere replays it from `turn.started` (user bubble + running
-   frame) instead of catching only the bare deltas after connect."
-  [sid sub-id sink cursor]
-  ;; ensure an entry exists so `ingest-mirrored-event!` (called by hydrate)
-  ;; doesn't no-op, then hydrate the in-flight foreign turn INTO the ring
-  ;; before we snapshot replay from it.
-  (ensure-session-entry! sid)
-  (hydrate-foreign-turn! sid)
-  (let [lock (event-store/lock-for sid)]
-    (locking lock
-      ;; Forget may have won while hydration ran outside the replay lock.
-      (ensure-session-entry! sid)
-      (let [replay (read-replay! sid cursor)]
-        (update-session! sid #(assoc-in % [:subscribers sub-id] sink))
-        replay))))
+   frame) instead of catching only the bare deltas after connect. `replay` is
+   `:full` (the default) or `:settled`, as in [[read-replay!]]."
+  ([sid sub-id sink cursor] (subscribe! sid sub-id sink cursor :full))
+  ([sid sub-id sink cursor replay]
+   ;; ensure an entry exists so `ingest-mirrored-event!` (called by hydrate)
+   ;; doesn't no-op, then hydrate the in-flight foreign turn INTO the ring
+   ;; before we snapshot replay from it.
+   (ensure-session-entry! sid)
+   (hydrate-foreign-turn! sid)
+   (let [lock (event-store/lock-for sid)]
+     (locking lock
+       ;; Forget may have won while hydration ran outside the replay lock.
+       (ensure-session-entry! sid)
+       (let [events (read-replay! sid cursor replay)]
+         (update-session! sid #(assoc-in % [:subscribers sub-id] sink))
+         events)))))
 
 (defn unsubscribe! [sid sub-id] (drop-subscriber! sid sub-id) nil)
 
@@ -1127,10 +1133,12 @@
   "Read-only peek at the replay ring: stored canonical (string-keyed) events
    with `\"seq\"` > cursor, oldest first. Lets a page renderer locate the
    running turn's `turn.started` seq so its SSE reconnect can replay the WHOLE
-   in-flight turn instead of only what happens after connect."
-  [sid cursor]
-  (let [lock (event-store/lock-for sid)]
-    (locking lock (read-replay! sid cursor))))
+   in-flight turn instead of only what happens after connect. `replay` is
+   `:full` or `:settled`, as in [[read-replay!]]."
+  ([sid cursor] (events-since sid cursor :full))
+  ([sid cursor replay]
+   (let [lock (event-store/lock-for sid)]
+     (locking lock (read-replay! sid cursor replay)))))
 
 (defn running-turn-count
   "Number of live turns currently owned by this gateway process. Used by the

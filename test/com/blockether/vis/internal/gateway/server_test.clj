@@ -133,9 +133,10 @@
                        (rv 'events-since-handler)]
 
                    (with-redefs [state/events-since
-                                 (fn [id cursor]
+                                 (fn [id cursor replay]
                                    (expect (= sid id))
                                    (expect (= 0 cursor))
+                                   (expect (= :settled replay))
                                    [event])
 
                                  wire/->wire
@@ -146,6 +147,14 @@
                        (expect (= 200 (:status response)))
                        (expect (= "application/json" (get-in response [:headers "Content-Type"])))
                        (expect (= {"events" [event]} (wire/parse-json (:body response)))))))))
+
+(defdescribe sse-replay-test
+             (it "replays settled turns by lifecycle unless the client asks for the full stream"
+                 (let [replay (rv 'sse-replay)]
+                   (expect (= :settled (replay {:query-params {}})))
+                   (expect (= :settled (replay {:query-params {"replay" "settled"}})))
+                   (expect (= :full (replay {:query-params {"replay" "full"}})))
+                   (expect (= :full (replay {:query-params {"replay" " full "}}))))))
 
 (defn- server-state [] instance/server-state)
 
@@ -2201,7 +2210,7 @@
                           (fn []
                             (with-redefs-fn {#'state/soul #(when (= live %) {"id" (str live)})
                                              #'state/current-turn-id (constantly nil)
-                                             #'state/subscribe! (fn [sid _ _ _]
+                                             #'state/subscribe! (fn [sid _ _ _ _]
                                                                   (swap! subscribed conj sid)
                                                                   [])
                                              #'state/unsubscribe! (fn [& _])
@@ -2427,7 +2436,7 @@
                              #'state/current-seq (constantly 4)
                              #'state/replay-floor (constantly 0)
                              #'state/subscribe!
-                             (fn [id _ _ cursor]
+                             (fn [id _ _ cursor _]
                                (swap! subscribed conj [id cursor])
                                [{"schema" 1 "type" "turn.started" "session_id" (str id) "seq" 5}])
                              #'state/unsubscribe! (fn [& _])

@@ -183,7 +183,7 @@
 (defdescribe
   settled-turn-replay-test
   (it
-    "replays a turn that settled while the client was away without its stream"
+    "replays a settled turn without its stream only to a rendering client"
     (with-replay
       (fn [sid registry]
         (with-redefs-fn {#'state/EVENT_RING_MAX (delay 20)}
@@ -211,15 +211,22 @@
                    ["turn.started" "running"] ["content.block.delta" "running"]]]
 
               ;; The client saw the turn start and its first delta, then left.
-              (expect (= resumed (frames (state/events-since sid 2))))
+              (expect (= resumed (frames (state/events-since sid 2 :settled))))
               (expect (= resumed
                          (frames (state/subscribe! sid
-                                                   "sink"
-                                                   (fn [_])
-                                                   2))))
+                                                   "sink" (fn [_])
+                                                   2 :settled))))
               (expect (= (into [["turn.started" "settled"]] resumed)
-                         (frames (state/events-since sid 0))))
+                         (frames (state/events-since sid 0 :settled))))
               ;; A cursor inside the running turn still gets every frame.
-              (expect (= [["content.block.delta" "running"]] (frames (state/events-since sid 9))))
+              (expect (= [["content.block.delta" "running"]]
+                         (frames (state/events-since sid 9 :settled))))
+              ;; A client that follows the stream, such as an SDK poll whose window holds
+              ;; a turn's last frames and its terminal, gets every frame.
+              (expect (= 8 (count (state/events-since sid 2))))
+              (expect (= 8
+                         (count (state/subscribe! sid
+                                                  "follower" (fn [_])
+                                                  2 :full))))
               ;; Only the read is filtered; the ring keeps every stored frame.
               (expect (= 10 (count (get-in @registry [sid :events])))))))))))

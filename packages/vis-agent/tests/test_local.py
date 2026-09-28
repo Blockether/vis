@@ -270,7 +270,8 @@ def test_local_event_polling_uses_the_canonical_cursor_key(monkeypatch, tmp_path
     monkeypatch.setattr(engine, "get_session_events_since", page)
     with engine.session("s").events(cursor=7) as events:
         assert next(events).seq == 8
-    assert calls == [{"cursor": 7}]
+    # The SDK follows every frame, including a turn that settled between polls.
+    assert calls == [{"cursor": 7, "replay": "full"}]
     engine.close()
 
 

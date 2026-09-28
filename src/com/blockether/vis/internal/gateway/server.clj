@@ -504,6 +504,17 @@
               parse-long)
       0))
 
+(defn- sse-replay
+  "Replay mode requested by a client. `replay=full` follows every stored frame, as
+   the SDK does; by default a turn that settled while the client was away replays
+   its lifecycle frames only, because rendering clients show it from its transcript."
+  [request]
+  (if (= "full"
+         (some-> (get-in request [:query-params "replay"])
+                 str/trim))
+    :full
+    :settled))
+
 (defn- request-client-pid
   "OS pid of the LOCAL vis process that opened this connection, from the
    `X-Vis-Client-Pid` header every gateway client sends. Remote clients (phone,
@@ -737,9 +748,10 @@
    per-session `last-seq` guard dedups each session independently. Optionally
    carries the fleet status feed on that same connection, marked with
    `scope=fleet` so its independent sequence cannot advance a session cursor.
-   Replays each session past its cursor, then drains live and heartbeats; a
+   Replays each session past its cursor in `replay` mode (see [[sse-replay]];
+   default `:settled`), then drains live and heartbeats; a
    dead client unsubscribes every feed."
-  [sid+cursors proxied? owner-pid & [include-fleet?]]
+  [sid+cursors proxied? owner-pid & [include-fleet? replay]]
   (reify
     ring-protocols/StreamableResponseBody
       (write-body-to-stream [_ _ output-stream]
@@ -796,7 +808,7 @@
                        replay (when (some? cursor)
                                 ;; Seed the guard before atomic registration.
                                 (swap! last-seqs assoc (str sid) cursor)
-                                (state/subscribe! sid sub-id sink cursor))
+                                (state/subscribe! sid sub-id sink cursor (or replay :settled)))
                        ;; Deletion may win between the first read and registration.
                        session (when (some? cursor) (state/soul sid))]
 
@@ -915,10 +927,13 @@
     (cond fleet? {:status 200
                   :headers sse/sse-headers
                   :body (fleet-sse-body proxied? (request-client-pid request))}
-          (seq sid+cursors)
-          {:status 200
-           :headers sse/sse-headers
-           :body (multi-sse-body sid+cursors proxied? (request-client-pid request) combined?)}
+          (seq sid+cursors) {:status 200
+                             :headers sse/sse-headers
+                             :body (multi-sse-body sid+cursors
+                                                   proxied?
+                                                   (request-client-pid request)
+                                                   combined?
+                                                   (sse-replay request))}
           :else (http/error-response 400 :bad-request "no valid sids"))))
 
 ;; /metrics (§6.5)
@@ -1147,7 +1162,8 @@
   (if-let [sid (http/path-sid request)]
     {:status 200
      :headers {"Content-Type" "application/json"}
-     :body (wire/canonical-json-str {"events" (state/events-since sid (sse-cursor request))})}
+     :body (wire/canonical-json-str
+             {"events" (state/events-since sid (sse-cursor request) (sse-replay request))})}
     (http/session-404 (get-in request [:path-params :sid]))))
 
 ;; Router and middleware

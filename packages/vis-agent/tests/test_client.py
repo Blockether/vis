@@ -280,7 +280,8 @@ def test_stream_resume_deduplicates_and_honors_a_restarted_generation():
     def respond(method, path, body):
         if result := compatible(method, path, body):
             return result
-        streams.append(parse_qs(urlsplit(path).query)["sids"][0])
+        query = parse_qs(urlsplit(path).query)
+        streams.append((query["sids"][0], query["replay"][0]))
         if len(streams) == 1:
             data = [
                 {"type": "subscription.ready", "session_id": sid, "cursor": 7},
@@ -303,7 +304,8 @@ def test_stream_resume_deduplicates_and_honors_a_restarted_generation():
             assert next(events).seq == 8
             assert next(events).cursor == 0
             assert next(events).seq == 1
-        assert streams == ["session-one:7", "session-one:8"]
+        # Every reconnect asks for the full stream, not only a settled turn's lifecycle.
+        assert streams == [("session-one:7", "full"), ("session-one:8", "full")]
 
 
 def test_stream_budget_and_malformed_frames_fail_visibly():

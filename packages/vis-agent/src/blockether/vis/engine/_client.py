@@ -3162,7 +3162,9 @@ class Events(_EventStream):
         **options: `reconnects` bounds retries (default 3); `retry_delay` is a
             nonnegative finite delay in seconds (default 0.2).
 
-    Duplicate events are suppressed. `subscription.ready` resets the cursor,
+    The stream replays every stored event after `cursor`, including the progress
+    of turns that finished before you subscribed. Duplicate events are
+    suppressed. `subscription.ready` resets the cursor,
     including after a daemon restart, so persist the stream's current `cursor`
     rather than assuming it is always increasing. The idle timeout is the
     client's timeout. Closing the stream never cancels a turn. Invalid replay
@@ -3176,7 +3178,10 @@ class Events(_EventStream):
         super().__init__(session.client, **options)
 
     def _endpoint(self):
-        return "/v1/events", {"sids": f"{self.session.id}:{self.cursor}"}
+        return "/v1/events", {
+            "sids": f"{self.session.id}:{self.cursor}",
+            "replay": "full",
+        }
 
     def _accept(self, name, value):
         event = Event.from_wire(value)
@@ -3199,7 +3204,7 @@ class _SessionPollingEvents(_PollingEvents, Events):
 
     def _page(self):
         data = self.client.get_session_events_since(
-            self.session.id, query={"cursor": self.cursor}
+            self.session.id, query={"cursor": self.cursor, "replay": "full"}
         )
         if not isinstance(data, dict) or not isinstance(data.get("events"), list):
             raise ProtocolError("malformed session event page")
