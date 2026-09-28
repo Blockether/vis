@@ -279,54 +279,62 @@
         (directory id)
 
         archive
-        (io/file dir "inference.zip")]
+        (io/file dir "inference.zip")
 
-    (try (let [result (*execute!* (io/file dir "spec.json") #(progress! id %) #(cancelled? id))]
-           (when (cancelled? id)
-             (throw (ex-info "Decision training was cancelled" {:type :decisions/cancelled})))
-           (when-not (valid-result? result archive)
-             (throw (ex-info "Decision trainer result is incomplete"
-                             {:type :decisions/training-failed})))
-           (locking lock
-             (write-status! id
-                            (assoc (read-status id)
-                              "status" "registering"
-                              "stage" "registering")))
-           ;; Python exited and released its tensors. Registration now uses the
-           ;; ordinary bounded JVM runtime and never activates an existing alias.
-           (cache/end-training!)
-           (let [model-id (get (read-status id) "model_id")
-                 registered (registry/register!
-                              archive
-                              (get result "sha256")
-                              (fn [model inference]
-                                (when-not (= model-id (:id model))
-                                  (throw (ex-info "Decision trainer returned a different model"
-                                                  {:type :decisions/invalid-bundle})))
-                                (decisions/validate-runtime! model inference)))]
+        terminal
+        (volatile! nil)]
 
-             (cleanup-inference! id)
-             (locking lock
-               (write-status! id
-                              (assoc (read-status id)
-                                "status" "completed"
-                                "stage" "completed"
-                                "model_ref" (get registered "model_ref")
-                                "metrics" {"decision_accuracy" (get result "decision_accuracy")
-                                           "action_accuracy" (get result "action_accuracy")})))))
-         (catch Throwable _
-           (cleanup-inference! id)
-           (locking lock
-             (when-let [status (read-status id)]
-               (write-status! id
-                              (assoc status
-                                "status" (if (cancelled? id) "cancelled" "failed")
-                                "stage" (if (cancelled? id) "cancelled" "failed")
-                                "error" (if (cancelled? id)
-                                          "Decision training was cancelled"
-                                          "Decision training or validation failed"))))))
-         (finally (cache/end-training!)
-                  (locking lock (when (= id (:id @active)) (reset! active nil)))))))
+    (try
+      (let [result (*execute!* (io/file dir "spec.json") #(progress! id %) #(cancelled? id))]
+        (when (cancelled? id)
+          (throw (ex-info "Decision training was cancelled" {:type :decisions/cancelled})))
+        (when-not (valid-result? result archive)
+          (throw (ex-info "Decision trainer result is incomplete"
+                          {:type :decisions/training-failed})))
+        (locking lock
+          (write-status! id
+                         (assoc (read-status id)
+                           "status" "registering"
+                           "stage" "registering")))
+        ;; Python exited and released its tensors. Registration now uses the
+        ;; ordinary bounded JVM runtime and never activates an existing alias.
+        (cache/end-training!)
+        (let [model-id (get (read-status id) "model_id")
+              registered (registry/register!
+                           archive
+                           (get result "sha256")
+                           (fn [model inference]
+                             (when-not (= model-id (:id model))
+                               (throw (ex-info "Decision trainer returned a different model"
+                                               {:type :decisions/invalid-bundle})))
+                             (decisions/validate-runtime! model inference)))]
+
+          (cleanup-inference! id)
+          (locking lock
+            (vreset! terminal
+                     (assoc (read-status id)
+                       "status" "completed"
+                       "stage" "completed"
+                       "model_ref" (get registered "model_ref")
+                       "metrics" {"decision_accuracy" (get result "decision_accuracy")
+                                  "action_accuracy" (get result "action_accuracy")})))))
+      (catch Throwable _
+        (cleanup-inference! id)
+        (locking lock
+          (when-let [status (read-status id)]
+            (vreset! terminal
+                     (assoc status
+                       "status" (if (cancelled? id) "cancelled" "failed")
+                       "stage" (if (cancelled? id) "cancelled" "failed")
+                       "error" (if (cancelled? id)
+                                 "Decision training was cancelled"
+                                 "Decision training or validation failed"))))))
+      (finally (locking lock
+                 ;; Terminal readers and new jobs must observe both reservations released.
+                 (cache/end-training!)
+                 (when (= id (:id @active)) (reset! active nil))
+                 (when-let [status @terminal]
+                   (write-status! id status)))))))
 
 (defn create!
   "Stage bounded approved inputs, then run one isolated offline CPU trainer.

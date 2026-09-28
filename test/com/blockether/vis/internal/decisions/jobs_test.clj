@@ -184,6 +184,41 @@
                                            {:close (fn [])})
                                          (constantly :ok))))))))))
 
+(deftest terminal-job-status-follows-training-reservation-release
+  (doseq [cancel? [false true]]
+    (fixture
+      (fn [_ _ _]
+        (let [id (atom nil)
+              entered (promise)
+              release (promise)
+              releasing-status (promise)
+              end-training! cache/end-training!]
+
+          (with-redefs [cache/end-training! (fn []
+                                              ;; Observe the ordering in the worker, without timing a polling race.
+                                              (deliver releasing-status
+                                                       (get (jobs/get! @id) "status"))
+                                              (end-training!))]
+            (binding [jobs/*execute!* (fn [_ _ _]
+                                        (deliver entered true)
+                                        @release
+                                        (throw (ex-info "synthetic training failure" {})))]
+              (try (reset! id (get (jobs/create! request) "job_id"))
+                   (is (= true (deref entered 3000 nil)))
+                   (when cancel? (jobs/delete! @id))
+                   (deliver release true)
+                   (is (= (if cancel? "cancelling" "running") (deref releasing-status 3000 nil)))
+                   (let [terminal (if cancel? "cancelled" "failed")]
+                     (is (= terminal (get (await-status @id terminal) "status"))))
+                   (is (= :ok
+                          (cache/with-resident! :after-terminal
+                                                (fn []
+                                                  {:close (fn [])})
+                                                (constantly :ok))))
+                   (let [next-id (get (jobs/create! request) "job_id")]
+                     (is (= "failed" (get (await-status next-id "failed") "status"))))
+                   (finally (deliver release true))))))))))
+
 (deftest gliner-jobs-select-approved-checkpoint-and-reject-cross-family-resume
   (fixture
     (fn [_ _ baseline]
