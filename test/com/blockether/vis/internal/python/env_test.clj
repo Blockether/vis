@@ -736,22 +736,29 @@
             (expect (= #{[{"query" "a.*b" "is_regex" true}] [{"query" "c.+d" "is_regex" true}]}
                        (set @seen))))))))
 
+;; A `hold` promise keeps `succeed(2)` from finishing until the block has returned,
+;; so whether slot 2 settled before the failure surfaced is not a race.
 (defn- gather-outcome
-  [code]
-  (let [seen (atom [])]
-    (tpc/with-own [ctx
-                   {'succeed (fn [value]
-                               (swap! seen conj value)
-                               value)
-                    'fail (fn []
-                            (swap! seen conj :failed)
-                            (throw (ex-info "expected fixture failure" {})))}]
-                  (let [result (ep/run-python-block
-                                 ctx
-                                 (str "async def call_slot(value):\n"
-                                      "    if value is None:\n        return await fail()\n"
-                                      "    return await succeed(value)\n" code))]
-                    {:result result :seen @seen}))))
+  ([code] (gather-outcome code nil))
+  ([code hold]
+   (let [seen (atom [])]
+     (tpc/with-own [ctx
+                    {'succeed (fn [value]
+                                (when (and hold (= 2 value)) (deref hold 10000 nil))
+                                (swap! seen conj value)
+                                value)
+                     'fail (fn []
+                             (swap! seen conj :failed)
+                             (throw (ex-info "expected fixture failure" {})))}]
+                   (let [result (ep/run-python-block
+                                  ctx
+                                  (str "async def call_slot(value):\n"
+                                       "    if value is None:\n        return await fail()\n"
+                                       "    return await succeed(value)\n" code))
+                         settled @seen]
+
+                     (when hold (deliver hold true))
+                     {:result result :seen settled})))))
 
 (defdescribe
   gather-exception-contract-test
@@ -771,15 +778,19 @@
           (expect (nil? (:error result)) (pr-str result))
           (expect (= "ordered\n" (:stdout result)))
           (expect (= [1 :failed 2] seen)))))
-  (it "settles every direct or wrapped sibling before surfacing the default-mode failure"
+  ;; The runtime pool fails fast (vis-python-runtime `par-failure-test`): the error
+  ;; surfaces once slots 0 and 1 finish, while slot 2 may still be running or never
+  ;; start. Holding slot 2 until the block returns makes that order exact.
+  (it "surfaces the first failing slot without waiting for later direct or wrapped siblings"
       (doseq [calls ["succeed(1), fail(), succeed(2)"
                      "call_slot(1), call_slot(None), call_slot(2)"]]
         (let [{:keys [result seen]}
-              (gather-outcome (str "answers = await gather(" calls ")\nprint('not reached')"))]
+              (gather-outcome (str "answers = await gather(" calls ")\nprint('not reached')")
+                              (promise))]
           (expect (some? (:error result)))
           (expect (str/includes? (pr-str (:error result)) "[1] expected fixture failure"))
           (expect (not (str/includes? (str (:stdout result)) "not reached")))
-          (expect (= {1 1 :failed 1 2 1} (frequencies seen)))))))
+          (expect (= {1 1 :failed 1} (frequencies seen)) (pr-str seen))))))
 
 (defdescribe
   doc-authoritative-lookup-test
@@ -1004,9 +1015,9 @@
                             "print(doc('gather'))"))]
           (doseq [text ["gather(*awaitables, return_exceptions=False)"
                         "independent deferred tool calls" "results preserve input order"
-                        "keep dependent calls sequential" "every failing slot index"
-                        "return_exceptions=True" "exception objects" "host slots run serially"
-                        "side effects"
+                        "keep dependent calls sequential" "first failing slot in input order"
+                        "later slots may still be running" "return_exceptions=True"
+                        "exception objects" "host slots run serially" "side effects"
                         "await gather(cat(path_a), cat(path_b), return_exceptions=True)"]]
             (expect (str/includes? out text) text))
           (expect (not (str/includes? out "Current limitation")))
