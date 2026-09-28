@@ -85,8 +85,8 @@ def trace_stream(path: Path) -> Iterator[IO[str]]:
             process.kill()
 
 
-def has_pinned_provider_call(trial: Path) -> bool:
-    """Detect real model work in a failed trial with no final Vis result."""
+def pinned_model_work(trial: Path) -> tuple[bool, bool]:
+    """Report whether a trace called the pinned model and whether it streamed output."""
     for path in (
         trial / "agent/vis-trace.jsonl.gz",
         trial / "agent/vis-trace.jsonl.zst",
@@ -94,25 +94,39 @@ def has_pinned_provider_call(trial: Path) -> bool:
     ):
         if not path.is_file():
             continue
+        called = False
         try:
             with trace_stream(path) as stream:
                 for line in stream:
-                    if "provider-call" not in line:
+                    if "provider-call" not in line and '"delta"' not in line:
                         continue
                     try:
                         frame = json.loads(line)
                     except json.JSONDecodeError:
                         continue
                     payload = frame.get("payload")
-                    if (
-                        isinstance(payload, dict)
-                        and payload.get("phase") == "provider-call"
-                        and f"{payload.get('provider')}/{payload.get('model')}" == MODEL
+                    if not isinstance(payload, dict):
+                        continue
+                    phase = payload.get("phase")
+                    if phase == "provider-call":
+                        model = f"{payload.get('provider')}/{payload.get('model')}"
+                        called = called or model == MODEL
+                    elif (
+                        called
+                        and phase in {"reasoning", "content"}
+                        and payload.get("delta")
                     ):
-                        return True
+                        return True, True
         except (EOFError, OSError, UnicodeDecodeError):
-            continue
-    return False
+            pass
+        if called:
+            return True, False
+    return False, False
+
+
+def has_pinned_provider_call(trial: Path) -> bool:
+    """Detect real model work in a failed trial with no final Vis result."""
+    return pinned_model_work(trial)[0]
 
 
 def exception_type(result: dict) -> str | None:
@@ -121,14 +135,14 @@ def exception_type(result: dict) -> str | None:
 
 
 def is_scored_attempt(result: dict, trial: Path) -> bool:
-    """Accept verified Vis results and verified timeouts after real model work."""
+    """Accept verified Vis results and timeouts once the pinned model streamed output."""
     if result.get("verifier_result") is None:
         return False
     # Harbor verifies a timed-out agent, but Vis never writes its final result.
-    return has_vis_result(result) or (
-        exception_type(result) == "AgentTimeoutError"
-        and has_pinned_provider_call(trial)
-    )
+    if not has_vis_result(result) and exception_type(result) != "AgentTimeoutError":
+        return False
+    # A provider that refused every call measured the runner, not the agent.
+    return pinned_model_work(trial)[1]
 
 
 def accounted_tasks(jobs: Path) -> tuple[set[str], set[str], set[str]]:

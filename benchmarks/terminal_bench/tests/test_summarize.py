@@ -153,6 +153,9 @@ def test_report_scores_each_task_by_latest_verified_model_attempt(tmp_path):
             },
         }
     )
+    model_output = json.dumps(
+        {"event": "trace-chunk", "payload": {"phase": "reasoning", "delta": "Let"}}
+    )
     vis = {"metadata": {"vis": {"model": "zai-coding-plan/glm-5.3-flash"}}}
     timeout = {"metadata": None}
     for job, task, finished, exception, agent, reward in (
@@ -194,7 +197,9 @@ def test_report_scores_each_task_by_latest_verified_model_attempt(tmp_path):
             )
         )
         if task != "setup":
-            (trial / "agent/vis-trace.jsonl").write_text(provider_call + "\n")
+            (trial / "agent/vis-trace.jsonl").write_text(
+                provider_call + "\n" + model_output + "\n"
+            )
     report = make_report(jobs, dataset)
     assert report["solved_tasks"] == ["retried"]
     assert report["scored_tasks"] == 2
@@ -206,6 +211,10 @@ def test_report_groups_scored_tasks_by_how_their_latest_attempt_ended(tmp_path):
     dataset = tmp_path / "dataset"
     dataset.mkdir()
     jobs = tmp_path / "jobs"
+    model_output = {
+        "event": "trace-chunk",
+        "payload": {"phase": "reasoning", "delta": "Let"},
+    }
     provider_call = {
         "event": "trace-chunk",
         "payload": {
@@ -270,7 +279,10 @@ def test_report_groups_scored_tasks_by_how_their_latest_attempt_ended(tmp_path):
             )
         )
         (trial / "agent/vis-trace.jsonl").write_text(
-            "".join(json.dumps(frame) + "\n" for frame in [provider_call, *frames])
+            "".join(
+                json.dumps(frame) + "\n"
+                for frame in [provider_call, model_output, *frames]
+            )
         )
     report = make_report(jobs, dataset)
     assert report["task_outcomes"] == {

@@ -17,26 +17,33 @@ from run_suite import (
 )
 
 
-def write_model_attempt(trial, result):
-    """Write a Harbor trial whose trace shows a pinned provider call."""
+def write_model_trace(trial, *, streamed=True):
+    """Write a trace with a pinned provider call and, optionally, streamed output."""
+    frames = [
+        {
+            "event": "trace-chunk",
+            "payload": {
+                "phase": "provider-call",
+                "provider": "zai-coding-plan",
+                "model": "glm-5.3-flash",
+            },
+        }
+    ]
+    if streamed:
+        frames.append(
+            {"event": "trace-chunk", "payload": {"phase": "reasoning", "delta": "Let"}}
+        )
     (trial / "agent").mkdir(parents=True, exist_ok=True)
-    (trial / "result.json").write_text(json.dumps(result))
     with gzip.open(
         trial / "agent/vis-trace.jsonl.gz", "wt", encoding="utf-8"
     ) as stream:
-        stream.write(
-            json.dumps(
-                {
-                    "event": "trace-chunk",
-                    "payload": {
-                        "phase": "provider-call",
-                        "provider": "zai-coding-plan",
-                        "model": "glm-5.3-flash",
-                    },
-                }
-            )
-            + "\n"
-        )
+        stream.writelines(json.dumps(frame) + "\n" for frame in frames)
+
+
+def write_model_attempt(trial, result, *, streamed=True):
+    """Write a Harbor trial whose trace shows a pinned provider call."""
+    write_model_trace(trial, streamed=streamed)
+    (trial / "result.json").write_text(json.dumps(result))
 
 
 def test_catalog_skips_gpu_and_reserves_high_memory(tmp_path):
@@ -95,10 +102,31 @@ def test_accounting_retries_setup_only_failures_but_not_live_trials(tmp_path):
     (jobs / "finished" / "result.json").write_text(
         '{"finished_at":"2026-01-01T00:00:01Z"}'
     )
+    write_model_trace(jobs / "old" / "completed__abcd")
     completed, in_flight, failed = accounted_tasks(jobs)
     assert completed == {"completed"}
     assert in_flight == {"still-live"}
     assert failed == set()
+
+
+def test_refused_model_calls_are_retryable_failures_not_scores(tmp_path):
+    jobs = tmp_path / "jobs"
+    trial = jobs / "suite-001" / "refused__abcd"
+    result = {
+        "task_name": "terminal-bench/refused",
+        "finished_at": "2026-01-01T00:00:01Z",
+        "exception_info": {"exception_type": "NonZeroAgentExitCodeError"},
+        "agent_result": {
+            "metadata": {"vis": {"model": run_suite.MODEL, "status": "error"}}
+        },
+        "verifier_result": {"rewards": {"reward": 0.0}},
+    }
+    write_model_attempt(trial, result, streamed=False)
+    assert accounted_tasks(jobs) == (set(), set(), {"refused"})
+    with pytest.raises(RuntimeError, match="Incomplete metrics"):
+        job_result(jobs / "suite-001", {"name": "refused"})
+    write_model_attempt(trial, result)
+    assert accounted_tasks(jobs) == ({"refused"}, set(), set())
 
 
 def test_accounting_records_model_failure_but_retries_canceled_peer(tmp_path):
@@ -257,6 +285,7 @@ def test_job_names_and_missing_metrics_are_not_silently_accepted(tmp_path):
     job = jobs / "suite-001"
     trial = job / "small__abcd"
     trial.mkdir(parents=True)
+    write_model_trace(trial)
     assert job_name("suite", jobs) == "suite-002"
     assert job_name("suite", jobs, {"suite-002"}) == "suite-003"
     result = {
