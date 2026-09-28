@@ -1139,6 +1139,67 @@ print(worker_value)"))))
            (expect (false? (.isAlive process)))
            (finally (try (env/dispose-python-context! session) (catch Throwable _ nil))
                     (.delete marker)))))
+  ;; Vis session b7ff5cee: the slots of a gather outlived its interrupt, so the
+  ;; block missed the unwind window and its session process was retired.
+  (it
+    "keeps the real session process when an interrupted gather unwinds"
+    (let [marker
+          (java.io.File/createTempFile "vis-gather-" ".ready")
+
+          _
+          (.delete marker)
+
+          made
+          (env/create-python-context {}
+                                     (constantly [])
+                                     {:worker? true
+                                      :jail-enabled? false
+                                      :enabled? false
+                                      :allowed-domains []
+                                      :denied-domains []
+                                      :exclude-domains []}
+                                     nil)
+
+          session
+          (:python-context made)
+
+          ^Process process
+          (:process (get @(var-get #'worker/workers) session))
+
+          retired
+          (atom false)
+
+          execution
+          (future (env/run-python-block
+                    session
+                    (str "import time\n"
+                         "async def slot(n):\n"
+                         "    if n == 0:\n"
+                         "        with open("
+                         (pr-str (str marker))
+                         ", 'w') as ready_file:\n"
+                         "            ready_file.write('ready')\n" "    time.sleep(5)\n"
+                         "try:\n" "    await gather(*[slot(n) for n in range(4)])\n"
+                         "except Exception as error:\n" "    print('swallowed', repr(error))\n")))]
+
+      (try (expect (loop [remaining 500]
+                     (cond (.exists marker) true
+                           (or (zero? remaining) (realized? execution)) false
+                           :else (do (Thread/sleep 10) (recur (dec remaining))))))
+           (expect (true? ((deref #'python-exec/interrupt-block!)
+                            session
+                            execution
+                            {:python-context-retired-atom retired}
+                            :await-unwind?
+                            true)))
+           (let [outcome (deref execution 5000 ::hung)]
+             (expect (str/includes? (pr-str (:error outcome)) "KeyboardInterrupt") (pr-str outcome))
+             (expect (not (str/includes? (str (:stdout outcome)) "swallowed"))))
+           (expect (false? @retired))
+           (expect (.isAlive process))
+           (expect (= "2\n" (:stdout (env/run-python-block session "print(1 + 1)"))))
+           (finally (try (env/dispose-python-context! session) (catch Throwable _ nil))
+                    (.delete marker)))))
   (it "reclaims a condemned environment's worker before detaching it"
       (let [retired
             (atom false)

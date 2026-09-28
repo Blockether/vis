@@ -1023,7 +1023,10 @@
                         "keep dependent calls sequential" "settle every slot before failing"
                         "first failing slot in input order"
                         "`also failed:` line per other failed slot"
-                        "No slot keeps running after the error" "return_exceptions=True"
+                        "No slot keeps running after the error"
+                        "Cancelling the turn or a block timeout stops a gather"
+                        "slots that have not started never run" "running slots are interrupted"
+                        "which `except Exception` does not catch" "return_exceptions=True"
                         "exception objects" "host slots run serially" "side effects"
                         "await gather(cat(path_a), cat(path_b), return_exceptions=True)"]]
             (expect (str/includes? out text) text))
