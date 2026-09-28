@@ -363,7 +363,7 @@
       (toggles/hydrate-from-config! {})
       (is (true? (council 'enabled?)))
       (is (string? (council 'prompt nil)))
-      (toggles/hydrate-from-config! {:toggles {"council" false}})
+      (toggles/hydrate-from-config! {"toggles" {"council" false}})
       (is (false? (council 'enabled?)))
       (is (nil? (council 'prompt nil)))
       (toggles/reset-to-default! "council")

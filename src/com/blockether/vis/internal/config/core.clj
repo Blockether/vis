@@ -1469,12 +1469,14 @@
            apply-config-metadata)))
 
 (defn- active-provider-entry
+  "The provider entry the string-keyed YAML `config` selects: its `default_provider`,
+   else its first entry."
   [config]
   (let [provider-entries
-        (or (:providers config) (get config "providers"))
+        (get config "providers")
 
         default-id
-        (or (:default-provider config) (get config "default_provider"))
+        (get config "default_provider")
 
         id-str
         (fn [value]
@@ -1482,14 +1484,12 @@
                 (some? value) (str value)))]
 
     (or (when default-id
-          (some #(when (= (id-str default-id) (id-str (or (:id %) (get % "id")))) %)
-                provider-entries))
+          (some #(when (= (id-str default-id) (id-str (get % "id"))) %) provider-entries))
         (first provider-entries))))
 
 (defn- provider-selection-changed?
   [previous-provider selected-provider]
-  (letfn [(provider-id [provider] (or (:id provider) (get provider "id")))]
-    (and selected-provider (not= (provider-id previous-provider) (provider-id selected-provider)))))
+  (and selected-provider (not= (:id previous-provider) (:id selected-provider))))
 
 (defn- emit-provider-selected!
   [{:keys [previous-provider provider config source]}]

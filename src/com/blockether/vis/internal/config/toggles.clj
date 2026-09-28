@@ -452,7 +452,7 @@
 
          declared
          (fn [m]
-           (let [values (or (get m "toggles") (:toggles m))]
+           (let [values (get m "toggles")]
              (if (map? values)
                (into {}
                      (keep (fn [[id _]]
@@ -502,10 +502,9 @@
     nil))
 
 (defn hydrate-from-config!
-  "Bulk-apply values from the string-keyed YAML `toggles` map. Keyword-keyed
-   internal maps remain accepted for callers that do not originate at YAML."
+  "Bulk-apply values from the string-keyed YAML `toggles` map."
   [config-map]
-  (let [persisted (or (get config-map "toggles") (:toggles config-map))]
+  (let [persisted (get config-map "toggles")]
     (when (map? persisted)
       (let [reg @registry]
         (doseq [[id v] persisted

@@ -145,7 +145,7 @@
       (with-clean-state
         (fn []
           (t/register-toggle! {:id "test_zeta" :label "Zeta" :default false :persist? true})
-          (t/hydrate-from-config! {:toggles {"test_zeta" true "test_orphan_unknown" true}})
+          (t/hydrate-from-config! {"toggles" {"test_zeta" true "test_orphan_unknown" true}})
           (expect (true? (t/enabled? "test_zeta")))
           (expect (false? (t/enabled? "test_orphan_unknown")))))))
 
@@ -178,17 +178,17 @@
                                :choices [:quick :balanced :deep]
                                :default :balanced
                                :persist? true})
-          (t/hydrate-from-config! {:toggles {"test_flag" "true" "test_mode" "deep"}})
+          (t/hydrate-from-config! {"toggles" {"test_flag" "true" "test_mode" "deep"}})
           (expect (true? (t/enabled? "test_flag")))
           (expect (= "deep" (t/value-of "test_mode")))
           ;; the same canonical string id updates the same toggle
-          (t/hydrate-from-config! {:toggles {"test_mode" "quick"}})
+          (t/hydrate-from-config! {"toggles" {"test_mode" "quick"}})
           (expect (= "quick" (t/value-of "test_mode")))
           ;; keyword and namespaced aliases are ignored, never coerced
-          (t/hydrate-from-config! {:toggles {:test_mode "deep" "ns/test_mode" "deep"}})
+          (t/hydrate-from-config! {"toggles" {:test_mode "deep" "ns/test_mode" "deep"}})
           (expect (= "quick" (t/value-of "test_mode")))
           ;; an out-of-set enum string is dropped, leaving the prior value
-          (t/hydrate-from-config! {:toggles {"test_mode" "nonsense"}})
+          (t/hydrate-from-config! {"toggles" {"test_mode" "nonsense"}})
           (expect (= "quick" (t/value-of "test_mode")))))))
 
 (defdescribe host-defaults-test

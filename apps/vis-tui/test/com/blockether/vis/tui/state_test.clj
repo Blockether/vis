@@ -719,7 +719,7 @@
       ;; off the registry. (In production `screen/run-chat!` runs
       ;; hydration AFTER `init!` and then dispatches
       ;; `:resync-toggle-settings` — see the regression test below.)
-      (vis/toggles-hydrate-from-config! {:toggles {"reasoning_level" :deep}})
+      (vis/toggles-hydrate-from-config! {"toggles" {"reasoning_level" :deep}})
       (try (with-redefs [vis/load-config-raw (fn []
                                                {})]
              (state/init!)
@@ -737,14 +737,14 @@
                                                {})]
              (state/init!)                     ;; projects default :balanced
              (vis/toggles-hydrate-from-config! ;; toggle -> persisted :quick
-               {:toggles {"reasoning_level" :quick}})
+               {"toggles" {"reasoning_level" :quick}})
              (expect (= "balanced" ;; stale projection, pre-resync
                         (get-in @state/app-db [:settings :reasoning-level])))
              (state/dispatch [:resync-toggle-settings]) ;; the fix
              (expect (= "quick" (get-in @state/app-db [:settings :reasoning-level]))))
            (finally (vis/toggle-reset-to-default! "reasoning_level"))))
   (it "hydrates verbosity from the toggles registry"
-      (vis/toggles-hydrate-from-config! {:toggles {"verbosity" :medium}})
+      (vis/toggles-hydrate-from-config! {"toggles" {"verbosity" :medium}})
       (try (with-redefs [vis/load-config-raw (fn []
                                                {})]
              (state/init!)
@@ -754,7 +754,7 @@
       ;; `hydrate-from-config!` routes through `set-value!` which
       ;; validates against `:choices`. Invalid entries are silently
       ;; skipped — the registered default stands.
-      (vis/toggles-hydrate-from-config! {:toggles {"reasoning_level" :turbo "verbosity" :loud}})
+      (vis/toggles-hydrate-from-config! {"toggles" {"reasoning_level" :turbo "verbosity" :loud}})
       (try (with-redefs [vis/load-config-raw (fn []
                                                {})]
              (state/init!)
