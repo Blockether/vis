@@ -1283,11 +1283,13 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "settings"
         },
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "response_schema": "setting"
         }
       },
       "path": "/v1/settings"
@@ -1297,7 +1299,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "setting"
         }
       },
       "path": "/v1/settings/:id"
@@ -2287,6 +2290,210 @@
         "is_live",
         "server_time_ms",
         "goal"
+      ]
+    },
+    "settings_target": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "$ref": "https://contract.blockether.com/vis/schema/toggle.json#/$defs/scope"
+        },
+        "target_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "scope"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "scope": {
+                "const": "global"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "target_id"
+              ]
+            }
+          },
+          "else": {
+            "required": [
+              "target_id"
+            ]
+          }
+        }
+      ]
+    },
+    "setting": {
+      "type": "object",
+      "required": [
+        "id",
+        "label",
+        "type"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "boolean",
+            "enum",
+            "string"
+          ]
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "$ref": "https://contract.blockether.com/vis/schema/toggle.json#/$defs/scope"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "scope": {
+          "$ref": "https://contract.blockether.com/vis/schema/toggle.json#/$defs/scope"
+        },
+        "source": {
+          "enum": [
+            "default",
+            "global",
+            "project",
+            "group",
+            "session"
+          ]
+        },
+        "is_override": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "value": {
+          "type": [
+            "boolean",
+            "string"
+          ]
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "is_experimental": {
+          "type": "boolean"
+        },
+        "multiline": {
+          "type": "boolean"
+        }
+      }
+    },
+    "settings": {
+      "type": "object",
+      "required": [
+        "scope",
+        "target_id",
+        "groups"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "https://contract.blockether.com/vis/schema/toggle.json#/$defs/scope"
+        },
+        "target_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "title",
+              "toggles"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "toggles": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/setting"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "setting_write": {
+      "type": "object",
+      "required": [
+        "id",
+        "action"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "https://contract.blockether.com/vis/schema/toggle.json#/$defs/scope"
+        },
+        "target_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "value",
+            "toggle",
+            "cycle",
+            "inherit"
+          ]
+        },
+        "value": {
+          "type": [
+            "boolean",
+            "string"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "value"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "value"
+            ]
+          }
+        }
       ]
     }
   }

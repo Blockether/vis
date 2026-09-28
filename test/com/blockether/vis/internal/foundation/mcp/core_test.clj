@@ -18,7 +18,10 @@
      [f]
      (let [registered? (some #(= "foundation-mcp" (:ext/name %)) (extension/registered-extensions))]
        (when-not registered? (mcp/register!))
-       (try (f)
+       (try (with-redefs [config/load-global-yaml-config-raw (constantly {})
+                          config/load-global-config-raw (constantly {})]
+
+              (f))
             (finally (when-not registered? (extension/deregister-extension! "foundation-mcp"))))))])
 
 (defdescribe mcp-native-contract-test
@@ -208,7 +211,7 @@
             (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile-async!)]
 
         (with-redefs-fn {#'config/load-global-config-raw (constantly {})
-                         #'config/load-config-raw (constantly {})
+                         #'config/load-global-yaml-config-raw (constantly {})
                          #'config/save-config! (fn [value source]
                                                  (reset! saved [value source]))
                          reconnect! (constantly nil)}
@@ -266,8 +269,8 @@
 
         (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                            @store)
-                         #'config/load-config-raw (fn []
-                                                    @store)
+                         #'config/load-global-yaml-config-raw (fn []
+                                                                @store)
                          #'config/save-config! (fn [value _source]
                                                  (reset! store value))
                          reconnect! (constantly nil)}
@@ -300,7 +303,7 @@
             (try (f) ::no-throw (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
 
       (with-redefs-fn {#'config/load-global-config-raw (constantly {})
-                       #'config/load-config-raw (constantly merged)
+                       #'config/load-global-yaml-config-raw (constantly merged)
                        #'config/save-config! (fn [value source]
                                                (reset! saved [value source]))
                        reconnect! (constantly nil)}
@@ -326,7 +329,7 @@
                                                 "timeout_ms" 45000
                                                 "env" {"API_TOKEN" "never-leaves"}}}}}]
         (with-redefs-fn {#'config/load-global-config-raw (constantly machine)
-                         #'config/load-config-raw (constantly machine)}
+                         #'config/load-global-yaml-config-raw (constantly machine)}
           (fn []
             (let [row (first (get (mcp/gateway-servers) "servers"))]
               ;; The TUI and the app build their edit form from this row: without
@@ -353,7 +356,7 @@
         (with-redefs-fn {#'com.blockether.vis.internal.foundation.mcp.core/reconcile-async!
                          (constantly nil)
                          #'config/load-global-config-raw (constantly machine)
-                         #'config/load-config-raw (constantly merged)}
+                         #'config/load-global-yaml-config-raw (constantly merged)}
           (fn []
             (let [rows (get (mcp/gateway-servers) "servers")]
               (expect (= ["owned" "team"] (mapv #(get % "name") rows)))
@@ -471,8 +474,8 @@
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
-                       #'config/load-config-raw (fn []
-                                                  @store)
+                       #'config/load-global-yaml-config-raw (fn []
+                                                              @store)
                        #'config/save-config! (fn [value _source]
                                                (reset! store value))
                        #'client/connect (fn [name _spec]
@@ -528,8 +531,8 @@
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
-                       #'config/load-config-raw (fn []
-                                                  @store)
+                       #'config/load-global-yaml-config-raw (fn []
+                                                              @store)
                        #'client/connect (fn [name _spec]
                                           (swap! connects conj name)
                                           ::connection)
@@ -562,7 +565,7 @@
               (try (f) ::no-throw (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
 
         (with-redefs-fn {#'config/load-global-config-raw (constantly merged)
-                         #'config/load-config-raw (constantly merged)}
+                         #'config/load-global-yaml-config-raw (constantly merged)}
           (fn []
             (expect (= :mcp/invalid-server (thrown #(mcp/start-gateway-server-auth! "local"))))
             (expect (= :mcp/not-found (thrown #(mcp/start-gateway-server-auth! "absent"))))
@@ -611,8 +614,8 @@
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
-                       #'config/load-config-raw (fn []
-                                                  @store)
+                       #'config/load-global-yaml-config-raw (fn []
+                                                              @store)
                        #'client/connect (fn [_name _spec]
                                           (let [c (keyword (str "conn-" (count @connects)))]
                                             (swap! connects conj "local")
@@ -651,8 +654,8 @@
 
         (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                            @store)
-                         #'config/load-config-raw (fn []
-                                                    @store)}
+                         #'config/load-global-yaml-config-raw (fn []
+                                                                @store)}
           (fn []
             (let [previous @supervisor]
               (try (reset! supervisor nil)
@@ -693,8 +696,8 @@
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
-                       #'config/load-config-raw (fn []
-                                                  @store)
+                       #'config/load-global-yaml-config-raw (fn []
+                                                              @store)
                        #'client/connect (fn [name _spec]
                                           (swap! connects conj name)
                                           (deliver entered true)
@@ -745,8 +748,8 @@
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
-                       #'config/load-config-raw (fn []
-                                                  @store)
+                       #'config/load-global-yaml-config-raw (fn []
+                                                              @store)
                        #'client/connect (fn [name _spec]
                                           (keyword name))
                        #'client/list-tools (constantly [])
@@ -802,8 +805,8 @@
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
-                       #'config/load-config-raw (fn []
-                                                  @store)
+                       #'config/load-global-yaml-config-raw (fn []
+                                                              @store)
                        #'client/connect (fn [_name _spec]
                                           {:transport :stdio :tools (atom nil)})
                        #'client/list-tools (constantly [{"name" "write_file"} {"name" "read_file"}])
@@ -862,8 +865,8 @@
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
-                       #'config/load-config-raw (fn []
-                                                  @store)
+                       #'config/load-global-yaml-config-raw (fn []
+                                                              @store)
                        #'client/connect (fn [_name _spec]
                                           {:transport :stdio :tools (atom nil)})
                        #'client/list-tools (constantly [{"name" "write_file"
@@ -946,8 +949,8 @@
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
-                       #'config/load-config-raw (fn []
-                                                  @store)
+                       #'config/load-global-yaml-config-raw (fn []
+                                                              @store)
                        #'client/connect (fn [_name _spec]
                                           (throw (ex-info "connection refused" {})))
                        #'client/alive? (constantly false)
@@ -1045,8 +1048,8 @@
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
-                       #'config/load-config-raw (fn []
-                                                  @store)
+                       #'config/load-global-yaml-config-raw (fn []
+                                                              @store)
                        #'config/save-config! (fn [value _source]
                                                (reset! store value)
                                                nil)
@@ -1117,8 +1120,8 @@
                      (var-get #'mcp/ensure-connected!)]
 
                  (reset! (var-get #'mcp/auth-backoff) {})
-                 (try (with-redefs-fn {#'config/load-config-raw (fn []
-                                                                  @cfg)
+                 (try (with-redefs-fn {#'config/load-global-yaml-config-raw (fn []
+                                                                              @cfg)
                                        #'client/connect (fn [_ _]
                                                           (swap! connects inc)
                                                           (throw (ex-info "401"

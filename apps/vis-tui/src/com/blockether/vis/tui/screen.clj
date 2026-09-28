@@ -3646,6 +3646,42 @@
    (refresh-improve-settings!)
    nil))
 
+(defn- open-scoped-settings-modal!
+  "Open the shared dialog for the active session or one of its current ancestors."
+  [screen scope]
+  (try (let [sid
+             (get-in @state/app-db [:session :id])
+
+             row
+             (first (vis/list-sessions {:ids [(str sid)] :archived :include}))
+
+             target-id
+             (case scope
+               "session"
+               sid
+
+               "group"
+               (get row "group_id")
+
+               "project"
+               (get row "project_id"))]
+
+         (if target-id
+           (dlg/settings-dialog!
+             screen
+             {}
+             {:settings-target {:scope scope
+                                :target-id (str target-id)
+                                :label (if (= scope "session") (get row "title") (str target-id))}
+              :mcp-add (fn [{:keys [g region]}]
+                         (mcp/save-server! screen g region nil))
+              :mcp-action (fn [{:keys [server action g region]}]
+                            (mcp/run-action! screen g region server action))})
+           (vis/notify! (str "This session has no " scope) :level :warn))
+         (state/dispatch [:refresh-session-settings sid]))
+       (catch Exception e
+         (vis/notify! (str "Settings unavailable: " (ex-message e)) :level :error))))
+
 (def ^:private view-churn-keys
   "app-db keys the render thread mutates as bookkeeping only — never part of the
    ACTIVE view, so every fast-path predicate ignores them. Mirrors
@@ -8660,6 +8696,18 @@
                                      :settings
                                      (do (with-dialog-lock #(open-settings-modal! screen))
                                          (retry-startup!))
+
+                                     :session-settings
+                                     (with-dialog-lock #(open-scoped-settings-modal! screen
+                                                                                     "session"))
+
+                                     :group-settings
+                                     (with-dialog-lock #(open-scoped-settings-modal! screen
+                                                                                     "group"))
+
+                                     :project-settings
+                                     (with-dialog-lock #(open-scoped-settings-modal! screen
+                                                                                     "project"))
 
                                      ;; App verbs reachable from the palette (Ctrl+P)
                                      ;; in addition to their direct keys — the palette

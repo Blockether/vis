@@ -4768,12 +4768,14 @@ vis.register_extension(vis.Extension(name='reload-lifecycle', description='Reloa
     (with-loaded
       {"asker.py" asker-py}
       (fn [_ {:keys [store]}]
-        (let [seen
+        (let [sid
+              (db-test/store-session! store {:title "Human input"})
+
+              seen
               (atom [])
 
               ask-key
-              (get (extension/wrap-extension (registered "asker")
-                                             {:session-id "sid-104" :db-info store})
+              (get (extension/wrap-extension (registered "asker") {:session-id sid :db-info store})
                    'ask_key)]
 
           (channel-events/add-channel-event-listener! :tui ::issue-104 #(swap! seen conj [:tui %]))
@@ -4785,7 +4787,7 @@ vis.register_extension(vis.Extension(name='reload-lifecycle', description='Reloa
                  (expect (= {:is-accepted true} (deref answered 10000 ::never))))
                (let [opened (filterv #(= :view/open (:op (second %))) @seen)]
                  (expect (= [:tui :app] (mapv first opened)))
-                 (expect (= ["sid-104" "sid-104"]
+                 (expect (= [(str sid) (str sid)]
                             (mapv #(get-in (second %) [:view :session-id]) opened))))
                (finally (channel-events/remove-channel-event-listener! :tui ::issue-104)
                         (channel-events/remove-channel-event-listener! :app ::issue-104)))))))
@@ -6697,3 +6699,36 @@ vis.register_extension(vis.Extension(
               (expect (nil? (:error answer)) (pr-str answer))
               (expect (= "positional!\nkeyword!\nok\n" (:stdout answer))))
             (finally (ep/dispose-python-context! ctx))))))))
+
+(defdescribe
+  scoped-setting-callback-test
+  (it
+    "registers portable settings and reads the bound response snapshot across Python host calls"
+    (with-loaded
+      {"settings.py"
+       (str
+         "import blockether.vis.extension as vis
+"
+         "enabled = vis.Setting(id='python_scoped_feature', label='Feature', default=True, scopes=['global', 'session'])
+"
+         "def read_feature() -> bool:
+    \"Read this response's setting.\"
+    return enabled.value()
+"
+         "vis.register_extension(vis.Extension(name='setting-fixture', alias='setting_fixture', description='Settings fixture', settings=[enabled], symbols=[vis.Symbol(read_feature, activity=vis.Activity(label='Read feature', show_start=False))]))
+")}
+      (fn [_ _]
+        (expect (= [] (pyx/load-failures)))
+        (let [ext
+              (registered "setting-fixture")
+
+              read-value
+              (symbol-fn ext 'read_feature)]
+
+          (expect (= ["global" "session"] (:scopes (toggles/toggle-spec "python_scoped_feature"))))
+          (binding [toggles/*overrides* {"python_scoped_feature" false}]
+            (let [answer (read-value)]
+              (expect (false? (:result answer)) (pr-str answer))))
+          (binding [toggles/*overrides* {"python_scoped_feature" true}]
+            (let [answer (read-value)]
+              (expect (true? (:result answer)) (pr-str answer)))))))))

@@ -890,7 +890,7 @@
 
       (try (expect (false? (toggles/enabled? id)))
            (with-redefs [vis/gateway-toggle-setting!
-                         (fn [toggle-id]
+                         (fn [toggle-id _target]
                            (swap! called conj toggle-id)
                            {"id" toggle-id "type" "boolean" "enabled" true})]
              (let [out (apply-settings-option {:something "else"}
@@ -931,7 +931,7 @@
                    (settings-option-label {:type :registry-toggle :toggle-id id :label "Enum Test"}
                                           {})))
         (with-redefs [vis/gateway-set-setting-value!
-                      (fn [toggle-id value]
+                      (fn [toggle-id value _target]
                         (swap! called conj [toggle-id value])
                         {"id" toggle-id "type" "enum" "value" "high"})]
           (let [out (apply-settings-option {:something "else"}
@@ -3317,7 +3317,7 @@
                                                     "value" "off"
                                                     "choices" ["auto" "worktree" "rift" "off"]
                                                     "is_experimental" true}]}]})
-           (with-redefs [vis/gateway-set-setting-value! (fn [id value]
+           (with-redefs [vis/gateway-set-setting-value! (fn [id value _target]
                                                           {"id" id "type" "enum" "value" value})]
              (apply-settings-option {} (assoc (second (registry-toggle-rows)) :value "worktree")))
            (expect (= "Draft backend: worktree  [Experimental]"

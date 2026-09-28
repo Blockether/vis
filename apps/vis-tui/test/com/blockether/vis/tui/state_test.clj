@@ -33,76 +33,26 @@
 
 (defdescribe
   turn-request-options-test
-  ;; Regression: verbosity was gated on `(= :openai-codex provider)`, so a
-  ;; GitHub Copilot GPT session — the SAME `/v1/responses` wire — was denied
-  ;; a field its endpoint accepts, while the chip stayed hidden. The gate is
-  ;; now svar's `:verbosity-style` on the model the SESSION routes to.
-  (it "omits verbosity when the session's model rides a wire that rejects it"
-      (with-redefs [vis/get-router
-                    (constantly :router)
+  (it "lets the gateway snapshot settings instead of submitting a stale client projection"
+      (let [enqueue
+            (:fn (get @@#'state/event-registry :enqueue-message))
 
-                    vis/resolve-model-info
-                    (fn [_ _provider _model]
-                      {:provider :github-copilot :name "claude-sonnet-4-6"})]
+            db
+            {:active-tab-id :main
+             :session {:id "s1"}
+             :loading? true
+             :input-history []
+             :pastes {}
+             :pending-sends []
+             :settings {:reasoning-level "deep" :verbosity "high"}}
 
-        (expect (nil? (#'state/turn-extra-body
-                       {:session {:id "s1"}
-                        :session-model-pref {:provider "github-copilot" :model "claude-sonnet-4-6"}
-                        :settings {:verbosity "high"}})))))
-  (it "includes verbosity for every model svar stamped with a verbosity style"
-      (doseq [provider [:openai-codex :github-copilot]]
-        (with-redefs [vis/get-router (constantly :router)
-                      vis/resolve-model-info
-                      (fn [_ _provider _model]
-                        {:provider provider :name "gpt-5.6-sol" :verbosity-style :openai-text})]
+            result
+            (enqueue db [:enqueue-message "queued" :main])
 
-          (expect (= {:text {:verbosity "high"}}
-                     (#'state/turn-extra-body
-                      {:session {:id "s1"}
-                       :session-model-pref {:provider (name provider) :model "gpt-5.6-sol"}
-                       :settings {:verbosity "high"}}))))))
-  (it "keeps Codex Fast out of provider-native extra body"
-      (try (vis/toggle-set-value! "codex_fast_mode" true)
-           (doseq [provider [:openai-codex :github-copilot]]
-             (with-redefs [vis/get-router (constantly :router)
-                           vis/resolve-model-info (fn [_ _provider _model]
-                                                    {:provider provider
-                                                     :name "gpt-5.6-sol"
-                                                     :verbosity-style :openai-text})]
+            effect
+            (first (filter #(= :gateway-enqueue (first %)) (:fx result)))]
 
-               (expect (= {:text {:verbosity "high"}}
-                          (#'state/turn-extra-body
-                           {:session {:id "s1"}
-                            :session-model-pref {:provider (name provider) :model "gpt-5.6-sol"}
-                            :settings {:verbosity "high"}})))))
-           (finally (vis/toggle-reset-to-default! "codex_fast_mode"))))
-  (it "captures enabled Fast mode as provider-neutral turn intent"
-      (try
-        (vis/toggle-set-value! "codex_fast_mode" true)
-        (doseq [[provider expected] [[:openai-codex {"codex_fast_mode" true}] [:github-copilot {}]]]
-          (with-redefs [vis/get-router (constantly :router)
-                        vis/resolve-model-info (fn [_ _provider _model]
-                                                 {:provider provider :name "gpt-5.6-sol"})]
-
-            (expect (= expected
-                       (#'state/turn-features
-                        {:session {:id "s1"}
-                         :session-model-pref {:provider (name provider) :model "gpt-5.6-sol"}})))))
-        (finally (vis/toggle-reset-to-default! "codex_fast_mode"))))
-  (it "returns empty turn intent when the toggle is disabled"
-      (try (vis/toggle-set-value! "codex_fast_mode" false)
-           (with-redefs [vis/get-router
-                         (constantly :router)
-
-                         vis/resolve-model-info
-                         (fn [& _]
-                           {:provider :openai-codex :name "gpt-5.6-sol"})]
-
-             (expect (= {}
-                        (#'state/turn-features
-                         {:session {:id "s1"}
-                          :session-model-pref {:provider "openai-codex" :model "gpt-5.6-sol"}}))))
-           (finally (vis/toggle-reset-to-default! "codex_fast_mode"))))
+        (expect (= [nil nil {}] (subvec effect 4 7)))))
   (it "toggles Fast for Codex and refuses other providers"
       (let [handler (-> #'state/event-registry
                         deref
@@ -113,8 +63,9 @@
                       vis/resolve-model-info (fn [_ provider _model]
                                                {:provider (keyword provider)})]
 
-          (expect (= [[:toggle-boolean "codex_fast_mode" "Fast mode"]]
-                     (:fx (handler {:session-model-pref {:provider "openai-codex" :model "gpt"}}
+          (expect (= [[:toggle-boolean "s1" "codex_fast_mode" "Fast mode"]]
+                     (:fx (handler {:session {:id "s1"}
+                                    :session-model-pref {:provider "openai-codex" :model "gpt"}}
                                    [:toggle-codex-fast-mode]))))
           (expect (= [[:notify "Fast mode is available only for OpenAI Codex" :warn 1500]]
                      (:fx (handler {:session-model-pref {:provider "github-copilot" :model "gpt"}}
@@ -764,101 +715,47 @@
 
 (defdescribe
   settings-shortcut-test
-  (it "commits shortcut settings before notification watchers dispatch render bumps"
-      ;; The cycle event mutates the toggle registry; the cached
-      ;; `:settings` projection is rebuilt synchronously in the same
-      ;; FX :db so notification listeners observe the new value the
-      ;; moment they fire.
-      (vis/toggle-set-value! "reasoning_level" "deep")
-      (try
-        (with-redefs [vis/load-config-raw
-                      (fn []
-                        {})
+  (it
+    "cycles exactly once at the captured session without mutating the global registry"
+    (let [calls
+          (atom [])
 
-                      vis/save-config!
-                      (fn [_])
+          global
+          (vis/toggle-value "reasoning_level")]
 
-                      vis/update-machine-config!
-                      (fn [& _])
+      (with-redefs [vis/get-router
+                    (constantly :router)
 
-                      vis/get-router
-                      (constantly :router)
+                    vis/resolve-effective-model
+                    (constantly {:reasoning-effort? true})
 
-                      vis/resolve-effective-model
-                      (fn [_]
-                        {:provider :openai :name "gpt-5" :reasoning? true :reasoning-effort? true})
+                    vis/change-setting!
+                    (fn [id action target]
+                      (swap! calls conj [id action target])
+                      {"id" id "type" "enum" "value" "quick"})
 
-                      vis/notify!
-                      (fn [& _]
-                        (state/dispatch [:bump-render-version]))]
+                    vis/gateway-settings
+                    (fn [_ target]
+                      (expect (= "s1" (:target-id target)))
+                      {"groups" [{"toggles"
+                                  [{"id" "reasoning_level" "type" "enum" "value" "quick"}]}]})
 
-          (reset! state/app-db {:settings {:reasoning-level "deep" :verbosity "low"}
-                                :render-version 0})
-          (let [result (future (state/dispatch [:cycle-reasoning-level]) :done)]
-            (expect (= :done (deref result 1000 :timeout)))
-            (expect (= "quick" (vis/toggle-value "reasoning_level")))
-            (expect (= "quick" (get-in @state/app-db [:settings :reasoning-level])))))
-        (finally (vis/toggle-reset-to-default! "reasoning_level"))))
-  (it "advances reasoning exactly one step when the registry listener dispatches back"
-      ;; REGRESSION (Ctrl+X r cycled forever): `dispatch` runs an :fx handler's
-      ;; FUNCTION inside `swap! app-db` and only its returned effects after the
-      ;; commit. Flipping the toggle in the function body ran the registry
-      ;; listener synchronously; the listener's re-entrant
-      ;; :resync-toggle-settings dispatch committed an inner swap, the outer CAS
-      ;; failed, and the retry cycled the level AGAIN - each retry guaranteeing
-      ;; the next. The flip now lives in the :cycle-toggle EFFECT, so one
-      ;; keystroke advances exactly one step.
-      (vis/toggle-set-value! "reasoning_level" "quick")
-      (let [dispose (vis/toggle-add-listener! (fn [event]
-                                                (state/dispatch [:resync-toggle-settings
-                                                                 (:id event)])))]
-        (try (with-redefs [vis/load-config-raw (fn []
-                                                 {})
-                           vis/save-config! (fn [_])
-                           vis/update-machine-config! (fn [& _])
-                           vis/get-router (constantly :router)
-                           vis/resolve-effective-model (fn [_]
-                                                         {:provider :openai
-                                                          :name "gpt-5"
-                                                          :reasoning? true
-                                                          :reasoning-effort? true})
-                           vis/notify! (fn [& _])]
+                    vis/notify!
+                    (fn [& _]
+                      (state/dispatch [:bump-render-version]))]
 
-               (reset! state/app-db {:settings {:reasoning-level "quick"} :render-version 0})
-               (let [result (future (state/dispatch [:cycle-reasoning-level]) :done)]
-                 (expect (= :done (deref result 2000 :timeout)))
-                 (expect (= "balanced" (vis/toggle-value "reasoning_level")))
-                 (expect (= "balanced" (get-in @state/app-db [:settings :reasoning-level])))))
-             (finally (dispose) (vis/toggle-reset-to-default! "reasoning_level")))))
-  (it "wraps reasoning level from deep back to quick"
-      (vis/toggle-set-value! "reasoning_level" "deep")
-      (try
-        (with-redefs [vis/load-config-raw
-                      (fn []
-                        {})
-
-                      vis/save-config!
-                      (fn [_])
-
-                      vis/update-machine-config!
-                      (fn [& _])
-
-                      vis/get-router
-                      (constantly :router)
-
-                      vis/resolve-effective-model
-                      (fn [_]
-                        {:provider :openai :name "gpt-5" :reasoning? true :reasoning-effort? true})
-
-                      vis/notify!
-                      (fn [& _])]
-
-          (reset! state/app-db {:settings {:reasoning-level "deep" :verbosity "low"}
-                                :render-version 0})
-          (state/dispatch [:cycle-reasoning-level])
-          (expect (= "quick" (vis/toggle-value "reasoning_level")))
-          (expect (= "quick" (get-in @state/app-db [:settings :reasoning-level]))))
-        (finally (vis/toggle-reset-to-default! "reasoning_level"))))
+        (reset! state/app-db {:session {:id "s1"} :render-version 0})
+        (state/dispatch [:cycle-reasoning-level])
+        (flush-queue-io!)
+        (expect (= [["reasoning_level" "cycle" {:scope "session" :target-id "s1"}]] @calls))
+        (expect (= :quick (get-in @state/app-db [:session-settings "s1" :reasoning-level])))
+        (expect (= global (vis/toggle-value "reasoning_level"))))))
+  (it "keeps a late response under its original owner after switching sessions"
+      (reset! state/app-db {:session {:id "s2"} :render-version 0})
+      (state/dispatch [:session-settings-loaded "s1"
+                       [{"id" "codex_fast_mode" "type" "boolean" "enabled" false}]])
+      (expect (false? (get-in @state/app-db [:session-settings "s1" :codex-fast-mode])))
+      (expect (nil? (get-in @state/app-db [:session-settings "s2"]))))
   (it "leaves reasoning unchanged for fixed-thinking Z.ai models"
       (let [notified (atom nil)]
         (with-redefs [vis/get-router (constantly :router)
@@ -893,34 +790,31 @@
           (expect (= ["Answer length is not configurable for this model"
                       [:level :warn :ttl-ms 1500]]
                      @notified)))))
-  (it "cycles and sends Astra verbosity through real gateway capabilities on any Responses provider"
-      ;; Exercise the production decoder/resolver, not a capability stub.
-      (let [before @state/app-db]
-        (try (doseq [provider ["openai-codex" "github-copilot" "custom-responses"]]
-               (with-redefs [vis/load-config-raw (constantly {})
-                             vis/save-config! (fn [_])
-                             vis/update-machine-config! (fn [& _])
-                             vis/notify! (fn [& _])
-                             vis/router-cached
-                             (constantly [{"id" provider
-                                           "is_default" true
-                                           "default_model" "gpt-6-astra"
-                                           "models" ["gpt-6-astra"]
-                                           "model_details" [{"name" "gpt-6-astra"
-                                                             "is_reasoning_effort_configurable" true
-                                                             "verbosity_style" "openai-text"}]}])]
+  (it "cycles scoped verbosity on every model exposing the wire capability"
+      (let [calls (atom [])]
+        (with-redefs [vis/notify! (fn [& _])
+                      vis/change-setting! (fn [id action target]
+                                            (swap! calls conj [id action target])
+                                            {"id" id "type" "enum" "value" "medium"})
+                      vis/gateway-settings (fn [& _]
+                                             {"groups" []})]
 
-                 ;; Cycling reads the global registry; isolate the starting value.
-                 (vis/toggle-reset-to-default! "verbosity")
-                 (reset! state/app-db {:session {:id "s1"}
-                                       :session-model-pref {:provider provider :model "gpt-6-astra"}
-                                       :settings {:reasoning-level "balanced" :verbosity "low"}
-                                       :render-version 0})
-                 (doseq [level ["low" "medium" "high" "low"]]
-                   (expect (= level (get-in @state/app-db [:settings :verbosity])))
-                   (expect (= {:text {:verbosity level}} (#'state/turn-extra-body @state/app-db)))
-                   (state/dispatch [:cycle-verbosity]))))
-             (finally (vis/toggle-reset-to-default! "verbosity") (reset! state/app-db before))))))
+          (doseq [provider ["openai-codex" "github-copilot" "custom-responses"]]
+            (with-redefs [vis/router-cached (constantly [{"id" provider
+                                                          "is_default" true
+                                                          "default_model" "gpt-6-astra"
+                                                          "models" ["gpt-6-astra"]
+                                                          "model_details" [{"name" "gpt-6-astra"
+                                                                            "verbosity_style"
+                                                                            "openai-text"}]}])]
+              (reset! state/app-db {:session {:id provider}
+                                    :session-model-pref {:provider provider :model "gpt-6-astra"}
+                                    :render-version 0})
+              (state/dispatch [:cycle-verbosity])
+              (flush-queue-io!)))
+          (expect (= ["openai-codex" "github-copilot" "custom-responses"]
+                     (mapv #(get-in % [2 :target-id]) @calls)))
+          (expect (every? #(= ["verbosity" "cycle"] (subvec % 0 2)) @calls))))))
 
 (defdescribe
   session-model-pref-scope-test

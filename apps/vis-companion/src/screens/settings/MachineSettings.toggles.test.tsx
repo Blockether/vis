@@ -62,7 +62,7 @@ describe('draft backend dropdown', () => {
       groups: [{ id: 'sandbox', title: 'Sandbox', toggles: [{ ...backend, value: 'off' }] }],
     });
     const save = vi.spyOn(GatewayClient.prototype, 'setSetting').mockImplementation(
-      async (_id, _action, value) => ({ ...backend, value }),
+      async (_id, _action, value) => ({ ...backend, value: typeof value === 'string' ? value : undefined }),
     );
     const select = await openSettings();
     expect(select).toHaveTextContent('off');

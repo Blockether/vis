@@ -1,6 +1,8 @@
 (ns com.blockether.vis.internal.gateway.server.mcp
   "MCP server routes: configuration, lifecycle and authentication."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.config.scoped :as scoped]
+            [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp]
             [com.blockether.vis.internal.gateway.server.http :as http]))
 
@@ -28,11 +30,19 @@
           :mcp/oauth-flow-not-found
           404
 
-          400)]
+          (or (:status (ex-data e)) 400))]
 
     (http/error-response status (or type :mcp/invalid-request) (ex-message e))))
 
-(defn- mcp-servers-handler [_] (http/json-response (mcp/gateway-servers)))
+(defn- settings-target
+  [request body]
+  (let [params (merge (:query-params request) body)]
+    (scoped/target (lp/db-info) (get params "scope") (get params "target_id"))))
+
+(defn- mcp-servers-handler
+  [request]
+  (try (http/json-response (mcp/scoped-servers (lp/db-info) (settings-target request nil)))
+       (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
 
 (defn- save-mcp-server-handler
   [request]
@@ -43,24 +53,34 @@
              (or (get-in request [:path-params :name]) (get body "name"))
 
              server
-             (or (get body "server") body)]
+             (or (get body "server") (dissoc body "scope" "target_id"))]
 
-         (http/json-response (mcp/save-gateway-server! name server)))
+         (http/json-response
+           (mcp/save-scoped-server! (lp/db-info) (settings-target request body) name server)))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))
        (catch Throwable e (http/error-response 400 :mcp/invalid-request (ex-message e)))))
 
 (defn- set-mcp-server-enabled-handler
   [request]
-  (try (let [enabled (get (http/body-json request) "enabled")]
+  (try (let [body
+             (http/body-json request)
+
+             enabled
+             (get body "enabled")]
+
          (if (boolean? enabled)
-           (http/json-response
-             (mcp/set-gateway-server-enabled! (get-in request [:path-params :name]) enabled))
+           (http/json-response (mcp/set-scoped-server-enabled! (lp/db-info)
+                                                               (settings-target request body)
+                                                               (get-in request [:path-params :name])
+                                                               enabled))
            (http/error-response 400 :mcp/invalid-request "enabled must be a boolean")))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
 
 (defn- delete-mcp-server-handler
   [request]
-  (try (http/json-response (mcp/delete-gateway-server! (get-in request [:path-params :name])))
+  (try (http/json-response (mcp/delete-scoped-server! (lp/db-info)
+                                                      (settings-target request nil)
+                                                      (get-in request [:path-params :name])))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
 
 (defn- test-mcp-server-handler
@@ -136,18 +156,39 @@
   (try (http/json-response (mcp/logout-gateway-server-auth! (get-in request [:path-params :name])))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
 
+(defn- global-only
+  [handler]
+  (fn [request]
+    (try
+      (let [body
+            (some-> (:body request)
+                    slurp)
+
+            decoded
+            (when (seq body) (http/body-json (assoc request :body (java.io.StringReader. body))))
+
+            params
+            (merge (:query-params request) decoded)]
+
+        (if (or (not= "global" (get params "scope" "global")) (some? (get params "target_id")))
+          (http/error-response 400 :mcp/global-only "Lifecycle and authentication are global-only")
+          (handler (cond-> request
+                     body
+                     (assoc :body (java.io.StringReader. body))))))
+      (catch Exception e (mcp-error-response e)))))
+
 (def handlers
   "Handlers for this namespace's routes, keyed by the gateway contract's `[method path]`."
   {[:get "/v1/mcp/servers"] mcp-servers-handler
    [:post "/v1/mcp/servers"] save-mcp-server-handler
-   [:post "/v1/mcp/servers/actions/test"] test-mcp-server-handler
+   [:post "/v1/mcp/servers/actions/test"] (global-only test-mcp-server-handler)
    [:put "/v1/mcp/servers/:name"] save-mcp-server-handler
    [:delete "/v1/mcp/servers/:name"] delete-mcp-server-handler
    [:post "/v1/mcp/servers/:name/actions/enable"] set-mcp-server-enabled-handler
-   [:post "/v1/mcp/servers/:name/actions/kill"] kill-mcp-server-handler
-   [:post "/v1/mcp/servers/:name/actions/start"] start-mcp-server-handler
-   [:post "/v1/mcp/servers/:name/auth/start"] mcp-auth-start-handler
-   [:post "/v1/mcp/servers/:name/auth/complete"] mcp-auth-complete-handler
-   [:post "/v1/mcp/servers/:name/auth/poll"] mcp-auth-poll-handler
-   [:post "/v1/mcp/servers/:name/auth/cancel"] mcp-auth-cancel-handler
-   [:post "/v1/mcp/servers/:name/auth/logout"] mcp-auth-logout-handler})
+   [:post "/v1/mcp/servers/:name/actions/kill"] (global-only kill-mcp-server-handler)
+   [:post "/v1/mcp/servers/:name/actions/start"] (global-only start-mcp-server-handler)
+   [:post "/v1/mcp/servers/:name/auth/start"] (global-only mcp-auth-start-handler)
+   [:post "/v1/mcp/servers/:name/auth/complete"] (global-only mcp-auth-complete-handler)
+   [:post "/v1/mcp/servers/:name/auth/poll"] (global-only mcp-auth-poll-handler)
+   [:post "/v1/mcp/servers/:name/auth/cancel"] (global-only mcp-auth-cancel-handler)
+   [:post "/v1/mcp/servers/:name/auth/logout"] (global-only mcp-auth-logout-handler)})

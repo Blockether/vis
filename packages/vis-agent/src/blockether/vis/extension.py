@@ -47,6 +47,12 @@ class Host(Protocol):
     def workspace_root(self) -> str:
         """Read the active session working copy, or the outside process directory."""
 
+    def setting_declaration(self, spec: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Validate a declaration and fill defaults from the canonical schema."""
+
+    def setting(self, id: str, default: bool | str) -> bool | str:
+        """Read one setting from the current callback snapshot."""
+
     def state_get(self, key: str) -> Any:
         """Read one value out of the extension's durable state."""
 
@@ -780,6 +786,67 @@ _registration = {"spec": None}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class Setting:
+    """Declare a boolean or choice setting shared by the app and TUI.
+
+    `scopes` allows any non-empty combination of global, project, group and session.
+    Omitting it uses the contract's global-only default. `group` is a presentation
+    category, not an organizational group. `value()` reads the current callback's
+    response snapshot; outside Vis it returns the declared default.
+    """
+
+    id: str
+    label: str
+    default: bool | str
+    type: str = "boolean"
+    choices: Sequence[str] = ()
+    scopes: Sequence[str] | None = None
+    description: str | None = None
+    group: str = "extensions"
+
+    def __post_init__(self):
+        for name, value in (("scopes", self.scopes), ("choices", self.choices)):
+            if name == "scopes" and value is None:
+                continue
+            if not isinstance(value, (list, tuple)):
+                raise TypeError(f"Setting {name} must be a list or tuple")
+            object.__setattr__(self, name, tuple(value))
+        spec = _host.setting_declaration(self._spec())
+        object.__setattr__(self, "scopes", tuple(spec["scopes"]))
+        if self.type == "boolean" and type(self.default) is not bool:
+            raise ValueError("A boolean setting requires a boolean default")
+        if self.type == "enum" and (
+            not isinstance(self.default, str)
+            or self.default not in self.choices
+            or not all(isinstance(choice, str) for choice in self.choices)
+        ):
+            raise ValueError(
+                "A choice setting requires a default from its string choices"
+            )
+
+    def _spec(self):
+        spec = {
+            "id": self.id,
+            "label": self.label,
+            "default": self.default,
+            "type": self.type,
+            "group": self.group,
+            "is_persist": True,
+        }
+        if self.scopes is not None:
+            spec["scopes"] = list(self.scopes)
+        if self.choices:
+            spec["choices"] = list(self.choices)
+        if self.description is not None:
+            spec["description"] = self.description
+        return spec
+
+    def value(self) -> bool | str:
+        """Read this setting in the current callback without changing any scope."""
+        return _host.setting(self.id, self.default)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Extension:
     """Group tools and host capabilities in one immutable declaration.
 
@@ -797,6 +864,7 @@ class Extension:
         ctx: Optional host context callback.
         providers: `Provider` declarations.
         network_filters: `NetworkFilter` declarations.
+        settings: Host-owned `Setting` declarations with explicit allowed scopes.
         env: Environment variable names resolved at host registration.
 
     Collection inputs are copied into tuples. Constructing an Extension is pure;
@@ -824,6 +892,7 @@ class Extension:
     ctx: Callable[..., Any] | None = None
     providers: Sequence[Provider] = ()
     network_filters: Sequence[NetworkFilter] = ()
+    settings: Sequence[Setting] = ()
     env: Sequence[str] = ()
 
     def __post_init__(self):
@@ -855,6 +924,7 @@ class Extension:
             ("op_hooks", OpHook),
             ("providers", Provider),
             ("network_filters", NetworkFilter),
+            ("settings", Setting),
         ):
             value = getattr(self, name)
             if not isinstance(value, (tuple, list)) or not all(
@@ -887,6 +957,7 @@ class Extension:
             "op_hooks",
             "providers",
             "network_filters",
+            "settings",
         }
         return {
             field.name: (

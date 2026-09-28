@@ -675,7 +675,7 @@
         (fn []
           (doseq [cols [80 120]]
             (let [db {:messages []
-                      :settings {:reasoning-level "deep" :verbosity "low"}
+                      :settings {:reasoning-level "deep" :verbosity "low" :codex-fast-mode true}
                       :workspace {"is_draft" true}}
                   capture (cap/capture! {:cols cols
                                          :rows 4
@@ -695,7 +695,7 @@
                                                               {:name "gpt-5.6-sol"
                                                                :provider provider})}
                  (fn []
-                   (let [db {:messages [] :settings {}}
+                   (let [db {:messages [] :settings {:codex-fast-mode true}}
                          texts (mapv :text (build-segments db 0))]
 
                      (expect (= expected (filterv #{"speed: fast" "(C-x q)"} texts)))

@@ -1450,6 +1450,7 @@
                        :description
                        "Let the agent read its own session history and gateway event journals."
                        :default false
+                       :scopes ["global" "project" "group" "session"]
                        :owner :vis
                        :persist? true
                        :group :sandbox})

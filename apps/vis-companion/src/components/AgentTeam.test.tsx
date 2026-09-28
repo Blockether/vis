@@ -142,7 +142,7 @@ describe('agent team controller', () => {
     await act(async () => { vi.advanceTimersByTime(5000); });
     expect(screen.queryByRole('button', { name: /Agents:/ })).toBeNull();
     expect(agents).toHaveBeenCalledTimes(1);
-    expect(setting).toHaveBeenCalledWith('subagents', expect.any(AbortSignal));
+    expect(setting).toHaveBeenCalledWith('subagents', expect.any(AbortSignal), { scope: 'session', target_id: 'leader' });
     setting.mockRejectedValue(new Error('Settings unavailable'));
     await act(async () => { vi.advanceTimersByTime(5000); });
     expect(screen.queryByRole('button', { name: /Agents:/ })).toBeNull();

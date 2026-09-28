@@ -165,7 +165,7 @@ export function AgentTeam({ client, sid, parentId, onOpen }: {
       if (fetching || controller.signal.aborted || document.hidden) return;
       fetching = true;
       try {
-        const setting = await client.setting('subagents', controller.signal).catch(() => null);
+        const setting = await client.setting('subagents', controller.signal, { scope: 'session', target_id: sid }).catch(() => null);
         if (controller.signal.aborted) return;
         setEnabled(setting?.enabled === true);
         if (setting?.enabled !== true) return;

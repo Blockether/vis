@@ -150,15 +150,15 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
     if (!commentable || !planName(name)) return;
     const controller = new AbortController();
     void client
-      .setting('plans', controller.signal)
+      .setting('plans', controller.signal, { scope: 'session', target_id: sid })
       .then((toggle) => setPlansEnabled(toggle.enabled === true))
       .catch(() => setPlansEnabled(false));
     return () => controller.abort();
-  }, [client, name, commentable]);
+  }, [client, sid, name, commentable]);
 
   const sendPlan = useCallback(
     async (action: PlanAction, savedVersion: number) => {
-      if ((await client.setting('plans')).enabled !== true) {
+      if ((await client.setting('plans', undefined, { scope: 'session', target_id: sid })).enabled !== true) {
         setPlansEnabled(false);
         throw new Error(
           'Plan before coding is off. Enable it in Settings and reopen this document.',

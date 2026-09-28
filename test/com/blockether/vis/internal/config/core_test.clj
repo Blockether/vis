@@ -519,17 +519,14 @@
              (finally (rm-rf! (io/file tmp)))))))
 
 (defdescribe
-  machine-store-never-holds-project-config-test
-  "`~/.vis/state.yml` is the PERSON's tier and merges OVER `<cwd>/vis.yml`, so a
-   block that describes a REPOSITORY has no business in it: it would decide for
-   every other checkout on the machine, and the project's own file would stop
-   mattering."
+  machine-store-does-not-import-project-config-test
+  "Whole-store writers cannot promote merged project access to global settings."
   ;; Regression, user report: whole-store writers handed `save-config!` the MERGED
   ;; config, so filesystem grants, the jail and the environment of whichever
   ;; project happened to be open were copied into `~/.vis/state.yml` — from where
   ;; the machine tier outranked every project's own vis.yml, on every repository.
   (it
-    "drops project-scoped blocks on read and never writes them back"
+    "never copies project access or environment into the machine store"
     (let [tmp
           (str (System/getProperty "java.io.tmpdir") "/vis-cfg-project-scope-" (System/nanoTime))
 
@@ -540,13 +537,10 @@
           (str tmp "/vis.yml")]
 
       (try (.mkdirs (io/file tmp))
-           (spit
-             path
-             (str "providers:\n  - id: prov-a\n    api_key: key-a\n"
-                  "environment:\n  FROM_STORE: 'yes'\n"
-                  "workspace:\n  filesystem:\n    - id: other-repo\n      path: /tmp/other-repo\n"))
+           (spit path "providers:\n  - id: prov-a\n    api_key: key-a\n")
            (spit project
-                 "workspace:\n  filesystem:\n    - id: this-repo\n      path: /tmp/this-repo\n")
+                 (str "workspace:\n  filesystem:\n    - id: this-repo\n      path: /tmp/this-repo\n"
+                      "jail:\n  enabled: false\nenvironment:\n  FROM_PROJECT: 'yes'\n"))
            (with-redefs [config/config-dir
                          (constantly tmp)
 
@@ -565,18 +559,21 @@
              (config/invalidate-config-cache!)
              (let [store (config/load-global-config-raw)]
                (expect (nil? (get store "workspace")))
+               (expect (nil? (get store "jail")))
                (expect (nil? (get store "environment")))
                (expect (= ["prov-a"] (mapv #(get % "id") (get store "providers")))))
              ;; the project's own file decides its grants again
              (expect (= ["this-repo"]
                         (mapv #(get % "id")
                               (get-in (config/load-config-raw) ["workspace" "filesystem"]))))
-             ;; and a whole-store write cannot put them back
+             ;; A whole-store write cannot promote the merged project configuration.
              (config/save-config! (config/load-config-raw))
              (config/invalidate-config-cache!)
              (let [written (slurp path)]
                (expect (not (str/includes? written "workspace")))
                (expect (not (str/includes? written "this-repo")))
+               (expect (not (str/includes? written "jail")))
+               (expect (not (str/includes? written "FROM_PROJECT")))
                (expect (str/includes? written "prov-a"))))
            (finally (rm-rf! (io/file tmp)))))))
 

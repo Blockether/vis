@@ -56,7 +56,10 @@
    Every verb carries its own transient key and group, so the letter a user learns
    belongs to the verb and not to whatever widget happens to paint it."
   [row]
-  (let [http?
+  (let [scoped?
+        (flag row "is_scoped")
+
+        http?
         (some? (get row "url"))
 
         managed?
@@ -66,10 +69,10 @@
         (flag row "is_authorized")]
 
     (cond-> []
-      (flag row "is_killed")
+      (and (not scoped?) (flag row "is_killed"))
       (conj {:id :start :key "s" :group :runtime :label "Start"})
 
-      (not (flag row "is_killed"))
+      (and (not scoped?) (not (flag row "is_killed")))
       (conj {:id :kill :key "k" :group :runtime :label "Kill"})
 
       (and managed? (flag row "enabled"))
@@ -81,13 +84,13 @@
       managed?
       (conj {:id :edit :key "c" :group :config :label "Edit…"})
 
-      managed?
-      (conj {:id :remove :key "x" :group :config :label "Remove"})
+      (and managed? (or (not scoped?) (flag row "is_override")))
+      (conj {:id :remove :key "x" :group :config :label (if scoped? "Use inherited" "Remove")})
 
-      http?
+      (and http? (not scoped?))
       (conj {:id :auth :key "a" :group :account :label (if authorized? "Re-authorize" "Sign in")})
 
-      (and http? authorized?)
+      (and http? authorized? (not scoped?))
       (conj {:id :logout :key "o" :group :account :label "Sign out"})
 
       :always

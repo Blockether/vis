@@ -523,3 +523,19 @@
 
           (expect (str/includes? text expected))
           (expect (str/includes? text "MCP · repo"))))))
+
+(defdescribe scoped-mcp-actions-test
+             (it "never offers global lifecycle or credentials in a local scope"
+                 (let [row
+                       (assoc http-server
+                         "is_scoped" true
+                         "is_override" false)
+
+                       actions
+                       (mcp-model/server-actions row)]
+
+                   (expect (= #{:disable :edit :details} (set (map :id actions))))
+                   (expect (= "Use inherited"
+                              (:label (first (filter #(= :remove (:id %))
+                                                     (mcp-model/server-actions
+                                                       (assoc row "is_override" true))))))))))

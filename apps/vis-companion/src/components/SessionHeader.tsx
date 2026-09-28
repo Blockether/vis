@@ -44,6 +44,7 @@ export type SessionHeaderModel = Readonly<{
 export type SessionHeaderCommands = Readonly<{
   back: () => void;
   toggleArtifacts: () => void;
+  settings?: () => void;
 }>;
 
 /**
@@ -177,6 +178,9 @@ export function SessionHeader({
       </div>
       {menu && (
         <Menu label="Session actions" at={menu} onDismiss={closeMenu}>
+          {commands.settings && (
+            <MenuItem title="Session settings" onSelect={() => { closeMenu(); commands.settings?.(); }} />
+          )}
           {model.artifacts.count > 0 && (
             <MenuItem
               // The row NAMES what pressing it does, and the count rides that name

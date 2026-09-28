@@ -20,10 +20,24 @@ Skills written for Claude Code, pi, opencode or the
   same folders](#where-vis-looks), so they work without changes.
 - **You want Vis to follow a particular skill now.** Name it with
   [`/skill:<name>`](#use-a-skill-explicitly).
+- **A skill should not be offered for this task or project.** Control its
+  [availability](#control-availability) without deleting the skill files.
 
 Put rules that apply to every task in
 [`AGENTS.md`](context-and-prompts.md#project-rules-agents-md). When the task needs a
 tool that Vis can call rather than instructions, write an [extension](extending.md).
+
+## Control availability
+
+Open global settings or the current project, group or session's settings and
+find the skill under **Skills**. Switch it off to remove it from future discovery,
+`doc()` lookups, prompt inventories and slash expansion. Use **Use inherited
+value** to follow the parent scope again. The global switch affects sessions
+without a more specific override.
+
+Availability does not erase instructions already in the conversation and is not
+a filesystem permission. See [scoped settings](configuration.md#project-group-and-session-settings)
+for inheritance and [the process jail](jail.md) for access restrictions.
 
 ## Write a skill
 

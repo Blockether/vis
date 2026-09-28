@@ -330,6 +330,14 @@ export interface Project {
 
 export type ToggleType = 'boolean' | 'enum' | 'string';
 
+export type SettingsScope = 'global' | 'project' | 'group' | 'session';
+
+export interface SettingsTarget {
+  scope: SettingsScope;
+  target_id?: string;
+  label?: string;
+}
+
 export interface Toggle {
   id: string;
   label: string;
@@ -340,6 +348,11 @@ export interface Toggle {
   value?: string;
   choices?: string[];
   max_length?: number;
+  multiline?: boolean;
+  scopes?: SettingsScope[];
+  scope?: SettingsScope;
+  source?: SettingsScope | 'default';
+  is_override?: boolean;
 }
 
 export interface ToggleGroup {
@@ -350,6 +363,9 @@ export interface ToggleGroup {
 
 export interface SettingsResponse {
   groups: ToggleGroup[];
+  scope?: SettingsScope;
+  target_id?: string;
+  label?: string;
 }
 
 /** Sanitized MCP inventory served by one gateway. Secret values never travel here. */
@@ -359,7 +375,9 @@ export interface McpServer {
   enabled: boolean;
   is_connected: boolean;
   /** Live gateway verdict; older gateways may omit it. */
-  status?: 'connected' | 'connecting' | 'unhealthy' | 'disabled' | 'killed';
+  status?: 'connected' | 'connecting' | 'unhealthy' | 'disabled' | 'killed' | 'disconnected';
+  source?: SettingsScope;
+  is_override?: boolean;
   /** False when the server comes from a hand-written config tier: listed, but this API never rewrites it. */
   is_managed: boolean;
   tools: number;

@@ -16,6 +16,7 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.improve :as improve-settings]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.improve.core :as improve]
             [com.blockether.vis.internal.improve.review :as improve-review]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
@@ -4223,6 +4224,11 @@
             {:provider provider :model model}
             (session-model sid))
 
+          engine-opts
+          (assoc engine-opts
+            :settings-snapshot (merge (scoped/values (lp/db-info) sid)
+                                      toggles/*invocation-overrides*))
+
           resolved-provider
           (:provider route-snapshot)
 
@@ -4264,7 +4270,8 @@
                                  :session_id (str sid)
                                  :status "queued"
                                  :request request
-                                 :queued_at queued-at}
+                                 :queued_at queued-at
+                                 :engine-opts engine-opts}
                           ;; The submitter's OWN correlation id, echoed back on
                           ;; every wire view of this turn and on turn.queued. A
                           ;; channel paints no queue row of its own, so this is
@@ -4288,9 +4295,6 @@
 
                           (seq workspace)
                           (assoc :workspace workspace)
-
-                          engine-opts
-                          (assoc :engine-opts engine-opts)
 
                           resolved-provider
                           (assoc :provider resolved-provider)

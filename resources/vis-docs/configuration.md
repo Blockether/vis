@@ -11,6 +11,9 @@ when you want settings shared across projects or checked into a repository.
 - **Your team should share the same settings.** Commit a project `vis.yml`;
   [Configuration files](#configuration-files) shows which file wins when several set
   the same key.
+- **One session or group needs different behavior.** Open its
+  [scoped settings](#project-group-and-session-settings) instead of changing the
+  gateway defaults.
 - **A provider hits rate limits or fails, or a task should stay within a budget.**
   Set a [fallback model](#default-and-fallback), and set retries and token and cost
   limits under [Router](#router).
@@ -580,6 +583,83 @@ toggles:
 ```
 
 Run `/reload` after editing.
+
+## Project, group and session settings
+
+Open **Session settings** from the session's **…** menu in the app. Project and
+organizational group menus offer their own settings. In the TUI, use **Session
+settings**, **Group settings** or **Project settings** from the command palette.
+The familiar settings rows show the effective value and where it comes from.
+**Use inherited value** removes only the override at the scope you opened.
+
+Values resolve per setting: **global → project → group → session**. A scope with
+no value is skipped; `false` is an explicit value, not inheritance. For example,
+disable plans in a group, enable them in one session, then choose **Use inherited
+value** in that session to follow the group's disabled value again. Changing the
+group does not overwrite another session's explicit choice.
+
+Global means this gateway, shared by its connected clients. Project settings use
+the canonical project root, not a draft's working-copy path. Edits go to the
+project's `.vis/config.yml`; checked-in `vis.yml` stays intact. Group and session
+overrides persist in the gateway database. Moving a session keeps its own values
+and follows its new ancestors. New sessions and forks inherit their ancestors,
+not the source session's overrides. Ungrouped sessions skip the group layer.
+
+Response options, including reasoning, verbosity and fast mode, are captured
+when you submit a message. Later edits do not change running or queued responses.
+Paths and access rows accept JSON configuration and apply on the next turn.
+Local permissions cannot expand the host's global access policy. Draft settings
+govern future operations; changing them does not move or delete an existing draft.
+
+Skill and MCP availability applies to the next lookup or call, including a call
+by an already-known name. An ongoing external call can finish. Disable a skill
+globally or locally to remove it from discovery, `doc()`, prompt inventories and
+slash entry points; this does not erase text already read or deny filesystem access.
+
+Optional tool extensions have **Auto**, **On** and **Off** engine settings.
+Auto uses the extension's existing applicability check; On keeps it active; Off
+hides its tools and rejects new calls, including saved handles. This is extension
+activation, not model routing. Core, provider and channel infrastructure is not
+switchable here.
+
+Provider setup, credentials, OAuth and shared MCP start/stop operations stay
+global. Theme and other device preferences remain local to the app or terminal.
+Only settings declared for the selected scope appear in its catalog.
+
+### Scoped MCP servers
+
+Use the MCP panel in the same scoped dialog to add a server definition or control
+its availability. Local definitions can shadow an inherited name without editing
+its parent. **Use inherited** removes only the local definition. Local definitions
+cannot store environment credentials, HTTP headers or authentication settings.
+Disabling availability for one session does not stop a shared connection. Enabling
+availability does not start a server disabled by the global administrator.
+
+The CLI accepts the same explicit scope and target for `list`, `add`, `remove`,
+`enable` and `disable`:
+
+```bash
+vis-agent gateway mcp list --scope session --target-id <session-id>
+vis-agent gateway mcp add docs --url https://gateway.example.com/mcp --scope group --target-id <group-id>
+vis-agent gateway mcp disable docs --scope session --target-id <session-id>
+vis-agent gateway mcp remove docs --scope group --target-id <group-id>
+```
+
+Omit both flags to manage global servers. Project targets accept the project ID
+or its canonical root; group and session targets use their IDs. Authentication
+and lifecycle commands remain global-only.
+
+### Settings HTTP reference
+
+`GET /v1/settings` and `GET /v1/settings/:id` take `scope` and `target_id` query
+parameters. Omitted scope means global, never the currently viewed session.
+Non-global requests require a target. Rows include `scopes`, `scope`, `source`
+and `is_override`; boolean rows use `enabled`, other rows use `value`.
+
+`POST /v1/settings` accepts the same target with `id` and `action`: `value`,
+`toggle`, `cycle` or `inherit`. A `value` action also requires `value`, including
+explicit JSON `false`. Invalid values and disallowed scopes return 400; unknown
+targets or setting IDs return 404. Inheritance removes one key, not a parent map.
 
 ## Session titling
 

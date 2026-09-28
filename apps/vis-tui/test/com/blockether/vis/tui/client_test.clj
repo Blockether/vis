@@ -642,3 +642,35 @@
                                         (catch clojure.lang.ExceptionInfo e e))]
                        (expect (= "Session is busy." (ex-message failure)))
                        (expect (= "busy" (get (ex-data failure) "error"))))))))
+
+(defdescribe
+  scoped-settings-routing-test
+  (it "keeps targets on reads, explicit false writes, inheritance and MCP mutations"
+      (let [asked
+            (atom [])
+
+            target
+            {:scope "session" :target-id "a/b"}]
+
+        (with-redefs-fn {#'client/send-json! (fn [& args]
+                                               (swap! asked conj (vec args))
+                                               {})}
+          (fn []
+            (client/settings :tui target)
+            (client/setting "plans" target)
+            (client/set-setting-value! "plans" false target)
+            (client/inherit-setting! "plans" target)
+            (client/mcp-servers target)
+            (client/mcp-save-server! "docs" {"command" "echo"} target)
+            (client/mcp-set-server-enabled! "docs" false target)
+            (client/mcp-delete-server! "docs" target)))
+        (expect
+          (= [["GET" "/v1/settings?channel=tui&scope=session&target_id=a%2Fb"]
+              ["GET" "/v1/settings/plans?scope=session&target_id=a%2Fb"]
+              ["POST" "/v1/settings" (merge target {:id "plans" :action "value" :value false})]
+              ["POST" "/v1/settings" (merge target {:id "plans" :action "inherit"})]
+              ["GET" "/v1/mcp/servers?scope=session&target_id=a%2Fb"]
+              ["POST" "/v1/mcp/servers" (merge target {:name "docs" :server {"command" "echo"}})]
+              ["POST" "/v1/mcp/servers/docs/actions/enable" (merge target {:enabled false})]
+              ["DELETE" "/v1/mcp/servers/docs?scope=session&target_id=a%2Fb"]]
+             @asked)))))

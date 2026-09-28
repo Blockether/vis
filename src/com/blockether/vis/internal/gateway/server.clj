@@ -1650,34 +1650,21 @@
 (defonce ^:private toggle-persist-listener-installed? (atom false))
 
 (defn- install-toggle-persistence!
-  "Hydrate feature toggles from the `toggles:` slot of the merged YAML config
-   and install a listener that writes every change back — through
-   `config/save-toggles!`, which touches ONLY the `toggles:` block of the machine
-   store: handing the MERGED config to `save-config!` folded the hand-written and
-   project tiers into `~/.vis/state.yml`, where the machine tier then outranked
-   them. Mirrors the TUI's wiring in `channel-tui/screen.clj` so a toggle flipped
-   from any gateway client survives a gateway restart - without this, only
-   TUI-hosted processes ever persisted toggles. Idempotent: hydration re-runs
-   harmlessly; the save listener installs once per process."
+  "Hydrate gateway-global toggles and persist only the changed key, never a
+   snapshot of defaults or project values. Explicit scoped writes persist first."
   []
-  (try (let [raw (or (config/load-config-raw) {})]
-         (toggles/hydrate-from-config! raw)
-         ;; Self-heal stale toggle cruft: an old build persisted keyword-id
-         ;; toggles whose namespace was dropped on serialise (`:shell/enabled`
-         ;; -> a meaningless `enabled: true`). Those ids no longer register, so
-         ;; hydrate ignores them but they linger in state.yml until a flip. If
-         ;; any orphan is present, rewrite the canonical snapshot NOW so the
-         ;; file converges instead of carrying the garbage forever.
-         (when (toggles/has-orphan-keys? (get raw "toggles"))
-           (config/save-toggles! (toggles/snapshot))))
+  (try (toggles/hydrate-from-config! {"toggles"
+                                      (merge (get (config/load-global-yaml-config-raw) "toggles")
+                                             (get (config/load-global-config-raw) "toggles"))})
        (when (compare-and-set! toggle-persist-listener-installed? false true)
          (toggles/add-listener!
-           (fn [_event]
-             (try (config/save-toggles! (toggles/snapshot))
-                  (catch Throwable t
-                    (tel/log!
-                      {:level :warn :id ::toggle-persist-failed :data {:error (ex-message t)}}
-                      "Toggle persistence failed; in-memory value still applies."))))))
+           (fn [{:keys [id new persist?]}]
+             (when (and (not (false? persist?)) (:persist? (toggles/toggle-spec id)))
+               (try (config/update-machine-config! #(assoc-in % ["toggles" id] new))
+                    (catch Throwable t
+                      (tel/log!
+                        {:level :warn :id ::toggle-persist-failed :data {:error (ex-message t)}}
+                        "Toggle persistence failed; in-memory value still applies.")))))))
        (catch Throwable t
          (tel/log! {:level :warn :id ::toggles-hydrate-failed :data {:error (ex-message t)}}
                    "Toggle hydration from config failed; defaults stand."))))

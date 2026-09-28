@@ -5,6 +5,14 @@
 
 (def ^:private schema (delay (document/schema-document "toggle")))
 
+(def scopes
+  "Ordered settings scopes, from least to most specific."
+  (get-in @schema ["$defs" "scope" "enum"]))
+
+(def default-scopes
+  "Allowed scopes when a declaration omits them."
+  (get-in @schema ["$defs" "contribution" "properties" "scopes" "default"]))
+
 (def id-pattern
   "Portable canonical toggle-id regular expression."
   (get-in @schema ["$defs" "contribution" "properties" "id" "pattern"]))

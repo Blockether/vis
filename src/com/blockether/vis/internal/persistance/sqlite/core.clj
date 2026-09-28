@@ -3202,6 +3202,43 @@
                  :where [:= :id (->ref session-id)]}))
     nil))
 
+(defn- setting-table
+  [scope]
+  (case scope
+    "session"
+    :session_setting
+
+    "group"
+    :group_setting))
+
+(defn db-scoped-settings
+  "Read explicit settings for a durable session or organizational group."
+  [db-info scope target-id]
+  (into {}
+        (map (fn [row]
+               [(:setting_id row) (json/read-json (:value row))]))
+        (when (and (ds db-info) target-id)
+          (query! db-info
+                  {:select [:setting_id :value]
+                   :from (setting-table scope)
+                   :where [:= :owner_id (->ref target-id)]}))))
+
+(defn db-set-scoped-setting!
+  "Update one key atomically; unrelated concurrent writes cannot be lost."
+  [db-info scope target-id setting-id value]
+  (when (ds db-info)
+    (if (nil? value)
+      (execute! db-info
+                {:delete-from (setting-table scope)
+                 :where [:and [:= :owner_id (->ref target-id)] [:= :setting_id setting-id]]})
+      (execute! db-info
+                {:insert-into (setting-table scope)
+                 :values
+                 [{:owner_id (->ref target-id) :setting_id setting-id :value (wire/json-str value)}]
+                 :on-conflict [:owner_id :setting_id]
+                 :do-update-set [:value]})))
+  value)
+
 ;; The human's star (session_soul.favorite_rank)
 
 (defn db-set-session-favorite!

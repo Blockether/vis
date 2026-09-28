@@ -13,6 +13,7 @@
             [com.blockether.vis.internal.channel.slash :as slash]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.context.engine :as ctx-engine]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
@@ -1312,13 +1313,25 @@
       - :status - Only present on failure (`:error` or `:cancelled`)."
   ([environment messages] (turn! environment messages {}))
   ([environment messages opts]
-   (let [ctx
-         (prepare-turn-context environment messages opts)
+   (let [snapshot
+         (or (:settings-snapshot opts)
+             (merge (scoped/values (:db-info environment) (:session-id environment))
+                    toggles/*invocation-overrides*))
+
+         environment
+         (assoc environment :config/toggles (atom snapshot))
+
+         ctx
+         (binding [toggles/*overrides* snapshot]
+           (prepare-turn-context environment messages opts))
 
          {:keys [eval-timeout-ms debug? user-request root-model db-info environment-id]}
          ctx]
 
-     (binding [rt/*rlm-context*
+     (binding [toggles/*overrides*
+               snapshot
+
+               rt/*rlm-context*
                {:rlm-environment-id environment-id
                 :rlm-type :main
                 :rlm-debug? debug?

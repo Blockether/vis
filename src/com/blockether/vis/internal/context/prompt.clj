@@ -13,6 +13,7 @@
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.python.env :as env-python]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -635,7 +636,15 @@
                           deref
                           seq)]
     (vec (filter (fn [ext]
-                   (try (boolean (call-extension-callback ext (:ext/activation-fn ext) environment))
+                   (try (case (scoped/engine-mode environment ext)
+                          "off"
+                          false
+
+                          "on"
+                          true
+
+                          (boolean
+                            (call-extension-callback ext (:ext/activation-fn ext) environment)))
                         (catch Throwable t
                           (tel/log! {:level :error
                                      :id ::ext-activation-error

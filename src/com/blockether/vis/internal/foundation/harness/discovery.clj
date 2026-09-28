@@ -19,6 +19,7 @@
             [clojure.string :as str]
             [com.blockether.fff :as fff]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.workspace.fff-index :as fff-index]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]))
@@ -561,6 +562,18 @@
 
 (defn agents [] (:agents (ensure!)))
 
-(defn skills [] (:skills (ensure!)))
+(defn all-skills
+  "Discovered skills before availability filtering, for human settings only."
+  []
+  (let [skills (:skills (ensure!))]
+    (doseq [skill skills]
+      (scoped/register-resource! :skills (:name skill)))
+    skills))
+
+(defn skills
+  "Only skills available to this callback's session, including exact-name doc reads."
+  []
+  (filterv #(scoped/resource-enabled? extension/*current-environment* :skills (:name %))
+    (all-skills)))
 
 (defn commands [] (:commands (ensure!)))

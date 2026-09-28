@@ -22,6 +22,7 @@
    :choices ["auto" "worktree" "rift" "off"]
    :default "off"
    :experimental? true
+   :scopes ["global" "project" "group" "session"]
    :owner :vis
    :persist? true
    :group :experimental})

@@ -49,7 +49,7 @@ it('puts one independent switch before the server details without a status icon'
   expect(control).toHaveAttribute('aria-checked', 'true');
   fireEvent.click(control);
   await waitFor(() => expect(control).toHaveAttribute('aria-checked', 'false'));
-  expect(client.setMcpServerEnabled).toHaveBeenCalledExactlyOnceWith('linear', false);
+  expect(client.setMcpServerEnabled).toHaveBeenCalledExactlyOnceWith('linear', false, undefined);
   expect(row).toHaveAttribute('aria-expanded', 'false');
   fireEvent.click(row);
   expect(screen.getByRole('region', { name: 'linear details' })).toBeVisible();

@@ -28,7 +28,8 @@
    `url` implies Streamable HTTP; `command` implies stdio -- exactly what
    `mcp.core/transport-of` infers when no explicit `transport` is given."
   [parsed]
-  (cond-> {"enabled" (not (boolean (get parsed "disabled")))}
+  (cond-> {"transport" (if (get parsed "url") "streamable_http" "stdio")
+           "enabled" (not (boolean (get parsed "disabled")))}
     (get parsed "url")
     (assoc "url" (get parsed "url"))
 
@@ -56,10 +57,21 @@
     (when (str/blank? n) (throw (ex-info "A server NAME is required." {:vis/user-error true})))
     n))
 
+(defn- settings-target
+  [parsed]
+  (let [scope
+        (get parsed "scope")
+
+        id
+        (get parsed "target-id")]
+
+    (when (and id (nil? scope)) (throw (ex-info "--target-id requires --scope" {})))
+    (when scope {:scope scope :target-id id})))
+
 (defn- cli-mcp-list!
   [parsed _residual]
   (with-mcp-db! parsed)
-  (let [rows (gateway-client/mcp-servers)]
+  (let [rows (gateway-client/mcp-servers (settings-target parsed))]
     (if (empty? rows)
       (commandline/stdout!
         "No MCP servers configured. Add one: vis-agent gateway mcp add <NAME> --url <URL>")
@@ -81,10 +93,10 @@
         (mcp-spec-from-parsed parsed)
 
         saved
-        (gateway-client/mcp-save-server! name spec)]
+        (gateway-client/mcp-save-server! name spec (settings-target parsed))]
 
     (commandline/stdout! (str "Saved MCP server \"" name "\" (" (get saved "transport") ")."))
-    (when (= "streamable_http" (get saved "transport"))
+    (when (and (not (settings-target parsed)) (= "streamable_http" (get saved "transport")))
       (if (get saved "is_authorized")
         (commandline/stdout! "  Already authorized.")
         (do (commandline/stdout! "  This server needs OAuth sign-in before it can be used:")
@@ -109,21 +121,21 @@
   [parsed _residual]
   (with-mcp-db! parsed)
   (let [name (require-mcp-name! parsed)]
-    (gateway-client/mcp-delete-server! name)
+    (gateway-client/mcp-delete-server! name (settings-target parsed))
     (commandline/stdout! (str "Removed MCP server \"" name "\"."))))
 
 (defn- cli-mcp-enable!
   [parsed _residual]
   (with-mcp-db! parsed)
   (let [name (require-mcp-name! parsed)]
-    (gateway-client/mcp-set-server-enabled! name true)
+    (gateway-client/mcp-set-server-enabled! name true (settings-target parsed))
     (commandline/stdout! (str "Enabled MCP server \"" name "\"."))))
 
 (defn- cli-mcp-disable!
   [parsed _residual]
   (with-mcp-db! parsed)
   (let [name (require-mcp-name! parsed)]
-    (gateway-client/mcp-set-server-enabled! name false)
+    (gateway-client/mcp-set-server-enabled! name false (settings-target parsed))
     (commandline/stdout! (str "Disabled MCP server \"" name "\"."))))
 
 (defn- cli-mcp-kill!
@@ -222,164 +234,185 @@
 
 (def subcommands
   "Subcommands registered under `vis-agent gateway mcp`."
-  [{:cmd/name "list"
-    :cmd/parent ["gateway" "mcp"]
-    :cmd/doc
-    "List MCP servers configured on this gateway (transport, enabled, connected, authorized, tool count)."
-    :cmd/usage "vis-agent gateway mcp list [--db PATH]"
-    :cmd/args
-    [{:name "db" :kind :flag :type :string :doc "SQLite DB path whose gateway should be queried."}]
-    :cmd/examples ["vis-agent gateway mcp list"]
-    :cmd/run-fn cli-mcp-list!}
-   {:cmd/name "add"
-    :cmd/parent ["gateway" "mcp"]
-    :cmd/doc
-    "Add (or replace) a gateway-managed MCP server. A `--url` makes it Streamable HTTP; a `--command` makes it stdio. OAuth is never configured here -- save the server, then run `auth-start`."
-    :cmd/usage
-    "vis-agent gateway mcp add <NAME> (--url URL [--headers K=V,...] | --command CMD [--args \"a b\"] [--cwd DIR] [--env K=V,...]) [--timeout-ms MS] [--disabled] [--db PATH]"
-    :cmd/args
-    [{:name "name"
-      :kind :positional
-      :type :string
-      :required true
-      :doc "Server name, e.g. \"linear\"."}
-     {:name "url"
-      :kind :flag
-      :type :string
-      :doc "Streamable HTTP endpoint, e.g. https://mcp.linear.app/mcp."}
-     {:name "headers"
-      :kind :flag
-      :type :string
-      :doc
-      "Static request headers as K=V,K2=V2 (e.g. Authorization=Bearer TOKEN) -- the bearer-token alternative to OAuth. Leave unset for OAuth servers; sign in with auth-start instead."}
-     {:name "command" :kind :flag :type :string :doc "Executable for a stdio server."}
-     {:name "args" :kind :flag :type :string :doc "Space-separated stdio arguments."}
-     {:name "cwd" :kind :flag :type :string :doc "Working directory for a stdio server."}
-     {:name "env" :kind :flag :type :string :doc "stdio environment as K=V,K2=V2."}
-     {:name "timeout-ms" :kind :flag :type :int :doc "Per-call timeout override in milliseconds."}
-     {:name "disabled" :kind :flag :type :boolean :doc "Save the server switched off."}
-     {:name "db" :kind :flag :type :string :doc "SQLite DB path whose gateway should be updated."}]
-    :cmd/examples
-    ["vis-agent gateway mcp add linear --url https://mcp.linear.app/mcp"
-     "vis-agent gateway mcp add linear-ro --url https://mcp.linear.app/mcp/readonly"
-     "vis-agent gateway mcp add local-fs --command npx --args \"-y @modelcontextprotocol/server-filesystem /tmp\""]
-    :cmd/run-fn cli-mcp-add!}
-   {:cmd/name "test"
-    :cmd/parent ["gateway" "mcp"]
-    :cmd/doc
-    "Connect a candidate server spec without saving it, and report whether it connected and how many tools it exposes."
-    :cmd/usage "vis-agent gateway mcp test <NAME> (--url URL | --command CMD ...) [--db PATH]"
-    :cmd/args
-    [{:name "name" :kind :positional :type :string :required true :doc "Server name to test as."}
-     {:name "url" :kind :flag :type :string :doc "Streamable HTTP endpoint."}
-     {:name "headers" :kind :flag :type :string :doc "Static request headers as K=V,K2=V2."}
-     {:name "command" :kind :flag :type :string :doc "Executable for a stdio server."}
-     {:name "args" :kind :flag :type :string :doc "Space-separated stdio arguments."}
-     {:name "cwd" :kind :flag :type :string :doc "Working directory for a stdio server."}
-     {:name "env" :kind :flag :type :string :doc "stdio environment as K=V,K2=V2."}
-     {:name "timeout-ms" :kind :flag :type :int :doc "Per-call timeout override in milliseconds."}
-     {:name "db"
-      :kind :flag
-      :type :string
-      :doc "SQLite DB path whose gateway should run the test."}]
-    :cmd/examples ["vis-agent gateway mcp test linear --url https://mcp.linear.app/mcp"]
-    :cmd/run-fn cli-mcp-test!}
-   {:cmd/name "remove"
-    :cmd/parent ["gateway" "mcp"]
-    :cmd/doc "Delete a gateway-managed MCP server and stop it now."
-    :cmd/usage "vis-agent gateway mcp remove <NAME> [--db PATH]"
-    :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
-               {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-    :cmd/examples ["vis-agent gateway mcp remove linear"]
-    :cmd/run-fn cli-mcp-remove!}
-   {:cmd/name "enable"
-    :cmd/parent ["gateway" "mcp"]
-    :cmd/doc "Turn a configured server back on."
-    :cmd/usage "vis-agent gateway mcp enable <NAME> [--db PATH]"
-    :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
-               {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-    :cmd/run-fn cli-mcp-enable!}
-   {:cmd/name "disable"
-    :cmd/parent ["gateway" "mcp"]
-    :cmd/doc "Turn a configured server off without deleting it."
-    :cmd/usage "vis-agent gateway mcp disable <NAME> [--db PATH]"
-    :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
-               {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-    :cmd/run-fn cli-mcp-disable!}
-   {:cmd/name "kill"
-    :cmd/parent ["gateway" "mcp"]
-    :cmd/doc
-    "Stop a server now and hold it down until started again (runtime only, config unchanged)."
-    :cmd/usage "vis-agent gateway mcp kill <NAME> [--db PATH]"
-    :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
-               {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-    :cmd/run-fn cli-mcp-kill!}
-   {:cmd/name "start"
-    :cmd/parent ["gateway" "mcp"]
-    :cmd/doc "Undo a kill and reconnect a server now."
-    :cmd/usage "vis-agent gateway mcp start <NAME> [--db PATH]"
-    :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
-               {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-    :cmd/run-fn cli-mcp-start!}
-   {:cmd/name "auth-start"
-    :cmd/parent ["gateway" "mcp"]
-    :cmd/doc
-    "Begin the headless OAuth 2.1 flow (RFC 9728/8414 discovery, dynamic client registration, PKCE) for an HTTP server. Prints the authorize URL to open and the auth-complete command to run after."
-    :cmd/usage "vis-agent gateway mcp auth-start <NAME> [--db PATH]"
-    :cmd/args [{:name "name"
-                :kind :positional
-                :type :string
-                :required true
-                :doc "Server name (must be Streamable HTTP)."}
-               {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-    :cmd/examples ["vis-agent gateway mcp auth-start linear"]
-    :cmd/run-fn cli-mcp-auth-start!}
-   {:cmd/name "auth-complete"
-    :cmd/parent ["gateway" "mcp"]
-    :cmd/doc
-    "Finish an OAuth flow with the redirect URL the browser landed on (or its bare `code=` value)."
-    :cmd/usage
-    "vis-agent gateway mcp auth-complete <NAME> --flow-id ID --input URL_OR_CODE [--db PATH]"
-    :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
-               {:name "flow-id"
-                :kind :flag
-                :type :string
-                :required true
-                :doc "flow_id printed by auth-start."}
-               {:name "input"
-                :kind :flag
-                :type :string
-                :required true
-                :doc "The pasted redirect URL, or its bare authorization code."}
-               {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-    :cmd/examples
-    ["vis-agent gateway mcp auth-complete linear --flow-id abc123 --input \"http://127.0.0.1:5555/callback?code=xyz&state=...\""]
-    :cmd/run-fn cli-mcp-auth-complete!}
-   {:cmd/name "auth-poll"
-    :cmd/parent ["gateway" "mcp"]
-    :cmd/doc "Read an in-flight OAuth flow's verdict without blocking: pending, ok, or error."
-    :cmd/usage "vis-agent gateway mcp auth-poll <NAME> --flow-id ID [--db PATH]"
-    :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
-               {:name "flow-id"
-                :kind :flag
-                :type :string
-                :required true
-                :doc "flow_id printed by auth-start."}
-               {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-    :cmd/run-fn cli-mcp-auth-poll!}
-   {:cmd/name "auth-cancel"
-    :cmd/parent ["gateway" "mcp"]
-    :cmd/doc "Abandon an in-flight OAuth flow and release its loopback listener."
-    :cmd/usage "vis-agent gateway mcp auth-cancel <NAME> --flow-id ID [--db PATH]"
-    :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
-               {:name "flow-id" :kind :flag :type :string :required true :doc "flow_id to abandon."}
-               {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-    :cmd/run-fn cli-mcp-auth-cancel!}
-   {:cmd/name "auth-logout"
-    :cmd/parent ["gateway" "mcp"]
-    :cmd/doc "Forget the gateway's persisted OAuth tokens for a server."
-    :cmd/usage "vis-agent gateway mcp auth-logout <NAME> [--db PATH]"
-    :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
-               {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
-    :cmd/examples ["vis-agent gateway mcp auth-logout linear"]
-    :cmd/run-fn cli-mcp-auth-logout!}])
+  (mapv
+    (fn [command]
+      (if (#{"list" "add" "remove" "enable" "disable"} (:cmd/name command))
+        (update command
+                :cmd/args
+                into
+                [{:name "scope"
+                  :kind :flag
+                  :type :string
+                  :doc "Settings scope: global, project, group or session."}
+                 {:name "target-id"
+                  :kind :flag
+                  :type :string
+                  :doc "Project id/root, group id or session id; required outside global."}])
+        command))
+    [{:cmd/name "list"
+      :cmd/parent ["gateway" "mcp"]
+      :cmd/doc
+      "List MCP servers configured on this gateway (transport, enabled, connected, authorized, tool count)."
+      :cmd/usage "vis-agent gateway mcp list [--db PATH]"
+      :cmd/args [{:name "db"
+                  :kind :flag
+                  :type :string
+                  :doc "SQLite DB path whose gateway should be queried."}]
+      :cmd/examples ["vis-agent gateway mcp list"]
+      :cmd/run-fn cli-mcp-list!}
+     {:cmd/name "add"
+      :cmd/parent ["gateway" "mcp"]
+      :cmd/doc
+      "Add (or replace) a gateway-managed MCP server. A `--url` makes it Streamable HTTP; a `--command` makes it stdio. OAuth is never configured here -- save the server, then run `auth-start`."
+      :cmd/usage
+      "vis-agent gateway mcp add <NAME> (--url URL [--headers K=V,...] | --command CMD [--args \"a b\"] [--cwd DIR] [--env K=V,...]) [--timeout-ms MS] [--disabled] [--db PATH]"
+      :cmd/args
+      [{:name "name"
+        :kind :positional
+        :type :string
+        :required true
+        :doc "Server name, e.g. \"linear\"."}
+       {:name "url"
+        :kind :flag
+        :type :string
+        :doc "Streamable HTTP endpoint, e.g. https://mcp.linear.app/mcp."}
+       {:name "headers"
+        :kind :flag
+        :type :string
+        :doc
+        "Static request headers as K=V,K2=V2 (e.g. Authorization=Bearer TOKEN) -- the bearer-token alternative to OAuth. Leave unset for OAuth servers; sign in with auth-start instead."}
+       {:name "command" :kind :flag :type :string :doc "Executable for a stdio server."}
+       {:name "args" :kind :flag :type :string :doc "Space-separated stdio arguments."}
+       {:name "cwd" :kind :flag :type :string :doc "Working directory for a stdio server."}
+       {:name "env" :kind :flag :type :string :doc "stdio environment as K=V,K2=V2."}
+       {:name "timeout-ms" :kind :flag :type :int :doc "Per-call timeout override in milliseconds."}
+       {:name "disabled" :kind :flag :type :boolean :doc "Save the server switched off."}
+       {:name "db"
+        :kind :flag
+        :type :string
+        :doc "SQLite DB path whose gateway should be updated."}]
+      :cmd/examples
+      ["vis-agent gateway mcp add linear --url https://mcp.linear.app/mcp"
+       "vis-agent gateway mcp add linear-ro --url https://mcp.linear.app/mcp/readonly"
+       "vis-agent gateway mcp add local-fs --command npx --args \"-y @modelcontextprotocol/server-filesystem /tmp\""]
+      :cmd/run-fn cli-mcp-add!}
+     {:cmd/name "test"
+      :cmd/parent ["gateway" "mcp"]
+      :cmd/doc
+      "Connect a candidate server spec without saving it, and report whether it connected and how many tools it exposes."
+      :cmd/usage "vis-agent gateway mcp test <NAME> (--url URL | --command CMD ...) [--db PATH]"
+      :cmd/args
+      [{:name "name" :kind :positional :type :string :required true :doc "Server name to test as."}
+       {:name "url" :kind :flag :type :string :doc "Streamable HTTP endpoint."}
+       {:name "headers" :kind :flag :type :string :doc "Static request headers as K=V,K2=V2."}
+       {:name "command" :kind :flag :type :string :doc "Executable for a stdio server."}
+       {:name "args" :kind :flag :type :string :doc "Space-separated stdio arguments."}
+       {:name "cwd" :kind :flag :type :string :doc "Working directory for a stdio server."}
+       {:name "env" :kind :flag :type :string :doc "stdio environment as K=V,K2=V2."}
+       {:name "timeout-ms" :kind :flag :type :int :doc "Per-call timeout override in milliseconds."}
+       {:name "db"
+        :kind :flag
+        :type :string
+        :doc "SQLite DB path whose gateway should run the test."}]
+      :cmd/examples ["vis-agent gateway mcp test linear --url https://mcp.linear.app/mcp"]
+      :cmd/run-fn cli-mcp-test!}
+     {:cmd/name "remove"
+      :cmd/parent ["gateway" "mcp"]
+      :cmd/doc "Delete a gateway-managed MCP server and stop it now."
+      :cmd/usage "vis-agent gateway mcp remove <NAME> [--db PATH]"
+      :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
+                 {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
+      :cmd/examples ["vis-agent gateway mcp remove linear"]
+      :cmd/run-fn cli-mcp-remove!}
+     {:cmd/name "enable"
+      :cmd/parent ["gateway" "mcp"]
+      :cmd/doc "Turn a configured server back on."
+      :cmd/usage "vis-agent gateway mcp enable <NAME> [--db PATH]"
+      :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
+                 {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
+      :cmd/run-fn cli-mcp-enable!}
+     {:cmd/name "disable"
+      :cmd/parent ["gateway" "mcp"]
+      :cmd/doc "Turn a configured server off without deleting it."
+      :cmd/usage "vis-agent gateway mcp disable <NAME> [--db PATH]"
+      :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
+                 {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
+      :cmd/run-fn cli-mcp-disable!}
+     {:cmd/name "kill"
+      :cmd/parent ["gateway" "mcp"]
+      :cmd/doc
+      "Stop a server now and hold it down until started again (runtime only, config unchanged)."
+      :cmd/usage "vis-agent gateway mcp kill <NAME> [--db PATH]"
+      :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
+                 {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
+      :cmd/run-fn cli-mcp-kill!}
+     {:cmd/name "start"
+      :cmd/parent ["gateway" "mcp"]
+      :cmd/doc "Undo a kill and reconnect a server now."
+      :cmd/usage "vis-agent gateway mcp start <NAME> [--db PATH]"
+      :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
+                 {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
+      :cmd/run-fn cli-mcp-start!}
+     {:cmd/name "auth-start"
+      :cmd/parent ["gateway" "mcp"]
+      :cmd/doc
+      "Begin the headless OAuth 2.1 flow (RFC 9728/8414 discovery, dynamic client registration, PKCE) for an HTTP server. Prints the authorize URL to open and the auth-complete command to run after."
+      :cmd/usage "vis-agent gateway mcp auth-start <NAME> [--db PATH]"
+      :cmd/args [{:name "name"
+                  :kind :positional
+                  :type :string
+                  :required true
+                  :doc "Server name (must be Streamable HTTP)."}
+                 {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
+      :cmd/examples ["vis-agent gateway mcp auth-start linear"]
+      :cmd/run-fn cli-mcp-auth-start!}
+     {:cmd/name "auth-complete"
+      :cmd/parent ["gateway" "mcp"]
+      :cmd/doc
+      "Finish an OAuth flow with the redirect URL the browser landed on (or its bare `code=` value)."
+      :cmd/usage
+      "vis-agent gateway mcp auth-complete <NAME> --flow-id ID --input URL_OR_CODE [--db PATH]"
+      :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
+                 {:name "flow-id"
+                  :kind :flag
+                  :type :string
+                  :required true
+                  :doc "flow_id printed by auth-start."}
+                 {:name "input"
+                  :kind :flag
+                  :type :string
+                  :required true
+                  :doc "The pasted redirect URL, or its bare authorization code."}
+                 {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
+      :cmd/examples
+      ["vis-agent gateway mcp auth-complete linear --flow-id abc123 --input \"http://127.0.0.1:5555/callback?code=xyz&state=...\""]
+      :cmd/run-fn cli-mcp-auth-complete!}
+     {:cmd/name "auth-poll"
+      :cmd/parent ["gateway" "mcp"]
+      :cmd/doc "Read an in-flight OAuth flow's verdict without blocking: pending, ok, or error."
+      :cmd/usage "vis-agent gateway mcp auth-poll <NAME> --flow-id ID [--db PATH]"
+      :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
+                 {:name "flow-id"
+                  :kind :flag
+                  :type :string
+                  :required true
+                  :doc "flow_id printed by auth-start."}
+                 {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
+      :cmd/run-fn cli-mcp-auth-poll!}
+     {:cmd/name "auth-cancel"
+      :cmd/parent ["gateway" "mcp"]
+      :cmd/doc "Abandon an in-flight OAuth flow and release its loopback listener."
+      :cmd/usage "vis-agent gateway mcp auth-cancel <NAME> --flow-id ID [--db PATH]"
+      :cmd/args
+      [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
+       {:name "flow-id" :kind :flag :type :string :required true :doc "flow_id to abandon."}
+       {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
+      :cmd/run-fn cli-mcp-auth-cancel!}
+     {:cmd/name "auth-logout"
+      :cmd/parent ["gateway" "mcp"]
+      :cmd/doc "Forget the gateway's persisted OAuth tokens for a server."
+      :cmd/usage "vis-agent gateway mcp auth-logout <NAME> [--db PATH]"
+      :cmd/args [{:name "name" :kind :positional :type :string :required true :doc "Server name."}
+                 {:name "db" :kind :flag :type :string :doc "SQLite DB path."}]
+      :cmd/examples ["vis-agent gateway mcp auth-logout linear"]
+      :cmd/run-fn cli-mcp-auth-logout!}]))

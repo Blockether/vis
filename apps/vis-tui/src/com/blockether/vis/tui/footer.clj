@@ -531,8 +531,8 @@
      4  cost
      5  keyboard shortcut hints"
   [db _now-ms]
-  (let [{:keys [settings]}
-        db
+  (let [settings
+        (merge (:settings db) (get-in db [:session-settings (str (get-in db [:session :id]))]))
 
         info
         (session-model-info db)
@@ -555,7 +555,7 @@
         (or (:verbosity settings) default-verbosity)
 
         codex-fast?
-        (and (= :openai-codex (:provider info)) (boolean (lp/toggle-value "codex_fast_mode")))
+        (and (= :openai-codex (:provider info)) (true? (:codex-fast-mode settings)))
 
         ws
         (:workspace db)

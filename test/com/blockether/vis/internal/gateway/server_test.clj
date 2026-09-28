@@ -2818,7 +2818,12 @@
                  (toggles/register-toggle! {:id "server_test_toggle" :label "Test" :default false})
                  (toggles/set-enabled! "server_test_toggle" false)
                  (let [synced (atom 0)]
-                   (with-redefs [loop-env/sync-cached-extension-symbols! #(swap! synced inc)]
+                   (with-redefs [loop-env/sync-cached-extension-symbols! #(swap! synced inc)
+                                 config/load-global-yaml-config-raw (constantly {})
+                                 config/load-global-config-raw (constantly {})
+                                 config/update-machine-config! (fn [f]
+                                                                 (f {}))]
+
                      (let [response (#'settings-api/set-setting-handler
                                      {:query-params {"id" "server_test_toggle" "action" "toggle"}})]
                        (expect (= 200 (:status response))))
@@ -5936,66 +5941,76 @@
   ;; silently, and `cycle` on a boolean surfaced as a 500 engine-error.
 (defdescribe
   set-setting-value-action-refuses-what-it-cannot-store-test
-  (it "set setting value action refuses what it cannot store"
-      (toggles/register-toggle! {:id "server_test_value_bool" :label "Test bool" :default true})
-      (toggles/register-toggle! {:id "server_test_value_enum"
-                                 :label "Test enum"
-                                 :type :enum
-                                 :choices ["quick" "deep"]
-                                 :default "quick"})
-      (let [call
-            #'settings-api/set-setting-handler
+  (it
+    "set setting value action refuses what it cannot store"
+    (toggles/register-toggle! {:id "server_test_value_bool" :label "Test bool" :default true})
+    (toggles/register-toggle! {:id "server_test_value_enum"
+                               :label "Test enum"
+                               :type :enum
+                               :choices ["quick" "deep"]
+                               :default "quick"})
+    (let [call
+          (fn [request]
+            (let [machine (atom {"toggles" {"server_test_value_bool" (toggles/value-of
+                                                                       "server_test_value_bool")
+                                            "server_test_value_enum" (toggles/value-of
+                                                                       "server_test_value_enum")}})]
+              (with-redefs [config/load-global-yaml-config-raw (constantly {})
+                            config/load-global-config-raw #(deref machine)
+                            config/update-machine-config! #(swap! machine %)]
 
-            body
-            (fn [json]
-              {:body (java.io.StringReader. ^String json)})
+                (#'settings-api/set-setting-handler request))))
 
-            row
-            (fn [response]
-              (wire/parse-json (:body response)))]
+          body
+          (fn [json]
+            {:body (java.io.StringReader. ^String json)})
 
-        ;; a JSON false is a value, not a missing one
-        (let [response (call (body (str "{\"id\":\"server_test_value_bool\","
-                                        "\"action\":\"value\",\"value\":false}")))]
-          (expect (= 200 (:status response)))
-          (expect (false? (get (row response) "enabled")))
-          (expect (false? (toggles/enabled? "server_test_value_bool"))))
-        ;; the string false means OFF, never its truthy cast
-        (toggles/set-value! "server_test_value_bool" true)
-        (let [response (call {:query-params
-                              {"id" "server_test_value_bool" "action" "value" "value" "false"}})]
-          (expect (= 200 (:status response)))
-          (expect (false? (toggles/enabled? "server_test_value_bool"))))
-        ;; a token the type cannot name is a 400 that changes nothing
-        (toggles/set-value! "server_test_value_bool" true)
-        (let [response (call {:query-params
-                              {"id" "server_test_value_bool" "action" "value" "value" "maybe"}})]
-          (expect (= 400 (:status response)))
-          (expect (true? (toggles/enabled? "server_test_value_bool"))))
-        ;; the value action without a value is a 400, not a silent success
-        (let [response (call {:query-params {"id" "server_test_value_bool" "action" "value"}})]
-          (expect (= 400 (:status response)))
-          (expect (true? (toggles/enabled? "server_test_value_bool"))))
-        ;; an enum takes a registered choice and refuses the rest
-        (expect (= 200
-                   (:status (call {:query-params {"id" "server_test_value_enum"
-                                                  "action" "value"
-                                                  "value" "DEEP"}}))))
-        (expect (= "deep" (toggles/value-of "server_test_value_enum")))
-        (expect (= 400
-                   (:status (call {:query-params {"id" "server_test_value_enum"
-                                                  "action" "value"
-                                                  "value" "banana"}}))))
-        (expect (= "deep" (toggles/value-of "server_test_value_enum")))
-        ;; cycle on a boolean is the client's 400, not the engine's 500
-        (let [response (call {:query-params {"id" "server_test_value_bool" "action" "cycle"}})]
-          (expect (= 400 (:status response))))
-        ;; the default flip still flips
-        (toggles/set-value! "server_test_value_bool" true)
-        (expect (= 200
-                   (:status (call {:query-params {"id" "server_test_value_bool"
-                                                  "action" "toggle"}}))))
-        (expect (false? (toggles/enabled? "server_test_value_bool"))))))
+          row
+          (fn [response]
+            (wire/parse-json (:body response)))]
+
+      ;; a JSON false is a value, not a missing one
+      (let [response (call (body (str "{\"id\":\"server_test_value_bool\","
+                                      "\"action\":\"value\",\"value\":false}")))]
+        (expect (= 200 (:status response)))
+        (expect (false? (get (row response) "enabled")))
+        (expect (false? (toggles/enabled? "server_test_value_bool"))))
+      ;; the string false means OFF, never its truthy cast
+      (toggles/set-value! "server_test_value_bool" true)
+      (let [response (call {:query-params
+                            {"id" "server_test_value_bool" "action" "value" "value" "false"}})]
+        (expect (= 200 (:status response)))
+        (expect (false? (toggles/enabled? "server_test_value_bool"))))
+      ;; a token the type cannot name is a 400 that changes nothing
+      (toggles/set-value! "server_test_value_bool" true)
+      (let [response (call {:query-params
+                            {"id" "server_test_value_bool" "action" "value" "value" "maybe"}})]
+        (expect (= 400 (:status response)))
+        (expect (true? (toggles/enabled? "server_test_value_bool"))))
+      ;; the value action without a value is a 400, not a silent success
+      (let [response (call {:query-params {"id" "server_test_value_bool" "action" "value"}})]
+        (expect (= 400 (:status response)))
+        (expect (true? (toggles/enabled? "server_test_value_bool"))))
+      ;; an enum takes a registered choice and refuses the rest
+      (expect (= 200
+                 (:status (call {:query-params {"id" "server_test_value_enum"
+                                                "action" "value"
+                                                "value" "DEEP"}}))))
+      (expect (= "deep" (toggles/value-of "server_test_value_enum")))
+      (expect (= 400
+                 (:status (call {:query-params {"id" "server_test_value_enum"
+                                                "action" "value"
+                                                "value" "banana"}}))))
+      (expect (= "deep" (toggles/value-of "server_test_value_enum")))
+      ;; cycle on a boolean is the client's 400, not the engine's 500
+      (let [response (call {:query-params {"id" "server_test_value_bool" "action" "cycle"}})]
+        (expect (= 400 (:status response))))
+      ;; the default flip still flips
+      (toggles/set-value! "server_test_value_bool" true)
+      (expect (= 200
+                 (:status (call {:query-params {"id" "server_test_value_bool"
+                                                "action" "toggle"}}))))
+      (expect (false? (toggles/enabled? "server_test_value_bool"))))))
 
 ;; Compression is a transport win everywhere EXCEPT the live stream, where the
   ;; deflater's buffering is indistinguishable from a stalled turn. Jetty happens to

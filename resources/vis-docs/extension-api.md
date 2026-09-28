@@ -9,6 +9,8 @@ callbacks and host operations.
   feature.** Start from [Find an API](#find-an-api).
 - **`doc()` shows a tool's types or defaults differently from what you declared.**
   Check the [tool contract rules](#tool-contracts).
+- **You want users to configure your extension per project or session.** Declare
+  [settings](#settings) with their allowed scopes.
 - **Your extension needs a service from Vis**, such as [durable
   state](#durable-state), [environment variables](#environment), [session
   context](#session-context) or [another session tool](#call-other-session-tools).
@@ -25,6 +27,7 @@ design](extension-design.md) for authoring and test guidance.
 | Explain when the agent should use it | [Prompts and discovery](#prompts-and-discovery) |
 | Read types, defaults and introspection limits | [Tool contracts](#tool-contracts) |
 | Add a user command or guard | [Slash commands](#slash-commands) · [Op hooks](#op-hooks) |
+| Add configurable behavior | [Settings](#settings) |
 | Persist data or report status | [Durable state](#durable-state) · [Logging and notifications](#logging-and-notifications) |
 | Read environment or add session context | [Environment](#environment) · [Session context](#session-context) |
 | Access files or start a process | [Filesystem and processes](#filesystem-and-processes) |
@@ -87,6 +90,55 @@ The callback env dict contains `cwd`, `session_id` and `channel`. Keep `prompt`,
 `activation` and `ctx` short-running. Calls into one extension instance are serialized.
 Dependency and skill metadata belong to the [package manifest](extension-packages.md#package-manifest),
 not `Extension`.
+
+## Settings
+
+Declare `vis.Setting` objects in `Extension(settings=[...])` to use the app and
+TUI's shared settings rows. Read `setting.value()` inside a callback; it returns
+that response's effective snapshot without changing the global setting. Outside
+Vis, it returns the declared default. Registration validates declarations but
+does not create overrides.
+
+```python
+import blockether.vis.extension as vis
+
+include_details = vis.Setting(
+    id="report_details",
+    label="Report details",
+    default=False,
+    scopes=["global", "project", "group", "session"],
+    description="Include the supporting detail in reports.",
+)
+
+def report() -> str:
+    """Prepare a report with the selected level of detail."""
+    return "Detailed report" if include_details.value() else "Summary"
+
+vis.register_extension(vis.Extension(
+    name="reports",
+    alias="reports",
+    description="Prepare reports.",
+    settings=[include_details],
+    symbols=[vis.Symbol(report, activity=vis.Activity(
+        label="Prepare report", show_start=False,
+    ))],
+))
+```
+
+`id` is a unique lower-case snake_case identifier. `type` defaults to `"boolean"`
+with a boolean `default`. For a choice row, use `type="enum"`, string `choices`
+and a `default` from those choices. Optional `group` organizes settings visually;
+it is not a session's organizational group.
+
+`scopes` accepts any non-empty, duplicate-free subset of `global`, `project`,
+`group` and `session`. Omitting it permits only `global`. The backend enforces
+eligibility for writes and resolution, not just display. A missing override
+inherits; `False` does not. Reloading or temporarily removing an extension keeps
+its stored choices. These declarations belong to gateway-hosted extensions,
+not application-hosted tool bridges.
+
+See [scoped settings](configuration.md#project-group-and-session-settings) for
+inheritance, submission timing, engine activation and access limits.
 
 ## Tools
 

@@ -109,7 +109,7 @@
    row can pick its rendering strategy (toggle vs. cycle) without
    re-deriving anything."
   [{:keys [id label default description owner since persist? group type choices visible-fn channels
-           settings? experimental?]}]
+           settings? experimental? scopes]}]
   (let [t (or type :boolean)]
     (cond-> {:id id
              :label (str label)
@@ -122,6 +122,7 @@
                         (->str-choice default))
              :owner (or owner :vis)
              :persist? (boolean persist?)
+             :scopes (vec (or scopes toggle-contract/default-scopes))
              :experimental? (boolean experimental?)
              ;; `:settings? false` keeps a toggle registered/persisted but OUT
              ;; of every channel's Settings dialog (it has its own control,
@@ -174,6 +175,13 @@
   [specs]
   (mapv register-toggle! specs))
 
+(defn unregister-owner!
+  "Remove declarations owned by an unloaded extension; durable overrides stay stored."
+  [owner]
+  (swap! registry (fn [entries]
+                    (into {} (remove #(= owner (:owner (val %)))) entries)))
+  nil)
+
 (defn registered-toggles
   "Vec of every registered toggle's normalized spec, in registration
    insertion order. Stable for the TUI settings dialog."
@@ -225,6 +233,10 @@
   [event]
   (doseq [f @listeners]
     (try (f event) (catch Throwable _ nil))))
+
+(def ^:dynamic *persist-writes*
+  "False while a writer has already persisted an exact sparse update."
+  true)
 
 (def ^:dynamic *overrides*
   "Admitted session configuration, bound by the extension callback context."
@@ -300,7 +312,7 @@
 
     (swap! state assoc id v)
     (swap! runtime-values assoc id v)
-    (when (not= old v) (notify! {:id id :old old :new v}))
+    (when (not= old v) (notify! {:id id :old old :new v :persist? *persist-writes*}))
     v))
 
 (defn cycle-value!
@@ -579,6 +591,7 @@
                        ;; of every channel's Settings list.
                        :settings? false
                        :default "balanced"
+                       :scopes toggle-contract/scopes
                        :owner :vis
                        :group :provider
                        :persist? true})
@@ -596,6 +609,7 @@
                        ;; Own control (TUI Ctrl+X l, footer), like reasoning_level.
                        :settings? false
                        :default "low"
+                       :scopes toggle-contract/scopes
                        :owner :vis
                        :group :provider
                        :persist? true})
@@ -611,6 +625,7 @@
        :description "Describe attached images with a vision model when the active model cannot see."
        :type :boolean
        :default true
+       :scopes toggle-contract/scopes
        :owner :vis
        :group :provider
        :persist? true})
@@ -626,6 +641,7 @@
                        "Transcribe attached voice recordings locally and give the model the words."
                        :type :boolean
                        :default true
+                       :scopes toggle-contract/scopes
                        :owner :vis
                        :group :provider
                        :persist? true})
@@ -658,6 +674,7 @@
        "Rescue a failed turn on another provider or model. Off keeps the session on the picked one."
        :type :boolean
        :default true
+       :scopes toggle-contract/scopes
        :owner :vis
        :group :provider
        :persist? true})
@@ -672,6 +689,7 @@
                        "Re-ask a declined request on a sibling model of the same provider."
                        :type :boolean
                        :default true
+                       :scopes toggle-contract/scopes
                        :owner :vis
                        :group :provider
                        :persist? true})
@@ -682,6 +700,7 @@
        "Delegate work to managed agents. Off blocks spawning, wakes and further iterations."
        :default false
        :experimental? true
+       :scopes toggle-contract/scopes
        :owner :vis
        :group :experimental
        :persist? true})
@@ -702,6 +721,7 @@
        :type :boolean
        :default false
        :experimental? true
+       :scopes toggle-contract/scopes
        :owner :vis
        :group :experimental
        :persist? true})

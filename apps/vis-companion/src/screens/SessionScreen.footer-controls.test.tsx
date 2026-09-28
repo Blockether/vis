@@ -140,14 +140,14 @@ describe('composer response controls', () => {
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     await user.click(verbosityButton);
 
-    expect(setSetting).toHaveBeenCalledWith('verbosity', 'cycle');
+    expect(setSetting).toHaveBeenCalledWith('verbosity', 'cycle', undefined, { scope: 'session', target_id: 's1' });
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /verbosity — medium/i })).toBeInTheDocument(),
     );
   });
   // Regression, reported session b30f87ac-f20e-4d7f-9fd2-416788d10527:
   // Fast mode was encoded as an OpenAI-only request field before routing finished.
-  it('submits Fast mode as a provider-neutral turn feature', async () => {
+  it('leaves Fast mode to the gateway submission snapshot', async () => {
     const user = userEvent.setup();
     const fast = { id: 'codex_fast_mode', label: 'Fast mode', type: 'boolean', enabled: true };
     const submitTurn = vi.fn(
@@ -178,12 +178,12 @@ describe('composer response controls', () => {
     await waitFor(() => expect(submitTurn).toHaveBeenCalled());
     const options = submitTurn.mock.calls[0]?.[2];
     expect(options?.extraBody).toBeUndefined();
-    expect(options?.turnFeatures).toEqual({ codex_fast_mode: true });
+    expect(options?.turnFeatures).toBeUndefined();
   });
 
-  // Regression: the chip was provider-gated and its value never reached submitTurn.
+  // Response chips edit the session; cached UI values must not override submission snapshots.
   it.each(['openai-codex', 'github-copilot', 'custom-responses'])(
-    'sends the chosen Astra verbosity from %s on immediate and queued turns',
+    'shows chosen Astra verbosity for %s without resending it on immediate or queued turns',
     async (provider) => {
       const user = userEvent.setup();
       const pref = { provider, model: 'gpt-6-astra' };
@@ -218,9 +218,7 @@ describe('composer response controls', () => {
           screen.getByRole('button', { name: index ? 'Queue message' : 'Send message' }),
         );
         await waitFor(() => expect(submitTurn).toHaveBeenCalledTimes(index + 1));
-        expect(submitTurn.mock.calls[index]?.[2]?.extraBody).toEqual({
-          text: { verbosity: level },
-        });
+        expect(submitTurn.mock.calls[index]?.[2]?.extraBody).toBeUndefined();
         await user.click(chip);
       }
     },
@@ -325,7 +323,7 @@ describe('composer response controls', () => {
         screen.getByRole('button', { name: index ? 'Queue message' : 'Send message' }),
       );
       await waitFor(() => expect(submitTurn).toHaveBeenCalledTimes(index + 1));
-      expect(submitTurn.mock.calls[index]?.[2]?.extraBody).toEqual(expected);
+      expect(submitTurn.mock.calls[index]?.[2]?.extraBody).toBeUndefined();
     }
   });
 
@@ -384,7 +382,7 @@ describe('composer response controls', () => {
       },
     });
     await act(async () => {});
-    expect(fetcher.mock.calls.some(([url]) => url.endsWith(failedPath))).toBe(true);
+    expect(fetcher.mock.calls.some(([url]) => new URL(url).pathname.endsWith(failedPath))).toBe(true);
     expect(screen.queryByRole('button', { name: /verbosity/i })).not.toBeInTheDocument();
     offline = false;
     act(() => {
@@ -403,10 +401,10 @@ describe('composer response controls', () => {
     // A later failed refresh must retain the recovered, chosen value.
     gateway.invalidateRouter();
     offline = true;
-    const attempts = fetcher.mock.calls.filter(([url]) => url.endsWith(failedPath)).length;
+    const attempts = fetcher.mock.calls.filter(([url]) => new URL(url).pathname.endsWith(failedPath)).length;
     act(() => window.dispatchEvent(new Event('online')));
     await waitFor(() =>
-      expect(fetcher.mock.calls.filter(([url]) => url.endsWith(failedPath)).length).toBeGreaterThan(
+      expect(fetcher.mock.calls.filter(([url]) => new URL(url).pathname.endsWith(failedPath)).length).toBeGreaterThan(
         attempts,
       ),
     );
@@ -414,7 +412,7 @@ describe('composer response controls', () => {
     await user.type(screen.getByRole('textbox', { name: 'Message Vis' }), 'hello');
     await user.click(screen.getByRole('button', { name: 'Send message' }));
     await waitFor(() => expect(submitTurn).toHaveBeenCalledOnce());
-    expect(submitTurn.mock.calls[0]?.[2]?.extraBody).toEqual({ text: { verbosity: 'medium' } });
+    expect(submitTurn.mock.calls[0]?.[2]?.extraBody).toBeUndefined();
   });
 
   it('enables verbosity when an uncached fleet arrives for the default model', async () => {

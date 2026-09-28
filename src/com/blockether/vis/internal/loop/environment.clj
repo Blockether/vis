@@ -10,6 +10,8 @@
             [com.blockether.anomaly.core :as anomaly]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.config.scoped :as scoped]
+            [com.blockether.vis.internal.config.scoped-policy :as scoped-policy]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.extension.client :as client-extensions]
@@ -213,41 +215,55 @@
    Invalid live configuration retains only this workspace's last-good snapshot,
    or a deny-safe default on its first load. Another project's grants must never
    become the fallback. An explicit rebuild replaces the snapshot."
-  []
-  (let [root (.getCanonicalPath (workspace/cwd))]
-    (try (let [snap (security-policy/snapshot (or (config/load-config-raw) {}) {:base-dir root})]
-           (swap! last-good-security-snapshot assoc root snap)
-           snap)
-         (catch Throwable e
-           (let [last-good (get @last-good-security-snapshot root)
-                 invalid? (and (instance? clojure.lang.ExceptionInfo e)
-                               (= :vis/invalid-config (:type (ex-data e))))]
+  ([] (security-config-snapshot nil nil))
+  ([db session-id]
+   (let [root
+         (.getCanonicalPath (workspace/cwd))
 
-             (tel/log! {:level :warn
-                        :id ::security-config-invalid
-                        :data
-                        (if invalid? {:problems (:problems (ex-data e))} {:error (ex-message e)})
-                        :msg (str "security config could not be applied; "
-                                  (if last-good
-                                    "keeping this workspace's last-good policy"
-                                    "falling back to a deny-safe policy")
-                                  " so the session survives")})
-             (let [problems (try (config/config-problems) (catch Throwable _ nil))
-                   base (or last-good
-                            (try (security-policy/snapshot {} {:base-dir root})
-                                 (catch Throwable _ {})))]
+         cache-key
+         [root session-id]]
 
-               (assoc base
-                 :config-error {"source" (or (:source (ex-data e)) "vis.yml / ~/.vis/state.yml")
-                                "message" (str "The live config on disk could not be applied; "
-                                               (if last-good
-                                                 "the last-good policy is in effect."
-                                                 "a deny-safe policy is in effect."))
-                                "problems" (if (seq problems) (vec problems) [(ex-message e)])
-                                "hint"
-                                (str "Fix the keys above in vis.yml or ~/.vis/state.yml, then run "
-                                     "/reload. Keys are snake_case strings; the config is closed, "
-                                     "so unknown or renamed keys are rejected.")})))))))
+     (try
+       (let [snap (if db
+                    (scoped-policy/snapshot db session-id)
+                    (security-policy/snapshot (or (config/load-config-raw) {}) {:base-dir root}))]
+         (swap! last-good-security-snapshot assoc cache-key snap)
+         snap)
+       (catch Throwable e
+         (let [last-good
+               (get @last-good-security-snapshot cache-key)
+
+               invalid?
+               (and (instance? clojure.lang.ExceptionInfo e)
+                    (= :vis/invalid-config (:type (ex-data e))))]
+
+           (tel/log! {:level :warn
+                      :id ::security-config-invalid
+                      :data
+                      (if invalid? {:problems (:problems (ex-data e))} {:error (ex-message e)})
+                      :msg (str "security config could not be applied; "
+                                (if last-good
+                                  "keeping this workspace's last-good policy"
+                                  "falling back to a deny-safe policy")
+                                " so the session survives")})
+           (let [problems
+                 (try (config/config-problems) (catch Throwable _ nil))
+
+                 base
+                 (or last-good
+                     (try (security-policy/snapshot {} {:base-dir root}) (catch Throwable _ {})))]
+
+             (assoc base
+               :config-error {"source" (or (:source (ex-data e)) "vis.yml / ~/.vis/state.yml")
+                              "message" (str "The live config on disk could not be applied; "
+                                             (if last-good
+                                               "the last-good policy is in effect."
+                                               "a deny-safe policy is in effect."))
+                              "problems" (if (seq problems) (vec problems) [(ex-message e)])
+                              "hint"
+                              (str "Fix the keys above in vis.yml or ~/.vis/state.yml, then run "
+                                   "/reload. Keys are snake_case strings; the config is closed, "
+                                   "so unknown or renamed keys are rejected.")}))))))))
 
 (defn create-environment
   "Creates a vis environment (component) for session lifecycle and
@@ -440,11 +456,11 @@
             ;; rebuilds this snapshot.
             security-config (binding [workspace/*workspace-root* (or (:root active-workspace)
                                                                      workspace/*workspace-root*)]
-                              (security-config-snapshot))
+                              (security-config-snapshot db-info session-id))
             toggle-values (binding [workspace/*workspace-root* (or (:root active-workspace)
                                                                    workspace/*workspace-root*)]
-                            (atom (toggles/config-values (config/load-config-raw)
-                                                         (config/load-project-tiers-raw))))
+                            (atom (merge (scoped/values db-info session-id)
+                                         toggles/*invocation-overrides*)))
             configured-rw-roots (security-policy/read-write-roots security-config)
             ;; Engine substrate: embedded CPython (env/create-python-context builds a
             ;; deny-by-default Python session, wires the Clojure tools as Python
@@ -1269,14 +1285,28 @@
 ;; every channel goes through, so the fan-out belongs on its listener.
 ;; `notify!` swallows listener throws, and `defonce` keeps the registration
 ;; idempotent across `(require ... :reload)`.
+(defn- refresh-cached-settings!
+  [event]
+  (doseq [{:keys [environment]} (vals @cache)]
+    (when-let [values (:config/toggles environment)]
+      (let [rows (scoped/settings
+                   (:db-info environment)
+                   (scoped/target (:db-info environment) "session" (:session-id environment)))
+            effective (into {} (map (juxt :id :value)) rows)
+            source (:source (first (filter #(= (:id event) (:id %)) rows)))]
+
+        (reset! values (cond-> effective
+                         (and (not (:scope event)) (#{"global" "default"} source))
+                         (assoc (:id event) (:new event)))))))
+  (when (or (= workspace/draft-backend-toggle-id (:id event))
+            (#{["workspace"] ["jail"]} (:section event)))
+    (mark-policy-reload!))
+  (sync-cached-extension-symbols!))
+
 (defonce ^:private _toggle-extension-sync-listener
-  (toggles/add-listener! (fn [event]
-                           (doseq [{:keys [environment]} (vals @cache)]
-                             (when-let [values (:config/toggles environment)]
-                               (swap! values assoc (:id event) (:new event))))
-                           (when (= workspace/draft-backend-toggle-id (:id event))
-                             (mark-policy-reload!))
-                           (sync-cached-extension-symbols!))))
+  (toggles/add-listener! #(when-not (false? (:persist? %)) (refresh-cached-settings! %))))
+
+(defonce ^:private _scoped-settings-sync-listener (scoped/add-listener! refresh-cached-settings!))
 
 (defn- kickoff-cached-sessions
   "Run provider kickoff for each cached entry against `router`, outside any cache

@@ -587,22 +587,43 @@
   []
   (improve-write! :post "/v1/improve/review" {} improve-review-timeout-ms))
 
+(defn- settings-query
+  [target]
+  (when target
+    (str "scope="
+         (enc (:scope target))
+         (when-let [id (:target-id target)]
+           (str "&target_id=" (enc (str id)))))))
+
+(defn change-setting!
+  "Apply an atomic action to a setting owned by the selected gateway target."
+  [id action target]
+  (send-json! "POST" "/v1/settings" (merge target {:id id :action action})))
+
 (defn toggle-setting!
   "Atomically flip one boolean setting in the gateway and return its refreshed
    string-keyed settings row. The gateway owns both persistence and live runtime
    fan-out; clients must not mutate a process-local toggle registry instead."
-  [id]
-  (send-json! "POST" "/v1/settings" {:id id :action "toggle"}))
+  ([id] (toggle-setting! id nil))
+  ([id target] (send-json! "POST" "/v1/settings" (merge target {:id id :action "toggle"}))))
 
 (defn setting
   "Read one gateway-owned setting, including its current value."
-  [id]
-  (send-json! "GET" (str "/v1/settings/" (enc id))))
+  ([id] (setting id nil))
+  ([id target]
+   (send-json! "GET"
+               (str "/v1/settings/" (enc id) (when target (str "?" (settings-query target)))))))
 
 (defn set-setting-value!
   "Set an explicit enum or string value in the gateway and return its refreshed row."
-  [id value]
-  (send-json! "POST" "/v1/settings" {:id id :action "value" :value value}))
+  ([id value] (set-setting-value! id value nil))
+  ([id value target]
+   (send-json! "POST" "/v1/settings" (merge target {:id id :action "value" :value value}))))
+
+(defn inherit-setting!
+  "Remove only this target's override; never edit its parent."
+  [id target]
+  (send-json! "POST" "/v1/settings" (merge target {:id id :action "inherit"})))
 
 (defn settings
   "Every settings group the gateway serves for `channel`, in ITS order — the same
@@ -610,7 +631,12 @@
    re-deriving one from a process-local registry copy, which drifts the moment the
    engine or an extension registers a toggle this binary never heard of."
   ([] (settings :tui))
-  ([channel] (send-json! "GET" (str "/v1/settings?channel=" (enc (name channel))))))
+  ([channel] (settings channel nil))
+  ([channel target]
+   (send-json! "GET"
+               (str "/v1/settings?channel="
+                    (enc (name channel))
+                    (when target (str "&" (settings-query target)))))))
 
 (defn create-session! [opts] (send-json! "POST" "/v1/sessions" opts))
 
@@ -1230,8 +1256,11 @@
 (defn mcp-servers
   "Sanitized MCP inventory (string-keyed rows: `name`, `transport`, `enabled`,
    `is_connected`, `is_managed`, `is_killed`, `tools`, `is_authorized`, …)."
-  []
-  (vec (get (send-json! "GET" "/v1/mcp/servers") "servers")))
+  ([] (mcp-servers nil))
+  ([target]
+   (vec (get (send-json! "GET"
+                         (str "/v1/mcp/servers" (when target (str "?" (settings-query target)))))
+             "servers"))))
 
 (defn mcp-save-server!
   "Create or replace a gateway-managed server. `spec` is the string-keyed wire
@@ -1242,8 +1271,9 @@
 
    Secrets survive an omitting save: see `mcp.core/with-preserved-secrets`.
    Returns the saved sanitized row."
-  [server spec]
-  (send-json! "POST" "/v1/mcp/servers" {:name server :server spec}))
+  ([server spec] (mcp-save-server! server spec nil))
+  ([server spec target]
+   (send-json! "POST" "/v1/mcp/servers" (merge target {:name server :server spec}))))
 
 (defn mcp-test-server!
   "Connect a CANDIDATE spec without saving it and return `{name, is_connected,
@@ -1265,12 +1295,18 @@
 
 (defn mcp-set-server-enabled!
   "Persist a server's on/off switch in the gateway's own state."
-  [server enabled]
-  (send-json! "POST"
-              (str "/v1/mcp/servers/" (enc server) "/actions/enable")
-              {:enabled (boolean enabled)}))
+  ([server enabled] (mcp-set-server-enabled! server enabled nil))
+  ([server enabled target]
+   (send-json! "POST"
+               (str "/v1/mcp/servers/" (enc server) "/actions/enable")
+               (merge target {:enabled (boolean enabled)}))))
 
-(defn mcp-delete-server! [server] (send-json! "DELETE" (str "/v1/mcp/servers/" (enc server))))
+(defn mcp-delete-server!
+  ([server] (mcp-delete-server! server nil))
+  ([server target]
+   (send-json!
+     "DELETE"
+     (str "/v1/mcp/servers/" (enc server) (when target (str "?" (settings-query target)))))))
 
 (defn mcp-auth-start!
   "Begin headless OAuth for an HTTP MCP server. Returns the wire flow

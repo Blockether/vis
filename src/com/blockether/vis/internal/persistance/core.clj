@@ -109,6 +109,9 @@
   ;; channel; read by the engine at turn start (see session-model + loop.clj).
   (db-get-session-model-pref [db-info session-id])
   (db-set-session-model-pref! [db-info session-id provider model])
+  ;; Sparse entity-owned setting overrides. nil removes one override, false is a value.
+  (db-scoped-settings [db-info scope target-id])
+  (db-set-scoped-setting! [db-info scope target-id setting-id value])
   ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
   (db-get-project [db-info project-id])
   (db-list-projects [db-info opts])

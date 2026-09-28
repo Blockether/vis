@@ -981,6 +981,7 @@
                        :type :boolean
                        :settings? false
                        :default false
+                       :scopes ["global" "project" "group" "session"]
                        :owner "openai-codex"
                        :group :provider
                        :persist? true})

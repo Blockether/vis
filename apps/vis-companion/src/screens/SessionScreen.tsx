@@ -15,6 +15,7 @@ import {
 import { AssistantMessage, transcriptEnterClass, UserMessage } from '../components/ChatContent';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
 import { AgentTeam } from '../components/AgentTeam';
+import { ScopedSettingsDialog } from './settings/ScopedSettingsDialog';
 import {
   ComposerAttachmentPicker,
   type ComposerAttachmentCommands,
@@ -1213,16 +1214,18 @@ export function SessionScreen({
   // control for it (the model picker deliberately has none). The gateway keeps
   // it out of `/v1/settings` (`:settings? false`) because each channel owns its
   // own control, hence the by-id read.
+  const settingsTarget = useMemo(() => ({ scope: 'session' as const, target_id: sid }), [sid]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [reasoning, setReasoning] = useState<Toggle | null>(() =>
-    client.cachedSetting('reasoning_level'),
+    client.cachedSetting('reasoning_level', settingsTarget),
   );
   const [reasoningBusy, setReasoningBusy] = useState(false);
   const [verbosity, setVerbosity] = useState<Toggle | null>(() =>
-    client.cachedSetting('verbosity'),
+    client.cachedSetting('verbosity', settingsTarget),
   );
   const [verbosityBusy, setVerbosityBusy] = useState(false);
   const [codexFast, setCodexFast] = useState<Toggle | null>(() =>
-    client.cachedSetting('codex_fast_mode'),
+    client.cachedSetting('codex_fast_mode', settingsTarget),
   );
   const [codexFastBusy, setCodexFastBusy] = useState(false);
   // The level the user just asked for, shown until the gateway confirms it.
@@ -1242,7 +1245,7 @@ export function SessionScreen({
         ['codex_fast_mode', setCodexFast],
       ] as const) {
         void client
-          .setting(id, signal)
+          .setting(id, signal, settingsTarget)
           .then((toggle) => {
             if (!signal.aborted) receive(toggle);
           })
@@ -1268,13 +1271,13 @@ export function SessionScreen({
       stopWake();
       controller?.abort();
     };
-  }, [client, connected, routerOpen, sid]);
+  }, [client, connected, routerOpen, sid, settingsTarget, settingsOpen]);
 
   async function toggleCodexFast() {
     if (!codexFast || codexFastBusy) return;
     setCodexFastBusy(true);
     try {
-      setCodexFast(await client.setSetting(codexFast.id, 'toggle'));
+      setCodexFast(await client.setSetting(codexFast.id, 'toggle', undefined, settingsTarget));
     } catch (e) {
       setComposerNotice((e as Error).message);
     } finally {
@@ -1301,7 +1304,7 @@ export function SessionScreen({
     setPendingLevel(nextReasoningLevel(reasoning));
     setReasoningBusy(true);
     try {
-      setReasoning(await client.setSetting(reasoning.id, 'cycle'));
+      setReasoning(await client.setSetting(reasoning.id, 'cycle', undefined, settingsTarget));
     } catch (e) {
       setComposerNotice((e as Error).message);
     } finally {
@@ -1314,7 +1317,7 @@ export function SessionScreen({
     if (!verbosity || verbosityBusy) return;
     setVerbosityBusy(true);
     try {
-      setVerbosity(await client.setSetting(verbosity.id, 'cycle'));
+      setVerbosity(await client.setSetting(verbosity.id, 'cycle', undefined, settingsTarget));
     } catch (e) {
       setComposerNotice((e as Error).message);
     } finally {
@@ -1340,16 +1343,9 @@ export function SessionScreen({
     modelProvider?.model_details?.find((model) => model.name === modelProvider.default_model) ??
     modelProvider?.model_details?.[0];
   const verbosityAvailable = modelInfo?.verbosity_style != null && verbosity;
-  const turnExtraBody = verbosityAvailable
-    ? { text: { verbosity: verbosityAvailable.value ?? 'low' } }
-    : undefined;
   function turnFeaturesFor(voiceProjection: boolean): Record<string, boolean> | undefined {
-    const codexFastMode = Boolean(codexFastAvailable && codexFast.enabled);
-    if (!voiceProjection && !codexFastMode) return undefined;
-    return {
-      ...(voiceProjection ? { voice_projection: true } : {}),
-      ...(codexFastMode ? { codex_fast_mode: true } : {}),
-    };
+    // The gateway snapshots response settings at submission, not from this UI cache.
+    return voiceProjection ? { voice_projection: true } : undefined;
   }
 
   // The header chip shows whatever model this session actually runs on, so read
@@ -3719,7 +3715,6 @@ export function SessionScreen({
         const submitted = await client.submitTurn(sid, request, {
           displayRequest,
           attachments: sent,
-          extraBody: turnExtraBody,
           turnFeatures: turnFeaturesFor(voiceProjection),
         });
         const queuedId = submitted.turn_id;
@@ -3809,7 +3804,6 @@ export function SessionScreen({
       const submitted = await client.submitTurn(sid, request, {
         displayRequest,
         attachments: sent,
-        extraBody: turnExtraBody,
         turnFeatures: turnFeaturesFor(voiceProjection),
       });
       const submittedId = submitted.turn_id;
@@ -4727,6 +4721,7 @@ export function SessionScreen({
   };
   const headerCommands: SessionHeaderCommands = {
     back: onBack,
+    settings: () => setSettingsOpen(true),
     toggleArtifacts: () => {
       setLinkedAttachmentId(null);
       setArtifactsOpen((was) => !was);
@@ -4746,6 +4741,9 @@ export function SessionScreen({
            is answered. Its overlay stands in THIS pane, so a waiting question
            never covers the desk beside it — the TUI shows the same form. */}
           <HumanInputPrompt client={client} subscriptions={subscriptions} sid={sid} />
+          {settingsOpen && (
+            <ScopedSettingsDialog client={client} target={{ ...settingsTarget, label: headerModel.title }} onClose={() => setSettingsOpen(false)} />
+          )}
           <SessionHeader
             model={headerModel}
             commands={headerCommands}

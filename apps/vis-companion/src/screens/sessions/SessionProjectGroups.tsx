@@ -32,6 +32,8 @@ import {
   SectionHeader,
 } from '../../components/SessionNavigator';
 import { Menu, MenuItem, MenuNote, MENU_WIDTH } from '../../components/Menu';
+import { ScopedSettingsDialog } from '../settings/ScopedSettingsDialog';
+import type { SettingsTarget } from '../../lib/types';
 import {
   ArchiveIcon,
   ChevronIcon,
@@ -1350,6 +1352,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   };
   // Group names edit in their bands; the sheet holds only actions that need a choice.
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
+  const [settingsTarget, setSettingsTarget] = useState<SettingsTarget | null>(null);
   const [menu, setMenu] = useState<{ at: MenuPosition; step: MenuStep } | null>(null);
   const [typed, setTyped] = useState('');
   const [failure, setFailure] = useState<string | null>(null);
@@ -1919,6 +1922,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           </div>
         )}
       </section>
+      {settingsTarget && <ScopedSettingsDialog key={`${settingsTarget.scope}:${settingsTarget.target_id}`} client={getClient(conn)} target={settingsTarget} onClose={() => setSettingsTarget(null)} />}
       {menu && (
         <Menu
           label={`${menu.step.kind === 'sessions' ? 'Sessions' : 'Groups'} in ${project}`}
@@ -1931,6 +1935,7 @@ export const ProjectGroup = memo(function ProjectGroup({
             if (step.kind === 'root')
               return (
                 <>
+                  <MenuItem title="Project settings" onSelect={() => { setMenu(null); setSettingsTarget({ scope: 'project', target_id: root, label: project }); }} />
                   <MenuItem
                     title="New group"
                     icon={<ProjectsIcon className="size-3.5" />}
@@ -2089,6 +2094,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                     }}
                   />
                 )}
+                <MenuItem title="Group settings" onSelect={() => { setMenu(null); setSettingsTarget({ scope: 'group', target_id: band.id, label: band.name }); }} />
                 <MenuItem
                   title="Rename group"
                   icon={<PencilIcon className="size-3.5" />}

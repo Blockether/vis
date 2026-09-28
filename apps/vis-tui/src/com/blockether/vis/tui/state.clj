@@ -1298,15 +1298,37 @@
                                         :on-warm #(dispatch [:bump-render-version])}))
                     (assoc db :settings settings)))))
 
-(reg-event-fx :cycle-reasoning-level
-              (fn [db _]
-                (if-not (reasoning-effort-configurable? db)
-                  {:db db
-                   :fx [[:notify "Reasoning effort is not configurable for this model" :warn
-                         settings-notification-ttl-ms]]}
-                  ;; Cycle the registry as an effect, never inside `swap!`; its synchronous
-                  ;; listener dispatches again and would make CAS retries repeat the action.
-                  {:db db :fx [[:cycle-toggle "reasoning_level" "Reasoning"]]})))
+(reg-event-db :session-settings-loaded
+              (fn [db [_ sid rows]]
+                (assoc-in db
+                  [:session-settings (str sid)]
+                  (into {}
+                        (keep (fn [row]
+                                (when-let [k ({"reasoning_level" :reasoning-level
+                                               "verbosity" :verbosity
+                                               "codex_fast_mode" :codex-fast-mode}
+                                              (get row "id"))]
+                                  [k
+                                   (if (= "boolean" (get row "type"))
+                                     (get row "enabled")
+                                     (some-> (get row "value")
+                                             keyword))])))
+                        rows))))
+
+(reg-event-fx :refresh-session-settings
+              (fn [db [_ sid]]
+                {:db db :fx [[:refresh-session-settings sid]]}))
+
+(reg-event-fx
+  :cycle-reasoning-level
+  (fn [db _]
+    (if-not (reasoning-effort-configurable? db)
+      {:db db
+       :fx [[:notify "Reasoning effort is not configurable for this model" :warn
+             settings-notification-ttl-ms]]}
+      ;; Cycle the registry as an effect, never inside `swap!`; its synchronous
+      ;; listener dispatches again and would make CAS retries repeat the action.
+      {:db db :fx [[:cycle-toggle (get-in db [:session :id]) "reasoning_level" "Reasoning"]]})))
 
 (reg-event-fx :cycle-verbosity
               (fn [db _]
@@ -1315,15 +1337,17 @@
                    :fx [[:notify "Answer length is not configurable for this model" :warn
                          settings-notification-ttl-ms]]}
                   ;; Effect, not an in-swap mutation - see :cycle-reasoning-level.
-                  {:db db :fx [[:cycle-toggle "verbosity" "Verbosity"]]})))
-
-(reg-event-fx :toggle-codex-fast-mode
-              (fn [db _]
-                (if-not (codex-session? db)
                   {:db db
-                   :fx [[:notify "Fast mode is available only for OpenAI Codex" :warn
-                         settings-notification-ttl-ms]]}
-                  {:db db :fx [[:toggle-boolean "codex_fast_mode" "Fast mode"]]})))
+                   :fx [[:cycle-toggle (get-in db [:session :id]) "verbosity" "Verbosity"]]})))
+
+(reg-event-fx
+  :toggle-codex-fast-mode
+  (fn [db _]
+    (if-not (codex-session? db)
+      {:db db
+       :fx [[:notify "Fast mode is available only for OpenAI Codex" :warn
+             settings-notification-ttl-ms]]}
+      {:db db :fx [[:toggle-boolean (get-in db [:session :id]) "codex_fast_mode" "Fast mode"]]})))
 
 (reg-event-fx :cycle-model
               ;; Ctrl+T cycles the ACTIVE SESSION's model preference — the SAME unified,
@@ -2301,41 +2325,42 @@
     (merge next-db (select-keys previous-db active-turn-state-keys))
     (clear-active-turn-state next-db)))
 
-(reg-event-db
+(reg-event-fx
   :init-session
   (fn [db [_ session history workspace]]
     (let [user-history (history-user-texts history)]
-      (-> db
-          ensure-tabs
-          (assoc :session session
-                 ;; The session's current gateway workspace record, JSON-keyed: "root"
-                 ;; is the active filesystem root; "repo_root" retains the canonical
-                 ;; project identity for internally isolated workspaces.
-                 :workspace workspace
-                 :title nil
-                 ;; This tab is being REBOUND to another session, so the
-                 ;; previous session's optimistic model pick must not survive:
-                 ;; `session-model-pref` prefers this key over the gateway
-                 ;; value, so a leftover pinned the footer chip (and the codex
-                 ;; verbosity gating) to the OLD session's model until restart.
-                 ;; nil = re-read the new session's real preference.
-                 :session-model-pref nil
-                 :messages (or history [])
-                 :scroll scroll/follow
-                 :input (input/empty-input)
-                 :input-history user-history
-                 :input-history-index nil
-                 :input-history-draft nil
-                 :submitted-input nil
-                 :pastes {}
-                 :paste-counter 0
-                 :image-counter 0
-                 :attachments []
-                 :attachment-feedback []
-                 :attachment-focus? false
-                 :attachment-index 0
-                 :detail-expansions {})
-          (reconcile-in-flight-state db session)))))
+      {:db (-> db
+               ensure-tabs
+               (assoc :session session
+                      ;; The session's current gateway workspace record, JSON-keyed: "root"
+                      ;; is the active filesystem root; "repo_root" retains the canonical
+                      ;; project identity for internally isolated workspaces.
+                      :workspace workspace
+                      :title nil
+                      ;; This tab is being REBOUND to another session, so the
+                      ;; previous session's optimistic model pick must not survive:
+                      ;; `session-model-pref` prefers this key over the gateway
+                      ;; value, so a leftover pinned the footer chip (and the codex
+                      ;; verbosity gating) to the OLD session's model until restart.
+                      ;; nil = re-read the new session's real preference.
+                      :session-model-pref nil
+                      :messages (or history [])
+                      :scroll scroll/follow
+                      :input (input/empty-input)
+                      :input-history user-history
+                      :input-history-index nil
+                      :input-history-draft nil
+                      :submitted-input nil
+                      :pastes {}
+                      :paste-counter 0
+                      :image-counter 0
+                      :attachments []
+                      :attachment-feedback []
+                      :attachment-focus? false
+                      :attachment-index 0
+                      :detail-expansions {})
+               (reconcile-in-flight-state db session))
+       :fx [[:refresh-session-settings (:id session)]]})))
 
 (reg-event-fx
   :open-session-tab
@@ -4382,22 +4407,6 @@
               (fn [db [_ offset max-s]]
                 (assoc db :scroll (scroll/to-y (long offset) (long max-s)))))
 
-(defn- turn-extra-body
-  "Per-turn wire extras captured when the turn is enqueued. `text.verbosity` is
-   capability-gated; provider-specific Fast intent travels separately as a turn
-   feature so the engine can project it after routing."
-  [{:keys [settings] :as db}]
-  (not-empty (cond-> {}
-               (verbosity-configurable? db)
-               (assoc-in [:text :verbosity] (name (or (:verbosity settings) "low"))))))
-
-(defn- turn-features
-  "Provider-neutral turn intent captured with the submission."
-  [db]
-  (cond-> {}
-    (and (codex-session? db) (vis/toggle-value "codex_fast_mode"))
-    (assoc "codex_fast_mode" true)))
-
 (defonce ^:private process-submission-id (str (java.util.UUID/randomUUID)))
 
 (defn- submission-prefix
@@ -4560,10 +4569,7 @@
               (assoc :awaiting-ack? true))
 
             gw-fx
-            (when gateway?
-              [[:gateway-enqueue workspace-id session entry
-                (when (reasoning-effort-configurable? db) (get-in db [:settings :reasoning-level]))
-                (turn-extra-body source-db) (turn-features source-db) workspace]])]
+            (when gateway? [[:gateway-enqueue workspace-id session entry nil nil {} workspace]])]
 
         {:db (update-tab db
                          workspace-id
@@ -4619,87 +4625,88 @@
           preview-text
           (input/collapse-paste-placeholders text pastes)]
 
-      (cond
-        (:loading? source-db) (enqueue-message-result db workspace-id text)
-        (nil? (:session source-db)) {:db db}
-        :else
-        (let [workspace
-              (active-workspace source-db)
+      (cond (:loading? source-db) (enqueue-message-result db workspace-id text)
+            (nil? (:session source-db)) {:db db}
+            :else
+            (let [workspace
+                  (active-workspace source-db)
 
-              agent-text
-              (binding [workspace/*workspace-root* (workspace/workspace-root workspace)]
-                (input/expand-file-mentions full-text))
+                  agent-text
+                  (binding [workspace/*workspace-root* (workspace/workspace-root workspace)]
+                    (input/expand-file-mentions full-text))
 
-              token
-              (vis/cancellation-token)
+                  token
+                  (vis/cancellation-token)
 
-              extra-body
-              (turn-extra-body source-db)
+                  extra-body
+                  nil
 
-              turn-features
-              (turn-features source-db)
+                  turn-features
+                  {}
 
-              reasoning-level
-              (when (reasoning-effort-configurable? db) (get-in db [:settings :reasoning-level]))
+                  reasoning-level
+                  nil
 
-              client-turn-id
-              (str (java.util.UUID/randomUUID))
+                  client-turn-id
+                  (str (java.util.UUID/randomUUID))
 
-              visible-preview-text
-              (chat/user-request-with-staged-attachments preview-text attachments)]
+                  visible-preview-text
+                  (chat/user-request-with-staged-attachments preview-text attachments)]
 
-          {:db (update-tab db
-                           workspace-id
-                           (fn [w]
-                             (-> w
-                                 (update :messages
-                                         conj
-                                         (assoc (chat/user-message visible-preview-text)
-                                           :client-turn-id client-turn-id))
-                                 (update :messages
-                                         conj
-                                         (assoc (pending-assistant-for text)
-                                           :client-turn-id client-turn-id))
-                                 (remember-input full-text)
-                                 ;; Sending re-pins to the bottom: one atomic FOLLOW
-                                 ;; reset replaces the whole `:scroll` value, so no
-                                 ;; in-flight animation target can dangle and flash the
-                                 ;; view to the top of the freshly-appended message.
-                                 (assoc :scroll scroll/follow
-                                        :loading? true
-                                        :cancel-token token
-                                        :cancelling? false
-                                        ;; Do NOT clear `:cancel-awaiting-client-id` here. A rapid
-                                        ;; cancel/resubmit must retain the old submit's identity until
-                                        ;; its delayed turn.started either arrives or is proven absent.
-                                        :progress {:iterations []}
-                                        :turn-start-ms (System/currentTimeMillis)
-                                        ;; Identity of the turn this tab launched DIRECTLY: the
-                                        ;; correlation id we sent as the gateway idempotency key. A
-                                        ;; queue event echoing OUR OWN submit back (the gateway was
-                                        ;; still tearing down a just-cancelled turn and parked it) is
-                                        ;; recognised by that id — never by request text — instead of
-                                        ;; being painted as a second "Queued" row.
-                                        :live-turn-client-id client-turn-id
-                                        :submitted-input {:text text
-                                                          :pastes (:pastes source-db)
-                                                          :paste-counter (:paste-counter source-db)
-                                                          :image-counter (:image-counter source-db)
-                                                          :attachments attachments}
-                                        :input-history-index nil
-                                        :input-history-draft nil
-                                        :slash-command-index 0
-                                        :slash-command-hidden? false))))
-           ;; `agent-text` (LLM-facing, with `@path` expanded into a
-           ;; `[Attached File: ...]` directive) drives the model.
-           ;; `preview-text` (un-expanded `@path` token, plus a fenced
-           ;; head+tail peek of each paste) is the user's collapsed line -
-           ;; flowed in as `display-text` so it lands in the persisted
-           ;; `user_request` column. Without the split,
-           ;; reopening a session re-rendered the verbose attachment
-           ;; directive in the user bubble.
-           :fx [[:session-turn workspace-id (:session source-db) agent-text token reasoning-level
-                 extra-body turn-features workspace client-turn-id preview-text attachments]]})))))
+              {:db (update-tab db
+                               workspace-id
+                               (fn [w]
+                                 (-> w
+                                     (update :messages
+                                             conj
+                                             (assoc (chat/user-message visible-preview-text)
+                                               :client-turn-id client-turn-id))
+                                     (update :messages
+                                             conj
+                                             (assoc (pending-assistant-for text)
+                                               :client-turn-id client-turn-id))
+                                     (remember-input full-text)
+                                     ;; Sending re-pins to the bottom: one atomic FOLLOW
+                                     ;; reset replaces the whole `:scroll` value, so no
+                                     ;; in-flight animation target can dangle and flash the
+                                     ;; view to the top of the freshly-appended message.
+                                     (assoc :scroll scroll/follow
+                                            :loading? true
+                                            :cancel-token token
+                                            :cancelling? false
+                                            ;; Do NOT clear `:cancel-awaiting-client-id` here. A rapid
+                                            ;; cancel/resubmit must retain the old submit's identity until
+                                            ;; its delayed turn.started either arrives or is proven absent.
+                                            :progress {:iterations []}
+                                            :turn-start-ms (System/currentTimeMillis)
+                                            ;; Identity of the turn this tab launched DIRECTLY: the
+                                            ;; correlation id we sent as the gateway idempotency key. A
+                                            ;; queue event echoing OUR OWN submit back (the gateway was
+                                            ;; still tearing down a just-cancelled turn and parked it) is
+                                            ;; recognised by that id — never by request text — instead of
+                                            ;; being painted as a second "Queued" row.
+                                            :live-turn-client-id client-turn-id
+                                            :submitted-input
+                                            {:text text
+                                             :pastes (:pastes source-db)
+                                             :paste-counter (:paste-counter source-db)
+                                             :image-counter (:image-counter source-db)
+                                             :attachments attachments}
+                                            :input-history-index nil
+                                            :input-history-draft nil
+                                            :slash-command-index 0
+                                            :slash-command-hidden? false))))
+               ;; `agent-text` (LLM-facing, with `@path` expanded into a
+               ;; `[Attached File: ...]` directive) drives the model.
+               ;; `preview-text` (un-expanded `@path` token, plus a fenced
+               ;; head+tail peek of each paste) is the user's collapsed line -
+               ;; flowed in as `display-text` so it lands in the persisted
+               ;; `user_request` column. Without the split,
+               ;; reopening a session re-rendered the verbose attachment
+               ;; directive in the user bubble.
+               :fx [[:session-turn workspace-id (:session source-db) agent-text token
+                     reasoning-level extra-body turn-features workspace client-turn-id preview-text
+                     attachments]]})))))
 
 (reg-event-fx :enqueue-message
               ;; Capture a user submission while a previous turn is still processing.
@@ -6257,31 +6264,6 @@
         (fn []
           (try (voice-output/stop!) (catch Throwable _ nil))))
 
-;; Flip a cycling registry toggle OUTSIDE the dispatch swap. `toggle-cycle-value!`
-;; fires the registry listener synchronously and that listener dispatches back
-;; into `app-db`; done inside the swap it livelocks the CAS retry loop (the
-;; toggle advances once per retry). As an effect it runs exactly once, after the
-;; state transition has committed.
-(reg-fx :cycle-toggle
-        (fn [toggle-id label]
-          (let [next (vis/toggle-cycle-value! toggle-id)]
-            ;; The listener wired in `init!` normally resyncs; dispatch it here
-            ;; too so the projection is correct even without that wiring, and so
-            ;; the id is carried through (render-neutral = no cache bust).
-            (dispatch [:resync-toggle-settings toggle-id])
-            (vis/notify! (str label ": " (name next))
-                         :level :info
-                         :ttl-ms settings-notification-ttl-ms))))
-
-(reg-fx :toggle-boolean
-        (fn [toggle-id label]
-          (let [enabled? (not (boolean (vis/toggle-value toggle-id)))]
-            (vis/toggle-set-value! toggle-id enabled?)
-            (dispatch [:resync-toggle-settings toggle-id])
-            (vis/notify! (str label (if enabled? " enabled" " disabled"))
-                         :level :info
-                         :ttl-ms settings-notification-ttl-ms))))
-
 ;; Every gateway call in this section is a BLOCKING HTTP round-trip, and
 ;; `dispatch` runs effects on the thread that dispatched — for a submission that
 ;; is the TUI's INPUT thread. Inline, one unreachable daemon froze the editor for
@@ -6302,6 +6284,46 @@
    caller (or a test) can await the round-trip; the TUI never does."
   [f]
   (.submit ^ExecutorService @gateway-queue-executor ^Runnable f))
+
+(defn- refresh-session-settings!
+  [sid]
+  (when sid
+    (let [catalog (vis/gateway-settings :tui {:scope "session" :target-id (str sid)})]
+      (dispatch [:session-settings-loaded sid
+                 (mapcat #(get % "toggles") (get catalog "groups"))]))))
+
+(reg-fx :refresh-session-settings
+        (fn [sid]
+          (when sid
+            (gateway-queue-io!
+              #(try (refresh-session-settings! sid)
+                    (catch Exception e
+                      (vis/notify! (str "Settings unavailable: " (ex-message e)) :level :warn)))))))
+
+(defn- change-session-setting!
+  [sid id label action]
+  (if-not sid
+    (vis/notify! "Open a session first to change its settings" :level :warn)
+    (gateway-queue-io!
+      #(try (let [row (vis/change-setting! id action {:scope "session" :target-id (str sid)})]
+              (refresh-session-settings! sid)
+              (vis/notify! (str label
+                                ": "
+                                (if (= "boolean" (get row "type"))
+                                  (if (get row "enabled") "on" "off")
+                                  (get row "value")))
+                           :level :info
+                           :ttl-ms settings-notification-ttl-ms))
+            (catch Exception e
+              (vis/notify! (str "Setting unchanged: " (ex-message e)) :level :error))))))
+
+(reg-fx :cycle-toggle
+        (fn [sid id label]
+          (change-session-setting! sid id label "cycle")))
+
+(reg-fx :toggle-boolean
+        (fn [sid id label]
+          (change-session-setting! sid id label "toggle")))
 
 ;; Persist the active session's model preference to the shared, channel-neutral
 ;; store. The engine reads it on the next turn (router-for-model) and the web
@@ -6997,5 +7019,6 @@
         (fn [sid]
           (when sid
             (gateway-queue-io! (fn []
-                                 (try (vis/gateway-mark-session-read! sid)
+                                 (try (refresh-session-settings! sid)
+                                      (vis/gateway-mark-session-read! sid)
                                       (catch Throwable _ nil)))))))

@@ -256,7 +256,9 @@
                                     {:placeholder "a short id for this server, e.g. filesystem"})
                                   str/trim))]
         (when-let [filled (ask-all (assoc form :transport transport)
-                                   (field-prompts (:read! q) transport))]
+                                   (cond->> (field-prompts (:read! q) transport)
+                                     dlg/*settings-target*
+                                     (remove #(#{:env :headers} (first %)))))]
           [server (form->spec filled)])))))
 
 (defn save-server!
@@ -270,10 +272,13 @@
     (try (when-let [[server spec] (collect-spec! q row)]
            (if-let [problem (spec-problem server spec)]
              ((:note! q) title problem)
-             (let [verdict (try (vis/gateway-mcp-test-server! server spec)
-                                (catch Exception e {"error" (ex-message e)}))
+             (let [verdict (when-not dlg/*settings-target*
+                             (try (vis/gateway-mcp-test-server! server spec)
+                                  (catch Exception e {"error" (ex-message e)})))
                    tools (tool-count verdict)
-                   summary (cond (get verdict "is_connected")
+                   summary (cond dlg/*settings-target*
+                                 "Saved for this scope; connects when the session first uses it."
+                                 (get verdict "is_connected")
                                  (str "Connected · " tools (if (= 1 tools) " tool" " tools"))
                                  ;; A successful disconnected HTTP probe is the gateway's
                                  ;; OAuth challenge verdict, not an unreachable endpoint.
@@ -290,7 +295,9 @@
                        {:cost summary
                         :yes-label (if row "Yes, save it" "Yes, add it")
                         :no-label "Discard it"})
-                 (vis/gateway-mcp-save-server! server spec)
+                 (if dlg/*settings-target*
+                   (vis/gateway-mcp-save-server! server spec dlg/*settings-target*)
+                   (vis/gateway-mcp-save-server! server spec))
                  nil))))
          (catch Exception e ((:note! q) title (str "MCP: " (ex-message e))) nil))))
 
@@ -343,10 +350,14 @@
            (vis/gateway-mcp-start-server! server)
 
            :enable
-           (vis/gateway-mcp-set-server-enabled! server true)
+           (if dlg/*settings-target*
+             (vis/gateway-mcp-set-server-enabled! server true dlg/*settings-target*)
+             (vis/gateway-mcp-set-server-enabled! server true))
 
            :disable
-           (vis/gateway-mcp-set-server-enabled! server false)
+           (if dlg/*settings-target*
+             (vis/gateway-mcp-set-server-enabled! server false dlg/*settings-target*)
+             (vis/gateway-mcp-set-server-enabled! server false))
 
            :auth
            (authorize! q server)
@@ -359,11 +370,18 @@
 
            :remove
            (when ((:confirm! q)
-                   (str "Remove MCP server `" server "`?")
-                   {:cost "Deletes it from the gateway's own configuration."
+                   (str
+                     (if dlg/*settings-target* "Use inherited MCP server `" "Remove MCP server `")
+                     server
+                     "`?")
+                   {:cost (if dlg/*settings-target*
+                            "Removes only this scope's definition."
+                            "Deletes it from the gateway's own configuration.")
                     :yes-label "Yes, remove"
                     :no-label "Keep it"})
-             (vis/gateway-mcp-delete-server! server))
+             (if dlg/*settings-target*
+               (vis/gateway-mcp-delete-server! server dlg/*settings-target*)
+               (vis/gateway-mcp-delete-server! server)))
 
            :details
            ((:view! q) (str "MCP · " server) (server-details row))

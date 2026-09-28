@@ -2,43 +2,61 @@
   "Settings routes, including the Improve register and its settings."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.toggle :as toggle-contract]
+            [com.blockether.vis.internal.config.scoped :as scoped]
+            [com.blockether.vis.internal.config.scoped-policy :as scoped-policy]
+            [com.blockether.vis.internal.foundation.harness.discovery :as harness]
+            [com.blockether.vis.internal.workspace.core :as workspace]
+            [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.gateway.server.http :as http]
             [com.blockether.vis.internal.gateway.state :as state]))
 
 (defn- toggle-json
-  "One settings row as JSON — the wire twin of the server-side
-   `toggle-row` hiccup: boolean rows carry `enabled`, enum rows carry
-   `value` + `choices`."
-  [{:keys [id label description type experimental?]}]
-  (let [choices
-        (try (toggles/choices-of id) (catch Throwable _ nil))
+  [{:keys [id label description type choices value experimental? scopes source scope is-override]}]
+  (cond-> {:id id
+           :label label
+           :type (name type)
+           :scopes scopes
+           :scope scope
+           :source source
+           :is-override is-override
+           :is-experimental (boolean experimental?)}
+    description
+    (assoc :description description)
 
-        value
-        (try (toggles/value-of id) (catch Throwable _ nil))
+    (= type :boolean)
+    (assoc :enabled (boolean value))
 
-        pretty
-        (fn [v]
-          (if (keyword? v) (name v) (str v)))
+    (not= type :boolean)
+    (assoc :value value)
 
-        base
-        {:id id
-         :label (str (or label id))
-         :is-experimental (boolean experimental?)
-         :type (name (or type (if (seq choices) :enum :boolean)))}]
+    choices
+    (assoc :choices choices)))
 
-    (cond-> base
-      description
-      (assoc :description (str description))
+(defn- resource-inventory
+  [target]
+  (binding [workspace/*workspace-root* (:root target)]
+    (let [skills (cond->> (harness/all-skills)
+                   (= "global" (:scope target))
+                   (remove :project-root))
+          servers (scoped/definitions (lp/db-info) target ["mcp" "servers"])]
 
-      (seq choices)
-      (assoc :value
-        (pretty value) :choices
-        (mapv pretty choices))
+      (set (concat (map #(scoped/register-resource! :skills (:name %)) skills)
+                   (map #(scoped/register-resource! :mcp (:name %)) servers))))))
 
-      (empty? choices)
-      (assoc :enabled (boolean (try (toggles/enabled? id) (catch Throwable _ false)))))))
+(defn- request-target
+  [request body]
+  (let [params (merge (:query-params request) body)]
+    (scoped/target (lp/db-info) (get params "scope") (get params "target_id"))))
+
+(defn- settings-response
+  [f]
+  (try (f)
+       (catch clojure.lang.ExceptionInfo e
+         (if-let [status (:status (ex-data e))]
+           (http/error-response status (or (:type (ex-data e)) :invalid-setting) (ex-message e))
+           (throw e)))))
 
 (defn- agent-name-setting
   []
@@ -61,110 +79,119 @@
              (throw e))))))
 
 (defn- list-settings-handler
-  "GET /v1/settings[?channel=web|all] — the gateway identity and feature toggles
-   rendered by every channel (web dialog, TUI pane, mobile app) as grouped JSON.
-   `channel` scopes rows exactly like `toggles-for-channel`; `all` (or
-   `*`, or omitting the param) ships every visible toggle regardless of
-   channel — the cross-channel view a remote companion wants."
+  "GET /v1/settings?scope=...&target_id=...; all clients share this catalog."
   [request]
-  (let [raw
-        (get-in request [:query-params "channel"])
+  (settings-response
+    (fn []
+      (let [target
+            (request-target request nil)
 
-        channel
-        (when (and raw (not (contains? #{"all" "*"} (str/lower-case raw)))) (keyword raw))
+            local?
+            (not= "global" (:scope target))
 
-        specs
-        (if channel (toggles/toggles-for-channel channel) (toggles/visible-toggles))
+            resources
+            (resource-inventory target)
 
-        grouped
-        (sort-by (comp str key) (group-by #(or (:group %) :other) specs))]
+            channel
+            (some-> (get-in request [:query-params "channel"])
+                    keyword)
 
-    (http/json-response
-      {:groups (into [{:id "agent" :title "Agent" :toggles [(agent-name-setting)]}]
-                     (map (fn [[group group-specs]]
-                            {:id (name group)
-                             :title (str/capitalize (str/replace (name group) #"[-_]+" " "))
-                             :toggles (mapv toggle-json group-specs)}))
-                     grouped)})))
+            rows
+            (filter #(and (some #{(:scope target)} (:scopes %))
+                          (or (not (#{:skills :mcp} (:group %))) (resources (:id %)))
+                          (or local?
+                              (and (not (false? (:settings? %))) (toggles/toggle-visible? %)))
+                          (or (nil? channel)
+                              (#{:all :*} channel)
+                              (toggles/toggle-for-channel? channel %)))
+                    (scoped/settings (lp/db-info) target))
+
+            grouped
+            (sort-by (comp str key) (group-by #(or (:group %) :other) rows))]
+
+        (http/json-response
+          {:scope (:scope target)
+           :target-id (:target-id target)
+           :label (:label target)
+           :groups (into (cond-> [{:id "access"
+                                   :title "Paths and access"
+                                   :toggles (scoped-policy/settings (lp/db-info) target)}]
+                           (not local?)
+                           (conj {:id "agent"
+                                  :title "Agent"
+                                  :toggles [(assoc (agent-name-setting) :scopes ["global"])]}))
+                         (map (fn [[group specs]]
+                                {:id (name group)
+                                 :title (if (and local? (= group :provider))
+                                          "Response"
+                                          (str/capitalize (str/replace (name group) #"[-_]+" " ")))
+                                 :toggles (mapv toggle-json specs)}))
+                         grouped)})))))
 
 (defn- get-setting-handler
-  "GET /v1/settings/:id — the agent name or ONE registered toggle row, INCLUDING the ids
-   `list-settings-handler` hides. `reasoning_level` is registered
-   `:settings? false` because every channel drives it from its own dedicated
-   control (TUI Ctrl+R, the companion's model dialog) rather than the Settings
-   list, so a remote channel still needs a way to READ its current value.
-   Same row shape as the list endpoint."
+  "Read one setting, including response controls hidden in the global dialog."
   [request]
-  (let [id-str
-        (get-in request [:path-params :id])
+  (settings-response
+    (fn []
+      (let [target
+            (request-target request nil)
 
-        id
-        (when (string? id-str) (str/trim id-str))
+            id
+            (get-in request [:path-params :id])
 
-        spec
-        (when (seq id) (toggles/toggle-spec id))]
+            resources
+            (resource-inventory target)
 
-    (cond (not (toggle-contract/toggle-id? id))
-          (http/error-response 400 :bad-setting-id "settings id must be a snake_case string")
-          (= id "agent_name") (http/json-response (agent-name-setting))
-          (nil? spec) (http/error-response 404 :unknown-setting "no such setting" :id (str id-str))
-          :else (http/json-response (toggle-json spec)))))
+            spec
+            (first (filter #(= id (:id %)) (scoped/settings (lp/db-info) target)))]
+
+        (cond
+          (not (toggle-contract/toggle-id? id))
+          (http/error-response 400 :invalid-setting-id "Setting id must be lower-case snake_case")
+          (scoped-policy/setting? id)
+          (http/json-response (first (filter #(= id (:id %))
+                                             (scoped-policy/settings (lp/db-info) target))))
+          (and (= id "agent_name") (= "global" (:scope target))) (http/json-response
+                                                                   (agent-name-setting))
+          (and spec
+               (some #{(:scope target)} (:scopes spec))
+               (or (not (#{:skills :mcp} (:group spec))) (resources id)))
+          (http/json-response (toggle-json spec))
+          :else (http/error-response 404 :unknown-setting "No setting in this scope" :id id))))))
 
 (defn- set-setting-handler
-  "POST /v1/settings {id, action} — flip (`toggle`, the default), `cycle` an
-   enum, or set an exact value (`value` action with `{value}`) on one registered
-   toggle or the agent name; answers with the refreshed row. JSON body or query params both work.
-
-   A `value` the setting's own type cannot name is a 400, never a silent 200:
-   booleans take true/false (on/off, yes/no, 1/0), enums take a choice name, and
-   agent_name takes a nonblank string of at most 80 characters without control characters."
+  "Set one key or remove its override with action=inherit. false is explicit."
   [request]
-  (let [body
-        (try (http/body-json request) (catch Throwable _ nil))
+  (settings-response
+    (fn []
+      (let [body
+            (merge (:query-params request) (http/body-json request))
 
-        id-str
-        (or (get body "id") (get-in request [:query-params "id"]))
+            target
+            (request-target request body)
 
-        action
-        (str (or (get body "action") (get-in request [:query-params "action"]) "toggle"))
+            resources
+            (resource-inventory target)
 
-        ;; A JSON `false` is a LEGAL value, so PRESENCE decides. An `or` here read
-        ;; `{"value": false}` as "no value given" and answered 200 to a request
-        ;; that changed nothing — the client believed the setting was off.
-        given
-        (cond (contains? body "value") {:raw (get body "value")}
-              (contains? (:query-params request) "value") {:raw (get-in request
-                                                                        [:query-params "value"])})
+            id
+            (get body "id")
 
-        id
-        (when (string? id-str) (str/trim id-str))
+            action
+            (get body "action" "toggle")]
 
-        spec
-        (when (seq id) (toggles/toggle-spec id))]
-
-    (cond
-      (not (toggle-contract/toggle-id? id))
-      (http/error-response 400 :bad-setting-id "settings id must be a snake_case string")
-      (= id "agent_name") (set-agent-name-setting action given)
-      (nil? spec) (http/error-response 404 :unknown-setting "no such setting" :id (str id-str))
-      (= action "value")
-      (if-let [chosen (when given (toggles/wire-value id (:raw given)))]
-        (do (toggles/set-value! id (:value chosen))
-            (http/json-response (toggle-json (toggles/toggle-spec id))))
-        (http/error-response
-          400
-          :invalid-setting-value
-          "value must match the setting's type: true/false for a boolean, one of its choices for an enum"
-          :id id))
-      (and (= action "cycle") (not= :enum (toggles/type-of id)))
-      (http/error-response 400
-                           :invalid-setting-action
-                           "cycle advances an enum; a boolean setting takes toggle or value"
-                           :id id)
-      :else (do (if (= action "cycle")
-                  (toggles/cycle-value! id)
-                  (toggles/set-enabled! id (not (toggles/enabled? id))))
-                (http/json-response (toggle-json (toggles/toggle-spec id)))))))
+        (cond (and (#{:skills :mcp} (:group (toggles/toggle-spec id))) (not (resources id)))
+              (http/error-response 404 :unknown-setting "Resource is not available in this target")
+              (scoped-policy/setting? id)
+              (http/json-response
+                (scoped-policy/set-setting! (lp/db-info) target id action (get body "value")))
+              (= id "agent_name")
+              (if (= "global" (:scope target))
+                (set-agent-name-setting action {:raw (get body "value")})
+                (http/error-response 400 :invalid-setting-scope "Agent name is global"))
+              :else
+              (http/json-response
+                (toggle-json
+                  (scoped/set-setting! (lp/db-info) target id action (get body "value")))))))))
 
 (defn- improve-handler
   [operation]

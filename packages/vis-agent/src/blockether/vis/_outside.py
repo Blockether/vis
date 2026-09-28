@@ -85,6 +85,23 @@ def workspace_root():
     return str(Path.cwd())
 
 
+def setting_declaration(spec):
+    """Use the package's canonical schemas for outside-host declarations."""
+    from ._contracts import definition, validate
+
+    spec = dict(spec)
+    spec.setdefault(
+        "scopes",
+        definition("toggle", "contribution")["properties"]["scopes"]["default"],
+    )
+    return validate("toggle", "contribution", spec)
+
+
+def setting(id, default):
+    """Outside callbacks have no session overlay and use the declaration default."""
+    return default
+
+
 def state_home():
     """The directory this host writes to. `VIS_OUTSIDE_HOME` moves it."""
     home = os.environ.get("VIS_OUTSIDE_HOME")
@@ -1287,6 +1304,8 @@ def _live_handle(held, envelope, op, view_id):
 
 _IMPLEMENTATIONS = {
     "workspace_root": workspace_root,
+    "setting_declaration": setting_declaration,
+    "setting": setting,
     "state_get": state_get,
     "state_put": state_put,
     "state_del": state_del,

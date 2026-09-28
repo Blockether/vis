@@ -38,6 +38,8 @@
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.extension :as ext]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.config.scoped :as scoped]
+            [com.blockether.vis.internal.config.validation :as validation]
             [com.blockether.vis.internal.docs.corpus :as doc-corpus]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.mcp.client :as mcp]
@@ -130,7 +132,7 @@
         (atom nil)
 
         bearer-fn
-        (when (and (= :streamable-http transport) (not has-static-auth?))
+        (when (and server-name (= :streamable-http transport) (not has-static-auth?))
           (mcp-oauth/make-bearer-fn server-name (:url s) www-auth))]
 
     (cond-> (assoc s :transport transport)
@@ -155,7 +157,8 @@
    not re-parse or re-wrap on every call. `${ENV_VAR}` is interpolated."
   []
   (let [raw
-        (get-in (or (config/load-config-raw) {}) ["mcp"])
+        {"servers" (merge (get-in (config/load-global-yaml-config-raw) ["mcp" "servers"])
+                          (get-in (config/load-global-config-raw) ["mcp" "servers"]))}
 
         h
         (hash raw)]
@@ -305,7 +308,7 @@
    must not stall the pool it has already been excluded from."
   [pool k server spec accept?]
   (let [existing (get @pool k)]
-    (cond (and existing (mcp/alive? (:conn existing))) (:conn existing)
+    (cond (and existing (= spec (:spec existing)) (mcp/alive? (:conn existing))) (:conn existing)
           existing (do (close-in-pool! pool k) (recur pool k server spec accept?))
           :else (try
                   (let [conn (mcp/connect server spec)
@@ -342,7 +345,40 @@
                                     "MCP connect failed")))
                     nil)))))
 
-(defn- session-spec-of [session-id server] (get-in @session-specs [session-id server]))
+(defonce ^:private scoped-spec-cache (atom {}))
+
+(defn- session-definitions
+  [session-id]
+  (let [env extension/*current-environment*]
+    (when (and session-id (:db-info env))
+      (scoped/definitions (:db-info env)
+                          (scoped/target (:db-info env) "session" session-id)
+                          ["mcp" "servers"]))))
+
+(defn- local-session-specs
+  [session-id]
+  (into {}
+        (keep (fn [{:keys [name value source]}]
+                (when (not= "global" source)
+                  (let [k
+                        [session-id name]
+
+                        cached
+                        (get @scoped-spec-cache k)
+
+                        spec
+                        (if (= value (:raw cached))
+                          (:spec cached)
+                          ;; Never attach a global OAuth token to a scoped namesake.
+                          (->client-spec nil (config/runtime-config value)))]
+
+                    (swap! scoped-spec-cache assoc k {:raw value :spec spec})
+                    [name spec]))))
+        (session-definitions session-id)))
+
+(defn- session-spec-of
+  [session-id server]
+  (or (get-in @session-specs [session-id server]) (get (local-session-specs session-id) server)))
 
 (defn- conn-of
   "The live conn for `server` as SEEN BY `session-id` (nil = global scope only).
@@ -376,7 +412,7 @@
   ([server] (ensure-connected! nil server))
   ([session-id server]
    (if-let [spec (session-spec-of session-id server)]
-     (when-not (auth-backoff? [session-id server] spec)
+     (when (and (enabled? spec) (not (auth-backoff? [session-id server] spec)))
        (ensure-in-pool! session-conns
                         [session-id server]
                         server
@@ -396,7 +432,12 @@
   "`{server spec}` visible to `session-id`: the configured (daemon-wide) servers
    plus that session's own, which win on a name clash."
   [session-id]
-  (merge (configured-servers) (get @session-specs session-id)))
+  (into
+    {}
+    (filter (fn [[name spec]]
+              (and (enabled? spec)
+                   (scoped/resource-enabled? extension/*current-environment* :mcp name))))
+    (merge (configured-servers) (local-session-specs session-id) (get @session-specs session-id))))
 
 (defn- reconcile!
   "Reconcile the daemon-wide pool to config: connect newly-enabled servers,
@@ -478,6 +519,10 @@
   (doseq [server (keys (get @session-specs session-id))]
     (swap! connect-failures dissoc [session-id server]))
   (swap! session-specs dissoc session-id)
+  (swap! scoped-spec-cache #(into {}
+                                  (remove (fn [[k _]]
+                                            (= session-id (first k))))
+                                  %))
   nil)
 
 (defn session-servers
@@ -492,7 +537,10 @@
 
 ;; Gateway management — persisted on the gateway, never in a Companion client.
 
-(defn- raw-servers [] (or (get-in (or (config/load-config-raw) {}) ["mcp" "servers"]) {}))
+(defn- raw-servers
+  []
+  (merge (get-in (config/load-global-yaml-config-raw) ["mcp" "servers"])
+         (get-in (config/load-global-config-raw) ["mcp" "servers"])))
 
 (defn- machine-servers
   "The servers THIS GATEWAY owns: the `:mcp :servers` block of the machine-written
@@ -555,7 +603,7 @@
                              (let [nm (server-name k)
                                    spec (->> (dissoc v "name")
                                              config/runtime-config
-                                             (->client-spec nm))]
+                                             (->client-spec nil))]
 
                                [nm spec])))
                       servers)]
@@ -687,6 +735,7 @@
   (let [machine (machine-servers)]
     {"servers" (->> (raw-servers)
                     (map (fn [[name spec]]
+                           (scoped/register-resource! :mcp (str name))
                            [(str name) spec]))
                     (sort-by first)
                     (mapv (fn [[name spec]]
@@ -712,8 +761,7 @@
     (let [spec (volatile! nil)]
       ;; `update-machine-config!` is the LOCKED read-modify-write of the machine
       ;; store — a second writer would otherwise drop this server — and the
-      ;; `save-config!` inside it stays the strict schema and secret-preserving
-      ;; write boundary.
+      ;; write boundary still validates the schema and preserves secret references.
       (config/update-machine-config!
         (fn [machine]
           (let [spec* (with-preserved-secrets (get-in machine ["mcp" "servers" name]) raw-spec)]
@@ -773,6 +821,83 @@
     (revive! name)
     (disconnect! name)
     {"name" name "is_deleted" true}))
+
+(defn scoped-servers
+  "Sanitized definitions and provenance for one settings target; does not change other pools."
+  [db target]
+  (if (= "global" (:scope target))
+    (gateway-servers)
+    {"scope" (:scope target)
+     "target_id" (:target-id target)
+     "servers"
+     (mapv (fn [{:keys [name value source is-override]}]
+             (scoped/register-resource! :mcp name)
+             (let [conn
+                   (if (= "global" source)
+                     (get-in @conns [name :conn])
+                     (when (= "session" (:scope target))
+                       (get-in @session-conns [[(:target-id target) name] :conn])))
+
+                   connected?
+                   (boolean (and conn (mcp/alive? conn)))]
+
+               (merge (select-keys value ["command" "args" "cwd" "url" "timeout_ms"])
+                      {"name" name
+                       "transport" (wire-transport (config/runtime-config value))
+                       "enabled"
+                       (and (not (false? (get value "enabled")))
+                            (not (false? (:value (first (filter #(= (scoped/resource-id :mcp name)
+                                                                    (:id %))
+                                                                (scoped/settings db target)))))))
+                       "status" (if connected? "connected" "disconnected")
+                       "is_connected" connected?
+                       "tools" (tool-count conn)
+                       "source" source
+                       "is_override" is-override
+                       "is_managed" true})))
+           (scoped/definitions db target ["mcp" "servers"]))}))
+
+(defn save-scoped-server!
+  "Write a scoped definition. Credentials and OAuth administration stay global."
+  [db target name raw-spec]
+  (if (= "global" (:scope target))
+    (save-gateway-server! name raw-spec)
+    (let [name
+          (server-name name)
+
+          spec
+          (dissoc raw-spec "name")]
+
+      (when-not (and (map? raw-spec) (validation/valid? {"mcp" {"servers" {name spec}}}))
+        (throw (ex-info "Invalid MCP server definition" {:type :mcp/invalid-server})))
+      (when (or (seq (get spec "env")) (seq (get spec "headers")) (seq (get spec "auth")))
+        (throw (ex-info "MCP credentials and environment belong to global server definitions"
+                        {:type :mcp/invalid-server})))
+      (scoped/set-definition! db target ["mcp" "servers"] name spec)
+      (first (filter #(= name (get % "name")) (get (scoped-servers db target) "servers"))))))
+
+(defn delete-scoped-server!
+  "Remove only the selected definition override, revealing an inherited server if present."
+  [db target name]
+  (if (= "global" (:scope target))
+    (delete-gateway-server! name)
+    (do (scoped/set-definition! db target ["mcp" "servers"] (server-name name) nil)
+        {"name" name "is_deleted" true})))
+
+(defn set-scoped-server-enabled!
+  "Change availability without mutating an ancestor definition or stopping another session."
+  [db target name enabled]
+  (if (= "global" (:scope target))
+    (set-gateway-server-enabled! name enabled)
+    (let [_
+          (when-not (some #(= name (:name %)) (scoped/definitions db target ["mcp" "servers"]))
+            (throw (ex-info "MCP server not found in this target" {:type :mcp/not-found})))
+
+          id
+          (scoped/register-resource! :mcp (server-name name))]
+
+      (scoped/set-setting! db target id "value" enabled)
+      (first (filter #(= name (get % "name")) (get (scoped-servers db target) "servers"))))))
 
 (defn kill-gateway-server!
   "Stop `name` NOW and keep it stopped: close the connection (for stdio that
@@ -1062,7 +1187,7 @@
                                 (when-let [sch (get t "inputSchema")]
                                   (str "\n\nInput schema: " (pr-str sch))))}))
                 cached))))
-        (visible-servers nil)))
+        (visible-servers (:session-id extension/*current-environment*))))
 
 (doc-corpus/register-source! :mcp-tools #'doc-corpus-entries)
 
@@ -1103,7 +1228,8 @@
   ([env server tool] (mcp-call-impl env server tool nil))
   ([env server tool args]
    (try
-     (if-let [conn (ensure-connected! (:session-id env) server)]
+     (if-let [conn (when (scoped/resource-enabled? env :mcp server)
+                     (ensure-connected! (:session-id env) server))]
        (let [rows (tool-rows conn)
              row (when (string? tool) (first (filter #(= tool (get % "name")) rows)))]
 
@@ -1230,7 +1356,8 @@
   "Active when at least one MCP server is configured, or a client attached one to
    this session."
   [env]
-  (boolean (or (seq (configured-servers)) (seq (get @session-specs (:session-id env))))))
+  (binding [extension/*current-environment* env]
+    (boolean (seq (visible-servers (:session-id env))))))
 
 ;; `/reload` re-reads config, so it is also where a gateway that has never run a
 ;; turn first learns it owns servers: reconcile synchronously (so the reply

@@ -87,6 +87,7 @@ class ClientExtensions:
                     "op_hooks",
                     "network_filters",
                     "slash_commands",
+                    "settings",
                 )
                 if getattr(extension, name)
             ]

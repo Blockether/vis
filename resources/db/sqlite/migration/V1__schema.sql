@@ -1050,3 +1050,18 @@ CREATE TABLE activity_invocation (
   UNIQUE (history_id, sequence)
 );
 CREATE INDEX idx_activity_invocation_running ON activity_invocation(history_id, state, sequence);
+
+-- Sparse settings follow the entity, not a cached runtime or a client.
+CREATE TABLE session_setting (
+  owner_id TEXT NOT NULL REFERENCES session_soul(id) ON DELETE CASCADE,
+  setting_id TEXT NOT NULL,
+  value TEXT NOT NULL,
+  PRIMARY KEY (owner_id, setting_id)
+);
+
+CREATE TABLE group_setting (
+  owner_id TEXT NOT NULL REFERENCES session_group(id) ON DELETE CASCADE,
+  setting_id TEXT NOT NULL,
+  value TEXT NOT NULL,
+  PRIMARY KEY (owner_id, setting_id)
+);

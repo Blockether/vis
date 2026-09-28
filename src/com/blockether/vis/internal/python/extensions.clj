@@ -50,6 +50,7 @@
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.extension.aggregate :as aggregate]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.contract.toggle :as toggle-contract]
             [com.blockether.vis.internal.channel.notifications :as notifications]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
@@ -57,6 +58,7 @@
             [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.sandbox.policy :as security-policy]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
@@ -567,6 +569,25 @@
         bound-session
         (select-keys bound-env [:session-id :db-info])]
 
+    (put! g
+          "__vis_host_setting_declaration__"
+          (fn [spec]
+            (let [spec
+                  (merge {"scopes" toggle-contract/default-scopes} spec)
+
+                  value
+                  (cond-> (wire/->engine spec)
+                    (get spec "type")
+                    (update :type keyword))]
+
+              (when-not (toggle-contract/contribution-valid? value)
+                (throw (ex-info "Invalid setting declaration"
+                                {:type :settings/invalid-declaration})))
+              spec)))
+    (put! g
+          "__vis_host_setting__"
+          (fn [id default]
+            (if (toggles/toggle-spec id) (toggles/value-of id) default)))
     (put! g
           "__vis_host_workspace_root__"
           (fn []
@@ -1711,6 +1732,20 @@
     (cond-> {:ext/name ext-name
              :ext/description (str (get reg "description"))
              :ext/kind (str (or (get reg "kind") "python"))
+             :ext/toggles (mapv (fn [setting]
+                                  (cond-> {:id (get setting "id")
+                                           :label (get setting "label")
+                                           :default (get setting "default")
+                                           :type (keyword (get setting "type"))
+                                           :group (keyword (get setting "group"))
+                                           :scopes (vec (get setting "scopes"))
+                                           :persist? true}
+                                    (get setting "description")
+                                    (assoc :description (get setting "description"))
+
+                                    (get setting "choices")
+                                    (assoc :choices (vec (get setting "choices")))))
+                                (get reg "settings"))
              :ext/source-nses ['com.blockether.vis.internal.python.extensions]
              :ext/engine (cond-> {:ext.engine/symbols symbols :ext.engine/exact-symbol-names? true}
                            alias-sym
@@ -2735,8 +2770,8 @@
           ;; ids absent from the file keep their current in-memory value.
           _toggles
           (try (if-let [values (:config/toggles extension/*current-environment*)]
-                 (reset! values (toggles/config-values (config/load-config-raw)
-                                                       (config/load-project-tiers-raw)))
+                 (let [env extension/*current-environment*]
+                   (reset! values (scoped/values (:db-info env) (:session-id env))))
                  (when-not workspace/*workspace-root*
                    (toggles/hydrate-from-config! (or (config/load-config-raw) {}))))
                (catch Throwable _ nil))

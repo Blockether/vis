@@ -1869,11 +1869,20 @@
 ;; toggles/kills a server, and drives the headless auth legs — exactly the same
 ;; boundary as provider auth above.
 
+(defn- settings-target-query
+  [target]
+  (when target
+    (str "?scope="
+         (enc (or (:scope target) "global"))
+         (when-let [id (:target-id target)]
+           (str "&target_id=" (enc id))))))
+
 (defn mcp-servers
   "Sanitized MCP inventory (string-keyed rows: `name`, `transport`, `enabled`,
    `is_connected`, `is_managed`, `is_killed`, `tools`, `is_authorized`, …)."
-  []
-  (vec (get (send-json! "GET" "/v1/mcp/servers") "servers")))
+  ([] (mcp-servers nil))
+  ([target]
+   (vec (get (send-json! "GET" (str "/v1/mcp/servers" (settings-target-query target))) "servers"))))
 
 (defn mcp-save-server!
   "Create or replace a gateway-managed server. `spec` is the string-keyed wire
@@ -1884,8 +1893,9 @@
 
    Secrets survive an omitting save: see `mcp.core/with-preserved-secrets`.
    Returns the saved sanitized row."
-  [server spec]
-  (send-json! "POST" "/v1/mcp/servers" {:name server :server spec}))
+  ([server spec] (mcp-save-server! server spec nil))
+  ([server spec target]
+   (send-json! "POST" "/v1/mcp/servers" (merge {:name server :server spec} target))))
 
 (defn mcp-test-server!
   "Connect a CANDIDATE spec without saving it and return `{name, is_connected,
@@ -1907,12 +1917,16 @@
 
 (defn mcp-set-server-enabled!
   "Persist a server's on/off switch in the gateway's own state."
-  [server enabled]
-  (send-json! "POST"
-              (str "/v1/mcp/servers/" (enc server) "/actions/enable")
-              {:enabled (boolean enabled)}))
+  ([server enabled] (mcp-set-server-enabled! server enabled nil))
+  ([server enabled target]
+   (send-json! "POST"
+               (str "/v1/mcp/servers/" (enc server) "/actions/enable")
+               (merge {:enabled (boolean enabled)} target))))
 
-(defn mcp-delete-server! [server] (send-json! "DELETE" (str "/v1/mcp/servers/" (enc server))))
+(defn mcp-delete-server!
+  ([server] (mcp-delete-server! server nil))
+  ([server target]
+   (send-json! "DELETE" (str "/v1/mcp/servers/" (enc server) (settings-target-query target)))))
 
 (defn mcp-auth-start!
   "Begin headless OAuth for an HTTP MCP server. Returns the wire flow

@@ -54,6 +54,7 @@ import type {
   SessionUsage,
   Subagent,
   SettingsResponse,
+  SettingsTarget,
   SlashCommand,
   SseEvent,
   SubmittedTurn,
@@ -2066,8 +2067,18 @@ export class GatewayClient {
 
   // ── Settings (shared feature-toggle registry, same as TUI) ──────
   /** Last settings payload seen for this gateway — paint it, then revalidate. */
-  cachedSettings(): SettingsResponse | null {
-    return readSnapshot<SettingsResponse>(this.snapshotKey('settings'));
+  private settingsQuery(target?: SettingsTarget): string {
+    const query = new URLSearchParams({ scope: target?.scope ?? 'global' });
+    if (target?.target_id) query.set('target_id', target.target_id);
+    return query.toString();
+  }
+
+  private settingsKey(kind: string, target?: SettingsTarget, id = ''): string {
+    return this.snapshotKey(kind, `${this.settingsQuery(target)}/${id}`);
+  }
+
+  cachedSettings(target?: SettingsTarget): SettingsResponse | null {
+    return readSnapshot<SettingsResponse>(this.settingsKey('settings', target));
   }
 
   /** Register paired identities with the primary; its durable order is authoritative. */
@@ -2086,14 +2097,14 @@ export class GatewayClient {
     return response.machine_ids;
   }
 
-  async settings(signal?: AbortSignal): Promise<SettingsResponse> {
+  async settings(signal?: AbortSignal, target?: SettingsTarget): Promise<SettingsResponse> {
     const response = await this.request<SettingsResponse>(
       'GET',
-      '/v1/settings?channel=all',
+      `/v1/settings?channel=all&${this.settingsQuery(target)}`,
       undefined,
       signal,
     );
-    writeSnapshot(this.snapshotKey('settings'), response);
+    writeSnapshot(this.settingsKey('settings', target), response);
     return response;
   }
 
@@ -2103,8 +2114,8 @@ export class GatewayClient {
    * until a round trip lands, on every session open, for a value that changes
    * once in a blue moon.
    */
-  cachedSetting(id: string): Toggle | null {
-    return readSnapshot<Toggle>(this.snapshotKey('setting', id));
+  cachedSetting(id: string, target?: SettingsTarget): Toggle | null {
+    return readSnapshot<Toggle>(this.settingsKey('setting', target, id));
   }
 
   /**
@@ -2112,36 +2123,39 @@ export class GatewayClient {
    * so screen-owned knobs (reasoning effort lives in the composer footer) are
    * read one at a time here. The answer is snapshotted for the seed above.
    */
-  async setting(id: string, signal?: AbortSignal): Promise<Toggle> {
+  async setting(id: string, signal?: AbortSignal, target?: SettingsTarget): Promise<Toggle> {
     const toggle = await this.request<Toggle>(
       'GET',
-      `/v1/settings/${encodeURIComponent(id)}`,
+      `/v1/settings/${encodeURIComponent(id)}?${this.settingsQuery(target)}`,
       undefined,
       signal,
     );
-    writeSnapshot(this.snapshotKey('setting', id), toggle);
+    writeSnapshot(this.settingsKey('setting', target, id), toggle);
     return toggle;
   }
 
   async setSetting(
     id: string,
-    action: 'toggle' | 'cycle' | 'value',
-    value?: string,
+    action: 'toggle' | 'cycle' | 'value' | 'inherit',
+    value?: string | boolean,
+    target?: SettingsTarget,
   ): Promise<Toggle> {
     const updated = await this.request<Toggle>('POST', '/v1/settings', {
       id,
       action,
       value,
+      scope: target?.scope ?? 'global',
+      target_id: target?.target_id,
     });
     // The by-id seed the composer reads is the same fact, so keep it in step —
     // otherwise cycling reasoning effort here would repaint the OLD word on the
     // next open until the revalidation landed.
-    writeSnapshot(this.snapshotKey('setting', id), updated);
+    writeSnapshot(this.settingsKey('setting', target, id), updated);
     // Patch the one toggle that changed instead of dropping the snapshot, so
     // reopening the dialog paints the NEW value rather than a blank sheet.
-    const cached = this.cachedSettings();
+    const cached = this.cachedSettings(target);
     if (cached) {
-      writeSnapshot(this.snapshotKey('settings'), {
+      writeSnapshot(this.settingsKey('settings', target), {
         ...cached,
         groups: (cached.groups ?? []).map((group) => ({
           ...group,
@@ -2202,15 +2216,15 @@ export class GatewayClient {
    * and headers stay on the machine — so the answer from the last visit is the
    * honest first frame.
    */
-  cachedMcpServers(): McpServer[] | null {
-    return readSnapshot<McpServer[]>(this.snapshotKey('mcp-servers'));
+  cachedMcpServers(target?: SettingsTarget): McpServer[] | null {
+    return readSnapshot<McpServer[]>(this.settingsKey('mcp-servers', target));
   }
 
-  async mcpServers(signal?: AbortSignal): Promise<McpServer[]> {
+  async mcpServers(signal?: AbortSignal, target?: SettingsTarget): Promise<McpServer[]> {
     const servers =
-      (await this.request<McpServersResponse>('GET', '/v1/mcp/servers', undefined, signal))
+      (await this.request<McpServersResponse>('GET', `/v1/mcp/servers?${this.settingsQuery(target)}`, undefined, signal))
         .servers ?? [];
-    writeSnapshot(this.snapshotKey('mcp-servers'), servers);
+    writeSnapshot(this.settingsKey('mcp-servers', target), servers);
     return servers;
   }
 
@@ -2218,11 +2232,11 @@ export class GatewayClient {
    * Keep the seed in step with a row this device just changed, so reopening the
    * panel paints what the press did instead of the state before it.
    */
-  private rememberMcpServer(server: McpServer): McpServer {
-    const held = this.cachedMcpServers();
+  private rememberMcpServer(server: McpServer, target?: SettingsTarget): McpServer {
+    const held = this.cachedMcpServers(target);
     if (held)
       writeSnapshot(
-        this.snapshotKey('mcp-servers'),
+        this.settingsKey('mcp-servers', target),
         held.some((row) => row.name === server.name)
           ? held.map((row) => (row.name === server.name ? server : row))
           : [...held, server],
@@ -2230,28 +2244,28 @@ export class GatewayClient {
     return server;
   }
 
-  async saveMcpServer(name: string, server: McpServerInput): Promise<McpServer> {
+  async saveMcpServer(name: string, server: McpServerInput, target?: SettingsTarget): Promise<McpServer> {
     return this.rememberMcpServer(
-      await this.request<McpServer>('POST', '/v1/mcp/servers', { name, server }),
+      await this.request<McpServer>('POST', '/v1/mcp/servers', { name, server, ...target }), target,
     );
   }
 
-  async setMcpServerEnabled(name: string, enabled: boolean): Promise<McpServer> {
+  async setMcpServerEnabled(name: string, enabled: boolean, target?: SettingsTarget): Promise<McpServer> {
     return this.rememberMcpServer(
       await this.request<McpServer>(
         'POST',
         `/v1/mcp/servers/${encodeURIComponent(name)}/actions/enable`,
-        { enabled },
-      ),
+        { enabled, ...target },
+      ), target,
     );
   }
 
-  async deleteMcpServer(name: string): Promise<void> {
-    await this.request('DELETE', `/v1/mcp/servers/${encodeURIComponent(name)}`);
-    const held = this.cachedMcpServers();
+  async deleteMcpServer(name: string, target?: SettingsTarget): Promise<void> {
+    await this.request('DELETE', `/v1/mcp/servers/${encodeURIComponent(name)}?${this.settingsQuery(target)}`);
+    const held = this.cachedMcpServers(target);
     if (held)
       writeSnapshot(
-        this.snapshotKey('mcp-servers'),
+        this.settingsKey('mcp-servers', target),
         held.filter((row) => row.name !== name),
       );
   }

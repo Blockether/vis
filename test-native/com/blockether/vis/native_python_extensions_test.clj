@@ -116,16 +116,17 @@
             (str
               "from dataclasses import dataclass\n"
               "import blockether.vis.extension as vis\n"
+              "enabled = vis.Setting(id='native_feature', label='Native feature', default=False, scopes=['global', 'session'])\n"
               "@dataclass(frozen=True)\nclass CreatedIssue:\n    url: str\n"
               "@dataclass(frozen=True)\nclass Results:\n    items: tuple[CreatedIssue, ...]\n"
-              "def find() -> Results:\n"
-              "    \"Return the fixture records.\"\n"
+              "def find() -> Results:\n" "    \"Return the fixture records.\"\n"
+              "    assert enabled.value() is False\n"
               "    return Results((CreatedIssue('https://gateway.example.com/240'),))\n"
               "def _render(*, result, error, **_):\n"
               "    summary = str(error) if error else f'{len(result.items)} records'\n"
               "    return vis.ActivityPresentation('Read records', summary)\n"
               "vis.register_extension(vis.Extension(name='record-subscription', alias='records', "
-              "description='Native record fixture', symbols=[vis.Symbol(find, name='records', "
+              "description='Native record fixture', settings=[enabled], symbols=[vis.Symbol(find, name='records', "
               "activity=vis.Activity(label='Read records', show_start=False, render=_render))]))\n")))
         (with-redefs-fn {#'native/stream-body #(reply true %) #'native/whole-body #(reply false %)}
           (fn []

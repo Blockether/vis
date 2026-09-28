@@ -1109,7 +1109,8 @@
           (str (config-dir) "/" n))
         ["config.yml" "config.yaml" "vis.yml" "vis.yaml"]))
 
-(defn- deep-merge-config
+(defn deep-merge-config
+  "Merge configuration tiers recursively; extension definitions remain atomic per name."
   [& maps]
   (letfn [(merge* [a b]
             (cond (nil? a) b
@@ -1122,41 +1123,25 @@
         merged))))
 
 (defn load-global-config-raw
-  "Load the machine-written global store as a config map (or nil): `~/.vis/state.yml`,
-   the YAML file Vis read-modify-writes. Machine-owned on purpose — kept out of the
-   hand-written YAML merge so the RMW cycle never clobbers user files.
+  "Load the machine-written global store as a config map (or nil): `~/.vis/state.yml`.
+   Explicit global workspace and jail settings belong here; project environment
+   variables do not. Hand-written YAML stays outside the read-modify-write store.
 
-   A DERIVED block the contract rejects is dropped here rather than handed on
-   (`config-validation/without-invalid-derived`): every writer read-modify-writes this
-   whole map, so a malformed row in a cache Vis wrote itself would otherwise
-   refuse the person's own next write and leave the store read-only.
-
-   A PROJECT-scoped block is dropped the same way (`without-project-scoped`): this
-   tier merges OVER `<cwd>/vis.yml`, so filesystem grants or an environment an
-   older build folded in here would outrank — silently, in every other checkout on
-   this machine — the project files they were copied out of."
+   Invalid derived blocks are dropped so a malformed cache cannot refuse the
+   person's next write. All authored configuration is validated before writing."
   []
   (let [raw
         (read-yaml-config-map-lenient (state-path))
 
         [config dropped]
-        (config-validation/without-invalid-derived raw)
-
-        [config project-scoped]
-        (config-validation/without-project-scoped config)]
+        (config-validation/without-invalid-derived raw)]
 
     (when (seq dropped)
       (tel/log! {:level :warn
                  :id ::derived-store-block-dropped
                  :data {:keys (vec (sort dropped)) :path (state-path)}}
                 "Ignoring a machine-written memory block the config contract rejects"))
-    (when (seq project-scoped)
-      (tel/log!
-        {:level :warn
-         :id ::project-scoped-store-block-dropped
-         :data {:keys (vec (sort project-scoped)) :path (state-path)}}
-        "Ignoring a project-scoped block in the machine store; it belongs to the project's own vis.yml"))
-    config))
+    (dissoc config "environment")))
 
 (defn load-global-yaml-config-raw
   "Load only the hand-written global YAML tier: the first existing of
@@ -1582,39 +1567,58 @@
         (keyword? v) (name v)
         :else v))
 
-(defn save-config!
-  "Persist configuration to `~/.vis/state.yml` using the string-keyed YAML contract.
-   Callers may supply internal keyword-keyed domain maps; validation always runs on
-   the exact string-keyed map that is written.
+(defn- write-machine-config!
+  [config source]
+  ;; Restore references before validation so resolved secrets are never baked in.
+  (let [wire-config
+        (restore-env-refs (->yaml-safe config))
 
-   This REPLACES the whole store. Anything that reads the store in order to change
-   PART of it goes through `update-machine-config!` instead — a bare
-   read-modify-write here silently drops whatever another writer stored in between."
+        wire-config
+        (if (map? wire-config) (dissoc wire-config "environment") wire-config)]
+
+    (config-validation/assert-config! wire-config (state-path))
+    (let [previous-provider
+          (some-> (active-provider-entry (load-global-config-raw))
+                  runtime-config)
+
+          selected-provider
+          (some-> (active-provider-entry wire-config)
+                  runtime-config)
+
+          runtime-config
+          (runtime-config wire-config)]
+
+      (ensure-private-dir! (config-dir))
+      (spit-private! (state-path) (yamlstar/dump wire-config))
+      (invalidate-config-cache!)
+      (when (provider-selection-changed? previous-provider selected-provider)
+        (emit-provider-selected! {:previous-provider previous-provider
+                                  :provider selected-provider
+                                  :config runtime-config
+                                  :source source})))))
+
+(def ^:private ^:dynamic *machine-access-overrides*
+  ;; Bound only around the locked writer, never while invoking its update function.
+  ;; An empty map deliberately removes every explicit global access override.
+  nil)
+
+(defn save-config!
+  "Replace machine configuration while preserving explicit global access settings.
+   Callers may supply keyword-keyed domain maps or merged project configuration;
+   workspace, jail and environment from that input never become machine grants.
+
+   Partial writes, including explicit global access changes, must instead use
+   `update-machine-config!` so the read and write share one critical section."
   ([config] (save-config! config nil))
   ([config source]
-   ;; `restore-env-refs` FIRST: a caller may hand us a map that travelled through
-   ;; `load-config`, where `${NAME}` was already resolved. Writing that verbatim
-   ;; would bake the secret into `state.yml` and quietly destroy the reference.
-   ;; The machine store is the PERSON's tier and merges over the project's own
-   ;; files, so a caller that built this map from the MERGED config would copy a
-   ;; repository's grants in here and make them global. Drop those keys.
-   (let [wire-config (first (config-validation/without-project-scoped (restore-env-refs
-                                                                        (->yaml-safe config))))]
-     (config-validation/assert-config! wire-config (state-path))
-     (let [previous-provider (some-> (active-provider-entry (load-global-config-raw))
-                                     runtime-config)
-           selected-provider (some-> (active-provider-entry wire-config)
-                                     runtime-config)
-           runtime-config (runtime-config wire-config)]
-
-       (ensure-private-dir! (config-dir))
-       (spit-private! (state-path) (yamlstar/dump wire-config))
-       (invalidate-config-cache!)
-       (when (provider-selection-changed? previous-provider selected-provider)
-         (emit-provider-selected! {:previous-provider previous-provider
-                                   :provider selected-provider
-                                   :config runtime-config
-                                   :source source}))))))
+   (let [wire-config (first (config-validation/without-project-scoped (->yaml-safe config)))]
+     (write-machine-config! (if (map? wire-config)
+                              (merge wire-config
+                                     (or *machine-access-overrides*
+                                         (select-keys (load-global-config-raw)
+                                                      ["workspace" "jail"])))
+                              wire-config)
+                            source))))
 
 (defonce ^:private machine-store-monitor
   ;; A FileLock belongs to the JVM, not to the thread: two threads of THIS
@@ -1626,7 +1630,9 @@
 (defn update-machine-config!
   "Read-modify-write the machine store `~/.vis/state.yml` under a lock: apply `f`
    to the raw string-keyed map (an absent store arrives as `{}`) and persist the
-   result through `save-config!`.
+   result through the validated, secret-preserving machine write boundary.
+   Unlike `save-config!`, this explicit update may change global workspace and
+   jail settings: `f` receives only the machine store, never merged project data.
 
    THE write pattern for everything Vis persists about itself. Every writer here
    rewrites the WHOLE map, so the read and the write have to be ONE critical
@@ -1656,7 +1662,11 @@
                    raw*
                    (f raw)]
 
-               (when (and raw* (not= raw raw*)) (save-config! raw* source) raw*)))]
+               (when (and raw* (not= raw raw*))
+                 (binding [*machine-access-overrides* (select-keys (->yaml-safe raw*)
+                                                                   ["workspace" "jail"])]
+                   (save-config! raw* source))
+                 raw*)))]
 
        (try (with-open [^FileChannel channel (FileChannel/open lock-path
                                                                (into-array
@@ -1881,6 +1891,37 @@
                                                                     StandardOpenOption/WRITE]))]
       (let [^FileLock lock (.lock channel)]
         (try (f) (finally (.release lock)))))))
+
+(defn update-project-config!
+  "Atomically edit the workspace's local .vis/config.yml overlay, never vis.yml.
+   The caller binds the canonical project root. Preserve unrelated keys and refuse
+   an overlay that aliases the global store. All project writers share the lock."
+  [f]
+  (locking machine-store-monitor
+    (with-project-extension-save-lock
+      (fn []
+        (let [dir
+              (io/file (workspace/cwd) ".vis")
+
+              path
+              (or (some #(when (.exists (io/file %)) %) (project-config-yaml-paths))
+                  (first (project-config-yaml-paths)))]
+
+          (when (= (.getCanonicalPath dir) (.getCanonicalPath (io/file (config-dir))))
+            (throw (ex-info "Project settings cannot alias the global configuration"
+                            {:status 400})))
+          (let [before
+                (or (read-yaml-config-map path) {})
+
+                after
+                (f before)]
+
+            (config-validation/assert-config! after path)
+            (when (not= before after)
+              (ensure-private-dir! (str dir))
+              (spit-private! path (yamlstar/dump after))
+              (invalidate-config-cache!))
+            after))))))
 
 (defn save-extension-declaration!
   "Save one admitted declaration using a prepared snapshot; return its YAML path.

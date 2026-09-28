@@ -37,13 +37,15 @@
     (or (get @validators cache-key)
         (let [source (schema-document document-name)
               schema-id (get source "$id")
+              toggle-schema (schema-document "toggle")
               target (if definition
                        (-> (select-keys source ["$schema" "$id" "$defs"])
                            (assoc "$ref" (str "#/$defs/" definition)))
                        source)
               compiled (skjema/compile-schema target
                                               {:base schema-id
-                                               :registry {(get @common-schema "$id") @common-schema}
+                                               :registry {(get @common-schema "$id") @common-schema
+                                                          (get toggle-schema "$id") toggle-schema}
                                                :format-assertion true})]
 
           (swap! validators assoc cache-key compiled)

@@ -3085,6 +3085,12 @@
    working — and stays gateway-free — for callers and tests without one."
   (atom {:status :unloaded :groups [] :error nil}))
 
+(def ^:dynamic *settings-target* nil)
+
+(def ^:dynamic *local-settings-inventory* nil)
+
+(defn- settings-inventory-atom [] (or *local-settings-inventory* settings-inventory))
+
 (defn- mirror-setting-value!
   "Mirror ONE catalog row's value onto the process registry when this binary
    registers that id itself, so local reads (`plans` in the annotator,
@@ -3105,20 +3111,22 @@
    that cannot answer keeps the catalog Settings last read — and, before the
    first answer, the process-registry projection — instead of a blank pane."
   []
-  (let [answer (try
-                 {:status :ok :groups (vec (get (vis/gateway-settings :tui) "groups")) :error nil}
-                 (catch Exception e {:status :error :error (ex-message e)}))]
+  (let [answer (try {:status :ok
+                     :groups (vec (get (vis/gateway-settings :tui *settings-target*) "groups"))
+                     :error nil}
+                    (catch Exception e {:status :error :error (ex-message e)}))]
     (if (= :ok (:status answer))
-      (do (run! mirror-setting-value! (mapcat #(get % "toggles") (:groups answer)))
-          (reset! settings-inventory answer))
-      (swap! settings-inventory assoc :status :error :error (:error answer)))))
+      (do (when-not *settings-target*
+            (run! mirror-setting-value! (mapcat #(get % "toggles") (:groups answer))))
+          (reset! (settings-inventory-atom) answer))
+      (swap! (settings-inventory-atom) assoc :status :error :error (:error answer)))))
 
 (defn- cache-setting-row!
   "Fold ONE refreshed gateway row back into the cached catalog, so the frame
    after a flip renders the value the daemon just confirmed without a re-read."
   [row]
   (when-let [id (get row "id")]
-    (swap! settings-inventory update
+    (swap! (settings-inventory-atom) update
       :groups
       (fn [groups]
         (mapv (fn [group]
@@ -3134,28 +3142,39 @@
    companion app draws from `GET /v1/settings`. Each row carries its type and
    value because the DAEMON, not this process, owns them.
 
-   Settings edits the agent name through its own row above and the TUI has no
-   control for any other string setting, so only boolean and enum rows pass."
+   The agent name keeps its dedicated global row; other text rows use the shared editor."
   [groups]
   (vec
     (mapcat (fn [group]
-              (let [rows (filterv #(contains? #{"boolean" "enum"} (get % "type"))
-                           (get group "toggles"))]
+              (let [rows (filterv #(not= "agent_name" (get % "id")) (get group "toggles"))]
                 (when (seq rows)
                   (cons {:type :section :label (str (get group "title"))}
-                        (for [row rows]
-                          (let [enum? (= "enum" (get row "type"))]
-                            (cond-> {:key (keyword (str "toggle::" (get row "id")))
-                                     :type :registry-toggle
-                                     :toggle-id (get row "id")
-                                     :toggle-type (if enum? :enum :boolean)
-                                     :toggle-value
-                                     (if enum? (get row "value") (boolean (get row "enabled")))
-                                     :experimental? (boolean (get row "is_experimental"))
-                                     :label (str (get row "label"))
-                                     :description (str (get row "description"))}
-                              enum?
-                              (assoc :choices (vec (get row "choices"))))))))))
+                        (mapcat (fn [row]
+                                  (let [enum? (= "enum" (get row "type"))
+                                        text? (= "string" (get row "type"))
+                                        id (get row "id")
+                                        setting {:key (keyword (str "toggle::" id))
+                                                 :type (if text? :text-setting :registry-toggle)
+                                                 :toggle-id id
+                                                 :toggle-type (if enum? :enum :boolean)
+                                                 :toggle-value (if (or enum? text?)
+                                                                 (get row "value")
+                                                                 (boolean (get row "enabled")))
+                                                 :choices (vec (get row "choices"))
+                                                 :experimental? (boolean (get row
+                                                                              "is_experimental"))
+                                                 :label (str (get row "label"))
+                                                 :description (str (get row "description")
+                                                                   (when (get row "source")
+                                                                     (str " · Source: "
+                                                                          (get row "source"))))}]
+
+                                    (cond-> [setting]
+                                      (get row "is_override")
+                                      (conj {:type :inherit
+                                             :toggle-id id
+                                             :label (str "Use inherited: " (get row "label"))}))))
+                                rows)))))
             (or groups []))))
 
 (defn- registry-toggle-rows
@@ -3168,8 +3187,8 @@
    binary. Until that first answer, and whenever the daemon cannot be reached,
    the process registry renders the pane instead of leaving it blank."
   []
-  (let [groups (:groups @settings-inventory)]
-    (if (seq groups)
+  (let [groups (:groups @(settings-inventory-atom))]
+    (if (or *settings-target* (seq groups))
       (catalog-toggle-rows groups)
       ;; `toggles-for-channel` drops provider-specific knobs whose provider
       ;; isn't configured (`:visible-fn`) AND toggles scoped to OTHER channels
@@ -3408,14 +3427,22 @@
    working — and stays MCP-free — for callers and tests without a gateway."
   (atom {:status :unloaded :servers [] :error nil}))
 
+(def ^:dynamic *local-mcp-inventory* nil)
+
+(defn- mcp-inventory-atom [] (or *local-mcp-inventory* mcp-inventory))
+
 (defn load-mcp-inventory!
   "Refresh the cached MCP inventory from the gateway. Never throws: a gateway
    that is down, or a rejected verb, becomes an inline row instead of yet
    another modal."
   []
-  (reset! mcp-inventory (try {:status :ok :servers (vec (vis/gateway-mcp-servers)) :error nil}
-                             (catch Exception e
-                               {:status :error :servers [] :error (ex-message e)}))))
+  (reset! (mcp-inventory-atom) (try {:status :ok
+                                     :servers (vec (if *settings-target*
+                                                     (vis/gateway-mcp-servers *settings-target*)
+                                                     (vis/gateway-mcp-servers)))
+                                     :error nil}
+                                    (catch Exception e
+                                      {:status :error :servers [] :error (ex-message e)}))))
 
 (defn- mcp-settings-rows
   "The `MCP Servers` settings section: one row per server — its live status
@@ -3423,7 +3450,7 @@
    frame, plus one row that adds a new server. Empty until `load-mcp-inventory!`
    has run."
   []
-  (let [{:keys [status servers error]} @mcp-inventory]
+  (let [{:keys [status servers error]} @(mcp-inventory-atom)]
     (when-not (= :unloaded status)
       (vec
         (concat [{:type :section :label "MCP Servers"}]
@@ -3432,7 +3459,9 @@
                          :label (str (get row "name"))
                          :description (mcp-model/server-status row)
                          :inline-description true
-                         :server row})
+                         :server (cond-> row
+                                   *settings-target*
+                                   (assoc "is_scoped" true))})
                       servers)
                 (when (seq (str error))
                   [{:type :info :tone :bad :label "MCP unavailable" :description (str error)}])
@@ -3459,39 +3488,46 @@
    never a wait before the frame."
   []
   (swap! provider-inventory assoc :status :loading)
-  (swap! mcp-inventory assoc :status :loading)
-  (swap! settings-inventory assoc :status :loading))
+  (swap! (mcp-inventory-atom) assoc :status :loading)
+  (swap! (settings-inventory-atom) assoc :status :loading))
 
 (defn- load-inventories!
   "Read the gateway name, settings catalog, MCP inventory and provider fleet in
    parallel. Called only AFTER the settings frame is on the terminal."
   []
-  (let [mcp
-        (vis/worker-future "vis-tui-settings-mcp-inventory" load-mcp-inventory!)
+  (if *settings-target*
+    (do (load-settings-inventory!) (load-mcp-inventory!))
+    (let [mcp
+          (vis/worker-future "vis-tui-settings-mcp-inventory" load-mcp-inventory!)
 
-        catalog
-        (vis/worker-future "vis-tui-settings-catalog" load-settings-inventory!)]
+          catalog
+          (vis/worker-future "vis-tui-settings-catalog" load-settings-inventory!)]
 
-    (let [agent (vis/worker-future "vis-tui-settings-agent-name" load-agent-name!)]
-      (load-provider-inventory!)
-      @agent)
-    @mcp
-    @catalog
-    nil))
+      (let [agent (vis/worker-future "vis-tui-settings-agent-name" load-agent-name!)]
+        (load-provider-inventory!)
+        @agent)
+      @mcp
+      @catalog
+      nil)))
 
 (defn- settings-rows
   "Every setting in one flat grouped list: response and theme preferences,
    toggles, providers, and MCP servers. Empty sections are omitted."
   []
-  (vec (concat (settings-ui-options)
-               [{:type :section :label "Agent"}
-                {:type :agent-name
-                 :label "Agent name"
-                 :description (or (get @agent-name-setting "error")
-                                  "Shared by all gateway clients. Overrides project names.")}]
-               (or (registry-toggle-rows) [])
-               (or (provider-settings-rows) [])
-               (or (mcp-settings-rows) []))))
+  (if *settings-target*
+    (vec (concat (or (registry-toggle-rows) [])
+                 (when-let [error (:error @(settings-inventory-atom))]
+                   [{:type :info :tone :bad :label "Settings unavailable" :description error}])
+                 (or (mcp-settings-rows) [])))
+    (vec (concat (settings-ui-options)
+                 [{:type :section :label "Agent"}
+                  {:type :agent-name
+                   :label "Agent name"
+                   :description (or (get @agent-name-setting "error")
+                                    "Shared by all gateway clients. Overrides project names.")}]
+                 (or (registry-toggle-rows) [])
+                 (or (provider-settings-rows) [])
+                 (or (mcp-settings-rows) [])))))
 
 (defn- settings-option-label
   [{:keys [key label type choices toggle-id toggle-type toggle-value experimental?]} values]
@@ -3627,10 +3663,10 @@
           remote-row
           (case kind
             :boolean
-            (vis/gateway-toggle-setting! toggle-id)
+            (vis/gateway-toggle-setting! toggle-id *settings-target*)
 
             :enum
-            (vis/gateway-set-setting-value! toggle-id value)
+            (vis/gateway-set-setting-value! toggle-id value *settings-target*)
 
             (throw (ex-info "Unsupported registry setting type" {:toggle-id toggle-id :type kind})))
 
@@ -3654,7 +3690,8 @@
       ;; row renders from, and into the process registry when this binary reads
       ;; that toggle itself.
       (cache-setting-row! remote-row)
-      (when (vis/toggle-spec toggle-id) (vis/toggle-set-value! toggle-id remote-value))
+      (when (and (not *settings-target*) (vis/toggle-spec toggle-id))
+        (vis/toggle-set-value! toggle-id remote-value))
       values)
     (catch Throwable t
       (vis/notify! (str "Setting was not changed: " (or (ex-message t) "gateway request failed"))
@@ -3898,6 +3935,21 @@
 (defn- activate-settings-row!
   [^TerminalScreen screen g region values callbacks row]
   (case (:type row)
+    :text-setting
+    (try (when-let [value (mini-read! screen
+                                      g
+                                      (host-band-region screen region)
+                                      (:label row)
+                                      {:initial (:toggle-value row)})]
+           (cache-setting-row! (vis/set-setting-value! (:toggle-id row) value *settings-target*))
+           (load-settings-inventory!))
+         (catch Exception e (mini-note! screen g region "Setting not saved" (ex-message e))))
+
+    :inherit
+    (try (cache-setting-row! (vis/inherit-setting! (:toggle-id row) *settings-target*))
+         (load-settings-inventory!)
+         (catch Exception e (mini-note! screen g region "Setting not reset" (ex-message e))))
+
     :agent-name
     (let [region (host-band-region screen region)]
       (try (let [current (vis/setting "agent_name")]
@@ -3926,7 +3978,7 @@
         ;; A feature flag can reveal or hide dependent rows — Improve mode shows
         ;; only while Improve is on — exactly as it does in the app, so re-read
         ;; the catalog it just changed instead of waiting for the next open.
-        (when (and (:experimental? row) (seq (:groups @settings-inventory)))
+        (when (and (:experimental? row) (seq (:groups @(settings-inventory-atom))))
           (load-settings-inventory!))))
 
     :action
@@ -4194,536 +4246,559 @@
    current settings map."
   ([^TerminalScreen screen settings] (settings-dialog! screen settings nil))
   ([^TerminalScreen screen settings callbacks]
-   (let [;; MCP servers and providers are settings sections now, so both
-         ;; inventories are read once per open instead of from behind dialogs of
-         ;; their own — but NOT here. Opening Settings costs one paint, never a
-         ;; gateway round trip (a daemon that still has to start takes seconds; a
-         ;; gateway on another machine costs an RTT per provider). The loop reads
-         ;; them once its first frame is on the terminal.
-         _
-         (mark-inventories-loading!)
+   (binding [*settings-target*
+             (:settings-target callbacks)
 
-         inventories-pending
-         (volatile! true)
+             *local-settings-inventory*
+             (when (:settings-target callbacks) (atom {:status :unloaded :groups [] :error nil}))
 
-         selected
-         (atom (settings-initial-index (settings-rows) (:focus-section callbacks)))
+             *local-mcp-inventory*
+             (when (:settings-target callbacks) (atom {:status :unloaded :servers [] :error nil}))]
 
-         scroll
-         (atom 0)
+     (let [;; MCP servers and providers are settings sections now, so both
+           ;; inventories are read once per open instead of from behind dialogs of
+           ;; their own — but NOT here. Opening Settings costs one paint, never a
+           ;; gateway round trip (a daemon that still has to start takes seconds; a
+           ;; gateway on another machine costs an RTT per provider). The loop reads
+           ;; them once its first frame is on the terminal.
+           _
+           (mark-inventories-loading!)
 
-         values
-         (atom (or settings {}))
+           inventories-pending
+           (volatile! true)
 
-         scrollbar-drag-offset
-         (volatile! nil)
+           selected
+           (atom (settings-initial-index (settings-rows) (:focus-section callbacks)))
 
-         pointer-down-target
-         (volatile! nil)
+           scroll
+           (atom 0)
 
-         query
-         (atom "")
+           values
+           (atom (or settings {}))
 
-         ;; Mark gutter = a single status glyph (●/○/◆/▸) + 1-col gap; wrapped
-         ;; option descriptions indent to this so they sit under the label.
-         check-w
-         2]
+           scrollbar-drag-offset
+           (volatile! nil)
 
-     ;; A live change can repaint the chat behind this modal. Reuse the SAME
-     ;; settings paint without reading input or flushing a band-less frame.
-     ((fn paint-settings! [paint-only?]
-        (loop []
+           pointer-down-target
+           (volatile! nil)
 
-          (let [all-rows
-                (settings-rows)
+           query
+           (atom "")
 
-                rows
-                (filter-settings-rows all-rows @query)
+           ;; Mark gutter = a single status glyph (●/○/◆/▸) + 1-col gap; wrapped
+           ;; option descriptions indent to this so they sit under the label.
+           check-w
+           2]
 
-                n
-                (count rows)
+       ;; A live change can repaint the chat behind this modal. Reuse the SAME
+       ;; settings paint without reading input or flushing a band-less frame.
+       ((fn paint-settings! [paint-only?]
+          (loop []
 
-                size
-                (modal-size! screen)
+            (let [all-rows
+                  (settings-rows)
 
-                cols
-                (.getColumns size)
+                  rows
+                  (filter-settings-rows all-rows @query)
 
-                screen-rows
-                (.getRows size)
+                  n
+                  (count rows)
 
-                g
-                (frame/surface-graphics screen cols screen-rows)
+                  size
+                  (modal-size! screen)
 
-                bounds
-                (draw-dialog-chrome! g
-                                     cols
-                                     screen-rows
-                                     "Settings"
-                                     (settings-content-width cols)
-                                     (settings-content-height screen-rows))
+                  cols
+                  (.getColumns size)
 
-                {:keys [left inner-w]}
-                bounds
+                  screen-rows
+                  (.getRows size)
 
-                left
-                (long left)
+                  g
+                  (frame/surface-graphics screen cols screen-rows)
 
-                inner-w
-                (long inner-w)
+                  bounds
+                  (draw-dialog-chrome! g
+                                       cols
+                                       screen-rows
+                                       (if *settings-target*
+                                         (str (titleize-label (:scope *settings-target*))
+                                              " settings: "
+                                              (or (:label *settings-target*)
+                                                  (:target-id *settings-target*)))
+                                         "Settings")
+                                       (settings-content-width cols)
+                                       (settings-content-height screen-rows))
 
-                ;; Wide Settings is a TOC rail + divider + settings pane. Narrow
-                ;; Settings collapses to one pane; forcing the 14-column rail was
-                ;; what let content cross the dialog's right border.
-                {:keys [split? rail-w pane-left pane-width]}
-                (settings-pane-geometry left inner-w)
+                  {:keys [left inner-w]}
+                  bounds
 
-                rail-w
-                (long rail-w)
+                  left
+                  (long left)
 
-                lleft
-                (long pane-left)
+                  inner-w
+                  (long inner-w)
 
-                linner
-                (long pane-width)
+                  ;; Wide Settings is a TOC rail + divider + settings pane. Narrow
+                  ;; Settings collapses to one pane; forcing the 14-column rail was
+                  ;; what let content cross the dialog's right border.
+                  {:keys [split? rail-w pane-left pane-width]}
+                  (settings-pane-geometry left inner-w)
 
-                {:keys [content-top content-h hint-row]}
-                (dialog-layout bounds)
+                  rail-w
+                  (long rail-w)
 
-                content-top
-                (long content-top)
+                  lleft
+                  (long pane-left)
 
-                content-h
-                (long content-h)
+                  linner
+                  (long pane-width)
 
-                search-row
-                content-top
+                  {:keys [content-top content-h hint-row]}
+                  (dialog-layout bounds)
 
-                list-top
-                (+ content-top 2)
+                  content-top
+                  (long content-top)
 
-                visible-h
-                (max 1 (- content-h 2))
+                  content-h
+                  (long content-h)
 
-                _
-                (swap! selected #(p/clamp % 0 (max 0 (dec n))))
+                  search-row
+                  content-top
 
-                option-indent
-                (long (settings-option-indent))
+                  list-top
+                  (+ content-top 2)
 
-                ;; Reserve `p/SELECTION_WIDTH` cols at the start of the
-                ;; option row for the selection gutter (`>` glyph + 1
-                ;; col margin). The cursor itself is painted at
-                ;; `(inc lleft)` (the pane's inner edge) by the row
-                ;; loop; option body shifts right by the gutter.
-                option-x
-                (+ lleft 2 option-indent p/SELECTION_WIDTH)
+                  visible-h
+                  (max 1 (- content-h 2))
 
-                labels
-                (mapv #(settings-option-label % @values) rows)
+                  _
+                  (swap! selected #(p/clamp % 0 (max 0 (dec n))))
 
-                base-paint-w
-                linner
+                  option-indent
+                  (long (settings-option-indent))
 
-                base-option-w
-                (max 1 (- base-paint-w 2 option-indent p/SELECTION_WIDTH))
+                  ;; Reserve `p/SELECTION_WIDTH` cols at the start of the
+                  ;; option row for the selection gutter (`>` glyph + 1
+                  ;; col margin). The cursor itself is painted at
+                  ;; `(inc lleft)` (the pane's inner edge) by the row
+                  ;; loop; option body shifts right by the gutter.
+                  option-x
+                  (+ lleft 2 option-indent p/SELECTION_WIDTH)
 
-                base-desc-w
-                (max 1 (- base-option-w check-w))
+                  labels
+                  (mapv #(settings-option-label % @values) rows)
 
-                base-entries
-                (settings-render-entries rows base-desc-w)
+                  base-paint-w
+                  linner
 
-                scrollable?
-                (> (count base-entries) visible-h)
+                  base-option-w
+                  (max 1 (- base-paint-w 2 option-indent p/SELECTION_WIDTH))
 
-                paint-w
-                (if scrollable? (max 1 (dec linner)) linner)
+                  base-desc-w
+                  (max 1 (- base-option-w check-w))
 
-                option-w
-                (max 1 (- paint-w 2 option-indent p/SELECTION_WIDTH))
+                  base-entries
+                  (settings-render-entries rows base-desc-w)
 
-                desc-x
-                (+ option-x check-w)
+                  scrollable?
+                  (> (count base-entries) visible-h)
 
-                desc-w
-                (max 1 (- option-w check-w))
+                  paint-w
+                  (if scrollable? (max 1 (dec linner)) linner)
 
-                ;; Rows carrying an inline description (MCP / provider status) share
-                ;; ONE column, so those states line up as a table instead of ragging
-                ;; after names of different length.
-                inline-desc-x
-                (+ option-x
-                   p/STATUS_WIDTH
-                   2
-                   (long (reduce max
-                                 0
-                                 (keep (fn [[row lbl]]
-                                         (when (:inline-description row) (count lbl)))
-                                       (map vector rows labels)))))
+                  option-w
+                  (max 1 (- paint-w 2 option-indent p/SELECTION_WIDTH))
 
-                entries
-                (settings-render-entries rows desc-w)
+                  desc-x
+                  (+ option-x check-w)
 
-                visual-n
-                (count entries)
+                  desc-w
+                  (max 1 (- option-w check-w))
 
-                sel-entry-idxs
-                (keep-indexed (fn [entry-idx {:keys [row-idx]}]
-                                (when (= row-idx @selected) entry-idx))
-                              entries)
+                  ;; Rows carrying an inline description (MCP / provider status) share
+                  ;; ONE column, so those states line up as a table instead of ragging
+                  ;; after names of different length.
+                  inline-desc-x
+                  (+ option-x
+                     p/STATUS_WIDTH
+                     2
+                     (long (reduce max
+                                   0
+                                   (keep (fn [[row lbl]]
+                                           (when (:inline-description row) (count lbl)))
+                                         (map vector rows labels)))))
 
-                ;; Option line of the selected row (first non-description entry).
-                selected-visual
-                (long (or (first (keep-indexed (fn [entry-idx {:keys [row-idx part]}]
-                                                 (when (and (= row-idx @selected)
-                                                            (not= part :option-desc))
-                                                   entry-idx))
-                                               entries))
-                          0))
+                  entries
+                  (settings-render-entries rows desc-w)
 
-                ;; Last paint row owned by the selected option, INCLUDING its
-                ;; wrapped description rows. The scroll window must be able to
-                ;; reach this so the trailing desc lines (and, for the bottom-most
-                ;; option, the true content end) come into view — otherwise scroll
-                ;; caps short of `visual-n - visible-h` and the scrollbar thumb
-                ;; never reaches the bottom (selectable rows < paint rows).
-                selected-visual-end
-                (long (or (last sel-entry-idxs) selected-visual))
+                  visual-n
+                  (count entries)
 
-                ;; Visual index where the intro rows (section / subsection /
-                ;; info-line) that directly precede the selected option begin.
-                ;; The scroll window is selection-driven, so without this the
-                ;; first option pins itself to the top and its SECTION HEADER
-                ;; (a non-selectable row above it) is clipped forever — you can
-                ;; scroll to the first setting but never see its header.
-                header-start
-                (long (loop [i (dec selected-visual)]
-                        (if (and (>= i 0)
-                                 (contains? #{:section :subsection :info-line}
-                                            (:part (nth entries i))))
-                          (recur (dec i))
-                          (inc i))))
+                  sel-entry-idxs
+                  (keep-indexed (fn [entry-idx {:keys [row-idx]}]
+                                  (when (= row-idx @selected) entry-idx))
+                                entries)
 
-                _
-                (let [start0
-                      (visible-window-start selected-visual @scroll visible-h visual-n)
+                  ;; Option line of the selected row (first non-description entry).
+                  selected-visual
+                  (long (or (first (keep-indexed (fn [entry-idx {:keys [row-idx part]}]
+                                                   (when (and (= row-idx @selected)
+                                                              (not= part :option-desc))
+                                                     entry-idx))
+                                                 entries))
+                            0))
 
-                      ;; Back UP to reveal those intro headers whenever the
-                      ;; option (through its last desc line) still fits in the
-                      ;; viewport from `header-start`.
-                      start0
-                      (if (and (< header-start start0)
-                               (<= (- selected-visual-end header-start) (dec visible-h)))
-                        header-start
-                        start0)
+                  ;; Last paint row owned by the selected option, INCLUDING its
+                  ;; wrapped description rows. The scroll window must be able to
+                  ;; reach this so the trailing desc lines (and, for the bottom-most
+                  ;; option, the true content end) come into view — otherwise scroll
+                  ;; caps short of `visual-n - visible-h` and the scrollbar thumb
+                  ;; never reaches the bottom (selectable rows < paint rows).
+                  selected-visual-end
+                  (long (or (last sel-entry-idxs) selected-visual))
 
-                      ;; Pull the window down to reveal the selected row's last
-                      ;; desc line, but never so far that the option line itself
-                      ;; scrolls out of view (cap at `selected-visual`).
-                      start1
-                      (if (>= selected-visual-end (+ start0 visible-h))
-                        (min selected-visual (max 0 (- (inc selected-visual-end) visible-h)))
-                        start0)]
+                  ;; Visual index where the intro rows (section / subsection /
+                  ;; info-line) that directly precede the selected option begin.
+                  ;; The scroll window is selection-driven, so without this the
+                  ;; first option pins itself to the top and its SECTION HEADER
+                  ;; (a non-selectable row above it) is clipped forever — you can
+                  ;; scroll to the first setting but never see its header.
+                  header-start
+                  (long (loop [i (dec selected-visual)]
+                          (if (and (>= i 0)
+                                   (contains? #{:section :subsection :info-line}
+                                              (:part (nth entries i))))
+                            (recur (dec i))
+                            (inc i))))
 
-                  (reset! scroll start1))
+                  _
+                  (let [start0
+                        (visible-window-start selected-visual @scroll visible-h visual-n)
 
-                ;; Frame 1 search bar: borderless full-width query field sitting
-                ;; above the split — identical to the command palette
-                ;; (`list-dialog!`) and the session switcher (`navigator-dialog!`),
-                ;; which draw no count on the query row. Returns the cursor pos.
-                search-cursor
-                (draw-text-input-field! g
-                                        left
-                                        search-row
-                                        inner-w
-                                        @query
-                                        (count @query)
-                                        "Search settings…")]
+                        ;; Back UP to reveal those intro headers whenever the
+                        ;; option (through its last desc line) still fits in the
+                        ;; viewport from `header-start`.
+                        start0
+                        (if (and (< header-start start0)
+                                 (<= (- selected-visual-end header-start) (dec visible-h)))
+                          header-start
+                          start0)
 
-            ;; Full-width rule under the search bar — the same framed-input
-            ;; compartment the command palette (`list-dialog!`) and the session
-            ;; switcher (`navigator-dialog!`) draw under their query fields. On a
-            ;; split layout, `┬` joins the rail divider beginning below it.
-            (p/set-colors! g t/dialog-border t/dialog-bg)
-            (p/draw-separator! g left (+ left inner-w 1) (inc content-top))
-            (when split? (p/put-str! g lleft (inc content-top) "┬"))
-            (dotimes [i visible-h]
-              (let [entry-idx (+ (long @scroll) i)
-                    row-y (+ list-top i)]
+                        ;; Pull the window down to reveal the selected row's last
+                        ;; desc line, but never so far that the option line itself
+                        ;; scrolls out of view (cap at `selected-visual`).
+                        start1
+                        (if (>= selected-visual-end (+ start0 visible-h))
+                          (min selected-visual (max 0 (- (inc selected-visual-end) visible-h)))
+                          start0)]
 
-                (if (< entry-idx visual-n)
-                  (let [{:keys [row-idx part text head?]} (nth entries entry-idx)
-                        {:keys [label tone description inline-description]} (nth rows row-idx)
-                        option-label (nth labels row-idx)
-                        selected? (= row-idx @selected)
-                        [mark mark-color] (settings-row-mark (nth rows row-idx) @values)]
+                    (reset! scroll start1))
 
-                    (case part
-                      :section
-                      (do (p/set-colors! g t/dialog-border t/dialog-bg)
-                          (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                          (p/put-str! g (+ lleft 2) row-y (settings-section-text label paint-w))
-                          (p/set-fg! g t/dialog-hint-key)
-                          (p/styled g [p/BOLD] (p/put-str! g (+ lleft 5) row-y label)))
+                  ;; Frame 1 search bar: borderless full-width query field sitting
+                  ;; above the split — identical to the command palette
+                  ;; (`list-dialog!`) and the session switcher (`navigator-dialog!`),
+                  ;; which draw no count on the query row. Returns the cursor pos.
+                  search-cursor
+                  (draw-text-input-field! g
+                                          left
+                                          search-row
+                                          inner-w
+                                          @query
+                                          (count @query)
+                                          "Search settings…")]
 
-                      :subsection
-                      (do (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                          (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                          (p/styled g
-                                    [p/BOLD]
-                                    (p/put-str! g
-                                                (+ lleft 2)
-                                                row-y
-                                                (settings-subsection-text label paint-w))))
+              ;; Full-width rule under the search bar — the same framed-input
+              ;; compartment the command palette (`list-dialog!`) and the session
+              ;; switcher (`navigator-dialog!`) draw under their query fields. On a
+              ;; split layout, `┬` joins the rail divider beginning below it.
+              (p/set-colors! g t/dialog-border t/dialog-bg)
+              (p/draw-separator! g left (+ left inner-w 1) (inc content-top))
+              (when split? (p/put-str! g lleft (inc content-top) "┬"))
+              (dotimes [i visible-h]
+                (let [entry-idx (+ (long @scroll) i)
+                      row-y (+ list-top i)]
 
-                      ;; Prose ABOUT the section (empty state, gateway error): a
-                      ;; bold head line plus its own wrapped body, both in the
-                      ;; description column so the block hangs off the section
-                      ;; instead of running along the pane edge as one sentence.
-                      :info-line
-                      (do
-                        (p/set-colors! g
-                                       (cond (and head? (= :bad tone)) t/status-bad
-                                             head? t/dialog-fg
-                                             :else t/dialog-hint)
-                                       t/dialog-bg)
-                        (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                        (if head?
-                          (p/styled g [p/BOLD] (p/put-str! g desc-x row-y (ellipsize text desc-w)))
-                          (p/put-str! g desc-x row-y (ellipsize text desc-w))))
+                  (if (< entry-idx visual-n)
+                    (let [{:keys [row-idx part text head?]} (nth entries entry-idx)
+                          {:keys [label tone description inline-description]} (nth rows row-idx)
+                          option-label (nth labels row-idx)
+                          selected? (= row-idx @selected)
+                          [mark mark-color] (settings-row-mark (nth rows row-idx) @values)]
 
-                      :option-desc
-                      (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                          (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                          (p/put-str! g desc-x row-y (ellipsize text desc-w)))
+                      (case part
+                        :section
+                        (do (p/set-colors! g t/dialog-border t/dialog-bg)
+                            (p/fill-rect! g (inc lleft) row-y paint-w 1)
+                            (p/put-str! g (+ lleft 2) row-y (settings-section-text label paint-w))
+                            (p/set-fg! g t/dialog-hint-key)
+                            (p/styled g [p/BOLD] (p/put-str! g (+ lleft 5) row-y label)))
 
-                      ;; Selection visual: leading `> ` cursor glyph and
-                      ;; BOLD label text. Descriptions wrap beneath the
-                      ;; option on dim rows, so long labels no longer force
-                      ;; descriptions into an ellipsis-only column.
-                      (do
-                        (p/set-colors! g t/dialog-fg t/dialog-bg)
-                        (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                        ;; Cursor glyph sits immediately LEFT of the row body, so
-                        ;; a selected row reads as one unit instead of an orphan
-                        ;; bullet parked against the pane divider.
-                        (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                        (p/draw-selection-marker! g (- option-x p/SELECTION_WIDTH) row-y selected?)
-                        ;; Leading status glyph (●/○/◆/▸) via the shared component,
-                        ;; which returns the col to start the label at.
-                        (let [label-x (p/status-mark! g option-x row-y mark mark-color t/dialog-bg)
-                              lbl (ellipsize option-label (max 1 (- option-w p/STATUS_WIDTH)))]
+                        :subsection
+                        (do (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                            (p/fill-rect! g (inc lleft) row-y paint-w 1)
+                            (p/styled g
+                                      [p/BOLD]
+                                      (p/put-str! g
+                                                  (+ lleft 2)
+                                                  row-y
+                                                  (settings-subsection-text label paint-w))))
 
+                        ;; Prose ABOUT the section (empty state, gateway error): a
+                        ;; bold head line plus its own wrapped body, both in the
+                        ;; description column so the block hangs off the section
+                        ;; instead of running along the pane edge as one sentence.
+                        :info-line
+                        (do (p/set-colors! g
+                                           (cond (and head? (= :bad tone)) t/status-bad
+                                                 head? t/dialog-fg
+                                                 :else t/dialog-hint)
+                                           t/dialog-bg)
+                            (p/fill-rect! g (inc lleft) row-y paint-w 1)
+                            (if head?
+                              (p/styled g
+                                        [p/BOLD]
+                                        (p/put-str! g desc-x row-y (ellipsize text desc-w)))
+                              (p/put-str! g desc-x row-y (ellipsize text desc-w))))
+
+                        :option-desc
+                        (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+                            (p/fill-rect! g (inc lleft) row-y paint-w 1)
+                            (p/put-str! g desc-x row-y (ellipsize text desc-w)))
+
+                        ;; Selection visual: leading `> ` cursor glyph and
+                        ;; BOLD label text. Descriptions wrap beneath the
+                        ;; option on dim rows, so long labels no longer force
+                        ;; descriptions into an ellipsis-only column.
+                        (do
                           (p/set-colors! g t/dialog-fg t/dialog-bg)
-                          (if selected?
-                            (p/styled g [p/BOLD] (p/put-str! g label-x row-y lbl))
-                            (p/put-str! g label-x row-y lbl))
-                          ;; A short STATE (an MCP server / provider status) rides
-                          ;; the option line in one shared column instead of
-                          ;; costing a whole wrapped row per entry.
-                          (when (and inline-description (seq (str description)))
-                            (let [dx (max (+ (long label-x) (long (count lbl)) 2)
-                                          (long inline-desc-x))
-                                  avail (- (+ lleft paint-w) dx)]
+                          (p/fill-rect! g (inc lleft) row-y paint-w 1)
+                          ;; Cursor glyph sits immediately LEFT of the row body, so
+                          ;; a selected row reads as one unit instead of an orphan
+                          ;; bullet parked against the pane divider.
+                          (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                          (p/draw-selection-marker! g
+                                                    (- option-x p/SELECTION_WIDTH)
+                                                    row-y
+                                                    selected?)
+                          ;; Leading status glyph (●/○/◆/▸) via the shared component,
+                          ;; which returns the col to start the label at.
+                          (let [label-x
+                                (p/status-mark! g option-x row-y mark mark-color t/dialog-bg)
+                                lbl (ellipsize option-label (max 1 (- option-w p/STATUS_WIDTH)))]
 
-                              (when (pos? avail)
-                                (p/set-colors! g t/dialog-hint t/dialog-bg)
-                                (p/put-str! g dx row-y (ellipsize (str description) avail)))))))))
-                  (do (p/set-colors! g t/dialog-fg t/dialog-bg)
-                      (p/fill-rect! g (inc lleft) row-y paint-w 1)))))
-            ;; Wide-only Table-of-Contents rail. Painted AFTER the settings pane so
-            ;; its divider cannot be overwritten by a pane fill.
-            (when split?
-              (let [toc (settings-toc rows @selected)]
-                (p/set-colors! g t/dialog-border t/dialog-bg)
-                (doseq [ry (range list-top (+ content-top content-h))]
-                  (p/put-str! g lleft ry "│"))
-                (dotimes [i (min (count toc) visible-h)]
-                  (let [{lbl :label cnt :count active? :active?} (nth toc i)
-                        ry (+ list-top i)
-                        rail-x (inc left)
-                        cstr (str cnt)
-                        lbl-w (max 1 (- rail-w 2 (count cstr) 1))
-                        bg (if active? t/header-active-tab-bg t/dialog-bg)
-                        fg (if active? t/header-active-tab-fg t/dialog-fg)]
+                            (p/set-colors! g t/dialog-fg t/dialog-bg)
+                            (if selected?
+                              (p/styled g [p/BOLD] (p/put-str! g label-x row-y lbl))
+                              (p/put-str! g label-x row-y lbl))
+                            ;; A short STATE (an MCP server / provider status) rides
+                            ;; the option line in one shared column instead of
+                            ;; costing a whole wrapped row per entry.
+                            (when (and inline-description (seq (str description)))
+                              (let [dx (max (+ (long label-x) (long (count lbl)) 2)
+                                            (long inline-desc-x))
+                                    avail (- (+ lleft paint-w) dx)]
 
-                    (p/set-colors! g fg bg)
-                    (p/fill-rect! g rail-x ry rail-w 1)
-                    (if active?
-                      (p/styled g [p/BOLD] (p/put-str! g (inc rail-x) ry (ellipsize lbl lbl-w)))
-                      (p/put-str! g (inc rail-x) ry (ellipsize lbl lbl-w)))
-                    (p/set-colors! g (if active? t/header-active-tab-fg t/dialog-hint) bg)
-                    (p/put-str! g (- (+ rail-x rail-w) (count cstr) 1) ry cstr)))))
-            (ScrollBar/draw g
-                            Direction/VERTICAL
-                            (TerminalPosition. (int (+ lleft linner)) (int list-top))
-                            (int visible-h)
-                            (int visual-n)
-                            (int visible-h)
-                            (when (some? @scroll) (Integer/valueOf (int @scroll)))
-                            t/dialog-border
-                            t/dialog-bg
-                            t/dialog-hint-key
-                            t/dialog-bg)
-            (draw-hint-bar! g
-                            left
-                            hint-row
-                            inner-w
-                            [["type" "search"] ["↑/↓" "move"] ["Enter" "change"]
-                             ["Esc" "clear/close"]])
-            (when-not paint-only? (.setCursorPosition screen search-cursor) (frame/refresh! screen))
-            (when-not paint-only?
-              (if @inventories-pending
-                ;; The frame is ON the terminal now — only then pay for the gateway,
-                ;; and repaint into the dialog the user is already looking at.
-                ;; `focus-section` is re-parked because the rows the read added sit
-                ;; under its own section header.
-                (do (vreset! inventories-pending false)
-                    (load-inventories!)
-                    (reset! selected (settings-initial-index (settings-rows)
-                                                             (:focus-section callbacks)))
-                    (recur))
-                (let [key
-                      (read-modal-key! screen)
+                                (when (pos? avail)
+                                  (p/set-colors! g t/dialog-hint t/dialog-bg)
+                                  (p/put-str! g dx row-y (ellipsize (str description) avail)))))))))
+                    (do (p/set-colors! g t/dialog-fg t/dialog-bg)
+                        (p/fill-rect! g (inc lleft) row-y paint-w 1)))))
+              ;; Wide-only Table-of-Contents rail. Painted AFTER the settings pane so
+              ;; its divider cannot be overwritten by a pane fill.
+              (when split?
+                (let [toc (settings-toc rows @selected)]
+                  (p/set-colors! g t/dialog-border t/dialog-bg)
+                  (doseq [ry (range list-top (+ content-top content-h))]
+                    (p/put-str! g lleft ry "│"))
+                  (dotimes [i (min (count toc) visible-h)]
+                    (let [{lbl :label cnt :count active? :active?} (nth toc i)
+                          ry (+ list-top i)
+                          rail-x (inc left)
+                          cstr (str cnt)
+                          lbl-w (max 1 (- rail-w 2 (count cstr) 1))
+                          bg (if active? t/header-active-tab-bg t/dialog-bg)
+                          fg (if active? t/header-active-tab-fg t/dialog-fg)]
 
-                      selected-row
-                      (when (pos? n) (nth rows (p/clamp @selected 0 (dec n))))
+                      (p/set-colors! g fg bg)
+                      (p/fill-rect! g rail-x ry rail-w 1)
+                      (if active?
+                        (p/styled g [p/BOLD] (p/put-str! g (inc rail-x) ry (ellipsize lbl lbl-w)))
+                        (p/put-str! g (inc rail-x) ry (ellipsize lbl lbl-w)))
+                      (p/set-colors! g (if active? t/header-active-tab-fg t/dialog-hint) bg)
+                      (p/put-str! g (- (+ rail-x rail-w) (count cstr) 1) ry cstr)))))
+              (ScrollBar/draw g
+                              Direction/VERTICAL
+                              (TerminalPosition. (int (+ lleft linner)) (int list-top))
+                              (int visible-h)
+                              (int visual-n)
+                              (int visible-h)
+                              (when (some? @scroll) (Integer/valueOf (int @scroll)))
+                              t/dialog-border
+                              t/dialog-bg
+                              t/dialog-hint-key
+                              t/dialog-bg)
+              (draw-hint-bar! g
+                              left
+                              hint-row
+                              inner-w
+                              [["type" "search"] ["↑/↓" "move"] ["Enter" "change"]
+                               ["Esc" "clear/close"]])
+              (when-not paint-only?
+                (.setCursorPosition screen search-cursor)
+                (frame/refresh! screen))
+              (when-not paint-only?
+                (if @inventories-pending
+                  ;; The frame is ON the terminal now — only then pay for the gateway,
+                  ;; and repaint into the dialog the user is already looking at.
+                  ;; `focus-section` is re-parked because the rows the read added sit
+                  ;; under its own section header.
+                  (do (vreset! inventories-pending false)
+                      (load-inventories!)
+                      (reset! selected (settings-initial-index (settings-rows)
+                                                               (:focus-section callbacks)))
+                      (recur))
+                  (let [key
+                        (read-modal-key! screen)
 
-                      activate-row!
-                      (fn [row]
-                        (activate-settings-row! screen
-                                                g
-                                                {:left left
-                                                 :inner-w inner-w
-                                                 :hint-row hint-row
-                                                 :text-w (max 1 (- (long inner-w) 2))
-                                                 :min-row list-top
-                                                 ;; One snapshot per activation: a shorter band gives the
-                                                 ;; rows a taller one covered back to the list itself.
-                                                 :restore! (frame-restorer screen)}
-                                                values
-                                                (assoc callbacks
-                                                  :on-change (fn [settings]
-                                                               (notify-settings-change! callbacks
-                                                                                        settings)
-                                                               (paint-settings! true)))
-                                                row))]
+                        selected-row
+                        (when (pos? n) (nth rows (p/clamp @selected 0 (dec n))))
 
-                  (when key
-                    (cond
-                      (instance? MouseAction key)
-                      (if-let [step (ScrollBar/wheelStep ^KeyStroke key)]
-                        ;; Mouse wheel anywhere in the dialog — selection follows
-                        ;; the wheel direction so the cursor stays in the visible
-                        ;; window without having to chase it with arrow keys.
-                        (do (vreset! pointer-down-target nil)
-                            (swap! selected #(move-settings-selection rows % step))
-                            (recur))
-                        (let [was-dragging? (some? @scrollbar-drag-offset)
-                              ^ScrollBar$DragResult drag
-                              (ScrollBar/dragStep ^MouseAction key
-                                                  Direction/VERTICAL
-                                                  (TerminalPosition. (int (+ lleft linner))
-                                                                     (int list-top))
-                                                  (int visible-h)
-                                                  (int visual-n)
-                                                  (int visible-h)
-                                                  (Integer/valueOf (int @scroll))
-                                                  (when (some? @scrollbar-drag-offset)
-                                                    (Integer/valueOf (int @scrollbar-drag-offset)))
-                                                  1)
-                              action (.getActionType ^MouseAction key)
-                              pointer-target (settings-pointer-target key
-                                                                      rows
-                                                                      entries
-                                                                      @scroll
-                                                                      {:split? split?
-                                                                       :left left
-                                                                       :rail-w rail-w
-                                                                       :pane-left lleft
-                                                                       ;; `paint-w` excludes the scrollbar cell.
-                                                                       :pane-width paint-w
-                                                                       :list-top list-top
-                                                                       :visible-h visible-h
-                                                                       :selected @selected})
-                              scrollbar-interaction? (or was-dragging?
-                                                         (and drag (not (.release drag))))]
+                        activate-row!
+                        (fn [row]
+                          (activate-settings-row! screen
+                                                  g
+                                                  {:left left
+                                                   :inner-w inner-w
+                                                   :hint-row hint-row
+                                                   :text-w (max 1 (- (long inner-w) 2))
+                                                   :min-row list-top
+                                                   ;; One snapshot per activation: a shorter band gives the
+                                                   ;; rows a taller one covered back to the list itself.
+                                                   :restore! (frame-restorer screen)}
+                                                  values
+                                                  (assoc callbacks
+                                                    :on-change (fn [settings]
+                                                                 (notify-settings-change! callbacks
+                                                                                          settings)
+                                                                 (paint-settings! true)))
+                                                  row))]
 
-                          ;; A release belongs to the scrollbar only when a drag was armed.
-                          (when (and drag (.release drag)) (vreset! scrollbar-drag-offset nil))
-                          (when-let [grip (and drag (.gripOffset drag))]
-                            (vreset! scrollbar-drag-offset (long grip)))
-                          (when-let [s (and drag (.scrollPosition drag))]
-                            (reset! scroll (long s))
-                            ;; The window is selection-driven, so the cursor rides along
-                            ;; with the drag instead of snapping back on the next paint.
-                            (when-let [row (settings-selection-for-window rows
-                                                                          entries
-                                                                          (long s)
-                                                                          visible-h)]
-                              (reset! selected row)))
-                          (cond scrollbar-interaction? (do (vreset! pointer-down-target nil)
-                                                           (recur))
-                                (= action MouseActionType/CLICK_DOWN)
-                                ;; Keep the painted frame stable between down/release. Moving
-                                ;; selection here could scroll the row away before release.
-                                (do (vreset! pointer-down-target pointer-target) (recur))
-                                (= action MouseActionType/CLICK_RELEASE)
-                                (let [pressed @pointer-down-target]
-                                  (vreset! pointer-down-target nil)
-                                  (when (and pressed (= pressed pointer-target))
-                                    (let [row-idx (:row-idx pressed)]
-                                      (reset! selected row-idx)
-                                      ;; A TOC click navigates; a setting click performs the
-                                      ;; same operation as Enter on that logical row.
-                                      (when (= :setting (:kind pressed))
-                                        (activate-row! (nth rows row-idx)))))
-                                  (recur))
-                                :else (do (when (= action MouseActionType/DRAG)
-                                            (vreset! pointer-down-target nil))
-                                          (recur)))))
-                      :else
-                      (condp = (key-type key)
-                        ;; Esc clears an active search first, then closes on the next press.
-                        KeyType/Escape (if (str/blank? @query)
-                                         @values
-                                         (do (reset! query "")
-                                             (reset! selected (first-selectable-index all-rows))
-                                             (reset! scroll 0)
-                                             (recur)))
-                        KeyType/ArrowUp (do (swap! selected #(move-settings-selection rows % -1))
-                                            (recur))
-                        KeyType/ArrowDown (do (swap! selected #(move-settings-selection rows % 1))
+                    (when key
+                      (cond
+                        (instance? MouseAction key)
+                        (if-let [step (ScrollBar/wheelStep ^KeyStroke key)]
+                          ;; Mouse wheel anywhere in the dialog — selection follows
+                          ;; the wheel direction so the cursor stays in the visible
+                          ;; window without having to chase it with arrow keys.
+                          (do (vreset! pointer-down-target nil)
+                              (swap! selected #(move-settings-selection rows % step))
+                              (recur))
+                          (let [was-dragging? (some? @scrollbar-drag-offset)
+                                ^ScrollBar$DragResult drag
+                                (ScrollBar/dragStep
+                                  ^MouseAction key
+                                  Direction/VERTICAL
+                                  (TerminalPosition. (int (+ lleft linner)) (int list-top))
+                                  (int visible-h)
+                                  (int visual-n)
+                                  (int visible-h)
+                                  (Integer/valueOf (int @scroll))
+                                  (when (some? @scrollbar-drag-offset)
+                                    (Integer/valueOf (int @scrollbar-drag-offset)))
+                                  1)
+                                action (.getActionType ^MouseAction key)
+                                pointer-target (settings-pointer-target key
+                                                                        rows
+                                                                        entries
+                                                                        @scroll
+                                                                        {:split? split?
+                                                                         :left left
+                                                                         :rail-w rail-w
+                                                                         :pane-left lleft
+                                                                         ;; `paint-w` excludes the scrollbar cell.
+                                                                         :pane-width paint-w
+                                                                         :list-top list-top
+                                                                         :visible-h visible-h
+                                                                         :selected @selected})
+                                scrollbar-interaction? (or was-dragging?
+                                                           (and drag (not (.release drag))))]
+
+                            ;; A release belongs to the scrollbar only when a drag was armed.
+                            (when (and drag (.release drag)) (vreset! scrollbar-drag-offset nil))
+                            (when-let [grip (and drag (.gripOffset drag))]
+                              (vreset! scrollbar-drag-offset (long grip)))
+                            (when-let [s (and drag (.scrollPosition drag))]
+                              (reset! scroll (long s))
+                              ;; The window is selection-driven, so the cursor rides along
+                              ;; with the drag instead of snapping back on the next paint.
+                              (when-let [row (settings-selection-for-window rows
+                                                                            entries
+                                                                            (long s)
+                                                                            visible-h)]
+                                (reset! selected row)))
+                            (cond scrollbar-interaction? (do (vreset! pointer-down-target nil)
+                                                             (recur))
+                                  (= action MouseActionType/CLICK_DOWN)
+                                  ;; Keep the painted frame stable between down/release. Moving
+                                  ;; selection here could scroll the row away before release.
+                                  (do (vreset! pointer-down-target pointer-target) (recur))
+                                  (= action MouseActionType/CLICK_RELEASE)
+                                  (let [pressed @pointer-down-target]
+                                    (vreset! pointer-down-target nil)
+                                    (when (and pressed (= pressed pointer-target))
+                                      (let [row-idx (:row-idx pressed)]
+                                        (reset! selected row-idx)
+                                        ;; A TOC click navigates; a setting click performs the
+                                        ;; same operation as Enter on that logical row.
+                                        (when (= :setting (:kind pressed))
+                                          (activate-row! (nth rows row-idx)))))
+                                    (recur))
+                                  :else (do (when (= action MouseActionType/DRAG)
+                                              (vreset! pointer-down-target nil))
+                                            (recur)))))
+                        :else
+                        (condp = (key-type key)
+                          ;; Esc clears an active search first, then closes on the next press.
+                          KeyType/Escape (if (str/blank? @query)
+                                           @values
+                                           (do (reset! query "")
+                                               (reset! selected (first-selectable-index all-rows))
+                                               (reset! scroll 0)
+                                               (recur)))
+                          KeyType/ArrowUp (do (swap! selected #(move-settings-selection rows % -1))
                                               (recur))
-                        KeyType/PageUp (do (swap! selected
+                          KeyType/ArrowDown (do (swap! selected #(move-settings-selection rows % 1))
+                                                (recur))
+                          KeyType/PageUp (do
+                                           (swap! selected
                                              #(settings-page-selection rows entries % visible-h -1))
                                            (recur))
-                        KeyType/PageDown
-                        (do (swap! selected #(settings-page-selection rows entries % visible-h 1))
-                            (recur))
-                        ;; Backspace edits the live search query.
-                        KeyType/Backspace (do (when (seq @query)
-                                                (swap! query #(subs % 0 (dec (count %))))
-                                                (reset! selected (first-selectable-index
-                                                                   (filter-settings-rows all-rows
-                                                                                         @query)))
-                                                (reset! scroll 0))
-                                              (recur))
-                        ;; Any printable character types into the search query (VS Code feel);
-                        ;; Enter is the only key that toggles/activates the selected row.
-                        KeyType/Character (let [c (key-character key)]
-                                            (if (and c (>= (int c) 32))
-                                              (do (swap! query str c)
+                          KeyType/PageDown
+                          (do (swap! selected #(settings-page-selection rows entries % visible-h 1))
+                              (recur))
+                          ;; Backspace edits the live search query.
+                          KeyType/Backspace (do (when (seq @query)
+                                                  (swap! query #(subs % 0 (dec (count %))))
                                                   (reset! selected (first-selectable-index
                                                                      (filter-settings-rows all-rows
                                                                                            @query)))
-                                                  (reset! scroll 0)
-                                                  (recur))
-                                              (recur)))
-                        KeyType/Enter (do (when selected-row (activate-row! selected-row)) (recur))
-                        (recur))))))))))
-       false))))
+                                                  (reset! scroll 0))
+                                                (recur))
+                          ;; Any printable character types into the search query (VS Code feel);
+                          ;; Enter is the only key that toggles/activates the selected row.
+                          KeyType/Character
+                          (let [c (key-character key)]
+                            (if (and c (>= (int c) 32))
+                              (do (swap! query str c)
+                                  (reset! selected (first-selectable-index
+                                                     (filter-settings-rows all-rows @query)))
+                                  (reset! scroll 0)
+                                  (recur))
+                              (recur)))
+                          KeyType/Enter (do (when selected-row (activate-row! selected-row))
+                                            (recur))
+                          (recur))))))))))
+         false)))))
 
 ;;; ── Session picker ─────────────────────────────────────────────────────
 (defn- short-session-id
@@ -6333,6 +6408,8 @@
    {:id :fork-at-turn :label "Fork Session at Turn…" :show-when :has-turns}
    {:id :close-tab :label "Close Tab"} {:id :providers :label "Providers"}
    {:id :mcp :label "MCP Servers"} {:id :settings :label "Settings"}
+   {:id :session-settings :label "Session settings"} {:id :group-settings :label "Group settings"}
+   {:id :project-settings :label "Project settings"}
    {:id :toggle-all-details :label "Fold / Unfold All"}
    {:id :toggle-detail-labels :label "Label Folds — jump to one"}
    {:id :toggle-help :label "Keyboard Shortcuts"}

@@ -1082,7 +1082,9 @@
             (try (with-redefs [turn/run-turn! (fn [& _]
                                                 (swap! provider-calls inc)
                                                 (throw (ex-info "should not run" {})))]
-                   (turn/turn! env [{:role "user" :content "task"}] {:reasoning-effort "medium"}))
+                   (turn/turn! env
+                               [{:role "user" :content "task"}]
+                               {:reasoning-effort "medium" :settings-snapshot {}}))
                  nil
                  (catch clojure.lang.ExceptionInfo e e))]
 

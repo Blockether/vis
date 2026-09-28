@@ -9,6 +9,7 @@
             [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.channel.form :as form]
@@ -1891,6 +1892,7 @@
         (try (swap! registry assoc sid {:next-seq 0 :turns {} :turn-order []})
              (with-redefs-fn {#'lp/by-id (fn [_]
                                            {:id sid})
+                              #'scoped/values (constantly {"plans" false})
                               #'state/session-model (fn [_]
                                                       {:provider "lmstudio" :model "ornith"})
                               #'state/launch-turn-worker! (fn [& args]
@@ -1898,6 +1900,7 @@
                #(state/submit-turn! sid {:request "hello"}))
              (expect (= "lmstudio" (get-in @launched [3 :provider])))
              (expect (= "ornith" (get-in @launched [3 :model])))
+             (expect (= {"plans" false} (get-in @launched [3 :engine-opts :settings-snapshot])))
              (expect (= "lmstudio" (get (state/get-turn sid (second @launched)) "provider")))
              (expect (= "ornith" (get (state/get-turn sid (second @launched)) "model")))
              (finally (swap! registry dissoc sid)))))
@@ -1910,7 +1913,7 @@
           (str "route-snapshot-queued-" (java.util.UUID/randomUUID))
 
           pin
-          (atom {:provider "openai-codex" :model "gpt-5.6-sol"})
+          (atom {:provider "openai-codex" :model "gpt-5.6-sol" :settings {"plans" false}})
 
           launched
           (atom [])]
@@ -1923,6 +1926,8 @@
               :turn-order ["r0"]})
            (with-redefs-fn {#'lp/by-id (fn [_]
                                          {:id sid})
+                            #'scoped/values (fn [& _]
+                                              (:settings @pin))
                             #'state/session-model (fn [_]
                                                     @pin)
                             #'state/append-event! (fn [& _]
@@ -1931,9 +1936,9 @@
                                                           (swap! launched conj (vec args)))}
              (fn []
                (state/submit-turn! sid {:request "first queued"})
-               (reset! pin {:provider "anthropic" :model "claude-opus-5"})
+               (reset! pin {:provider "anthropic" :model "claude-opus-5" :settings {"plans" true}})
                (state/submit-turn! sid {:request "second queued"})
-               (reset! pin {:provider "lmstudio" :model "ornith"})
+               (reset! pin {:provider "lmstudio" :model "ornith" :settings {"plans" false}})
                (let [[q1 q2] (subvec (get-in @registry [sid :turn-order]) 1)]
                  (expect (= ["openai-codex" "gpt-5.6-sol"]
                             (mapv #(get-in @registry [sid :turns q1 %]) [:provider :model])))
@@ -1943,13 +1948,17 @@
                  (state/drain-idle! sid)
                  (expect (= ["openai-codex" "gpt-5.6-sol"]
                             (mapv #(get-in (first @launched) [3 %]) [:provider :model])))
+                 (expect (= {"plans" false}
+                            (get-in (first @launched) [3 :engine-opts :settings-snapshot])))
                  (swap! registry (fn [entries]
                                    (-> entries
                                        (assoc-in [sid :current-turn] nil)
                                        (assoc-in [sid :turns q1 :status] "completed"))))
                  (state/drain-idle! sid)
                  (expect (= ["anthropic" "claude-opus-5"]
-                            (mapv #(get-in (second @launched) [3 %]) [:provider :model]))))))
+                            (mapv #(get-in (second @launched) [3 %]) [:provider :model])))
+                 (expect (= {"plans" true}
+                            (get-in (second @launched) [3 :engine-opts :settings-snapshot]))))))
            (finally (swap! registry dissoc sid))))))
 
 (defdescribe turn-terminal-claim-once-test
@@ -3806,6 +3815,7 @@
                      "held"
                      {:turn_id "held" :status "queued" :request "next request" :queued_at 2}}})
           (with-redefs-fn {#'lp/by-id (constantly {:id sid})
+                           #'scoped/values (constantly {})
                            #'state/session-model (constantly nil)
                            #'state/append-event! (fn [_ type payload & _]
                                                    (swap! events conj [type payload]))
@@ -4083,39 +4093,41 @@
    turn record AND on `turn.queued`, so a channel binds its optimistic \"Queued\"
    row to the gateway record by ID instead of guessing by request text (two
    identical prompts are indistinguishable by text)."
-  (it "echoes the submitter's correlation id on the queued record and its event"
-      (let [registry
-            @#'state/registry
+  (it
+    "echoes the submitter's correlation id on the queued record and its event"
+    (let [registry
+          @#'state/registry
 
-            sid
-            (str "idem-" (java.util.UUID/randomUUID))
+          sid
+          (str "idem-" (java.util.UUID/randomUUID))
 
-            events
-            (atom [])]
+          events
+          (atom [])]
 
-        (try (swap! registry assoc sid {:next-seq 0 :current-turn "running-1"})
-             (with-redefs-fn {#'state/append-event! (fn [_sid type payload & _]
-                                                      (swap! events conj [type payload])
-                                                      nil)
-                              #'lp/by-id (fn [_]
-                                           {:id sid})
-                              #'state/session-model (fn [_]
-                                                      nil)}
-               (fn []
-                 (let [res
-                       (state/submit-turn! sid {:request "hello" :idempotency-key "cid-1"})
+      (try (swap! registry assoc sid {:next-seq 0 :current-turn "running-1"})
+           (with-redefs-fn {#'state/append-event! (fn [_sid type payload & _]
+                                                    (swap! events conj [type payload])
+                                                    nil)
+                            #'lp/by-id (fn [_]
+                                         {:id sid})
+                            #'scoped/values (constantly {})
+                            #'state/session-model (fn [_]
+                                                    nil)}
+             (fn []
+               (let [res
+                     (state/submit-turn! sid {:request "hello" :idempotency-key "cid-1"})
 
-                       queued
-                       (->> @events
-                            (filter (comp #{"turn.queued"} first))
-                            first
-                            second)]
+                     queued
+                     (->> @events
+                          (filter (comp #{"turn.queued"} first))
+                          first
+                          second)]
 
-                   (expect (= "queued" (get-in res [:turn "status"])))
-                   (expect (= "cid-1" (get-in res [:turn "idempotency_key"])))
-                   (expect (= "cid-1" (:idempotency_key queued)))
-                   (expect (= (get-in res [:turn "turn_id"]) (:turn_id queued))))))
-             (finally (swap! registry dissoc sid)))))
+                 (expect (= "queued" (get-in res [:turn "status"])))
+                 (expect (= "cid-1" (get-in res [:turn "idempotency_key"])))
+                 (expect (= "cid-1" (:idempotency_key queued)))
+                 (expect (= (get-in res [:turn "turn_id"]) (:turn_id queued))))))
+           (finally (swap! registry dissoc sid)))))
   (it
     "echoes the submitter's correlation id on turn.started"
     (let [registry
@@ -4287,6 +4299,7 @@
                                                     nil)
                             #'lp/by-id (fn [_]
                                          {:id sid})
+                            #'scoped/values (constantly {})
                             #'state/session-model (fn [_]
                                                     nil)}
              (fn []

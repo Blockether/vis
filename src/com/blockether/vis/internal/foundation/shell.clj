@@ -3180,6 +3180,7 @@
    ;; namespace's docstring; the settings row stays one line.
    :description "Expose the Python `shell` verb; the model's commands run inside the OS jail."
    :default true
+   :scopes ["global" "project" "group" "session"]
    :owner :vis
    :persist? true
    :group :sandbox})

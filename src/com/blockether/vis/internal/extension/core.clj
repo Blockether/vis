@@ -34,6 +34,8 @@
             [com.blockether.vis.internal.channel.theme :as theme]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.contract.toggle :as toggle-contract]
+            [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel])
@@ -645,6 +647,7 @@
        (optional-field? x :ext/network-filters #(every? ifn? %))
        (optional-field? x :ext/env #(vector-of? env-entry? %))
        (optional-field? x :ext/settings #(vector-of? setting-entry? %))
+       (optional-field? x :ext/toggles #(vector-of? toggle-contract/contribution-valid? %))
        (optional-field? x :ext/theme theme/extension-theme-map?)
        (every? #(optional-field? x % non-blank-string?)
                [:ext/version :ext/author :ext/owner :ext/license :ext/repository])
@@ -1759,6 +1762,7 @@
   (if-let [extensions (:extensions env)]
     (concat (remove ::descriptor? (get @op-hooks op-kw))
             (for [ext @extensions
+                  :when (not= "off" (scoped/engine-mode env ext))
                   hook (:ext/op-hooks ext)
                   :let [gate-kw (gate-op (:op hook))]
                   :when (= op-kw (or gate-kw (keyword (:op hook))))]
@@ -1987,6 +1991,9 @@
 
    Raw helper symbols (`:ext.symbol/raw? true`) bypass this function entirely."
   [ext sym-entry args env]
+  (when (= "off" (scoped/engine-mode env ext))
+    (throw (ex-info "Extension is disabled in this session"
+                    {:type :extension/disabled :extension (:ext/name ext)})))
   (with-context
     {:ext ext :symbol (:ext.symbol/symbol sym-entry) :env env}
     (let [sym
@@ -2209,10 +2216,14 @@
                   [sym
                    (if (:ext.symbol/raw? sym-entry)
                      (fn [& args]
-                       (rt/park-blocking-wall (fn []
-                                                (with-context
-                                                  {:ext ext :symbol sym :env (env-thunk)}
-                                                  (apply (:ext.symbol/fn sym-entry) args)))))
+                       (rt/park-blocking-wall
+                         (fn []
+                           (when (= "off" (scoped/engine-mode (env-thunk) ext))
+                             (throw (ex-info "Extension is disabled in this session"
+                                             {:type :extension/disabled
+                                              :extension (:ext/name ext)})))
+                           (with-context {:ext ext :symbol sym :env (env-thunk)}
+                                         (apply (:ext.symbol/fn sym-entry) args)))))
                      (fn [& args]
                        (let [env (env-thunk)
                              w (get-log-writer)]
@@ -2627,6 +2638,15 @@
         (:ext/name ext)]
 
     (validate-slash-collisions! ext @extension-registry)
+    (doseq [spec (:ext/toggles ext)]
+      (when-let [existing (toggles/toggle-spec (:id spec))]
+        (when-not (= ns-sym (:owner existing))
+          (throw (ex-info "Setting id belongs to another owner"
+                          {:type :extension/setting-collision :id (:id spec)})))))
+    (toggles/unregister-owner! ns-sym)
+    (doseq [spec (:ext/toggles ext)]
+      (toggles/register-toggle! (assoc spec :owner ns-sym)))
+    (scoped/engine-setting! ext)
     (when-not (contains? @extension-registry ns-sym) (swap! extension-order conj ns-sym))
     (swap! extension-registry assoc ns-sym ext)
     (tel/log! {:level :info
@@ -2795,6 +2815,7 @@
                         :id ::deregister-attachment-storage-failed
                         :data
                         {:ext ns-sym :backend-id (:storage/id backend) :error (ex-message t)}}))))
+    (toggles/unregister-owner! ns-sym)
     (theme/unregister-themes! (keys (:ext/theme ext)))
     (unregister-op-hooks-for-owner! (ext-op-hook-owner ext))
     (egress-proxy/unregister-network-filters-for-owner! (ext-op-hook-owner ext))

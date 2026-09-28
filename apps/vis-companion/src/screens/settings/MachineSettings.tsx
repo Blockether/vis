@@ -116,7 +116,9 @@ export function StringSetting({
         )}
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <Input
+        {toggle.multiline ? <textarea aria-label={toggle.label} value={draft} disabled={busy}
+          className="min-h-24 w-full border border-dialog-edge bg-input p-2 font-mono text-meta"
+          onChange={(event) => setDraft(event.target.value)} /> : <Input
           aria-label={toggle.label}
           value={draft}
           maxLength={toggle.max_length}
@@ -124,7 +126,7 @@ export function StringSetting({
           required
           className="flex-1"
           onChange={(event) => setDraft(event.target.value)}
-        />
+        />}
         {(changed || busy) && (
           <Button
             type="submit"
@@ -148,6 +150,43 @@ export function StringSetting({
         )}
       </div>
     </form>
+  );
+}
+
+/** The same value row is used for gateway and scoped settings. */
+export function SettingRow({ toggle, busy, onToggle, onPick, onInherit }: {
+  toggle: Toggle;
+  busy: boolean;
+  onToggle: () => void;
+  onPick: (value: string) => Promise<boolean>;
+  onInherit?: () => void;
+}) {
+  return (
+    <div>
+      {toggle.type === 'string' ? (
+        <StringSetting key={`${toggle.id}:${toggle.value}`} toggle={toggle} busy={busy} onSave={onPick} />
+      ) : (
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-2 sm:px-4">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Text as="p" variant="label" className="break-words">{toggle.label}</Text>
+              {toggle.is_experimental && (
+                <span className="bg-thinking-surface px-1 font-mono text-ui text-warn">Experimental</span>
+              )}
+            </div>
+            {toggle.description && <Text as="p" variant="description" className="mt-0.5 break-words">{toggle.description}</Text>}
+          </div>
+          {toggle.type === 'boolean' && <Switch className="self-center" label={toggle.label} isOn={!!toggle.enabled} isBusy={busy} disabled={busy} onClick={onToggle} />}
+          {toggle.type === 'enum' && <EnumSetting toggle={toggle} busy={busy} onPick={(value) => void onPick(value)} />}
+        </div>
+      )}
+      {onInherit && (
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2 sm:px-4">
+          <Text variant="description">{toggle.is_override ? 'Set here' : `Inherited from ${toggle.source ?? 'default'}`}</Text>
+          {toggle.is_override && <Button variant="secondary" density="panel" disabled={busy} onClick={onInherit}>Use inherited value</Button>}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -270,6 +309,19 @@ export function MachineSettings({
     }
   }
 
+  async function inherit(toggle: Toggle) {
+    setErr(null);
+    setPending(toggle.id);
+    try {
+      patch(await client.setSetting(toggle.id, 'inherit'));
+      await load();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
   return (
     // Groups run FULL BLEED and are divided by one rule, so the dialog's own frame is
     // the only box on the screen. A banner still needs air, so it brings its own
@@ -367,75 +419,11 @@ export function MachineSettings({
         groups.map((group) => (
           <SettingsPanel key={group.id} title={group.title}>
             <div className="divide-y divide-dialog-edge">
-              {group.toggles.map((toggle) => {
-                const busy = pending === toggle.id;
-                if (toggle.type === 'string')
-                  return (
-                    <StringSetting
-                      key={`${toggle.id}:${toggle.value}`}
-                      toggle={toggle}
-                      busy={busy}
-                      onSave={(value) => pick(toggle, value)}
-                    />
-                  );
-                // Regression, user report (paraphrased: now that the row ends in a
-                // real toggle, what is the mark on the left for): the row said its
-                // state twice — a ticked ring in one alphabet and, a column away, the
-                // switch that already says it — and every value row wore the same dot,
-                // which changed for nothing. One row, one anchor (anti-slop 3 and 5).
-                // The marks that stayed are the ones nothing else in their row can
-                // say: a machine's health, a provider's session, an MCP server's
-                // reach.
-                return (
-                  <div
-                    key={toggle.id}
-                    className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-2 sm:px-4 sm:py-2"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Text as="p" variant="label" className="break-words">
-                          {toggle.label}
-                        </Text>
-                        {toggle.is_experimental && (
-                          <span className="bg-thinking-surface px-1 font-mono text-ui text-warn">
-                            Experimental
-                          </span>
-                        )}
-                      </div>
-                      {toggle.description && (
-                        <Text as="p" variant="description" className="mt-0.5 break-words">
-                          {toggle.description}
-                        </Text>
-                      )}
-                    </div>
-
-                    {toggle.type === 'boolean' && (
-                      // A CONTROL ANSWERS THE WHOLE ROW, not its first line. The mark
-                      // beside the name rides the title's baseline, but a 28px switch
-                      // pinned to `items-start` sat 6px above the centre of the two
-                      // lines it governs, and every wrapped description tilted the
-                      // column further; it centres against the cell, the way a setting
-                      // row does everywhere a finger expects one.
-                      <Switch
-                        className="self-center"
-                        label={toggle.label}
-                        isOn={!!toggle.enabled}
-                        isBusy={busy}
-                        disabled={busy}
-                        onClick={() => flip(toggle)}
-                      />
-                    )}
-
-                    {toggle.type === 'enum' && toggle.choices && (
-                      <EnumSetting
-                        toggle={toggle}
-                        busy={busy}
-                        onPick={(value) => void pick(toggle, value)}
-                      />
-                    )}
-                  </div>
-                );
-              })}
+              {group.toggles.map((toggle) => (
+                <SettingRow key={toggle.id} toggle={toggle} busy={pending === toggle.id}
+                  onToggle={() => void flip(toggle)} onPick={(value) => pick(toggle, value)}
+                  onInherit={toggle.id === 'agent_name' ? undefined : () => void inherit(toggle)} />
+              ))}
             </div>
           </SettingsPanel>
         ))
@@ -453,11 +441,12 @@ export function MachineSettings({
 const MCP_SETTLE_POLL_MS = 1500;
 const MCP_SETTLE_WINDOW_MS = 30_000;
 
-export function McpServersPanel({ client }: { client: GatewayClient }) {
+export function McpServersPanel({ client, target }: { client: GatewayClient; target?: import('../../lib/types').SettingsTarget }) {
+  const isScoped = Boolean(target && target.scope !== 'global');
   // The rows this machine gave last time are the first frame; `load` below
   // revalidates them underneath. Opening on `null` flashed an empty band and
   // then moved every panel under it down (see `cachedMcpServers`).
-  const [servers, setServers] = useState<McpServer[] | null>(() => client.cachedMcpServers());
+  const [servers, setServers] = useState<McpServer[] | null>(() => client.cachedMcpServers(target));
   const [showForm, setShowForm] = useState(false);
   const [transport, setTransport] = useState<'stdio' | 'streamable_http'>('stdio');
   const [name, setName] = useState('');
@@ -513,13 +502,13 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
         setTimedOut(new Set());
       }
       try {
-        setServers(await client.mcpServers());
+        setServers(await client.mcpServers(undefined, target));
         setError(null);
       } catch (e) {
         setError((e as Error).message);
       }
     },
-    [client],
+    [client, target],
   );
 
   useEffect(() => {
@@ -673,13 +662,12 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
     const message = valid();
     if (message) return setError(message);
     // Keyed by the name the gateway already knows when editing.
-    const target = editing ? editing.name : name.trim();
+    const serverName = editing ? editing.name : name.trim();
     const candidate = spec();
     setBusy('save');
     try {
-      const result = await client.testMcpServer(target, candidate);
-      setTest(result);
-      await client.saveMcpServer(target, candidate);
+      if (!isScoped) setTest(await client.testMcpServer(serverName, candidate));
+      await client.saveMcpServer(serverName, candidate, target);
       closeForm();
       await load();
     } catch (e) {
@@ -692,7 +680,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
   async function toggle(server: McpServer) {
     setBusy(server.name);
     try {
-      await client.setMcpServerEnabled(server.name, !server.enabled);
+      await client.setMcpServerEnabled(server.name, !server.enabled, target);
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -772,7 +760,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
   async function remove(server: McpServer) {
     setBusy(server.name);
     try {
-      await client.deleteMcpServer(server.name);
+      await client.deleteMcpServer(server.name, target);
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -849,7 +837,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
               autoCorrect="off"
             />
           </FormLabel>
-          <FormLabel
+          {!isScoped && <FormLabel
             label="Environment variables (optional)"
             hint={
               editing
@@ -863,7 +851,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
               placeholder="API_TOKEN=…"
               className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none mouse:text-ui"
             />
-          </FormLabel>
+          </FormLabel>}
         </>
       ) : (
         <>
@@ -877,7 +865,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
               autoCorrect="off"
             />
           </FormLabel>
-          <FormLabel
+          {!isScoped && <FormLabel
             label="Headers (optional)"
             hint={
               editing
@@ -891,7 +879,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
               placeholder="Authorization=Bearer …"
               className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none mouse:text-ui"
             />
-          </FormLabel>
+          </FormLabel>}
         </>
       )}
       {test && (
@@ -904,7 +892,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
           Cancel
         </Button>
         <Button disabled={busy !== null} onClick={() => void validateAndSave()}>
-          {busy === 'save' ? 'Validating…' : editing ? 'Validate & update' : 'Validate & save'}
+          {busy === 'save' ? 'Saving…' : isScoped ? 'Save here' : editing ? 'Validate & update' : 'Validate & save'}
         </Button>
       </div>
     </div>
@@ -946,8 +934,8 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
             return confirming.kind === 'remove' ? (
               <ConfirmRow
                 key={server.name}
-                question={`Remove ${server.name}?`}
-                confirmLabel="Yes, remove"
+                question={isScoped ? `Use inherited definition for ${server.name}?` : `Remove ${server.name}?`}
+                confirmLabel={isScoped ? 'Use inherited' : 'Yes, remove'}
                 isBusy={busy === server.name}
                 onKeep={() => setConfirming(null)}
                 onConfirm={() => {
@@ -974,7 +962,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
           // verbs, so a config-file server carries them too; only the edits that
           // would rewrite somebody's `vis.yml` are missing from it.
           const actions: SwipeAction[] = [];
-          if (server.url)
+          if (!isScoped && server.url)
             actions.push(
               // While the browser holds the sign-in, the same slot takes it back.
               isSigningIn
@@ -999,7 +987,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
                     },
                   },
             );
-          if (server.url && server.is_authorized)
+          if (!isScoped && server.url && server.is_authorized)
             actions.push({
               key: 'signout',
               label: 'Sign out',
@@ -1007,7 +995,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
               icon: <CircleSlashIcon className="size-4" />,
               onSelect: () => setConfirming({ name: server.name, kind: 'signout' }),
             });
-          actions.push({
+          if (!isScoped) actions.push({
             key: 'run',
             label: server.is_killed ? 'Start' : 'Kill',
             name: server.is_killed
@@ -1032,10 +1020,10 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
                 if (idle) openForm(server);
               },
             });
-            actions.push({
+            if (!isScoped || server.is_override) actions.push({
               key: 'remove',
-              label: 'Remove',
-              name: `Remove ${server.name} from this machine`,
+              label: isScoped ? 'Use inherited' : 'Remove',
+              name: isScoped ? `Use inherited definition for ${server.name}` : `Remove ${server.name} from this machine`,
               icon: <TrashIcon className="size-4" />,
               tone: 'danger',
               onSelect: () => setConfirming({ name: server.name, kind: 'remove' }),
@@ -1161,6 +1149,8 @@ function mcpServerState(
     };
   if (!server.enabled) return { tone: 'text-dialog-hint', label: 'Disabled', word: 'off' };
   if (server.is_connected) return { tone: 'text-ok', label: 'Connected', word: tools };
+  if (server.status === 'disconnected')
+    return { tone: 'text-dialog-hint', label: 'Connects when a session uses it', word: 'not connected' };
   if (server.status === 'unhealthy' || timedOut)
     return { tone: 'text-err', label: 'Unhealthy — could not connect', word: 'unhealthy' };
   if (server.url && !server.is_authorized)
