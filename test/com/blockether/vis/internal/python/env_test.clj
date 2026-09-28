@@ -937,11 +937,14 @@
           ;; `rg`/`find_files` were replaced by `grep` (name + content search in one tool)
           (expect (re-find #"grep=True" out))
           (expect (re-find #"patch=True" out))))
-    (it "filters symbol names with regular expressions, never document bodies"
+    (it "finds callables by name alone and documentation pages by their outline"
         (let [out (run (str "print('body='+str(len(apropos('REGULAR-EXPRESSION FILTER'))))\n"
-                            "print('exact='+apropos(r'^grep$')[0].name)"))]
+                            "print('exact='+apropos(r'^grep$')[0].name)\n"
+                            "print('outline='+str('token-optimization' in "
+                            "[i.name for i in apropos('Context Window') if i.type == 'doc']))"))]
           (expect (str/includes? out "body=0"))
-          (expect (str/includes? out "exact=grep"))))
+          (expect (str/includes? out "exact=grep"))
+          (expect (str/includes? out "outline=True"))))
     (it "rejects an invalid regular expression"
         (let [result (ep/run-python-block ctx "apropos('[')")]
           (expect (some? (:error result)))))
@@ -1225,10 +1228,11 @@ Follow every fixture step without truncation."}]))
           (expect (str/includes? out "curated=True"))
           (expect (str/includes? out "grep=True"))
           (expect (str/includes? out "points=True"))))
-    (it "a miss points to exact retrieval and regular-expression discovery"
+    (it "a miss names nearby handles and points to exact retrieval and discovery"
         (let [out (run "print(doc('gatewa'))")]
           (expect (str/includes? out "gatewa"))
           (expect (str/includes? out "is not a handle"))
+          (expect (str/includes? out "gateway-service"))
           (expect (str/includes? out "apropos(pattern)"))))))
 
 ;; Regression: a documentation slug must never shadow a bound function — the

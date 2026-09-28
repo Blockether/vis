@@ -6,9 +6,10 @@
 
    `entries` is the whole corpus in source order, deduplicated by EXACT name; `pages`
    is the documentation subset the docs site renders. `apropos` applies one regular
-   expression to record names and preserves corpus order — there is no ranking,
-   tokenization, search index or classpath discovery. `doc` retrieves the same record
-   by name and prints its whole text."
+   expression to record names — and to the outline of pages and skills: title,
+   opening, headings, `When to use` problems — preserving corpus order. There is no
+   ranking, tokenization, search index or classpath discovery. `doc` retrieves the
+   same record by name and prints its whole text."
   (:refer-clojure :exclude [record?])
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
@@ -73,22 +74,26 @@
    ten rows cost less than one page."
   100)
 
-(defn body-text
-  "The opening of `text` as ONE line, capped at `body-max-len`: the `body` an
-   `apropos` row shows. Whitespace collapses so a wrapped docstring reads as the
-   sentence its author wrote. Skip a leading Markdown title when prose follows it,
-   so pages describe their purpose instead of repeating their name. The first
-   paragraph is enough; the complete document remains one `doc(name)` away."
+(defn- opening
+  "The first paragraph of `text` as ONE line: what a document says it is for.
+   Whitespace collapses so a wrapped docstring reads as the sentence its author
+   wrote. Skip a leading Markdown title when prose follows it, so pages describe
+   their purpose instead of repeating their name."
   [text]
   (let [prose
         (str/replace-first (str/trim (str text)) #"^#{1,6}[ \t]+[^\r\n]*(?:\r?\n[ \t]*)+" "")
 
         para
-        (first (str/split prose #"\n\s*\n"))
+        (first (str/split prose #"\n\s*\n"))]
 
-        s
-        (str/trim (str/replace (str/replace (str para) #"\s+" " ") #"^#+\s*" ""))]
+    (str/trim (str/replace (str/replace (str para) #"\s+" " ") #"^#+\s*" ""))))
 
+(defn body-text
+  "The opening of `text` capped at `body-max-len`: the `body` an `apropos` row
+   shows. The first paragraph is enough; the complete document remains one
+   `doc(name)` away."
+  [text]
+  (let [s (opening text)]
     (if (> (count s) (long body-max-len))
       (str (str/trim (subs s 0 (dec (long body-max-len)))) "…")
       s)))
@@ -295,16 +300,100 @@
   []
   (filterv #(= "doc" (:kind %)) (entries)))
 
- ;; Search — one regular expression over names
+;; Search — one regular expression over names and page outlines
+
+(def ^:private outlined-kinds
+  "The kinds `search` also finds by their outline. A callable is found by its name
+   alone, so a word its contract happens to use never floods a search."
+  #{"doc" "skill"})
+
+(defn- fence?
+  "Whether `line` opens or closes a fenced code block."
+  [line]
+  (some? (re-find #"^\s*(?:```|~~~)" line)))
+
+(defn- problems
+  "The bold statements that open the items of a `When to use` list, each as ONE
+   line however its source wraps."
+  [lines]
+  (into []
+        (keep #(some->> (re-find #"^\*\*(.+?)\*\*" (str/replace % #"\s+" " "))
+                        second
+                        str/trim))
+        (rest (str/split (str/join "\n" lines) #"(?m)^[ \t]*[-*+][ \t]+"))))
+
+(defn outline
+  "The phrases a documentation page or skill is found by besides its name: its
+   opening paragraph, every heading outside fenced code — the title included —
+   and the bold problem statements its `When to use` section lists. Other kinds
+   have no outline."
+  [{:keys [kind text]}]
+  (if-not (contains? outlined-kinds (str kind))
+    []
+    (loop [lines
+           (str/split-lines (str text))
+
+           fenced?
+           false
+
+           when-to-use
+           nil
+
+           phrases
+           [(opening text)]]
+
+      (let [[line & more]
+            lines
+
+            heading
+            (when (and line (not fenced?))
+              (second (re-matches #"#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*" line)))
+
+            phrases
+            (if (and when-to-use (or (nil? line) heading))
+              (into phrases (problems when-to-use))
+              phrases)]
+
+        (cond (nil? line) (into [] (remove str/blank?) phrases)
+              (fence? line) (recur more
+                                   (not fenced?)
+                                   (some-> when-to-use
+                                           (conj line))
+                                   phrases)
+              heading (recur more
+                             fenced?
+                             (when (= "when to use" (str/lower-case heading)) [])
+                             (conj phrases heading))
+              :else (recur more
+                           fenced?
+                           (some-> when-to-use
+                                   (conj line))
+                           phrases))))))
+
+(defn- search-pattern
+  "Compile a caller's pattern: a string ignores case, a compiled `Pattern` keeps
+   its own flags and a blank string matches everything."
+  ^java.util.regex.Pattern [pattern]
+  (cond (instance? java.util.regex.Pattern pattern) pattern
+        (str/blank? (str pattern)) (re-pattern ".*")
+        :else (java.util.regex.Pattern/compile (str pattern)
+                                               (int (bit-or
+                                                      java.util.regex.Pattern/CASE_INSENSITIVE
+                                                      java.util.regex.Pattern/UNICODE_CASE)))))
 
 (defn search
-  "Return entries whose `:name` contains a match for `pattern`, preserving corpus
-   order. A blank string lists every entry. Invalid regular expressions are errors."
+  "Return entries `pattern` finds, preserving corpus order: a match in the `:name`
+   or in one phrase of a page's or skill's `outline`. A string pattern ignores
+   case; a compiled `Pattern` keeps its own flags. A blank string lists every
+   entry. Invalid regular expressions are errors."
   [es pattern]
-  (let [re (cond (instance? java.util.regex.Pattern pattern) pattern
-                 (str/blank? (str pattern)) (re-pattern ".*")
-                 :else (re-pattern (str pattern)))]
-    (into [] (filter #(re-find re (str (:name %)))) es)))
+  (let [re
+        (search-pattern pattern)
+
+        found?
+        #(some? (re-find re (str %)))]
+
+    (into [] (filter #(or (found? (:name %)) (some found? (outline %)))) es)))
 
 ;; The curated index — `doc()` with no argument
 
@@ -359,9 +448,41 @@ Everything else — "
       (count es)
       " documents in all — is one `apropos(pattern)` away; `doc(name)` prints any of them whole.")))
 
+(def ^:private miss-suggestion-limit
+  "Handles a miss names: enough to cover a near name, few enough to read."
+  5)
+
 (defn miss-text
-  "What `doc(target)` answers when nothing carries that handle."
-  [_es target]
-  (str (pr-str (str target))
-       " is not a handle. `doc()` lists the verbs a session starts from; "
-       "`apropos(pattern)` filters every known name."))
+  "What `doc(target)` answers when nothing carries that handle: the handles in
+   `es` whose name or outline contains the target literally, names first, so a
+   near miss costs one more `doc` call instead of a search."
+  [es target]
+  (let [wanted
+        (normalize-name target)
+
+        hits
+        (when-not (str/blank? wanted) (search es (java.util.regex.Pattern/quote wanted)))
+
+        named?
+        #(str/includes? (str/lower-case (str (:name %))) wanted)
+
+        found
+        (mapv :name (concat (filter named? hits) (remove named? hits)))
+
+        shown
+        (take miss-suggestion-limit found)
+
+        more
+        (- (count found) (count shown))
+
+        near
+        (when (seq shown)
+          (str "Handles whose name or outline contains it: "
+               (str/join ", " shown)
+               (when (pos? more) (str " and " more " more"))
+               ". "))]
+
+    (str (pr-str (str target))
+         " is not a handle. " near
+         "`doc()` lists the verbs a session starts from; "
+         "`apropos(pattern)` searches every known name and page outline.")))

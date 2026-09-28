@@ -3,6 +3,30 @@
 Most settings are managed from the terminal UI or the Companion app. Edit YAML
 when you want settings shared across projects or checked into a repository.
 
+## When to use
+
+- **You want to use a model from another provider or your own endpoint, or set its
+  API key.** Add it from the app in [Quick setup](#quick-setup), or declare it in
+  YAML under [Providers and models](#providers-and-models).
+- **Your team should share the same settings.** Commit a project `vis.yml`;
+  [Configuration files](#configuration-files) shows which file wins when several set
+  the same key.
+- **A provider hits rate limits or fails, or a task should stay within a budget.**
+  Set a [fallback model](#default-and-fallback), and set retries and token and cost
+  limits under [Router](#router).
+- **Commands that Vis runs need your project's environment variables.** Put them in
+  `.env`, as described in [Environment](#environment).
+- **Vis should use tools from an MCP server.** Add the server as described in [MCP
+  servers](#mcp-servers).
+- **Search skips a directory that `.gitignore` excludes, such as vendored
+  repositories.** Include it again under [Grep](#grep).
+- **Python HTTPS requests fail a strict certificate check, or packages must come
+  from a private index.** See [Python TLS validation](#python-tls-validation) and
+  [Python package index](#python-package-index).
+
+Use [Project instructions](context-and-prompts.md) for rules about working in your
+codebase, and the [process jail](jail.md) to limit what commands can access.
+
 ## Quick setup
 
 Open the provider picker in the terminal and choose **Add Provider**, or use

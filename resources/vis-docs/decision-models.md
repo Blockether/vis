@@ -6,14 +6,32 @@ published baseline is a starting point, **not** a policy for taking actions on y
 behalf: collect representative labels for your use case, evaluate both heads and decide
 when a human should review the result before relying on it.
 
+## When to use
+
+- **Your application classifies requests into a fixed set of labels**, such as
+  whether a damaged item needs a refund or a repair. Ask a typed `choice`
+  question [from Python](#ask-from-python).
+- **You also need a rating or a direct answer**, such as how urgent the request is
+  and whether the item can be refunded. Ask `score` and `noul` questions in the same
+  call.
+- **You must decide when a person should review a result.** Each answer includes an
+  action-versus-escalation score. Evaluate it on your own labels before you rely on
+  it.
+- **The baseline does not fit your data.** [Train with your own
+  labels](#train-locally-with-the-python-sdk), then [publish a verified version and
+  select it](#publish-explicitly-and-select-a-version).
+
+For open-ended work that needs files or tools, run an agent task with the [Python
+SDK](python-sdk.md) instead.
+
+## Download the baseline
+
 The `assets-pack` release keeps the existing voice assets and adds pinned FP32
 inference bundles, complete checkpoints and offline training dependencies for Laya
 and both GLiNER2.5 decision models. Downloads are explicit; starting a gateway
 never downloads weights. You call decision models from Python through the
 [`vis-agent` SDK](python-sdk.md). Its lightweight client works without PyTorch, and the
 training extras are optional.
-
-## Download the baseline
 
 Install Vis, then download the pinned inference bundle on the machine running your
 gateway:

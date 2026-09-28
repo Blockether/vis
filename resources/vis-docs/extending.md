@@ -1,8 +1,26 @@
 # Extending Vis
 
-An extension adds Python tools, user commands or integrations to Vis. Start with
-one file and one tool; add a package only when you need dependencies, reusable
-code or distribution. You can write it yourself or ask Vis to build it.
+An extension is a Python plugin that adds custom tools, user commands or
+integrations to Vis. Start with one file and one tool; add a package only when
+you need dependencies, reusable code or distribution. You can write it yourself
+or ask Vis to build it.
+
+## When to use
+
+- **Vis rebuilds the same steps in every session**, such as running your tests with
+  the right options or querying a service. Turn them into a tool with one clear
+  result; [your first extension](#your-first-extension) takes one file.
+- **A rule must be checked every time, not just remembered.** Put the check in code,
+  such as a [hook that runs after each
+  edit](extension-design.md#check-code-complexity-after-edits).
+- **You want a command that you run yourself from the chat.** Add a [slash
+  command](extension-api.md#slash-commands).
+- **You would rather not write the code.** [Ask Vis to build the
+  extension](#ask-vis-to-build-an-extension) from a description of the task.
+
+If Vis needs only instructions, not code, write a [skill](skills.md) or add the rule
+to [`AGENTS.md`](context-and-prompts.md#project-rules-agents-md). [Choose what you
+need](#choose-what-you-need) compares the options.
 
 ## Choose what you need
 

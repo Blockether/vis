@@ -8,6 +8,23 @@ and reads the full instructions when a task needs one.
 Skills written for Claude Code, pi, opencode or the
 [agent skills standard](https://agentskills.io) work without changes.
 
+## When to use
+
+- **You explain the same workflow to Vis for every release, review or migration.**
+  [Write it once as a skill](#write-a-skill), with any scripts and templates it
+  needs, and Vis reads it when a task calls for it.
+- **The procedure is too long to keep in `AGENTS.md`**, which Vis includes in every
+  turn. Vis lists only a skill's name and description until a task needs the full
+  instructions.
+- **You already use skills with Claude Code, pi or opencode.** Vis searches [the
+  same folders](#where-vis-looks), so they work without changes.
+- **You want Vis to follow a particular skill now.** Name it with
+  [`/skill:<name>`](#use-a-skill-explicitly).
+
+Put rules that apply to every task in
+[`AGENTS.md`](context-and-prompts.md#project-rules-agents-md). When the task needs a
+tool that Vis can call rather than instructions, write an [extension](extending.md).
+
 ## Write a skill
 
 ```text

@@ -2,10 +2,22 @@
 
 If you already have a Python project managed by uv, you can expose its functions
 to Vis without copying the code. Your package stays editable in its checkout;
-a small extension file registers the tools. This guide covers that setup. For
-a new extension, the [one-file tutorial](extending.md) or
-[automatically prepared package](extension-packages.md#package-manifest) needs
-less setup.
+a small extension file registers the tools. This guide covers that setup.
+
+## When to use
+
+- **Your team already has a Python library whose functions Vis should call.**
+  [Declare the project](#declare-the-editable-project) and register those functions
+  from a small entry file.
+- **You change that library often.** Source edits need only
+  [`/reload`](#reload-after-changes), not a reinstall.
+- **You want to test the library and the Vis tool separately.** See [Test the
+  implementation and the tool](#test-the-implementation-and-the-tool).
+- **The agent's own Python code should import your library.** [Install the project
+  into shared packages](#install-a-project-into-shared-packages).
+
+For a new extension, the [one-file tutorial](extending.md) or an [automatically
+prepared package](extension-packages.md#package-manifest) needs less setup.
 
 ## Before you start
 

@@ -341,7 +341,7 @@
     "  Result shape | `doc(name)` lists return-model fields under Model schemas. Traverse available `fn.contract` in memory for nested types; `fields` is a list of `{name, type}`. Print the matching leaves.\n"
     "- Registered signatures/types own kinds, requiredness/defaults, returns and mutation tag; inspection may omit types/effects.\n"
     "  A docstring adds intent and preconditions; the registry already carries signature, defaults and schema. Omit optional arguments to take their defaults; a `...` shown in a signature is a placeholder, so pass a real value or leave the argument out.\n"
-    "- `apropos(pattern)` filters SYMBOL names by regex as `AproposItem(type, name, body)`; `doc(name)` returns\n"
+    "- `apropos(pattern)` filters SYMBOL names and page/skill outlines by case-insensitive regex as `AproposItem(type, name, body)`; `doc(name)` returns\n"
     "  the authoritative contract, whole: obey its stated preconditions. `doc()` is the curated index.\n"
     "  A skill is one of those documents.\n" "\n"
     "## 2. Execution surfaces\n"

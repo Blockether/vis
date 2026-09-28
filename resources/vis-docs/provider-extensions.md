@@ -1,15 +1,25 @@
 # Provider extensions
 
-Use a provider extension to connect Vis to an LLM service that needs custom
-sign-in or model discovery. You register it with `vis.Provider`, and Vis can
-select its models alongside the built-in providers. If your service needs only
-an endpoint and API key, use [Configuration](configuration.md#providers-and-models)
-instead; no extension is needed.
+Use a provider extension to connect Vis to an LLM provider that needs custom sign-in
+or model discovery. You register it with `vis.Provider`, and Vis can select its
+models alongside the built-in providers.
+
+## When to use
+
+- **Your LLM service needs an interactive sign-in or tokens that expire.** Handle
+  sign-in and renewal in [callbacks](#callbacks) such as `auth_fn` and
+  `refresh_token_fn`.
+- **The service's models should come from the service itself.** Extend the model
+  list with `enrich_models_fn`, described in [Callbacks](#callbacks).
+- **The extension should own the provider's credentials**, outside `state.yml`.
+  Register a [managed provider](#managed-providers).
+
+If your service needs only an endpoint and API key, use
+[Configuration](configuration.md#providers-and-models) instead; no extension is
+needed.
 
 ## Before you start
 
-Use a provider extension when authentication or model discovery needs Python code.
-For a fixed endpoint and API key, prefer [provider configuration](configuration.md#providers-and-models).
 The example needs no external Python dependencies, but its endpoint and model names
 are placeholders: replace them with a service you are authorized to use.
 

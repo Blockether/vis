@@ -1,7 +1,8 @@
 # Python SDK
 
-Use `Agent()` to run tasks in your current project, or give it a `GatewayClient`
-to use a separately running gateway. Add your application's functions with
+Use `Agent()` to embed Vis in your program and run tasks in your current project,
+or give it a `GatewayClient` to use a separately running gateway. Add your
+application's functions with
 `extensions=[...]`; they keep access to your Python objects in either mode.
 Both modes provide `run()`, `send()` and one conversation for follow-up requests.
 
@@ -9,6 +10,22 @@ For classes, methods, signatures and type annotations, browse the
 [generated Python SDK API reference](https://vis.blockether.com/python-sdk-api/).
 It is rebuilt from `main` and may include APIs not yet released on PyPI.
 Use this guide for installation and task examples.
+
+## When to use
+
+- **Your script or application should give Vis a task in your project and use the
+  answer.** Start with [a private agent](#let-your-program-own-a-private-agent) that
+  your program owns.
+- **Your program needs fields it can check, not prose.** Pass a Pydantic model to
+  get a [validated result](#get-a-validated-result).
+- **The agent needs your application's rules, data or services.** [Give it your
+  functions](#give-the-agent-your-functions) without installing an extension.
+- **Conversations must outlive your script or appear in the Vis app.** [Connect to a
+  gateway](#connect-to-a-gateway-and-run-a-task).
+- **Your own interface should show what the agent is doing.** [Show progress while a
+  turn runs](#show-progress-while-a-turn-runs).
+
+For a Java or Clojure program, use the [Java and Clojure SDK](jvm-sdk.md).
 
 ## Install the SDK
 

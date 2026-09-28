@@ -16,6 +16,12 @@
        carries no `#` at all.
      * Under the H1 comes a LEAD paragraph, before the first `##`: what this page
        covers, so a reader who stops there still knows what they found.
+     * A page under a named section of `vis-docs/site.edn` documents a feature,
+       so its FIRST `##` is `When to use`: two or more problems a reader brings,
+       each tied to the part of the page that solves it, and the page to read
+       instead when a neighbouring feature fits better. It follows the lead and
+       never precedes it, because the lead's first paragraph is also the page's
+       `apropos` row. `index.md` and the unsectioned introduction are exempt.
      * `##` and `###` only. A deeper heading gets no `id` and no on-this-page
        entry (see `anchors+toc`), so nothing — not even this page — can link to it.
      * Anchors are unique within a page, and every relative `page.md#anchor` link

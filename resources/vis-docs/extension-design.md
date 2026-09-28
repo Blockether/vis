@@ -7,6 +7,24 @@ operation, explaining its inputs and testing it. Start with the
 [tested greeter package](https://github.com/Blockether/vis/tree/main/packages/vis-agent/examples/greeter)
 when you need a larger example.
 
+## When to use
+
+- **The agent repeats the same sequence of calls to get one answer.** [Choose a tool
+  boundary](#choose-a-useful-tool-boundary) that returns that answer directly.
+- **The agent calls your tool with the wrong arguments or misreads its result.**
+  [Describe its structure once](#describe-structure-once) and [document default
+  behavior](#document-default-behavior).
+- **The extension is growing and needs tests.** [Keep the entrypoint
+  small](#keep-the-entrypoint-small) and [test both
+  boundaries](#test-both-boundaries).
+- **People cannot tell at a glance what a tool did.** [Design its
+  Activity](#design-the-activity-with-the-tool), as in the [CI
+  report](#show-a-ci-report-without-hiding-failures).
+- **A team rule should be measured after every edit, not left to a reminder.** Build
+  an [edit–check–fix cycle](#check-code-complexity-after-edits).
+- **Other Python programs need the same tool descriptions and help.** Use a [typed
+  catalog](#typed-catalog-and-generated-help).
+
 Follow the greeter example from its contract through registration, Activity and
 tests. Then try the [CI report](#show-a-ci-report-without-hiding-failures) and
 [edit–check–fix cycle](#check-code-complexity-after-edits). The optional

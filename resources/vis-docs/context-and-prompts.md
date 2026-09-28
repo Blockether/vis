@@ -9,6 +9,24 @@ apply on the next turn without a restart.
 | `.vis/SYSTEM.md`, `.vis/APPEND_SYSTEM.md` | Replace or extend the system prompt |
 | `.vis/prompts/*.md` | Reusable prompts invoked with `/name` |
 
+## When to use
+
+- **Vis keeps missing a project convention**, such as how to run the tests or which
+  files must not change. Write it once in [`AGENTS.md`](#project-rules-agents-md);
+  Vis includes the file in every turn.
+- **You type the same request again and again**, such as a review of the staged
+  changes. Save it as a [prompt template](#prompt-templates-name) and run it with
+  `/name`.
+- **A task should continue until the result is verified**, not stop after one reply.
+  Set a [goal](#explicit-goals-goal) with an iteration budget.
+- **A project needs different or extra system instructions.** Add [system prompt
+  files](#system-prompt-files) under `.vis/`.
+- **You want to run a shell command without involving the model.** Start the message
+  with [`!`](#shell-shortcuts-and).
+
+Use a [skill](skills.md) for a procedure that Vis should read only when a task needs
+it.
+
 ## Project rules: AGENTS.md
 
 Put instructions for your codebase in `AGENTS.md` at the project root: how to

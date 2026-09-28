@@ -5,6 +5,25 @@ effect, start with `vis-agent doctor` in your project's terminal. Its load messa
 usually identifies which stage failed. The sections below explain what to check
 for each symptom.
 
+## When to use
+
+- **Your tool is missing, or Vis never chooses it.** See [Tool missing or not
+  chosen](#tool-missing-or-not-chosen).
+- **An edit has not taken effect**, and Vis still runs old code or shows old
+  documentation. See [Old code or documentation after an
+  edit](#old-code-or-documentation-after-an-edit).
+- **Loading fails** because the extension is [already
+  registered](#already-registered), or because [imports or dependency preparation
+  fail](#imports-or-dependency-preparation-fail).
+- **The extension loads but something is wrong**: `doc()` [hides a default or shows
+  an incomplete type](#default-hidden-or-type-incomplete), a [package skill is
+  missing](#package-skill-missing), [a call
+  fails](#registration-works-but-the-call-fails) or [a live view does not
+  update](#live-view-updates).
+
+If Vis itself fails rather than your extension, see [Reporting a
+bug](reporting-bugs.md).
+
 ## Tool missing or not chosen
 
 1. Check `vis-agent extension list` and `vis-agent doctor` in the intended project.

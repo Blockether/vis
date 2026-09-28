@@ -1,8 +1,20 @@
 # Extension API
 
 Reference for Python extension declarations, tool contracts, callbacks and host
-operations. Start with the [tutorial](extending.md) for a complete entry file or
-[Extension design](extension-design.md) for authoring and test guidance.
+operations.
+
+## When to use
+
+- **You need the exact declaration, argument or return value for an extension
+  feature.** Start from [Find an API](#find-an-api).
+- **`doc()` shows a tool's types or defaults differently from what you declared.**
+  Check the [tool contract rules](#tool-contracts).
+- **Your extension needs a service from Vis**, such as [durable
+  state](#durable-state), [environment variables](#environment), [session
+  context](#session-context) or [another session tool](#call-other-session-tools).
+
+Start with the [tutorial](extending.md) for a complete entry file or [Extension
+design](extension-design.md) for authoring and test guidance.
 
 ## Find an API
 
@@ -495,8 +507,9 @@ at registration. A prompt callable computes text each turn; it should not log in
 start background work or repeat the entire API. `description` supplies the extension
 summary even when `prompt` is omitted.
 
-`apropos(pattern)` filters public symbol names by regular expression. `doc(name)`
-or `doc(hit)` reads the complete matching document. Signatures and resolved
+`apropos(pattern)` filters public symbol names by regular expression, ignoring case;
+a bundled skill also matches by its description and headings. `doc(name)` or
+`doc(hit)` reads the complete matching document. Signatures and resolved
 annotations supply call structure; short docstrings and `Annotated` descriptions
 supply semantics, not duplicate signatures or schemas. Keep a useful first-line
 summary for discovery. Put an optional multi-step procedure in a [skill](skills.md).

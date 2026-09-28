@@ -89,6 +89,9 @@ extension guides and API reference address developers building with it.
 
 - Start with the reader's goal: what the feature does, when to use it and how to get a useful
   result. Show ordinary chat or UI workflows before internal calls when those workflows exist.
+- Lead each feature page with use cases: its `When to use` section states the problems readers
+  bring, in their words, links each to the section that solves it and names the better-fitting
+  page for nearby problems. Describe the reader's situation, not the feature's capabilities.
 - Address the reader as "you". Use plain words, active voice, short paragraphs and a clear,
   conversational but professional tone. Be direct and literal; avoid unexplained jargon,
   metaphors, slogans, rhetorical filler and forced friendliness.
@@ -134,7 +137,7 @@ Paths below are relative to this repository. Internal namespace paths begin at
 | Tool declarations | `extension/core.clj` and its mirrored test own description/result/params, requiredness and wire keys. |
 | Gateway transport | `gateway/wire.clj` defines snake_case wire keys, kebab-case engine keys and total JSON encoding. Use `wire/->wire` and `wire/json-str`; transport encoding failures can break event replay. |
 | Config | `config/` owns merged configuration; toggle IDs are snake_case strings and reload from merged config. |
-| Docs | `resources/vis-docs/` serves both the site and `doc()`. `resources/META-INF/vis/apropos/docs.edn` is the catalog; `resources/vis-docs/site.edn` alone owns titles and navigation. |
+| Docs | `resources/vis-docs/` serves both the site and `doc()`. `resources/META-INF/vis/apropos/docs.edn` is the catalog; `resources/vis-docs/site.edn` alone owns titles and navigation. The `docs/core.clj` namespace docstring defines the page contract that `docs-page-canon-test` enforces. |
 | Extension Center | The catalog lives in `apps/vis-docs/`, not `resources/vis-docs/`: `worker.js` owns `/extensions/` and `/api/*` over D1 (`schema.sql`), `web/render.js` renders catalog pages in both the Worker and the browser, and `web/style.css` adds catalog-only layout over the shared `resources/vis-docs/assets/theme.css`. The catalog is public-site-only; it is never a `doc()` page. |
 | UI | Companion controls are in `apps/vis-companion/src/components/ui.tsx`; TUI rendering is in `apps/vis-tui/`. |
 | Companion relay | `apps/vis-companion-relay/` is the push Worker: it holds the APNs/FCM keys, seals delivery grants (`apps/vis-companion-relay/src/seal.ts`) and keeps no device-token store, database or OAuth callback. `gateway/relay.clj` pushes through a grant, `gateway/push.clj` pushes directly with a self-hosted APNs key, and `apps/vis-companion/src/lib/relay.ts` registers the grant with its gateway. |

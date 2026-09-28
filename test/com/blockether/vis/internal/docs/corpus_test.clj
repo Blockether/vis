@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.docs.corpus-test
   "The corpus behind `apropos`/`doc`: one record per document, a usable first
-   line, and a regular-expression filter over names."
+   line, and one regular expression over names and page outlines."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.docs.corpus :as dc]
@@ -90,24 +90,96 @@ Whole skill body."}
         (expect (not (str/includes? src "harness.core")))
         (expect (not (str/includes? src "harness-core"))))))
 
+(def ^:private drafts-page
+  (str/join "\n"
+            ["# Drafts" "" "A draft gives a session its own working copy." "" "## When to use" ""
+             "- **You want to read the whole"
+             "  diff first.** See [Review changes](#review-changes)." "" "## Review changes" ""
+             "Approval happens after a matrix check." "" "```md" "## Fenced heading" "```"]))
+
 (defdescribe
   search-test
-  "`apropos` is a regular-expression filter over symbol names. It preserves the
-   corpus order and ignores document bodies."
-  (let [es [{:name "numpy" :text "Array module."}
-            {:name "numpy.linalg.solve" :text "Solve a matrix equation."}
-            {:name "pandas.read_csv" :text "Read comma-separated data."}
-            {:name "shell" :text "Runs a command."}]]
+  "`apropos` is one regular expression that ignores case: over the names of
+   callables and over the outline of pages and skills. It preserves corpus order,
+   never reads a callable's contract or a page's body prose, and ranks nothing."
+  (let [es [{:name "numpy" :kind "module" :text "Array module."}
+            {:name "numpy.linalg.solve" :kind "function" :text "Solve a matrix equation."}
+            {:name "pandas.read_csv" :kind "function" :text "Read comma-separated data."}
+            {:name "shell" :kind "tool" :text "Runs a command."}
+            {:name "drafts" :kind "doc" :text drafts-page}]]
     (it "matches names with a caller-supplied regular expression"
         (expect (= ["numpy" "numpy.linalg.solve"] (mapv :name (dc/search es #"numpy(?:\..*)?"))))
-        (expect (= ["numpy.linalg.solve" "pandas.read_csv"] (mapv :name (dc/search es #"\.")))))
-    (it "does not search document text" (expect (empty? (dc/search es #"matrix"))))
+        (expect (= ["numpy.linalg.solve" "pandas.read_csv"] (mapv :name (dc/search es #"\.\w")))))
+    (it "ignores case in a string pattern and keeps a compiled pattern's own flags"
+        (expect (= ["pandas.read_csv"] (mapv :name (dc/search es "READ_CSV"))))
+        (expect (empty? (dc/search es #"READ_CSV"))))
+    (it "finds a page by its opening, headings and When to use problems"
+        (doseq [pattern ["working copy" "^drafts$" "review changes" "whole diff first"]]
+          (expect (= ["drafts"] (mapv :name (dc/search es pattern))) pattern)))
+    (it "never searches a callable's contract or a page's body prose"
+        (expect (empty? (dc/search es "matrix")))
+        (expect (empty? (dc/search es "fenced heading"))))
     (it "preserves corpus order" (expect (= (mapv :name es) (mapv :name (dc/search es #".*")))))
     (it "treats a blank pattern as a listing"
         (expect (= (mapv :name es) (mapv :name (dc/search es "")))))
     (it "refuses an invalid regular expression"
         (expect (= java.util.regex.PatternSyntaxException
                    (try (dc/search es "[") nil (catch Throwable t (class t))))))))
+
+(defdescribe
+  outline-test
+  "What a page or skill is found by besides its name: its opening, headings
+   outside code and the problems its `When to use` list opens with, one line each."
+  (it "reads a page's outline in document order"
+      (expect (= ["A draft gives a session its own working copy." "Drafts" "When to use"
+                  "You want to read the whole diff first." "Review changes"]
+                 (dc/outline {:name "drafts" :kind "doc" :text drafts-page}))))
+  (it "gives a callable no outline"
+      (expect (= [] (dc/outline {:name "shell" :kind "tool" :text "# Shell\n\nRuns a command."})))))
+
+(defdescribe
+  miss-text-test
+  "A miss names the handles whose name or outline contains the target, so a near
+   miss costs one more `doc` call instead of a search."
+  (let [es (into [{:name "drafts" :kind "doc" :text drafts-page}]
+                 (map (fn [i]
+                        {:name (str "tool-" i) :kind "tool" :text "A tool."}))
+                 (range 7))]
+    (it "suggests the handles that contain the target"
+        (let [text (dc/miss-text es "Working Copy")]
+          (expect (str/starts-with? text "\"Working Copy\" is not a handle."))
+          (expect (str/includes? text "contains it: drafts."))))
+    (it "lists name matches before outline matches"
+        (expect (str/includes?
+                  (dc/miss-text (conj es {:name "copy-tool" :kind "tool" :text "Copies."}) "copy")
+                  "contains it: copy-tool, drafts.")))
+    (it "caps the suggestions and counts the rest"
+        (expect (str/includes? (dc/miss-text es "tool")
+                               "tool-0, tool-1, tool-2, tool-3, tool-4 and 2 more.")))
+    (it "reads the target as literal text, not as a pattern"
+        (expect (not (str/includes? (dc/miss-text es "tool.*") "contains it"))))
+    (it "keeps the discovery advice when nothing matches"
+        (let [text (dc/miss-text es "nothing-like-it")]
+          (expect (not (str/includes? text "contains it")))
+          (expect (str/includes? text "apropos(pattern)"))))))
+
+(defdescribe
+  reader-words-find-their-page-test
+  "People search in their own words. Each phrase below missed its page while
+   `apropos` read names only; the page's outline now carries it."
+  (it "finds the page a reader means"
+      (let [es (dc/entries)]
+        (doseq [[words page] [["context window" "token-optimization"]
+                              ["tokens" "token-optimization"] ["api key" "configuration"]
+                              ["worktree" "drafts"] ["iphone" "index"] ["android" "index"]
+                              ["permissions" "jail"] ["log file" "logging"] ["crash" "logging"]
+                              ["plugin" "extending"] ["custom tool" "extending"]
+                              ["transcript" "exporting-sessions"] ["upgrade" "distributions"]
+                              ["graalvm" "jvm-native-image"] ["password" "human-input"]
+                              ["llm provider" "provider-extensions"] ["workflow" "skills"]
+                              ["stop" "queue-and-cancel"] ["team" "council"] ["embed" "python-sdk"]
+                              ["remote" "gateway-service"]]]
+          (expect (some #{page} (map :name (dc/search es words))) (str words " -> " page))))))
 
 (defdescribe experimental-guide-discovery-test
              (it "does not offer the experimental planning guide through doc or apropos"

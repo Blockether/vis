@@ -1,8 +1,19 @@
 # Native builds for Java and Clojure extensions
 
-Use this guide when you are adding **Java or Clojure capabilities inside Vis**
-and want to ship them in a native engine without requiring a JVM at runtime.
-This is an in-tree engine build, not a drop-in JAR plugin system.
+This guide shows how to add **Java or Clojure capabilities inside Vis** and ship
+them in a GraalVM native image that runs without a JVM. This is an in-tree
+engine build, not a drop-in JAR plugin system.
+
+## When to use
+
+- **You are adding Java or Clojure code that must run inside the Vis engine.** [Add
+  and test it on the JVM](#add-and-test-your-jvm-capability) first.
+- **People should run your build without installing Java.** [Build and test the
+  image](#build-and-test-the-image), then [package it](#package-and-run-your-build).
+- **Code that works on the JVM fails in the native image.** [Regenerate reachability
+  metadata](#regenerating-reachability-metadata) for it.
+- **The build fails with a certificate error behind a corporate proxy.** See
+  [Building behind a corporate TLS proxy](#building-behind-a-corporate-tls-proxy).
 
 You do **not** need a native build to use the Python SDK, connect a Java/Clojure
 client, run a gateway or add a Python extension. Use a [prebuilt runtime](distributions.md)

@@ -5,6 +5,24 @@ can ask Vis to consult a session that worked on a related problem, get a second
 review, or share findings across ongoing tasks. Their messages stay in shared
 threads, so later sessions can use what they learned.
 
+## When to use
+
+- **Another session already investigated this bug or this part of the code.** [Ask
+  Vis to consult it](#ask-vis-to-consult-another-session) instead of repeating the
+  research.
+- **You want a second opinion before you merge a change.** Have one session
+  implement it and another [review it](#work-on-a-task-together).
+- **Several sessions work as a team on parts of one task.** Agree in a shared
+  thread on [who is responsible for each part](#work-on-a-task-together), and
+  share results as they arrive.
+- **Findings should outlast the session that found them.** Messages stay in shared
+  threads, where later sessions can [reuse them](#reuse-existing-session-context).
+- **Your own program coordinates sessions.** Use the [API reference](#api-reference)
+  or the [Python SDK](#python-sdk) handle.
+
+Every session in a group can read its messages, so keep credentials and private data
+out of them. See [Groups and settings](#groups-and-settings).
+
 ## Ask Vis to consult another session
 
 Ask in the conversation as you would for any other task. You do not need to write

@@ -4,6 +4,19 @@ Create a session on a running gateway, submit a task and read the answer from a
 Java or Clojure application. The gateway runs the tools and owns the project
 files; your JVM application acts as its client.
 
+## When to use
+
+- **A Java service or Clojure program should give Vis a task and use the answer.**
+  [Connect from Java](#connect-from-java) or [call the same API from
+  Clojure](#call-the-same-api-from-clojure).
+- **You deploy a JVM application next to a native gateway.** Java does not need
+  GraalVM to connect; see [Package a JVM application or a native
+  runtime](#package-a-jvm-application-or-a-native-runtime).
+
+For a Python program, use the [Python SDK](python-sdk.md). To add Java or Clojure
+code inside the Vis engine itself, see [Native builds for Java and Clojure
+extensions](jvm-native-image.md).
+
 ## Prepare the JVM classpath
 
 Use JDK 25 and the Clojure CLI. The published Vis library includes its runtime

@@ -1,17 +1,37 @@
 # Drafts
 
 A draft gives a session its own working copies of one or more repositories, separate from
-your current checkout. **Drafts are experimental and off by default.** To enable
-them, open **Settings → Experimental → Draft backend** in the TUI or Companion app
-and choose `auto`, `worktree` or `rift`. Choose `off` to disable automatic drafts
-and new draft creation. Vis preserves any choice you have already saved.
+your current checkout, as a Git worktree or a copy-on-write clone. **Drafts are
+experimental and off by default.**
 
-When enabled, Vis starts each change-making task in a session-owned draft without
-a separate request. This includes code, tests, documentation and configuration;
-read-only questions and analysis do not need a draft. Vis keeps edits and checks
-in the draft. If no backend can create one, Vis reports the blocker instead of
-editing your current checkout. Original project repositories stay read-only to
-sandbox writers; select every repository you need to change.
+## When to use
+
+- **You want Vis to try a change without editing the files you are working on.** Vis
+  makes the change and runs its checks in its own copy. [Enable
+  drafts](#enable-drafts) explains what that protection covers.
+- **You want to read the whole diff before anything reaches your branch.** [Review
+  the changes](#review-changes-before-approval), then [approve](#approval) them or
+  ask Vis to discard the draft.
+- **One change spans several repositories.** [Include each
+  repository](#work-in-another-repository) in the draft without switching projects.
+- **A session is working in the wrong draft.** Ask Vis to [return it to its original
+  checkout](#recover-a-session-opened-in-the-wrong-draft).
+- **Your team needs its own check before a draft is approved.** An extension can
+  [guard approvals with a hook](#hooks-for-extensions).
+
+Read-only questions and analysis do not need a draft.
+
+## Enable drafts
+
+Open **Settings → Experimental → Draft backend** in the TUI or Companion app and
+choose `auto`, `worktree` or `rift`. Choose `off` to disable automatic drafts and
+new draft creation. Vis preserves any choice you have already saved.
+
+When enabled, Vis starts each change-making task in a session-owned draft without a
+separate request. This includes code, tests, documentation and configuration. Vis
+keeps edits and checks in the draft. If no backend can create one, Vis reports the
+blocker instead of editing your current checkout. Original project repositories stay
+read-only to sandbox writers; select every repository you need to change.
 
 Draft write protection does not require the jail: while drafts are enabled, Vis'
 file tools refuse writes to the original repositories whether or not the jail is

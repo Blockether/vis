@@ -1,6 +1,7 @@
 Vis is a coding agent you can adapt to your tools and workflow.
 Use it to explore a project, make changes and check the results. You can work
-in the terminal or desktop app, then follow the same session from your phone.
+in the terminal or desktop app, then follow the same session from your iPhone,
+iPad or Android device.
 
 <nav class="quick-links" aria-label="Getting started">
   <a href="motivation.md">Motivation</a>

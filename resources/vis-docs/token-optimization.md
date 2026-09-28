@@ -1,14 +1,27 @@
 # How Vis manages context
 
-Long sessions can fill the model's working space with old file reads and tool
+Long sessions can fill the model's context window with old file reads and tool
 results. Vis returns only selected tool output and can summarize completed work
 without deleting your session history.
+
+## When to use
+
+- **A long session spends tokens on old file reads and tool output.** Ask Vis to
+  [fold the settled work](#folding-settled-work) into a summary before the next
+  phase.
+- **Another session already investigated your problem.** [Reuse its
+  findings](#reuse-another-session-s-findings) instead of repeating the research.
+- **You need a helper that Vis wrote earlier, with changes.** Ask Vis to [find and
+  refine it](#reuse-and-refine-session-helpers) instead of writing a new one.
+- **You want to know why Vis prints only part of a result, or edits files by line
+  address.** See [One tool, many functions](#one-tool-many-functions) and
+  [Addresses, not copies](#addresses-not-copies).
+
+## Folding settled work
 
 When research is done, you can say:
 
 > Summarize what we learned and what remains open, then continue with the fix.
-
-## Folding settled work
 
 Vis calls a summary a **fold**. It replaces completed steps in the model's
 active context with conclusions, open questions, relevant files and test state.
@@ -43,9 +56,10 @@ with the latest turn, workspace roots, budget and extension context.
 
 ## Discovery instead of catalogs
 
-The prompt does not carry every function signature. `apropos(pattern)` searches
-public symbol names by regular expression in manifest order; `doc(name)` reads
-a contract, guide or skill when needed.
+The prompt does not carry every function signature. `apropos(pattern)` matches a
+regular expression, ignoring case, against public symbol names in manifest order;
+guides and skills also match by their title, opening, headings and `When to use`
+problems. `doc(name)` reads a contract, guide or skill when needed.
 
 ## Reuse and refine session helpers
 

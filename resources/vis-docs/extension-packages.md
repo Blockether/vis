@@ -2,8 +2,29 @@
 
 You can keep an extension in one project, install it for all your projects or
 share it with other people. This guide covers those choices and how to reload
-changes. For your first tool, start with [Extending Vis](extending.md). If you
-already have a uv package, follow [Using an existing Python project](extension-development.md).
+changes.
+
+## When to use
+
+- **An extension needs third-party dependencies or more than one file.** [Choose a
+  layout](#choose-a-layout) and describe the package in a
+  [manifest](#package-manifest).
+- **You want an extension in every project, not just one.** Install it for all your
+  projects; [Where extensions load](#where-extensions-load) explains how project and
+  global copies combine.
+- **Everyone on your team should get the same extensions.** [Save the installation
+  in the project's configuration](#save-an-installation-in-configuration).
+- **You want to install an extension someone else wrote.** Prefer an [approved
+  release](#install-an-approved-github-release), or pin the commit you reviewed as
+  described in [Install source that is not in the
+  catalog](#install-source-that-is-not-in-the-catalog).
+- **An update broke something.** [Roll back](#check-for-updates-and-roll-back) to
+  the version that worked.
+- **You want to share your extension.** [Publish it](#publish-a-package) through
+  GitHub Releases.
+
+For your first tool, start with [Extending Vis](extending.md). If you already have a
+uv package, follow [Using an existing Python project](extension-development.md).
 
 ## Choose a layout
 

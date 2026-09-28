@@ -5,12 +5,28 @@ without reading a new chat message for every update. Your extension opens it wit
 `vis.live(...)` and updates its progress, tables, logs or controls as work proceeds.
 The view appears in the terminal or Companion app and can be stopped at any time.
 
+## When to use
+
+- **Your tool waits for a CI run or deployment that takes minutes.** Show its jobs
+  as they finish, as in [Watch a CI run](#watch-a-ci-run).
+- **You follow several builds at once.** Keep them in [one
+  view](#monitor-a-fixed-build-set) instead of one message per update.
+- **Errors get lost in a long log.** [Mark each line's
+  severity](#add-severity-to-streaming-output) so failures stand out.
+- **The person watching needs to act or stop.** Add
+  [buttons](#add-spinners-and-buttons), and handle [interruption](#interruption)
+  when they stop watching.
+
+For a tool's ordinary status, choose [Activity
+presentation](extension-api.md#activity-presentation) instead; use a live view when
+the user needs to watch or interact with ongoing work. To ask a question and wait
+for the answer, use a [form](human-input.md).
+
 ## Before you start
 
 Open a live view inside a registered tool or user command with a calling session,
-not during extension registration. Choose [Activity presentation](extension-api.md#activity-presentation)
-for a tool's ordinary status; use a live view when the user needs to watch or interact
-with ongoing work. Stopping the view stops watching, not necessarily the external job.
+not during extension registration. Stopping the view stops watching, not necessarily
+the external job.
 
 ## In the terminal
 

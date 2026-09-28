@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the block parse, the error lists the quotes and brackets that are wrong.
 
 ### Changed
+- Documentation is easier to find. `apropos()` also matches documentation pages
+  and skills by their title, opening paragraph, headings and the problems listed
+  under `When to use`, and searches ignore case. Tools and functions are still
+  matched by name only. When `doc(name)` finds nothing, it lists the handles whose
+  name or outline contains that text. Every feature guide now opens with a
+  `When to use` section that links each problem to the part of the page that
+  solves it.
 - The gateway formats Python code for the TUI and the companion with a built-in
   formatter that lays out code the way `ruff format` does. Code with formatter
   suppression comments such as `fmt: off` is shown as written. Vis no longer

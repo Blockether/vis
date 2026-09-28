@@ -1,7 +1,22 @@
 # Exporting sessions
 
 Export a saved session to share a conversation, review its tool calls or keep a
-readable copy. Vis stores sessions locally and can export them as Markdown or HTML.
+readable transcript. Vis stores sessions locally and can export them as Markdown
+or HTML.
+
+## When to use
+
+- **You want to show a teammate how Vis solved a problem.** Export an [HTML
+  page](#html) that opens in any browser.
+- **A bug report needs the conversation that shows the problem.** Export it, then
+  remove private details as described in [Reporting a
+  bug](reporting-bugs.md#sharing-a-transcript).
+- **You want to review every tool call from a session, or keep a readable record.**
+  The [Markdown export](#markdown) includes the tool calls.
+
+Exports are not redacted. Read an export before you share it.
+
+## Export a session
 
 ```bash
 vis-agent sessions list

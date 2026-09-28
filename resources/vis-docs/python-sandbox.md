@@ -5,6 +5,21 @@ separate from your project's Python environment: installing a package in one
 does not necessarily make it available in the other. This page explains which
 environment to use, how to install packages and what the sandbox can access.
 
+## When to use
+
+- **The agent cannot import a package that your project already has.** The sandbox
+  has its own packages; [install the package there](#packages).
+- **You want to try an extension declaration before you save a file.** [Experiment
+  in the sandbox](#experiment-with-extension-declarations).
+- **You need to know what the agent's code can read, write or connect to.** See
+  [What the sandbox may do](#what-the-sandbox-may-do).
+- **Python HTTPS requests fail a strict certificate check.** See [TLS
+  compatibility](#tls-compatibility).
+- **The Python worker stops responding.** Look for the [hang
+  evidence](#diagnosing-an-unresponsive-worker) that Vis tries to save.
+
+To limit what the agent's commands can reach, turn on the [process jail](jail.md).
+
 ## Running Python
 
 Each session has its own Python state. The sandbox and trusted Python extensions

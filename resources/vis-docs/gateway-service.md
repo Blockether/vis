@@ -5,6 +5,23 @@ one agent service. The gateway owns sessions and runs tools on its machine;
 clients send requests and follow progress. You can run it in your terminal or
 keep it running under a service manager.
 
+## When to use
+
+- **You want to follow the same sessions from your phone, desktop app and
+  terminal.** [Start a gateway](#start-a-local-gateway) that all of them connect to.
+- **The agent should run on a remote server while you work from a laptop or phone.**
+  [Connect from another machine](#connect-from-another-machine) through a VPN, an
+  SSH tunnel or HTTPS.
+- **Scripts and SDK clients need a service that is always running.** [Keep it
+  running on Linux](#keep-it-running-on-linux) under a service manager.
+- **A client cannot connect, or a task stops making progress.** See [Troubleshoot a
+  connection](#troubleshoot-a-connection) and [Collect evidence when work stops
+  progressing](#collect-evidence-when-work-stops-progressing).
+
+For terminal use on one computer, you do not need to set this up: `vis-agent tui`
+starts a local gateway when none is running. See [Runtime
+distributions](distributions.md#terminal-gateway-lifecycle).
+
 ## Install the runtime
 
 On the machine that will run the agent, install the native release:

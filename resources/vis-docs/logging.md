@@ -1,9 +1,24 @@
 # Logs and diagnostics
 
 Use this page to find startup errors, command output and hang reports. Vis writes
-diagnostics under `~/.vis/logs/YYYY-MM-DD/` on the machine running the process.
+log files and other diagnostics under `~/.vis/logs/YYYY-MM-DD/` on the machine
+running the process.
 The date is UTC. A process or command keeps the directory chosen when it starts;
 a hang report uses its capture date.
+
+## When to use
+
+- **Vis or the gateway crashes or does not start.** [Find the
+  log](#find-the-right-file) for that day and process.
+- **A command or extension printed output that you did not see.** Check the [log
+  files](#find-the-right-file) and the [Python worker log](#python-runtime).
+- **A task stopped making progress, or the whole gateway stopped answering.** Read
+  the [hang reports](#hang-reports) and the [evidence collected from outside the
+  gateway](#when-the-whole-jvm-stops-answering).
+- **You are about to attach logs to a bug report.** [Review them
+  first](#review-before-sharing); logs can contain anything a command printed.
+- **You want to know how long logs are kept.** See [Rotation and
+  retention](#rotation-and-retention).
 
 ## Find the right file
 

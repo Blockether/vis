@@ -878,6 +878,13 @@
   (let [tail (second (str/split md #"(?m)^## See also$" 2))]
     (re-seq #"\]\(([A-Za-z0-9._-]+\.md)" (str tail))))
 
+(defn- use-cases
+  "PURE: the top-level list items under a page's `## When to use` heading, up to
+   the next `##`: the problems the page says it solves."
+  [^String md]
+  (let [tail (second (str/split md #"(?m)^## When to use$" 2))]
+    (re-seq #"(?m)^[-*+] " (first (str/split (str tail) #"(?m)^## " 2)))))
+
 (def ^:private max-unit-chars
   "Characters one paragraph — or one list item with its continuation lines — may
    carry before it stops being prose and becomes a table nobody drew. Roughly 120
@@ -931,7 +938,7 @@
    `anchors` is `{slug #{anchor-id}}` for the whole site, so a cross-page
    fragment is checked against the toc of the page it points AT, and `pages` is
    the whole page list, which the landing page has to be a map of."
-  [{:keys [slug title md blurb toc]} anchors pages]
+  [{:keys [slug title section md blurb toc]} anchors pages]
   (let [home?
         (= "index" slug)
 
@@ -979,6 +986,12 @@
                   ", not with its manifest title " (pr-str (str "# " title)))])
           (when (< (count (lead-paragraph md)) 60)
             [(say "has no lead paragraph between its H1 and the first `##`")])
+          (when (and section (not= "When to use" (first h2-texts)))
+            [(say "opens on `## "
+                  (first h2-texts)
+                  "` — a page under a site section starts with `## When to use`")])
+          (when (and section (< (count (use-cases md)) 2))
+            [(say "`When to use` names fewer than two problems the page solves")])
           (when-not (= "See also" (last h2-texts))
             [(say "ends on `## " (last h2-texts) "` — the last `##` of a page is `See also`")])
           (when (< (count (see-also-links md)) 2)
@@ -1054,6 +1067,36 @@
         (expect (seq pages))
         (expect (empty? broken)
                 (str/join "\n" (cons "pages that break the docs page contract:" broken))))))
+
+(defn- canon-fixture
+  "A minimal page in nav `section` whose first `##` is `first-h2`, listing `items`."
+  [section first-h2 items]
+  {:slug "fixture"
+   :title "Fixture"
+   :section section
+   :md (str "# Fixture\n\nA lead paragraph long enough to count as the page's introduction.\n\n## "
+            first-h2
+            "\n\n"
+            (str/join "\n" (map #(str "- " %) items))
+            "\n\n## See also\n")})
+
+(defn- when-to-use-breaks
+  "The page-contract lines `page` earns for its `When to use` section."
+  [page]
+  (filter #(str/includes? % "When to use") (page-canon page {} [])))
+
+(defdescribe
+  when-to-use-canon-test
+  "A page under a site section opens with the problems it solves, so a reader who
+   arrives with a problem learns first whether this is the right page. The
+   unsectioned introduction is exempt."
+  (it "flags a sectioned page that opens elsewhere or names fewer than two problems"
+      (expect (seq (when-to-use-breaks (canon-fixture "Guides" "Install" ["a" "b"]))))
+      (expect (seq (when-to-use-breaks (canon-fixture "Guides" "When to use" ["only one"])))))
+  (it "accepts a sectioned page that opens with two or more problems"
+      (expect (empty? (when-to-use-breaks (canon-fixture "Guides" "When to use" ["a" "b"])))))
+  (it "leaves the unsectioned introduction pages alone"
+      (expect (empty? (when-to-use-breaks (canon-fixture nil "Why Vis" []))))))
 
 (defdescribe
   extension-center-public-link-test

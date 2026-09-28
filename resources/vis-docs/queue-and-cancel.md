@@ -3,6 +3,19 @@
 You can keep typing while Vis is working. Messages sent during a running turn
 are queued and run in order when the turn finishes.
 
+## When to use
+
+- **You think of a follow-up while Vis is still working.** Send it now; it [waits in
+  the queue](#queue-a-message) and runs when the current turn finishes.
+- **A queued message has a mistake.** Edit it before it runs: in the terminal, [move
+  it back into the composer](#queue-a-message); in the Companion app, tap it to edit
+  or remove it.
+- **Vis is going in the wrong direction and you want to stop it.** [Cancel the
+  turn](#cancel-a-turn); your queued messages return to the composer so you can
+  send them again.
+- **You want to leave the session.** See [Quit](#quit) for what **Ctrl+C** does in
+  each state.
+
 ## Queue a message
 
 Press **Enter** to send. If no turn is running, the message starts one.

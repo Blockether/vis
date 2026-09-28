@@ -5,6 +5,20 @@ Report bugs at <https://github.com/Blockether/vis/issues>.
 Session transcripts can contain private code and credentials. Include only
 information needed to reproduce the Vis problem.
 
+## When to use
+
+- **Vis crashed, stopped responding or gave a wrong result, and you can make it
+  happen again.** Collect [what to include](#what-to-include) and fill in the
+  [template](#template).
+- **You found a security problem**, such as a sandbox escape or a credential leak.
+  Do not open a public issue; follow [Security issues](#security-issues).
+- **The report needs a transcript or logs.** Remove private code and credentials
+  first, as described in [What to leave out](#what-to-leave-out) and [Sharing a
+  transcript](#sharing-a-transcript).
+
+If your own extension does not load, start with [Extension
+troubleshooting](extension-troubleshooting.md).
+
 ## Security issues
 
 Do not open a public issue for a vulnerability such as a sandbox escape,

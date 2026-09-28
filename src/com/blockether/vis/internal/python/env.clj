@@ -956,18 +956,20 @@
               (assoc :params (str (get keys nm)))))))
       ordered-names)))
 
+(defn- apropos-visible
+  "What `apropos` may answer from a corpus: the session's own `def`s — those are
+   what `defs()` lists — and underscore-private names are left out."
+  [es]
+  (into [] (remove #(or (= "local" (str (:kind %))) (str/starts-with? (str (:name %)) "_"))) es))
+
 (defn- apropos-rows
-  "The rows `apropos(pattern)` prints: the corpus filtered by the pattern, with
-   the session's own `def`s left out — those are what `defs()` lists."
+  "The rows `apropos(pattern)` prints: the visible corpus filtered by the pattern."
   [facts pattern]
-  (let [corpus (into [] (remove #(= "local" (str (:kind %)))) (sandbox-corpus facts))]
-    (into []
-          (comp (remove #(str/starts-with? (str (:name %)) "_"))
-                (map (fn [hit]
-                       {"name" (:name hit)
-                        "kind" (str (:kind hit "tool"))
-                        "body" (doc-corpus/body-text (:text hit))})))
-          (doc-corpus/search corpus (str pattern)))))
+  (mapv (fn [hit]
+          {"name" (:name hit)
+           "kind" (str (:kind hit "tool"))
+           "body" (doc-corpus/body-text (:text hit))})
+        (doc-corpus/search (apropos-visible (sandbox-corpus facts)) (str pattern))))
 
 (defn- doc-text
   "Resolve a corpus page first. Nil `live` asks whether guest prose is needed;
@@ -1000,16 +1002,18 @@
               (when (some? live) (if (str/blank? (str live)) page (str live)))
               :else page))
           (when (some? live)
-            (if (str/blank? (str live)) (doc-corpus/miss-text es target) (str live))))))))
+            (if (str/blank? (str live))
+              (doc-corpus/miss-text (apropos-visible es) target)
+              (str live))))))))
 
 (def ^:private introspection-doc
   "The pages of the two discovery verbs and the three runtime verbs beside them.
    They are installed by the ENGINE rather than the extension registry, so this
    is the only place their contract can come from."
   {'apropos
-   "apropos(pattern='') -> [AproposItem(type, name, body)]. REGULAR-EXPRESSION FILTER over every SYMBOL name this session can reach. The pattern is applied with Clojure `re-find`, so `numpy\\..*` finds NumPy members and an invalid expression is an error. Results preserve corpus order and are never ranked or capped. With no argument it lists every public symbol. `type` is function · class · module · tool · doc · skill; `name` is exactly what `doc()` reads; `body` is the opening of the symbol's own text. Printing lists compact `type name — body` rows; indexing, attributes, tuple unpacking and JSON retain all three fields. Pass a row directly to `doc(item)` for the whole document. Session-local `def`s are listed by `defs()`, not here."
+   "apropos(pattern='') -> [AproposItem(type, name, body)]. REGULAR-EXPRESSION FILTER over every SYMBOL name this session can reach, and over the outline of every documentation page and skill: its title, opening paragraph, section headings and the problems its `When to use` section lists. The pattern ignores case and is applied with Clojure `re-find` to each name and outline phrase separately, so `numpy\\..*` finds NumPy members, `context window` finds the page that explains it and an invalid expression is an error. A callable is found by its name alone, never by words in its docstring. Results preserve corpus order and are never ranked or capped. With no argument it lists every public symbol. `type` is function · class · module · tool · doc · skill; `name` is exactly what `doc()` reads; `body` is the opening of the symbol's own text. Printing lists compact `type name — body` rows; indexing, attributes, tuple unpacking and JSON retain all three fields. Pass a row directly to `doc(item)` for the whole document. Session-local `def`s are listed by `defs()`, not here."
    'doc
-   "doc(target) -> str. RETRIEVE one symbol whole: an `AproposItem` a search answered with, a function name, a Vis documentation slug or a skill name. Corpus names ignore case, surrounding whitespace and a trailing `.md`; a callable wins a name collision. Python live member names stay exact and case-sensitive. Authoritative corpus pages are returned without live lookup or imports. What comes back is what the target IS: a function's or class's own docstring, a module's, a whole documentation page, a whole `SKILL.md`. A target absent from the corpus, or a module without harvested documentation, falls back to the live object — `doc(\"pandas.read_csv\")` prints that member's signature and docstring and may import its module. `doc()` with no argument prints the curated index of the verbs a session starts from. A skill is one of these documents and nothing more: reading it is the whole of using it."
+   "doc(target) -> str. RETRIEVE one symbol whole: an `AproposItem` a search answered with, a function name, a Vis documentation slug or a skill name. Corpus names ignore case, surrounding whitespace and a trailing `.md`; a callable wins a name collision. Python live member names stay exact and case-sensitive. Authoritative corpus pages are returned without live lookup or imports. What comes back is what the target IS: a function's or class's own docstring, a module's, a whole documentation page, a whole `SKILL.md`. A target absent from the corpus, or a module without harvested documentation, falls back to the live object — `doc(\"pandas.read_csv\")` prints that member's signature and docstring and may import its module. When nothing carries the name, the answer lists the handles whose name or outline contains it. `doc()` with no argument prints the curated index of the verbs a session starts from. A skill is one of these documents and nothing more: reading it is the whole of using it."
    'gather
    "gather(*awaitables, return_exceptions=False) -> list. Run independent deferred tool calls/awaitables; results preserve input order. One list/tuple works; keep dependent calls sequential. Host batches use a bounded pool: all dispatched slots settle before failure reports every failing slot index. A failed await returns no partial list; successful calls may already have side effects, so do not replay an entire write batch. With `return_exceptions=True`, results and exception objects occupy their original slots; host slots run serially in this mode. For per-slot recovery, use `await gather(cat(path_a), cat(path_b), return_exceptions=True)`. Inspect each slot before retrying safe failed work."
    'defs

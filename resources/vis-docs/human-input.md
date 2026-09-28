@@ -1,8 +1,23 @@
 # Forms and user input
 
 Use a form when your extension needs someone to choose an option, enter a
-credential or confirm a step. `vis.ask` displays the form in the terminal or
-Companion app, waits for an answer and returns it to your Python code.
+password or token, or confirm a step. `vis.ask` displays the form in the terminal
+or Companion app, waits for an answer and returns it to your Python code.
+
+## When to use
+
+- **A tool is about to do something that needs a person's approval**, such as a
+  deployment. [Ask for confirmation](#ask-and-handle-cancellation) and stop if the
+  person cancels.
+- **The tool needs a token or one-time code that must not appear in the
+  conversation.** A `password` or `otp` field returns [a handle instead of the
+  value](#the-answer); only the handle is recorded or sent to the model.
+- **Only a person can make the choice**, such as which environment to deploy to.
+  Offer the options as [fields](#fields).
+- **The input must be valid before the tool continues.** Add
+  [validation](#validation) that refuses a bad value with a message.
+
+To show progress instead of asking a question, use a [live view](live-views.md).
 
 ## Before you start
 

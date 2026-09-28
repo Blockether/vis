@@ -1,9 +1,26 @@
 # Process jail and network policy
 
-The process jail lets you limit which files, environment variables and network
-connections are available to commands that Vis runs. It is optional and disabled
-by default. These limits apply to managed processes, not trusted extension code.
+The process jail lets you limit the permissions of commands that Vis runs: which
+files, environment variables and network connections are available to them. It
+is optional and disabled by default. These limits apply to managed processes, not
+trusted extension code.
 The [Python sandbox](python-sandbox.md) also has its own permission checks.
+
+## When to use
+
+- **The agent runs code you have not reviewed**, such as tests from an unfamiliar
+  repository. [Enable the jail](#enable-the-jail) so those commands do not run with
+  your full permissions.
+- **Commands must not read secrets such as `.env` files.** [Deny specific
+  files](#deny-specific-files) and [filter environment
+  variables](#environment-filtering).
+- **Commands may reach only the hosts you approve, or may only read from them.** Set
+  [network egress](#network-egress) rules, down to [method, path and
+  port](#method-path-and-port-rules).
+- **A development server inside the jail must accept connections.** Open [inbound
+  development ports](#inbound-development-ports).
+- **A command is blocked and you need to know why.** [Diagnose the effective
+  policy](#diagnose-the-effective-policy).
 
 ## Enable the jail
 

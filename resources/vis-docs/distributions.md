@@ -6,6 +6,25 @@ install `vis-agent`, which runs the engine and gateway, and `vis-tui`, the termi
 client that connects to it. The [desktop apps](#open-the-desktop-app) connect to
 the same gateway from Windows, macOS or Linux.
 
+## When to use
+
+- **You are installing Vis and must choose a build.** Compare [native and
+  JVM](#native-vs-jvm), then [install](#installing).
+- **You want to upgrade Vis to a newer release.** See [Updating and selecting a
+  track](#updating-and-selecting-a-track).
+- **A fix you need is only in a beta.** [Switch to that
+  version](#switching-between-versions), and back to the stable release afterwards.
+- **You develop Vis or need the latest code from `main`.** Use the `dev` track, or
+  [run on the JVM for one launch](#one-launch-jvm-override).
+- **The gateway runs a different version than your terminal after an update.** See
+  [How you learn that a newer version is
+  running](#how-you-learn-that-a-newer-version-is-running).
+- **You want the desktop app.** [Open the desktop app](#open-the-desktop-app) for
+  your platform and release track.
+
+To add Java or Clojure code inside the engine, see [Native builds for Java and
+Clojure extensions](jvm-native-image.md).
+
 ## Native vs JVM
 
 Choose native for everyday use. Choose JVM when developing Vis itself or
