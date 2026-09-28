@@ -370,6 +370,19 @@ describe('a pause is only as tall as the question it asks', () => {
     expect(boxes[0]).not.toContain('w-9');
   });
 
+  // Regression: a narrow field shrinks flex widths below 44px while a fixed
+  // 44px height leaves tall, thin digits. Each box must follow its own width.
+  it('keeps every code box square as the field column narrows', () => {
+    const boxes = markup('otp').match(/<input[^>]*aria-label="One-time code digit \d"[^>]*>/g) ?? [];
+    expect(boxes).toHaveLength(6);
+    for (const box of boxes) {
+      const classes = (/class="([^"]*)"/.exec(box)?.[1] ?? '').split(/\s+/);
+      expect(classes).toContain('aspect-square');
+      expect(classes).toContain('flex-1');
+      expect(classes).not.toContain('h-11');
+    }
+  });
+
   // Regression, user report (a 440pt iPhone photograph of the shipped sheet): the
   // bounded row was capped on the phone too, so the code stopped 24px short of the
   // field under it — justified against nothing.

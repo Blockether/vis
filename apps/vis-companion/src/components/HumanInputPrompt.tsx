@@ -748,7 +748,7 @@ function OtpBoxes({
             autoComplete={index === 0 ? 'one-time-code' : 'off'}
             aria-label={`${field.label} digit ${index + 1}`}
             value={digits[index] ?? ''}
-            className="h-11 min-w-8 max-w-11 flex-1 border border-edge bg-input text-center font-mono text-body tabular-nums text-white focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted"
+            className="aspect-square min-w-8 max-w-11 flex-1 border border-edge bg-input text-center font-mono text-body tabular-nums text-white focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted"
             onChange={(event) => fill(index, event.target.value)}
             onPaste={(event) => {
               event.preventDefault();
