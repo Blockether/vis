@@ -148,6 +148,24 @@ def test_accounting_scores_verified_timeouts_after_model_work(tmp_path):
     assert failed == {"unverified-timeout"}
 
 
+@pytest.mark.skipif(shutil.which("zstd") is None, reason="zstd executable required")
+def test_accounting_reads_model_work_from_archived_traces(tmp_path):
+    jobs = tmp_path / "jobs"
+    trial = jobs / "long" / "archived-timeout__abcd"
+    write_model_attempt(
+        trial,
+        {
+            "task_name": "terminal-bench/archived-timeout",
+            "finished_at": "2026-01-01T08:00:01Z",
+            "exception_info": {"exception_type": "AgentTimeoutError"},
+            "verifier_result": {"rewards": {"reward": 0.0}},
+        },
+    )
+    archive_batch_traces(jobs / "long")
+    assert not (trial / "agent/vis-trace.jsonl.gz").exists()
+    assert accounted_tasks(jobs)[0] == {"archived-timeout"}
+
+
 @pytest.mark.parametrize("name", ["completed", "live", "pending", "unknown"])
 def test_retry_task_refuses_unaccounted_completed_or_active_trials(
     tmp_path, monkeypatch, capsys, name

@@ -8,7 +8,10 @@ import shutil
 import subprocess
 import sys
 import tomllib
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import IO
 
 from archive_traces import archive_trace
 from capture_trace import capture
@@ -56,14 +59,38 @@ def has_vis_result(result: dict) -> bool:
     return isinstance(vis, dict) and vis.get("model") == MODEL
 
 
+@contextmanager
+def trace_stream(path: Path) -> Iterator[IO[str]]:
+    """Stream raw, gzip or archived zstd traces, stopping zstd on early exit."""
+    if path.suffix != ".zst":
+        opener = gzip.open if path.suffix == ".gz" else open
+        with opener(path, "rt", encoding="utf-8") as stream:
+            yield stream
+        return
+    with subprocess.Popen(
+        ["zstd", "-dc", "--", str(path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+    ) as process:
+        try:
+            yield process.stdout
+        finally:
+            process.kill()
+
+
 def has_pinned_provider_call(trial: Path) -> bool:
     """Detect real model work in a failed trial with no final Vis result."""
-    for path in (trial / "agent/vis-trace.jsonl.gz", trial / "agent/vis-trace.jsonl"):
+    for path in (
+        trial / "agent/vis-trace.jsonl.gz",
+        trial / "agent/vis-trace.jsonl.zst",
+        trial / "agent/vis-trace.jsonl",
+    ):
         if not path.is_file():
             continue
-        opener = gzip.open if path.suffix == ".gz" else open
         try:
-            with opener(path, "rt", encoding="utf-8") as stream:
+            with trace_stream(path) as stream:
                 for line in stream:
                     if "provider-call" not in line:
                         continue
