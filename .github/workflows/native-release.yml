@@ -291,7 +291,6 @@ jobs:
         if: runner.os == 'Linux'
         env:
           VIS_NATIVE_BIN: ${{ matrix.bin }}
-          VIS_TEST_NATIVE_LINKER_DEBUG: "1"
         run: clojure -M:test-native --namespace com.blockether.vis.native-speech-startup-test
       - name: Test the native binaries
         shell: bash

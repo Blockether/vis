@@ -36,7 +36,6 @@
      (.putAll env (#'native/native-environment))
      (.putAll env environment)
      (.put env "HOME" (.getAbsolutePath home))
-     (when (System/getenv "VIS_TEST_NATIVE_LINKER_DEBUG") (.put env "LD_DEBUG" "libs,versions"))
      [(.start builder) log])))
 
 (defn- listening?
@@ -52,20 +51,6 @@
     (try (expect (.waitFor client timeout-secs TimeUnit/SECONDS) "native speech query timed out")
          (let [exit (.exitValue client)
                output (slurp log)
-               debug? (some? (System/getenv "VIS_TEST_NATIVE_LINKER_DEBUG"))
-               linker-details
-               (when (and debug? (not= 0 exit))
-                 (let [^File gateway-log (io/file home "gateway.log")]
-                   (->> (cond-> [output]
-                          (.isFile gateway-log)
-                          (conj (slurp gateway-log)))
-                        (mapcat str/split-lines)
-                        (filter
-                          #(re-find
-                             #"(?i)libonnxruntime|libsherpa-onnx|not found|symbol lookup|error:"
-                             %))
-                        (take-last 90)
-                        (str/join "\n"))))
                details (when (not= 0 exit)
                          (when-let [path (second (re-find #"See (\S+\.log) for details\." output))]
                            (let [^File file (io/file path)
@@ -80,14 +65,7 @@
                                          (take-last 50)
                                          (str/join "\n")))))))]
 
-           {:exit exit
-            :output (str (if debug?
-                           (->> (str/split-lines output)
-                                (remove #(re-find #"^\s*[0-9]+:\s+" %))
-                                (str/join "\n"))
-                           output)
-                         (when (seq linker-details) (str "\nLinker diagnostics:\n" linker-details))
-                         details)})
+           {:exit exit :output (str output details)})
          (finally (when (.isAlive client) (#'native/kill-tree! client))))))
 
 (defn- with-native-gateway

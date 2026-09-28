@@ -58,7 +58,7 @@
        ort-version
        "-sherpa-"
        sherpa-version
-       (if (contains? #{"linux-x64" "linux-aarch64"} token) "-abi1" "")))
+       (if (contains? #{"linux-x64" "linux-aarch64"} token) "-abi2" "")))
 
 (defn default-native-dir
   "Versioned path so upgrading either JNI package or Linux ABI cannot reuse an old library."

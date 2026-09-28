@@ -72,8 +72,8 @@
   (it "does not reuse an incompatible pre-fix Linux native cache"
       (doseq [token ["linux-x64" "linux-aarch64"]]
         (expect (str/includes? (runtime/default-native-dir token)
-                               (str "sherpa-" runtime/sherpa-version "-abi1"))))
-      (expect (not (str/includes? (runtime/default-native-dir "osx-aarch64") "-abi1"))))
+                               (str "sherpa-" runtime/sherpa-version "-abi2"))))
+      (expect (not (str/includes? (runtime/default-native-dir "osx-aarch64") "-abi2"))))
   (it "preserves upstream loading on platforms without a shared native release"
       (let [old-path (System/getProperty runtime/ort-native-path-property)]
         (with-redefs [runtime/platform-token (constantly "osx-x64")]

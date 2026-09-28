@@ -151,6 +151,21 @@
       (ByteArrayInputStream. (compatible-linux-jni! token (.readAllBytes in) patch)))
     stream))
 
+(defn- install-embedded-jni!
+  [token dir]
+  (let [name
+        (second (library-names))
+
+        resource
+        (str "sherpa-onnx/native/" token "/" name)
+
+        url
+        (or (io/resource resource)
+            (throw (ex-info "Sherpa's embedded JNI resource is missing"
+                            {:type :speech/native-incomplete :resource resource})))]
+
+    (runtime/install-stream! dir name (shared-jni-stream token (io/input-stream url)))))
+
 (defn- install!
   "Download the platform jar; on shared platforms extract only Sherpa's JNI."
   [token dir shared?]
@@ -209,10 +224,7 @@
 
                     (when-not (installed? dir)
                       (if embedded
-                        (runtime/install-resource! dir
-                                                   (second (library-names))
-                                                   (str "sherpa-onnx/native/" token
-                                                        "/" (second (library-names))))
+                        (install-embedded-jni! token dir)
                         (do (notifications/notify!
                               (str "Downloading sherpa-onnx " version " JNI library (" token ")...")
                               :level :info

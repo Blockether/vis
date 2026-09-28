@@ -11,7 +11,10 @@
   (:import [ai.onnxruntime OrtEnvironment]
            [com.blockether.vis.internal.speech.tts GenerationCallback]
            [com.k2fsa.sherpa.onnx VersionInfo]
+           [java.io File OutputStream]
            [java.nio.charset StandardCharsets]
+           [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]
            [java.security MessageDigest]
            [java.util Arrays HexFormat]
            [java.util.jar JarEntry JarFile]))
@@ -55,53 +58,97 @@
 
 ;; Regression: Linux x64 run 36358782219 linked Sherpa v1.13.8 against ORT 1.30
 ;; and failed because its sole versioned import was OrtGetApiBase@VERS_1.28.2.
+(defn- synthetic-linux-jni
+  "Small pinned version-reference fixture for both Linux staging paths."
+  []
+  (let [^bytes original
+        (byte-array 48)
+
+        old-version
+        (.getBytes "VERS_1.28.2" StandardCharsets/US_ASCII)
+
+        new-version
+        (.getBytes "VERS_1.30.0" StandardCharsets/US_ASCII)
+
+        old-hash
+        (byte-array (map unchecked-byte [0x82 0xfe 0x7b 0x02]))
+
+        new-hash
+        (byte-array (map unchecked-byte [0x80 0xc6 0x7b 0x02]))]
+
+    (System/arraycopy old-version 0 original 4 (alength old-version))
+    (System/arraycopy old-hash 0 original 32 (alength old-hash))
+    (let [^bytes expected (aclone original)]
+      (System/arraycopy new-version 0 expected 4 (alength new-version))
+      (System/arraycopy new-hash 0 expected 32 (alength new-hash))
+      {:original original
+       :expected expected
+       :compat {:sha256 (.formatHex (HexFormat/of)
+                                    (.digest (MessageDigest/getInstance "SHA-256") original))
+                :version-offset 4
+                :hash-offset 32}})))
+
 (defdescribe
   linux-ort-symbol-patch-test
-  (it
-    "changes only the pinned symbol version and its GNU ELF hash"
-    (let [^bytes original
-          (byte-array 48)
-
-          old-version
-          (.getBytes "VERS_1.28.2" StandardCharsets/US_ASCII)
-
-          new-version
-          (.getBytes "VERS_1.30.0" StandardCharsets/US_ASCII)
-
-          old-hash
-          (byte-array (map unchecked-byte [0x82 0xfe 0x7b 0x02]))
-
-          new-hash
-          (byte-array (map unchecked-byte [0x80 0xc6 0x7b 0x02]))]
-
-      (System/arraycopy old-version 0 original 4 (alength old-version))
-      (System/arraycopy old-hash 0 original 32 (alength old-hash))
-      (let [compat
-            {:sha256 (.formatHex (HexFormat/of)
-                                 (.digest (MessageDigest/getInstance "SHA-256") original))
-             :version-offset 4
-             :hash-offset 32}
+  (it "changes only the pinned symbol version and its GNU ELF hash"
+      (let [{:keys [original expected compat]}
+            (synthetic-linux-jni)
 
             ^bytes actual
-            (aclone original)
-
-            ^bytes expected
-            (aclone original)
+            (aclone ^bytes original)
 
             ^bytes changed
-            (aclone original)]
+            (aclone ^bytes original)]
 
-        (System/arraycopy new-version 0 expected 4 (alength new-version))
-        (System/arraycopy new-hash 0 expected 32 (alength new-hash))
         (expect (identical? actual (#'sherpa/compatible-linux-jni! "linux-x64" actual compat)))
-        (expect (Arrays/equals expected actual))
+        (expect (Arrays/equals ^bytes expected actual))
         (aset-byte changed 40 (unchecked-byte 1))
         (let [^bytes unchanged (aclone changed)]
           (expect (= :speech/native-incompatible
                      (try (#'sherpa/compatible-linux-jni! "linux-x64" changed compat)
                           nil
                           (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
-          (expect (Arrays/equals unchanged changed)))))))
+          (expect (Arrays/equals unchanged changed)))))
+  (it "patches the native image's embedded Linux JNI before staging it"
+      ;; Regression: Linux ARM64 native run 36363290772 embedded the unpatched JNI.
+      (let [{:keys [original expected compat]}
+            (synthetic-linux-jni)
+
+            ^File upstream
+            (File/createTempFile "vis-sherpa-embedded-" ".so")
+
+            ^File dir
+            (.toFile (Files/createTempDirectory "vis-sherpa-staging-" (make-array FileAttribute 0)))
+
+            lib
+            (second (sherpa/library-names))
+
+            resource
+            (str "sherpa-onnx/native/linux-x64/" lib)
+
+            ^File staged
+            (io/file dir lib)
+
+            previous
+            (System/getProperty sherpa/native-path-property)]
+
+        (try (with-open [^OutputStream out (io/output-stream upstream)]
+               (.write out ^bytes original))
+             (with-redefs-fn {#'sherpa/linux-ort-symbol-patches {"linux-x64" compat}
+                              #'sherpa/installed? (constantly false)
+                              #'sherpa/embedded? (constantly true)
+                              #'runtime/ensure-ort! (constantly {:dir (.getAbsolutePath dir)})
+                              #'io/resource (fn [name]
+                                              (when (= resource name) (.toURL (.toURI upstream))))}
+               (fn []
+                 (expect (= :embedded (:source (#'sherpa/provision! "linux-x64"))))))
+             (expect (Arrays/equals ^bytes expected (Files/readAllBytes (.toPath staged))))
+             (finally (if previous
+                        (System/setProperty sherpa/native-path-property previous)
+                        (System/clearProperty sherpa/native-path-property))
+                      (.delete staged)
+                      (.delete dir)
+                      (.delete upstream))))))
 
 (defdescribe
   ensure-native-test
@@ -150,17 +197,14 @@
                            runtime/ensure-ort!
                            (constantly {:source :property :dir chosen})
 
-                           runtime/install-resource!
-                           (fn [dir name resource]
-                             (swap! staged conj [dir name resource]))]
+                           sherpa/install-embedded-jni!
+                           (fn [token dir]
+                             (swap! staged conj [token dir]))]
 
                (let [answer (#'sherpa/provision! (sherpa/platform-token))]
                  (expect (= chosen (:dir answer)))
                  (expect (= chosen (System/getProperty sherpa/native-path-property)))
-                 (expect (= [[chosen (second (sherpa/library-names))
-                              (str "sherpa-onnx/native/" (sherpa/platform-token)
-                                   "/" (second (sherpa/library-names)))]]
-                            @staged))))
+                 (expect (= [[(sherpa/platform-token) chosen]] @staged))))
              (finally (if previous-ort
                         (System/setProperty runtime/ort-native-path-property previous-ort)
                         (System/clearProperty runtime/ort-native-path-property))
