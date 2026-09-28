@@ -109,6 +109,23 @@
               (swap! display-cache assoc k {:v v :at now})
               v)))))))
 
+;; ── Route commands ──────────────────────────────────────────────────────────
+;; A manual pick is composer state: the gateway snapshots it when a turn is SUBMITTED, so
+;; a pick made while a turn runs waits for the next turn. A writer with a `reason` (agent
+;; routing, the engine's authentication rescue) also issues a ROUTE COMMAND, which a
+;; running turn follows at its next model request. Each command carries a fresh `:seq`,
+;; so repeating an earlier route still reads as a new command.
+
+(defonce ^:private route-commands
+  ;; sid-string -> {:provider :model :reason :seq}
+  (atom {}))
+
+(defn route-command
+  "The latest route command for session `sid` as `{:provider :model :reason :seq}`, or nil
+   when no agent or engine writer routed it. A manual pick never issues one."
+  [sid]
+  (when sid (get @route-commands (str sid))))
+
 ;; ── Change listeners ────────────────────────────────────────────────────────
 ;; The store is shared, but every attached surface keeps its OWN display copy (the
 ;; TUI footer chip, the companion header, the web rail). A pick set by the ENGINE —
@@ -156,10 +173,12 @@
    `sid`. Takes effect IMMEDIATELY for reads; the DB write is debounced so
    rapid cycling coalesces to one write. Returns `{:provider :model}` (or nil).
 
-   `reason` names why a writer that is NOT the human moved the pick (the engine's
-   `:authentication-fallback` rescue); it rides the broadcast so a surface can say
-   why the chip changed under the user's hands. nil for a manual pick. An
-   idempotent write neither schedules storage nor announces a change."
+   `reason` names why a writer that is NOT the human moved the pick (agent routing,
+   the engine's `:authentication-fallback` rescue); it rides the broadcast so a surface
+   can say why the chip changed under the user's hands, and it issues a [[route-command]]
+   that a running turn follows at its next model request. nil for a manual pick, which
+   waits for the next turn. An idempotent write neither schedules storage nor announces
+   a change; a reason still issues its command."
   ([db-info sid provider model] (set-model! db-info sid provider model nil))
   ([db-info sid provider model reason]
    (when (and db-info sid)
@@ -184,7 +203,12 @@
            k
            (str sid)]
 
-       (when (nil? reason) (persistance/db-lock-routing! db-info sid (boolean model)))
+       (if (nil? reason)
+         (persistance/db-lock-routing! db-info sid (boolean model))
+         (swap! route-commands update
+           k
+           (fn [previous]
+             {:provider provider :model model :reason reason :seq (inc (long (:seq previous 0)))})))
        (if (= before result)
          result
          (do (swap! pending assoc k {:db-info db-info :provider provider :model model})

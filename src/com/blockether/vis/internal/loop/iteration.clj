@@ -2304,8 +2304,11 @@
         summaries-at-turn-start
         (transcript/current-session-summaries environment)
 
-        routing-pref-at-turn-start
-        (session-model/model-of (:db-info environment) (:session-id environment))
+        ;; A running turn keeps the route it was submitted with: a manual pick waits for
+        ;; the next turn. Only a route command issued after this point (agent routing,
+        ;; the authentication rescue) moves it, at the next model request.
+        route-command-at-turn-start
+        (session-model/route-command (:session-id environment))
 
         resumed-message-base
         (transcript/resumable-prompt-message-base (transcript/load-prompt-cache-state
@@ -2409,8 +2412,8 @@
      :on-chunk on-chunk
      :prompt-cache-status-atom prompt-cache-status-atom
      :reasoning-effort reasoning-effort
+     :route-command-at-turn-start route-command-at-turn-start
      :routing routing
-     :routing-pref-at-turn-start routing-pref-at-turn-start
      :session-turn-id session-turn-id
      :stable-prompt-messages stable-prompt-messages
      :standing-ctx-atom standing-ctx-atom
@@ -2510,10 +2513,10 @@
   "Plans the iteration's request: the route, the model and reasoning level, the
    provider extra body and the context budget."
   [{:keys [base-reasoning-level environment extra-body has-reasoning? llm-provider
-           max-context-tokens routing routing-pref-at-turn-start trailer-iters user-request]
+           max-context-tokens route-command-at-turn-start routing trailer-iters user-request]
     :as state}]
   (let [route-change
-        (agents/routing-change environment routing-pref-at-turn-start)
+        (agents/routing-change environment route-command-at-turn-start)
 
         environment
         (if route-change
@@ -2763,7 +2766,7 @@
            emit-hook! environment install-projection! iteration iteration-extra-body
            max-context-tokens message-base-atom message-token-counter on-chunk pre-resolved-model
            provider-output-started? provider-replay-unsafe? reasoning-effort reasoning-level
-           replay-target request-budget-atom route-change routing routing-pref-at-turn-start
+           replay-target request-budget-atom route-change route-command-at-turn-start routing
            session-turn-id summaries trailer-iters user-request]
     :as state}]
   (let [resolved-model
@@ -2779,8 +2782,8 @@
         iteration-routing
         (atom effective-routing)
 
-        applied-routing-preference
-        (atom (if route-change (:preference route-change) routing-pref-at-turn-start))
+        applied-route-command
+        (atom (if route-change (:command route-change) route-command-at-turn-start))
 
         iteration-result
         ;; Per-iteration request attempts. `next-attempt` spends each
@@ -2798,7 +2801,7 @@
               ;; in-flight env captured the pre-refresh router).
               (fn [{:keys [retries env] current-extra-body :extra-body}]
                 (let [route-change
-                      (agents/routing-change env @applied-routing-preference)
+                      (agents/routing-change env @applied-route-command)
 
                       attempt-routing
                       (if route-change
@@ -2826,8 +2829,7 @@
                               #(agents/restrict-router env %))
 
                       _
-                      (when route-change
-                        (reset! applied-routing-preference (:preference route-change)))
+                      (when route-change (reset! applied-route-command (:command route-change)))
 
                       _
                       (reset! iteration-routing attempt-routing)

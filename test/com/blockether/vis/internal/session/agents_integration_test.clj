@@ -50,6 +50,11 @@
   {:stop-reason :tool-calls
    :tool-calls [{:id "agent-boundary" :name "python_execution" :input {:code code}}]})
 
+(defn- requested-model
+  "The model one provider request asks for: its forced route, else the router root."
+  [request-router opts]
+  (or (get-in opts [:routing :model]) (get-in request-router [:providers 0 :root])))
+
 (defn- child-environment
   [parent checkpoint budget allowed]
   (let [db
@@ -222,6 +227,110 @@
            (expect (= ["small" "large" "small"] @calls))
            (expect (= "small" (get-in shared [:providers 0 :root])))
            (finally (loop-env/dispose-environment! env))))))
+
+;; Regression: a model picked in the app or the TUI while a turn was running re-routed
+;; that turn from its very next iteration. The picker is composer state: the running turn
+;; keeps the route it started with, and the pick takes effect on the next turn. The cases
+;; call `turn!`, the production entry that pins each turn's route when the turn starts.
+(defdescribe
+  manual-pick-waits-for-the-next-turn-test
+  "A model picked during a turn changes the next turn, never the running one."
+  (it "keeps the running turn on its route and moves the next turn"
+      (let [shared
+            (router)
+
+            env
+            (loop-env/create-environment shared {:db :memory})
+
+            calls
+            (atom [])]
+
+        (try
+          (with-redefs [loop-router/get-router
+                        (constantly shared)
+
+                        svar/ask-code!
+                        (fn [request-router opts]
+                          (swap! calls conj (requested-model request-router opts))
+                          (if (= 1 (count @calls))
+                            (do
+                              (smodel/set-model! (:db-info env) (:session-id env) "fixture" "large")
+                              (code-response "print('Picker changed')"))
+                            {:stop-reason :end :content "Turn result"}))]
+
+            (turn/turn! env [(svar/user "Finish on the route this turn started with")] {})
+            (turn/turn! env [(svar/user "Start on the newly picked route")] {}))
+          (expect (= ["small" "small" "large"] @calls))
+          (finally (loop-env/dispose-environment! env)))))
+  (it "keeps a retry on the running turn's route"
+      (let [shared
+            (router)
+
+            env
+            (loop-env/create-environment shared {:db :memory})
+
+            calls
+            (atom [])]
+
+        (try
+          (with-redefs [iteration/MAX_MAX_TOKENS_EXCEEDED_RETRIES
+                        1
+
+                        loop-router/get-router
+                        (constantly shared)
+
+                        svar/ask-code!
+                        (fn [request-router opts]
+                          (swap! calls conj (requested-model request-router opts))
+                          (if (= 1 (count @calls))
+                            (do
+                              (smodel/set-model! (:db-info env) (:session-id env) "fixture" "large")
+                              (throw (ex-info "Reasoning exhausted the output budget"
+                                              {:type :svar.llm/max-tokens-exceeded
+                                               :output-tokens 32})))
+                            {:stop-reason :end :content "Turn result"}))]
+
+            (turn/turn! env [(svar/user "Retry on the route this turn started with")] {})
+            (turn/turn! env [(svar/user "Start on the newly picked route")] {}))
+          (expect (= ["small" "small" "large"] @calls))
+          (finally (loop-env/dispose-environment! env)))))
+  (it
+    "applies an agent route at the next request and a later manual pick at the next turn"
+    (let [shared
+          (router)
+
+          env
+          (loop-env/create-environment shared {:db :memory})
+
+          calls
+          (atom [])]
+
+      (try
+        (with-redefs [loop-router/get-router
+                      (constantly shared)
+
+                      svar/ask-code!
+                      (fn [request-router opts]
+                        (swap! calls conj (requested-model request-router opts))
+                        (case (count @calls)
+                          1
+                          (do (smodel/set-model! (:db-info env)
+                                                 (:session-id env)
+                                                 "fixture"
+                                                 "large"
+                                                 :agent-routing)
+                              (code-response "print('Agent routed')"))
+
+                          2
+                          (do (smodel/set-model! (:db-info env) (:session-id env) "fixture" "small")
+                              (code-response "print('Picker changed')"))
+
+                          {:stop-reason :end :content "Turn result"}))]
+
+          (turn/turn! env [(svar/user "Follow the agent route inside this turn")] {})
+          (turn/turn! env [(svar/user "Start on the newly picked route")] {}))
+        (expect (= ["small" "large" "large" "small"] @calls))
+        (finally (loop-env/dispose-environment! env))))))
 
 (defdescribe
   registered-python-agent-bindings-reach-host-test

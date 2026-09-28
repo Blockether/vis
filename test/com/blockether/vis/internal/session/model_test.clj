@@ -5,8 +5,8 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- with-quiet-store
-  "Run `f` with the debounced DB write stubbed out and the pending queue emptied after,
-   so a unit test can drive `set-model!` without a database or a late flush."
+  "Run `f` with the debounced DB write stubbed out and the pending queue and route commands
+   emptied after, so a unit test can drive `set-model!` without a database or a late flush."
   [f]
   (with-redefs [persistance/db-get-session-model-pref
                 (fn [& _]
@@ -16,7 +16,7 @@
                 (fn [& _]
                   nil)]
 
-    (try (f) (finally (reset! @#'smodel/pending {})))))
+    (try (f) (finally (reset! @#'smodel/pending {}) (reset! @#'smodel/route-commands {})))))
 
 (defn- capturing
   "Register a listener that records `[sid pick]`, run `f`, then deregister it and answer
@@ -81,3 +81,33 @@
         (smodel/remove-model-listener! listener)
         (with-quiet-store #(smodel/set-model! :db "sess-1" "openai" "gpt-5"))
         (expect (= [] @seen)))))
+
+;; Regression: a model picked while a turn ran re-routed that turn from its next iteration.
+;; A manual pick is composer state for the next turn; only an agent or engine writer issues
+;; a route command that the running turn follows.
+(defdescribe
+  route-command-test
+  "Only a writer with a reason issues a route command for the running turn."
+  (it "issues no command for a manual pick"
+      (with-quiet-store #(do (smodel/set-model! :db "sess-1" "openai" "gpt-5")
+                             (expect (nil? (smodel/route-command "sess-1"))))))
+  (it "issues a command for agent routing and the authentication rescue"
+      (with-quiet-store
+        #(do (smodel/set-model! :db "sess-1" "openai" "gpt-5" :agent-routing)
+             (expect (= {:provider "openai" :model "gpt-5" :reason :agent-routing :seq 1}
+                        (smodel/route-command "sess-1")))
+             (smodel/set-model! :db "sess-1" "openai" "gpt-5.4" :authentication-fallback)
+             (expect (=
+                       {:provider "openai" :model "gpt-5.4" :reason :authentication-fallback :seq 2}
+                       (smodel/route-command "sess-1"))))))
+  (it "keeps the last command when a manual pick follows it"
+      (with-quiet-store #(do (smodel/set-model! :db "sess-1" "openai" "gpt-5" :agent-routing)
+                             (smodel/set-model! :db "sess-1" "anthropic" "claude-opus-4-5")
+                             (expect
+                               (= {:provider "openai" :model "gpt-5" :reason :agent-routing :seq 1}
+                                  (smodel/route-command "sess-1"))))))
+  (it "numbers a repeated route as a new command"
+      ;; The pick is unchanged, but the agent asked again: the running turn must follow it.
+      (with-quiet-store #(do (smodel/set-model! :db "sess-1" "openai" "gpt-5" :agent-routing)
+                             (smodel/set-model! :db "sess-1" "openai" "gpt-5" :agent-routing)
+                             (expect (= 2 (:seq (smodel/route-command "sess-1"))))))))

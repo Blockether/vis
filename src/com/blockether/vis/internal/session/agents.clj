@@ -252,9 +252,14 @@
      [#'route 'council.route ["model"] ["provider" "session_id"]]]))
 
 (defn routing-change
+  "The route command issued for this session since `before`, as
+   `{:preference {:provider :model} :command command}`, or nil. Agent routing and the
+   engine's authentication rescue issue commands; a manual pick is composer state that
+   the next submitted turn snapshots, so it never re-routes a running turn."
   [env before]
-  (let [pref (smodel/model-of (:db-info env) (:session-id env))]
-    (when (not= pref before) {:preference pref})))
+  (let [command (smodel/route-command (:session-id env))]
+    (when (and command (not= command before))
+      {:preference (select-keys command [:provider :model]) :command command})))
 
 (defn restrict-router
   "Apply an inherited allowlist to every request and retry, including automatic fallback."
