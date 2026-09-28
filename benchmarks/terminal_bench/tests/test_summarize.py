@@ -139,6 +139,69 @@ def test_report_keeps_exceptions_out_of_reward_mean(tmp_path):
     assert "private" not in json.dumps(report)
 
 
+def test_report_scores_each_task_by_latest_verified_model_attempt(tmp_path):
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    jobs = tmp_path / "jobs"
+    provider_call = json.dumps(
+        {
+            "event": "trace-chunk",
+            "payload": {
+                "phase": "provider-call",
+                "provider": "zai-coding-plan",
+                "model": "glm-5.3-flash",
+            },
+        }
+    )
+    vis = {"metadata": {"vis": {"model": "zai-coding-plan/glm-5.3-flash"}}}
+    timeout = {"metadata": None}
+    for job, task, finished, exception, agent, reward in (
+        ("first", "retried", "2026-01-01T01:00:00Z", None, vis, 0.0),
+        ("second", "retried", "2026-01-01T02:00:00Z", None, vis, 1.0),
+        (
+            "first",
+            "timed-out",
+            "2026-01-01T08:00:00Z",
+            "AgentTimeoutError",
+            timeout,
+            0.0,
+        ),
+        (
+            "first",
+            "killed",
+            "2026-01-01T03:00:00Z",
+            "NonZeroAgentExitCodeError",
+            timeout,
+            None,
+        ),
+        ("first", "setup", "2026-01-01T00:10:00Z", "SetupError", None, None),
+    ):
+        trial = jobs / job / f"{task}__abcd"
+        (trial / "agent").mkdir(parents=True)
+        (trial / "result.json").write_text(
+            json.dumps(
+                {
+                    "task_name": f"terminal-bench/{task}",
+                    "finished_at": finished,
+                    "exception_info": {"exception_type": exception}
+                    if exception
+                    else None,
+                    "agent_result": agent,
+                    "verifier_result": None
+                    if reward is None
+                    else {"rewards": {"reward": reward}},
+                }
+            )
+        )
+        if task != "setup":
+            (trial / "agent/vis-trace.jsonl").write_text(provider_call + "\n")
+    report = make_report(jobs, dataset)
+    assert report["solved_tasks"] == ["retried"]
+    assert report["scored_tasks"] == 2
+    assert report["task_pass_rate"] == 0.5
+    assert report["unscored_model_tasks"] == ["killed"]
+
+
 def test_compressed_trace_and_invalid_line(tmp_path):
     path = tmp_path / "vis-trace.jsonl.gz"
     with gzip.open(path, "wt") as stream:

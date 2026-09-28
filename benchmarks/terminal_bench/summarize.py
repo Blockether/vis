@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from capture_trace import redact_value
+from run_suite import has_pinned_provider_call, has_vis_result, is_scored_attempt
 
 
 def elapsed_seconds(start: str | None, end: str | None) -> float | None:
@@ -182,6 +183,10 @@ def trial_summary(result_path: Path, root: Path) -> dict:
         "trial": result.get("trial_name"),
         "status": status,
         "exception_type": exception.get("exception_type") if exception else None,
+        "finished_at": finished,
+        "model_attempt": has_vis_result(result)
+        or has_pinned_provider_call(result_path.parent),
+        "scored": bool(finished) and is_scored_attempt(result, result_path.parent),
         "result_path": relative(result_path, root),
         "trace": trace_summary(result_path.parent / "agent/vis-trace.jsonl", root),
         "model": metadata.get("model"),
@@ -234,6 +239,23 @@ def make_report(jobs_dir: Path, dataset_dir: Path) -> dict:
         for trial in verified
         if isinstance(trial["reward"], (int, float))
     ]
+    # Score each task once, by its latest verified model attempt.
+    scored = {}
+    for trial in sorted(
+        (
+            trial
+            for trial in trials
+            if trial["scored"] and isinstance(trial["task"], str)
+        ),
+        key=lambda trial: trial["finished_at"],
+    ):
+        scored[trial["task"].removeprefix("terminal-bench/")] = trial
+    model_tasks = {
+        trial["task"].removeprefix("terminal-bench/")
+        for trial in trials
+        if trial["model_attempt"] and isinstance(trial["task"], str)
+    }
+    solved = sorted(name for name, trial in scored.items() if trial["reward"] == 1)
     return redact_value(
         {
             "dataset": "terminal-bench/terminal-bench@4.0.0",
@@ -248,6 +270,10 @@ def make_report(jobs_dir: Path, dataset_dir: Path) -> dict:
                 trial["status"] == "exception" for trial in trials
             ),
             "mean_verified_reward": sum(rewards) / len(rewards) if rewards else None,
+            "scored_tasks": len(scored),
+            "solved_tasks": solved,
+            "task_pass_rate": len(solved) / len(scored) if scored else None,
+            "unscored_model_tasks": sorted(model_tasks - set(scored)),
             "trials": trials,
         }
     )
