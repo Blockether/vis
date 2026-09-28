@@ -286,6 +286,12 @@ jobs:
           bin/verify-linux-abi target/tui-release-bundle
           target/tui-release-bundle/vis-tui --version
           target/tui-release-bundle/vis-tui --help >/dev/null
+      # Catch a native JNI link failure before running the slower full image suite.
+      - name: Smoke-test shared ONNX Runtime (native Linux)
+        if: runner.os == 'Linux'
+        env:
+          VIS_NATIVE_BIN: ${{ matrix.bin }}
+        run: clojure -M:test-native --namespace com.blockether.vis.native-speech-startup-test
       - name: Test the native binaries
         shell: bash
         env:

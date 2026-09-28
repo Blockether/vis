@@ -49,7 +49,23 @@
   [home binary args timeout-secs]
   (let [[^Process client log] (start-native! home binary "client" args)]
     (try (expect (.waitFor client timeout-secs TimeUnit/SECONDS) "native speech query timed out")
-         {:exit (.exitValue client) :output (slurp log)}
+         (let [exit (.exitValue client)
+               output (slurp log)
+               details (when (not= 0 exit)
+                         (when-let [path (second (re-find #"See (\S+\.log) for details\." output))]
+                           (let [^File file (io/file path)
+                                 ^File logs (io/file home ".vis/logs")]
+
+                             (when (and (.isFile file)
+                                        (str/starts-with? (.getCanonicalPath file)
+                                                          (str (.getCanonicalPath logs)
+                                                               File/separator)))
+                               (str "\n"
+                                    (->> (str/split-lines (slurp file))
+                                         (take-last 50)
+                                         (str/join "\n")))))))]
+
+           {:exit exit :output (str output details)})
          (finally (when (.isAlive client) (#'native/kill-tree! client))))))
 
 (defn- with-native-gateway
@@ -206,8 +222,7 @@
           (let [dir (io/file home
                              ".vis"
                              "native"
-                             (str "onnxruntime-" runtime/ort-version
-                                  "-sherpa-" runtime/sherpa-version)
+                             (runtime/native-cache-name (runtime/platform-token))
                              (runtime/platform-token))]
             (expect (= (set (runtime/library-names))
                        (set (map #(.getName ^File %) (.listFiles ^File dir))))

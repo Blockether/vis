@@ -51,18 +51,19 @@
 
      (str o "-" a))))
 
+(defn native-cache-name
+  "The compatible runtime and JNI cache name for this release platform."
+  [token]
+  (str "onnxruntime-"
+       ort-version
+       "-sherpa-"
+       sherpa-version
+       (if (contains? #{"linux-x64" "linux-aarch64"} token) "-abi1" "")))
+
 (defn default-native-dir
   "Versioned path so upgrading either JNI package or Linux ABI cannot reuse an old library."
   [token]
-  (str (io/file (System/getProperty "user.home")
-                ".vis"
-                "native"
-                (str "onnxruntime-"
-                     ort-version
-                     "-sherpa-"
-                     sherpa-version
-                     (if (contains? #{"linux-x64" "linux-aarch64"} token) "-abi1" ""))
-                token)))
+  (str (io/file (System/getProperty "user.home") ".vis" "native" (native-cache-name token) token)))
 
 (defn native-dir
   "The one path both JNI loaders use on a supported native release platform."
