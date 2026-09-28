@@ -9,10 +9,11 @@ The implementation uses the existing settings renderers and configuration owners
 Global → canonical project → organizational group → session. Each declaration can
 allow any nonempty subset of these scopes. Explicit false differs from inheritance.
 
-`scoped_policy.clj` applies the same hierarchy to access settings. Group and session
-values live in SQLite; project overrides use the hidden project configuration;
-global values use the machine store. Authored YAML is not rewritten. Providers,
-credentials and gateway administration remain global; device preferences stay local.
+`src/com/blockether/vis/internal/sandbox/scoped_policy.clj` applies the same
+hierarchy to access settings. Group and session values live in SQLite; project
+overrides use the hidden project configuration; global values use the machine
+store. Authored YAML is not rewritten. Providers, credentials and gateway
+administration remain global; device preferences stay local.
 
 Rejected alternatives: copying effective settings into new sessions or forks,
 using Council groups as settings scopes, sending cached client toggles with every
@@ -86,7 +87,8 @@ Companion and native-image suites. No paid model end-to-end calls are required.
 Acceptance criteria: affected tests, formatting, lint/reflection, documentation links,
 final diff review and native-image execution pass. Only task-owned files are committed.
 
-Unknowns: none. Implementation and verification are complete.
+Unknowns: none for the scoped implementation. Affected verification is complete;
+full-suite CI reports its result on the committed revision.
 
 ## Plan state
 
@@ -98,6 +100,11 @@ Unknowns: none. Implementation and verification are complete.
 - TUI: 539 tests passed; Clojure lint/reflection checks passed.
 - Final GraalVM CE native build passed; all four native SDK boundary tests passed.
 - Final Companion settings checks: 21 passed; typecheck and lint passed again.
-- Documentation/link and diff checks passed. The scoped commit delivers this plan
-  and implementation together; publication is recorded in the repository history.
+- Post-push CI exposed six fixture/layering regressions. All 20 reproducing tests
+  and 790 affected follow-up tests now pass; lint/reflection checks are clean.
+- The follow-up GraalVM CE build and all four native SDK boundary tests passed.
+- A full local JVM follow-up did not complete. It also exposed an ambient-provider
+  fixture dependency and order-dependent failures outside this scoped follow-up.
+- Documentation/link and diff checks passed. Publication and full-suite CI results
+  are recorded against the commits delivering this plan and implementation.
 - No product release or live gateway restart is part of this task.

@@ -12,7 +12,7 @@
             [com.blockether.vis.contract.toggle :as contract]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.scoped :as scoped]
-            [com.blockether.vis.internal.config.scoped-policy :as policy]
+            [com.blockether.vis.internal.sandbox.scoped-policy :as policy]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.persistance.core :as store]

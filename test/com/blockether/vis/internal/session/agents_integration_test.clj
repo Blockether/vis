@@ -15,21 +15,24 @@
             [com.blockether.vis.internal.session.model :as smodel]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
 
-(set-ns-context! [(around-each [f]
-                               (let [enabled?
-                                     (toggles/enabled? "subagents")
+(set-ns-context!
+  [(around-each
+     [f]
+     (let [enabled?
+           (toggles/enabled? "subagents")
 
-                                     registered?
-                                     (some #(= "foundation-core" (:ext/name %))
-                                           (extension/registered-extensions))]
+           registered?
+           (some #(= "foundation-core" (:ext/name %)) (extension/registered-extensions))]
 
-                                 (when-not registered? (foundation/register!))
-                                 (toggles/set-enabled! "subagents" true)
-                                 (try (f)
-                                      (finally (toggles/set-enabled! "subagents" enabled?)
-                                               (when-not registered?
-                                                 (extension/deregister-extension!
-                                                   "foundation-core"))))))])
+       (when-not registered? (foundation/register!))
+       (toggles/set-enabled! "subagents" true)
+       (try
+         ;; Session snapshots also need the fixture's explicit override.
+         (binding [toggles/*invocation-overrides* (assoc toggles/*invocation-overrides*
+                                                    "subagents" true)]
+           (f))
+         (finally (toggles/set-enabled! "subagents" enabled?)
+                  (when-not registered? (extension/deregister-extension! "foundation-core"))))))])
 
 (defn- router
   []

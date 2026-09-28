@@ -11,7 +11,7 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.config.scoped :as scoped]
-            [com.blockether.vis.internal.config.scoped-policy :as scoped-policy]
+            [com.blockether.vis.internal.sandbox.scoped-policy :as scoped-policy]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.extension.client :as client-extensions]

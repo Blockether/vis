@@ -5,6 +5,7 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.persistance.core :as ps]
+            [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.python.extensions :as pyx]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
@@ -85,7 +86,10 @@
         (.toFile (Files/createTempDirectory "vis-tools" (make-array FileAttribute 0)))
 
         store
-        (ps/db-create-connection! :memory)]
+        (ps/db-create-connection! :memory)
+
+        session-id
+        (h/store-session! store {:title "Tools"})]
 
     (try (spit (io/file dir "svc.py") svc-source)
          (spit (io/file dir "client.py") client-source)
@@ -99,7 +103,7 @@
 
            (expect (= 2 (:loaded result)))
            (binding [extension/*current-environment* {:db-info store
-                                                      :session-id "tools-session"
+                                                      :session-id session-id
                                                       :extensions (atom (vec (vals exts)))
                                                       :active-extensions (atom (vec (vals exts)))}]
              (f exts)))

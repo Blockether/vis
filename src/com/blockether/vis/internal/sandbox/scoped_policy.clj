@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.config.scoped-policy
+(ns com.blockether.vis.internal.sandbox.scoped-policy
   "Scoped access settings. Local policy can narrow, never expand, the host ceiling."
   (:require [charred.api :as json]
             [clojure.set :as set]
