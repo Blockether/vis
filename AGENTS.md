@@ -75,7 +75,7 @@ resolves that issue. Keep any other body text to the reason the diff cannot expl
 - One engine/package, organized by domain under `src/com/blockether/vis/internal/`; mirror tests
   under `test/`. Add to an existing owner rather than another flat namespace or extension jar.
   Registration order is the explicit vector in `resources/META-INF/vis/manifest.edn`, not classpath
-  discovery. `build.clj` derives native entrypoints from it.
+  discovery. `build.clj` AOT-compiles every namespace; the manifest drives registration at runtime.
 - Shared leaf primitives belong to `internal.util`; one-caller helpers stay local. Production outbound
   Clojure HTTP uses `babashka.http-client`. Do not introduce Clojure `declare`.
 - Clojure formatting uses `.zprint.edn` and the Vis formatter: one blank line between top-level forms,
@@ -135,7 +135,7 @@ Paths below are relative to this repository. Internal namespace paths begin at
 | Shims | `attach` and `ls` expose host functions; they do not replace Python packages. Python docstrings in `resources/vis-shims/` generate apropos resources; `apropos-resource-test/regenerate!` updates them. |
 | Contracts | `packages/vis-contract/resources/vis-contract/schema/` owns canonical JSON Schemas; Skjema validates portable shapes. Derive vocabulary and bounds from schemas, never paired catalogs. Callbacks, IO and mutable state remain local. |
 | Tool declarations | `extension/core.clj` and its mirrored test own description/result/params, requiredness and wire keys. |
-| Gateway transport | `gateway/wire.clj` defines snake_case wire keys, kebab-case engine keys and total JSON encoding. Use `wire/->wire` and `wire/json-str`; transport encoding failures can break event replay. |
+| Gateway transport | `packages/vis-contract/src/com/blockether/vis/contract/wire.clj` defines snake_case wire keys, kebab-case engine keys and total JSON encoding. Use `wire/->wire` and `wire/json-str`; transport encoding failures can break event replay. |
 | Config | `config/` owns merged configuration; toggle IDs are snake_case strings and reload from merged config. |
 | Docs | `resources/vis-docs/` serves both the site and `doc()`. `resources/META-INF/vis/apropos/docs.edn` is the catalog; `resources/vis-docs/site.edn` alone owns titles and navigation. The `docs/core.clj` namespace docstring defines the page contract that `docs-page-canon-test` enforces. |
 | Extension Center | The catalog lives in `apps/vis-docs/`, not `resources/vis-docs/`: `worker.js` owns `/extensions/` and `/api/*` over D1 (`schema.sql`), `web/render.js` renders catalog pages in both the Worker and the browser, and `web/style.css` adds catalog-only layout over the shared `resources/vis-docs/assets/theme.css`. The catalog is public-site-only; it is never a `doc()` page. |
@@ -164,8 +164,7 @@ Vis uses Lazytest, **not `clojure.test`** (which is silently undiscovered here):
 Use `lazytest.core/set-ns-context!` and `around-each` instead of `use-fixtures`.
 
 Run the affected namespaces in a clean JVM with `clojure -M:test`, optionally
-`--namespace my.ns-test` or `--var my.ns-test/my-test`. ClojureScript tests belong
-to the project's shadow-cljs build; inspect printed counts, not just its exit code.
+`--namespace my.ns-test` or `--var my.ns-test/my-test`.
 
 Passing JVM tests or a successful native build do not prove the binary runs. Interop changes need the relevant
 `test-native/` coverage against the built image (`-M:test-native`); reachability metadata lives inside
@@ -200,4 +199,7 @@ tag. Tag, version and current main must agree. Never move published tags; publis
 App-only rebuilds keep the version and use the git commit count as build number. Choose either
 `npm run release:ios:store` / `release:android:store`, or `npm run release:mobile`; only the latter
 creates `companion-v<version>-build.<N>`. Never hand-tag it or submit the same build both ways.
-`CHANGELOG.md` is hand-authored; CI writes the release notes section.
+
+The root `CHANGELOG.md` is hand-authored: each product release commit adds its dated
+`## [vX.Y.Z] - YYYY-MM-DD` section. CI does not edit it; the release workflow drafts the GitHub
+Release with generated notes.
