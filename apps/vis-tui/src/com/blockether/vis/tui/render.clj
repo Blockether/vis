@@ -9104,13 +9104,20 @@
   ([answer bubble-w opts] (:text (format-answer-markdown-data answer bubble-w opts))))
 
 (defn format-council-request-data
-  "Council requests preview four wrapped rows and use the ordinary per-turn disclosure controls."
+  "Council requests use the user-prose layout, preview four rows and keep per-turn disclosure controls."
   [text bubble-w {:keys [session-id session-turn-id detail-expansions]}]
   (let [content-w
         (max 10 (- (long bubble-w) 4))
 
+        ;; Keep source newlines literal; only soft wraps use Justice and the shared justifier.
         lines
-        (vec (mapcat #(wrap-text % content-w) (str/split (or text "") #"\n" -1)))
+        (vec (mapcat (fn [line]
+                       (if (str/blank? line)
+                         [{:line "" :meta nil}]
+                         (layout/ast->entries [:ast [:p line]]
+                                              content-w
+                                              {:mode :channel :full-justify? true})))
+                     (str/split (or text "") #"\n" -1)))
 
         collapsible?
         (> (count lines) 4)
@@ -9122,9 +9129,7 @@
         (detail-expanded? detail-expansions session-id node-id false)
 
         body
-        (mapv (fn [line]
-                {:line line :meta nil})
-              (if (and collapsible? (not expanded?)) (subvec lines 0 4) lines))
+        (if (and collapsible? (not expanded?)) (subvec lines 0 4) lines)
 
         control
         (when collapsible?

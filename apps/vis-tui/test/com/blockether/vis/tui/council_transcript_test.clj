@@ -3,6 +3,7 @@
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.interactions :as interactions]
+            [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.virtual :as virtual]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
@@ -88,6 +89,75 @@
                     (= (:node-id control) (:node-id (.lookup interactions/hit-map 3 row))))
                   (range 12))
             "The existing mouse and keyboard disclosure map can open the request")))))
+
+(deftest council-prose-uses-justice-layout
+  (let [prose
+        (str "A quiet paragraph can become much more comfortable when its lines share "
+             "a reasonably even rhythm of spaces instead of alternating between very tight "
+             "and very loose arrangements.")
+
+        message
+        {:role :user :request-kind :council :text prose :session-turn-id "council-turn"}
+
+        opts
+        {:session-id "session" :detail-expansions {}}
+
+        collapsed
+        (virtual/project-message message 28 {} opts)
+
+        control
+        (last (:line-meta collapsed))
+
+        expanded
+        (virtual/project-message message
+                                 28
+                                 {}
+                                 (assoc opts
+                                   :detail-expansions {["session" (:node-id control)] true}))
+
+        lines
+        (vec (butlast (:prewrapped-lines expanded)))]
+
+    (is (= ["A quiet paragraph" "can become much more" "comfortable when its"
+            "lines share a reasonably" "even rhythm of spaces" "instead of alternating"
+            "between very tight and" "very loose arrangements."]
+           (mapv #(str/replace % #" +" " ") lines)))
+    (is (every? #(= 24 (p/display-width %)) (butlast lines)))
+    (is (= "very loose arrangements." (last lines)))
+    (is (= (subvec lines 0 4) (subvec (:prewrapped-lines collapsed) 0 4)))
+    (is (= :toggle-details (:kind control)))))
+
+(deftest council-explicit-breaks-and-literal-text-survive-layout
+  (let
+    [text
+     (str
+       "The first line contains enough ordinary words to wrap naturally and align its soft rows.\n"
+       "Short last line.\n\n*Keep* #literal text")
+
+     message
+     {:role :user :request-kind :council :text text :session-turn-id "council-turn"}
+
+     opts
+     {:session-id "session" :detail-expansions {}}
+
+     collapsed
+     (virtual/project-message message 44 {} opts)
+
+     control
+     (last (:line-meta collapsed))
+
+     expanded
+     (virtual/project-message message
+                              44
+                              {}
+                              (assoc opts :detail-expansions {["session" (:node-id control)] true}))
+
+     lines
+     (vec (butlast (:prewrapped-lines expanded)))]
+
+    (is (= ["Short last line." "" "*Keep* #literal text"] (subvec lines (- (count lines) 3))))
+    (is (every? nil? (butlast (:line-meta expanded))))
+    (is (= :toggle-details (:kind (last (:line-meta expanded)))))))
 
 (deftest short-council-requests-do-not-grow-a-control
   (let [projected (virtual/project-message
