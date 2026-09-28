@@ -1,4 +1,6 @@
 import type { GatewayClient } from './gateway';
+import { approxBytes, registerMemoryOwner, type MemoryCell } from './perf';
+import { bufferStreamEvent } from './session-stream';
 import { MAX_SUBSCRIBED_SESSIONS } from './storage';
 import { onAway, onWake } from './wake';
 import type { SseEvent } from './types';
@@ -65,9 +67,11 @@ export class SessionSubscriptionHub {
   private readonly stopWake: () => void;
   private readonly stopAway: () => void;
   private supervisor: ReturnType<typeof setInterval> | null = null;
+  private readonly stopMemoryReport: () => void;
 
   constructor(client: GatewayClient) {
     this.client = client;
+    this.stopMemoryReport = registerMemoryOwner('session streams', this, (hub) => hub.memoryCells());
     // The stream is the app's only push channel. Retire it while the webview is
     // still live, BEFORE the OS parks its fetch reader; otherwise a gateway that
     // dies while the app is away leaves WebKit sockets that can block every later
@@ -154,7 +158,8 @@ export class SessionSubscriptionHub {
     this.watchSessions([sid]);
 
     if (replay) {
-      const buffered = this.buffers.get(sid) ?? [];
+      // A copy: a listener may feed the hub while the replay is still running.
+      const buffered = [...(this.buffers.get(sid) ?? [])];
       for (const event of buffered) listener(event);
     }
 
@@ -244,6 +249,7 @@ export class SessionSubscriptionHub {
 
   dispose(): void {
     this.disposed = true;
+    this.stopMemoryReport();
     this.stopAway();
     this.stopWake();
     if (this.supervisor) clearInterval(this.supervisor);
@@ -421,7 +427,10 @@ export class SessionSubscriptionHub {
       this.ended.delete(sid);
       this.buffers.set(sid, [event]);
     } else if (!this.ended.has(sid)) {
-      const buffered = [...(this.buffers.get(sid) ?? []), event];
+      const buffered = this.buffers.get(sid) ?? [];
+      // Keep each block's latest text and Activity, not every revision of them: a
+      // long turn otherwise buffered thousands of whole-block copies per session.
+      bufferStreamEvent(buffered, event);
       if (buffered.length > MAX_BUFFERED_EVENTS) {
         // Trim from the front, but NEVER evict the head `turn.started`: that is
         // the frame which RESETS a replaying screen's running-turn bubble. Drop it and a
@@ -436,6 +445,21 @@ export class SessionSubscriptionHub {
 
     for (const listener of this.sessionListeners.get(sid) ?? []) listener(event);
     for (const listener of this.fleetListeners) listener(event);
+  }
+
+  /** What the hub holds per session, for the memory overlay (`perf.ts`). */
+  private *memoryCells(): Iterable<MemoryCell> {
+    yield { source: 'stream hubs', bytes: 0, entries: 1 };
+    for (const sid of this.watched) {
+      const buffered = this.buffers.get(sid) ?? [];
+      yield { source: 'watched streams', session: sid, bytes: 0, entries: 1 };
+      // Per frame: frames never change, while the buffer changes in place.
+      let bytes = 16 + buffered.length * 8;
+      for (const frame of buffered) bytes += approxBytes(frame);
+      yield { source: 'stream buffer', session: sid, bytes, entries: buffered.length };
+      const listeners = this.sessionListeners.get(sid)?.size ?? 0;
+      yield { source: 'stream listeners', session: sid, bytes: 0, entries: listeners };
+    }
   }
 
   private clearGrace(): void {

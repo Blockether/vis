@@ -60,6 +60,7 @@ npm install
 npm run dev        # web at http://localhost:5273
 npm run build      # type-check + production bundle into dist/ (React Compiler on)
 npm run lint       # React Compiler static analysis over every src file (no eslint)
+npm run perf       # released bundle with the memory overlay at http://127.0.0.1:5274
 ```
 
 ## Testing
@@ -141,6 +142,61 @@ as a JVM test suite or a native build, still slows a run down. To keep a slow
 run from failing, every `findBy*` query and `waitFor` call waits up to five
 seconds, and every test may take up to 15 seconds. A test that hangs therefore
 takes 15 seconds to fail.
+
+## Find what uses memory
+
+Use the memory overlay when the app gets heavier the longer you use it, for
+example after you open many sessions. It shows live counters for the page and a
+heatmap of what the app keeps for each session, so you can tell a cache that
+grows from registrations that are never removed.
+
+The overlay is off by default, because its probes add some overhead. Turn it on in
+one of these ways:
+
+- In any Vis app, including the desktop and mobile apps: open **Settings**, expand
+  **Diagnostics** and select **Show memory overlay**. Vis reloads with the overlay
+  on. Select **Hide memory overlay** to turn it off again.
+- In a web build: open the page with `?perf=1` in its address. The browser
+  remembers that choice until you open the page with `?perf=0` or hide the overlay
+  in Settings.
+- From this directory: build and serve a web copy that always has the overlay on.
+
+```sh
+npm run perf       # build the released bundle with the overlay, then serve it
+```
+
+`npm run perf` builds the same code as `npm run build` into `dist-perf/`, left
+unminified with source maps, and serves it at http://127.0.0.1:5274. If a Vis
+gateway is running on this machine, the page opens connected to it.
+
+The overlay shows:
+
+- **Counters**: JS heap, elements in the page, event listeners, listeners on
+  elements that were removed from the page, intervals, pending timeouts, elements
+  watched by observers and object URLs. A red counter means something was left on a
+  removed element.
+- **Memory by session**: a row per session and a column per cache, such as cached
+  transcripts and session snapshots (`transcript`, `session`), events kept to replay
+  a stream (`stream buffer`) and the screens listening to it (`stream listeners`).
+  Cells show approximate bytes; select **Show items** for counts. The session you
+  have open is outlined and its name is bold.
+- **Listeners added since the baseline**: select **Set baseline**, use the app (for
+  example, open and leave ten sessions), and the overlay lists the listener sources
+  that kept growing, with the function that added each one.
+- **Copy report** copies every number as JSON, to attach to an issue or compare
+  two runs.
+
+Keep these limits in mind:
+
+- Byte sizes are estimated from the size of the data a cache holds, not measured
+  heap usage. For exact retained sizes, take a heap snapshot in the browser's
+  developer tools.
+- Only Chromium browsers report the JS heap. In Safari and other WebKit views, such
+  as the macOS desktop app, it reads "Not reported"; the other counters and the
+  heatmap still work.
+- The overlay sees only what is registered after the page starts, and its probes
+  add some overhead. Compare its numbers with each other, not with measurements
+  taken while it is off.
 
 ## Native builds
 

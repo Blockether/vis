@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { APP_BUILD_COMMIT, APP_BUILD_NUMBER } from '../../lib/build-info';
 import { APP_MIN_GATEWAY_PROTOCOL, APP_PROTOCOL, APP_VERSION } from '../../lib/compat';
 import { RETAINED_LOG_POLICY, exportDiagnostics } from '../../lib/diagnostics';
+import { PERF_BUILD, perfActive, reloadWithStoredPerf, setPerfEnabled } from '../../lib/perf';
 import { Banner, Button, Text } from '../../components/ui';
 import { SettingsPanel } from './SettingsLayout';
 
@@ -24,18 +25,30 @@ function DiagnosticFact({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** Source identity, wire compatibility and the one deliberate way out for
- *  app-private logs — one band that opens, and nothing painted until it does.
+/** Source identity, wire compatibility, the one deliberate way out for app-private
+ *  logs and the memory overlay switch — one band that opens, and nothing painted
+ *  until it does.
  *
  *  The whole named band is the control. A trailing chevron turns to confirm the
  *  state, but it is not a tiny separate target beside inert copy. Reported in the
  *  app: pressing Diagnostics itself did nothing even though the neighbouring
  *  Application band opened as expected. Hidden remains HIDDEN — the facts, the
- *  trust sentence and the verb are not on the page until the band is pressed. */
-export function DiagnosticsPanel({ isOpen, onToggle }: { isOpen: boolean; onToggle: () => void }) {
+ *  sentences and the verbs are not on the page until the band is pressed. */
+export function DiagnosticsPanel({
+  isOpen,
+  onToggle,
+  onReload = reloadWithStoredPerf,
+}: {
+  isOpen: boolean;
+  onToggle: () => void;
+  /** Starts the page again, so the memory probes install or stay out. */
+  onReload?: () => void;
+}) {
   const [isExporting, setIsExporting] = useState(false);
   const [exported, setExported] = useState('');
   const [exportError, setExportError] = useState('');
+  const [overlayError, setOverlayError] = useState('');
+  const isOverlayOn = perfActive();
 
   async function exportLogs() {
     setIsExporting(true);
@@ -54,14 +67,20 @@ export function DiagnosticsPanel({ isOpen, onToggle }: { isOpen: boolean; onTogg
     }
   }
 
+  /** The probes install at startup, so the choice applies when the page loads again. */
+  function switchOverlay() {
+    if (setPerfEnabled(!isOverlayOn)) onReload();
+    else setOverlayError('This device did not save the setting.');
+  }
+
   const foldLabel = isOpen ? 'Hide diagnostics' : 'Show diagnostics';
 
   return (
     <SettingsPanel title="Diagnostics" disclosure={{ isOpen, onToggle, label: foldLabel }}>
       {/* THE PANEL'S FACTS ARE A COMPACT MATRIX, NOT SIX SETTINGS ROWS. Related
           identity, protocol and retention facts pair across three shared rows; no
-          fact disappears merely to make the panel quiet. The one sentence that
-          survives is the trust promise beside the export verb it qualifies. */}
+          fact disappears merely to make the panel quiet. Each sentence that survives
+          qualifies the verb beside it: the trust promise, and the reload. */}
       {isOpen && (
         <>
           <dl
@@ -94,6 +113,23 @@ export function DiagnosticsPanel({ isOpen, onToggle }: { isOpen: boolean; onTogg
             >
               {isExporting ? 'Preparing logs…' : 'Export app logs'}
             </Button>
+            {!PERF_BUILD && (
+              <>
+                <Text as="p" variant="description">
+                  The memory overlay counts what Vis keeps in memory for each session.
+                  Switching it reloads Vis.
+                </Text>
+                {overlayError && <Banner kind="err">{overlayError}</Banner>}
+                <Button
+                  variant="secondary"
+                  density="panel"
+                  className="w-full"
+                  onClick={switchOverlay}
+                >
+                  {isOverlayOn ? 'Hide memory overlay' : 'Show memory overlay'}
+                </Button>
+              </>
+            )}
           </div>
         </>
       )}

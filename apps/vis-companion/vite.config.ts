@@ -1,11 +1,14 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import babel from '@rolldown/plugin-babel';
 import react, { reactCompilerPreset } from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig, type PreviewServer } from 'vite';
 import pkg from './package.json' with { type: 'json' };
 import {
   devConnectionStorageScript,
   discoverDevGatewayConnections,
+  prependHeadScript,
   sameOriginConnectionStorageScript,
 } from './scripts/dev-gateway.ts';
 import { companionBuildInfo } from './scripts/build-info.ts';
@@ -36,7 +39,15 @@ export default defineConfig(async ({ command, mode }) => {
     // `vite build --mode web` is the bundle a gateway serves from its own root
     // (`vis-agent web`, attached to every release as vis-web.tar.gz). It gets its
     // own folder so it never mixes with the Capacitor build in `dist/`.
-    build: { outDir: mode === 'web' ? 'dist-web' : 'dist' },
+    // `--mode perf` (`npm run perf`) is the released bundle with the memory overlay on:
+    // React's production build, left unminified with source maps so the overlay and
+    // heap snapshots name the app's own functions.
+    build:
+      mode === 'perf'
+        ? { outDir: 'dist-perf', minify: false, sourcemap: true }
+        : { outDir: mode === 'web' ? 'dist-web' : 'dist' },
+    // The preview page carries the same bearer tokens as the dev page: loopback only.
+    preview: { host: '127.0.0.1', port: 5274 },
     plugins: [
       {
         name: 'vis-dev-gateway-autoconnect',
@@ -44,6 +55,23 @@ export default defineConfig(async ({ command, mode }) => {
         transformIndexHtml() {
           const children = devConnectionStorageScript(devGateways);
           return children ? [{ tag: 'script', children, injectTo: 'head-prepend' as const }] : [];
+        },
+      },
+      {
+        // `vite preview` has no HTML transform, so the preview server seeds the same
+        // connections into each page response itself.
+        name: 'vis-preview-gateway-autoconnect',
+        configurePreviewServer(server: PreviewServer) {
+          if (devGateways.length === 0) return;
+          const script = devConnectionStorageScript(devGateways);
+          const page = resolve(server.config.root, server.config.build.outDir, 'index.html');
+          server.middlewares.use((request, response, next) => {
+            const path = (request.url ?? '/').split('?')[0];
+            if (request.method !== 'GET' || (path !== '/' && path !== '/index.html')) return next();
+            response.setHeader('Content-Type', 'text/html; charset=utf-8');
+            response.setHeader('Cache-Control', 'no-store');
+            response.end(prependHeadScript(readFileSync(page, 'utf8'), script));
+          });
         },
       },
       {

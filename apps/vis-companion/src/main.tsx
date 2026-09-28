@@ -1,3 +1,4 @@
+import './perf-boot';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
@@ -5,6 +6,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { captureContextMenu, captureLinkClicks } from './lib/desktop';
 import { installDiagnostics } from './lib/diagnostics';
 import { loadHost } from './lib/host';
+import { perfActive } from './lib/perf';
 import { paintStoredTheme } from './lib/theme';
 import './index.css';
 
@@ -35,3 +37,7 @@ root.render(
     </ErrorBoundary>
   </StrictMode>,
 );
+
+// The memory overlay, when Settings, `?perf=1` or the `perf` build turned it on: in its
+// own root, so the app's tree and layout stay exactly what a normal launch renders.
+if (perfActive()) void import('./components/PerfOverlay').then((overlay) => overlay.mountPerfOverlay());

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   devConnectionStorageScript,
   discoverDevGatewayConnections,
+  prependHeadScript,
   sameOriginConnectionStorageScript,
 } from './dev-gateway.ts';
 
@@ -207,5 +208,25 @@ describe('companion web build served by a gateway', () => {
     expect(values.get('vis.connections')).toBe(saved);
     expect(values.has('CapacitorStorage.vis.connections')).toBe(false);
     expect(values.get('vis.activeConnection')).toBe(origin);
+  });
+});
+
+describe('prependHeadScript', () => {
+  it('runs the seed before any other head content', () => {
+    const html = '<!doctype html><html lang="en"><head data-app="vis">\n<meta charset="UTF-8" /><script type="module" src="/assets/index.js"></script></head><body></body></html>';
+
+    expect(prependHeadScript(html, 'seed()')).toBe(
+      '<!doctype html><html lang="en"><head data-app="vis"><script>seed()</script>\n<meta charset="UTF-8" /><script type="module" src="/assets/index.js"></script></head><body></body></html>',
+    );
+  });
+
+  it('puts the seed first in a page without a head', () => {
+    expect(prependHeadScript('<p>Offline</p>', 'seed()')).toBe('<script>seed()</script><p>Offline</p>');
+  });
+
+  it('matches only the head element, not a header', () => {
+    expect(prependHeadScript('<header>Menu</header><HEAD></HEAD>', 'seed()')).toBe(
+      '<header>Menu</header><HEAD><script>seed()</script></HEAD>',
+    );
   });
 });

@@ -22,6 +22,7 @@ import {
   flushDraftMessages,
   hydrateDraftMessages,
 } from './draft-messages';
+import { approxBytes, registerMemoryOwner, registerMemorySource, type MemoryCell } from './perf';
 import type {
   ArchiveView,
   AuthFlow,
@@ -644,6 +645,40 @@ hydrateSnapshots(snapshotStores);
 normalizeSnapshotLimits();
 installSnapshotFlushOnHide(snapshotStores);
 
+/** Snapshot kinds whose key ends in a session id: the memory heatmap's rows. */
+const SESSION_SNAPSHOT_KINDS = new Set([
+  'goal',
+  'live',
+  'model',
+  'queued',
+  'running-turn',
+  'session',
+  'transcript',
+]);
+
+registerMemorySource('gateway snapshots', function* (): Iterable<MemoryCell> {
+  const titles = new Map<string, string>();
+  for (const [key, value] of snapshots) {
+    const [, kind, sid] = key.split('\u0000');
+    const title = kind === 'session' ? (value as Session | null)?.title : undefined;
+    if (sid && title) titles.set(sid, title);
+  }
+  for (const [key, value] of snapshots) {
+    const [, kind = key, sid] = key.split('\u0000');
+    const session = SESSION_SNAPSHOT_KINDS.has(kind) ? sid : undefined;
+    yield {
+      source: kind,
+      session,
+      title: session ? titles.get(session) : undefined,
+      bytes: approxBytes(value),
+      entries: Array.isArray(value) ? value.length : 1,
+    };
+  }
+  for (const [key, watchers] of revisionWatchers) {
+    yield { source: 'revision watchers', session: key.split('\u0000')[2], bytes: 0, entries: watchers.size };
+  }
+});
+
 /** Persist the caches NOW — used when the app is being torn down. */
 export function persistGatewayCaches(): void {
   flushSnapshots(snapshotStores);
@@ -1088,6 +1123,23 @@ export class GatewayClient {
     this.base = normalizeBase(conn.url);
     this.token = conn.token;
     this.overview = this.cachedProjectsOverview();
+    registerMemoryOwner('gateway client', this, (client) => client.memoryCells());
+  }
+
+  /** What this instance holds, for the memory overlay (`perf.ts`). */
+  private *memoryCells(): Iterable<MemoryCell> {
+    yield { source: 'gateway clients', bytes: 0, entries: 1 };
+    for (const [key, bytes] of this.attachmentSizes) {
+      yield { source: 'attachments', session: key.split('\u0000')[0], bytes, entries: 1 };
+    }
+    for (const [key, sent] of this.sentAttachments) {
+      yield {
+        source: 'sent attachments',
+        session: key.split('\u0000')[0],
+        bytes: approxBytes(sent),
+        entries: sent.length,
+      };
+    }
   }
 
   /** Cache key for one of this gateway's snapshot-able payloads. */
@@ -1155,8 +1207,9 @@ export class GatewayClient {
     // and must keep reporting itself as one.
     const stalled = () => deadline.signal.aborted && !signal?.aborted;
     const seconds = Math.round(REQUEST_TIMEOUT_MS / 1000);
+    const attempt = linkSignals(signal ? [signal, deadline.signal] : [deadline.signal]);
+    const attemptSignal = attempt.signal;
     try {
-      const attemptSignal = anySignal(signal ? [signal, deadline.signal] : [deadline.signal]);
       let res: Response;
       try {
         res = await raceAbort(
@@ -1223,6 +1276,7 @@ export class GatewayClient {
         timedOut: deadline.signal.aborted && !signal?.aborted,
       });
       window.clearTimeout(timer);
+      attempt.release();
       release();
     }
   }
@@ -1247,12 +1301,13 @@ export class GatewayClient {
     // not on this network any more.
     const deadline = new AbortController();
     const timer = window.setTimeout(() => deadline.abort(), PROBE_TIMEOUT_MS);
+    const probe = linkSignals(signal ? [signal, deadline.signal] : [deadline.signal]);
     try {
       await this.request(
         'GET',
         '/healthz',
         undefined,
-        anySignal(signal ? [signal, deadline.signal] : [deadline.signal]),
+        probe.signal,
       );
       return true;
     } catch (e) {
@@ -1262,6 +1317,7 @@ export class GatewayClient {
       return false;
     } finally {
       window.clearTimeout(timer);
+      probe.release();
     }
   }
 
@@ -1671,9 +1727,10 @@ export class GatewayClient {
     if (options.contentType) headers.set('Content-Type', options.contentType);
     const deadline = new AbortController();
     const timer = window.setTimeout(() => deadline.abort(), REQUEST_TIMEOUT_MS);
-    const attemptSignal = anySignal(
+    const attempt = linkSignals(
       options.signal ? [options.signal, deadline.signal] : [deadline.signal],
     );
+    const attemptSignal = attempt.signal;
     let status = 0;
     let failure: { cause: unknown } | undefined;
     try {
@@ -1718,6 +1775,7 @@ export class GatewayClient {
         timedOut: deadline.signal.aborted && !options.signal?.aborted,
       });
       window.clearTimeout(timer);
+      attempt.release();
     }
   }
 
@@ -1849,7 +1907,8 @@ export class GatewayClient {
       stream: 'voice_job',
     });
     const watchdog = new AbortController();
-    const streamSignal = signal ? anySignal([signal, watchdog.signal]) : watchdog.signal;
+    // Released by `watchdog.abort()` when the stream ends.
+    const streamSignal = signal ? linkSignals([signal, watchdog.signal]).signal : watchdog.signal;
     const seen: { job: VoiceJob | null } = { job: null };
     let stalled = false;
     let status = 0;
@@ -4714,7 +4773,10 @@ export class GatewayClient {
     } = {},
   ): () => void {
     const controller = new AbortController();
-    const signal = opts.signal ? anySignal([opts.signal, controller.signal]) : controller.signal;
+    // Released by `controller.abort()` when the subscription closes.
+    const signal = opts.signal
+      ? linkSignals([opts.signal, controller.signal]).signal
+      : controller.signal;
 
     void (async () => {
       let retryMs = 400;
@@ -4724,7 +4786,8 @@ export class GatewayClient {
         // connection attempt, so the outer loop reconnects with up-to-date
         // cursors instead of dying with the caller's shared signal.
         const attempt = new AbortController();
-        const attemptSignal = anySignal([signal, attempt.signal]);
+        // Released by `attempt.abort()` when this attempt ends.
+        const attemptSignal = linkSignals([signal, attempt.signal]).signal;
         const diagnostic = startRequestDiagnostic(this.base, 'GET', '/v1/events', {
           transport: 'sse',
           stream: 'sessions',
@@ -4874,7 +4937,10 @@ export class GatewayClient {
     } = {},
   ): () => void {
     const controller = new AbortController();
-    const signal = opts.signal ? anySignal([opts.signal, controller.signal]) : controller.signal;
+    // Released by `controller.abort()` when the subscription closes.
+    const signal = opts.signal
+      ? linkSignals([opts.signal, controller.signal]).signal
+      : controller.signal;
 
     void (async () => {
       let retryMs = 400;
@@ -4883,7 +4949,8 @@ export class GatewayClient {
         // Per-attempt controller, exactly as the multiplexed stream: the stall
         // watchdog aborts only THIS attempt and the outer loop reconnects.
         const attempt = new AbortController();
-        const attemptSignal = anySignal([signal, attempt.signal]);
+        // Released by `attempt.abort()` when this attempt ends.
+        const attemptSignal = linkSignals([signal, attempt.signal]).signal;
         const diagnostic = startRequestDiagnostic(this.base, 'GET', '/v1/events', {
           transport: 'sse',
           stream: 'fleet',
@@ -5014,34 +5081,50 @@ function raceAbort<T>(work: PromiseLike<T> | T, signal: AbortSignal): Promise<T>
   });
 }
 
-/** Combine several AbortSignals into one that aborts when any input aborts. */
-
-function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+/** Wait `ms`, or less if `signal` aborts first; the signal keeps no listener after. */
+export function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     if (signal.aborted) {
       resolve();
       return;
     }
-    const timer = window.setTimeout(resolve, ms);
-    signal.addEventListener(
-      'abort',
-      () => {
-        window.clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
+    const done = () => {
+      window.clearTimeout(timer);
+      signal.removeEventListener('abort', done);
+      resolve();
+    };
+    const timer = window.setTimeout(done, ms);
+    signal.addEventListener('abort', done, { once: true });
   });
 }
 
-function anySignal(signals: AbortSignal[]): AbortSignal {
-  const ctrl = new AbortController();
-  for (const s of signals) {
-    if (s.aborted) {
-      ctrl.abort();
-      break;
-    }
-    s.addEventListener('abort', () => ctrl.abort(), { once: true });
+/** A signal that follows several others, and the call that stops it following them. */
+export interface LinkedSignal {
+  signal: AbortSignal;
+  release: () => void;
+}
+
+/**
+ * A signal that aborts when any input aborts. A long-lived input (a caller's signal
+ * across requests, a stream's across reconnects) must not keep a listener per call, so
+ * call `release` once the work is over, unless it ended by aborting an input.
+ * `AbortSignal.any` links weakly by itself. The fallback for older WebViews holds its
+ * links until an input aborts or `release` runs, so no abort is lost to a collected
+ * signal while its work still runs.
+ */
+export function linkSignals(signals: AbortSignal[]): LinkedSignal {
+  if (typeof AbortSignal.any === 'function') {
+    return { signal: AbortSignal.any(signals), release: () => {} };
   }
-  return ctrl.signal;
+  const ctrl = new AbortController();
+  const release = () => {
+    for (const input of signals) input.removeEventListener('abort', onAbort);
+  };
+  function onAbort() {
+    release();
+    ctrl.abort();
+  }
+  if (signals.some((input) => input.aborted)) ctrl.abort();
+  else for (const input of signals) input.addEventListener('abort', onAbort);
+  return { signal: ctrl.signal, release };
 }

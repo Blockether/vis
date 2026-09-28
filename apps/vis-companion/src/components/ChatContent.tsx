@@ -1867,20 +1867,28 @@ function scheduleBoxes(boxes: Iterable<Element>) {
   boxFrame = window.requestAnimationFrame(flushBoxes);
 }
 
-function observeBox(box: Element, measure: () => (() => void) | void): () => void {
+/**
+ * The one observer every box shares, and its rotation hook. Both live as long as the
+ * page, so they are created here, in a scope that holds no box: closures made inside
+ * `observeBox` would share its context and keep the first box it saw alive, with that
+ * box's whole screen, long after the screen was gone.
+ */
+function sharedBoxObserver(): ResizeObserver {
+  if (!boxObserver) {
+    boxObserver = new ResizeObserver((entries) =>
+      scheduleBoxes(entries.map((entry) => entry.target)),
+    );
+    onViewportRotation((phase) => {
+      if (phase === 'end') scheduleBoxes(observedBoxes);
+    });
+  }
+  return boxObserver;
+}
+
+export function observeBox(box: Element, measure: () => (() => void) | void): () => void {
   boxMeasures.set(box, measure);
   observedBoxes.add(box);
-  if (typeof ResizeObserver !== 'undefined') {
-    if (!boxObserver) {
-      boxObserver = new ResizeObserver((entries) =>
-        scheduleBoxes(entries.map((entry) => entry.target)),
-      );
-      onViewportRotation((phase) => {
-        if (phase === 'end') scheduleBoxes(observedBoxes);
-      });
-    }
-    boxObserver.observe(box);
-  }
+  if (typeof ResizeObserver !== 'undefined') sharedBoxObserver().observe(box);
   return () => {
     boxObserver?.unobserve(box);
     observedBoxes.delete(box);

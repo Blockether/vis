@@ -148,6 +148,19 @@ export function devConnectionStorageScript(connections: DevGatewayConnection[]):
 }
 
 /**
+ * Put a script first in `<head>`, where the dev server's `head-prepend` injection puts it.
+ * `vite preview` serves built files without HTML transform hooks, so its server inserts
+ * the seed into each page response instead, and the token is never written to disk.
+ */
+export function prependHeadScript(html: string, script: string): string {
+  const tag = `<script>${script}</script>`;
+  const head = /<head(?:\s[^>]*)?>/i.exec(html);
+  if (!head) return `${tag}${html}`;
+  const end = head.index + head[0].length;
+  return `${html.slice(0, end)}${tag}${html.slice(end)}`;
+}
+
+/**
  * Seed the gateway that served this page as a saved connection before React imports.
  *
  * `vite build --mode web` produces the bundle a gateway serves from its own root
