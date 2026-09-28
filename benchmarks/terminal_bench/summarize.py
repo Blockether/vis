@@ -10,6 +10,8 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+from capture_trace import redact_value
+
 
 def elapsed_seconds(start: str | None, end: str | None) -> float | None:
     if not start or not end:
@@ -232,19 +234,23 @@ def make_report(jobs_dir: Path, dataset_dir: Path) -> dict:
         for trial in verified
         if isinstance(trial["reward"], (int, float))
     ]
-    return {
-        "dataset": "terminal-bench/terminal-bench@4.0.0",
-        "total_dataset_tasks": len(task_dirs),
-        "gpu_required_tasks": gpu_tasks,
-        "unattempted_tasks": [
-            task.name for task in task_dirs if task.name not in attempted
-        ],
-        "attempts": len(trials),
-        "verified_attempts": len(verified),
-        "exception_attempts": sum(trial["status"] == "exception" for trial in trials),
-        "mean_verified_reward": sum(rewards) / len(rewards) if rewards else None,
-        "trials": trials,
-    }
+    return redact_value(
+        {
+            "dataset": "terminal-bench/terminal-bench@4.0.0",
+            "total_dataset_tasks": len(task_dirs),
+            "gpu_required_tasks": gpu_tasks,
+            "unattempted_tasks": [
+                task.name for task in task_dirs if task.name not in attempted
+            ],
+            "attempts": len(trials),
+            "verified_attempts": len(verified),
+            "exception_attempts": sum(
+                trial["status"] == "exception" for trial in trials
+            ),
+            "mean_verified_reward": sum(rewards) / len(rewards) if rewards else None,
+            "trials": trials,
+        }
+    )
 
 
 def main() -> None:

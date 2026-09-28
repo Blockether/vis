@@ -5,6 +5,7 @@ import json
 import shutil
 
 import pytest
+import run_suite
 from run_suite import (
     accounted_tasks,
     archive_batch_traces,
@@ -156,3 +157,29 @@ def test_batch_archive_preserves_incomplete_traces(tmp_path):
     assert not (job / "complete__abcd/agent/vis-trace.jsonl.gz").exists()
     assert (job / "interrupted__abcd/agent/vis-trace.jsonl.gz").is_file()
     assert not (job / "interrupted__abcd/agent/vis-trace.jsonl.zst").exists()
+
+
+def test_queue_captures_harbor_logs_through_redaction(tmp_path, monkeypatch):
+    monkeypatch.setenv("ZAI_CODING_API_KEY", "fixture-zai-credential-12345")
+    monkeypatch.setattr(run_suite.sys, "argv", ["run_suite", "--max-batches", "1"])
+    monkeypatch.setattr(run_suite, "ROOT", tmp_path)
+    monkeypatch.setattr(run_suite, "JOBS", tmp_path / "jobs")
+    task = {"name": "sample"}
+    monkeypatch.setattr(run_suite, "catalog", lambda _: ([task], []))
+    monkeypatch.setattr(run_suite, "accounted_tasks", lambda _: (set(), set(), set()))
+    monkeypatch.setattr(run_suite, "free_gb", lambda _: (32, 32))
+    monkeypatch.setattr(run_suite, "next_batch", lambda _: [task])
+    calls = []
+
+    def capture(command, path, *, cwd):
+        calls.append((command, path, cwd))
+        return 7
+
+    monkeypatch.setattr(run_suite, "capture", capture)
+    with pytest.raises(RuntimeError, match="Harbor exited 7"):
+        run_suite.main()
+    assert len(calls) == 1
+    command, path, cwd = calls[0]
+    assert command[1] == "run"
+    assert path == tmp_path / "runs/suite-001.log"
+    assert cwd == tmp_path

@@ -11,6 +11,7 @@ import tomllib
 from pathlib import Path
 
 from archive_traces import archive_trace
+from capture_trace import capture
 
 MODEL = "zai-coding-plan/glm-5.3-flash"
 ROOT = Path(__file__).resolve().parent
@@ -258,13 +259,10 @@ def main() -> None:
         print(
             f"Starting {name}: {', '.join(task['name'] for task in batch)}", flush=True
         )
-        with (ROOT / "runs" / f"{name}.log").open("w", encoding="utf-8") as log:
-            result = subprocess.run(
-                command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT
-            )
-        if result.returncode:
+        returncode = capture(command, ROOT / "runs" / f"{name}.log", cwd=ROOT)
+        if returncode:
             raise RuntimeError(
-                f"Harbor exited {result.returncode} in {name}; inspect runs/{name}.log"
+                f"Harbor exited {returncode} in {name}; inspect runs/{name}.log"
             )
         results = batch_results(JOBS / name, batch)
         archive_batch_traces(JOBS / name)

@@ -6,4 +6,6 @@
 /runs/
 __pycache__/
 *.jsonl
+*.jsonl.gz
+*.jsonl.zst
 *.log

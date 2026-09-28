@@ -6,6 +6,7 @@ import os
 import shlex
 from pathlib import Path
 
+from capture_trace import redact_value
 from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
@@ -14,6 +15,7 @@ MODEL = "zai-coding-plan/glm-5.3-flash"
 PROVIDER, MODEL_ID = MODEL.split("/", 1)
 BUNDLE = Path(__file__).resolve().parent / "artifacts" / "vis-agent-linux-amd64.tar.gz"
 REMOTE = "/installed-agent/vis-agent"
+REMOTE_PYTHON = "/installed-agent/vis-agent-python/python/bin/python3"
 TRACE = "/logs/agent/vis-trace.jsonl.gz"
 HOME = "/tmp/vis-benchmark-home"
 
@@ -57,19 +59,21 @@ def populate_metrics(context: AgentContext, result: dict) -> None:
     estimate = cost.get("total_cost")
     if isinstance(estimate, bool) or not isinstance(estimate, (int, float)):
         estimate = None
-    context.metadata = {
-        "vis": {
-            "model": MODEL,
-            "duration_ms": result.get("duration-ms", result.get("duration_ms")),
-            "iteration_count": result.get(
-                "iteration-count", result.get("iteration_count")
-            ),
-            "estimated_metered_api_cost_usd": estimate,
-            "billing": "Z.ai Coding Plan subscription; per-trial billed USD unknown",
-            "eval": result.get("eval"),
-            "status": result.get("status"),
+    context.metadata = redact_value(
+        {
+            "vis": {
+                "model": MODEL,
+                "duration_ms": result.get("duration-ms", result.get("duration_ms")),
+                "iteration_count": result.get(
+                    "iteration-count", result.get("iteration_count")
+                ),
+                "estimated_metered_api_cost_usd": estimate,
+                "billing": "Z.ai Coding Plan subscription; per-trial billed USD unknown",
+                "eval": result.get("eval"),
+                "status": result.get("status"),
+            }
         }
-    }
+    )
     # A subscription's marginal billed cost is not the metered price estimate.
     context.cost_usd = None
 
@@ -93,11 +97,16 @@ class VisAgent(BaseInstalledAgent):
         if not BUNDLE.is_file():
             raise FileNotFoundError(f"Missing native Linux bundle: {BUNDLE}")
         await environment.upload_file(BUNDLE, "/tmp/vis-benchmark.tar.gz")
+        await environment.upload_file(
+            Path(__file__).with_name("capture_trace.py"),
+            "/installed-agent/capture_trace.py",
+        )
         await self.exec_as_root(
             environment,
             command=(
                 "tar -xzf /tmp/vis-benchmark.tar.gz -C /installed-agent && "
                 f"chmod 755 {REMOTE} /installed-agent/vis-agent-native && "
+                f"{REMOTE_PYTHON} --version && "
                 f"{REMOTE} --version"
             ),
         )
@@ -111,10 +120,12 @@ class VisAgent(BaseInstalledAgent):
             f"'default_provider: {PROVIDER}' 'default_model: {MODEL_ID}' "
             f"> {HOME}/.vis/config.yml && chmod 600 {HOME}/.vis/config.yml && "
             f"export HOME={HOME} VIS_HOME={HOME}/.vis; "
-            f"set -o pipefail; {REMOTE} --db :memory --model {MODEL} "
+            f"set -o pipefail; {REMOTE_PYTHON} /installed-agent/capture_trace.py "
+            f"--stdout {TRACE} --stderr /logs/agent/vis-stderr.log -- "
+            f"{REMOTE} --db :memory --model {MODEL} "
             "--toggles council=false,draft_backend=off "
             "--full-trace-json-stream -- "
-            f"{shlex.quote(instruction)} 2> /logs/agent/vis-stderr.log | gzip -1 > {TRACE}"
+            f"{shlex.quote(instruction)}"
         )
 
     @with_prompt_template
@@ -124,8 +135,10 @@ class VisAgent(BaseInstalledAgent):
         key = os.environ.get("ZAI_CODING_API_KEY")
         if not key:
             raise RuntimeError("ZAI_CODING_API_KEY is required in the Harbor host")
-        # Only the agent process sees this credential. It is never a CLI argument,
-        # Harbor job-config value, bundle file or exported trace artifact.
+        if redact_value(instruction) != instruction:
+            raise ValueError("Benchmark instructions must not contain credentials")
+        # Credentials stay in the process environment, never command arguments.
+        # The capture wrapper redacts known credentials before storing either stream.
         await self.exec_as_agent(
             environment,
             command=self.command(instruction),

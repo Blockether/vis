@@ -234,3 +234,36 @@ def test_long_window_archived_trace_reads_without_losing_events(tmp_path):
     assert summary["path"] == "vis-trace.jsonl.zst"
     assert summary["provider_calls"] == {"zai-coding-plan/glm-5.3-flash": 1}
     assert summary["truncated"] is False
+
+
+def test_report_redacts_credentials_in_free_form_fields(tmp_path, monkeypatch):
+    key = "fixture-zai-credential-12345"
+    monkeypatch.setenv("ZAI_CODING_API_KEY", key)
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    trial = tmp_path / "jobs/batch/task"
+    trial.mkdir(parents=True)
+    (trial / "result.json").write_text(
+        json.dumps(
+            {
+                "task_name": key,
+                "trial_name": key,
+                "finished_at": "2026-01-01T00:00:00Z",
+                "exception_info": {"exception_type": key},
+                "agent_result": {"metadata": {"vis": {"model": key}}},
+            }
+        )
+    )
+    (trial / "agent").mkdir()
+    (trial / "agent/vis-trace.jsonl").write_text(
+        json.dumps(
+            {
+                "event": key,
+                "payload": {"phase": "provider-call", "provider": key, "model": key},
+            }
+        )
+        + "\n"
+    )
+    report = make_report(tmp_path / "jobs", dataset)
+    assert key not in json.dumps(report)
+    assert "[REDACTED]" in json.dumps(report)

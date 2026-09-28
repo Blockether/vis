@@ -249,3 +249,28 @@ jobs:
   # The installed distributions and real HTTP/stdio SDK lifecycle share one gate.
   python-package:
     uses: ./.github/workflows/python-packages.yml
+
+  benchmark-safety:
+    name: Benchmark credential safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: benchmarks/terminal_bench
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.9.2"
+          enable-cache: false
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd
+          uv sync --locked --python 3.12
+      - name: Check formatting and lint
+        run: |
+          uv run ruff format --check ./*.py tests
+          uv run ruff check ./*.py tests
+      - name: Test capture and reports with synthetic credentials
+        run: uv run pytest tests
