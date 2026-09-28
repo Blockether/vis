@@ -255,3 +255,10 @@ Whole skill body."}
           ;; Forgotten, so read from the resources AGAIN - same records, new value.
           (expect (not (identical? before after)))
           (expect (= before after))))))
+
+(defdescribe normalize-name-test
+             (it "unwraps the JSON-keyed doc() argument map"
+                 ;; Issue #291: sandbox arguments arrive with JSON (string) keys only.
+                 (expect (= "index" (dc/normalize-name {"name" "Index.md"})))
+                 (expect (= "extending" (dc/normalize-name {"slug" " Extending "})))
+                 (expect (= "readme" (dc/normalize-name "README.md")))))

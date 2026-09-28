@@ -251,8 +251,8 @@
            :ext owner}])))
 
 (defn- live-config
-  "The merged live config a mount check reads: whatever the caller handed in, else
-   the lenient on-disk merge. A broken config downgrades to \"no report\"."
+  "The merged string-keyed YAML config a check reads: whatever the caller handed in,
+   else the lenient on-disk merge. A broken config downgrades to \"no report\"."
   [environment]
   (or (:config environment) (try (config/load-config-raw) (catch Throwable _ nil))))
 
@@ -366,41 +366,28 @@
    from `providers/picker-fleet`, so `default_provider` is ignored and the router
    silently falls back to another provider. Doctor now names that gap."
   [environment]
-  (let [config
-        (live-config environment)
-
-        cget
-        (fn [k1 k2]
-          (or (get config k1) (get config k2)))]
-
+  (let [config (live-config environment)]
     (when config
-      (let [fleet
-            (or (safe-call providers/picker-fleet nil) [])
-
-            registered
-            (into {}
-                  (keep (fn [p]
-                          (when-let [id (provider-id-str (:provider/id p))]
-                            [id p])))
-                  (or (safe-call registry/registered-providers nil) []))
-
+      (let [fleet (or (safe-call providers/picker-fleet nil) [])
+            registered (into {}
+                             (keep (fn [p]
+                                     (when-let [id (provider-id-str (:provider/id p))]
+                                       [id p])))
+                             (or (safe-call registry/registered-providers nil) []))
             configured-ids
-            (into #{}
-                  (keep #(provider-id-str (or (:id %) (get % "id"))))
-                  (cget :providers "providers"))]
+            (into #{} (keep #(provider-id-str (get % "id"))) (get config "providers"))]
 
         (into []
-              (keep (fn [[role pkey mkey pkey* mkey*]]
-                      (when-let [pid (provider-id-str (cget pkey pkey*))]
+              (keep (fn [[role pkey mkey]]
+                      (when-let [pid (provider-id-str (get config pkey))]
                         (selection-message {:role role
                                             :provider-id pid
-                                            :model-id (provider-id-str (cget mkey mkey*))
+                                            :model-id (provider-id-str (get config mkey))
                                             :fleet fleet
                                             :registered registered
                                             :configured-ids configured-ids}))))
-              [["default" :default-provider :default-model "default_provider" "default_model"]
-               ["fallback" :fallback-provider :fallback-model "fallback_provider"
-                "fallback_model"]])))))
+              [["default" "default_provider" "default_model"]
+               ["fallback" "fallback_provider" "fallback_model"]])))))
 
 (defn run-checks
   "Run host-owned diagnostics, including speech, then every registered extension's checks."

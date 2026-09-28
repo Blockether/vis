@@ -26,10 +26,9 @@
 
 (defn- reject-extension-id!
   [m]
-  (when (or (contains? m :extension-id) (contains? m :extension_id))
+  (when (contains? m :extension-id)
     (throw (ex-info "extension-id is runtime-owned; extension callers must not supply it"
-                    {:type :extension-aggregate/extension-id-forbidden
-                     :keys (vec (filter #(contains? m %) [:extension-id :extension_id]))}))))
+                    {:type :extension-aggregate/extension-id-forbidden :keys [:extension-id]}))))
 
 (defn- require-non-blank
   [kind v]
