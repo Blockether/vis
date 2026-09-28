@@ -802,6 +802,13 @@
 
 (defdescribe
   list-sessions-search-test
+  ;; Regression #288: sparse search rows need safe optional access in the contract and prompt.
+  (it "documents optional snippet fields and safe access"
+      (with-redefs [toggles/enabled? #(= "introspection" %)]
+        (doseq [text [(:ext.symbol/result introspection/list-sessions-symbol)
+                      (introspection/prompt {}) (#'foundation/combined-prompt {})]]
+          (doseq [required ["optional" "row.get(\"request_snippet\")" "row.get(\"reply_snippet\")"]]
+            (expect (str/includes? text required))))))
   (it
     "answers `search` in the SERVER's own order, tagged with where it hit"
     (let [s (vis/db-create-connection! :memory)]

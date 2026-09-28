@@ -1430,8 +1430,10 @@
      (str "String-keyed rows `{id, channel, title, goal, turn_count, created_at, modified_at}`; "
           "`goal` is the persisted goal or None. A starred session adds `favorite_rank`, the "
           "human's star order, lowest first. A matched "
-          "row adds `rank`, `is_in_title`/`is_in_request`/`is_in_reply`/`is_in_thinking` and the "
-          "`request_snippet`/`reply_snippet` windows.")}))
+          "row adds `rank` and `is_in_title`/`is_in_request`/`is_in_reply`/`is_in_thinking`. "
+          "The `request_snippet` and `reply_snippet` windows are optional: either or both keys "
+          "may be absent. Use `row.get(\"request_snippet\")` and `row.get(\"reply_snippet\")`; "
+          "each returns None when its field is absent.")}))
 
 ;; Session introspection is part of foundation-core, but its callable symbols and
 ;; prompt guidance remain behind the default-off `introspection` toggle.
@@ -1460,6 +1462,7 @@
     "- THIS session's conversation is already in front of you: live steps verbatim, folded steps as the gist breadcrumb standing where they collapsed. `await read_session()` on it re-reads what you can see and never undoes a fold, whatever `fold_count` says. Call it only for what a conversation cannot hold — `usage` (per-turn/iteration/tool/provider routing), `failures`, `diagnosis`, `session_forks`, `turn_retries` — or to recover ONE fact a gist omits, naming that fact and its `tN/iK` scope first. Reuse the result unless newer evidence is needed. `usage` tool rows overlap, so read each on its own.\n"
     "- A fold is deliberate: the gist you wrote replaces those steps, and reading them back does not restore them. Raw folded content lives ONLY in `transcript/turns/iterations/blocks` (`code`/`stdout`/`error`) — go there to repair a gist you can show is insufficient, not to browse.\n"
     "- Other conversation: `await list_sessions(search=\"…\")` ranks like the TUI/app search; then `get_session(id)` for one row, `read_session(id)` for its content. One search round settles it: re-spelling a miss is not new evidence, so no useful match ends the lookup and you answer from your own knowledge.\n"
+    "- Search snippets `request_snippet` and `reply_snippet` are optional; either or both may be absent. Use `row.get(\"request_snippet\")` and `row.get(\"reply_snippet\")`, which return None for absent fields.\n"
     "- A session id copied from the TUI or the companion app arrives MARKED as `vis_session_id#<uuid>` — that marker means 'this is a Vis session'; pass it verbatim (or the bare id) to `read_session`/`get_session`.\n"
     "- Filter in `python_execution`; print the fields the question needs.\n"))
 
