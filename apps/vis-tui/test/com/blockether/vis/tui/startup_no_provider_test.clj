@@ -79,7 +79,7 @@
                    #'client/gateway-release-session! #'timg/images-protocol]
                   (repeat no-op))
           {#'screen/create-terminal! (constantly terminal)
-           #'screen/session-workspace (constantly {:root "/tmp"})
+           #'screen/session-workspace (constantly {"root" "/tmp"})
            #'screen/subscribe-session-live! (constantly no-op)
            #'screen/open-settings-modal! (fn [_screen & [section]]
                                            (swap! dialogs conj (or section "Settings"))

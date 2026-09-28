@@ -8,7 +8,7 @@
 
 (defn workspace-root
   [workspace]
-  (cond (map? workspace) (or (:root workspace) (get workspace "root") (:workspace/root workspace))
+  (cond (map? workspace) (get workspace "root")
         (some? workspace) (str workspace)
         :else (str (cwd))))
 

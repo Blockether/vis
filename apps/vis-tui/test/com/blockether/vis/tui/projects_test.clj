@@ -127,11 +127,12 @@
     (state/dispatch [:select-project "empty" [] "new-project"])
     (is (= 1 (count (model/project-tabs @state/app-db))))
     (state/dispatch [:select-project "a" [] "unused"])
-    (state/dispatch [:bind-built-session "new-project" {:id "new-session"} [] {:root "/work/new"}])
+    (state/dispatch [:bind-built-session "new-project" {:id "new-session"} [] {"root" "/work/new"}])
     (is (= "a" (:active-project-id @state/app-db)))
     (is (= "Keep this draft" (input/input->text (:input @state/app-db))))
     (state/dispatch [:select-project "empty" [] "unused"])
     (is (= "new-session" (get-in @state/app-db [:session :id])))
+    (is (= "/work/new" (:workspace/root @state/app-db)))
     (is (= 1 (count (model/project-tabs @state/app-db))))))
 
 (deftest project-close-keeps-last-tab-test

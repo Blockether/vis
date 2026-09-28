@@ -180,14 +180,14 @@
 (defn tab-group-root
   "The PROJECT grouping key for a tab entry: the root of the workspace its
    session edits in — for a rift draft the trunk it was cloned from
-   (`:repo-root`), for trunk the root itself — falling back to the entry's
+   (`repo_root`), for trunk the root itself — falling back to the entry's
    denormalised `:workspace/root`. nil (synthetic/building tabs) means
    ungrouped; channels treat nil as its own group. ONE definition so the tab
    ORDER (state layer), the strip's group separators (channel headers) and
    tab persistence all agree on what a 'project' is."
   [entry]
   (let [ws (:workspace entry)]
-    (or (:repo-root ws) (:root ws) (:workspace/root entry))))
+    (or (get ws "repo_root") (get ws "root") (:workspace/root entry))))
 
 (defn project-tabs
   "Visible tab set. All other entries and their live locals remain in app-db."

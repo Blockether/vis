@@ -342,8 +342,7 @@
                  (:tabs @state/app-db)))
       (expect (= :tab-2 (:active-tab-id @state/app-db))))
   (it "attaches workspace root to the new workspace and active snapshot"
-      (let [workspace
-            {:workspace/id "ws-1" :workspace/root "/tmp/vis-ws" :main {:branch "feature/ws"}}]
+      (let [workspace {"id" "ws-1" "root" "/tmp/vis-ws" "label" "feature/ws"}]
         (reset! state/app-db {:tabs [{:id :main :label "Main" :active? true}]
                               :active-tab-id :main
                               :tab-locals {}
@@ -354,7 +353,7 @@
         (expect (= "/tmp/vis-ws" (:workspace/root @state/app-db)))
         (expect (= "feature/ws" (get-in @state/app-db [:tabs 1 :label])))))
   (it "keeps active root in sync when the backend workspace changes"
-      (reset! state/app-db {:workspace {:id "ws-1" :root "/tmp/old"}
+      (reset! state/app-db {:workspace {"id" "ws-1" "root" "/tmp/old"}
                             :workspace/root "/tmp/old"
                             :tabs [{:id :main :label "Main" :active? true}]
                             :active-tab-id :main
@@ -1637,7 +1636,7 @@
         (reset! state/app-db {:session {:id "s1"}
                               :active-tab-id "s1"
                               :render-version 0
-                              :workspace {:workspace/root "."}
+                              :workspace {"root" "."}
                               :messages []
                               :input-history []
                               :pastes {}
@@ -1948,7 +1947,7 @@
         (doseq [paused [nil {:reason "turn_failed" :held 1}]]
           (let [queued [{:text "next request" :turn-id "held" :mine? true}]
                 before (assoc running-db
-                         :workspace {:workspace/root "."}
+                         :workspace {"root" "."}
                          :pending-sends queued
                          :queue-paused paused)
                 {after :db fx :fx} ((handler :message-received)
@@ -2100,7 +2099,7 @@
                  (state/dispatch [:init-session {:id "s1" :status "idle"}
                                   [{:role :user :text "cancelled"}
                                    {:role :assistant :text "interrupted" :status :interrupted}]
-                                  {:root "/tmp"}])
+                                  {"root" "/tmp"}])
                  (let [db @state/app-db]
                    (expect (false? (:loading? db)))
                    (expect (false? (:cancelling? db)))
@@ -2120,7 +2119,7 @@
                  (state/dispatch [:init-session
                                   {:id "s1" :status "running" :current-turn-id "turn-1"}
                                   [{:role :user :text "running"} {:role :assistant :pending? true}]
-                                  {:root "/tmp"}])
+                                  {"root" "/tmp"}])
                  (let [db @state/app-db]
                    (expect (true? (:loading? db)))
                    (expect (true? (:cancelling? db)))
@@ -3786,7 +3785,7 @@
             db
             {:active-tab-id :main
              :session {:id "c1"}
-             :workspace {:workspace/root "."}
+             :workspace {"root" "."}
              :loading? true
              :cancelling? true
              :input (input/empty-input)
@@ -5127,24 +5126,51 @@
                             :active-tab-id :main
                             :tab-locals {}
                             :render-version 0})
-      (state/dispatch [:create-tab {:workspace {:root "/tmp/proj-a"}}])
-      (state/dispatch [:create-tab {:workspace {:root "/tmp/proj-b"}}])
-      (state/dispatch [:create-tab {:workspace {:root "/tmp/proj-a"}}])
+      (state/dispatch [:create-tab {:workspace {"root" "/tmp/proj-a"}}])
+      (state/dispatch [:create-tab {:workspace {"root" "/tmp/proj-b"}}])
+      (state/dispatch [:create-tab {:workspace {"root" "/tmp/proj-a"}}])
       ;; tab-3 (proj-a) slots in right after tab-1 (proj-a), before tab-2.
       (expect (= [:main :tab-1 :tab-3 :tab-2] (mapv :id (:tabs @state/app-db))))
       (expect (= :tab-3 (:active-tab-id @state/app-db))))
-  (it "a rift draft groups under its trunk via :repo-root"
+  (it "a rift draft groups under its trunk via repo_root"
       (reset! state/app-db {:tabs [{:id :main :label "Main" :active? true}]
                             :active-tab-id :main
                             :tab-locals {}
                             :render-version 0})
-      (state/dispatch [:create-tab {:workspace {:root "/tmp/trunk"}}])
-      (state/dispatch [:create-tab {:workspace {:root "/tmp/other"}}])
-      (state/dispatch [:create-tab {:workspace {:root "/tmp/clones/x" :repo-root "/tmp/trunk"}}])
+      (state/dispatch [:create-tab {:workspace {"root" "/tmp/trunk"}}])
+      (state/dispatch [:create-tab {:workspace {"root" "/tmp/other"}}])
+      (state/dispatch [:create-tab {:workspace {"root" "/tmp/clones/x" "repo_root" "/tmp/trunk"}}])
       (expect (= [:main :tab-1 :tab-3 :tab-2] (mapv :id (:tabs @state/app-db)))))
+  ;; Regression #291: the gateway serves the workspace record with its JSON keys, so an
+  ;; opened draft session keeps its roots and label and groups under its trunk.
+  (it "groups an opened draft session under its trunk from the gateway record"
+      (reset! state/app-db {:tabs [{:id :main
+                                    :label "Main"
+                                    :active? true
+                                    :workspace {"root" "/tmp/trunk"}
+                                    :workspace/root "/tmp/trunk"}
+                                   {:id :tab-1 :label "Other" :workspace/root "/tmp/other"}]
+                            :active-tab-id :main
+                            :session {:id "sid-main"}
+                            :tab-locals {:tab-1 {:session {:id "sid-other"}}}
+                            :render-version 0})
+      (state/dispatch [:open-session-tab {:id "sid-draft"} []
+                       {"root" "/tmp/clones/x" "repo_root" "/tmp/trunk" "label" "rift-x"}])
+      (let [db
+            @state/app-db
+
+            opened
+            (some #(when (= :tab-2 (:id %)) %) (:tabs db))]
+
+        (expect (= [:main :tab-2 :tab-1] (mapv :id (:tabs db))))
+        (expect (= "rift-x" (:label opened)))
+        (expect (= "/tmp/clones/x" (:workspace/root opened)))
+        (expect (= "/tmp/clones/x" (:workspace/root db)))
+        (expect (some #{{:id "sid-draft" :root "/tmp/trunk"}}
+                      (:sessions (state/tab-session-snapshot db))))))
   (it "a tab with no workspace root still appends at the end"
       (reset! state/app-db
-        {:tabs [{:id :main :label "Main" :active? true :workspace {:root "/tmp/proj-a"}}]
+        {:tabs [{:id :main :label "Main" :active? true :workspace {"root" "/tmp/proj-a"}}]
          :active-tab-id :main
          :tab-locals {}
          :render-version 0})
@@ -5152,16 +5178,17 @@
       (expect (= [:main :tab-1] (mapv :id (:tabs @state/app-db)))))
   (it "tab-session-snapshot carries each tab's project root"
       (reset! state/app-db
-        {:tabs [{:id :main :label "Main" :active? true :workspace {:root "/tmp/proj-a"}}
-                {:id :tab-1 :label "T1" :workspace {:root "/tmp/clones/x" :repo-root "/tmp/proj-b"}}
-                {:id :tab-2 :label "T2"}]
+        {:tabs
+         [{:id :main :label "Main" :active? true :workspace {"root" "/tmp/proj-a"}}
+          {:id :tab-1 :label "T1" :workspace {"root" "/tmp/clones/x" "repo_root" "/tmp/proj-b"}}
+          {:id :tab-2 :label "T2"}]
          :active-tab-id :main
          :session {:id "sid-main"}
          :tab-locals {:tab-1 {:session {:id "sid-b"}} :tab-2 {:session {:id "sid-c"}}}
          :render-version 0})
       (expect (= {:active "sid-main"
                   :sessions [{:id "sid-main" :root "/tmp/proj-a"}
-                             ;; draft → grouped under its trunk (:repo-root)
+                             ;; draft → grouped under its trunk (repo_root)
                              {:id "sid-b" :root "/tmp/proj-b"}
                              ;; no workspace → root absent, id-only entry
                              {:id "sid-c"}]}

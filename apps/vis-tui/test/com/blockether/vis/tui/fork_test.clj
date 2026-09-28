@@ -362,7 +362,7 @@
                   #'client/gateway-release-session! #'timg/images-protocol]
                  (repeat no-op))
                {#'screen/create-terminal! (constantly terminal)
-                #'screen/session-workspace (constantly {:root "/tmp"})
+                #'screen/session-workspace (constantly {"root" "/tmp"})
                 #'screen/subscribe-session-live! (constantly no-op)
                 #'client/toggle-add-listener! (constantly no-op)
                 #'client/load-config (constantly config)

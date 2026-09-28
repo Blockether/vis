@@ -222,7 +222,7 @@
       (when-let [root (or (:workspace/root db)
                           (some-> (active-tab-entry db)
                                   :workspace/root))]
-        {:workspace/root root})))
+        {"root" root})))
 
 (defn- sync-active-tab
   [db]
@@ -1819,18 +1819,10 @@
           (:workspace opts)
 
           root
-          (or (:workspace/root workspace) (:workspace/root opts))
+          (or (get workspace "root") (:workspace/root opts))
 
           label
-          (or (:label opts)
-              (some-> workspace
-                      :label
-                      not-empty)
-              (some-> workspace
-                      :main
-                      :branch
-                      not-empty)
-              untitled-session-label)
+          (or (:label opts) (not-empty (get workspace "label")) untitled-session-label)
 
           entry
           (cond-> {:id id :label label :active? true :project-id (:active-project-id db)}
@@ -2316,9 +2308,9 @@
       (-> db
           ensure-tabs
           (assoc :session session
-                 ;; The session's current workspace record. `:root` is the active
-                 ;; filesystem root; `:repo-root` retains the canonical project
-                 ;; identity for internally isolated workspaces.
+                 ;; The session's current gateway workspace record, JSON-keyed: "root"
+                 ;; is the active filesystem root; "repo_root" retains the canonical
+                 ;; project identity for internally isolated workspaces.
                  :workspace workspace
                  :title nil
                  ;; This tab is being REBOUND to another session, so the
@@ -2392,23 +2384,23 @@
                                             workspace
                                             (assoc :workspace workspace)
 
-                                            (:root workspace)
-                                            (assoc :workspace/root (:root workspace)))
+                                            (get workspace "root")
+                                            (assoc :workspace/root (get workspace "root")))
                                           e))
                                       es)))
                       (update-tab tab-id
                                   (fn [w]
-                                    (clear-active-turn-state (assoc w
-                                                               :session session
-                                                               :workspace workspace
-                                                               :workspace/root (:root workspace)
-                                                               :title nil
-                                                               ;; Same reason as :init-session — a
-                                                               ;; bound tab shows THIS session's model.
-                                                               :session-model-pref nil
-                                                               :messages (or history [])
-                                                               :input-history (history-user-texts
-                                                                                history)))))
+                                    (clear-active-turn-state
+                                      (assoc w
+                                        :session session
+                                        :workspace workspace
+                                        :workspace/root (get workspace "root")
+                                        :title nil
+                                        ;; Same reason as :init-session — a
+                                        ;; bound tab shows THIS session's model.
+                                        :session-model-pref nil
+                                        :messages (or history [])
+                                        :input-history (history-user-texts history)))))
                       (cond->
                         (not background?)
                         (activate-tab tab-id))
@@ -2438,18 +2430,15 @@
                   (keyword (str "tab-" n))
 
                   label
-                  (or (some-> workspace
-                              :label
-                              not-empty)
-                      untitled-session-label)
+                  (or (not-empty (get workspace "label")) untitled-session-label)
 
                   entry
                   (cond-> {:id id :label label :active? true :project-id (:active-project-id db)}
                     workspace
                     (assoc :workspace workspace)
 
-                    (:root workspace)
-                    (assoc :workspace/root (:root workspace)))
+                    (get workspace "root")
+                    (assoc :workspace/root (get workspace "root")))
 
                   db'
                   (-> db
@@ -2460,7 +2449,7 @@
                       (merge (empty-tab-state))
                       (assoc :session session
                              :workspace workspace
-                             :workspace/root (:root workspace)
+                             :workspace/root (get workspace "root")
                              :title nil
                              :messages (or history [])
                              :input-history (history-user-texts history)))]
@@ -2548,17 +2537,15 @@
                       (if (= (:id e) tab-id)
                         (cond-> (-> e
                                     (dissoc :build-id)
-                                    (assoc :label (or (some-> workspace
-                                                              :label
-                                                              not-empty)
+                                    (assoc :label (or (not-empty (get workspace "label"))
                                                       (when (not= starting-session-label (:label e))
                                                         (not-empty (:label e)))
                                                       untitled-session-label)))
                           workspace
                           (assoc :workspace workspace)
 
-                          (:root workspace)
-                          (assoc :workspace/root (:root workspace)))
+                          (get workspace "root")
+                          (assoc :workspace/root (get workspace "root")))
                         e))
                     entries)
 
@@ -2584,7 +2571,7 @@
                             (clear-active-turn-state (assoc w
                                                        :session session
                                                        :workspace workspace
-                                                       :workspace/root (:root workspace)
+                                                       :workspace/root (get workspace "root")
                                                        :messages (or history [])
                                                        :input-history (history-user-texts history)
                                                        :title nil))))
