@@ -23,7 +23,6 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.provider.credential-command :as cred]
@@ -623,8 +622,8 @@
         ;; keywords and vis.yml as JSON strings; spelling both layers alike
         ;; first makes a configured member replace the preset's, not join it.
         merged-extra-body
-        (not-empty (merge (svar-router/canonical-extra-body (:extra-body template))
-                          (svar-router/canonical-extra-body (:extra-body provider))))
+        (not-empty (merge (svar/canonical-extra-body (:extra-body template))
+                          (svar/canonical-extra-body (:extra-body provider))))
 
         ;; Kept on the pre-normalized provider so Vis can reattach it after svar
         ;; normalizes the router. Explicit provider config wins over its preset.
