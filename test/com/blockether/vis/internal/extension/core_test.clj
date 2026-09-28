@@ -1137,6 +1137,21 @@
         (binding [extension/*tool-event-sink* #(swap! events conj %)]
           (extension/invoke-symbol-wrapper ext sym [path] {}))
         (expect (= "~/vis/src/com/example/probe.clj" (:label (first @events))))))
+  ;; Issue #291: tool arguments arrive from the sandbox as parsed JSON, so a leading
+  ;; options map is labeled by its JSON key names, the one spelling that exists there.
+  (it "labels a leading options map by its JSON key name"
+      (let [events
+            (atom [])
+
+            sym
+            (extension/symbol #'activity-success-probe {:tag :observation})
+
+            ext
+            {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}]
+
+        (binding [extension/*tool-event-sink* #(swap! events conj %)]
+          (extension/invoke-symbol-wrapper ext sym [{"query" "reasoning" "paths" ["src"]}] {}))
+        (expect (= "reasoning" (:label (first @events))))))
   (it "captures patch metadata before returning only the public value"
       (let [events
             (atom [])

@@ -1329,8 +1329,10 @@
   "One-line human label for the PRIMARY argument of a tool call, so Activity can
    adapt the evidence to the channel width instead of inheriting a premature visual
    truncation. Best-effort: the first string positional arg, or a common key
-   (cmd/path/query/code/name/id) of a leading map arg. The Activity event boundary
-   performs the canonical byte bound. nil when nothing sensible.
+   (cmd/path/query/code/name/id) of a leading options map. Tool arguments arrive
+   from the sandbox as parsed JSON, so that map is read by its JSON names only.
+   The Activity event boundary performs the canonical byte bound. nil when
+   nothing sensible.
 
    A label is DISPLAY: an absolute path under home is rendered `~/…`, the spelling the
    footer, the navigator and the dialogs already use. `abbreviate-home` rewrites nothing
@@ -1342,9 +1344,9 @@
         pick
         (cond (string? primary) primary
               (map? primary) (some (fn [k]
-                                     (let [v (or (get primary k) (get primary (name k)))]
+                                     (let [v (get primary k)]
                                        (when (string? v) v)))
-                                   [:cmd :command :path :query :code :name :id])
+                                   ["cmd" "command" "path" "query" "code" "name" "id"])
               :else nil)
 
         line
