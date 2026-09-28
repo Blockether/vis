@@ -1345,7 +1345,7 @@
 
 (def ^:private MAX_MAX_TOKENS_EXCEEDED_RETRIES
   "Max transparent retries for `:svar.llm/max-tokens-exceeded` per
-   iteration. Each retry bumps `:extra-body {:max_tokens N}` by
+   iteration. Each retry bumps `:extra-body {\"max_tokens\" N}` by
    `MAX_TOKENS_RETRY_BUMP_FACTOR` so a reasoning-heavy iteration that
    burnt the auto-budget on hidden thinking gets another shot with
    headroom. 1 retry = 2 total attempts; subsequent bumps would either
@@ -1368,7 +1368,7 @@
    from svar's `ask-code!*` blank-content guard. The model produced
    reasoning but the visible content slot was empty because the
    provider's `finish_reason: \"length\"` truncated the response.
-   Retry-able via `:extra-body {:max_tokens N}` bump."
+   Retry-able via `:extra-body {\"max_tokens\" N}` bump."
   [^Throwable e]
   (= :svar.llm/max-tokens-exceeded (:type (ex-data e))))
 
@@ -1385,7 +1385,7 @@
         bumped
         (long (Math/ceil (* (double base) (double MAX_TOKENS_RETRY_BUMP_FACTOR))))]
 
-    (assoc (or prev-extra-body {}) :max_tokens bumped)))
+    (assoc prev-extra-body "max_tokens" bumped)))
 
 (defn- max-tokens-exhausted?
   "True for `:svar.llm/max-tokens-exceeded` errors that survived all
@@ -2946,7 +2946,9 @@
                                   (ex-data e)
 
                                   prev-max
-                                  (or (:output-tokens data) (:max_tokens current-extra-body) 8192)
+                                  (or (:output-tokens data)
+                                      (get current-extra-body "max_tokens")
+                                      8192)
 
                                   bumped
                                   (bumped-max-tokens-extra-body current-extra-body prev-max)]
@@ -2957,14 +2959,14 @@
                                                 :attempt (inc (long (:max-tokens retries)))
                                                 :max-retries MAX_MAX_TOKENS_EXCEEDED_RETRIES
                                                 :prev-max prev-max
-                                                :new-max (:max_tokens bumped)
+                                                :new-max (get bumped "max_tokens")
                                                 :reasoning-length (:reasoning-length data)}}
                                         (str "max_tokens exhausted on reasoning (~"
                                              (or (:reasoning-length data) "?")
                                              " reasoning tokens); retry " (inc (long (:max-tokens
                                                                                        retries)))
                                              "/" MAX_MAX_TOKENS_EXCEEDED_RETRIES
-                                             " with max_tokens=" (:max_tokens bumped)))
+                                             " with max_tokens=" (get bumped "max_tokens")))
                               ;; Spend the max-token budget so a second cap-hit
                               ;; cannot loop forever.
                               {::retry-max-tokens bumped})

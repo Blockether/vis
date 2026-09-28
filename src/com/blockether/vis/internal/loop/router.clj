@@ -1486,12 +1486,10 @@
   ["input_cost" "input_uncached_cost" "input_cached_cost" "input_cache_write_cost" "cache_read_cost"
    "cache_write_cost" "output_cost" "total_cost"])
 
-(def ^:private service-tier-keys [:service_tier "service_tier" :service-tier "service-tier"])
-
 (defn- service-tier
-  "The service tier `extra-body` names under `k`, lower-cased, or nil."
-  [extra-body k]
-  (some-> (get extra-body k)
+  "The lower-cased `service_tier` a caller's JSON-keyed `extra-body` names, or nil."
+  [extra-body]
+  (some-> (get extra-body "service_tier")
           str
           str/lower-case))
 
@@ -1508,12 +1506,12 @@
   [fast-mode extra-body turn-features]
   (boolean (when fast-mode
              (or (true? (get turn-features (:turn-feature fast-mode)))
-                 (some #(= (str/lower-case (:service-tier fast-mode)) (service-tier extra-body %))
-                       service-tier-keys)))))
+                 (= (str/lower-case (:service-tier fast-mode)) (service-tier extra-body))))))
 
 (defn fast-mode-router
   "Put a requested fast service tier only on the router entry of the provider
-  that declares it, so Svar fallback cannot carry it to another provider."
+  that declares it, so Svar fallback cannot carry it to another provider. The
+  router's request bodies are Svar's, spelled with keyword keys."
   [router extra-body turn-features]
   (let [tier-for (fn [provider]
                    (let [fm (fast-mode (:id provider))]
@@ -1525,11 +1523,7 @@
               (fn [providers]
                 (mapv (fn [provider]
                         (if-let [tier (tier-for provider)]
-                          (update provider
-                                  :extra-body
-                                  (fn [body]
-                                    (assoc (apply dissoc (or body {}) service-tier-keys)
-                                      :service_tier tier)))
+                          (assoc-in provider [:extra-body :service_tier] tier)
                           provider))
                       providers))))))
 
@@ -1544,10 +1538,9 @@
                                         :service-tier
                                         str/lower-case))
                          (vals (catalog/policies)))]
-    (not-empty (reduce (fn [body k]
-                         (if (contains? fast-tiers (service-tier body k)) (dissoc body k) body))
-                       (or extra-body {})
-                       service-tier-keys))))
+    (not-empty (cond-> extra-body
+                 (contains? fast-tiers (service-tier extra-body))
+                 (dissoc "service_tier")))))
 
 (defn fast-mode-cost-multiplier
   "The price multiplier of `provider`'s fast mode when this turn requested it,

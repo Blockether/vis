@@ -4770,17 +4770,17 @@
                  ;; Provider reports the exact number it cut off at — doubling that gives
                  ;; the next attempt enough headroom in the common case (reasoning ate
                  ;; roughly all of the budget).
-                 (expect (= {:max_tokens 4096} (bumped-max-tokens-extra-body nil 2048)))
-                 (expect (= {:max_tokens 16000} (bumped-max-tokens-extra-body nil 8000)))
+                 (expect (= {"max_tokens" 4096} (bumped-max-tokens-extra-body nil 2048)))
+                 (expect (= {"max_tokens" 16000} (bumped-max-tokens-extra-body nil 8000)))
                  ;; Preserves caller-supplied extra-body keys so the bump does not drop
-                 ;; their overrides (e.g. `:store false` for Codex).
-                 (expect (= {:store false :max_tokens 4096}
-                            (bumped-max-tokens-extra-body {:store false} 2048))))
+                 ;; their overrides (e.g. "store" false for Codex).
+                 (expect (= {"store" false "max_tokens" 4096}
+                            (bumped-max-tokens-extra-body {"store" false} 2048))))
              (it "falls back to 8192 when no previous max is known"
                  ;; Defensive: the error carries no `:output-tokens` (older svar version,
                  ;; or non-streaming path). Use a moderate-sized cap as fallback so we
                  ;; don't accidentally explode the request body.
-                 (expect (= {:max_tokens 16384} (bumped-max-tokens-extra-body nil nil)))))
+                 (expect (= {"max_tokens" 16384} (bumped-max-tokens-extra-body nil nil)))))
 
 (defdescribe llm-provider-error-context-test
              ;; Iteration-error-data shape (built by `format-exception`):
@@ -5871,7 +5871,7 @@
 
                    (expect (= 2.0 (multiplier {} fast :openai-codex)))
                    (expect (= 2.0 (multiplier {"service_tier" "PRIORITY"} {} "openai-codex")))
-                   (expect (= 1.0 (multiplier {:service_tier "priority"} fast :openai)))
+                   (expect (= 1.0 (multiplier {"service_tier" "priority"} fast :openai)))
                    (expect (= 1.0 (multiplier {} {} :openai-codex))))))
 
 ;; Regression, reported session b30f87ac-f20e-4d7f-9fd2-416788d10527:
@@ -5888,7 +5888,7 @@
         {"codex_fast_mode" true}
 
         verbosity
-        {:text {:verbosity "high"}}
+        {"text" {"verbosity" "high"}}
 
         router
         {:providers [{:id :openai-codex :extra-body {:service_tier "auto" :provider-option true}}
@@ -5900,32 +5900,26 @@
           (:extra-body (some #(when (= provider-id (:id %)) %) (:providers r))))]
 
     (it "scopes Fast to the Codex router entry before Svar can fall back"
-        (let [projected
-              (project-router router verbosity fast)
-
-              caller-body
-              (sanitize verbosity)]
-
-          (expect (= {:service_tier "priority" :provider-option true :text {:verbosity "high"}}
-                     (merge (provider-body projected :openai-codex) caller-body)))
-          (expect (= {:service_tier "standard_only" :max_tokens 1024 :text {:verbosity "high"}}
-                     (merge (provider-body projected :anthropic-coding-plan) caller-body)))))
+        (let [projected (project-router router verbosity fast)]
+          (expect (= {:service_tier "priority" :provider-option true}
+                     (provider-body projected :openai-codex)))
+          (expect (= {:service_tier "standard_only" :max_tokens 1024}
+                     (provider-body projected :anthropic-coding-plan)))
+          (expect (= verbosity (sanitize verbosity)))))
     (it "moves legacy caller Priority to Codex without deleting valid tiers"
         (let [legacy
-              {"service_tier" "PRIORITY" :max_tokens 512}
+              {"service_tier" "PRIORITY" "max_tokens" 512}
 
               projected
-              (project-router router legacy {})
+              (project-router router legacy {})]
 
-              caller-body
-              (sanitize legacy)]
-
-          (expect (= {:service_tier "priority" :provider-option true :max_tokens 512}
-                     (merge (provider-body projected :openai-codex) caller-body)))
-          (expect (= {:service_tier "standard_only" :max_tokens 512}
-                     (merge (provider-body projected :anthropic-coding-plan) caller-body)))
-          (expect (= {:service_tier "auto" :max_tokens 1024}
-                     (sanitize {:service_tier "auto" :max_tokens 1024})))))))
+          (expect (= {:service_tier "priority" :provider-option true}
+                     (provider-body projected :openai-codex)))
+          (expect (= {:service_tier "standard_only" :max_tokens 1024}
+                     (provider-body projected :anthropic-coding-plan)))
+          (expect (= {"max_tokens" 512} (sanitize legacy)))
+          (expect (= {"service_tier" "auto" "max_tokens" 1024}
+                     (sanitize {"service_tier" "auto" "max_tokens" 1024})))))))
 
 (defdescribe ask-code-block-observation-test
              (it "reports the block count (lenient mode: only the count is meaningful)"
@@ -7158,15 +7152,15 @@
         @#'iteration/request-with-retries
 
         attempt
-        {:retries {:auth 1 :stream 1 :max-tokens 0} :extra-body {:max_tokens 100} :env ::env}]
+        {:retries {:auth 1 :stream 1 :max-tokens 0} :extra-body {"max_tokens" 100} :env ::env}]
 
     (it "ends on a real result"
         (expect (nil? (next-attempt attempt {:answer "done"})))
         (expect (nil? (next-attempt attempt :unrelated-keyword))))
     (it "sends a max-token bump as the next request body"
         (expect
-          (= {:retries {:auth 1 :stream 1 :max-tokens 1} :extra-body {:max_tokens 200} :env ::env}
-             (next-attempt attempt {::iteration/retry-max-tokens {:max_tokens 200}}))))
+          (= {:retries {:auth 1 :stream 1 :max-tokens 1} :extra-body {"max_tokens" 200} :env ::env}
+             (next-attempt attempt {::iteration/retry-max-tokens {"max_tokens" 200}}))))
     (it "installs an auth fallback route without spending the auth budget"
         (expect (= (assoc attempt :routing {:provider :anthropic})
                    (next-attempt attempt
@@ -7195,7 +7189,7 @@
 
             results
             [{::iteration/retry-auth-fallback {:provider :anthropic}}
-             {::iteration/retry-max-tokens {:max_tokens 200}} ::iteration/retry-auth-refresh
+             {::iteration/retry-max-tokens {"max_tokens" 200}} ::iteration/retry-auth-refresh
              {:answer "done"}]
 
             send!
@@ -7207,24 +7201,24 @@
         (expect (= {:answer "done"}
                    (request-with-retries send!
                                          {:retries {:auth 0 :stream 0 :max-tokens 0}
-                                          :extra-body {:max_tokens 100}
+                                          :extra-body {"max_tokens" 100}
                                           :env :env}
                                          routing)))
         (expect
           (= [{:retries {:auth 0 :stream 0 :max-tokens 0}
-               :extra-body {:max_tokens 100}
+               :extra-body {"max_tokens" 100}
                :env :env
                :routing {:provider :openai}}
               {:retries {:auth 0 :stream 0 :max-tokens 0}
-               :extra-body {:max_tokens 100}
+               :extra-body {"max_tokens" 100}
                :env [:env 0]
                :routing {:provider :anthropic}}
               {:retries {:auth 0 :stream 0 :max-tokens 1}
-               :extra-body {:max_tokens 200}
+               :extra-body {"max_tokens" 200}
                :env [:env 1]
                :routing {:provider :anthropic}}
               {:retries {:auth 1 :stream 0 :max-tokens 1}
-               :extra-body {:max_tokens 200}
+               :extra-body {"max_tokens" 200}
                :env [:env 2]
                :routing {:provider :anthropic}}]
              @sent))))))
@@ -7664,7 +7658,7 @@
         (expect (= {:auth 2 :stream 0 :max-tokens 0}
                    (next-counters ::iteration/retry-auth-backoff refreshed)))
         (expect (= {:auth 0 :stream 0 :max-tokens 1}
-                   (next-counters {::iteration/retry-max-tokens {:max_tokens 16384}} fresh)))
+                   (next-counters {::iteration/retry-max-tokens {"max_tokens" 16384}} fresh)))
         (expect (nil? (next-counters {:answer "done"} fresh)))))
   (it
     "keeps both stream recoveries after a forced auth refresh"
@@ -12871,7 +12865,7 @@
              (let [result (iteration/iteration-loop environment
                                                     "Return the result"
                                                     {:routing {:provider :fixture :model "large"}
-                                                     :extra-body {:max_tokens 20000}
+                                                     :extra-body {"max_tokens" 20000}
                                                      :session-turn-id
                                                      (persistance/db-store-session-turn!
                                                        (:db-info environment)

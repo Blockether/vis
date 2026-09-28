@@ -619,11 +619,10 @@
         ;; defaults from the preset). svar merges these as the lowest
         ;; precedence layer, so an explicit per-provider config override
         ;; and any per-turn :extra-body still win. Presets spell members as
-        ;; keywords and vis.yml as JSON strings; spelling both layers alike
-        ;; first makes a configured member replace the preset's, not join it.
+        ;; JSON names, like vis.yml, so a configured member replaces the
+        ;; preset's; svar converts the keys when it reads the layer.
         merged-extra-body
-        (not-empty (merge (svar/canonical-extra-body (:extra-body template))
-                          (svar/canonical-extra-body (:extra-body provider))))
+        (not-empty (merge (:extra-body template) (:extra-body provider)))
 
         ;; Kept on the pre-normalized provider so Vis can reattach it after svar
         ;; normalizes the router. Explicit provider config wins over its preset.

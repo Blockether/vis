@@ -147,3 +147,22 @@
           :zai-coding-plan :alibaba-coding-plan :alibaba-token-plan :openrouter :ollama :lmstudio]
          (filterv (set (keys policies/first-party)) (mapv :id (catalog/presets))))
       "the Add-provider picker keeps its first-party order"))
+
+(deftest first-party-presets-spell-request-bodies-with-json-names
+  ;; vis.yml, gateway clients and Python extensions spell `extra_body` members as JSON
+  ;; names. A keyword preset member would sit next to the configured member instead
+  ;; of being replaced by it.
+  (doseq [register! [openai/register! anthropic/register! openai-codex/register!
+                     github-copilot/register! zai/register! alibaba/register! openrouter/register!
+                     ollama/register! lmstudio/register!]]
+    (register!))
+  (is (seq (:extra-body (catalog/template :lmstudio))))
+  (doseq [id
+          (map :id (catalog/presets))
+
+          :let [extra-body
+                (:extra-body (catalog/template id))]
+          :when extra-body]
+
+    (is (every? string? (mapcat keys (filter map? (tree-seq coll? seq extra-body))))
+        (str id " spells its preset extra-body members as JSON names"))))
