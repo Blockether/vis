@@ -118,7 +118,7 @@ def _source(bundle: Path) -> list[Path]:
 
 
 def package(bundle: Path, archive: Path) -> tuple[str, int]:
-    """Write only inventoried FP32 inference files; never include checkpoints/data."""
+    """Write only inventoried FP32 inference files. Never include checkpoints or data."""
     paths = _source(bundle)
     with zipfile.ZipFile(archive, "w", allowZip64=True) as zipped:
         for path in paths:
@@ -139,7 +139,7 @@ def package(bundle: Path, archive: Path) -> tuple[str, int]:
 
 
 class ProgressReader:
-    """Bounded HTTP read() wrapper; report actual bytes written, not guessed progress."""
+    """Bounded HTTP read() wrapper. It reports written bytes, not guessed progress."""
 
     def __init__(
         self, source: BinaryIO, size: int, callback: Callable[[int, int], None] | None

@@ -1,4 +1,4 @@
-"""Session-owned application callables; only declarations and JSON cross the wire."""
+"""Session-owned application callables. Only declarations and JSON cross the wire."""
 
 from __future__ import annotations
 

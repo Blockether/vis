@@ -1,4 +1,4 @@
-"""Private reader and validator for the canonical, language-neutral JSON Schemas."""
+"""Private reader and validator for the shared, language-neutral JSON Schemas."""
 
 import json
 from functools import cache, lru_cache
@@ -29,14 +29,14 @@ _SCHEMA_NAMES = (
 
 @cache
 def schema(name: str) -> dict[str, Any]:
-    """Read a shipped JSON Schema; never retrieve schemas from the network."""
+    """Read a shipped JSON Schema. Never fetch schemas from the network."""
     if name not in _SCHEMA_NAMES:
         raise ValueError("unknown contract schema")
     return json.loads((_DATA / "schema" / f"{name}.json").read_text(encoding="utf-8"))
 
 
 def definition(name: str, key: str) -> dict[str, Any]:
-    """Read one named definition directly from its canonical JSON Schema."""
+    """Read one named definition directly from its JSON Schema."""
     return schema(name)["$defs"][key]
 
 

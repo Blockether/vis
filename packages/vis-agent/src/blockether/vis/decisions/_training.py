@@ -167,9 +167,9 @@ def quantize_bundle(source, destination):
     """Make a deployable weight-only INT8 bundle from a full FP32 export.
 
     ORT basic optimization folds ModernBERT linear-layer weight transposes before
-    quantization. Quantizing the raw export silently leaves those layers FP32.
-    Keep source, temporary optimization and destination separate; publish only
-    the graph, its external weights, tokenizer and runtime configuration.
+    quantization. Quantizing the raw export silently leaves those layers FP32. Keep
+    source, temporary optimization and destination separate. Publish only the graph, its
+    external weights, tokenizer and runtime configuration.
     """
     source = Path(source).resolve()
     destination = Path(destination).resolve()

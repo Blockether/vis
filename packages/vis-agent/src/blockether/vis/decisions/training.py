@@ -147,7 +147,7 @@ class TrainingBundle:
 
     @classmethod
     def fetch(cls, *, model_ref: str, cache_dir: str | Path) -> TrainingBundle:
-        """Download exactly a catalog-pinned checkpoint once; reuse it offline.
+        """Download a catalog-pinned checkpoint exactly once. Reuse it offline.
 
         A failed checksum or unsafe archive never becomes an installed checkpoint.
         Network access occurs only on this explicit call when the bundle is absent.

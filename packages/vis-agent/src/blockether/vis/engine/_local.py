@@ -1,8 +1,8 @@
 """Owned local Vis subprocess, with the same session API and no HTTP listener.
 
-Explicit executable selection only; no download, gateway discovery or user-server
-shutdown. Each engine gets a temporary database. Closing discards that database.
-Supports Linux/macOS. Instances use one calling thread, like GatewayClient.
+You select the executable explicitly. There is no download, gateway discovery or
+user-server shutdown. Each engine gets a temporary database, and closing discards it.
+Supports Linux and macOS. Instances use one calling thread, like GatewayClient.
 """
 
 from __future__ import annotations
@@ -49,21 +49,21 @@ class LocalEngine(ExecutionLayer):
 
     Use this layer when you need to choose an executable, share one local process
     between agents, or call the session API directly. The Vis executable must be
-    installed separately; this class never downloads it or discovers a gateway.
+    installed separately. This class never downloads it or discovers a gateway.
     Supported platforms are Linux and macOS.
 
     Args:
         executable: Executable path/name or nonempty argument sequence. The SDK
-            appends `stdio`; no shell command parsing is performed.
+            appends `stdio`. It does not parse shell commands.
         root: Existing local working directory, resolved at construction.
         timeout: Positive finite timeout in seconds for each transport operation.
         startup_timeout: Positive finite deadline in seconds for initial boot.
 
-    Construction is lazy. `connect` or context entry starts the subprocess;
-    repeated connection calls reuse it. `close` stops only this owned process and
-    discards its temporary session database. It does not revert project edits or
-    stop any separately running Vis server. Explicitly injected agents borrow this
-    layer, so close those agents before leaving the layer's context.
+    Construction is lazy. `connect` or context entry starts the subprocess, and repeated
+    connection calls reuse it. `close` stops only this owned process and discards its
+    temporary session database. It does not revert project edits or stop any separately
+    running Vis server. Explicitly injected agents borrow this layer. Close those agents
+    before you leave the layer's context.
 
     ```python
     from blockether.vis.engine import Agent, LocalEngine
@@ -136,9 +136,9 @@ class LocalEngine(ExecutionLayer):
     def connect(self):
         """Start the owned process once and validate its protocol handshake.
 
-        Return this layer for chaining. A closed layer cannot be restarted; create
-        a new one after failure or closure. Startup failure cleans up the process
-        and temporary database before propagating the error.
+        Return this layer for chaining. A closed layer cannot be restarted. After a
+        failure or close, create a new one. A startup failure cleans up the process and
+        temporary database before the error propagates.
         """
         if self._closed:
             raise TransportError("client is closed")

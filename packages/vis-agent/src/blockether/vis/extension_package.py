@@ -51,7 +51,7 @@ def _relative(value):
 
 
 def project_subdirectory(value=""):
-    """An empty value or dot selects the repository root; otherwise use a portable path."""
+    """An empty value or dot selects the repository root. Otherwise, use a portable path."""
     return "" if value in ("", ".") else _relative(value)
 
 
@@ -83,11 +83,11 @@ def github_source(value, subdirectory=None):
     """Split one catalog identifier into a repository URL and its project folder.
 
     Accepts `owner/repository`, the Extension Center listing path
-    `owner/repository/folder`, an HTTPS GitHub repository URL with an optional
-    folder, and a listing URL such as
-    `https://vis.blockether.com/extensions/owner/repository/folder`. An empty
-    `subdirectory` leaves the folder to the identifier; a folder named in both
-    places must agree.
+    `owner/repository/folder`, an HTTPS GitHub repository URL with an optional folder,
+    and a listing URL such as
+    `https://vis.blockether.com/extensions/owner/repository/folder`. If `subdirectory`
+    is empty, the identifier sets the folder. If both name a folder, the two folders
+    must agree.
     """
     if not isinstance(value, str):
         raise ValueError("Use a GitHub owner/repository slug or HTTPS repository URL")
@@ -206,7 +206,7 @@ def inspect_source(directory, vis_version=None, python_version=None):
 
     Returns:
         Validated metadata, including source information. Managed installations
-        retain their GitHub identity rather than becoming anonymous local paths.
+        keep their GitHub identity. They do not become anonymous local paths.
 
     Raises:
         OSError: A path is missing or unreadable.
@@ -820,11 +820,12 @@ def install(
 ):
     """Install an approved version, an explicit SHA, or a linked local project.
 
-    No selector means the latest approved stable release, never a moving branch.
-    A GitHub source may carry its project folder, as `owner/repository/folder`.
-    Release selection does not import publisher code. Dependency preparation is on reload.
-    Save admits the source as sync-owned and returns its declaration and a rollback token;
-    the host writes configuration, then discards the token on success.
+    Without a selector, install uses the latest approved stable release, never a moving
+    branch. A GitHub source can include its project folder, as `owner/repository/folder`.
+    Release selection does not import publisher code. Dependencies are prepared on reload.
+
+    Save admits the source as sync-owned and returns its declaration and a rollback token.
+    The host writes the configuration and then discards the token on success.
     """
     _trust(trust)
     subdirectory = project_subdirectory(subdirectory)
@@ -864,7 +865,7 @@ def install(
 def update(
     source, directory, trust=False, version=None, vis_version=None, subdirectory=None
 ):
-    """Update a managed repository slug or URL; select a folder when several are installed."""
+    """Update a managed repository slug or URL. Name a folder if several are installed."""
     _trust(trust)
     directory = Path(directory).expanduser().resolve()
     repository, folder = github_source(source, subdirectory)
@@ -911,8 +912,9 @@ def rollback(
 ):
     """Restore a managed repository slug or URL's previous pinned source or an older release.
 
-    Retained versions are validated and reactivated, preserving local edits. Missing
-    versions are fetched at their pinned revision; dependencies are resolved on /reload.
+    Versions still on disk are validated and activated again, and local edits stay.
+    Missing versions are fetched at their pinned revision. Dependencies are resolved on
+    /reload.
     """
     _trust(trust)
     directory = Path(directory).expanduser().resolve()
@@ -1143,7 +1145,8 @@ def rollback_saved_install(directory, name, save_state):
     """Undo this saved admission after configuration failed, never a later installation.
 
     The host returns the opaque token from install(save=True). Source checkouts and Git
-    snapshots are retained. Unrelated sync records and externally changed links survive.
+    snapshots stay on disk. Unrelated sync records and externally changed links are not
+    removed.
     """
     name = _name(name)
     directory = Path(directory).expanduser().resolve()
@@ -1248,13 +1251,13 @@ def sync(
     dry_run=False,
     vis_version=None,
 ):
-    """Reconcile one YAML scope; reuse pins until refresh and prune only owned links.
+    """Reconcile one YAML scope. Reuse pins until refresh, and prune only owned links.
 
-    A `latest` version tracks the newest approved stable release on every sync.
-    Receipts and pointers are atomic. Old Git snapshots and local source are retained.
-    A failed package is reported without removing its previous source or other packages.
-    Dry-run performs no writes, imports or network calls. Dependencies are prepared by
-    the host after source admission, using upstream uv's own readiness/cache checks.
+    A `latest` version follows the newest approved stable release on every sync.
+    Receipts and pointers are atomic. Old Git snapshots and local source stay on disk. A
+    failed package is reported, and its previous source and other packages stay. Dry-run
+    makes no writes, imports or network calls. After source admission, the host prepares
+    dependencies with upstream uv's own readiness and cache checks.
     """
     if not dry_run:
         _trust(trust)

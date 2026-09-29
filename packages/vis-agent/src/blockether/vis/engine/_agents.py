@@ -1,4 +1,4 @@
-"""Managed subagents owned by a session, not arbitrary project peers."""
+"""Managed subagents that a session owns, not other project peers."""
 
 from __future__ import annotations
 

@@ -1,9 +1,9 @@
 """The host used when `vis` runs outside the engine.
 
-This module implements the Host protocol: local operations run locally, prompts
-use the terminal, and session-bound operations refuse without an engine.
-`VIS_OUTSIDE_ANSWERS` primes prompt values; `VIS_OUTSIDE_NONINTERACTIVE=1`
-returns `undeliverable` instead of blocking.
+This module implements the Host protocol. Local operations run locally, and prompts use
+the terminal. Session-bound operations refuse without an engine. `VIS_OUTSIDE_ANSWERS`
+primes prompt values. With `VIS_OUTSIDE_NONINTERACTIVE=1`, prompts return
+`undeliverable` instead of blocking.
 """
 
 from __future__ import annotations
@@ -28,9 +28,9 @@ from blockether.vis import _contracts
 def check_host(host):
     """Refuse a host that does not answer every implemented host operation.
 
-    Answers the host, so a constructor can `return check_host(built)` — the point is
-    that an incomplete host fails where it is BUILT, naming the ops it is missing,
-    instead of halfway through somebody's extension.
+    Returns the host, so a constructor can `return check_host(built)`. An incomplete
+    host then fails where it is built, and the error names the missing ops. It does not
+    fail later inside an extension.
     """
     missing = [
         name for name in _IMPLEMENTATIONS if not callable(getattr(host, name, None))
@@ -86,7 +86,7 @@ def workspace_root():
 
 
 def setting_declaration(spec):
-    """Use the package's canonical schemas for outside-host declarations."""
+    """Use the package's own JSON Schemas for outside-host declarations."""
     from ._contracts import definition, validate
 
     spec = dict(spec)
@@ -470,7 +470,8 @@ def _shell_vocabulary():
 def shell(opts):
     """Start a process, or drive one this host already started.
 
-    Spawn operations create a process; handle operations act on its retained ID.
+    Spawn operations create a process. Handle operations use the process ID that the
+    host keeps.
     """
     opts = dict(opts or {})
     op = str(opts.get("op") or "run").strip()
@@ -558,8 +559,9 @@ _PRIMED = {}
 def answer_with(values):
     """Answer the NEXT asks from `values` instead of prompting.
 
-    A test drives an extension end to end this way; anything the mapping does not
-    name is still typed by whoever is at the terminal. `answer_with({})` clears it.
+    A test can drive an extension end to end this way. A person at the terminal still
+    types any value that the mapping does not name. `answer_with({})` clears the
+    mapping.
     """
     _PRIMED.clear()
     _PRIMED.update({str(k): v for k, v in dict(values or {}).items()})
@@ -1328,9 +1330,9 @@ _IMPLEMENTATIONS = {
 class _OutsideHost:
     """The host `vis` binds when there is no engine in the room.
 
-    One attribute per contract op, because that is the shape the engine injects
-    too: an extension holds a `blockether.vis.extension.Host` either way, and anyone writing a
-    third host has an interface to implement rather than a dict shape to guess.
+    It has one attribute per contract op, because the engine injects the same shape. An
+    extension holds a `blockether.vis.extension.Host` in both cases. A third host then has an
+    interface to implement, not a dict shape to guess.
     """
 
     def __init__(self, ops):

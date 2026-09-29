@@ -48,7 +48,7 @@ class Host(Protocol):
         """Read the active session working copy, or the outside process directory."""
 
     def setting_declaration(self, spec: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Validate a declaration and fill defaults from the canonical schema."""
+        """Validate a declaration and fill defaults from the contract schema."""
 
     def setting(self, id: str, default: bool | str) -> bool | str:
         """Read one setting from the current callback snapshot."""
@@ -72,10 +72,10 @@ class Host(Protocol):
         """Show one notification on the user's channel."""
 
     def council_wake(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Publish to the bound session; only an eligible managed subagent self-wakes."""
+        """Publish to the bound session. Only an eligible managed subagent wakes itself."""
 
     def shell(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Run one canonical shell operation and return its result shape."""
+        """Run one shell operation. Return the contract's result shape."""
 
     def jailed_shell(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
         """Run one shell op inside the workspace jail."""
@@ -137,10 +137,11 @@ class _Council:
     ) -> Mapping[str, Any]:
         """Notify the bound session without a target ID or an active model turn.
 
-        May run from extension-owned background Python after a tool returns.
-        Only a managed subagent can self-wake while idle; an independent leader
-        stays idle. Active sessions receive a ping. Held queues are not resumed. Retry with the same
-        idempotency_key to avoid duplicate delivery. Registration-only contexts
+        May run from extension-owned background Python after a tool returns. Only a managed subagent
+        can self-wake while idle. An independent leader stays idle. Active sessions receive a ping,
+        and held queues are not resumed.
+
+        Retry with the same idempotency_key to avoid duplicate delivery. Registration-only contexts
         and an outside host have no bound session and refuse this operation.
         """
         options = {"content": content, "kind": kind}
@@ -182,8 +183,8 @@ _tool_classes = {}
 def _tool_class(name, names, sequence):
     """The frozen class for objects answered as `name` with fields `names`.
 
-    Built once per shape, as python_execution rebuilds an extension object: its
-    public fields only, read by field or key, iterable only through its declared
+    Built once per shape, as python_execution rebuilds an extension object. It has its
+    public fields only, read by field or key. It is iterable only through its declared
     sequence field.
     """
     shape = (name, names, sequence)
@@ -253,7 +254,7 @@ def _tool_value(value):
 
 
 def _tool_data(value):
-    """One argument as JSON data; a dataclass instance travels as its public fields."""
+    """One argument as JSON data. A dataclass instance travels as its public fields."""
     if is_dataclass(value) and not isinstance(value, type):
         return {
             f.name: _tool_data(getattr(value, f.name))
@@ -270,14 +271,16 @@ def _tool_data(value):
 class _Tools:
     """Active session tools, called from extension code the way the model calls them.
 
-    `vis.tools.spel.reserve("x-login", profile="x-com")` runs the tool the model
-    calls as `spel.reserve(...)`, including another extension's object methods;
-    `vis.tools["spel.reserve"]("x-login")` takes the name as a string. The call
-    runs in the bound session and shows its own Activity. An extension object
-    answers as a frozen class of the same name with its public fields, as in
-    python_execution; other answers are JSON data. Arguments are JSON data, and a
-    dataclass argument travels as its fields. An outside host refuses, and so
-    does a call back into an extension that is waiting on this one.
+    `vis.tools.spel.reserve("x-login", profile="x-com")` runs the tool the model calls
+    as `spel.reserve(...)`, including another extension's object methods.
+    `vis.tools["spel.reserve"]("x-login")` takes the name as a string. The call runs in
+    the bound session and shows its own Activity. An extension object answers as a
+    frozen class of the same name with its public fields, as in python_execution. Other
+    answers are JSON data. Arguments are JSON data, and a dataclass argument travels as
+    its fields.
+
+    An outside host refuses, and so does a call back into an extension that is waiting
+    on this one.
     """
 
     def __init__(self, name=""):
@@ -359,7 +362,10 @@ class _ActivityBlock:
     type: ClassVar[str]
 
     def to_wire(self) -> dict[str, Any]:
-        """Return a fresh canonical Activity content block, with no host lifecycle fields."""
+        """Return a fresh Activity content block in contract form.
+
+        Host lifecycle fields are not included.
+        """
         return {
             "type": self.type,
             **{
@@ -418,7 +424,7 @@ class ActivityDiff(ActivityCode):
 
 @dataclass(frozen=True, slots=True)
 class ActivityTable(_ActivityBlock):
-    """A rectangular table; input lists are snapshotted as tuples.
+    """A rectangular table. Input lists are snapshotted as tuples.
 
     ``paths`` is optional and, when given, holds one workspace path per row so
     clients can open that row's file. Use an empty string for a row without one.
@@ -539,11 +545,13 @@ _SYMBOL_TAGS = get_args(_SymbolTag)
 
 @dataclass(frozen=True, slots=True)
 class ActivitySection:
-    """A visible headline and one-line summary; only content waits behind disclosure.
+    """A visible headline and one-line summary.
 
-    summary_format="markdown" opts into inline Markdown with HTTP(S) links.
-    Unmarked or "inline" summaries are literal text. The 512-byte, one-line
-    limit includes Markdown source; images, HTML and block layout are not shown.
+    Only the content waits behind disclosure.
+
+    summary_format="markdown" opts into inline Markdown with HTTP(S) links. Unmarked or
+    "inline" summaries are literal text. The 512-byte, one-line limit includes Markdown
+    source. Images, HTML and block layout are not shown.
     """
 
     headline: str
@@ -589,10 +597,10 @@ class ActivitySection:
 class ActivityPresentation(ActivitySection):
     """One atomic symbol presentation, optionally linked to a persistent handle.
 
-    Use the same non-secret ``handle_id`` for later receipts of one operation in
-    this extension and Python form. Vis shows one current outcome while retaining
-    distinct details, errors and every invocation in history. Omit it for
-    independent calls; a handle is not a label, tool argument or return value.
+    Use the same non-secret ``handle_id`` for later receipts of one operation in this
+    extension and Python form. Vis shows one current outcome, and it keeps distinct
+    details, errors and every invocation in history. Omit it for independent calls. A
+    handle is not a label, tool argument or return value.
 
     Set ``verdict`` when the call finished but reports on checks: ``"failed"`` for
     failing tests or lint findings, ``"passed"`` when every check passed. Vis pins a
@@ -643,31 +651,33 @@ class ActivityPresentation(ActivitySection):
 
 @dataclass(frozen=True, slots=True)
 class Activity:
-    """Human-facing symbol presentation; the engine owns identity, timing and outcome.
+    """Human-facing symbol presentation. The engine owns identity, timing and outcome.
 
-    Declare Activity on every exported callable, including each object method.
-    Write understandable English for people, not Python identifiers or object reprs.
-    Labels and headlines use sentence case ("Read file", "Run tests"), preserving
-    proper names and acronyms. Summaries explain the target, useful counts or outcome.
-    Use render or publish_activity for selected content; return values stay independent.
+    Declare Activity on every exported callable, including each object method. Write
+    understandable English for people, not Python identifiers or object reprs. Labels
+    and headlines use sentence case ("Read file", "Run tests") and keep proper names and
+    acronyms. Summaries explain the target, useful counts or outcome. Use render or
+    publish_activity for selected content. Return values stay independent.
 
     show_start=False makes a fast operation end-only: no running row or start callback.
     Use it for quick reads, patches and local lookups. Keep show_start=True for work
     people wait for, such as tests, network requests or transfers. Internal start/end
     tracking still preserves ordering, timing, errors and cancellation. Published
-    content is retained but stays hidden until an end-only invocation settles.
+    content is kept but stays hidden until an end-only invocation settles.
+
     The final presentation must stand alone: name the target and outcome, including
     empty results or failures reported as return values. A normally returned failed
-    workflow is still a failed workflow; "Completed" alone is not enough. Label
-    partial lists and excerpts, and retain useful counts, errors and changes.
+    workflow is still a failed workflow. "Completed" alone is not enough. Label partial
+    lists and excerpts, and keep useful counts, errors and changes.
 
-    render is an optional synchronous callback receiving phase, args, kwargs,
-    result and error as keyword arguments; it returns an ActivityPresentation
-    (or None to keep the current presentation). It runs on success and failure,
-    and on start only when show_start=True. Use publish_activity for intermediate
-    stages of long-running tools. Rendering failures never change returns or errors.
+    render is an optional synchronous callback. It receives phase, args, kwargs,
+    result and error as keyword arguments. It returns an ActivityPresentation, or
+    None to keep the current presentation. It runs on success and failure, and on
+    start only when show_start=True. Use publish_activity for intermediate stages
+    of long-running tools. Rendering failures never change returns or errors.
+
     Args:
-        presenter: Presentation category; leave `"generic"` for ordinary tools.
+        presenter: Presentation category. Leave `"generic"` for ordinary tools.
         label: Optional nonblank, single-line label of at most 96 characters.
         render: Synchronous callback accepting `phase`, `args`, `kwargs`, `result`
             and `error` keyword arguments. Return an `ActivityPresentation` or None.
@@ -792,7 +802,7 @@ class Setting:
     `scopes` allows any non-empty combination of global, project, group and session.
     Omitting it uses the contract's global-only default. `group` is a presentation
     category, not an organizational group. `value()` reads the current callback's
-    response snapshot; outside Vis it returns the declared default.
+    response snapshot. Outside Vis, it returns the declared default.
     """
 
     id: str
@@ -853,7 +863,7 @@ class Extension:
     Args:
         name: Human-readable, nonblank extension name.
         description: Nonblank description of what the extension does.
-        alias: Python namespace for exported symbols; required with `symbols`.
+        alias: Python namespace for exported symbols. Required with `symbols`.
         symbols: `Symbol` declarations for functions or object namespaces.
         version: Optional extension version string.
         kind: Optional extension kind understood by the host.
@@ -867,11 +877,11 @@ class Extension:
         settings: Host-owned `Setting` declarations with explicit allowed scopes.
         env: Environment variable names resolved at host registration.
 
-    Collection inputs are copied into tuples. Constructing an Extension is pure;
-    it does not run callbacks or register anything. In an application, pass it to
+    Collection inputs are copied into tuples. Constructing an Extension is pure: it does
+    not run callbacks or register anything. In an application, pass it to
     `blockether.vis.engine.Agent` or its `register_extension` method. In an installed
-    extension entrypoint, call this module's `register_extension` once instead.
-    The application callback bridge rejects host-only fields before connecting.
+    extension entrypoint, call this module's `register_extension` once instead. The
+    application callback bridge rejects host-only fields before connecting.
 
     Raises:
         ValueError: A required name, alias, callback or environment name is invalid.
@@ -974,7 +984,7 @@ class Extension:
 def register_extension(extension: Extension) -> None:
     """Register one typed declaration and resolve its declared environment in this context.
 
-    Construction is pure; registration is the sole host boundary. A failure before
+    Construction is pure, and registration is the only host boundary. A failure before
     completion leaves the context unregistered. No constructor registers itself.
     """
     if not isinstance(extension, Extension):
@@ -1047,7 +1057,7 @@ def _inert_signature(fn):
 
 
 def _annotation_name(node, namespace):
-    """Resolve names statically; never import modules or run annotation expressions."""
+    """Resolve names statically. Never import modules or run annotation expressions."""
     if isinstance(node, ast.Name):
         return namespace.get(
             node.id, vars(builtins).get(node.id, inspect.Signature.empty)
@@ -1342,13 +1352,13 @@ _UNFIT = object()
 def _call_arguments(fn, args, kwargs):
     """Rebuild the records a host call carried as JSON data, keeping its call shape.
 
-    An argument crosses the host boundary as JSON, so a record arrives as a dict
-    of its public fields. A parameter annotated with a dataclass gets that
-    dataclass back, built through its constructor, also inside a union, list,
-    tuple, set or dict annotation (Blockether/vis#289). Annotations resolve
-    statically, as for tool contracts. A value that does not fit its annotation
-    stays as it arrived, and so does every argument of a call the signature
-    cannot bind: the call itself reports that mistake.
+    An argument crosses the host boundary as JSON, so a record arrives as a dict of its
+    public fields. A parameter annotated with a dataclass gets that dataclass back,
+    built through its constructor. This also works inside a union, list, tuple, set or
+    dict annotation (Blockether/vis#289). Annotations resolve statically, as for tool
+    contracts. A value that does not fit its annotation stays as it arrived. So does
+    every argument of a call that the signature cannot bind: the call itself reports
+    that mistake.
     """
     try:
         # A wrapper around a bound method must not unwrap past the binding.
@@ -1516,7 +1526,10 @@ def _holds_record(shape):
 
 
 def _rebuilt_value(shape, value):
-    """`value` with the records `shape` expects rebuilt; as is when it does not fit."""
+    """Return `value` with the records that `shape` expects rebuilt.
+
+    A value that does not fit stays as is.
+    """
     if not _holds_record(shape):
         return value
     result = _fitted_argument(shape, value)
@@ -1524,7 +1537,7 @@ def _rebuilt_value(shape, value):
 
 
 def _fitted_argument(shape, value):
-    """`value` in `shape`, or `_UNFIT`; a union takes its first fitting member."""
+    """`value` in `shape`, or `_UNFIT`. A union takes its first fitting member."""
     kind = shape[0]
     if kind == "any":
         return value
@@ -1616,10 +1629,9 @@ class _SignatureSource(str):
 
 
 def _contract_type_source(spec):
-    """The annotation `spec` reads as in a signature: source text a sandbox can
-    read statically. Builtins, typing forms and generic origins keep their
-    names; every other name is quoted, a forward reference that is never
-    evaluated."""
+    """The annotation `spec` reads as in a signature: source text that a sandbox can
+    read statically. Builtins, typing forms and generic origins keep their names. Every
+    other name is quoted as a forward reference that is never evaluated."""
     arguments = spec.get("arguments", [])
     if spec["kind"] == "literal":
         return "Literal[" + ", ".join(repr(value) for value in spec["values"]) + "]"
@@ -1834,13 +1846,13 @@ def sequence(*, field: str) -> Callable[[_SequenceClass], _SequenceClass]:
     """Declare a dataclass's public list or tuple field as its sandbox sequence.
 
     Apply this outside `@dataclass`. The returned class is unchanged except for
-    metadata: original methods are neither called nor transported. Each subclass
-    must opt in separately. Values are checked when returned by an extension;
-    the backing field must hold a built-in list or tuple, not a lazy iterable.
+    metadata: original methods are neither called nor transported. Each subclass must
+    opt in separately. Values are checked when an extension returns them. The backing
+    field must hold a built-in list or tuple, not a lazy iterable.
 
-    Sandbox records iterate over the received field and support length, truth
-    testing, integer indices and slices. String keys still read named fields.
-    Only the received items are exposed; iteration never fetches another page.
+    Sandbox records iterate over the received field and support length, truth testing,
+    integer indices and slices. String keys still read named fields. Only the received
+    items are exposed, and iteration never fetches another page.
     """
     if not isinstance(field, str) or not field.isidentifier() or field.startswith("_"):
         raise ValueError("sequence field must be a public dataclass field name")
@@ -1898,18 +1910,18 @@ def method(
     """Describe a public method on an object exported through `Symbol`.
 
     Args:
-        fn: Method to annotate; omit it to use `@method(...)`.
-        tag: What the method does, as Activity reports it: `"observation"` reads,
-            `"mutation"` changes local state, `"verification"` checks work (tests,
-            lint, CI status) and `"external"` reaches people or systems beyond the
-            session (messages, publications, remote hosts).
+        fn: Method to annotate. Omit it to use `@method(...)`.
+        tag: What the method does, as Activity reports it. `"observation"` reads,
+            `"mutation"` changes local state and `"verification"` checks work
+            (tests, lint, CI status). `"external"` reaches people or systems beyond
+            the session (messages, publications, remote hosts).
         is_hidden: Hide the method from discovery without removing the callable.
         activity: This method's human-facing presentation. Declare it on each
             exported method, not on the containing object namespace.
 
     Returns:
         The original method, or a decorator returning it. Calling your method
-        directly still uses normal Python behavior; this decorator adds metadata.
+        directly still uses normal Python behavior. This decorator adds metadata.
 
     Raises:
         ValueError: The tag is unsupported or the decorated value is not callable.
@@ -1955,7 +1967,7 @@ def method(
 
 
 def _public_members(obj):
-    """Return public attributes without invoking arbitrary descriptors."""
+    """Return public attributes without invoking any descriptor."""
     candidates = {}
     for cls in reversed(type(obj).__mro__):
         for name, raw in vars(cls).items():
@@ -2040,11 +2052,11 @@ class Symbol:
 
     Args:
         fn: Function, or an object whose public methods form a namespace.
-        name: Override the function name; required for objects and must then be
+        name: Override the function name. Required for objects, and must then be
             a public Python identifier.
         tag: Default operation classification, one of the `method` tags.
         is_hidden: Hide the symbol from discovery without removing the callable.
-        activity: Human-facing presentation for a function; declare one on every
+        activity: Human-facing presentation for a function. Declare one on every
             exported callable. For an object, leave this unset and put an Activity
             on every exported `method` instead.
 
@@ -2076,9 +2088,9 @@ class Symbol:
     def contract(self) -> dict[str, Any]:
         """Fresh portable tool description, including literal defaults but no host access.
 
-        Namespace members carry their full public names. Strings in Annotated
-        describe meaning; unresolved annotations remain explicit, never evaluated.
-        This is documentation, not runtime argument or result validation.
+        Namespace members carry their full public names. Strings in Annotated describe
+        meaning. Unresolved annotations remain explicit and are never evaluated. This is
+        documentation, not runtime argument or result validation.
         """
         spec = self._spec()
         if spec["marker"] == "namespace":
@@ -2119,7 +2131,7 @@ class Symbol:
 
 @dataclass(frozen=True, slots=True)
 class TypeSpec:
-    """An inert Python type description; references bound recursive records."""
+    """An inert Python type description. References bound recursive records."""
 
     kind: Literal[
         "any",
@@ -2144,7 +2156,7 @@ class TypeSpec:
 
 @dataclass(frozen=True, slots=True)
 class FieldSpec:
-    """A dataclass field; default values and factories are never exported or run."""
+    """A dataclass field. Default values and factories are never exported or run."""
 
     name: str
     type: TypeSpec
@@ -2155,7 +2167,7 @@ class FieldSpec:
 
 @dataclass(frozen=True, slots=True)
 class ParameterSpec(FieldSpec):
-    """A callable parameter; default_source is inert source or None when unavailable."""
+    """A callable parameter. default_source is inert source, or None when unavailable."""
 
     kind: Literal[
         "positional_only",
@@ -2241,7 +2253,7 @@ def _catalog_presentation(*, phase, result=None, error=None, **_):
 
 
 class Catalog:
-    """Read-only snapshot of public Symbols; construction and lookup perform no IO.
+    """Read-only snapshot of public Symbols. Construction and lookup do no IO.
 
     Pass the same symbols to Catalog and Extension. Rebuild after changing declarations.
     This is an adapter, not a registry, dispatcher or runtime type validator.
@@ -2331,7 +2343,8 @@ class Catalog:
     ) -> HelpDocument:
         """Render the same metadata as doc(). No configuration, authentication or operation runs.
 
-        Raises TypeError for a non-string name; ValueError for unknown or hidden names.
+        Raises TypeError for a non-string name, and ValueError for unknown or hidden
+        names.
         """
         if not isinstance(name, str):
             raise TypeError("Catalog name must be a string")
@@ -2380,7 +2393,7 @@ GATE_OPS = ("fs_access",)
 
 @dataclass(frozen=True, slots=True)
 class OpHook:
-    """An operation observer or a fail-closed gate; never mix both kinds in one hook."""
+    """An operation observer or a fail-closed gate. Never mix both kinds in one hook."""
 
     ops: Sequence[str]
     fn: Callable[..., Any]
@@ -2555,7 +2568,7 @@ class _ProviderValue:
     __slots__ = ()
 
     def to_wire(self) -> dict[str, ProviderJSON]:
-        """Return fresh host data; declared optional fields are omitted, not null."""
+        """Return fresh host data. Declared optional fields are omitted, not null."""
         value = {
             f.name: _provider_wire(getattr(self, f.name))
             for f in fields(self)
@@ -2605,7 +2618,10 @@ class ProviderPreset(_ProviderValue):
 
 @dataclass(frozen=True, slots=True)
 class ProviderCredential(_ProviderValue):
-    """A usable credential; return None when absent. Tokens/headers are excluded from repr."""
+    """A usable credential. Tokens and headers are excluded from repr.
+
+    Return None instead when no credential is available.
+    """
 
     token: str = field(repr=False)
     api_url: str | None = None
@@ -2657,7 +2673,7 @@ class ProviderStatus(_ProviderValue):
 
 @dataclass(frozen=True, slots=True)
 class ProviderModel(_ProviderValue):
-    """Model metadata returned by enrichment; extra preserves additional router fields."""
+    """Model metadata returned by enrichment. extra keeps additional router fields."""
 
     name: str
     context: int | None = None
@@ -2676,7 +2692,7 @@ class ProviderModel(_ProviderValue):
 
 @dataclass(frozen=True, slots=True)
 class ProviderLimitWindow(_ProviderValue):
-    """The canonical calendar, rolling or lifetime window for one limit."""
+    """The contract's calendar, rolling or lifetime window for one limit."""
 
     kind: ProviderWindowKind
     unit: ProviderWindowUnit | None = None
@@ -2693,7 +2709,10 @@ class ProviderLimitWindow(_ProviderValue):
 
 @dataclass(frozen=True, slots=True)
 class ProviderLimit(_ProviderValue):
-    """One canonical usage row; finite measurements retain their original precision."""
+    """One usage row in contract form.
+
+    Finite measurements keep their original precision.
+    """
 
     id: str
     label: str
@@ -2744,7 +2763,7 @@ class ProviderError(_ProviderValue):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ProviderLimits(_ProviderValue):
-    """Usage snapshot; the host fills provider_id and fetched_at_ms when omitted."""
+    """Usage snapshot. The host fills omitted provider_id and fetched_at_ms values."""
 
     status: ProviderLimitStatus = "ok"
     limits: Sequence[ProviderLimit] = ()
@@ -2853,12 +2872,12 @@ def _provider_callback(name, fn):
 
 @dataclass(frozen=True, slots=True)
 class Provider:
-    """Pure provider declaration; register_extension adapts callbacks to the host.
+    """Pure provider declaration. register_extension adapts its callbacks to the host.
 
-    Credential reads are passive; only auth_fn may initiate login. Callbacks are
-    synchronous and may run without a session. Refresh accepts zero arguments or
-    one rejected token (None if unknown), chosen without retrying callback errors.
-    Enrichment/selection inputs remain JSON mappings owned by the router/config,
+    Credential reads are passive, and only auth_fn may start a login. Callbacks are
+    synchronous and may run without a session. Refresh accepts zero arguments or one
+    rejected token (None if unknown), chosen without retrying callback errors.
+    Enrichment and selection inputs remain JSON mappings owned by the router or config,
     not a second SDK schema for those domains. Callback outputs use typed records.
     """
 
@@ -2954,15 +2973,15 @@ def strings_of(value):
 class _State(_MutableMapping):
     """The extension's durable store, as a mapping.
 
-    A real `MutableMapping`, so `pop`, `setdefault`, `update`, `clear`, `keys`,
-    `items`, `values`, `len` and iteration mean what they mean on a dict, and
-    comparing one to a dict compares contents. Five methods used to be the whole
-    surface: `vis.state.pop(key)` was an AttributeError, and `list(vis.state)`
-    fell through to the old sequence protocol and asked the host for the key `0`.
+    A real `MutableMapping`. So `pop`, `setdefault`, `update`, `clear`, `keys`, `items`,
+    `values`, `len` and iteration mean what they mean on a dict. Comparing one to a dict
+    compares contents. Five methods used to be the whole surface. Then
+    `vis.state.pop(key)` was an AttributeError, and `list(vis.state)` fell through to
+    the old sequence protocol. That asked the host for the key `0`.
 
-    A read is one host call for the key it names — never a copy of the store;
-    only iteration and `len` ask for the key list. A key written as `None` is
-    absent, because no host can tell a stored JSON null from a key nobody wrote.
+    A read is one host call for the key it names, never a copy of the store. Only
+    iteration and `len` ask for the key list. A key written as `None` is absent, because
+    no host can tell a stored JSON null from a key nobody wrote.
     """
 
     def _keys(self):
@@ -3691,8 +3710,8 @@ class Log(_Node):
     def write(self, *lines: str | Sequence[str], tone: LogTone | None = None):
         """Append complete lines, optionally styled by severity. Redact before writing.
 
-        Each argument is a retained line, not a raw byte fragment. A tone applies
-        only to this call; omitted tones are plain. Controls are displayed literally.
+        Each argument is one stored line, not a raw byte fragment. A tone applies only
+        to this call, and omitted tones are plain. Controls are displayed literally.
         """
         if tone is not None and tone not in get_args(LogTone):
             raise ValueError("log tone must be idle, running, ok, warn or error")
@@ -3805,25 +3824,23 @@ def _batch_size(op):
 class LiveView:
     """A live view the human WATCHES, driven by the extension that opened it.
 
-    `vis.live(...)` mounts one and answers this handle. Nodes are addressed by
-    id — `view['jobs']`, or `view.node('jobs')` — and each answers the typed
-    handle its own type declares. The view-level shortcuts (`view.status(...)`,
-    `view.log(...)`, `view.row(...)`) resolve to the one node of that type and
-    raise naming the candidate ids when the view holds several, so an ambiguous
-    call fails where it was written instead of quietly patching the wrong table.
+    `vis.live(...)` mounts one and answers this handle. Nodes are addressed by id, as
+    `view['jobs']` or `view.node('jobs')`, and each answers the typed handle its own
+    type declares. The view-level shortcuts (`view.status(...)`, `view.log(...)`,
+    `view.row(...)`) resolve to the one node of that type. When the view holds several
+    such nodes, they raise and name the candidate ids. So an ambiguous call fails where
+    it was written, and does not quietly patch the wrong table.
 
-    Pushes are BATCHED: ops buffer and cross on the next push after `flush_ms`,
-    when a coalesced push fills, and always before the view is read or closed.
-    `with view.batch():` groups one logical picture explicitly, including structural
-    add/drop operations. Repeated writes to the same row or node collapse into the
-    last one, so a per-row progress counter costs one wire row per tick rather than
-    one per write.
+    Pushes are BATCHED. Ops buffer and cross on the next push after `flush_ms`, or when
+    a coalesced push fills. They always cross before the view is read or closed. `with
+    view.batch():` groups one logical picture explicitly, including structural add and
+    drop operations. Repeated writes to the same row or node collapse into the last one.
+    So a per-row progress counter costs one wire row per tick, not one per write.
 
-    Closing is the point: `close()` answers either the structured verdict or the
-    compact `model_result` the extension chose. Used as a context manager the
-    view closes itself — `completed` on the way out, and `failed` carrying the
-    error when the body raised, because a run that died mid-way still owes the
-    model what happened.
+    Closing is the point: `close()` answers either the structured verdict or the compact
+    `model_result` that the extension chose. Used as a context manager, the view closes
+    itself. It closes as `completed` on the way out, and as `failed` with the error when
+    the body raised. A run that died midway still owes the model what happened.
     """
 
     def __init__(self, request, flush_ms=None):
@@ -4013,8 +4030,8 @@ class LiveView:
     def is_interrupted(self):
         """True once the human stopped watching.
 
-        Asks the engine at most once per flush window, so a compute loop can
-        poll it every iteration and still cost one host call per tick.
+        Asks the engine at most once per flush window. So a compute loop can poll it on
+        every iteration and still cost one host call per tick.
         """
         if self._is_open and self._since_ms(self._last_read) >= self._flush_ms:
             try:
@@ -4036,9 +4053,8 @@ class LiveView:
     def is_from_human(self):
         """True when a PERSON ended it, rather than the run itself or a deadline.
 
-        A view is always stoppable — nothing is asked of the human, so nothing is
-        left unanswered by stopping it — and this is how the run finds out that is
-        what happened.
+        A view is always stoppable. Nothing is asked of the human, so stopping it leaves
+        nothing unanswered. This is how the run finds out that a human stopped it.
         """
         return bool(self._result_field("is_from_human"))
 
@@ -4046,8 +4062,8 @@ class LiveView:
     def note(self):
         """The comment the human left with their stop, or None.
 
-        The stop always lands; the note says WHY in their own words, and the same
-        words reach the model in the verdict.
+        The stop always lands. The note says WHY in their own words, and the same words
+        reach the model in the verdict.
         """
         return self._result_field("note")
 
@@ -4170,9 +4186,9 @@ class LiveView:
         its selected rows. They are sealed only into the artifact record, so a
         reopened run can still switch rows without keeping its extension alive.
 
-        Closing twice is a no-op answering the first result: a `finally` that
-        closes what an interrupt already closed must not overwrite the reason
-        the human chose.
+        Closing twice is a no-op that answers the first result. A `finally` that closes
+        what an interrupt already closed must not overwrite the reason that the human
+        chose.
         """
         if not self._is_open:
             return self._result
@@ -4636,11 +4652,11 @@ def _assert_tree(actual, expected, path="view"):
 def _assert_catalog(
     catalog: Catalog, *, names: Sequence[str], mutations: Sequence[str] = ()
 ) -> None:
-    """Assert discovery parity and resolved types; never invoke operations.
+    """Assert discovery parity and resolved types. Never invoke operations.
 
-    Supply public callable names from actual registration/discovery and expected
-    mutation names. Test invocation, validation, IO and cancellation separately.
-    Any and opaque types are allowed; unresolved annotations fail with their path.
+    Supply public callable names from actual registration or discovery, and expected
+    mutation names. Test invocation, validation, IO and cancellation separately. Any and
+    opaque types are allowed. Unresolved annotations fail with their path.
     """
     tools = tuple(
         tool
@@ -4681,7 +4697,7 @@ def _assert_catalog(
 
 
 class _Testing:
-    """Reusable helpers for extension tests; no fixture reaches the real live host."""
+    """Reusable helpers for extension tests. No fixture reaches the real live host."""
 
     LiveRecorder = _LiveRecorder
     assert_tree = staticmethod(_assert_tree)
@@ -4712,7 +4728,10 @@ def _live_node(type_name, node_id, spec):
 
 
 def disclosure(node_id, label, *nodes, default_expanded=False):
-    """A collapsible column. Local choices survive updates; receipts start collapsed."""
+    """A collapsible column.
+
+    Local choices survive updates, and receipts start collapsed.
+    """
     return _live_node(
         "group",
         node_id,
@@ -4732,7 +4751,7 @@ def divider(node_id):
 
 
 def code(node_id, text, *, language=None, **spec):
-    """Literal code; whitespace is retained and content is never executed."""
+    """Literal code. Whitespace is kept, and content is never executed."""
     return _live_node("code", node_id, dict(spec, text=str(text), language=language))
 
 
@@ -4777,14 +4796,15 @@ def steps(node_id, steps=None, **spec):
 
 
 def output(node_id, **spec):
-    """Retained output with an independent disclosure, collapsed by default.
+    """Durable output with an independent disclosure, collapsed by default.
 
-    ``default_expanded=True`` opens an active log initially. Updates preserve the
-    local choice; completion starts a collapsed receipt. Hiding never clears lines.
+    ``default_expanded=True`` opens an active log initially. Updates preserve the local
+    choice, and completion starts a collapsed receipt. Hiding never clears lines.
     ``window_lines`` bounds only the hot window, not the durable record.
-    ``write(..., tone="warn")`` styles complete lines with a ``LogTone``; omitted
-    tones remain plain. Seeded ``line_tones`` align one-for-one with ``lines``.
-    Redact before writing. ANSI controls are visible text, never executed.
+
+    ``write(..., tone="warn")`` styles complete lines with a ``LogTone``, and omitted
+    tones remain plain. Seeded ``line_tones`` align one-for-one with ``lines``. Redact
+    before writing. ANSI controls are visible text, never executed.
     """
     return _live_node("log", node_id, spec)
 

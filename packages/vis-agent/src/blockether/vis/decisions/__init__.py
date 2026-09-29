@@ -25,7 +25,7 @@ from ._trainer import TrainingResult
 
 
 class Decisions:
-    """Infer with a named model; the gateway owns weights and execution.
+    """Infer with a named model. The gateway owns weights and execution.
 
     This lightweight client does not install PyTorch or ONNX Runtime. Training and
     model publication use separate, explicit APIs.
@@ -44,9 +44,9 @@ class Decisions:
     ) -> dict[str, Any]:
         """Answer choice, score and noul questions, including the action head.
 
-        ``model`` is mandatory and must refer to an installed version or alias.
-        Results retain the selected model and ``routing.model`` fields.
-        Baseline action probabilities are not approved for autonomous execution.
+        ``model`` is required and must name an installed version or alias. Results keep
+        the selected model and ``routing.model`` fields. Baseline action probabilities
+        are not approved for autonomous execution.
         """
         if not isinstance(model, str) or not model.strip():
             raise ValueError("model is required")
@@ -98,7 +98,7 @@ class Decisions:
     ) -> dict[str, Any]:
         """Create an unused alias, or CAS-update it with its exact previous ref.
 
-        A conflict raises GatewayError(409); neither upload nor training activates
+        A conflict raises GatewayError(409). Upload and training do not activate
         anything. Existing requests finish on their pinned old version.
         """
         result = self._gateway.put_decision_alias(
@@ -124,11 +124,11 @@ class Decisions:
     ) -> dict[str, Any]:
         """Train offline on approved gateway-local filenames, without uploading rows.
 
-        Select ``gliner2.5-base`` or ``gliner2.5-decide`` explicitly for GLiNER;
-        they require a separate ``decisions-gliner-training`` environment. The
-        gateway needs a pinned local checkpoint and an approved data directory.
-        No model alias changes when the job finishes. Use ``get_training_job``
-        for progress, and activate its model_ref separately after review.
+        For GLiNER, select ``gliner2.5-base`` or ``gliner2.5-decide`` explicitly. They
+        require a separate ``decisions-gliner-training`` environment. The gateway needs
+        a pinned local checkpoint and an approved data directory. No model alias changes
+        when the job finishes. Use ``get_training_job`` for progress. After review,
+        activate its model_ref separately.
         """
         names = {
             "train_data": (train_data, ".jsonl"),
@@ -177,7 +177,7 @@ class Decisions:
     def cancel_training_job(
         self, job_id: str, *, timeout: float | None = None
     ) -> dict[str, Any]:
-        """Cancel a running trainer; on terminal jobs, delete its private checkpoint.
+        """Cancel a running trainer, or delete a terminal job's private checkpoint.
 
         Registered inference versions are immutable and remain available.
         """
@@ -197,11 +197,11 @@ class Decisions:
         progress: Callable[[int, int], None] | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        """Verify and stream only FP32 inference files; never upload training data.
+        """Verify and stream only FP32 inference files. Never upload training data.
 
-        A transport timeout does not retry the mutation. A single safe GET for the
-        known content digest can confirm a completed import; otherwise the original
-        failure remains visible and the caller can inspect that ref later.
+        A transport timeout does not retry the mutation. A single safe GET for the known
+        content digest can confirm a completed import. If it cannot, the original
+        failure stays visible, and the caller can inspect that ref later.
         """
         source = (
             bundle.inference_bundle if isinstance(bundle, TrainingResult) else bundle

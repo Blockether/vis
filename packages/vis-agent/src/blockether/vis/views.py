@@ -26,7 +26,7 @@ class _ViewRecord:
         """Validate a raw mapping and return an immutable record.
 
         Raises:
-            ValueError: The mapping violates this record's canonical View schema.
+            ValueError: The mapping does not match this record's View schema.
         """
         validate("view", cls._definition, value)
         return cls(**freeze(value))
@@ -40,8 +40,8 @@ class _ViewRecord:
 class InputView(_ViewRecord):
     """An open input form, including field schemas and engine-owned timeout metadata.
 
-    This describes the form, not a person's answers. Submitted values are not
-    included in public close events; they belong to the waiting extension.
+    This describes the form, not a person's answers. Public close events do not include
+    submitted values. Those values belong to the waiting extension.
     """
 
     _definition = "input_view"
@@ -62,8 +62,8 @@ class InputView(_ViewRecord):
 class LiveView(_ViewRecord):
     """An open live interface at sequence `seq`, with immutable semantic nodes.
 
-    Apply subsequent `LivePatch` operations in sequence order in your consumer;
-    this snapshot does not mutate itself when another event arrives.
+    In your consumer, apply later `LivePatch` operations in sequence order. This
+    snapshot does not change itself when another event arrives.
     """
 
     _definition = "live_view"
@@ -82,7 +82,7 @@ class LiveView(_ViewRecord):
 
 @dataclass(frozen=True, slots=True)
 class ViewSnapshot(_ViewRecord):
-    """A retained view document without open-session IDs or timeout metadata."""
+    """A view document kept after close, without open-session IDs or timeout metadata."""
 
     _definition = "view"
     title: str
@@ -106,7 +106,7 @@ class LivePatch(_ViewRecord):
 
 @dataclass(frozen=True, slots=True)
 class InputResult(_ViewRecord):
-    """Public close receipt; submitted values belong only to the waiting extension."""
+    """Public close receipt. Submitted values belong only to the waiting extension."""
 
     _definition = "input_result"
     reason: str
@@ -114,11 +114,11 @@ class InputResult(_ViewRecord):
 
 @dataclass(frozen=True, slots=True)
 class LiveResult(_ViewRecord):
-    """A live interface's final outcome and optional retained document.
+    """A live interface's final outcome and the optional view document kept after close.
 
-    Check `is_completed` and `reason` rather than assuming every close succeeds.
-    `is_from_human` distinguishes a person's closure from a programmatic one;
-    `view`, `summary`, `error` and attachment metadata may be absent.
+    Check `is_completed` and `reason`. Do not assume that every close succeeds.
+    `is_from_human` tells a person's close from a programmatic one. `view`, `summary`,
+    `error` and attachment metadata can be absent.
     """
 
     _definition = "live_close"
@@ -138,7 +138,7 @@ class LiveResult(_ViewRecord):
         """Validate a close receipt and decode its optional `ViewSnapshot`.
 
         Raises:
-            ValueError: The receipt or its retained view violates the View schema.
+            ValueError: The receipt or its view document does not match the View schema.
         """
         validate("view", cls._definition, value)
         picture = (

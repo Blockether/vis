@@ -159,7 +159,7 @@ def _training_config(source: str | Path) -> dict:
 
 
 class GlinerTrainer:
-    """Explicit local two-head training; a validated ONNX bundle is never a checkpoint."""
+    """Explicit local two-head training. A validated ONNX bundle is never a checkpoint."""
 
     def __init__(self, checkpoint: GlinerTrainingBundle) -> None:
         from .gliner_training import GlinerTrainingBundle

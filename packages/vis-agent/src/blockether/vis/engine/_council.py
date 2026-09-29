@@ -1,4 +1,4 @@
-"""Session-bound Council; only managed teams can automatically wake idle sessions."""
+"""Session-bound Council. Only managed teams can automatically wake idle sessions."""
 
 from __future__ import annotations
 
@@ -120,9 +120,9 @@ class CouncilPage:
 class Council:
     """Communicate with other Vis sessions.
 
-    Obtain this handle with `Session.council`, rather than constructing it with
-    internal binding fields. The handle captures its session's group and current
-    activation when acquired; it is not a live alias for whichever run is latest.
+    Get this handle with `Session.council`. Do not construct it with internal binding
+    fields. When acquired, the handle captures its session's group and current
+    activation. It does not follow whichever run is latest.
 
     Use `members` to discover active peers, `publish` to send a message and `get`
     to inspect replies. Publication, delivery and a completed answer are separate
@@ -176,17 +176,18 @@ class Council:
                 findings, or `complain` for failures and concrete improvements.
                 Complaints enter the persistent improve register, not an external
                 issue tracker. Include sanitized evidence, expected versus actual
-                behavior, impact and a workaround; distinguish facts from guesses.
-            thread_id: Existing thread to continue; omit to start a new thread.
+                behavior, impact and a workaround. Keep facts apart from guesses.
+            thread_id: Existing thread to continue. Omit it to start a new thread.
             title: Optional readable title for the message.
             ping: Session IDs, `"all"` for active peers, or no recipients. Explicit
                 IDs wake an idle peer of the group or an eligible managed teammate.
             idempotency_key: Reuse this key when retrying uncertain IO. The same
                 publication is returned without notifying recipients twice.
             reply_required: Track an answer obligation for each addressed recipient.
-            reply_to: Explicit unanswered request to answer. A no-ping thread
-                continuation otherwise answers only the latest addressed entry if
-                it is an unanswered request; it never falls back to older requests.
+            reply_to: Explicit unanswered request to answer. Without it, a no-ping
+                thread continuation answers only the latest addressed entry, and only
+                if that entry is an unanswered request. It never falls back to older
+                requests.
 
         Returns:
             `CouncilEntry` with its entry/thread IDs and per-recipient `replies`.
@@ -194,10 +195,10 @@ class Council:
             Inspect the entry later with `get` to see replies and their states.
 
         Each message owns its kind and host-generated `source_ref`. That reference
-        identifies this publication, not a reported incident: include the original
-        session and turn/iteration/form when reporting one. Failed Python tool
-        executions already have an autocomplain entry; enrich its thread instead
-        of duplicating it. Follow-ups and acknowledgements do not grant wake rights.
+        identifies this publication, not a reported incident. When you report an
+        incident, include the original session and turn/iteration/form. Failed Python
+        tool executions already have an autocomplain entry. Add to its thread instead of
+        duplicating it. Follow-ups and acknowledgements do not grant wake rights.
         """
         body = {
             "content": content,
@@ -238,12 +239,12 @@ class Council:
     ) -> Subagent:
         """Create a subagent and publish its delegated task through Council.
 
-        Council must be enabled and the parent active with a complete checkpoint
-        in its live runtime. Context is copied, not Python handles. Children share
-        the checkout, inherit authorization, and consume their own bounded model
-        iterations. A key makes retries idempotent within the parent turn; reusing
-        it with different input is rejected. This is not an ordinary independent
-        fork and does not grant broader permissions.
+        Council must be enabled. The parent must be active, with a complete checkpoint
+        in its live runtime. Context is copied, but Python handles are not. Children
+        share the checkout, inherit authorization and use their own bounded model
+        iterations. A key makes retries idempotent within the parent turn, and reusing
+        it with different input is rejected. This is not an ordinary independent fork,
+        and it does not grant broader permissions.
         """
         body = {"task": task, "iteration_budget": iteration_budget}
         body.update(
@@ -282,8 +283,8 @@ class Council:
     ) -> dict[str, Any]:
         """Change this session or an owned child at the next request boundary.
 
-        Human model locks and inherited allowlists remain authoritative. The
-        shared router is unchanged; cross-model cache reuse is not guaranteed.
+        Human model locks and inherited allowlists still take priority. The shared
+        router is unchanged. Cache reuse across models is not guaranteed.
         """
         body = {"model": model, "provider": provider}
         if session_id is not None:
@@ -302,9 +303,9 @@ class Council:
     ) -> CouncilEntry:
         """Notify this bound session, including after the handle's activation ends.
 
-        An active session receives a ping. Only a managed subagent may self-wake;
-        an idle independent leader stays idle. Held queues are not resumed. Reusing
-        an idempotency key returns the original entry without another delivery.
+        An active session receives a ping. Only a managed subagent can wake itself. An
+        idle independent leader stays idle. Held queues are not resumed. Reusing an
+        idempotency key returns the original entry without another delivery.
         """
         body = {
             "content": content,
@@ -328,7 +329,7 @@ class Council:
         return CouncilEntry.from_wire(self._call("POST", "/wake", body=body))
 
     def threads(self, *, after: int = 0, limit: int = 50) -> CouncilPage:
-        """List roots and their kind in entry-ID order; replies do not reorder roots."""
+        """List roots and their kind in entry-ID order. Replies do not reorder roots."""
         query = {"after": after, "limit": limit}
         validate("council", "page_request", query)
         return CouncilPage.from_wire(
@@ -340,7 +341,7 @@ class Council:
     def read(
         self, *, thread_id: int | None = None, after: int = 0, limit: int = 50
     ) -> CouncilPage:
-        """Read a bounded page; never consumes or acknowledges a ping."""
+        """Read a bounded page. This never consumes or acknowledges a ping."""
         query = {"after": after, "limit": limit}
         if thread_id is not None:
             query["thread_id"] = thread_id

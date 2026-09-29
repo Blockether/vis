@@ -169,13 +169,13 @@ def _export_fp32(
 
 
 class ModernBertTrainer:
-    """Explicit CPU training; an ONNX inference bundle is never a checkpoint.
+    """Explicit CPU training. An ONNX inference bundle is never a checkpoint.
 
-    Each JSONL row contains ``state``, one Laya ``question``, an integer
-    ``target`` option index and ``action`` (0=act, 1=escalate). Evaluation rows
-    must be disjoint from training rows. A quality policy supplies independent
-    minimum decision and action accuracies; passing it does not approve
-    autonomous actions or establish domain calibration.
+    Each JSONL row contains ``state``, one Laya ``question``, an integer ``target``
+    option index and ``action`` (0=act, 1=escalate). Evaluation rows must be disjoint
+    from training rows. A quality policy supplies independent minimum decision and
+    action accuracies. Passing it does not approve autonomous actions or establish
+    domain calibration.
     """
 
     def __init__(self, checkpoint: TrainingBundle) -> None:

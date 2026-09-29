@@ -40,7 +40,7 @@ class ActivityResource:
 
 @dataclass(frozen=True, slots=True)
 class ActivityDiffLine:
-    """One classified diff line; `is_redacted` marks content withheld from the receipt."""
+    """One classified diff line. `is_redacted` marks content withheld from the receipt."""
 
     kind: str
     text: str
@@ -51,8 +51,8 @@ class ActivityDiffLine:
 class ActivityEvidence:
     """Text or structured change evidence attached to an invocation.
 
-    Optional counts describe the observed changes; truncation and redaction flags
-    explain why the displayed evidence may not contain the full content.
+    Optional counts describe the observed changes. Truncation and redaction flags
+    explain why the displayed evidence can be incomplete.
     """
 
     kind: str
@@ -69,11 +69,10 @@ class ActivityEvidence:
 class ActivityRow:
     """One invocation's lifecycle, outcome and human-readable evidence.
 
-    `id` and `sequence` preserve identity and ordering. `state` describes the
-    outcome; `summary` is display text, not a replacement for status. Linked
-    receipts appear as `children` with their shared `handle_id`. `presentation`
-    contains the extension's selected content, while `evidence` retains
-    engine-observed information.
+    `id` and `sequence` keep identity and order. `state` describes the outcome.
+    `summary` is display text and does not replace the status. Linked receipts appear as
+    `children` with their shared `handle_id`. `presentation` contains the content that
+    the extension selected. `evidence` keeps what the engine observed.
     """
 
     id: str
@@ -158,7 +157,7 @@ def _operation_group_label(operation: str, rows: list[ActivityRow]) -> str:
 
 @dataclass(frozen=True, slots=True)
 class ActivityArgumentGroup:
-    """One operation with identical complete arguments; all invocation evidence is retained."""
+    """One operation with identical complete arguments. All invocation evidence is kept."""
 
     id: str
     rows: tuple[ActivityRow, ...]
@@ -191,7 +190,7 @@ class ActivityGroup:
 
     @property
     def argument_groups(self) -> tuple[ActivityArgumentGroup, ...]:
-        """Repeated arguments in first-entry order; unknown argument keys stay separate."""
+        """Repeated arguments in first-entry order. Unknown argument keys stay separate."""
         return _argument_groups(self.rows)
 
 
@@ -217,9 +216,9 @@ class ActivityOmitted:
 class ActivityProjection:
     """One form's Activity receipt, optionally a page of its durable history.
 
-    Prefer `from_wire` to direct construction when accepting external data.
-    `rows` and nested values are immutable; `to_wire` produces an independent
-    mutable JSON-compatible copy. Grouping properties are computed, not stored.
+    For external data, use `from_wire` instead of direct construction. `rows` and nested
+    values are immutable. `to_wire` makes an independent, mutable, JSON-compatible copy.
+    Grouping properties are computed, not stored.
     """
 
     state: str
@@ -230,7 +229,10 @@ class ActivityProjection:
 
     @property
     def groups(self) -> tuple[ActivityGroup, ...]:
-        """The same per-operation groups used by Companion and TUI; not serialized."""
+        """The same per-operation groups that Companion and TUI use.
+
+        They are not serialized.
+        """
         grouped: dict[str, list[ActivityRow]] = {}
         for row in sorted(self.rows, key=lambda row: row.sequence):
             grouped.setdefault(row.operation, []).append(row)
@@ -245,7 +247,7 @@ class ActivityProjection:
 
     @property
     def argument_groups(self) -> tuple[ActivityArgumentGroup, ...]:
-        """Exact operation/argument pairs within this block; not serialized."""
+        """Exact operation/argument pairs within this block. They are not serialized."""
         return _argument_groups(self.rows)
 
     @classmethod

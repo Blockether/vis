@@ -80,14 +80,15 @@ def _problem_lines(problems: list[dict]) -> str:
 class StructuredOutputError(ValueError):
     """No valid structured result: a turn did not complete or answers stayed invalid.
 
-    `errors` lists the problems in the last turn as dictionaries with a
-    JSONPath-like `path` (`$` is the whole value), a `message` and a `source`:
-    `turn`, `answer`, `json`, `schema` or `pydantic`. `attempts` has one
-    dictionary per turn with its canonical `turn` record, final prose `answer`
-    (None when absent) and `errors`; `turn` is the last record. The message
-    lists the first problems. Messages include short scalar values from the
-    answer, never whole objects or arrays, unless the response model sets
-    Pydantic's `hide_input_in_errors`.
+    `errors` lists the problems in the last turn as dictionaries. Each has a
+    JSONPath-like `path` (`$` is the whole value), a `message` and a `source`. The
+    source is `turn`, `answer`, `json`, `schema` or `pydantic`. `attempts` has one
+    dictionary per turn. It holds the `turn` record, the final prose `answer` (None when
+    absent) and `errors`. `turn` is the last record.
+
+    The message lists the first problems. Messages include short scalar values from the
+    answer, but never whole objects or arrays. If the response model sets Pydantic's
+    `hide_input_in_errors`, messages include no answer values.
     """
 
     def __init__(self, reason: str, attempts: list[dict]):
@@ -368,7 +369,7 @@ class Agent:
 
     Args:
         project: Project directory. Local execution resolves an existing directory
-            immediately; gateway execution requires an absolute path on the gateway.
+            immediately. Gateway execution requires an absolute path on the gateway.
         execution_layer: A `blockether.vis.engine.LocalEngine` or
             `blockether.vis.engine.GatewayClient` to borrow. When omitted, the agent
             creates and owns a local engine. Configure executable, credentials and
@@ -416,7 +417,7 @@ class Agent:
 
     @property
     def session(self) -> Session:
-        """The same conversation for all requests; connects on first access."""
+        """The same conversation for all requests. It connects on first access."""
         if self._closed:
             raise TransportError("agent is closed")
         if self._session is None:
@@ -513,32 +514,35 @@ class Agent:
     ) -> dict | ResponseModel:
         """Submit a request and wait for its result in the same conversation.
 
-        Without `response_model`, return the canonical turn dictionary. Check its
-        `status`: completed, failed, cancelled, suspended and error all end the
-        wait; failed model work is returned as a record, not raised.
+        Without `response_model`, return the turn dictionary in contract form. Check its
+        `status`. Completed, failed, cancelled, suspended and error all end the wait.
+        Failed model work is returned as a record, not raised.
 
-        With a Pydantic `BaseModel` subclass, include its validation JSON Schema
-        in the request and return an instance validated against that schema, then
-        by Pydantic with your Python validators. This is a prompt, not
-        provider-enforced JSON mode: the final prose block must be one complete
-        JSON value, without fences or commentary. Other content block types are
-        ignored. Duplicate object members and non-finite numbers are invalid.
+        With a Pydantic `BaseModel` subclass, the request includes its validation JSON
+        Schema. The answer is validated against that schema, then by Pydantic with your
+        Python validators. The call returns the validated instance.
 
-        An invalid answer starts a correction turn in the same conversation that
-        lists each problem and repeats the schema, up to `max_corrections` times
-        (0 disables corrections). Each correction is another model call; the
-        agent is asked to keep completed work, but tool calls and file edits are
-        never undone. `StructuredOutputError` reports an unsuccessful turn, an
-        answer that is still invalid, or a deadline that left no time for a
-        correction; its `errors` and `attempts` say what went wrong.
+        This is a prompt, not provider-enforced JSON mode. The final prose block must be
+        one complete JSON value, without fences or commentary. Other content block types
+        are ignored. Duplicate object members and non-finite numbers are invalid.
 
-        `timeout` is a positive finite wait deadline in seconds for the answer
-        and any corrections, separate from the layer's transport timeout.
-        Submission options such as `provider`, `model` and `attachments` are
-        forwarded unchanged to `send`; corrections reuse them except
-        `attachments` and `idempotency_key`. `VisTimeout` does not cancel the
-        turn; transport errors propagate. Closing an owned local agent stops
-        unfinished work.
+        An invalid answer starts a correction turn in the same conversation. The
+        correction lists each problem and repeats the schema. This repeats up to
+        `max_corrections` times, and 0 disables corrections. Each correction is another
+        model call. The agent is asked to keep completed work, but tool calls and file
+        edits are never undone.
+
+        `StructuredOutputError` reports an unsuccessful turn, an answer that is still
+        invalid, or a deadline that left no time for a correction. Its `errors` and
+        `attempts` say what went wrong.
+
+        `timeout` is a positive finite wait deadline in seconds for the answer and any
+        corrections. It is separate from the layer's transport timeout. Submission
+        options such as `provider`, `model` and `attachments` are passed unchanged to
+        `send`. Corrections reuse them, except `attachments` and `idempotency_key`.
+
+        `VisTimeout` does not cancel the turn, and transport errors propagate. Closing
+        an owned local agent stops unfinished work.
         """
         if response_model is None:
             return self.send(request, **options).wait(timeout=timeout)
@@ -588,10 +592,10 @@ class Agent:
     def close(self):
         """Detach callbacks and release only resources owned by this agent.
 
-        Repeated calls are safe. The default local engine is stopped and its
-        temporary session database removed; project file edits remain. A borrowed
-        execution layer and other agents using it remain open. Requests through
-        this agent after closing raise `blockether.vis.engine.TransportError`.
+        Repeated calls are safe. The default local engine stops, and its temporary
+        session database is removed. Project file edits stay. A borrowed execution layer
+        and other agents that use it stay open. After closing, requests through this
+        agent raise `blockether.vis.engine.TransportError`.
         """
         if not self._closed:
             self._closed = True
