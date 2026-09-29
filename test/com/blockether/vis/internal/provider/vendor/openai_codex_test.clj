@@ -259,7 +259,7 @@
                                        defaults)]
 
                      ;; svar-catalog models ride as bare strings.
-                     (expect (= "gpt-6-sol" (config/model-name (first defaults))))
+                     (expect (= "gpt-6.1-sol" (config/model-name (first defaults))))
                      (expect (string? (get by-name "gpt-6-astra")))
                      (expect (contains? by-name "gpt-6-sol"))
                      (expect (contains? by-name "gpt-6-luna"))
@@ -284,7 +284,8 @@
                        (svar/make-router [(assoc (:provider/preset provider)
                                             :id (:provider/id provider)
                                             :api-key "test"
-                                            :models [{:name "gpt-6-sol"} {:name "gpt-6-luna"}])])]
+                                            :models [{:name "gpt-6.1-sol"} {:name "gpt-6-sol"}
+                                                     {:name "gpt-6-luna"}])])]
 
                    (doseq [model (:models (first (:providers router)))]
                      (expect (some #{(:name model)} defaults))
@@ -295,9 +296,10 @@
                      (expect (= [{:type "effort" :values ["low" "medium" "high" "xhigh" "max"]}]
                                 (:reasoning-options model)))
                      (expect (= #{:chat :vision} (:capabilities model)))
-                     (expect (= (if (= "gpt-6-sol" (:name model))
-                                  {:input 2.0 :cached-input 0.2 :output 10.0}
-                                  {:input 0.1 :cached-input 0.01 :output 0.5})
+                     (expect (= ({"gpt-6.1-sol" {:input 2.0 :cached-input 0.1 :output 10.0}
+                                  "gpt-6-sol" {:input 2.0 :cached-input 0.2 :output 10.0}
+                                  "gpt-6-luna" {:input 0.1 :cached-input 0.01 :output 0.5}}
+                                 (:name model))
                                 (select-keys (:pricing model) [:input :cached-input :output])))))))
 
 (defdescribe default-model-context-declaration-test

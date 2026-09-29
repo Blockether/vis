@@ -79,7 +79,8 @@
                        (svar/make-router [(assoc (:provider/preset provider)
                                             :id (:provider/id provider)
                                             :api-key "test"
-                                            :models [{:name "gpt-6-sol"} {:name "gpt-6-luna"}])])]
+                                            :models [{:name "gpt-6.1-sol"} {:name "gpt-6-sol"}
+                                                     {:name "gpt-6-luna"}])])]
 
                    (doseq [model (:models (first (:providers router)))]
                      (expect (some #{(:name model)} defaults))
@@ -88,12 +89,15 @@
                      (expect (= :openai-compatible-responses (:api-style model)))
                      (expect (= :openai-effort (:reasoning-style model)))
                      (expect (= [{:type "effort"
-                                  :values ["none" "low" "medium" "high" "xhigh" "max"]}]
+                                  :values (if (= "gpt-6.1-sol" (:name model))
+                                            ["low" "medium" "high" "xhigh" "max"]
+                                            ["none" "low" "medium" "high" "xhigh" "max"])}]
                                 (:reasoning-options model)))
                      (expect (= #{:chat :vision} (:capabilities model)))
-                     (expect (= (if (= "gpt-6-sol" (:name model))
-                                  {:input 2.0 :cached-input 0.2 :output 10.0}
-                                  {:input 0.1 :cached-input 0.01 :output 0.5})
+                     (expect (= ({"gpt-6.1-sol" {:input 2.0 :cached-input 0.1 :output 10.0}
+                                  "gpt-6-sol" {:input 2.0 :cached-input 0.2 :output 10.0}
+                                  "gpt-6-luna" {:input 0.1 :cached-input 0.01 :output 0.5}}
+                                 (:name model))
                                 (select-keys (:pricing model) [:input :cached-input :output])))))))
 
 (defdescribe copilot-claude-5-5-routing-test
@@ -122,6 +126,7 @@
                                                                   true)}
                      (fn []
                        (#'sut/enable-known-copilot-models! "token" "https://api.githubcopilot.com")
+                       (expect (contains? @requested "gpt-6.1-sol"))
                        (expect (contains? @requested "gpt-6-sol"))
                        (expect (contains? @requested "gpt-6-luna")))))))
 
@@ -156,8 +161,8 @@
         (expect (= "/responses" (get-in copilot [:provider/preset :responses-path])))
         ;; A configured default is selectable; account access depends on Copilot policy.
         (expect (= #{"claude-opus-5.5" "claude-sonnet-5.5" "claude-opus-5" "claude-fable-5"
-                     "claude-sonnet-5" "gpt-6-astra" "gpt-6-sol" "gpt-6-luna" "gpt-5.6-luna"
-                     "gpt-5.6-sol" "gpt-5.6-terra"}
+                     "claude-sonnet-5" "gpt-6.1-sol" "gpt-6-astra" "gpt-6-sol" "gpt-6-luna"
+                     "gpt-5.6-luna" "gpt-5.6-sol" "gpt-5.6-terra"}
                    models))
         (expect (not-any? #(re-find #"(?i)gemini|grok" %) models))
         (expect (ifn? (:provider/status-fn copilot)))

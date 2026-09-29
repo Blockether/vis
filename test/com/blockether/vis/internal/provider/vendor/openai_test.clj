@@ -16,7 +16,8 @@
                        (svar/make-router [(assoc (:provider/preset provider)
                                             :id (:provider/id provider)
                                             :api-key "test"
-                                            :models [{:name "gpt-6-sol"} {:name "gpt-6-luna"}])])]
+                                            :models [{:name "gpt-6.1-sol"} {:name "gpt-6-sol"}
+                                                     {:name "gpt-6-luna"}])])]
 
                    (doseq [model (:models (first (:providers router)))]
                      (expect (some #{(:name model)} defaults))
@@ -25,12 +26,15 @@
                      (expect (= :openai-compatible-responses (:api-style model)))
                      (expect (= :openai-effort (:reasoning-style model)))
                      (expect (= [{:type "effort"
-                                  :values ["none" "low" "medium" "high" "xhigh" "max"]}]
+                                  :values (if (= "gpt-6.1-sol" (:name model))
+                                            ["low" "medium" "high" "xhigh" "max"]
+                                            ["none" "low" "medium" "high" "xhigh" "max"])}]
                                 (:reasoning-options model)))
                      (expect (= #{:chat :vision} (:capabilities model)))
-                     (expect (= (if (= "gpt-6-sol" (:name model))
-                                  {:input 2.0 :cached-input 0.2 :output 10.0}
-                                  {:input 0.1 :cached-input 0.01 :output 0.5})
+                     (expect (= ({"gpt-6.1-sol" {:input 2.0 :cached-input 0.1 :output 10.0}
+                                  "gpt-6-sol" {:input 2.0 :cached-input 0.2 :output 10.0}
+                                  "gpt-6-luna" {:input 0.1 :cached-input 0.01 :output 0.5}}
+                                 (:name model))
                                 (select-keys (:pricing model) [:input :cached-input :output])))))))
 
 (defdescribe provider-openai-test
@@ -38,5 +42,5 @@
                  (let [provider (vis/provider-by-id :openai)]
                    (expect (= :openai (:provider/id provider)))
                    (expect (= "OpenAI" (:provider/label provider)))
-                   (expect (= "gpt-6-sol"
+                   (expect (= "gpt-6.1-sol"
                               (first (get-in provider [:provider/preset :default-models])))))))
