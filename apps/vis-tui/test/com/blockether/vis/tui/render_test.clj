@@ -9959,7 +9959,39 @@ print(paths)"
           (expect (= " Recorded " (get-in receipt [:meta :right-suffix])))
           (expect (not (str/includes? text "┌")))
           (expect (not (str/includes? text "ndjson"))))
-        (expect (not-any? #(str/includes? (:line %) "system viewer") entries)))))
+        (expect (not-any? #(str/includes? (:line %) "system viewer") entries))))
+  (it "does not show recorded-run attachments when the execution already has a RUN section"
+      (let [entries
+            (format-iteration-entry-entries
+              {:iteration-id "iteration-live"
+               :attachments
+               [{"source" "tool"
+                 "kind" "doc"
+                 "filename" "ci-run-101.live.ndjson"
+                 "media_type" "application/vnd.vis.live+ndjson"}
+                {"source" "tool"
+                 "kind" "doc"
+                 "filename" "ci-run-102.live.ndjson"
+                 "media_type" "application/vnd.vis.live+ndjson"}
+                {"source" "tool" "kind" "doc" "filename" "summary.md" "media_type" "text/markdown"}]
+               :forms [{:code "watch()"
+                        :success? true
+                        :activity {:history {:id "activity-live"}}
+                        :runs [{:view-id "current"
+                                :title "Beta Native"
+                                :reason :completed
+                                :owner {:activity-id "activity-live"}}]}]}
+              80
+              1
+              {:session-id "session-live" :session-turn-id "turn-live"})
+
+            text
+            (str/join "\n" (map :line entries))]
+
+        (expect (str/includes? text "Beta Native"))
+        (expect (str/includes? text "summary.md"))
+        (expect (not (str/includes? text "ci-run-101")))
+        (expect (not (str/includes? text "ci-run-102"))))))
 
 ;; #222: a form's live receipt must share its Activity surface, not float below it.
 (defdescribe

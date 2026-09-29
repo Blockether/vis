@@ -2655,6 +2655,20 @@ const TraceSegment = memo(function TraceSegment({
     return built;
   }, [segment, showCode, summarize]);
   const attachments = useMemo(() => segment.items.flatMap((entry) => entry.attachments), [segment]);
+  // A run already has its own section (live now or retained beside Activity). Do not
+  // list earlier record files from the same execution as a second stack of RUN rows.
+  // Without a section, the recorded artifact remains the reload-safe fallback.
+  const runOwners = [
+    ...liveViews.map((view) => view.owner),
+    ...attachments
+      .filter((entry) => attachmentIsLive(entry) && entry.iteration_id)
+      .map((entry) => entry.owner),
+  ];
+  const hasRun = chunks.some(
+    (chunk) =>
+      chunk.kind === 'code' &&
+      chunk.forms.some((form) => runOwners.some((owner) => liveOwnerMatches(owner, form.activity))),
+  );
   // A summarized run reads the reasoning of all its steps as one band.
   const thinking = useMemo(
     () =>
@@ -2707,15 +2721,7 @@ const TraceSegment = memo(function TraceSegment({
         <AttachmentRail
           client={client}
           sid={sid}
-          attachments={attachments.filter(
-            (attachment) =>
-              !attachmentIsLive(attachment) ||
-              !chunks.some(
-                (chunk) =>
-                  chunk.kind === 'code' &&
-                  chunk.forms.some((form) => liveOwnerMatches(attachment.owner, form.activity)),
-              ),
-          )}
+          attachments={hasRun ? attachments.filter((entry) => !attachmentIsLive(entry)) : attachments}
         />
       )}
     </section>

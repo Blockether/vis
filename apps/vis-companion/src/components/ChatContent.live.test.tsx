@@ -322,6 +322,50 @@ it('keeps concurrent owned views and unmatched views separate, including streame
   expect(mounted.queryByText('First monitor')).toBeNull();
 });
 
+it.each(['live', 'settled'] as const)(
+  'does not list recorded-run attachments below a %s RUN section',
+  (phase) => {
+    const activity = activityHistoryPage();
+    const owner = { invocation_id: 'watch', activity_id: activity.history!.id };
+    const record = (name: string, index: number, recordOwner?: typeof owner) => ({
+      filename: `${name}.live.ndjson`,
+      media_type: 'application/vnd.vis.live+ndjson',
+      iteration_id: 'iteration',
+      index,
+      owner: recordOwner,
+    });
+    const mounted = render(
+      <IterationTrace
+        iterations={[
+          {
+            id: 'iteration',
+            forms: [{ source: 'watch()', activity }],
+            attachments: [
+              record('ci-run-101', 0),
+              record('ci-run-102', 1),
+              ...(phase === 'settled' ? [record('Beta Native', 2, owner)] : []),
+              {
+                filename: 'summary.zip',
+                media_type: 'application/zip',
+                iteration_id: 'iteration',
+                index: 3,
+              },
+            ],
+          },
+        ]}
+        liveViews={phase === 'live' ? [{ ...STORY_LIVE_VIEW, title: 'Beta Native', owner }] : []}
+        client={{} as GatewayClient}
+        sid="session"
+        whole
+      />,
+    );
+    expect(mounted.getByRole('button', { name: 'Open run Beta Native' })).toBeVisible();
+    expect(mounted.queryByRole('button', { name: 'Open run ci-run-101' })).toBeNull();
+    expect(mounted.queryByRole('button', { name: 'Open run ci-run-102' })).toBeNull();
+    expect(mounted.getByText('summary.zip')).toBeVisible();
+  },
+);
+
 it('replaces the live view with one retained run receipt beside the same Activity', () => {
   const activity = activityHistoryPage();
   const owner = { invocation_id: 'paged-out', activity_id: activity.history!.id };
