@@ -3048,8 +3048,8 @@
      :name "_shell_logs"
      :result
      (str
-       "The same shell result shape as every other stage (`stage` is \"logs\"). `out` is the window "
-       "that this read returned, and a slice addresses that text directly (`page[-4000:]`). The "
+       "The same shell result shape as every other stage (`stage` is \"logs\"). `out` is the window this "
+       "read returned, and a slice addresses that text directly (`page[-4000:]`). The "
        "sandbox result keeps the whole request, so `next(page)` follows its cursor and "
        "`page.pages()` walks ready pages lazily. Ordinary dict iteration still yields keys. `is_eof` "
        "marks the end of the current snapshot.")
@@ -3125,8 +3125,8 @@
      :name "_shell_stop"
      :result
      (str
-       "The same shell result shape (`stage` \"stop\"), with `status` \"stopped\" and `exit`. `out` is "
-       "an empty string. You can still read the process log with `sh.logs()`.")
+       "The same shell result shape (`stage` \"stop\"): `status` \"stopped\", `exit`. `out` is an empty "
+       "string. You can still read the process log with `sh.logs()`.")
      :description
      (str "Transport for `sh.stop()`. Call the handle instead. It kills the process tree of a "
           "background shell and releases its live resource. The log stays on disk.")
