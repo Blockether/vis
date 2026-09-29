@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   gateway at that address, or starts it there. A release or beta installation without
   the web app, such as one updated by an older `vis-agent`, downloads the copy
   published with its build the first time you run the command.
+- Beta builds include the desktop app. Each beta release lists installers for macOS,
+  Windows and Linux, and `vis-agent desktop --track beta` opens the newest beta's app.
+  `vis-agent update --track beta` refreshes an installed beta app with the engine. Beta
+  and stable apps are cached separately, so opening one track keeps the other's app.
 
 ### Changed
 - Documentation is easier to find. `apropos()` also matches documentation pages

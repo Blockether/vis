@@ -21,6 +21,8 @@ the same gateway from Windows, macOS or Linux.
   running](#how-you-learn-that-a-newer-version-is-running).
 - **You want the desktop app.** [Open the desktop app](#open-the-desktop-app) for
   your platform and release track.
+- **A desktop fix you need is only in a beta.** Open the [beta desktop
+  app](#beta-the-newest-published-beta), which stays separate from your stable app.
 - **You want Vis in a browser.** [Open the web app](#open-the-web-app) that your gateway
   serves.
 
@@ -294,6 +296,13 @@ The Windows installer downloads Microsoft Edge WebView2 if needed; installation
 may require network access and administrator approval. To update the app, close
 Vis and install the newer package from the same release page.
 
+Each published beta carries the same installers. To try a desktop fix before it
+reaches a stable release, download them from that beta's prerelease on the
+[releases page](https://github.com/Blockether/vis/releases). A beta package installs
+as the same Vis app as the stable package. To keep your stable app, use
+[`vis-agent desktop --track beta`](#beta-the-newest-published-beta) on macOS or
+Linux instead.
+
 Run the gateway on the computer where your projects live: macOS, Linux, or
 [Linux in WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) on Windows.
 For a local WSL2 gateway, enable localhost forwarding. The
@@ -328,17 +337,16 @@ Open the desktop Companion for your selected release track:
 
 ```bash
 vis-agent desktop                  # use the track selected by vis-agent update
-vis-agent desktop --update         # check for a release update, or rebuild dev
+vis-agent desktop --update         # check for a release or beta update, or rebuild dev
 vis-agent desktop --track release  # download and open stable for this launch
+vis-agent desktop --track beta     # download and open the newest beta for this launch
 vis-agent desktop --track dev      # build and open your current source checkout
 vis-agent desktop --help
 ```
 
 `--track` overrides the desktop track for one launch; it does not change your
 engine selection. With no installed track, a source-only checkout defaults to dev;
-otherwise the default is release. Beta publishes engine and TUI bundles, not desktop
-apps. On beta, choose `--track release` or `--track dev` explicitly; the command
-never silently substitutes a stable app.
+otherwise the default is release.
 
 ### Release: download and reuse
 
@@ -350,12 +358,23 @@ with built-in extraction, so FUSE is not required; you still need a graphical
 desktop and the system libraries required by the app.
 
 Later release launches reuse the cached app without contacting GitHub. `vis-agent
-update` refreshes an installed app together with the engine, so the desktop you open
+update` refreshes an installed release app together with the engine, so the desktop you open
 matches the runtime you just installed; it never installs an app you do not have.
 `--update` checks for a newer stable version and downloads only when that version is
 not cached. Failed downloads or installation steps leave the previously selected app
 intact, and an engine update still succeeds: retry the command, or omit `--update` to
 open the existing copy. A missing cached executable is downloaded again automatically.
+
+### Beta: the newest published beta
+
+The beta track downloads the desktop app from the newest published beta, the same
+build that `vis-agent update --track beta` installs. It otherwise works like release:
+later launches reuse the cached app, `--update` checks for a newer beta, and
+`vis-agent update --track beta` refreshes an installed beta app. Beta apps are kept
+apart from stable ones, so opening one track never removes the other's app.
+
+If the newest beta has no app for your platform, the launcher says so and keeps any
+cached beta app; open `--track release` instead.
 
 ### Dev: build from source
 
@@ -383,8 +402,9 @@ first, run `vis-agent update --track dev`.
 
 ### Cached files and pairing
 
-Release files live in `~/.vis/install/desktop/<platform>/<version>/`; source builds
-live in `~/.vis/install/desktop/dev/<platform>/<version>.<build>/`. Both respect
+Release files live in `~/.vis/install/desktop/<platform>/<version>/`, beta files in
+`~/.vis/install/desktop/beta/<platform>/<version>-beta.<commit>/`, and source builds
+in `~/.vis/install/desktop/dev/<platform>/<version>.<build>/`. All of them respect
 `VIS_HOME`, and installing an app there needs no administrator access.
 
 Only one desktop app runs at a time. A launch closes a desktop running from another
@@ -392,9 +412,9 @@ version or track, then opens the version you selected. If that version is alread
 running, its window comes to the front.
 
 The launch then deletes the other versions in that track's folder, leaving one app
-on disk; the other track keeps its files. A release version deleted this way
-downloads again the next time you select it, and dev builds are rebuilt from source
-on every launch.
+on disk; the other tracks keep their files. Release and beta apps deleted this way
+download again when you need them, and dev builds are rebuilt from source on every
+launch.
 
 A desktop launch does not use Java, change your engine track, or start or restart
 a gateway.
@@ -410,11 +430,13 @@ successful main run. A newer successful run cancels an older beta build. New
 commits whose CI is pending or failed do not block publication of a green beta.
 
 Beta uses the same native build and test workflow as stable releases on Linux
-x86-64, Linux ARM64 and macOS ARM64. Each build has an immutable `beta-<commit>` tag.
-Its prerelease remains a draft until all native tests, SDK checks and TUI checks
-pass and all six engine/TUI archives are present and nonempty. Failed or cancelled
-builds cannot replace the last published beta. Beta never becomes GitHub's latest
-stable release, and does not publish mobile or desktop applications.
+x86-64, Linux ARM64 and macOS ARM64, and the same desktop packaging for macOS,
+Windows and Linux. Each build has an immutable `beta-<commit>` tag. Its prerelease
+remains a draft until all native tests, SDK checks, TUI checks and desktop packaging
+pass, and the six engine/TUI archives, the web app and the six desktop installers
+are present and nonempty. Failed or cancelled builds cannot replace the last
+published beta. Beta never becomes GitHub's latest stable release, and does not
+publish mobile applications.
 
 ## Files
 
@@ -424,7 +446,7 @@ stable release, and does not publish mobile or desktop applications.
 | `~/.local/bin/vis-agent-python/` | Its bundled Python worker and interpreter |
 | `~/.local/bin/vis-tui` | Matching native terminal client |
 | `~/.local/bin/vis-web/` | Web app that the gateway serves |
-| `~/.vis/install/desktop/` | Downloaded desktop apps, grouped by platform and version |
+| `~/.vis/install/desktop/` | Desktop apps by platform and version; beta apps in `beta/`, dev builds in `dev/` |
 | `~/.vis/install/track` | Selection used for subsequent launches |
 | `~/.vis/install/src` | Managed dev checkout at a detached main commit |
 | `~/.vis/install/ref` | Commit pinned by the last dev update |

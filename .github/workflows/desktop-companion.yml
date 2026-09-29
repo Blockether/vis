@@ -3,9 +3,10 @@ name: Desktop companion
 # Packages Vis Companion for universal macOS, Linux x64/ARM64 and Windows x64
 # with Pake — the same web bundle the phones get, wrapped in a Tauri window
 # (see apps/vis-companion/scripts/desktop-package.mjs for the flags and asset names).
-# A regular release attaches all installers to an unpublished draft. Only the
-# complete-product gate publishes it. Branch dispatches build without publishing;
-# dispatched tag recovery may update a draft, never an already published version.
+# A regular release or a native beta attaches all installers to its unpublished
+# draft. Only the complete-product gate of release.yml or beta-native.yml publishes
+# it. Branch dispatches build without publishing; dispatched tag recovery may update
+# a draft, never an already published version.
 
 on:
   workflow_call:
@@ -65,6 +66,10 @@ jobs:
           ref='${{ inputs.tag || github.ref_name }}'
           case "$ref" in
             v[0-9]*) echo 'publish=true' >> "$GITHUB_OUTPUT"; echo "attaching to $ref" ;;
+            beta-*)
+              [[ "$ref" =~ ^beta-[0-9a-f]{40}$ ]] || exit 1
+              echo 'publish=true' >> "$GITHUB_OUTPUT"; echo "attaching to $ref"
+              ;;
             *) echo 'publish=false' >> "$GITHUB_OUTPUT"; echo "dry run on $ref: packaging, publishing nothing" ;;
           esac
 

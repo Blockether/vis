@@ -1,8 +1,9 @@
 name: Beta Native
 
-# Successful main CI starts the same native builds used for production releases.
-# Each beta has an immutable tag. Drafts never become installation candidates until
-# every native target, bundled worker, SDK check and terminal client has passed.
+# Successful main CI starts the same native and desktop builds used for production
+# releases. Each beta has an immutable tag. Drafts never become installation
+# candidates until every native target, bundled worker, SDK check, terminal client
+# and desktop installer has passed.
 on:
   workflow_run:
     workflows: [CI]
@@ -83,7 +84,7 @@ jobs:
           else
             gh release create "$tag" --repo "$REPO" --target "$sha" \
               --draft --prerelease --latest=false --title "Beta ${sha:0:12}" \
-              --notes "Native beta from green main CI at $sha. Install: vis-agent update --track beta. Return to production: vis-agent update --track release."
+              --notes "Native beta from green main CI at $sha. Install: vis-agent update --track beta. Desktop: vis-agent desktop --track beta, or an installer below. Return to production: vis-agent update --track release."
           fi
           [ "$(gh api "repos/$REPO/commits/$tag" -q .sha)" = "$sha" ]
           printf 'sha=%s\ntag=%s\nbuild=true\n' "$sha" "$tag" >> "$GITHUB_OUTPUT"
@@ -99,9 +100,25 @@ jobs:
       tag: ${{ needs.pick.outputs.tag }}
     secrets: inherit
 
+  # Installers for every desktop platform, attached to the same draft. The one
+  # self-hosted Mac builds this package and the native macOS runtime in turn.
+  desktop:
+    concurrency:
+      group: beta-desktop-builds
+      cancel-in-progress: true
+    needs: pick
+    if: needs.pick.outputs.build == 'true'
+    permissions:
+      contents: write
+      id-token: write
+    uses: ./.github/workflows/desktop-companion.yml
+    with:
+      tag: ${{ needs.pick.outputs.tag }}
+    secrets: inherit
+
   publish:
     name: publish only the complete native beta
-    needs: [pick, native]
+    needs: [pick, native, desktop]
     runs-on: ubuntu-latest
     outputs:
       published: ${{ steps.publish.outputs.published }}
@@ -137,10 +154,17 @@ jobs:
           import json, os
           with open(os.environ['METADATA']) as source:
               release = json.load(source)
+          # desktop-package.mjs names installers after VIS_VERSION without its qualifier.
+          with open('VIS_VERSION') as source:
+              version = source.read().strip().split('-')[0]
           expected = {f'{name}-{platform}.tar.gz'
                       for name in ('vis-agent', 'vis-tui')
                       for platform in ('linux-x64', 'linux-arm64', 'macos-arm64')}
           expected.add('vis-web.tar.gz')
+          expected.update(f'vis-companion-{version}-{installer}'
+                          for installer in ('macos-universal.dmg', 'windows-x64.msi',
+                                            'linux-x64.deb', 'linux-x64.AppImage',
+                                            'linux-arm64.deb', 'linux-arm64.AppImage'))
           assets = release['assets']
           assert release['draft'] is True and release['tag_name'] == os.environ['TAG']
           assert release['prerelease'] is True

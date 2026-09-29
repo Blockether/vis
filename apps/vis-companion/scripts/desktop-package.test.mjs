@@ -155,17 +155,22 @@ describe('desktop release signing', () => {
     expect(workflow).toContain("if: runner.os == 'Linux'");
   });
 
-  it('grants release caller permissions for nested OIDC signing and asset upload', () => {
-    const release = readFileSync(
-      new URL('../../../.github/workflows/release.yml', import.meta.url),
-      'utf8',
-    );
-    const desktop = release.match(
-      /^  desktop:\r?\n([\s\S]*?)(?=^  [a-zA-Z_-]+:|$(?![\s\S]))/m,
-    )?.[1];
-    expect(desktop).toBeDefined();
-    expect(desktop).toContain('uses: ./.github/workflows/desktop-companion.yml');
-    expect(desktop).toMatch(/    permissions:\r?\n      contents: write\r?\n      id-token: write/);
+  it('grants release and beta caller permissions for nested OIDC signing and asset upload', () => {
+    // Releases and native betas both attach the installers to their draft.
+    for (const caller of ['release.yml', 'beta-native.yml']) {
+      const workflow = readFileSync(
+        new URL(`../../../.github/workflows/${caller}`, import.meta.url),
+        'utf8',
+      );
+      const desktop = workflow.match(
+        /^  desktop:\r?\n([\s\S]*?)(?=^  [a-zA-Z_-]+:|$(?![\s\S]))/m,
+      )?.[1];
+      expect(desktop, caller).toBeDefined();
+      expect(desktop).toContain('uses: ./.github/workflows/desktop-companion.yml');
+      expect(desktop).toMatch(
+        /    permissions:\r?\n      contents: write\r?\n      id-token: write/,
+      );
+    }
   });
 
   it('signs with OIDC and verifies the MSI and extracted EXE before smoke and upload', () => {

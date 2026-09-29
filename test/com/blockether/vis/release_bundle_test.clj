@@ -267,7 +267,10 @@
         (io/file root "web.tar.gz")
 
         desktop-dir
-        (io/file home ".vis/install/desktop/linux-x64")
+        (io/file home
+                 (if (and desktop (str/includes? desktop "-beta."))
+                   ".vis/install/desktop/beta/linux-x64"
+                   ".vis/install/desktop/linux-x64"))
 
         env
         {"HOME" (.getAbsolutePath home)
@@ -352,6 +355,9 @@
               "{\"assets\":[{\"browser_download_url\":\"https://github.com/example/vis/releases/download/beta-"
               (apply str (repeat 40 "a"))
               "/vis-agent-linux-x64.tar.gz\"},"
+              "{\"browser_download_url\":\"https://github.com/example/vis/releases/download/beta-"
+              (apply str (repeat 40 "a"))
+              "/vis-companion-9.9.9-linux-x64.AppImage\"},"
               "{\"browser_download_url\":\"https://github.com/example/vis/releases/download/beta-"
               (apply str (repeat 40 "a"))
               "/vis-tui-linux-x64.tar.gz\"}]}' ;;\n"))
@@ -1573,8 +1579,10 @@
                           "workflow_run.head_branch == 'main'"
                           "workflow_run.head_repository.full_name == github.repository"
                           "actions/workflows/ci.yml/runs?head_sha="
-                          "uses: ./.github/workflows/native-release.yml" "needs: [pick, native]"
-                          "require-draft-release" "--draft --prerelease --latest=false"
+                          "uses: ./.github/workflows/native-release.yml"
+                          "uses: ./.github/workflows/desktop-companion.yml"
+                          "needs: [pick, native, desktop]" "require-draft-release"
+                          "--draft --prerelease --latest=false"
                           "--draft=false --prerelease --latest=false"]]
           (expect (str/includes? beta contract) contract))
         (expect (str/includes? beta "tag=\"beta-$sha\""))
@@ -1996,39 +2004,76 @@
         (let [{:keys [exit output calls]} (run-beta-job "pick" overrides {})]
           (expect (not (zero? exit)) output)
           (expect (empty? calls) calls))))
-  (it "publishes a complete immutable draft until a newer green main commit supersedes it"
-      (let [sha
-            (apply str (repeat 40 "a"))
+  (it
+    "publishes a complete immutable draft until a newer green main commit supersedes it"
+    (let [sha
+          (apply str (repeat 40 "a"))
 
-            assets
-            (conj (vec (for [name
-                             ["vis-agent" "vis-tui"]
+          version
+          (first (str/split (str/trim (slurp "VIS_VERSION")) #"-"))
 
-                             platform
-                             ["linux-x64" "linux-arm64" "macos-arm64"]]
+          installers
+          (for [installer ["macos-universal.dmg" "windows-x64.msi" "linux-x64.deb"
+                           "linux-x64.AppImage" "linux-arm64.deb" "linux-arm64.AppImage"]]
+            {:name (str "vis-companion-" version "-" installer) :size 123 :state "uploaded"})
 
-                         {:name (str name "-" platform ".tar.gz") :size 123 :state "uploaded"}))
-                  {:name "vis-web.tar.gz" :size 123 :state "uploaded"})
+          assets
+          (-> (vec (for [name
+                         ["vis-agent" "vis-tui"]
 
-            metadata
-            {:tag_name (str "beta-" sha) :draft true :prerelease true :assets assets}]
+                         platform
+                         ["linux-x64" "linux-arm64" "macos-arm64"]]
 
-        (doseq [[overrides changes exit-ok? publish?]
-                [[{} {} true true] [{"TEST_MAIN" (apply str (repeat 40 "b"))} {} true true]
-                 [{"TEST_GREEN_MAIN" (apply str (repeat 40 "b"))} {} true false]
-                 [stale-green-main {} true true] [{} {:assets (pop assets)} false false]
-                 [{} {:assets (assoc-in assets [0 :size] 0)} false false]
-                 [{} {:assets (assoc-in assets [0 :state] "new")} false false]
-                 [{} {:assets (assoc assets 0 (last assets))} false false]
-                 [{} {:draft false} false false] [{} {:prerelease false} false false]
-                 [{} {:tag_name "v9.9.9"} false false]]]
-          (let [{:keys [exit output outputs calls]}
-                (run-beta-job "publish" overrides (merge metadata changes))]
-            (expect (= exit-ok? (zero? exit)) output)
-            (expect (= publish? (str/includes? calls "--draft=false --prerelease --latest=false"))
-                    calls)
-            ;; The index job acts on this answer alone.
-            (expect (= publish? (str/includes? outputs "published=true")) outputs))))))
+                     {:name (str name "-" platform ".tar.gz") :size 123 :state "uploaded"}))
+              (conj {:name "vis-web.tar.gz" :size 123 :state "uploaded"})
+              (into installers))
+
+          metadata
+          {:tag_name (str "beta-" sha) :draft true :prerelease true :assets assets}]
+
+      (doseq [[overrides changes exit-ok? publish?]
+              [[{} {} true true] [{"TEST_MAIN" (apply str (repeat 40 "b"))} {} true true]
+               [{"TEST_GREEN_MAIN" (apply str (repeat 40 "b"))} {} true false]
+               [stale-green-main {} true true] [{} {:assets (pop assets)} false false]
+               [{} {:assets (assoc-in assets [0 :size] 0)} false false]
+               [{} {:assets (assoc-in assets [0 :state] "new")} false false]
+               [{} {:assets (assoc assets 0 (last assets))} false false]
+               [{} {:assets (filterv #(str/ends-with? (:name %) ".tar.gz") assets)} false false]
+               [{} {:assets (mapv #(update % :name str/replace version "0") assets)} false false]
+               [{} {:draft false} false false] [{} {:prerelease false} false false]
+               [{} {:tag_name "v9.9.9"} false false]]]
+        (let [{:keys [exit output outputs calls]}
+              (run-beta-job "publish" overrides (merge metadata changes))]
+          (expect (= exit-ok? (zero? exit)) output)
+          (expect (= publish? (str/includes? calls "--draft=false --prerelease --latest=false"))
+                  calls)
+          ;; The index job acts on this answer alone.
+          (expect (= publish? (str/includes? outputs "published=true")) outputs))))))
+
+;; Regression, session 5979a1f6-c53f-4e9a-a9a4-e3f92fa730d6: the desktop workflow
+;; published only to release tags, so no beta ever carried a desktop app.
+(defdescribe
+  desktop-release-target-test
+  (it "attaches installers to a release or an immutable beta and only packages other refs"
+      (doseq [[ref expected] [["v1.2.3" "publish=true\n"]
+                              [(str "beta-" (apply str (repeat 40 "a"))) "publish=true\n"]
+                              ["main" "publish=false\n"] ["beta-main" nil]
+                              [(str "beta-" (apply str (repeat 39 "a"))) nil]]]
+        (let [dir (.toFile (Files/createTempDirectory "vis-desktop-target-"
+                                                      (make-array FileAttribute 0)))
+              outputs (io/file dir "outputs")
+              script (str/replace (workflow-job-script ".github/workflows/desktop-companion.yml"
+                                                       "package")
+                                  "${{ inputs.tag || github.ref_name }}"
+                                  ref)]
+
+          (try (expect (str/includes? script "case \"$ref\" in") script)
+               (spit outputs "")
+               (let [{:keys [exit output]} (run-bash ["bash" "-c" script]
+                                                     {"GITHUB_OUTPUT" (.getAbsolutePath outputs)})]
+                 (expect (= (some? expected) (zero? exit)) output)
+                 (expect (= (or expected "") (slurp outputs)) ref))
+               (finally (delete-tree! dir)))))))
 
 (defdescribe
   beta-index-test
@@ -2317,6 +2362,12 @@
         release
         (io/file dir "release.json")
 
+        beta
+        (io/file dir "native-beta")
+
+        beta-release
+        (io/file dir "beta.json")
+
         payload
         (io/file dir "payload")
 
@@ -2349,6 +2400,8 @@
          "PATH" (str (.getAbsolutePath bin) ":" (System/getenv "PATH"))
          "DESKTOP_CALLS" (.getAbsolutePath calls)
          "DESKTOP_RELEASE" (.getAbsolutePath release)
+         "DESKTOP_BETA" (.getAbsolutePath beta)
+         "DESKTOP_BETA_RELEASE" (.getAbsolutePath beta-release)
          "DESKTOP_PAYLOAD" (.getAbsolutePath payload)
          "DESKTOP_DEV_PLATFORM" dev-platform
          "DESKTOP_DEV_SUFFIX" suffix}
@@ -2365,7 +2418,21 @@
                                                                                       ".sha256")}
                                                          {"browser_download_url" url}]})
                                "\\/"
-                               "/"))))]
+                               "/"))))
+
+        publish-beta!
+        (fn [version commit desktop?]
+          (let [url
+                #(str "https://github.com/example/project/releases/download/beta-" commit "/" %)
+
+                assets
+                (cond-> [{"browser_download_url" (url "vis-agent-linux-x64.tar.gz")}]
+                  desktop?
+                  (conj {"browser_download_url"
+                         (url (str "vis-companion-" version "-" platform "." suffix))}))]
+
+            (spit beta (str "beta-" commit "\n"))
+            (spit beta-release (str/replace (wire/json-str {"assets" assets}) "\\/" "/"))))]
 
     (try
       (io/copy (io/file "bin/vis-agent") launcher)
@@ -2402,6 +2469,13 @@
         (io/file bin "curl")
         (str
           "#!/usr/bin/env bash\necho \"curl $*\" >> \"$DESKTOP_CALLS\"\n"
+          ;; GitHub answers 404 (curl exit 22) while no beta pointer is uploaded.
+          "case $* in\n"
+          "  */releases/download/installer/native-beta)\n"
+          "    [[ ${DESKTOP_FAIL:-} != selection && -f $DESKTOP_BETA ]] || exit 22\n"
+          "    exec cat \"$DESKTOP_BETA\" ;;\n" "  *api.github.com*/releases/tags/beta-*)\n"
+          "    [[ ${DESKTOP_FAIL:-} != api ]] || exit 22\n"
+          "    exec cat \"$DESKTOP_BETA_RELEASE\" ;;\nesac\n"
           "if [[ $* == *api.github.com* ]]; then\n" "  [[ ${DESKTOP_FAIL:-} != api ]] || exit 22\n"
           "  cat \"$DESKTOP_RELEASE\"; exit 0\nfi\n"
           "while (($#)); do if [[ $1 == -o ]]; then output=$2; shift; fi; shift; done\n"
@@ -2429,6 +2503,8 @@
           :calls calls
           :release release
           :publish! publish!
+          :publish-beta! publish-beta!
+          :beta-desktop (io/file home ".vis/install/desktop/beta" platform)
           :source source
           :track track
           :checkout dir
@@ -2604,21 +2680,73 @@
 
 (defdescribe
   desktop-track-test
+  ;; Regression, session 5979a1f6-c53f-4e9a-a9a4-e3f92fa730d6: betas published no
+  ;; desktop app, so the beta track had nothing to download.
   (it "honors the selected track and a one-launch override without changing that selection"
-      (with-desktop-fixture "Linux"
-                            "x86_64"
-                            (fn [{:keys [track calls run!]}]
-                              (spit track "beta\n")
-                              (let [{:keys [exit output]} (run! [] {})]
-                                (expect (not (zero? exit)) output)
-                                (expect (str/includes? output "no beta desktop") output)
-                                (expect (= "" (slurp calls))))
-                              (expect (zero? (:exit (run! ["--track" "release"] {}))))
-                              (expect (= "beta\n" (slurp track)))
-                              (spit calls "")
-                              (doseq [args [["--track" "beta"] ["--track" "unknown"] ["--track"]]]
-                                (expect (not (zero? (:exit (run! args {}))))))
-                              (expect (= "" (slurp calls))))))
+      (with-desktop-fixture
+        "Linux"
+        "x86_64"
+        (fn [{:keys [desktop beta-desktop track calls publish-beta! run!]}]
+          (spit track "beta\n")
+          (publish-beta! "9.8.7" (apply str (repeat 40 "a")) true)
+          (let [{:keys [exit output]} (run! [] {})]
+            (expect (zero? exit) output)
+            (expect (str/includes? output "opening beta desktop 9.8.7-beta.aaaaaaaaaaaa") output)
+            (expect (str/includes? output "desktop-app extract=1") output)
+            (expect (str/includes? (slurp calls) "/releases/tags/beta-aaaaaaaa") (slurp calls)))
+          (expect (= "9.8.7-beta.aaaaaaaaaaaa\n" (slurp (io/file beta-desktop "current"))))
+          (expect (not (.exists ^java.io.File desktop)))
+          (let [{:keys [exit output]} (run! ["--track" "release"] {})]
+            (expect (zero? exit) output)
+            (expect (str/includes? output "opening release desktop 9.8.7") output))
+          ;; Opening one track never removes the other's copy.
+          (expect (.canExecute (io/file beta-desktop "9.8.7-beta.aaaaaaaaaaaa/Vis.AppImage")))
+          (expect (= "9.8.7\n" (slurp (io/file desktop "current"))))
+          (expect (= "beta\n" (slurp track)))
+          (spit calls "")
+          (doseq [args [["--track" "unknown"] ["--track"]]]
+            (expect (not (zero? (:exit (run! args {}))))))
+          (expect (= "" (slurp calls))))))
+  (it "opens a cached beta offline and keeps it when a newer beta cannot be installed"
+      (with-desktop-fixture
+        "Linux"
+        "x86_64"
+        (fn [{:keys [beta-desktop calls publish-beta! run!]}]
+          (publish-beta! "9.8.7" (apply str (repeat 40 "a")) true)
+          (expect (zero? (:exit (run! ["--track" "beta"] {}))))
+          (spit calls "")
+          (let [{:keys [exit output]} (run! ["--track" "beta"] {"DESKTOP_FAIL" "selection"})]
+            (expect (zero? exit) output)
+            (expect (str/includes? output "opening beta desktop 9.8.7-beta.aaaaaaaaaaaa") output)
+            (expect (= "" (slurp calls))))
+          (publish-beta! "9.8.8" (apply str (repeat 40 "b")) false)
+          (doseq [[extra-env message]
+                  [[{"DESKTOP_FAIL" "selection"}
+                    "desktop: could not read the published native beta selection"]
+                   [{"DESKTOP_FAIL" "api"} "desktop: could not check beta-bbbbbbbbbbbb"]
+                   [{} "has no desktop app for linux-x64"]]]
+            (let [{:keys [exit output]} (run! ["--track" "beta" "--update"] extra-env)]
+              (expect (not (zero? exit)) output)
+              (expect (str/includes? output message) output)
+              (expect (= "9.8.7-beta.aaaaaaaaaaaa\n" (slurp (io/file beta-desktop "current")))))))))
+  (it "replaces an older beta with the newest one and removes its copy"
+      (doseq [[os arch] [["Linux" "x86_64"] ["Darwin" "arm64"]]]
+        (with-desktop-fixture
+          os
+          arch
+          (fn [{:keys [desktop beta-desktop publish-beta! run!]}]
+            (publish-beta! "9.8.7" (apply str (repeat 40 "a")) true)
+            (expect (zero? (:exit (run! ["--track" "beta"] {}))))
+            (publish-beta! "9.8.7" (apply str (repeat 40 "b")) true)
+            (let [{:keys [exit output]} (run! ["--track" "beta" "--update"] {})]
+              (expect (zero? exit) output)
+              (expect (str/includes? output
+                                     "removed the superseded desktop 9.8.7-beta.aaaaaaaaaaaa")
+                      output)
+              (expect (str/includes? output "opening beta desktop 9.8.7-beta.bbbbbbbbbbbb") output))
+            (expect (= "9.8.7-beta.bbbbbbbbbbbb\n" (slurp (io/file beta-desktop "current"))))
+            (expect (not (.exists (io/file beta-desktop "9.8.7-beta.aaaaaaaaaaaa"))))
+            (expect (not (.exists ^java.io.File desktop)))))))
   (it "builds dev from the selected source every time and keeps the release cache separate"
       (doseq [[os arch] [["Darwin" "arm64"] ["Darwin" "x86_64"] ["Linux" "x86_64"]
                          ["Linux" "aarch64"]]]
@@ -2734,7 +2862,31 @@
                      (expect (str/includes? output "installed the release track") output)
                      (expect (str/includes? output "kept the installed app 9.8.0") output)
                      (expect (= "9.8.0\n" (slurp (io/file desktop "current"))))
-                     (expect (not (.exists (io/file desktop "9.9.9"))))))))
+                     (expect (not (.exists (io/file desktop "9.9.9")))))))
+             (it "refreshes the installed beta desktop app with a beta engine update"
+                 (with-native-install-fixture
+                   {:installed? true :track "beta" :desktop "9.8.0-beta.bbbbbbbbbbbb"}
+                   (fn [{:keys [exit output desktop urls]}]
+                     (expect (zero? exit) output)
+                     (expect (str/includes? output
+                                            (str "updated the desktop app: 9.8.0-beta.bbbbbbbbbbbb"
+                                                 " → 9.9.9-beta.aaaaaaaaaaaa"))
+                             output)
+                     (expect (str/includes? urls
+                                            (str "/releases/download/beta-"
+                                                 (apply str (repeat 40 "a"))
+                                                 "/vis-companion-9.9.9-linux-x64.AppImage"))
+                             urls)
+                     (expect (.canExecute (io/file desktop "9.9.9-beta.aaaaaaaaaaaa/Vis.AppImage")))
+                     (expect (= "9.9.9-beta.aaaaaaaaaaaa\n" (slurp (io/file desktop "current")))))))
+             (it "leaves the stable desktop app alone on a beta engine update"
+                 (with-native-install-fixture
+                   {:installed? true :track "beta" :desktop "9.8.0"}
+                   (fn [{:keys [exit output desktop urls]}]
+                     (expect (zero? exit) output)
+                     (expect (str/includes? output "installed the beta track") output)
+                     (expect (not (str/includes? urls "vis-companion")) urls)
+                     (expect (= "9.8.0\n" (slurp (io/file desktop "current"))))))))
 
 ;; Regression: the public `vis-agent tui` command fell through to the one-shot
 ;; prompt shortcut, so asking for the terminal client sent "tui" to a model.

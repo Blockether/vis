@@ -6,7 +6,7 @@
 #   2. update Vis — and this command with it — (`vis-agent update`),
 #   3. select which published Vis runs (`vis-agent switch`).
 #
-# Desktop follows the selected track: release downloads; dev builds from source.
+# Desktop follows the selected track: release and beta download; dev builds from source.
 # Release and beta install native engine, Python and TUI bundles. Dev follows main
 # on the JVM. `update` defaults to release; only --track selects beta or dev.
 # `switch` names a build instead of following a track: `switch list` shows what
@@ -790,11 +790,11 @@ sync_wrapper_from_source() {
 # The beta publication gate records its newest complete immutable release here.
 # GitHub's release listing order does not identify the newest published beta.
 vis_beta_tag() {
-  local tag
+  local context="${1:-update}" tag
   tag="$(curl -fsSL "https://github.com/$vis_repo_slug/releases/download/installer/native-beta")" || \
-    die "update: could not read the published native beta selection"
+    die "$context: could not read the published native beta selection"
   [[ "$tag" =~ ^beta-[0-9a-f]{40}$ ]] || \
-    die "update: invalid published native beta selection"
+    die "$context: invalid published native beta selection"
   printf '%s\n' "$tag"
 }
 
@@ -943,7 +943,7 @@ Usage: vis-agent update|upgrade [vX.Y.Z] [--track release|beta|dev] [--keep-gate
          Every update without --track selects release, even after beta or dev.
          A successful update records the selection for subsequent launches.
          Native updates include the matching Python worker and terminal client.
-         An installed desktop app is refreshed too; none is installed for you.
+         An installed desktop app of that track is refreshed too; none is installed for you.
          Existing managed source is pinned to the native build commit; Git is required.
          Modified managed source is preserved automatically before updating.
          Dev requires Git and JDK 25+; it never builds or selects a native image.
@@ -1181,8 +1181,10 @@ Usage: vis-agent desktop [--track release|beta|dev] [--update]
 Open the desktop for your installed track; --track overrides it for this launch.
   release  Download the stable app once; --update checks for a newer release.
            vis-agent update refreshes an installed app too.
+  beta     Download the newest published beta once, kept apart from the stable
+           app; --update checks for a newer beta. vis-agent update --track beta
+           refreshes an installed beta app too.
   dev      Build the selected source checkout on every launch (also with --update).
-  beta     No desktop artifacts are published; choose release or dev explicitly.
 
 Dev needs Node/npm, Rust/Cargo, and native build tools (Xcode on macOS; WebKitGTK
 and a C/C++ toolchain on Linux). It builds the current source, including local
@@ -1199,8 +1201,9 @@ EOF
 }
 
 # Released macOS desktops are universal; only dev builds are per-architecture.
-# Sets desktop_platform, desktop_extension and desktop_executable. An unsupported
-# platform is the caller's to report or to skip.
+# Sets desktop_platform, desktop_extension, desktop_executable and desktop_dir.
+# Beta and dev copies live apart from release ones, so opening one track never
+# prunes another. An unsupported platform is the caller's to report or to skip.
 vis_desktop_platform() {
   local os="$1" arch="$2" track="$3"
   case "$os/$arch" in
@@ -1216,6 +1219,15 @@ vis_desktop_platform() {
       desktop_platform=linux-arm64; desktop_extension=AppImage; desktop_executable=Vis.AppImage ;;
     *) return 1 ;;
   esac
+  case "$track" in
+    beta|dev) desktop_dir="$vis_install_dir/desktop/$track/$desktop_platform" ;;
+    *) desktop_dir="$vis_install_dir/desktop/$desktop_platform" ;;
+  esac
+}
+
+# A release version, or a beta's version and commit: 0.2.29-beta.<12 hex digits>.
+vis_desktop_version_valid() {
+  [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9a-f]{12})?$ ]]
 }
 
 vis_desktop_ready() {
@@ -1281,24 +1293,39 @@ vis_install_desktop() (
   trap - EXIT
 )
 
-# Select and install the newest published desktop, recording it in `current`.
-# Contained in a subshell: a failed check, download or install exits here and
-# leaves both the installed app and the selection every launch reads intact.
+# Select and install the newest published desktop of the release or beta track,
+# recording it in `current`. Contained in a subshell: a failed check, download or
+# install exits here and leaves both the installed app and the selection every
+# launch reads intact.
 vis_fetch_desktop() (
-  local desktop_dir="$1" platform="$2" extension="$3" executable="$4"
-  local api json url asset version selection
+  local track="$1" desktop_dir="$2" platform="$3" extension="$4" executable="$5"
+  local api json url asset version selection release tag=""
   command -v curl >/dev/null 2>&1 || die "desktop: downloading the app needs 'curl' on PATH"
   configure_system_trust native
-  api="https://api.github.com/repos/$vis_repo_slug/releases/latest"
-  say "checking the latest stable desktop release"
-  json="$(curl -fsSL "$api")" || die "desktop: could not check the latest release; cached app unchanged" \
+  if [[ "$track" == beta ]]; then
+    say "checking the newest published beta desktop"
+    tag="$(vis_beta_tag desktop)" || exit 1
+    release="$tag"
+    api="https://api.github.com/repos/$vis_repo_slug/releases/tags/$tag"
+  else
+    say "checking the latest stable desktop release"
+    release="the latest release"
+    api="https://api.github.com/repos/$vis_repo_slug/releases/latest"
+  fi
+  json="$(curl -fsSL "$api")" || die "desktop: could not check $release; cached app unchanged" \
     "Retry later, or run vis-agent desktop without --update to use a cached app."
   url="$(vis_asset_url "$json" "vis-companion-[0-9][0-9.]*-$platform\\.$extension")"
+  if [[ -z "$url" && -n "$tag" ]]; then
+    die "desktop: $tag has no desktop app for $platform" "Checked $api" \
+      "Use: vis-agent desktop --track release"
+  fi
   [[ -n "$url" ]] || die "desktop: no desktop release for $platform" "Checked $api"
   asset="${url##*/}"
   version="${asset#vis-companion-}"
   version="${version%-"$platform"."$extension"}"
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "desktop: invalid release asset $asset"
+  # Betas keep the version of the release they precede; their commit tells them apart.
+  [[ -z "$tag" ]] || version="$version-beta.${tag:5:12}"
   mkdir -p "$desktop_dir"
   if ! vis_desktop_ready "$desktop_dir/$version" "$executable"; then
     vis_install_desktop "$url" "$desktop_dir/$version" "$executable"
@@ -1310,10 +1337,10 @@ vis_fetch_desktop() (
   fi
 )
 
-# One desktop at a time. Every installed copy of a track carries that track's
-# bundle id, so macOS hands a launch to whichever version is already running and
-# the selected version never opens; the two tracks would otherwise run side by
-# side. Close every desktop process except the app about to open, and say so.
+# One desktop at a time. Release and beta copies share one bundle id and dev copies
+# another, so macOS hands a launch to whichever version is already running and the
+# selected version never opens; dev and a published track would otherwise run side
+# by side. Close every desktop process except the app about to open, and say so.
 vis_close_other_desktops() {
   local keep="$1" pid command other attempt
   while read -r pid command; do
@@ -1380,16 +1407,13 @@ vis_do_desktop() {
     if [[ "$(runtime_effective)" == jvm ]]; then track=dev; else track=release; fi
   fi
   case "$track" in
-    release|dev) ;;
-    beta) die "desktop: no beta desktop artifacts are published" \
-      "Use: vis-agent desktop --track release (download) or --track dev (build source)." ;;
+    release|beta|dev) ;;
     *) die "desktop: unknown track $track" "Choose release, beta, or dev." ;;
   esac
   os="$(uname -s)"
   arch="$(uname -m)"
   vis_desktop_platform "$os" "$arch" "$track" || \
     die "desktop: unsupported platform $os/$arch" "Desktop supports macOS and Linux x64/ARM64."
-  desktop_dir="$vis_install_dir/desktop/$desktop_platform"
   if [[ "$track" == dev ]]; then
     source="$(find_jvm_source)" || die "desktop: no development source checkout found" \
       "Run: vis-agent update --track dev, or use bin/vis-agent from a Vis checkout."
@@ -1412,7 +1436,6 @@ vis_do_desktop() {
       npm run package:desktop -- --dev || die "desktop: dev native build failed; no app was opened"
     )
     [[ -s "$artifact" ]] || die "desktop: dev build did not produce $artifact; no app was opened"
-    desktop_dir="$vis_install_dir/desktop/dev/$desktop_platform"
     mkdir -p "$desktop_dir"
     # Keep every rebuild distinct, including uncommitted edits and running apps.
     destination="$(mktemp -d "$desktop_dir/$version.XXXXXX")"
@@ -1421,9 +1444,10 @@ vis_do_desktop() {
     vis_install_desktop "$artifact" "$destination" "$desktop_executable"
   else
     version="$(read_state "$desktop_dir/current")"
-    if (( update )) || [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+    if (( update )) || ! vis_desktop_version_valid "$version" || \
        ! vis_desktop_ready "$desktop_dir/$version" "$desktop_executable"; then
-      vis_fetch_desktop "$desktop_dir" "$desktop_platform" "$desktop_extension" "$desktop_executable" || exit 1
+      vis_fetch_desktop "$track" "$desktop_dir" "$desktop_platform" "$desktop_extension" \
+        "$desktop_executable" || exit 1
       version="$(read_state "$desktop_dir/current")"
     fi
   fi
@@ -1441,19 +1465,20 @@ vis_do_desktop() {
 }
 
 # The desktop belongs to the same installation as the engine, so an engine update
-# refreshes an installed app too. Without this, `vis-agent desktop` keeps opening
-# the version first downloaded while the runtime moves on. Best effort by design:
-# an app nobody installed is never downloaded, and a refresh that cannot finish
-# keeps both the installed app and the successful engine update.
+# refreshes an installed app of the same track too. Without this, `vis-agent
+# desktop` keeps opening the version first downloaded while the runtime moves on.
+# Best effort by design: an app nobody installed is never downloaded, and a
+# refresh that cannot finish keeps both the installed app and the successful
+# engine update.
 vis_update_desktop() {
   local track="$1" desktop_dir installed version
   # Dev desktops are rebuilt from the selected source on every launch.
   [[ "$track" != dev ]] || return 0
-  vis_desktop_platform "$(uname -s)" "$(uname -m)" release || return 0
-  desktop_dir="$vis_install_dir/desktop/$desktop_platform"
+  vis_desktop_platform "$(uname -s)" "$(uname -m)" "$track" || return 0
   installed="$(read_state "$desktop_dir/current")"
-  [[ "$installed" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 0
-  if ! vis_fetch_desktop "$desktop_dir" "$desktop_platform" "$desktop_extension" "$desktop_executable"; then
+  vis_desktop_version_valid "$installed" || return 0
+  if ! vis_fetch_desktop "$track" "$desktop_dir" "$desktop_platform" "$desktop_extension" \
+    "$desktop_executable"; then
     warn "desktop: kept the installed app $installed"
     return 0
   fi
