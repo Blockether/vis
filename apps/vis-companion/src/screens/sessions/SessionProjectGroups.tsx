@@ -1947,7 +1947,6 @@ export const ProjectGroup = memo(function ProjectGroup({
             if (step.kind === 'root')
               return (
                 <>
-                  <MenuItem title="Settings" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { setMenu(null); setSettingsTarget({ scope: 'project', target_id: root, label: project }); }} />
                   <MenuItem
                     title="New group"
                     icon={<ProjectsIcon className="size-3.5" />}
@@ -1964,6 +1963,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                       setMenu(null);
                     }}
                   />
+                  <MenuItem title="Settings" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { setMenu(null); setSettingsTarget({ scope: 'project', target_id: root, label: project }); }} />
                   {failure && <MenuNote>{failure}</MenuNote>}
                 </>
               );
@@ -2106,7 +2106,6 @@ export const ProjectGroup = memo(function ProjectGroup({
                     }}
                   />
                 )}
-                <MenuItem title="Settings" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { setMenu(null); setSettingsTarget({ scope: 'group', target_id: band.id, label: band.name }); }} />
                 <MenuItem
                   title="Rename group"
                   icon={<PencilIcon className="size-3.5" />}
@@ -2139,6 +2138,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                     }, 'close')
                   }
                 />
+                <MenuItem title="Settings" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { setMenu(null); setSettingsTarget({ scope: 'group', target_id: band.id, label: band.name }); }} />
                 <MenuItem
                   title="Delete group"
                   tone="danger"

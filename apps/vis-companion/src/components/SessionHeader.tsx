@@ -178,9 +178,6 @@ export function SessionHeader({
       </div>
       {menu && (
         <Menu label="Session actions" at={menu} onDismiss={closeMenu}>
-          {commands.settings && (
-            <MenuItem title="Settings" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { closeMenu(); commands.settings?.(); }} />
-          )}
           {model.artifacts.count > 0 && (
             <MenuItem
               // The row NAMES what pressing it does, and the count rides that name
@@ -214,6 +211,9 @@ export function SessionHeader({
               void copySessionId();
             }}
           />
+          {commands.settings && (
+            <MenuItem title="Settings" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { closeMenu(); commands.settings?.(); }} />
+          )}
         </Menu>
       )}
       {goal && goalDetails && (
