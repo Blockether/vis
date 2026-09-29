@@ -438,7 +438,7 @@
 
     (into {}
           (filter (fn [[name spec]]
-                    (and (enabled? spec) (scoped/resource-enabled? env :mcp name @live))))
+                    (and (enabled? spec) (scoped/resource-enabled? env :mcp name live))))
           (merge (configured-servers)
                  (local-session-specs session-id)
                  (get @session-specs session-id)))))

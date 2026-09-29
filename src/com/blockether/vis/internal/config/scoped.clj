@@ -311,24 +311,26 @@
 (defn live-values
   "The session values [[engine-mode]] and [[resource-enabled?]] read for `env`,
    resolved once so a caller checking many extensions, skills or servers pays
-   for one resolution. Nil outside a session, where both read the process-wide
+   for one resolution. Pass it as a `delay`: only a check that needs a session
+   value forces it. Nil outside a session, where both read the process-wide
    settings."
   [env]
   (when (and (:db-info env) (:session-id env)) (values (:db-info env) (:session-id env))))
 
 (defn- live-value
-  "`id`'s live value from `live`, resolved afresh when `live` predates the id's
-   registration."
+  "`id`'s live value from `live`, a map or a delay of one, resolved afresh when
+   `live` predates the id's registration."
   [env live id]
-  (if (contains? live id)
-    (get live id)
-    (if-let [fresh (live-values env)]
-      (get fresh id)
-      (toggles/value-of id))))
+  (let [live (force live)]
+    (if (contains? live id)
+      (get live id)
+      (if-let [fresh (live-values env)]
+        (get fresh id)
+        (toggles/value-of id)))))
 
 (defn engine-mode
-  "Live Auto/On/Off mode, independent of the response snapshot. Pass `live`
-   from [[live-values]] when checking several extensions."
+  "Live Auto/On/Off mode, independent of the response snapshot. Pass a delay of
+   [[live-values]] when checking several extensions."
   ([env ext] (engine-mode env ext nil))
   ([env ext live]
    (if-let [id (engine-setting! ext)]
@@ -337,7 +339,7 @@
 
 (defn resource-enabled?
   "Live gate: saved names and cached handles cannot bypass a scoped disable.
-   Pass `live` from [[live-values]] when checking several resources."
+   Pass a delay of [[live-values]] when checking several resources."
   ([env kind resource-name] (resource-enabled? env kind resource-name nil))
   ([env kind resource-name live]
    (not (false? (live-value env live (register-resource! kind resource-name))))))

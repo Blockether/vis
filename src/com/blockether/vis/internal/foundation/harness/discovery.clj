@@ -580,7 +580,7 @@
         (all-skills)
 
         live
-        (scoped/live-values env)]
+        (delay (scoped/live-values env))]
 
     (filterv #(scoped/resource-enabled? env :skills (:name %) live) skills)))
 

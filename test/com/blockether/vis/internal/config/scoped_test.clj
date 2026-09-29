@@ -502,6 +502,20 @@
           (expect
             (false?
               (scoped/resource-enabled? env :skills "late_fixture" (scoped/live-values env)))))))
+  (it "resolves no session settings unless a checked extension owns an engine setting"
+      (with-empty-config
+        (let [db
+              (h/store)
+
+              ;; A hook environment can name a session the store does not hold.
+              env
+              {:db-info db :session-id "missing-session"}
+
+              live
+              (delay (scoped/live-values env))]
+
+          (expect (= "auto" (scoped/engine-mode env {:ext/name "infrastructure_fixture"} live)))
+          (expect (not (realized? live))))))
   (it "titles settings groups in plain words and leaves scoped MCP availability to its section"
       (with-empty-config
         (let [db

@@ -635,7 +635,7 @@
   (when-let [exts (some-> (:extensions environment)
                           deref
                           seq)]
-    (let [live (scoped/live-values environment)]
+    (let [live (delay (scoped/live-values environment))]
       (vec (filter (fn [ext]
                      (try (case (scoped/engine-mode environment ext live)
                             "off"

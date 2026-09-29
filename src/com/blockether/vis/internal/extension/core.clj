@@ -1766,7 +1766,7 @@
                     hook (:ext/op-hooks ext)
                     :let [gate-kw (gate-op (:op hook))]
                     :when (and (= op-kw (or gate-kw (keyword (:op hook))))
-                               (not= "off" (scoped/engine-mode env ext @live)))]
+                               (not= "off" (scoped/engine-mode env ext live)))]
 
                 (assoc hook
                   :owner (ext-op-hook-owner ext)
