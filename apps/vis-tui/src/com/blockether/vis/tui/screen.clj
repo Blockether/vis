@@ -51,7 +51,8 @@
             MouseAction$WheelMomentum MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [com.googlecode.lanterna.terminal MouseCaptureMode]
-           [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour UnixTerminal]
+           [com.googlecode.lanterna.terminal.ansi ANSITerminal UnixLikeTerminal$CtrlCBehaviour
+            UnixTerminal]
            [com.googlecode.lanterna.terminal.html HtmlMedia HtmlMedia$Kind HtmlTerminal]
            [java.io PrintWriter StringWriter]
            [java.nio.charset Charset]
@@ -6668,11 +6669,28 @@
     (:html-terminal opts)
     (UnixTerminal. @vis/tty-in @vis/tty-out (Charset/defaultCharset) (terminal-ctrl-c-behaviour))))
 
+(defn- windows-terminal?
+  "Windows Terminal exports `WT_SESSION` to its shells, and into WSL through `WSLENV`."
+  [env]
+  (boolean (seq (get env "WT_SESSION"))))
+
 (defn- configure-terminal-input!
-  [terminal _opts]
-  (when (instance? UnixTerminal terminal)
-    (try (.setMouseCaptureMode ^UnixTerminal terminal MouseCaptureMode/CLICK_RELEASE_DRAG_MOVE)
-         (catch Throwable _ nil))))
+  "Turns on mouse reporting and asks the terminal to report modified keys such as
+   Shift+Enter, which `input/handle-key` treats as a line break. Windows Terminal gets
+   win32-input-mode instead of the kitty keyboard protocol: its console host serves it
+   to programs in WSL, which receive neither of the other reports, and it keeps AltGr
+   letters (Polish ą, German @) as text, which released builds send as Alt chords under
+   the kitty protocol (microsoft/terminal#19977, fixed after v1.25.1912.0).
+   modifyOtherKeys is ignored by Windows Terminal and still reaches tmux."
+  [terminal env]
+  (when (instance? ANSITerminal terminal)
+    (let [^ANSITerminal terminal terminal]
+      (try (.setMouseCaptureMode terminal MouseCaptureMode/CLICK_RELEASE_DRAG_MOVE)
+           (.setModifyOtherKeys terminal true)
+           (if (windows-terminal? env)
+             (.setWin32InputMode terminal true)
+             (.setKittyKeyboardProtocol terminal true))
+           (catch Throwable _ nil)))))
 
 (defn- probe-terminal-cell-size!
   "Ask a GRAPHICAL terminal for its REAL cell pixel size and feed it into
@@ -6853,7 +6871,7 @@
            (create-terminal! opts)
 
            _
-           (configure-terminal-input! terminal opts)
+           (configure-terminal-input! terminal (System/getenv))
 
            _
            (if (instance? HtmlTerminal terminal)

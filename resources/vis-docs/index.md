@@ -313,6 +313,27 @@ Vis starts a local gateway if needed.
 2. Follow its sign-in instructions.
 3. Select a model.
 
+Press Enter to send a message. To start a new line instead, press Shift+Enter or
+Alt+Enter. Ghostty, kitty, iTerm2, WezTerm, Alacritty, foot, xterm, Konsole and
+Windows Terminal, also with WSL, report Shift+Enter without extra setup. In Windows
+Terminal, Alt+Enter switches to full screen, so use Shift+Enter there.
+
+Some terminals need a setting or another key:
+
+- **Windows Terminal with SSH:** if Vis runs on a computer that you connect to with
+  `ssh`, open **Settings**, select **Open JSON file** and add this entry to the
+  `actions` list:
+
+  ```json
+  { "command": { "action": "sendInput", "input": "\u001b[13;2u" }, "keys": "shift+enter" }
+  ```
+
+- **GNOME Terminal and other VTE-based terminals:** Shift+Enter sends the same code
+  as Enter. Use Alt+Enter.
+- **Terminal on macOS:** turn on **Use Option as Meta key** in **Settings** >
+  **Profiles** > **Keyboard**, then use Option+Enter.
+- **tmux:** add `set -g extended-keys on` to `~/.tmux.conf`.
+
 ### In the desktop or phone app
 
 [Connect to your gateway](#connecting-the-companion-app), open your project and start a session.

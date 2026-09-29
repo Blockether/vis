@@ -35,8 +35,10 @@
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [java.util.concurrent.locks ReentrantLock]
-           [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour]
-           [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
+           [com.googlecode.lanterna.terminal.ansi ANSITerminal UnixLikeTerminal$CtrlCBehaviour]
+           [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]
+           [java.io ByteArrayInputStream ByteArrayOutputStream]
+           [java.nio.charset StandardCharsets]))
 
 (defdescribe
   remaining-messages-jump-test
@@ -3993,3 +3995,54 @@ therapy line 2"
                                              {})]
 
             (expect (= source (force (:text (first regions))))))))))
+
+(defn- ansi-terminal-output
+  "Configures an in-memory ANSI terminal like the TUI does, runs one private-mode
+   session and returns what the terminal was sent on entry and on exit. The input
+   holds the cursor position report a console host sends when win32-input-mode ends."
+  [env]
+  (let [out
+        (ByteArrayOutputStream.)
+
+        input
+        (ByteArrayInputStream. (.getBytes "\u001b[5;10R" StandardCharsets/UTF_8))
+
+        terminal
+        (proxy [ANSITerminal] [input out StandardCharsets/UTF_8])]
+
+    (#'screen/configure-terminal-input! terminal env)
+    (.enterPrivateMode ^ANSITerminal terminal)
+    (let [entered (.toString out "UTF-8")]
+      (.reset out)
+      (.exitPrivateMode ^ANSITerminal terminal)
+      {:entered entered :exited (.toString out "UTF-8")})))
+
+(defdescribe
+  terminal-key-reporting-test
+  (it "asks the terminal to report Shift+Enter and restores it before leaving the alternate screen"
+      (let [{:keys [entered exited]}
+            (ansi-terminal-output {})
+
+            main-screen
+            (str/index-of exited "\u001b[?1049l")]
+
+        (expect (str/includes? entered "\u001b[?1003h"))
+        (expect (str/includes? entered "\u001b[>4;1m"))
+        (expect (str/includes? entered "\u001b[>5u"))
+        (expect (not (str/includes? entered "\u001b[?9001h")))
+        (expect (< (or (str/index-of exited "\u001b[<u") Long/MAX_VALUE) main-screen))
+        (expect (< (or (str/index-of exited "\u001b[>4m") Long/MAX_VALUE) main-screen))))
+  (it
+    "uses win32-input-mode in Windows Terminal, so Shift+Enter reaches WSL and AltGr letters stay text"
+    (let [{:keys [entered exited]}
+          (ansi-terminal-output {"WT_SESSION" "0f9a8b7c-0000-4000-8000-000000000000"})
+
+          main-screen
+          (str/index-of exited "\u001b[?1049l")]
+
+      (expect (str/includes? entered "\u001b[>4;1m"))
+      (expect (str/includes? entered "\u001b[?9001h"))
+      (expect (not (str/includes? entered "\u001b[>5u")))
+      (expect (< (or (str/index-of exited "\u001b[?9001l") Long/MAX_VALUE) main-screen))))
+  (it "leaves terminals without ANSI escape codes alone"
+      (expect (nil? (#'screen/configure-terminal-input! (DefaultVirtualTerminal.) {})))))

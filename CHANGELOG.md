@@ -117,6 +117,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   value in `vis.yml` replaces the provider preset's default for the same
   option. Before, the request could contain the same option twice, and the
   provider could apply either value (#291).
+- Shift+Enter starts a new line in a TUI message on macOS and Linux. Vis asks the
+  terminal to report Shift+Enter, so Ghostty, kitty, iTerm2, WezTerm, Alacritty,
+  foot, xterm, Konsole and Windows Terminal, also with WSL, need no setup, and tmux
+  needs `set -g extended-keys on`. Alt+Enter still starts a new line, for example in
+  GNOME Terminal, which sends Shift+Enter as a plain Enter. Before, Shift+Enter sent
+  the message or typed characters such as `13;2u` into it, and Windows Terminal kept
+  Alt+Enter for full screen, so it had no key for a new line.
 
 ## [v0.2.29] - 2026-09-25
 

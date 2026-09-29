@@ -5,7 +5,8 @@
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.tty :as tty]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
+  (:import [com.googlecode.lanterna.input DefaultKeyDecodingProfile InputDecoder KeyStroke KeyType]
+           [java.io StringReader]))
 
 (defdescribe input-buffer-test
              (it "empty-input is one empty line, cursor at 0,0"
@@ -77,6 +78,8 @@
 (defn- alt-special-key [^KeyType ktype] (KeyStroke. ktype false true))
 
 (defn- ctrl-special-key [^KeyType ktype] (KeyStroke. ktype true false))
+
+(defn- shift-special-key [^KeyType ktype] (KeyStroke. ktype false false true))
 
 (defn- alt-shift-special-key [^KeyType ktype] (KeyStroke. ktype false true true))
 
@@ -331,7 +334,59 @@
                    (input/handle-key (ctrl-special-key KeyType/Backspace) state)))
         ;; delete-to-line-start stays on Ctrl+U.
         (expect (= {:action :continue :state line-gone}
-                   (input/handle-key (ctrl-key (Character. \u)) state))))))
+                   (input/handle-key (ctrl-key (Character. \u)) state)))))
+  (it "Shift+Enter and Alt+Enter break the line; Enter and Ctrl+Enter send"
+      ;; Windows Terminal takes Alt+Enter for full screen and GNOME Terminal cannot
+      ;; report Shift+Enter, so either chord must break the line.
+      (let [state
+            (-> (input/empty-input)
+                (input/paste-text "ab")
+                (input/move-left))
+
+            broken
+            (input/insert-newline state)]
+
+        (expect (= ["a" "b"] (:lines broken)))
+        (doseq [key [(shift-special-key KeyType/Enter) (alt-special-key KeyType/Enter)
+                     (KeyStroke. KeyType/Enter true true true)]]
+          (expect (= {:action :continue :state broken} (input/handle-key key state))))
+        (doseq [key [(special-key KeyType/Enter) (ctrl-special-key KeyType/Enter)]]
+          (expect (= {:action :send :state state} (input/handle-key key state)))))))
+
+(defn- terminal-keys
+  "Decodes raw terminal input with Lanterna's default profile, as the TUI terminal does."
+  [^String input]
+  (let [^InputDecoder decoder (doto (InputDecoder. (StringReader. input))
+                                (.addProfile (DefaultKeyDecodingProfile.)))]
+    (loop [strokes []]
+      (let [stroke (.getNextCharacter decoder true)]
+        (if (= KeyType/EOF (.getKeyType stroke)) strokes (recur (conj strokes stroke)))))))
+
+;; Regression: Shift+Enter sent the draft. Lanterna decoded the terminal's report
+;; as Alt+[ followed by the typed text "13;2u", and handle-key ignored Shift.
+(defdescribe
+  terminal-newline-test
+  (it "Shift+Enter breaks the line in every encoding terminals send for it"
+      (let [state (-> (input/empty-input)
+                      (input/paste-text "ab")
+                      (input/move-left))]
+        (doseq [[terminal report]
+                [["kitty keyboard protocol: Ghostty, kitty, iTerm2, Alacritty, foot" "\u001b[13;2u"]
+                 ["xterm modifyOtherKeys: xterm, WezTerm, tmux" "\u001b[27;2;13~"]
+                 ["Konsole" "\u001bOM"]
+                 ["Windows Terminal and WSL: win32-input-mode reports Shift and Enter down and up"
+                  (str "\u001b[16;42;0;1;16;1_\u001b[13;28;13;1;16;1_"
+                       "\u001b[13;28;13;0;16;1_\u001b[16;42;0;0;0;1_")]
+                 ["Alt+Enter, or Option+Enter with Option as Meta" "\u001b\r"]
+                 ["Alt+Enter after the tty maps CR to LF" "\u001b\n"]]]
+          (expect (= [{:action :continue :state (input/insert-newline state)}]
+                     (mapv #(input/handle-key % state) (terminal-keys report)))
+                  terminal))))
+  (it "plain Enter still sends, whether the tty delivers CR, LF or a win32-input-mode report"
+      (let [state (input/paste-text (input/empty-input) "ab")]
+        (doseq [report ["\r" "\n" "\u001b[13;28;13;1;0;1_\u001b[13;28;13;0;0;1_"]]
+          (expect (= [{:action :send :state state}]
+                     (mapv #(input/handle-key % state) (terminal-keys report))))))))
 
 (defdescribe
   placeholder-format-test

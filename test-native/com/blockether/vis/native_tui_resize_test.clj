@@ -40,7 +40,9 @@
           (handle [_ exchange]
             (with-open [^HttpExchange exchange exchange]
               (let [path (.getPath (.getRequestURI exchange))
-                    _ (when requests (swap! requests conj [(.getRequestMethod exchange) path]))
+                    _ (when requests
+                        (swap! requests conj
+                          [(.getRequestMethod exchange) path (slurp (.getRequestBody exchange))]))
                     _ (when (and slow-model? (str/ends-with? path "/model")) (Thread/sleep 5000))
                     body (case path
                            "/healthz"
@@ -102,6 +104,11 @@
   (let [model-key
         (when (#{"c" "m"} mode) mode)
 
+        newline-request
+        (get {"newline" "kitty-line\nxterm-line\nkonsole-line\nalt-line\nsent-line"
+              "newline-wt" "wtfirst\nwtsecond"}
+             mode)
+
         clipboard?
         (contains? #{"osc52" "clip.exe"} mode)
 
@@ -129,31 +136,41 @@
                                    (str "127.0.0.1:" (.getPort (.getAddress server))) (or mode "")])
                             (.redirectErrorStream true)
                             (.redirectOutput ProcessBuilder$Redirect/PIPE)))]
-            (try (let [finished? (.waitFor process (if (= "theme" mode) 190 55) TimeUnit/SECONDS)]
-                   (expect finished? "Native TUI PTY fixture timed out")
-                   (when finished?
-                     (let [output (slurp (.getInputStream process))]
-                       (expect (zero? (.exitValue process)) output)
-                       (expect (str/includes?
-                                 output
-                                 (cond (= "theme" mode) "native theme restored after restart"
-                                       (= "images" mode) "native Kitty image scrolling verified"
-                                       (= "prose" mode)
-                                       "native Justice prose reflow and copy verified"
-                                       clipboard? "native clipboard verified"
-                                       model-key "input responsive during slow model HTTP"
-                                       :else "resized to 100x35"))
-                               output)
-                       (when model-key
-                         (expect (some (fn [[method path]]
-                                         (and (= "PATCH" method) (str/ends-with? path "/model")))
-                                       @requests))))))
-                 (finally (when (.isAlive process)
-                            (with-open [children (.descendants process)]
-                              (doseq [^ProcessHandle child (iterator-seq (.iterator children))]
-                                (.destroyForcibly child)))
-                            (.destroyForcibly process)
-                            (.waitFor process 5 TimeUnit/SECONDS)))))
+            (try
+              (let [finished? (.waitFor process (if (= "theme" mode) 190 55) TimeUnit/SECONDS)]
+                (expect finished? "Native TUI PTY fixture timed out")
+                (when finished?
+                  (let [output (slurp (.getInputStream process))]
+                    (expect (zero? (.exitValue process)) output)
+                    (expect (str/includes?
+                              output
+                              (cond (= "theme" mode) "native theme restored after restart"
+                                    (= "images" mode) "native Kitty image scrolling verified"
+                                    (= "prose" mode) "native Justice prose reflow and copy verified"
+                                    clipboard? "native clipboard verified"
+                                    newline-request "native Shift+Enter newline verified"
+                                    model-key "input responsive during slow model HTTP"
+                                    :else "resized to 100x35"))
+                            output)
+                    (when model-key
+                      (expect (some (fn [[method path]]
+                                      (and (= "PATCH" method) (str/ends-with? path "/model")))
+                                    @requests)))
+                    ;; One message, its lines joined by the Shift+Enter breaks.
+                    (when newline-request
+                      (expect (= [newline-request]
+                                 (keep (fn [[method path body]]
+                                         (when (and (= "POST" method)
+                                                    (str/ends-with? path "/turns"))
+                                           (get (json/read-json body) "request")))
+                                       @requests))
+                              (pr-str @requests))))))
+              (finally (when (.isAlive process)
+                         (with-open [children (.descendants process)]
+                           (doseq [^ProcessHandle child (iterator-seq (.iterator children))]
+                             (.destroyForcibly child)))
+                         (.destroyForcibly process)
+                         (.waitFor process 5 TimeUnit/SECONDS)))))
           (finally (.stop server 0)
                    (.shutdownNow ^java.util.concurrent.ExecutorService (.getExecutor server))))))))
 
@@ -172,6 +189,14 @@
   ;; Model HTTP must never block the keyboard thread, including in native-image.
   (it "opens C-x c and accepts input while its model PATCH waits" (check-native-tui! "c"))
   (it "cycles C-x m and accepts input while its model HTTP waits" (check-native-tui! "m")))
+
+(defdescribe native-tui-newline-test
+             ;; Regression: Shift+Enter sent the draft. Lanterna decoded the terminal's report as
+             ;; Alt+[ followed by typed text, so no terminal could break a line with Shift+Enter.
+             (it "breaks the draft on Shift+Enter in every terminal encoding and sends it on Enter"
+                 (check-native-tui! "newline"))
+             (it "breaks the draft on Shift+Enter in Windows Terminal's win32-input-mode"
+                 (check-native-tui! "newline-wt")))
 
 (defdescribe native-tui-clipboard-test
              ;; Regression: lazy System/out resolved after log redirection, so the native

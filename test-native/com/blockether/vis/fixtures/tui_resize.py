@@ -17,6 +17,24 @@ import time
 from pathlib import Path
 
 
+def win32_key(vk, char, control_keys=0):
+    """Press and release one key as Windows Terminal reports it in win32-input-mode."""
+    return b"".join(
+        f"\x1b[{vk};0;{char};{down};{control_keys};1_".encode() for down in (1, 0)
+    )
+
+
+def win32_text(text):
+    """Type lowercase letters as win32-input-mode key reports."""
+    return b"".join(win32_key(ord(c.upper()), ord(c)) for c in text.decode())
+
+
+# Shift goes down, Enter is pressed and released with Shift held (16), Shift goes up.
+WIN32_SHIFT_ENTER = (
+    b"\x1b[16;42;0;1;16;1_" + win32_key(13, 13, 16) + b"\x1b[16;42;0;0;0;1_"
+)
+
+
 def check_resize(binary, home, gateway, mode=None):
     """Exercise production rendering and input on a controlling terminal."""
     model_key = mode if mode in ("c", "m") else None
@@ -24,6 +42,7 @@ def check_resize(binary, home, gateway, mode=None):
         "osc52" if mode == "prose" else mode if mode in ("osc52", "clip.exe") else None
     )
     theme_mode = mode in ("theme", "theme-restart")
+    newline_mode = mode in ("newline", "newline-wt")
     config_file = Path(home) / ".vis/tui/config.json"
     clipboard_file = Path(home) / "clipboard.bin"
     if clipboard_mode:
@@ -54,6 +73,10 @@ def check_resize(binary, home, gateway, mode=None):
             os.environ["VIS_TEST_CLIPBOARD"] = str(clipboard_file)
             os.environ.pop("TMUX", None)
             os.environ.pop("STY", None)
+        if mode == "newline-wt":
+            os.environ["WT_SESSION"] = "0f9a8b7c-0000-4000-8000-000000000000"
+        elif newline_mode:
+            os.environ.pop("WT_SESSION", None)
         os.execv(
             binary,
             [
@@ -414,6 +437,32 @@ def check_resize(binary, home, gateway, mode=None):
             assert logs, "TUI did not create its redirected log"
             assert all(b"\x1b]52;" not in log.read_bytes() for log in logs)
             print(f"native clipboard verified: {clipboard_mode}", flush=True)
+            return
+        if newline_mode:
+            # Shift+Enter breaks the draft line in each encoding terminals send for it,
+            # then Enter sends the draft as ONE message, which the gateway stub records.
+            if mode == "newline-wt":
+                requested = [b"\x1b[>4;1m", b"\x1b[?9001h"]
+                lines = [b"wtfirst", b"wtsecond"]
+                breaks = [WIN32_SHIFT_ENTER]
+                enter = win32_key(13, 13)
+            else:
+                requested = [b"\x1b[>4;1m", b"\x1b[>5u"]
+                lines = [b"kitty-line", b"xterm-line", b"konsole-line", b"alt-line"]
+                lines.append(b"sent-line")
+                # Kitty keyboard protocol, xterm modifyOtherKeys, Konsole, Alt+Enter.
+                breaks = [b"\x1b[13;2u", b"\x1b[27;2;13~", b"\x1bOM", b"\x1b\r"]
+                enter = b"\r"
+            missing = [report for report in requested if report not in output]
+            assert not missing, f"native TUI did not request key reports: {missing!r}"
+            for index, line in enumerate(lines):
+                os.write(master, win32_text(line) if mode == "newline-wt" else line)
+                await_bottom(3, text=line)
+                if index < len(breaks):
+                    os.write(master, breaks[index])
+            os.write(master, enter)
+            await_bottom(2, idle=True)
+            print(f"native Shift+Enter newline verified: {mode}", flush=True)
             return
         for rows, cols in [] if model_key else [(45, 120), (18, 70), (35, 100)]:
             # A partial escape sequence can continue in the next PTY read.

@@ -1149,7 +1149,10 @@
         ;; in the Character branch above. While
         ;; search is ACTIVE the screen key-loop intercepts typing → query and
         ;; Ctrl+N/P → next/prev BEFORE this handler.
-        KeyType/Enter (if (.isAltDown key)
+        ;; Shift+Enter or Alt+Enter breaks the line; Enter (and Ctrl+Enter) sends.
+        ;; Both chords count: Windows Terminal takes Alt+Enter for full screen,
+        ;; and GNOME Terminal sends Shift+Enter as a plain Enter.
+        KeyType/Enter (if (or (.isShiftDown key) (.isAltDown key))
                         {:action :continue :state (insert-newline state)}
                         {:action :send :state state})
         ;; Backspace: plain deletes a char; Ctrl/Alt+Backspace deletes the word
