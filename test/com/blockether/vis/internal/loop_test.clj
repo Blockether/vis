@@ -4805,7 +4805,26 @@
   (it "plans no retry when the enforced cap already equals the output ceiling"
       (let [e (ex-info "max_tokens hit"
                        {:type :svar.llm/max-tokens-exceeded :api-usage {:output-tokens 131072}})]
-        (expect (nil? (max-tokens-retry e nil {:output-ceiling 131072}))))))
+        (expect (nil? (max-tokens-retry e nil {:output-ceiling 131072})))))
+  (it "reads the retry ceiling from Svar's budget for the routed model"
+      ;; Crosses the Svar boundary: GLM's 32768 default cap sits below the 131072
+      ;; max_tokens z.ai accepts, which Svar reports as `:output-ceiling`.
+      (let [budget
+            (svar/context-budget (svar/make-router [{:id :zai-coding-plan
+                                                     :api-key "test"
+                                                     :models [{:name "glm-5.3-flash"}]}])
+                                 {})
+
+            capped
+            (fn [n]
+              (ex-info "max_tokens hit"
+                       {:type :svar.llm/max-tokens-exceeded :api-usage {:output-tokens n}}))]
+
+        (expect (= 131072 (:output-ceiling budget)))
+        (expect (= {"max_tokens" 65536} (:extra-body (max-tokens-retry (capped 32768) nil budget))))
+        (expect (= {"max_tokens" 131072}
+                   (:extra-body (max-tokens-retry (capped 100000) nil budget))))
+        (expect (nil? (max-tokens-retry (capped 131072) nil budget))))))
 
 (defdescribe
   llm-provider-error-context-test
