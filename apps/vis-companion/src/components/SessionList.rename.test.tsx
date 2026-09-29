@@ -50,7 +50,6 @@ function row(rename = vi.fn(async () => {})) {
       group={null}
       draft={EMPTY_DRAFT_MESSAGE}
       conn={conn}
-      match={null}
       needle=""
       commands={commands}
       deletion={null}

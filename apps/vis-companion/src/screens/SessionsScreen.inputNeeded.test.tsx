@@ -66,24 +66,6 @@ describe('a session waiting on a human', () => {
     expect(within(row('Parked')).getByText('INPUT NEEDED ×2')).toBeInTheDocument();
   });
 
-  it('finds the parked row by what it is waiting for', async () => {
-    const view = renderSessionsScreen({
-      machines: [
-        {
-          sessions: [
-            listSession({ id: 's1', title: 'Parked', live: true, is_awaiting_input: true }),
-            listSession({ id: 's2', title: 'Working', live: true }),
-          ],
-        },
-      ],
-      query: 'input needed',
-    });
-    restore = view.restore;
-
-    expect(await screen.findByText('Parked')).toBeInTheDocument();
-    expect(screen.queryByText('Working')).not.toBeInTheDocument();
-  });
-
   // Regression, user report (phone, a project of 115 sessions): the header counted
   // `1 needs input` while no row on the page said INPUT NEEDED — the parked session
   // sat deep in the project, outside the window, and the gateway's `awaiting` strip

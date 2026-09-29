@@ -325,43 +325,6 @@ export function searchTally(filtered: { machine: FleetMachine; sessions: Session
   return { matches, machines };
 }
 
-/**
- * Where a row the gateway could not place sits: after every placed one.
- *
- * The ORDER is the SERVER's answer, decided once for every client: running
- * sessions first, then the freshest first — the same order the gateway lists
- * sessions in, so a query narrows the list instead of reshuffling it. What is
- * left over is what no gateway can see: an unsent draft in this device's
- * composer, and the local metadata of a row the search endpoint did not return.
- * Those sort last rather than competing on a freshness this side would have to
- * guess at.
- */
-export const SEARCH_UNPLACED = Number.MAX_SAFE_INTEGER;
-
-/**
- * Order the rows a query matched by the PLACE the gateway gave them — its
- * position in the search answer, which is the gateway's own freshest-first
- * order.
- *
- * It used to sort by the relevance BAND instead (title hits, then the user's
- * words, then the assistant's), which buried this morning's session under
- * every year-old title that happened to contain the word: the dates jumped up
- * and down the list. Bands still travel on `SessionMatch.rank`, to say WHERE a
- * query hit; they no longer decide where a row sits.
- *
- * Bands the list paints itself (`sessionOrder`) are applied AFTER this, so a
- * starred row stays on top of its own search.
- */
-export function searchOrder(sessions: Session[], placeOf: (session: Session) => number): Session[] {
-  const rows = sessions.map((session, index) => ({
-    session,
-    index,
-    place: placeOf(session),
-  }));
-  rows.sort((a, b) => (a.place !== b.place ? a.place - b.place : a.index - b.index));
-  return rows.map((row) => row.session);
-}
-
 /** Read the gateway's canonical liveness verdict. */
 export function sessionIsLive(session: Session): boolean {
   return session.live;
@@ -456,24 +419,6 @@ export function sessionOrder(
     return a.index - b.index;
   });
   return rows.map((row) => row.session);
-}
-
-/**
- * The rows a QUERY may match on one machine: what is loaded, plus the sessions a
- * server-side transcript hit named that this machine has not paged in yet.
- *
- * The list is paged, so filtering the loaded window alone made search find only
- * what was already on screen — a hit in a session further down the fleet's own
- * ordering was silently intersected away. Hydrated rows are appended (newest
- * first among themselves); the gateway's order still owns everything it sent.
- */
-export function withSearchHits(sessions: Session[], hits: Session[]): Session[] {
-  if (hits.length === 0) return sessions;
-  const known = new Set(sessions.map((session) => session.id));
-  const extra = hits
-    .filter((session) => !known.has(session.id))
-    .sort((a, b) => sessionMillis(b) - sessionMillis(a));
-  return extra.length === 0 ? sessions : [...sessions, ...extra];
 }
 
 function dateMillis(value?: string): number {

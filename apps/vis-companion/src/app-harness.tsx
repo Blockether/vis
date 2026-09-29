@@ -16,7 +16,7 @@ import { render } from '@testing-library/react';
 await import('./screens/SessionScreen').catch(() => {});
 import { App } from './App';
 import { APP_MIN_GATEWAY_PROTOCOL, APP_PROTOCOL } from './lib/compat';
-import { sessionsWindow } from './screens/sessions-screen-harness';
+import { searchAnswer, sessionsWindow } from './screens/sessions-screen-harness';
 import type { GatewayConn, Session } from './lib/types';
 
 export interface AppMachine {
@@ -105,7 +105,8 @@ export function renderApp({
         ).map((index) => conns[index]!.id),
       });
     if (url.pathname === '/v1/sessions') return answer(sessionsWindow(machine.sessions ?? [], url));
-    if (url.pathname === '/v1/sessions/actions/search') return answer({ matches: [] });
+    if (url.pathname === '/v1/sessions/actions/search')
+      return answer(searchAnswer(machine.sessions ?? [], url));
     // The handshake every screen waits on: a gateway speaking this build's wire.
     const protocol = {
       protocol: APP_PROTOCOL,

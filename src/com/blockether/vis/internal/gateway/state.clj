@@ -5610,6 +5610,11 @@
 
 (def ^:private rest-band "Idle sessions, newest content first." 3)
 
+(def ^:private recent-band
+  "The ONE band of the content-time order (`recency-ranking`): the recents and a
+   search key every row by its content time alone."
+  0)
+
 (defn- session-listed?
   "Is this session one a NAVIGATOR paints at all?
 
@@ -5690,6 +5695,22 @@
                                       str)
                     ;; The ARCHIVE cut lands on the RANKING, like the ids above.
                     :archived-at (:archived-at record)}))))))
+       (sort-by (juxt :band :sort-key :id))
+       vec))
+
+(defn- recency-ranking
+  "`session-ranking` rows keyed by CONTENT TIME alone - the order of the recents and
+   of a search (`:order :recent` of `list-sessions-page`). Every cut and fact of the
+   navigator ranking stays; only the key changes, to ONE band, the negated recency and
+   the id, so `->session-cursor` still names any row. Stars, unsent words and running
+   turns stay on their rows: a list a reader is searching must not move when a turn
+   starts."
+  [ranking]
+  (->> ranking
+       (mapv (fn [row]
+               (assoc row
+                 :band recent-band
+                 :sort-key (unchecked-negate (long (:recency-ms row))))))
        (sort-by (juxt :band :sort-key :id))
        vec))
 
@@ -5887,6 +5908,12 @@
    stamp is set or when the GROUP holding it is archived: archiving a group never stamps
    its members, so unarchiving one brings back exactly the set that was visible before.
 
+   `:order :recent` keys the same list by content time ALONE (`recency-ranking`) - the
+   order the recents and a search answer in (`search-sessions`). Stars, unsent words
+   and running turns stay on their rows instead of lifting them, and the cursor still
+   names a row, so a client walks those answers with the same keyset. Without it the
+   list keeps the navigator's bands.
+
    CROSS-CHANNEL by default (`channel` = `:all`): a conversation started in one channel
    is visible in the others and vice-versa. Pass a specific channel keyword only when a
    caller genuinely needs a single-channel slice (e.g. resolving a chat by external-id).
@@ -5899,7 +5926,7 @@
   ([opts] (list-sessions-page :all opts))
   ([channel
     {:keys [limit after root project-id group-id group-ids id-prefix ids dirty grouped reader
-            archived]}]
+            archived order]}]
    (let [db
          (try (lp/db-info) (catch Throwable _ nil))
 
@@ -5967,7 +5994,12 @@
            ;; window, not beside it in `awaiting`, not on a group shelf - unless
            ;; the caller asked for it by name.
            (not= :include archived-mode)
-           (filterv (if (= :only archived-mode) archived-row? (complement archived-row?))))
+           (filterv (if (= :only archived-mode) archived-row? (complement archived-row?)))
+
+           ;; The recents and a search read this same list by content time alone:
+           ;; the key changes after every cut, never which rows the list holds.
+           (= :recent order)
+           recency-ranking)
 
          aside-groups?
          (= "aside"
@@ -6201,41 +6233,23 @@
       :unread_count (count (filterv unread? (map :id ranked)))
       :server_time_ms (util/now-ms)})))
 
-(defn search-session-ids
-  "Soul-id STRINGS whose TRANSCRIPT (user request + assistant iteration text)
-   matches `query`. The SERVER-side half of transcript search: clients match
-   title/project locally over the already-loaded list and union these ids for
-   the deep matches, so the 105MB of assistant text never crosses the wire.
-   Blank query → []."
-  ([query] (search-session-ids :all query))
-  ([channel query]
-   (let [db (try (lp/db-info) (catch Throwable _ nil))]
-     (if db (mapv str (persistance/db-search-session-ids db channel query)) []))))
-
 (defn search-session-matches
-  "Soul-id STRINGS whose TITLE or TRANSCRIPT matches `query`, each TAGGED with
-   WHERE it hit, RANKED by the server, and carrying up to a handful of MATCH
-   SNIPPETS:
+  "The sessions whose TITLE or TRANSCRIPT matches `query`, each TAGGED with WHERE it
+   hit, RANKED by the server, and carrying up to a handful of MATCH SNIPPETS:
    `[{:session_id str :rank 0-3 :is_in_title bool :is_in_request bool
       :is_in_reply bool :is_in_thinking bool
       :request_snippet str :reply_snippet str
       :hits [{:side \"request\"|\"reply\"|\"thinking\" :snippet str :at ms}]}]`
-   (wire-shaped: snake_case string-ish keys, `is_<foo>` flags). Same SERVER-side
-   deep search as `search-session-ids` — the assistant text never crosses the wire,
-   only these snippet windows. `:is_in_title` = the session's own name matched;
-   `:is_in_request` = the user's own request matched; `:is_in_reply` = the
+   (wire-shaped: snake_case keys, `is_<foo>` flags). The assistant text never crosses
+   the wire, only these snippet windows. `:is_in_title` = the session's own name
+   matched; `:is_in_request` = the user's own request matched; `:is_in_reply` = the
    assistant's answer; `:is_in_thinking` = only its reasoning aside.
 
-   THE ORDER IS THE ANSWER, and it is the LIST's own: freshest first, which is
-   exactly the key `order-session-summaries` gives the navigator -
-   `db-search-session-matches` sorts by the instant each session last moved (the
-   `modified_at` a list read prints). A search therefore FILTERS the list instead
-   of reshuffling it, and the dates only fall as a client scans down. Sessions
-   RUNNING right now are no longer lifted over that: a band that flips when a turn
-   starts moved results under the reader's finger, which is the defect the
-   navigator's own key just lost. `:rank` travels so a surface can say WHERE the
-   query hit and break a tie; it is not the order and no surface re-derives one
-   from the flags.
+   The store answers freshest first (`db-search-session-matches`), and
+   `search-sessions` keys the rows it paints by the same content time. A running
+   session is not lifted over that: a band that flips when a turn starts moved results
+   under the reader's finger. `:rank` travels so a surface can say WHERE the query hit;
+   it is not the order and no surface re-derives one from the flags.
    Blank query → []."
   ([query] (search-session-matches :all query))
   ([channel query]
@@ -6259,6 +6273,61 @@
                             (or hits []))})
              (persistance/db-search-session-matches db channel query))
        []))))
+
+(defn search-sessions
+  "THE session search every surface asks, in one answer shape:
+   `{:query q :sessions rows :total n :limit l :next-cursor s :has-more bool}`.
+
+   A BLANK query answers the RECENTS: every session the navigator lists, freshest
+   content first, so a search that opens empty already shows the latest work. A query
+   answers the listed sessions whose title or transcript matches it
+   (`search-session-matches`), in that SAME freshest-first order: typing filters the
+   list the reader was looking at and never reshuffles it. A matched row carries
+   `\"match\"` - its rank, the WHERE flags and the snippets around each hit; a recents
+   row carries none.
+
+   The rows ARE `list-sessions-page` rows (`:order :recent`), decorated like a list
+   read. Clients used to receive bare ids here, fetch each hit's row with a second
+   read and merge it into whatever list they held; this answer stands on its own.
+   `:limit`, `:after`, `:archived`, `:dirty` and `:reader` mean what they mean there,
+   so a client walks the hits with the list's own cursor. The store bounds one
+   transcript search (`db-search-session-matches`)."
+  ([opts] (search-sessions :all opts))
+  ([channel {:keys [query limit after archived dirty reader]}]
+   (let [q
+         (str query)
+
+         ;; `nil` is NO query - the recents. An EMPTY map is a query nothing matched:
+         ;; it stays empty instead of falling through to an uncut list.
+         matches
+         (when-not (str/blank? q)
+           (into {}
+                 (map (juxt :session_id #(wire/canonical (dissoc % :session_id))))
+                 (search-session-matches channel q)))
+
+         page
+         (when (or (nil? matches) (seq matches))
+           (list-sessions-page channel
+                               (cond-> {:order :recent
+                                        :limit limit
+                                        :after after
+                                        :archived archived
+                                        :dirty dirty
+                                        :reader reader}
+                                 matches
+                                 (assoc :ids (keys matches)))))]
+
+     {:query q
+      :sessions (if matches
+                  (mapv (fn [row]
+                          (assoc row "match" (get matches (str (get row "id")))))
+                        (:sessions page))
+                  (:sessions page))
+      :total (long (or (:total page) 0))
+      :limit (some-> limit
+                     long)
+      :next-cursor (:next-cursor page)
+      :has-more (boolean (:has-more page))})))
 
 ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
 

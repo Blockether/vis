@@ -3641,9 +3641,9 @@
             (expect (= "1 new update · Enter to show" (:label update-row))))))))
 
 (defdescribe
-  project-search-hydrates-ranked-unloaded-group-and-archive-test
+  project-search-paints-ranked-unloaded-group-and-archive-test
   (it
-    "project search hydrates ranked unloaded group and archive"
+    "project search paints unloaded, grouped and archived hits from one answer"
     (let [db
           (-> (fixture-db)
               (assoc :layout {:rows 18})
@@ -3672,19 +3672,16 @@
                     (fn [_ f]
                       (f))
 
-                    vis/gateway-search-session-matches
-                    (fn [q]
-                      (swap! calls conj [:search q])
-                      matches)
-
-                    vis/gateway-list-sessions-page
-                    (fn [options]
-                      (swap! calls conj [:hydrate options])
-                      {:sessions [{"id" "a5" "project_id" "a" "group_id" "g" "title" "Grouped"}
-                                  {"id" "b9"
+                    vis/gateway-search-sessions
+                    (fn [q opts]
+                      (swap! calls conj [:search q opts])
+                      ;; Every hit arrives WITH its row, in the gateway's order.
+                      {:sessions [{"id" "b9"
                                    "project_id" "b"
                                    "archived_at" "yesterday"
-                                   "title" "Archived reply"}]})]
+                                   "title" "Archived reply"}
+                                  {"id" "a5" "project_id" "a" "group_id" "g" "title" "Grouped"}]
+                       :matches matches})]
 
         (let [press! (fn [key]
                        (#'screen/project-sidebar-key!
@@ -3697,8 +3694,7 @@
           (press! \/)
           (expect (= "" (get-in @state/app-db [:project-sidebar :search :text])))
           (press! \q)
-          (expect (= [[:search "q"] [:hydrate {:ids ["b9" "a5"] :limit 5 :archived :include}]]
-                     @calls))
+          (expect (= [[:search "q" {:limit 200 :archived :include}]] @calls))
           (let [entries (projects/sidebar-entries @state/app-db)]
             (expect (= ["b9" "a5"] (mapv #(get-in % [:session "id"]) (filter :session entries))))
             (expect (= ["Companion / Archived reply" "Vis / Grouped"]
@@ -3727,7 +3723,12 @@
           matches
           (mapv (fn [i]
                   {:id (str "s" i) :in-title? true})
-                (range 7))]
+                (range 7))
+
+          rows
+          (mapv (fn [{:keys [id]}]
+                  {"id" id "project_id" "a" "title" id})
+                matches)]
 
       (with-redefs [state/app-db
                     (atom (assoc (fixture-db) :layout {:rows 18}))
@@ -3736,18 +3737,13 @@
                     (fn [_ f]
                       (swap! jobs conj f))
 
-                    vis/gateway-search-session-matches
-                    (fn [q]
-                      (swap! calls conj [:search q])
-                      (if (= q "none") [] matches))
-
-                    vis/gateway-list-sessions-page
-                    (fn [options]
-                      (swap! calls conj [:hydrate options])
+                    vis/gateway-search-sessions
+                    (fn [q opts]
+                      (swap! calls conj [:search q opts])
                       (when @failure? (throw (ex-info "offline" {})))
-                      {:sessions (mapv (fn [id]
-                                         {"id" id "project_id" "a" "title" id})
-                                       (reverse (:ids options)))})]
+                      (if (= q "none")
+                        {:sessions [] :matches []}
+                        {:sessions rows :matches matches}))]
 
         (state/dispatch [:project-search-open])
         (#'screen/search-projects! {:text "old" :cursor 3})
@@ -3756,9 +3752,7 @@
                       (projects/sidebar-entries @state/app-db)))
         ((second @jobs))
         ((first @jobs))
-        (expect (= [[:search "new"]
-                    [:hydrate {:ids ["s0" "s1" "s2" "s3" "s4"] :limit 5 :archived :include}]]
-                   @calls))
+        (expect (= [[:search "new" {:limit 200 :archived :include}]] @calls))
         (expect (= ["s0" "s1" "s2" "s3" "s4"]
                    (mapv #(get-in % [:session "id"])
                          (get-in @state/app-db [:project-sidebar :search :rows]))))
@@ -3772,7 +3766,6 @@
            identity
            identity
            nil))
-        ((last @jobs))
         (expect (= 5 (get-in @state/app-db [:project-sidebar :search :offset])))
         (expect (= ["s5" "s6"]
                    (mapv #(get-in % [:session "id"])
@@ -3787,8 +3780,7 @@
            identity
            identity
            identity
-           nil)
-          ((last @jobs)))
+           nil))
         (expect (zero? (get-in @state/app-db [:project-sidebar :search :offset])))
         (let [stale-id (get-in @state/app-db [:project-sidebar :search :request-id])]
           (#'screen/search-projects! {:text "none" :cursor 4})

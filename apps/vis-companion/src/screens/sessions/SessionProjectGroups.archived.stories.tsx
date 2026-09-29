@@ -76,7 +76,8 @@ const meta = {
     context: {
       getClient: () => STORY_PROJECT_CLIENT,
       drafts: {},
-      matches: null,
+      previewId: null,
+      preview: null,
       needle: '',
       openRow: null,
       actions: {

@@ -9,9 +9,9 @@ vi.mock('./lib/fleet', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./lib/fleet')>();
   return {
     ...actual,
-    withSearchHits: (...args: Parameters<typeof actual.withSearchHits>) => {
+    projectGroups: (...args: Parameters<typeof actual.projectGroups>) => {
       counters.passes += 1;
-      return actual.withSearchHits(...args);
+      return actual.projectGroups(...args);
     },
   };
 });
@@ -76,6 +76,8 @@ describe('typing in the composer', () => {
     // Once the draft is nonempty, further characters do not change row presence.
     await type(composer, 'h');
     const before = counters.passes;
+    // The probe is live: the list behind the transcript did run its pass.
+    expect(before).toBeGreaterThan(0);
     await type(composer, 'hello there');
 
     expect(composer.value).toBe('hello there');

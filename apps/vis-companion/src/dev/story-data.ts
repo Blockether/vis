@@ -767,7 +767,7 @@ export const STORY_SESSION_ROW: Session = {
   workspace: { root: STORY_SESSION.where, label: STORY_SESSION.project },
 };
 
-/** Search previews retain inline Markdown without opening links or loading images. */
+/** Messages a search found in one session, newest first; links and images stay inert. */
 export const STORY_SESSION_SEARCH_MATCH: SessionMatch = {
   sessionId: STORY_SESSION_ROW.id,
   rank: 1,
@@ -781,19 +781,19 @@ export const STORY_SESSION_SEARCH_MATCH: SessionMatch = {
     {
       side: 'request',
       snippet: '**Windows** and _macOS_ need another check.',
-      at: 1,
+      at: Date.UTC(2030, 0, 2, 11, 58, 0),
     },
     {
       side: 'reply',
       snippet:
         '**Checking Windows runtime guards.**\nKeep `WINDOWS` enabled; ~~skip Windows~~ is outdated.',
-      at: 2,
+      at: Date.UTC(2030, 0, 2, 11, 57, 0),
     },
     {
       side: 'thinking',
       snippet:
         'Compare [Windows documentation](https://example.com/windows) with the `windows` tests.',
-      at: 3,
+      at: Date.UTC(2030, 0, 2, 11, 56, 0),
     },
   ],
 };

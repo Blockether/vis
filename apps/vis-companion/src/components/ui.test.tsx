@@ -12,7 +12,6 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import {
-  BackButton,
   BandButton,
   Checkbox,
   Chip,
@@ -825,12 +824,7 @@ describe('the composer and the meta strip', () => {
   });
 });
 
-describe('the way back and the desk', () => {
-  it('BackButton names where it goes', () => {
-    render(<BackButton label="Back to sessions" />);
-    expect(screen.getByRole('button', { name: 'Back to sessions' })).toBeInTheDocument();
-  });
-
+describe('the way to the list on a desk', () => {
   it('SidebarToggle says which way the list is about to go', () => {
     const { rerender } = render(<SidebarToggle isShown />);
     expect(screen.getByRole('button', { name: 'Hide the session list' })).toHaveAttribute(

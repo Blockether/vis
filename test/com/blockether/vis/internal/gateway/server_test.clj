@@ -4652,6 +4652,48 @@
                              [:headers "ETag"]))]
           (expect (not= (etag nil) (etag "2:-4000:a"))))))))
 
+;; User report (paraphrased: "one search API for every surface"): the search route answered
+;; bare ids, so each client fetched the rows of its hits with a second read and merged them.
+(defdescribe
+  sessions-search-answers-list-rows
+  (it
+    "sessions search answers list rows in a window"
+    (let [seen (atom [])]
+      (with-redefs [state/search-sessions (fn [channel opts]
+                                            (swap! seen conj [channel opts])
+                                            {:query (:query opts)
+                                             :sessions [{"id" "b"
+                                                         "match" {"rank" 0 "is_in_title" true}}]
+                                             :total 3
+                                             :limit 50
+                                             :next-cursor "0:-3000:b"
+                                             :has-more true})]
+        (let [response (#'sessions-api/search-sessions-handler
+                        {:query-params {"q" "pager" "after" "0:-4000:a" "dirty" "d1"}})
+              body (wire/parse-json (:body response))]
+
+          (expect (= 200 (:status response)))
+          (expect
+            (= [:all
+                {:query "pager" :limit 50 :after "0:-4000:a" :archived :exclude :dirty #{"d1"}}]
+               (first @seen)))
+          (expect (= ["b"] (mapv #(get % "id") (get body "sessions"))))
+          (expect (= 0 (get-in body ["sessions" 0 "match" "rank"])))
+          (expect (= "0:-3000:b" (get body "next_cursor")))
+          (expect (true? (get body "has_more")))
+          ;; The id-only fields are gone from the wire, not kept beside the rows.
+          (expect (nil? (get body "session_ids")))
+          (expect (nil? (get body "matches"))))
+        ;; No query is the RECENTS, windowed like any other answer.
+        (#'sessions-api/search-sessions-handler {:query-params {}})
+        (expect (= "" (:query (second (second @seen)))))
+        (expect (= 50 (:limit (second (second @seen)))))
+        ;; A cursor that is present but not a cursor is a 400, never the head of the list.
+        (let [response (#'sessions-api/search-sessions-handler {:query-params {"after" "nope"}})]
+          (expect (= 400 (:status response)))
+          (expect (= "invalid-window"
+                     (get-in (wire/parse-json (:body response)) ["error" "type"]))))))))
+
 ;; Regression, user report (paraphrased: "groups should be outside the paging"): a client
 ;; could only paint the group bands of the page it was holding, so a session filed deeper
 ;; in the fleet looked like it was in no group at all (BLO-167).

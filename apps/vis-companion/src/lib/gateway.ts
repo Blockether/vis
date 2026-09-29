@@ -168,15 +168,14 @@ export interface SessionMatchHit {
   at: number | null;
 }
 
-// One matching session, tagged with WHERE the query hit plus up to a handful of
-// preview snippets. Only those small windows travel — never the conversation.
+// Where ONE row of a search answer matched, plus up to a handful of preview
+// snippets. Only those small windows travel — never the conversation.
 // `requestSnippet`/`replySnippet` are the first hit of each side, kept for
 // callers that want a single line.
 //
 // `rank` is the gateway's own relevance band — 0 the session's TITLE, 1 the
-// user's own words, 2 the assistant's answer, 3 its thinking — and the array
-// arrives in that order. Search relevance is decided once, on the server, for
-// every client; this app paints that order rather than re-deriving one.
+// user's own words, 2 the assistant's answer, 3 its thinking. It says WHERE the
+// query hit; where the row sits is the answer's own freshest-first order.
 export interface SessionMatch {
   sessionId: string;
   rank: number;
@@ -190,7 +189,6 @@ export interface SessionMatch {
 }
 
 interface RawSessionMatch {
-  session_id: string;
   rank?: number;
   is_in_title?: boolean;
   is_in_request?: boolean;
@@ -199,6 +197,47 @@ interface RawSessionMatch {
   request_snippet?: string | null;
   reply_snippet?: string | null;
   hits?: { side?: string; snippet?: string | null; at?: number | null }[];
+}
+
+/**
+ * One answer of THE session search (`GET /v1/sessions/actions/search`), the one
+ * every client asks. A blank query answers the RECENTS, a query the sessions whose
+ * title or transcript matched it. `sessions` are `GET /v1/sessions` rows in the
+ * gateway's own freshest-first order; `matches` says where each matched row hit,
+ * in the same order, and recents carry none. `nextCursor` continues the answer.
+ */
+export interface SessionSearch {
+  sessions: Session[];
+  matches: SessionMatch[];
+  total: number;
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+/** A search row's `match`, in the shape the app paints. */
+function sessionMatch(sessionId: string, m: RawSessionMatch): SessionMatch {
+  return {
+    sessionId,
+    rank: Number(m.rank ?? 0),
+    inTitle: Boolean(m.is_in_title),
+    inRequest: Boolean(m.is_in_request),
+    inReply: Boolean(m.is_in_reply),
+    inThinking: Boolean(m.is_in_thinking),
+    requestSnippet: m.request_snippet ?? null,
+    replySnippet: m.reply_snippet ?? null,
+    hits: (m.hits ?? [])
+      .filter((h) => Boolean(h.snippet?.trim()))
+      .map((h) => ({
+        side:
+          h.side === 'request'
+            ? ('request' as const)
+            : h.side === 'thinking'
+              ? ('thinking' as const)
+              : ('reply' as const),
+        snippet: h.snippet as string,
+        at: h.at ?? null,
+      })),
+  };
 }
 
 /**
@@ -3473,41 +3512,45 @@ export class GatewayClient {
       dirtySessionIds(this.base).join(','),
     ].join('\u0000');
   }
-  // GET /v1/sessions/actions/search?q= searches the transcript store AND the session
-  // titles server-side. Each hit carries the gateway's own `rank` band plus a short
-  // snippet of the matching text, so the UI previews the conversation and paints the
-  // order it was given rather than deriving a second one here.
-  async searchSessionMatches(query: string, signal?: AbortSignal): Promise<SessionMatch[]> {
-    const q = query.trim();
-    if (!q) return [];
-    const res = await this.request<{ matches?: RawSessionMatch[] }>(
+  /**
+   * THE session search every surface asks: `GET /v1/sessions/actions/search`.
+   *
+   * A blank query answers the RECENTS, a query the sessions whose title or transcript
+   * matched it. The gateway decides those rows and their order once, for every client,
+   * and sends the rows IN the answer: a hit further down the paged list needs no
+   * second read. Each matched row carries its `match` (the band it hit in plus a few
+   * snippets), so the UI previews the conversation without fetching it. `dirty=` rides
+   * along as on the list (see `listSessions`), so an untitled session holding unsent
+   * words on this device still counts as recent work. A query also reads the archive
+   * (`archived=include`): a session put away is still found by what was said in it,
+   * while the recents stay the active work.
+   */
+  async searchSessions(query: string, signal?: AbortSignal): Promise<SessionSearch> {
+    await hydrateDraftMessages();
+    const overlay = dirtySessionIds(this.base).join(',');
+    const res = await this.request<{
+      sessions?: (Session & { match?: RawSessionMatch | null })[];
+      total?: number;
+      next_cursor?: string | null;
+      has_more?: boolean;
+    }>(
       'GET',
-      `/v1/sessions/actions/search?q=${encodeURIComponent(q)}`,
+      `/v1/sessions/actions/search?q=${encodeURIComponent(query.trim())}${
+        overlay ? `&dirty=${encodeURIComponent(overlay)}` : ''
+      }${query.trim() ? '&archived=include' : ''}`,
       undefined,
       signal,
     );
-    return (res.matches ?? []).map((m) => ({
-      sessionId: m.session_id,
-      rank: Number(m.rank ?? 0),
-      inTitle: Boolean(m.is_in_title),
-      inRequest: Boolean(m.is_in_request),
-      inReply: Boolean(m.is_in_reply),
-      inThinking: Boolean(m.is_in_thinking),
-      requestSnippet: m.request_snippet ?? null,
-      replySnippet: m.reply_snippet ?? null,
-      hits: (m.hits ?? [])
-        .filter((h) => Boolean(h.snippet?.trim()))
-        .map((h) => ({
-          side:
-            h.side === 'request'
-              ? ('request' as const)
-              : h.side === 'thinking'
-                ? ('thinking' as const)
-                : ('reply' as const),
-          snippet: h.snippet as string,
-          at: h.at ?? null,
-        })),
-    }));
+    const rows = (res.sessions ?? []).filter((row) => !this.isSessionDeleted(row.id));
+    // Every row names the model it runs on, exactly as a list row does.
+    this.seedSessionModels(rows);
+    return {
+      sessions: rows,
+      matches: rows.flatMap((row) => (row.match ? [sessionMatch(row.id, row.match)] : [])),
+      total: res.total ?? rows.length,
+      nextCursor: res.next_cursor ?? null,
+      hasMore: res.has_more === true,
+    };
   }
 
   /**

@@ -30,6 +30,8 @@ const meta = {
     subscriptions: null,
     onOpen: fn(),
     onSearch: fn(),
+    isSearchOpen: false,
+    onCloseSearch: fn(),
     isVisible: true,
   },
 } satisfies Meta<typeof SessionsScreen>;

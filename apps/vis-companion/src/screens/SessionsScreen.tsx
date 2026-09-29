@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Banner, Button, overlayLayer } from '../components/ui';
+import { Banner, overlayLayer } from '../components/ui';
 import {
   MachineGap,
   MachineProjectsButton,
@@ -11,15 +11,17 @@ import {
 import {
   NavigatorSkeleton,
   draftSearchText,
-  sessionSearchText,
   type SessionListActions,
   type SessionRowAction,
   type SessionRowCommands,
 } from '../components/SessionList';
+import { SearchMessages } from '../components/SearchMessages';
+import { SessionSearchDialog } from '../components/SessionSearchDialog';
 import {
   ProjectGroup,
   creationKey,
   type ProjectCreation,
+  type ProjectGroupReading,
   type SessionRowsContext,
 } from './sessions/SessionProjectGroups';
 import { PANEL_SIZES } from '../components/Menu';
@@ -66,16 +68,14 @@ import {
   sameOverview,
   servedUnread,
   scopedMachines,
-  SEARCH_UNPLACED,
   searchFanout,
-  searchOrder,
   searchTally,
   sessionIsLive,
   sessionOrder,
   sessionRowKey,
-  withSearchHits,
   machineProject,
   type FleetMachine,
+  type ProjectGroupView,
 } from '../lib/fleet';
 
 const SESSION_LIST_EVENTS = new Set([
@@ -112,10 +112,6 @@ const STALE_POLL_MS = 20_000;
 // stream that drops puts the five-second cadence back on the very next tick.
 const STREAMED_POLL_MS = 30_000;
 
-// A query can name more sessions than a phone will ever scroll. Hydrating the
-// unloaded hits is one GET each, so the tail is cut rather than paid for.
-const SEARCH_HYDRATE_MAX = 40;
-
 // Searching is a FLEET round trip — one ranked FTS query per paired machine, and on a
 // large store the gateway spends ~130ms in SQLite before it answers. Firing that per
 // keystroke would queue a search behind every letter of a word and leave the last one
@@ -128,8 +124,8 @@ const SEARCH_DEBOUNCE_MS = 200;
 // sleeping machine is reported rather than holding the whole fleet.
 const SEARCH_REACH_MS = 8_000;
 
-// ONE machine's answer to the live query: the ranked hits it found, the sessions those
-// hits named that this page had not paged in yet, and whether the machine ANSWERED AT
+// ONE machine's answer to the live question: the rows its search answered with, in the
+// gateway's own order, where each of them matched, and whether the machine ANSWERED AT
 // ALL. `reached: false` is not an empty result — it is the absence of one, and the
 // screen prints it as such.
 type SearchAnswer = {
@@ -142,19 +138,20 @@ type SearchAnswer = {
 // `SEARCH_REACH_MS`.
 const UNREACHED: SearchAnswer = { matches: [], rows: [], reached: false };
 
-// The fleet's answer to ONE needle. `asked` is who the question went to, so
-// `asked.length - byMachine.size` is exactly how much of the search is still
+// The fleet's answer to ONE needle, `''` being the recents. `asked` is who the question
+// went to, so `asked.length - byMachine.size` is exactly how much of the search is still
 // outstanding — the progress the screen reports while it waits.
 type SearchAnswers = {
-  needle: string;
+  needle: string | null;
   asked: string[];
   byMachine: Map<string, SearchAnswer>;
 };
 
 const NO_MACHINES: string[] = [];
 
+// Nothing asked yet, so no needle is answered: not even the recents' blank one.
 const NO_SEARCH: SearchAnswers = {
-  needle: '',
+  needle: null,
   asked: NO_MACHINES,
   byMachine: new Map(),
 };
@@ -280,7 +277,7 @@ interface Props {
   conns: GatewayConn[];
   /** The machine that leads and initially owns the sessions scope. */
   primary?: GatewayConn | null;
-  /** The fleet-wide search, asked by the app bar above every machine chip. */
+  /** The search the dialog asks. It is empty while the dialog is closed. */
   query: string;
   onQuery: (next: string) => void;
   subscriptions: SessionSubscriptionHub | null;
@@ -302,12 +299,16 @@ interface Props {
    */
   isVisible: boolean;
   /**
-   * Open the fleet-wide search page — the same door the app bar's glass is. It is
-   * `null` while that page is ALREADY the screen, which stands the list's pull-down
-   * gesture (`lib/pull-to-search`) down: a hint promising a page the reader is
-   * already standing on is the screen lying to them.
+   * Open the search dialog — the same door the app bar's glass is. It is `null`
+   * while the dialog is ALREADY open, which stands the list's pull-down gesture
+   * (`lib/pull-to-search`) down: a hint promising a dialog the reader is already
+   * in is the screen lying to them.
    */
   onSearch: (() => void) | null;
+  /** Whether the search dialog stands over the app. The list under it never filters. */
+  isSearchOpen: boolean;
+  /** Leave the search dialog. The shell clears the query with it. */
+  onCloseSearch: () => void;
   /**
    * A share the OS handed over that no composer has taken yet. THIS LIST IS THE
    * CHOOSER — only the human knows whether a voice memo belongs to a session
@@ -330,6 +331,8 @@ export function SessionsScreen({
   openSession = null,
   isVisible,
   onSearch,
+  isSearchOpen,
+  onCloseSearch,
   share = null,
   onDiscardShare,
 }: Props) {
@@ -368,12 +371,10 @@ export function SessionsScreen({
     const timer = window.setTimeout(() => setSearchNeedle(next), SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [query, searchNeedle]);
-  // Every machine's answer to ONE query, filed under the needle it answered — a
+  // Every machine's answer to ONE question, filed under the needle it answered — a
   // fleet search is several round trips that land at different times, and the
-  // screen has to be able to say which of them are still out. `matches` (ranked
-  // hits) and `rows` (sessions the hits named that this page had not loaded) come
-  // back one after the other, so a machine files its matches first and its
-  // hydrated rows a round trip later.
+  // screen has to be able to say which of them are still out. A machine answers
+  // with its rows and where they matched in the same read.
   const [searchAnswers, setSearchAnswers] = useState<SearchAnswers>(NO_SEARCH);
   // The create in flight and the project header that started it. Only that
   // header replaces its plus with the busy word.
@@ -1103,15 +1104,21 @@ export function SessionsScreen({
   );
 
   // AT THE TOP OF THE LIST, A PULL IS A QUESTION ABOUT SEARCH. The glass that opens
-  // the search page sits in the far top corner of the app bar; the thumb already
+  // the search dialog sits in the far top corner of the app bar; the thumb already
   // reading this list has a gesture for it, and every native list answers it.
   usePullToSearch(listRef, hintRef, setPullPhase, onSearch);
 
-  // Search once per settled needle, abort superseded requests, ignore late answers by
-  // key, and paint each machine as soon as its ranked hits arrive.
+  // THE QUESTION ON THE WIRE while the dialog is open: the settled needle, or the
+  // RECENTS (`''`) while the field is blank, as the terminal's switcher lists them
+  // before a word is typed. Words the pause has not settled yet ask nothing: recents
+  // asked then would be a round trip nobody waits for.
+  const searchQuestion = !isSearchOpen ? null : searchNeedle || (query.trim() ? null : '');
+
+  // Ask once per settled question, abort superseded requests, ignore late answers by
+  // key, and paint each machine as soon as its answer arrives.
   useEffect(() => {
-    const needle = searchNeedle;
-    if (!needle) return;
+    const needle = searchQuestion;
+    if (needle === null) return;
     // WHICH MACHINES ARE EVEN ASKED. A gateway that is not answering is not asked a
     // question: neither the one whose list read failed nor the one that already ate a
     // whole search deadline in silence. Both still count as ASKED and answer at once as
@@ -1152,7 +1159,7 @@ export function SessionsScreen({
         // must not blank the matches the others found — and must not be filed as an
         // answer it never gave, which is how a dead gateway used to report "no
         // matches on this machine".
-        const found = await api.searchSessionMatches(needle, reach.signal).catch(() => null);
+        const found = await api.searchSessions(needle, reach.signal).catch(() => null);
         // The deadline is spent; the read is the reader's again. The effect's own
         // cancellation stays wired to this reach for as long as the effect lives, so a
         // query the user has replaced still aborts the flight it started.
@@ -1166,35 +1173,15 @@ export function SessionsScreen({
           answer(key, UNREACHED);
           return;
         }
-        answer(key, { matches: found, rows: [], reached: true });
-        // The list is PAGED. Intersecting the hits with the rows already loaded
-        // meant search could only find what was on screen; a hit in a session
-        // further down the fleet's ordering vanished. Fetch those rows by id —
-        // AFTER the matches above are already on screen.
-        const loaded = new Set(
-          (
-            machinesRef.current.find((machine) => machineKey(machine.conn) === key)?.sessions ?? []
-          ).map((session) => session.id),
-        );
-        const missing = found
-          .filter((match) => !loaded.has(match.sessionId))
-          .slice(0, SEARCH_HYDRATE_MAX);
-        if (missing.length === 0) return;
-        const rows = await Promise.all(
-          missing.map((match) => api.session(match.sessionId, controller.signal).catch(() => null)),
-        );
-        if (controller.signal.aborted) return;
-        answer(key, {
-          matches: found,
-          rows: rows.filter((row): row is Session => row !== null),
-          reached: true,
-        });
+        // The rows ride IN the answer, in the gateway's own order: a hit the paged list
+        // has not loaded needs no second read.
+        answer(key, { matches: found.matches, rows: found.sessions, reached: true });
       })();
     }
     return () => {
       controller.abort();
     };
-  }, [searchNeedle, fleetKey, scope]);
+  }, [searchQuestion, fleetKey, scope]);
 
   // WHAT IS TYPED VS WHAT WAS ASKED. `typed` is the field this frame; `searchNeedle` is
   // the needle every row, count and answer below belongs to. They differ only inside a
@@ -1216,10 +1203,11 @@ export function SessionsScreen({
     [live, searchAsked],
   );
   // STILL ASKING — the field is ahead of the needle the list answers (inside the pause),
-  // no needle has been filed yet, or a machine that was asked has yet to come back. This
-  // is the one fact the screen owed the reader and did not have.
+  // no question has been filed yet, or a machine that was asked has yet to come back.
+  // The recents are asked the same way. This is the one fact the screen owed the reader
+  // and did not have.
   const searchPending =
-    searching &&
+    isSearchOpen &&
     (typed !== searchNeedle || live === null || searchAnswered.size < searchAsked.length);
   // The machines that were ASKED and never answered — dark before the question was put,
   // or silent past `SEARCH_REACH_MS`. Kept apart from the ones that answered with
@@ -1247,22 +1235,10 @@ export function SessionsScreen({
       for (const match of entry.matches) byId.set(match.sessionId, match);
     return byId;
   }, [live]);
-  // WHERE the gateway put each match: its index in that machine's answer, which
-  // is the gateway's own order — running sessions first, then freshest first.
-  // The place, not the relevance band, is what the list sorts by; a session's
-  // index is only ever compared with others from the SAME machine, since a
-  // machine's rows are filtered and ordered inside its own section.
-  const searchPlaces = useMemo(() => {
-    if (!live) return null;
-    const places = new Map<string, number>();
-    for (const entry of live.byMachine.values())
-      entry.matches.forEach((match, index) => places.set(match.sessionId, index));
-    return places;
-  }, [live]);
-  // Sessions a transcript hit named that this machine had not paged in yet, per
-  // machine key. Kept beside the list instead of merged into it: the 10s poll
-  // rewrites `machine.sessions` from the gateway's own paged answer.
-  const searchHits = useMemo(() => {
+  // The rows each machine's answer carried, per machine key, in the gateway's own order:
+  // the recents, or what the query matched. Kept beside the list instead of merged into
+  // it: the 10s poll rewrites `machine.sessions` from the gateway's own paged answer.
+  const searchRows = useMemo(() => {
     const byMachine = new Map<string, Session[]>();
     if (live) for (const [key, entry] of live.byMachine) byMachine.set(key, entry.rows);
     return byMachine;
@@ -1325,63 +1301,87 @@ export function SessionsScreen({
     };
   }, [isListShown]);
 
-  // Filtering happens INSIDE each machine: two checkouts of the same repo on two
-  // machines are two projects, and a folder name never merges them.
-  const filtered = useMemo(() => {
-    const needle = searchNeedle.toLowerCase();
-    return inScope.map((machine) => {
-      const base = clientFor(machine.conn).base;
-      const draftFor = (session: Session) => draftMessages[draftMessageKey(base, session.id)];
-      // Server-side transcript hits this machine had not paged in are part of the
-      // list a query filters: without them search only finds what is on screen.
-      const hits = needle ? (searchHits.get(machineKey(machine.conn)) ?? []) : [];
-      const titleHit = (session: Session) =>
-        needle.length > 0 && (session.title ?? '').toLowerCase().includes(needle);
-      // A dirty row has no title and no transcript: what waits in its composer —
-      // the words AND the names of the files staged with them — is the only thing
-      // a query could match it on.
-      const metaHit = (session: Session) =>
-        needle.length > 0 &&
-        (sessionSearchText(session).includes(needle) ||
-          draftSearchText(draftFor(session)).includes(needle));
-      // WHICH ROWS THESE ARE IS THE GATEWAY'S ANSWER (`GatewayClient.listSessions`):
-      // it drops the abandoned taps itself and keeps the ones this device told it are
-      // holding unsent words. A query NARROWS that list; it never re-decides it.
-      const sessions = withSearchHits(machine.sessions ?? [], hits).filter(
-        (session) =>
-          !clientFor(machine.conn).isSessionDeleted(session.id) &&
-          (!needle || titleHit(session) || metaHit(session) || matches?.has(session.id) === true),
-      );
-      // Preserve gateway search order, then band complete local-only matches behind it.
-      // Unqueried lists pass through in gateway order.
-      if (!needle) return { machine, sessions };
-      return {
+  // THE LIST NEVER FILTERS. It shows every session on each machine in scope, in the
+  // gateway's order; a search answers in its own dialog (`SessionSearchDialog`), so the
+  // list's rows, scroll position and open projects stay as the reader left them.
+  const listed = useMemo(
+    () =>
+      inScope.map((machine) => ({
         machine,
-        sessions: sessionOrder(
-          searchOrder(sessions, (session) => searchPlaces?.get(session.id) ?? SEARCH_UNPLACED),
-          {
-            favoriteRank,
-            hasDraftMessage: (session) => draftMessageHasUnsent(draftFor(session)),
-          },
+        sessions: (machine.sessions ?? []).filter(
+          (session) => !clientFor(machine.conn).isSessionDeleted(session.id),
         ),
-      };
-    });
-  }, [inScope, searchNeedle, matches, searchPlaces, searchHits, draftMessages]);
-
-  // A filter is a FLEET question: it runs on every machine in scope, so the header
-  // reports what came back and from how many of them.
-  const searchCounts = useMemo(() => searchTally(filtered), [filtered]);
-
-  // Apply every canonical response immediately, including live and recent arrivals.
-  const visible = useMemo(
-    () => (sessions === null ? null : filtered.flatMap((entry) => entry.sessions)),
-    [filtered, sessions],
+      })),
+    [inScope],
   );
 
   // The row the transcript beside this list belongs to, named the way a row names
   // itself. A STRING in the row context rather than the connection it came from:
   // that context is memoised, and an object would re-render every row per paint.
   const openRow = openSession ? sessionRowKey(openSession.conn, openSession.sid) : null;
+  const openSid = openSession?.sid ?? null;
+
+  // WHAT THE SEARCH FOUND is each machine's own answer: the recents while the field is
+  // blank, else the sessions the query matched, both in the gateway's order. Filtering
+  // happens INSIDE each machine: two checkouts of the same repo on two machines are two
+  // projects, and a folder name never merges them.
+  //
+  // THE SESSION IN USE LEADS ITS MACHINE'S ANSWER, as the terminal switcher keeps the
+  // session it was opened from on its first row. Regression, user report (paraphrased:
+  // the search should start on the session I am in, not on the first result): the
+  // dialog started on the freshest row, and the open session could sit pages down or
+  // be missing from the recents altogether.
+  const found = useMemo(() => {
+    const needle = searchNeedle.toLowerCase();
+    return inScope.map((machine) => {
+      const api = clientFor(machine.conn);
+      const answered = (searchRows.get(machineKey(machine.conn)) ?? []).filter(
+        (session) => !api.isSessionDeleted(session.id),
+      );
+      const isOpen = (session: Session) => sessionRowKey(machine.conn, session.id) === openRow;
+      // The recents are painted as the gateway answered them: freshest first. Newer work
+      // can push the open session out of their window; the row this device holds for it
+      // stands in, because the session in use is recent work.
+      if (!needle) {
+        const open =
+          answered.find(isOpen) ??
+          (openSid !== null &&
+          sessionRowKey(machine.conn, openSid) === openRow &&
+          !api.isSessionDeleted(openSid)
+            ? (machine.sessions?.find(isOpen) ?? api.cachedSession(openSid))
+            : null);
+        return { machine, sessions: openFirst(answered, open) };
+      }
+      const draftFor = (session: Session) => draftMessages[draftMessageKey(api.base, session.id)];
+      // The one thing no gateway can match: the words and file names waiting in THIS
+      // device's composer. A loaded row whose unsent draft holds the query joins the
+      // answer, behind it.
+      const answeredIds = new Set(answered.map((session) => session.id));
+      const drafted = (machine.sessions ?? []).filter(
+        (session) =>
+          !answeredIds.has(session.id) &&
+          !api.isSessionDeleted(session.id) &&
+          draftSearchText(draftFor(session)).includes(needle),
+      );
+      const ordered = sessionOrder([...answered, ...drafted], {
+        favoriteRank,
+        hasDraftMessage: (session) => draftMessageHasUnsent(draftFor(session)),
+      });
+      // A query that matched the session in use answers with it on top.
+      return { machine, sessions: openFirst(ordered, ordered.find(isOpen)) };
+    });
+  }, [inScope, searchNeedle, searchRows, draftMessages, openRow, openSid]);
+
+  // A search is a FLEET question: it runs on every machine in scope, so the dialog
+  // reports what came back and from how many of them.
+  const searchCounts = useMemo(() => searchTally(found), [found]);
+
+  // Apply every canonical response immediately, including live and recent arrivals.
+  const visible = useMemo(
+    () => (sessions === null ? null : listed.flatMap((entry) => entry.sessions)),
+    [listed, sessions],
+  );
+
   // A visit remains read after the pane closes, even if a paged row or a fleet read
   // still carries the old NEW. Later answers are counted above that visit's floor.
   const isRowUnread = useCallback(
@@ -1619,18 +1619,6 @@ export function SessionsScreen({
     }),
     [rowCommands, deleting, actionBusy, actionError, confirmDelete, cancelDelete],
   );
-  const rowContext = useMemo<SessionRowsContext>(
-    () => ({
-      getClient: clientFor,
-      drafts: draftMessages,
-      matches,
-      needle: searchNeedle,
-      actions: rowActions,
-      openRow,
-      readFloors,
-    }),
-    [draftMessages, matches, searchNeedle, rowActions, openRow, readFloors],
-  );
   const projectCreation = useMemo<ProjectCreation>(
     () => ({ state: creating, start: createSession }),
     [creating, createSession],
@@ -1638,11 +1626,11 @@ export function SessionsScreen({
 
   const pageSize = useSessionsPerPage();
 
-  // Build unfiltered groups from gateway project overviews and queried groups from the
-  // complete local match set, always within their owning machine.
+  // The list builds its groups from the gateway's project overviews, and the search dialog
+  // builds them from the complete local match set. Both stay inside their own machine.
   const sections = useMemo(
     () =>
-      filtered.map((entry) => ({
+      listed.map((entry) => ({
         machine: entry.machine,
         // Carry page agreement with each machine entry.
         reading: {
@@ -1650,16 +1638,88 @@ export function SessionsScreen({
           isVisible,
         },
         // Keep canonical gateway paths for identity and creation; shorten only for paint.
-        groups: searching
-          ? searchGroups(entry.sessions, (session) => isRowUnread(entry.machine.conn, session))
-          : projectGroups(
-              entry.machine.overview,
-              entry.sessions,
-              (session) => isRowUnread(entry.machine.conn, session),
-              readSinceCounted(entry.machine, (session) => isRowSeen(entry.machine.conn, session)),
-            ),
+        groups: projectGroups(
+          entry.machine.overview,
+          entry.sessions,
+          (session) => isRowUnread(entry.machine.conn, session),
+          readSinceCounted(entry.machine, (session) => isRowSeen(entry.machine.conn, session)),
+        ),
       })),
-    [filtered, searching, pageSize, isVisible, isRowUnread, isRowSeen],
+    [listed, pageSize, isVisible, isRowUnread, isRowSeen],
+  );
+  const foundSections = useMemo(
+    () =>
+      found.map((entry) => {
+        const groups = searchGroups(entry.sessions, (session) =>
+          isRowUnread(entry.machine.conn, session),
+        );
+        // The session in use leads its machine's answer, and its project leads the
+        // projects, as in the terminal switcher: the row the search starts on is in view.
+        const open = groups.findIndex((group) =>
+          group.sessions.some((session) => sessionRowKey(entry.machine.conn, session.id) === openRow),
+        );
+        return {
+          machine: entry.machine,
+          // An open dialog is on the glass, whatever the list behind it is doing.
+          reading: {
+            pageSize,
+            isVisible: true,
+          },
+          groups: open > 0 ? [groups[open], ...groups.filter((_, index) => index !== open)] : groups,
+        };
+      }),
+    [found, pageSize, isRowUnread, openRow],
+  );
+
+  // THE ROW THE SEARCH PANE SHOWS: the one the reader last pressed while it is still a
+  // result, else the session in use when the query matched it, else the first result.
+  // The pane is never empty beside a list of answers, and it starts where the terminal
+  // switcher's cursor does: on the session the reader is in.
+  const [previewPick, setPreviewPick] = useState<string | null>(null);
+  if (!searching && previewPick !== null) setPreviewPick(null);
+  const preview = useMemo(() => {
+    if (!searching) return null;
+    let open: { session: Session; conn: GatewayConn } | null = null;
+    let first: { session: Session; conn: GatewayConn } | null = null;
+    for (const { machine, groups } of foundSections) {
+      for (const group of groups) {
+        for (const session of group.sessions) {
+          if (session.id === previewPick) return { session, conn: machine.conn };
+          if (sessionRowKey(machine.conn, session.id) === openRow) open ??= { session, conn: machine.conn };
+          first ??= { session, conn: machine.conn };
+        }
+      }
+    }
+    return open ?? first;
+  }, [searching, foundSections, previewPick, openRow]);
+  const previewId = preview?.session.id ?? null;
+  const openPreview = useCallback(() => {
+    if (!preview) return;
+    rowCommands.read?.(preview.conn, preview.session);
+    void rowCommands.open(preview.conn, preview.session.id);
+  }, [preview, rowCommands]);
+  // The list's rows answer no query: the search has its own rows, in its own dialog.
+  const rowContext = useMemo<SessionRowsContext>(
+    () => ({
+      getClient: clientFor,
+      drafts: draftMessages,
+      needle: '',
+      actions: rowActions,
+      openRow,
+      readFloors,
+      previewId: null,
+      preview: null,
+    }),
+    [draftMessages, rowActions, openRow, readFloors],
+  );
+  const foundContext = useMemo<SessionRowsContext>(
+    () => ({
+      ...rowContext,
+      needle: searchNeedle,
+      previewId,
+      preview: searching ? setPreviewPick : null,
+    }),
+    [rowContext, searchNeedle, previewId, searching],
   );
 
   // Project management uses gateway overview counts, matching the visible headers.
@@ -1717,6 +1777,161 @@ export function SessionsScreen({
     ) : null;
   if (loadError) return null;
 
+  // ONE MACHINE SWITCH, TWO PLACES: over the list, and under the search field, because a
+  // search asks the machine the switch has picked.
+  const machineSwitch = (
+    <div role="group" aria-label="Machines" className="flex min-w-0 flex-1">
+      <MachineSwitcher>
+        {/* The machine tabs are the groups, and exactly one is always active. */}
+        {switcherMachines.map((machine) => {
+          const key = machineKey(machine.conn);
+          const tally = tallies.get(key);
+          const name = machineLabel(machine.conn);
+          // A machine that is not answering cannot scope the screen to stale rows.
+          // Keep its name in place; its error-toned tile retries the connection,
+          // and the transport reason remains available in the title.
+          const isDown = Boolean(machine.error);
+          // A cached machine has not answered this run. Keep its pending state in
+          // the title; cached unread activity may still tint the tile.
+          const isChecking = !isDown && !machine.answered;
+          const retry = isDown ? retries.get(key) : undefined;
+          return (
+            <MachineTab
+              key={key}
+              isOn={scope === key}
+              hasUnread={!isDown && (tally?.unread ?? 0) > 0}
+              isDown={isDown}
+              note={
+                retry === 'busy'
+                  ? 'reconnecting...'
+                  : retry === 'failed'
+                    ? 'Unable to connect'
+                    : null
+              }
+              isNoteError={retry === 'failed'}
+              label={isDown ? `Reconnect to ${name}` : undefined}
+              title={
+                isDown
+                  ? `${name} is not answering — ${machine.error}`
+                  : isChecking
+                    ? `Checking ${name}…`
+                    : undefined
+              }
+              onClick={() => (isDown ? void retryMachine(machine.conn) : selectScope(key))}
+            >
+              {name}
+            </MachineTab>
+          );
+        })}
+      </MachineSwitcher>
+    </div>
+  );
+  // A search report gets its own line instead of compressing the machine switch.
+  const searchReport = searching && sessions !== null && (
+    <div className="order-last flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+      {/* A filter is a FLEET question, and the count it came back with is the
+          only proof it left this gateway. It is the one fact this row reports:
+          totals were the same numbers the project headers below already carry.
+          It counts the ROWS ON SCREEN, so it is spoken only once a needle has
+          actually been asked: inside a pause the list is still the last answer,
+          and before the first one there is nothing filtered to count. */}
+      {searched && (
+        <span className="whitespace-nowrap font-mono text-chip font-bold text-accent-ink">
+          {searchCounts.matches} {searchCounts.matches === 1 ? 'match' : 'matches'}
+        </span>
+      )}
+      {/* A search is a fleet ROUND TRIP over a transcript store, not a filter
+          over rows already here, so it has a DURATION and the row has to spend
+          it saying so — the report was waiting with nothing on screen but a
+          count that was really just "nothing yet". The same slot therefore
+          reports PROGRESS while machines are still reading ("searching 1 of 3
+          machines...") and the shipped tally the moment they have all answered;
+          the count beside it grows as each one lands, because every machine
+          paints the moment IT answers instead of behind the slowest. It is also
+          what a PAUSE says: the field is ahead of the needle the list answers,
+          and the honest word for that is the same one. */}
+      {searchPending ? (
+        <span
+          aria-live="polite"
+          className="whitespace-nowrap font-mono text-chip text-dialog-hint"
+        >
+          {searchAsked.length > 1
+            ? `searching ${searchAnswered.size} of ${searchAsked.length} machines...`
+            : 'searching...'}
+        </span>
+      ) : (
+        <>
+          {/* WHERE the query went, and only a fleet has an answer worth
+              printing: "across 2 of 3 machines" is the proof it left this
+              gateway. A solo user is told nothing they can act on. */}
+          {inScope.length > 1 && (
+            <span className="whitespace-nowrap font-mono text-chip text-dialog-hint">
+              across {searchCounts.machines} of {inScope.length} machines
+            </span>
+          )}
+          {/* A MACHINE THAT NEVER ANSWERED IS NOT A MACHINE THAT FOUND NOTHING,
+              and only this row can tell the reader which one it was: the search
+              covered less of the fleet than it was asked to, and every count
+              beside this is short by that much. In failure ink, because it is
+              the one part of the answer that did not arrive. */}
+          {searchUnreached.size > 0 && (
+            <span className="whitespace-nowrap font-mono text-chip text-err">
+              {searchUnreached.size} {searchUnreached.size === 1 ? 'machine' : 'machines'}{' '}
+              did not answer
+            </span>
+          )}
+        </>
+      )}
+    </div>
+  );
+  // THE SEARCH'S OWN LIST. Before a query it lists the recent sessions, while machines
+  // read their sessions or transcripts it says so, and once they all answered it says
+  // what came back.
+  const searchResults =
+    sessions === null ? (
+      <NavigatorSkeleton />
+    ) : foundSections.every(({ groups }) => groups.length === 0) ? (
+      <div className="px-5 py-16 text-center">
+        {/* A query whose answer has not come back yet is not a dead end, and saying "No
+            matching sessions" while every gateway is still reading its transcripts is the
+            screen lying about a result it does not have. */}
+        <p className="font-mono text-body font-bold text-white/70">
+          {searchPending
+            ? searching
+              ? 'Searching...'
+              : 'Reading recent sessions...'
+            : searching
+              ? 'No matching sessions'
+              : 'No recent sessions'}
+        </p>
+        <p aria-live="polite" className="mt-2 font-mono text-ui text-dialog-hint">
+          {searchPending
+            ? searchAsked.length > 1
+              ? `Read ${searchAnswered.size} of ${searchAsked.length} machines so far.`
+              : searching
+                ? 'Reading this machine’s transcripts.'
+                : 'Reading this machine’s sessions.'
+            : searching || searchUnreached.size > 0
+              ? searchVerdict
+              : 'Type a word from its title or messages.'}
+        </p>
+      </div>
+    ) : (
+      <MachineSections
+        sections={foundSections}
+        context={foundContext}
+        creation={projectCreation}
+        note={(machine) => {
+          const key = machineKey(machine.conn);
+          if (machine.sessions === null) return 'Reading sessions...';
+          if (searchUnreached.has(key)) return 'Could not reach this machine.';
+          if (!searchAnswered.has(key))
+            return searching ? 'Searching this machine...' : 'Reading this machine...';
+          return searching ? 'No matches on this machine.' : 'No recent sessions on this machine.';
+        }}
+      />
+    );
+
   return (
     <section
       aria-label="Sessions"
@@ -1738,116 +1953,14 @@ export function SessionsScreen({
       )}
       {/* The switch stays visible even for a fleet of one: it names the machine
           that owns the projects below. A borderless folder icon stands at the trailing
-          edge, and search reports take their own line. */}
+          edge. */}
       {/* The phone and desk sidebar use equal 12px vertical insets. On wider
           standalone layouts, the section already supplies the top inset. */}
       {showStrip && (
         <div
           className={`relative z-10 flex flex-wrap items-center gap-x-2 gap-y-2 px-3 py-3 ${isDesk ? '' : 'sm:pl-0 sm:pr-4 sm:pt-0'}`}
         >
-          <div role="group" aria-label="Machines" className="flex min-w-0 flex-1">
-            <MachineSwitcher>
-              {/* The machine tabs are the groups, and exactly one is always active. */}
-              {switcherMachines.map((machine) => {
-                const key = machineKey(machine.conn);
-                const tally = tallies.get(key);
-                const name = machineLabel(machine.conn);
-                // A machine that is not answering cannot scope the screen to stale rows.
-                // Keep its name in place; its error-toned tile retries the connection,
-                // and the transport reason remains available in the title.
-                const isDown = Boolean(machine.error);
-                // A cached machine has not answered this run. Keep its pending state in
-                // the title; cached unread activity may still tint the tile.
-                const isChecking = !isDown && !machine.answered;
-                const retry = isDown ? retries.get(key) : undefined;
-                return (
-                  <MachineTab
-                    key={key}
-                    isOn={scope === key}
-                    hasUnread={!isDown && (tally?.unread ?? 0) > 0}
-                    isDown={isDown}
-                    note={
-                      retry === 'busy'
-                        ? 'reconnecting...'
-                        : retry === 'failed'
-                          ? 'Unable to connect'
-                          : null
-                    }
-                    isNoteError={retry === 'failed'}
-                    label={isDown ? `Reconnect to ${name}` : undefined}
-                    title={
-                      isDown
-                        ? `${name} is not answering — ${machine.error}`
-                        : isChecking
-                          ? `Checking ${name}…`
-                          : undefined
-                    }
-                    onClick={() => (isDown ? void retryMachine(machine.conn) : selectScope(key))}
-                  >
-                    {name}
-                  </MachineTab>
-                );
-              })}
-            </MachineSwitcher>
-          </div>
-          {/* A search report gets its own line instead of compressing the machine switch. */}
-          {searching && sessions !== null && (
-            <div className="order-last flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-              {/* A filter is a FLEET question, and the count it came back with is the
-                  only proof it left this gateway. It is the one fact this row reports:
-                  totals were the same numbers the project headers below already carry.
-                  It counts the ROWS ON SCREEN, so it is spoken only once a needle has
-                  actually been asked: inside a pause the list is still the last answer,
-                  and before the first one there is nothing filtered to count. */}
-              {searched && (
-                <span className="whitespace-nowrap font-mono text-chip font-bold text-accent-ink">
-                  {searchCounts.matches} {searchCounts.matches === 1 ? 'match' : 'matches'}
-                </span>
-              )}
-              {/* A search is a fleet ROUND TRIP over a transcript store, not a filter
-                  over rows already here, so it has a DURATION and the row has to spend
-                  it saying so — the report was waiting with nothing on screen but a
-                  count that was really just "nothing yet". The same slot therefore
-                  reports PROGRESS while machines are still reading ("searching 1 of 3
-                  machines...") and the shipped tally the moment they have all answered;
-                  the count beside it grows as each one lands, because every machine
-                  paints the moment IT answers instead of behind the slowest. It is also
-                  what a PAUSE says: the field is ahead of the needle the list answers,
-                  and the honest word for that is the same one. */}
-              {searchPending ? (
-                <span
-                  aria-live="polite"
-                  className="whitespace-nowrap font-mono text-chip text-dialog-hint"
-                >
-                  {searchAsked.length > 1
-                    ? `searching ${searchAnswered.size} of ${searchAsked.length} machines...`
-                    : 'searching...'}
-                </span>
-              ) : (
-                <>
-                  {/* WHERE the query went, and only a fleet has an answer worth
-                      printing: "across 2 of 3 machines" is the proof it left this
-                      gateway. A solo user is told nothing they can act on. */}
-                  {inScope.length > 1 && (
-                    <span className="whitespace-nowrap font-mono text-chip text-dialog-hint">
-                      across {searchCounts.machines} of {inScope.length} machines
-                    </span>
-                  )}
-                  {/* A MACHINE THAT NEVER ANSWERED IS NOT A MACHINE THAT FOUND NOTHING,
-                      and only this row can tell the reader which one it was: the search
-                      covered less of the fleet than it was asked to, and every count
-                      beside this is short by that much. In failure ink, because it is
-                      the one part of the answer that did not arrive. */}
-                  {searchUnreached.size > 0 && (
-                    <span className="whitespace-nowrap font-mono text-chip text-err">
-                      {searchUnreached.size} {searchUnreached.size === 1 ? 'machine' : 'machines'}{' '}
-                      did not answer
-                    </span>
-                  )}
-                </>
-              )}
-            </div>
-          )}
+          {machineSwitch}
           <div className="flex shrink-0 items-center gap-2">
             {/* Only when no button can speak for it: a create started from this row's
                 own menu belongs to no project header. Every header-started create
@@ -1915,95 +2028,22 @@ export function SessionsScreen({
             <NavigatorSkeleton />
           ) : visible?.length === 0 && sections.every(({ groups }) => groups.length === 0) ? (
             <div className="px-5 py-16 text-center">
-              {/* A query whose answer has not come back yet is not a dead end, and
-                saying "No matching sessions" while every gateway is still reading
-                its transcripts is the screen lying about a result it does not
-                have. Outside search, this state means there is NO PROJECT: an empty
-                project still renders its own header and the New session action it owns. */}
-              <p className="font-mono text-body font-bold text-white/70">
-                {searchPending
-                  ? 'Searching...'
-                  : query
-                    ? 'No matching sessions'
-                    : 'No projects yet'}
+              {/* This state means there is NO PROJECT: an empty project still renders its
+                own header and the New session action it owns. */}
+              <p className="font-mono text-body font-bold text-white/70">No projects yet</p>
+              <p className="mt-2 font-mono text-ui text-dialog-hint">
+                Add a project to start a session.
               </p>
-              <p aria-live="polite" className="mt-2 font-mono text-ui text-dialog-hint">
-                {searchPending
-                  ? searchAsked.length > 1
-                    ? `Read ${searchAnswered.size} of ${searchAsked.length} machines so far.`
-                    : 'Reading this machine’s transcripts.'
-                  : query
-                    ? searchVerdict
-                    : 'Add a project to start a session.'}
-              </p>
-              {/* The field is in the app bar now, a screen away from this sentence, so the
-                way back to a full list is offered where the dead end is. A search still
-                in flight has no dead end to offer it for. */}
-              {query && !searchPending && (
-                <div className="mt-4 flex justify-center">
-                  <Button variant="secondary" onClick={() => onQuery('')}>
-                    Clear search
-                  </Button>
-                </div>
-              )}
             </div>
           ) : (
-            <div>
-              {sections.map(({ machine, groups, reading }, sectionIndex) => {
-                const key = machineKey(machine.conn);
-                return (
-                  <section
-                    key={key}
-                    aria-label={`${machineLabel(machine.conn)} projects`}
-                  >
-                    {/* Every machine keeps its own named panel and landmark, even when it
-                      is the only one in the fleet: the landmark is a NAME, not ink. */}
-                    {/* Reported (paraphrased: bin that rail on the left): a machine's
-                      hue used to run 2px down everything it owned and close it with a
-                      rule, and with three machines paired that stripe was the full
-                      height of the glass. The reader picks a machine in the switch
-                      above this list, not by comparing rows 800px apart, so where one
-                      computer ends is the trough this gap opens and the name its
-                      landmark carries — the first project of the second machine can
-                      still never read as the fifth project of the first. */}
-                    {sectionIndex > 0 && <MachineGap />}
-                    {/* The active tab directly above the card already names this machine, so
-                      the list has no second selected/unselected presentation to maintain. */}
-                    {groups.length === 0 ? (
-                      <div className="px-3 py-3 sm:px-4">
-                        <p className="font-mono text-meta text-dialog-hint">
-                          {machine.sessions === null
-                            ? 'Reading sessions...'
-                            : searching
-                              ? searchUnreached.has(key)
-                                ? 'Could not reach this machine.'
-                                : searchAnswered.has(key)
-                                  ? 'No matches on this machine.'
-                                  : 'Searching this machine...'
-                              : 'No projects on this machine yet.'}
-                        </p>
-                      </div>
-                    ) : (
-                      groups.map((group, groupIndex) => (
-                        // Nothing separates two projects: the band that opens the next
-                        // one brings its own paper and its own rule in over the name.
-                        <ProjectGroup
-                          key={`${key}\u0000${group.root}`}
-                          group={group}
-                          machine={machine}
-                          context={rowContext}
-                          reading={reading}
-                          creation={projectCreation}
-                          // The order already put the machine's live work on top; the
-                          // project it lands on is the one that opens by itself.
-                          initiallyOpen={groupIndex === 0}
-                        />
-                      ))
-                    )}
-                  </section>
-                );
-              })}
-            </div>
+            <MachineSections
+              sections={sections}
+              context={rowContext}
+              creation={projectCreation}
+              note={(machine) =>
+                machine.sessions === null ? 'Reading sessions...' : 'No projects on this machine yet.'
+              }
+            />
           )}
         </div>
 
@@ -2016,14 +2056,15 @@ export function SessionsScreen({
             <span>Reading sessions...</span>
           </footer>
         )}
-        {/* THE DESK'S OWN FOOTER, and it says only what is true here: `/` opens the
-            fleet search (`App`), and the count is the gateway's. The sidebar has room
-            for a footer without spending a row of the list on it. */}
+        {/* THE DESK'S OWN FOOTER, and it says only what is true here: `Ctrl+/` opens the
+            fleet search from anywhere, a field included (`App`), and the count is the
+            gateway's. The sidebar has room for a footer without spending a row of the
+            list on it. */}
         {isDesk && (
           <footer className="flex items-center justify-between gap-3 border-t border-dialog-edge bg-panel-2 px-3 py-1.5 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
             <span className="flex items-center gap-1.5">
               <kbd className="border border-dialog-edge px-1 font-mono text-chip normal-case">
-                /
+                Ctrl+/
               </kbd>
               Search
             </span>
@@ -2062,7 +2103,111 @@ export function SessionsScreen({
           }
         />
       )}
+      {isSearchOpen && (
+        <SessionSearchDialog
+          query={query}
+          onQuery={onQuery}
+          onClose={onCloseSearch}
+          scope={
+            showStrip ? (
+              <>
+                {machineSwitch}
+                {searchReport}
+              </>
+            ) : (
+              searchReport
+            )
+          }
+          results={searchResults}
+          messages={
+            preview && (
+              <SearchMessages
+                title={preview.session.title?.trim() || 'Untitled session'}
+                match={matches?.get(preview.session.id) ?? null}
+                query={searchNeedle}
+                isSearching={searchPending}
+                onOpen={openPreview}
+                className="min-h-0 flex-1"
+              />
+            )
+          }
+        />
+      )}
     </section>
+  );
+}
+
+/** `rows` led by `open`, the session in use, and otherwise in their own order. */
+function openFirst(rows: Session[], open: Session | null | undefined): Session[] {
+  return open ? [open, ...rows.filter((session) => session.id !== open.id)] : rows;
+}
+
+type MachineSection = {
+  machine: FleetMachine;
+  reading: ProjectGroupReading;
+  groups: ProjectGroupView[];
+};
+
+/**
+ * One named section per machine: its projects, or the note that stands in for them.
+ * The session list and the search dialog both stand their rows on it.
+ */
+function MachineSections({
+  sections,
+  context,
+  creation,
+  note,
+}: {
+  sections: MachineSection[];
+  context: SessionRowsContext;
+  creation: ProjectCreation;
+  /** What a machine with no project to show says instead. */
+  note: (machine: FleetMachine) => string;
+}) {
+  return (
+    <div>
+      {sections.map(({ machine, groups, reading }, sectionIndex) => {
+        const key = machineKey(machine.conn);
+        return (
+          <section key={key} aria-label={`${machineLabel(machine.conn)} projects`}>
+            {/* Every machine keeps its own named panel and landmark, even when it
+              is the only one in the fleet: the landmark is a NAME, not ink. */}
+            {/* Reported (paraphrased: bin that rail on the left): a machine's
+              hue used to run 2px down everything it owned and close it with a
+              rule, and with three machines paired that stripe was the full
+              height of the glass. The reader picks a machine in the switch
+              above this list, not by comparing rows 800px apart, so where one
+              computer ends is the trough this gap opens and the name its
+              landmark carries — the first project of the second machine can
+              still never read as the fifth project of the first. */}
+            {sectionIndex > 0 && <MachineGap />}
+            {/* The active tab directly above the card already names this machine, so
+              the list has no second selected/unselected presentation to maintain. */}
+            {groups.length === 0 ? (
+              <div className="px-3 py-3 sm:px-4">
+                <p className="font-mono text-meta text-dialog-hint">{note(machine)}</p>
+              </div>
+            ) : (
+              groups.map((group, groupIndex) => (
+                // Nothing separates two projects: the band that opens the next
+                // one brings its own paper and its own rule in over the name.
+                <ProjectGroup
+                  key={`${key}\u0000${group.root}`}
+                  group={group}
+                  machine={machine}
+                  context={context}
+                  reading={reading}
+                  creation={creation}
+                  // The order already put the machine's live work on top; the
+                  // project it lands on is the one that opens by itself.
+                  initiallyOpen={groupIndex === 0}
+                />
+              ))
+            )}
+          </section>
+        );
+      })}
+    </div>
   );
 }
 

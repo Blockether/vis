@@ -17,6 +17,8 @@ apps and the command line.
   each state.
 - **You need a conversation from last week.** [Find the
   session](#find-a-saved-session) by its title or by something said in it.
+- **You write a gateway client that must find sessions.** Use the [gateway search
+  route](#search-through-the-gateway-api).
 - **You want to try another approach without losing this conversation.** [Fork
   the session](#fork-a-session).
 - **The last few turns went wrong and you want to go back.** [Fork from an earlier
@@ -86,9 +88,16 @@ draft. To run them, submit the draft again.
 
 ### In the terminal
 
-Press **Ctrl+X s** to open the session switcher. Type to search session titles
-and conversation text, choose a session with **↑** and **↓**, and press **Enter**
-to open it. The switcher also has these keys:
+Press **Ctrl+X s** to open the session switcher. Before you type, it lists your
+recent sessions. Type to search session titles and conversation text, choose a
+session with **↑** and **↓**, and press **Enter** to open it.
+
+When you search, a border divides the switcher. The left side lists the sessions
+that match. The right side shows the matching messages of the selected session.
+Each message shows who wrote it, **You** or **Vis**, and when. Your search words
+are highlighted. In a narrow terminal, the messages are below the list.
+
+The switcher also has these keys:
 
 | Keys | What they do |
 |---|---|
@@ -116,7 +125,52 @@ choose **new updates**. The list you were reading does not move.
 ### In the desktop or phone app
 
 The app lists sessions under their projects, with groups inside each project.
-Choose a session to open it. On a phone, pull the session list down to search it.
+Choose a session to open it.
+
+To search your sessions, choose the search icon in the app bar. On a phone, you can also
+pull the session list down. The search opens in its own dialog. The session list behind
+the dialog does not change.
+
+The dialog opens on your recent sessions, with the most recent at the top. Type to
+search session titles and conversation text. When you type, the search also finds
+sessions that you archived.
+
+With a keyboard, press **Ctrl+/** to open the search. This shortcut also works while you
+type in a text box. When you are not typing, you can also press **/**.
+
+A border divides the dialog in the same way as the terminal switcher. The sessions that
+match are on the left. The matching messages of one session are on the right, with your
+search words highlighted. On a phone or in a narrow window, the messages are below the
+sessions.
+
+The messages of the first session in the results show first. To see the messages of a
+different session, choose that session. To open the session, choose it again. You
+can also choose **Open** or one of its messages. To close the search, press **Esc** or
+choose the close button.
+
+### Search through the gateway API
+
+The terminal and the apps search sessions through one gateway route. To use the
+same search in your own program, send this request through an authenticated gateway
+client:
+
+```text
+GET /v1/sessions/actions/search?q=release%20notes&limit=20
+```
+
+The answer lists session rows with the same fields as `GET /v1/sessions` rows. The
+rows are in order of recent activity, with the most recent first.
+
+- With an empty `q`, the answer lists your recent sessions.
+- With words in `q`, the answer lists the sessions whose title or conversation text
+  matches. Each of these rows also has a `match` object. It tells where the words
+  matched and gives short text around each match.
+- `limit` sets the page size, from 1 to 1000. The default is 50.
+- `total` is the number of sessions in all pages.
+- To read the next page, send the `next_cursor` value as `after`. When `has_more`
+  is `false`, there are no more pages.
+- `archived=exclude` lists active sessions, `include` lists all sessions and `only`
+  lists archived sessions. The default is `exclude`.
 
 ## Fork a session
 

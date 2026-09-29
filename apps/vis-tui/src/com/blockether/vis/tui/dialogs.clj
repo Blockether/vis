@@ -18,7 +18,7 @@
     [com.googlecode.lanterna.gui2 Direction HitRegionMap ScrollBar ScrollBar$DragResult]
     [com.googlecode.lanterna.input InputCoalescer KeyStroke KeyType MouseAction MouseActionType]
     [com.googlecode.lanterna.screen TerminalScreen]
-    [java.text SimpleDateFormat]
+    [java.text Normalizer Normalizer$Form SimpleDateFormat]
     [java.util Locale TimeZone]))
 
 (set! *unchecked-math* :warn-on-boxed)
@@ -5427,12 +5427,6 @@
    under a held arrow key."
   8)
 
-(def ^:private navigator-search-rows
-  "How many rows the picker fetches for search hits sitting OUTSIDE the window it holds,
-   freshest match first. Session search is ranked across the whole store, so a query can
-   name more sessions than a reader will ever scroll; this bounds what that costs."
-  60)
-
 (defn- navigator-page-in?
   "Whether the picker should pull its next page. A QUERY is answered by the server's search
    across the whole store, not by loading more rows, so paging only ever walks an unfiltered
@@ -5445,7 +5439,7 @@
 
 (defn- navigator-merge-sessions
   "`held` plus the rows it does not already carry, in the order they arrived. A page and a
-   search hydration can name the same session, and the picker paints it once."
+   search answer can name the same session, and the picker paints it once."
   [held incoming]
   (first (reduce (fn [[rows seen] row]
                    (let [id (str (get row "id"))]
@@ -5571,55 +5565,94 @@
                                   group)))
                  (partition-by (juxt :dir :session-group-id) matched)))))
 
+(defn- navigator-fold
+  "Fold `s` the way the gateway's `unicode61` index compares words: lower case and
+   without diacritics. Each char folds to ONE char, so an index into the result is
+   an index into `s`."
+  ^String [s]
+  (let [^String s
+        (str (or s ""))
+
+        sb
+        (StringBuilder. (.length s))]
+
+    (dotimes [i (.length s)]
+      (let [c (.charAt s i)
+            base (if (< (int c) 128)
+                   c
+                   (.charAt (Normalizer/normalize (String/valueOf c) Normalizer$Form/NFD) 0))]
+
+        (.append sb (Character/toLowerCase (char base)))))
+    (.toString sb)))
+
+(defn- navigator-search-terms
+  "The words of a search, folded like `navigator-fold`, longest first. The gateway
+   matches each word on its own at the start of a word in the text, so the message
+   pane marks every word and not the whole query."
+  [query]
+  (->> (str/split (navigator-fold (str/trim (str (or query "")))) #"[^\p{L}\p{N}]+")
+       (remove str/blank?)
+       distinct
+       (sort-by count #(compare %2 %1))
+       vec))
+
+(defn- navigator-word-start?
+  [^String folded i]
+  (let [i (long i)]
+    (or (zero? i) (not (Character/isLetterOrDigit (.charAt folded (dec i)))))))
+
 (defn- navigator-highlight-segments
-  "Split `s` into `[text bold?]` segments, bolding case-insensitive occurrences
-   of `needle` so the matched search term stands out in a plain snippet line."
-  [s needle]
+  "Split `s` into `[text match?]` segments. A segment matches where a word of
+   `query` starts a word of `s`, compared without case or diacritics, so the
+   words the gateway matched stand out in its snippet."
+  [s query]
   (let [s
         (str (or s ""))
 
-        needle
-        (str/trim (str (or needle "")))]
+        terms
+        (navigator-search-terms query)]
 
-    (if (str/blank? needle)
+    (if (or (empty? terms) (str/blank? s))
       [[s false]]
-      (let [ls
-            (str/lower-case s)
-
-            ln
-            (str/lower-case needle)
+      (let [folded
+            (navigator-fold s)
 
             n
-            (count needle)]
+            (count s)]
 
-        (loop [from
+        (loop [i
+               0
+
+               from
                0
 
                acc
                []]
 
-          (let [i (str/index-of ls ln from)]
-            (if (nil? i)
-              (conj acc [(subs s from) false])
-              (recur (+ (long i) n)
-                     (cond-> acc
-                       (> (long i) (long from))
-                       (conj [(subs s from i) false])
+          (if (>= i n)
+            (cond-> acc
+              (< from n)
+              (conj [(subs s from) false]))
+            (if-let [^String term (when (navigator-word-start? folded i)
+                                    (some (fn [^String term]
+                                            (when (.startsWith folded term (int i)) term))
+                                          terms))]
+              (let [end (+ i (.length term))]
+                (recur end
+                       end
+                       (cond-> acc
+                         (< from i)
+                         (conj [(subs s from i) false])
 
-                       :always
-                       (conj [(subs s i (+ (long i) n)) true]))))))))))
-
-(def ^:private navigator-inline-hits
-  "Snippet lines painted INLINE under one matching session row. The companion
-   app renders every hit under every match, so the TUI does the same; the
-   server already caps its payload at six hits per session."
-  6)
+                         :always
+                         (conj [(subs s i end) true]))))
+              (recur (inc i) from acc))))))))
 
 (defn- navigator-preview-entries
-  "Transcript-style preview rows for a selected body match: ONE row per MATCH
-   HIT, newest first — `You` for a hit in the user's own request, `Vis` for one
-   in the LLM reply. The server sends several hits per session, so a session
-   that matched twenty times no longer shows a single arbitrary line.
+  "Message rows for a body match: ONE row per MATCH HIT, newest first — `You`
+   for a hit in the user's own request, `Vis` for one in the assistant's reply or
+   its thinking (`:side`). `:at` is the message time in epoch ms when the gateway
+   sent it.
 
    Falls back to the legacy single request/reply snippet pair when the caller
    supplied no `:hits`."
@@ -5628,31 +5661,29 @@
     (let [hits (into []
                      (comp (filter #(not (str/blank? (:snippet %))))
                            (map (fn [h]
-                                  (if (= :request (:side h))
-                                    {:label "You" :role :user :text (:snippet h)}
-                                    {:label "Vis" :role :ai :text (:snippet h)}))))
+                                  (let [side (or (:side h) :reply)]
+                                    {:label (if (= :request side) "You" "Vis")
+                                     :role (if (= :request side) :user :ai)
+                                     :side side
+                                     :at (:at h)
+                                     :text (:snippet h)}))))
                      (:hits match))]
       (if (seq hits)
         hits
         (cond-> []
           (not (str/blank? (:request-snippet match)))
-          (conj {:label "You" :role :user :text (:request-snippet match)})
+          (conj {:label "You" :role :user :side :request :text (:request-snippet match)})
 
           (not (str/blank? (:reply-snippet match)))
-          (conj {:label "Vis" :role :ai :text (:reply-snippet match)}))))))
-
-(defn- navigator-hit-entries
-  "Inline snippet rows for one visible list row — empty when the row matched by
-   title/project only and carries no transcript hits."
-  [entry]
-  (vec (take navigator-inline-hits (navigator-preview-entries (:transcript-match entry)))))
+          (conj {:label "Vis" :role :ai :side :reply :text (:reply-snippet match)}))))))
 
 (defn- navigator-block-heights
   "Painted line count per session: optional project heading and top margin,
-   title row, compact metadata row, transcript snippets, then one blank line."
+   title row, compact metadata row, then one blank line. The matching messages
+   of the selected row paint in their own pane (`navigator-preview-lines`)."
   [visible-rows]
   (mapv (fn [entry]
-          (+ 3 (if (:group-start? entry) 2 0) (count (navigator-hit-entries entry))))
+          (if (:group-start? entry) 5 3))
         visible-rows))
 
 (defn- navigator-scroll-start
@@ -5695,8 +5726,8 @@
 
 (defn- navigator-visible-blocks
   "Paint plan from `start`, clipped by terminal lines. Every emitted session
-   keeps its hierarchy/title/metadata base. Overflow snippets are clipped first;
-   the blank spacer is omitted only when that base exactly fills the viewport."
+   keeps its hierarchy/title/metadata base; the blank spacer is omitted only
+   when that base exactly fills the viewport."
   [visible-rows start budget]
   (let [n
         (count visible-rows)
@@ -5723,21 +5754,165 @@
 
           (if (> (+ (long used) base) budget)
             acc
-            (let [remaining
-                  (max 0 (- budget (long used) base))
-
-                  spacer?
-                  (pos? remaining)
-
-                  hit-capacity
-                  (max 0 (- remaining (if spacer? 1 0)))
-
-                  hits
-                  (vec (take hit-capacity (navigator-hit-entries entry)))]
-
+            (let [spacer? (< (+ (long used) base) budget)]
               (recur (inc i)
-                     (+ (long used) base (count hits) (if spacer? 1 0))
-                     (conj acc {:idx i :entry entry :hits hits :spacer? spacer?})))))))))
+                     (+ (long used) base (if spacer? 1 0))
+                     (conj acc {:idx i :entry entry :spacer? spacer?})))))))))
+
+(def ^:private navigator-min-height
+  "Box height the picker asks for at least, so a search has room for the
+   matching messages even when there are only a few sessions."
+  24)
+
+(def ^:private navigator-side-min-width
+  "Narrowest dialog interior that keeps the message pane BESIDE the list. A
+   narrower dialog stacks the pane under the list."
+  84)
+
+(defn- navigator-pane-layout
+  "Geometry of the picker body under the query row. Without a query the list
+   fills the body (`:single`). With a query a border splits it: the list on the
+   left and the matching messages of the selected row on the right (`:side`), or
+   the messages under the list when the dialog is narrow (`:stacked`). A stacked
+   list takes only the `list-lines` its rows paint, up to three fifths of the body,
+   and the messages take the rest. `:divider` is the border's column (`:side`) or
+   row (`:stacked`)."
+  [{:keys [left right inner-w]} content-top content-h searching? list-lines]
+  (let [left
+        (long left)
+
+        right
+        (long right)
+
+        inner-w
+        (long inner-w)
+
+        body-x
+        (+ left 2)
+
+        body-top
+        (+ (long content-top) 2)
+
+        avail
+        (max 2 (- (long content-h) 2))
+
+        body-w
+        (max 1 (- inner-w 4))
+
+        single
+        {:mode :single
+         :body-x body-x
+         :body-w body-w
+         :scrollbar-col (+ body-x body-w 1)
+         :body-top body-top
+         :list-budget avail}]
+
+    (cond (not searching?) single
+          (>= inner-w (long navigator-side-min-width))
+          (let [list-inner
+                (long (p/clamp (quot (* 45 inner-w) 100) 34 72))
+
+                divider
+                (+ left 1 list-inner)]
+
+            (assoc single
+              :mode :side
+              :body-w (max 1 (- list-inner 4))
+              :scrollbar-col (- divider 2)
+              :divider divider
+              :preview-x (+ divider 2)
+              :preview-w (max 1 (- right divider 3))
+              :preview-top body-top
+              :preview-h avail))
+          :else (let [pane-min
+                      (max 4 (quot (* 2 avail) 5))
+
+                      list-budget
+                      (max 2 (min (long list-lines) (- avail 1 pane-min)))
+
+                      divider
+                      (+ body-top list-budget)]
+
+                  (assoc single
+                    :mode :stacked
+                    :list-budget list-budget
+                    :divider divider
+                    :preview-x body-x
+                    :preview-w (max 1 (- right left 3))
+                    :preview-top (inc divider)
+                    :preview-h (max 0 (- avail 1 list-budget)))))))
+
+(defn- navigator-preview-lines
+  "Paint plan of the message pane for the selected `entry`, at most `height`
+   lines of `width` columns. Each line is a map by `:kind`: `:title` the
+   session's title; `:label` one message's author (`:label`, `:role`), place and
+   time; `:text` one wrapped line of its snippet as `navigator-highlight-segments`;
+   `:note` why no message shows; `:more` the matched messages that did not fit;
+   `:blank` a spacer. Whole messages fit first: only a first message taller than
+   the pane is clipped."
+  [entry query {:keys [width height pending?]}]
+  (let [width
+        (max 1 (long width))
+
+        height
+        (max 0 (long height))
+
+        match
+        (:transcript-match entry)
+
+        head
+        [{:kind :title :text (str (:title entry))} {:kind :blank}]
+
+        more
+        (fn [n]
+          {:kind :more
+           :count n
+           :text (str "+" n (if (= 1 (long n)) " more message" " more messages"))})
+
+        groups
+        (mapv (fn [{:keys [label role side at text]}]
+                (into [{:kind :label
+                        :label label
+                        :role role
+                        :place (when (= :thinking side) "thinking")
+                        :stamp (when (some? at) (navigator-stamp at))}]
+                      (map (fn [line]
+                             {:kind :text :segments (navigator-highlight-segments line query)}))
+                      (p/word-wrap (str/trim (str/replace (str text) #"\s+" " ")) width)))
+              (navigator-preview-entries match))
+
+        lines
+        (cond (nil? entry) (if pending? [{:kind :note :text "Searching messages…"}] [])
+              (seq groups) (loop [acc
+                                  head
+
+                                  groups
+                                  groups
+
+                                  shown
+                                  0]
+
+                             (if-let [group (first groups)]
+                               (let [gap (if (pos? shown) [{:kind :blank}] [])
+                                     later (dec (count groups))
+                                     ;; While more messages follow, one line stays free for the
+                                     ;; note that counts them.
+                                     room (- height (if (pos? later) 1 0))]
+
+                                 (cond (<= (+ (count acc) (count gap) (count group)) room)
+                                       (recur (into (into acc gap) group) (rest groups) (inc shown))
+                                       (zero? shown)
+                                       (cond-> (into acc (take (max 0 (- room (count acc))) group))
+                                         (pos? later)
+                                         (conj (more later)))
+                                       :else (conj acc (more (count groups)))))
+                               acc))
+              pending? (conj head {:kind :note :text "Searching messages…"})
+              (= :title (:kind match))
+              (conj head {:kind :note :text "The title matches. No message matches."})
+              :else (conj head {:kind :note :text "No message matches."}))]
+
+    (vec (take height lines))))
 
 (defn- navigator-band-label
   "The header over one BAND of rows: where they live, WHICH SET of that project they are -
@@ -5820,44 +5995,83 @@
     (p/set-colors! g t/dialog-hint t/dialog-bg)
     (p/put-str! g content-x (inc (long row)) (p/ellipsize metadata (max 1 (- (long width) 2))))))
 
-(defn- draw-navigator-hit-line!
-  "Paint one compact full-width transcript hit beneath its owning session."
-  [g x row width query {:keys [label role text]}]
-  (let [label
-        (str label)
+(defn- draw-navigator-segments!
+  "Paint `navigator-highlight-segments` from `x`, clipped to `width` columns. A
+   matched segment is marked in the accent ink, like a highlighter pen."
+  [g x row width segments]
+  (loop [segments
+         segments
 
-        text-x
-        (+ (long x) 2 (p/display-width label) 2)
+         cx
+         (long x)
 
-        available
-        (max 0 (- (long width) 4 (p/display-width label)))]
+         remaining
+         (long width)]
 
-    (p/set-colors! g (if (= role :user) t/user-role-fg t/ai-role-fg) t/dialog-bg)
-    (p/styled g [p/BOLD] (p/put-str! g (+ (long x) 2) row label))
-    (loop [segments
-           (navigator-highlight-segments text query)
+    (when (and (seq segments) (pos? remaining))
+      (let [[segment match?]
+            (first segments)
 
-           cx
-           text-x
+            segment
+            (p/truncate-cols segment remaining)
 
-           remaining
-           available]
+            segment-w
+            (long (p/display-width segment))]
 
-      (when (and (seq segments) (pos? (long remaining)))
-        (let [[segment bold?]
-              (first segments)
+        (if match?
+          (do (p/set-colors! g t/dialog-bg t/dialog-hint-key)
+              (p/styled g [p/BOLD] (p/put-str! g cx row segment)))
+          (do (p/set-colors! g t/dialog-fg t/dialog-bg) (p/put-str! g cx row segment)))
+        (recur (rest segments) (+ cx segment-w) (- remaining segment-w))))))
 
-              segment
-              (p/truncate-cols segment remaining)
+(defn- draw-navigator-preview!
+  "Paint the message pane from its `navigator-preview-lines` plan: the selected
+   session's title, then for each matching message its author, place and time
+   over its snippet."
+  [g x top width lines]
+  (let [width (long width)]
+    (doseq [[i line] (map-indexed vector lines)]
+      (let [row (+ (long top) (long i))]
+        (case (:kind line)
+          :title
+          (do (p/set-colors! g t/dialog-fg t/dialog-bg)
+              (p/styled g [p/BOLD] (p/put-str! g x row (p/ellipsize (:text line) width))))
 
-              segment-w
-              (p/display-width segment)]
+          :label
+          (let [label (str (:label line))
+                label-w (long (p/display-width label))
+                details (str/join "  ·  " (remove nil? [(:place line) (:stamp line)]))]
 
-          (p/set-colors! g t/dialog-fg t/dialog-bg)
-          (if bold?
-            (p/styled g [p/BOLD] (p/put-str! g cx row segment))
-            (p/put-str! g cx row segment))
-          (recur (rest segments) (+ (long cx) segment-w) (- (long remaining) segment-w)))))))
+            (p/set-colors! g (if (= :user (:role line)) t/user-role-fg t/ai-role-fg) t/dialog-bg)
+            (p/styled g [p/BOLD] (p/put-str! g x row (p/ellipsize label width)))
+            (when (and (seq details) (< (+ label-w 2) width))
+              (p/set-colors! g t/dialog-hint t/dialog-bg)
+              (p/put-str! g (+ (long x) label-w 2) row (p/ellipsize details (- width label-w 2)))))
+
+          :text
+          (draw-navigator-segments! g x row width (:segments line))
+
+          (:note :more)
+          (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+              (p/put-str! g x row (p/ellipsize (:text line) width)))
+
+          nil)))))
+
+(defn- draw-navigator-divider!
+  "Paint the border between the list and the message pane, from the query
+   separator down to the footer separator and joined to both."
+  [g col content-top content-h]
+  (let [top
+        (inc (long content-top))
+
+        bottom
+        (+ (long content-top) (long content-h))]
+
+    (p/set-colors! g t/dialog-border t/dialog-bg)
+    (p/set-char! g col top p/BOX_T_DOWN)
+    (doseq [row (range (inc top) bottom)]
+      (p/set-char! g col row p/BOX_V))
+    (p/set-char! g col bottom p/BOX_T_UP)))
 
 (defn navigator-dialog!
   "C-x s session picker. `:load-initial` and `:load-more` fetch pages off the
@@ -5911,30 +6125,15 @@
         load-more
         (:load-more opts)
 
-        fetch-sessions
-        (:fetch-sessions opts)
-
-        search-transcript-ids
-        (:search-transcript-ids opts)
-
-        ;; ONE search: the gateway's matches, plus - on the search's own thread, before the
-        ;; result is painted - the rows for the hits outside the window.
+        ;; ONE search: the gateway answers the matches WITH their rows, so a hit outside
+        ;; the window joins the list on the search's own thread, before the result is
+        ;; painted, and no second read fetches it.
         search-fn
-        (when search-transcript-ids
+        (when-let [search-sessions (:search-sessions opts)]
           (fn [q]
-            (let [matches (or (search-transcript-ids q) {})]
-              (when (and fetch-sessions (seq matches))
-                (let [held (into #{} (map #(str (get % "id"))) @loaded-sessions)
-                      missing (->> matches
-                                   (remove #(contains? held (str (key %))))
-                                   (sort-by #(long (or (:order (val %)) Long/MAX_VALUE)))
-                                   (take navigator-search-rows)
-                                   (mapv key))]
-
-                  (when (seq missing)
-                    (when-let [rows (seq (try (fetch-sessions missing) (catch Throwable _ nil)))]
-                      (swap! loaded-sessions navigator-merge-sessions rows)))))
-              matches)))
+            (let [{:keys [matches sessions]} (search-sessions q)]
+              (when (seq sessions) (swap! loaded-sessions navigator-merge-sessions sessions))
+              (or matches {}))))
 
         transcript-ids
         (atom {})
@@ -6050,7 +6249,7 @@
                                      rows-n
                                      "Sessions"
                                      (- cols 4)
-                                     (+ (long desired-lines) 4 (long navigator-inline-hits)))
+                                     (max (long navigator-min-height) (+ (long desired-lines) 4)))
 
                 {:keys [left right inner-w]}
                 bounds
@@ -6061,35 +6260,39 @@
                 query-row
                 content-top
 
-                sb-gutter
-                2
-
                 content-w
-                (long (max 1 (- (long inner-w) sb-gutter)))
+                (long (max 1 (- (long inner-w) 2)))
+
+                block-heights
+                (navigator-block-heights visible-rows)
+
+                {:keys [mode divider preview-x preview-top preview-w preview-h] :as panes}
+                (navigator-pane-layout bounds
+                                       content-top
+                                       content-h
+                                       (not (str/blank? @query))
+                                       (reduce + 0 block-heights))
 
                 body-x
-                (+ (long left) 2)
+                (long (:body-x panes))
 
                 body-w
-                (long (max 1 (- content-w 2)))
+                (long (:body-w panes))
 
                 scrollbar-col
-                (+ body-x body-w 1)
+                (long (:scrollbar-col panes))
 
                 body-top
-                (+ (long content-top) 2)
+                (long (:body-top panes))
 
                 list-budget
-                (max 2 (- (long content-h) 2))
+                (long (:list-budget panes))
 
                 _
                 (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
                 _
                 (page-in! total)
-
-                block-heights
-                (navigator-block-heights visible-rows)
 
                 _
                 (swap! scroll #(navigator-scroll-start block-heights @selected % list-budget))
@@ -6132,20 +6335,31 @@
                 (loop [remaining blocks
                        row body-top]
 
-                  (when-let [{:keys [idx entry hits spacer?]} (first remaining)]
+                  (when-let [{:keys [idx entry spacer?]} (first remaining)]
                     (let [row (long row)
                           row (if (:group-start? entry)
                                 (do (draw-navigator-group! g body-x row body-w entry) (+ row 2))
-                                row)
-                          spacer-row (+ row 2 (count hits))]
+                                row)]
 
                       (when (< row (+ body-top list-budget))
                         (draw-navigator-session! g body-x row body-w entry (= idx @selected)))
-                      (doseq [[hit-idx hit] (map-indexed vector hits)]
-                        (let [hit-row (+ row 2 (long hit-idx))]
-                          (when (< hit-row (+ body-top list-budget))
-                            (draw-navigator-hit-line! g body-x hit-row body-w @query hit))))
-                      (recur (rest remaining) (+ spacer-row (if spacer? 1 0)))))))
+                      (recur (rest remaining) (+ row 2 (if spacer? 1 0)))))))
+              ;; A query splits the body: the list keeps its side of the border and
+              ;; the selected row's matching messages fill the other.
+              (when divider
+                (if (= :side mode)
+                  (draw-navigator-divider! g divider content-top content-h)
+                  (do (p/set-colors! g t/dialog-border t/dialog-bg)
+                      (p/draw-separator! g left right divider)))
+                (draw-navigator-preview!
+                  g
+                  preview-x
+                  preview-top
+                  preview-w
+                  (navigator-preview-lines
+                    (when (pos? total) (nth visible-rows @selected))
+                    (or @transcript-query @query)
+                    {:width preview-w :height preview-h :pending? (some? @search-task)})))
               (when (> total page-rows)
                 (ScrollBar/draw g
                                 Direction/VERTICAL

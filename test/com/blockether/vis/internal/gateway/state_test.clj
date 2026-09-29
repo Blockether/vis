@@ -3044,6 +3044,62 @@
 
 (defn- navigator-ids [opts] (mapv #(get % "id") (:sessions (navigator-page opts))))
 
+(defn- navigator-search
+  "`state/search-sessions` over `navigator-fleet`, the store answering `matches`."
+  [opts matches]
+  (with-redefs-fn {#'lp/db-info (constantly nil)
+                   #'persistance/db-session-turn-stats (constantly nil)
+                   #'lp/by-channel (constantly navigator-fleet)
+                   #'bus/live-turns (constantly {"busy" "turn-1"})
+                   #'bus/waiting-requests (constantly {})
+                   #'state/soul (fn [sid]
+                                  {"id" (str sid)})
+                   #'state/search-session-matches (fn [_ _]
+                                                    matches)}
+    (fn []
+      (state/search-sessions opts))))
+
+;; User report (paraphrased: "the session search should show recent sessions, like the
+;; terminal's session list, and every surface should use one search API"): an empty
+;; search showed nothing, and each client fetched the rows of its hits with a second read
+;; and merged them into its own list. `search-sessions` answers both with list rows.
+(defdescribe
+  gateway-search-sessions-test
+  (it "answers the RECENTS for a blank query, by content time alone"
+      ;; The navigator lifts the star and the running turn; the recents do not.
+      (expect (= ["starred" "busy" "used"] (navigator-ids {})))
+      (let [head (navigator-search {:query "  " :limit 2} nil)]
+        (expect (= ["used" "starred"] (mapv #(get % "id") (:sessions head))))
+        (expect (= 3 (:total head)))
+        (expect (:has-more head))
+        (expect (= "0:-2400:starred" (:next-cursor head)))
+        (expect (not-any? #(contains? % "match") (:sessions head)))
+        (let [tail (navigator-search {:query "" :limit 2 :after (:next-cursor head)} nil)]
+          (expect (= ["busy"] (mapv #(get % "id") (:sessions tail))))
+          (expect (not (:has-more tail))))))
+  (it "answers the matched list rows with their match, in the same order"
+      (let [answer (navigator-search {:query "pager" :limit 10}
+                                     [{:session_id "busy" :rank 2 :is_in_reply true :hits []}
+                                      {:session_id "blank" :rank 0 :is_in_title true :hits []}
+                                      {:session_id "used"
+                                       :rank 0
+                                       :is_in_title true
+                                       :hits [{:side "request" :snippet "the pager" :at 5}]}])]
+        ;; `blank` matched, but an abandoned tap is not in the list, so it is not a hit.
+        (expect (= ["used" "busy"] (mapv #(get % "id") (:sessions answer))))
+        (expect (= 2 (:total answer)))
+        (expect (= "pager" (:query answer)))
+        (expect
+          (= {"rank" 0 "is_in_title" true "hits" [{"side" "request" "snippet" "the pager" "at" 5}]}
+             (get (first (:sessions answer)) "match")))
+        (expect (= 2 (get-in (second (:sessions answer)) ["match" "rank"])))))
+  (it "answers nothing, not the whole list, when nothing matched"
+      (let [answer (navigator-search {:query "zzz" :limit 10} [])]
+        (expect (= [] (:sessions answer)))
+        (expect (zero? (:total answer)))
+        (expect (false? (:has-more answer)))
+        (expect (nil? (:next-cursor answer))))))
+
 (defdescribe gateway-owns-the-navigator-list-test
              "Which sessions are in the list, and where each one sits, is the GATEWAY's answer."
              (it "leaves out the taps nobody ever used, and counts what is left"

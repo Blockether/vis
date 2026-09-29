@@ -17,8 +17,6 @@ import {
   scopedMachines,
   scopedConns,
   searchFanout,
-  SEARCH_UNPLACED,
-  searchOrder,
   searchTally,
   scopedSessions,
   sessionInputCount,
@@ -26,7 +24,6 @@ import {
   sessionOrder,
   servedUnread,
   timeLabel,
-  withSearchHits,
   type FleetMachine,
 } from './fleet';
 import type { GatewayConn, GatewayOverview, Session } from './types';
@@ -427,76 +424,6 @@ describe('search across the fleet', () => {
     ];
     expect(searchTally(filtered)).toEqual({ matches: 2, machines: 2 });
     expect(searchTally([])).toEqual({ matches: 0, machines: 0 });
-  });
-
-  // Regression, user report (paraphrased: "the search results are not sorted by
-  // freshness — I care about freshness, not the band a hit landed in"). The app
-  // used to sort matched rows by `SessionMatch.rank`, so every year-old title
-  // holding the word sat above the session touched this morning. It now paints
-  // the PLACE the gateway gave each match: the gateway's own freshest-first
-  // order.
-
-  it('paints the gateway order — the place of a match, never its relevance band', () => {
-    const rows = [session('reply'), session('ask'), session('named'), session('other')];
-    // The gateway answered freshest first; the BANDS run the other way.
-    const place: Record<string, number> = { reply: 0, ask: 1, other: 2, named: 3 };
-    expect(searchOrder(rows, (row) => place[row.id] ?? 9).map((row) => row.id)).toEqual([
-      'reply',
-      'ask',
-      'other',
-      'named',
-    ]);
-  });
-
-  it('keeps the incoming order between rows the gateway placed together', () => {
-    const rows = [session('second'), session('first')];
-    expect(searchOrder(rows, () => 0).map((row) => row.id)).toEqual(['second', 'first']);
-  });
-
-  it('sorts a row the gateway did not place after every placed one', () => {
-    const rows = [session('draft-only'), session('thinking')];
-    const place: Record<string, number> = { thinking: 7 };
-    expect(
-      searchOrder(rows, (row) => place[row.id] ?? SEARCH_UNPLACED).map((row) => row.id),
-    ).toEqual(['thinking', 'draft-only']);
-    expect(SEARCH_UNPLACED).toBeGreaterThan(1_000_000);
-  });
-});
-
-// Regression (reported in-app: "I have the problem with searching the sessions …
-// on iOS"): the session list is paged, and the filter intersected the gateway's
-// server-side transcript hits with the rows already loaded — a match in a session
-// that had not been paged in was silently dropped, so search only ever found what
-// was already on screen.
-describe('withSearchHits', () => {
-  it('adds the hit sessions the paged list has not loaded, newest first', () => {
-    const loaded = [session('a', { modified_at: '2024-05-02T10:00:00Z' })];
-    const hits = [
-      session('a', { modified_at: '2024-05-02T10:00:00Z' }),
-      session('old', { modified_at: '2024-01-01T10:00:00Z' }),
-      session('newer', { modified_at: '2024-04-01T10:00:00Z' }),
-    ];
-    expect(withSearchHits(loaded, hits).map((row) => row.id)).toEqual(['a', 'newer', 'old']);
-  });
-
-  it('keeps the list identical when there is nothing to hydrate', () => {
-    const loaded = [session('a')];
-    expect(withSearchHits(loaded, [])).toBe(loaded);
-    expect(withSearchHits(loaded, [session('a')])).toBe(loaded);
-  });
-
-  // Regression, user report (paraphrased: "opening a session suddenly makes it the
-  // freshest one and it jumps up"): ranking read the gateway's touch clock, so a
-  // session merely read outranked one that had actually changed.
-  it('ranks hydrated hits by content time, never by the last touch', () => {
-    const loaded = [session('a', { modified_at: '2024-05-02T10:00:00Z' })];
-    const hits = [
-      session('touched', {
-        created_at: '2024-01-01T10:00:00Z',
-      }),
-      session('changed', { modified_at: '2024-03-01T10:00:00Z' }),
-    ];
-    expect(withSearchHits(loaded, hits).map((row) => row.id)).toEqual(['a', 'changed', 'touched']);
   });
 });
 

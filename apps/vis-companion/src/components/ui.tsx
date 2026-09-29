@@ -1044,13 +1044,12 @@ export function ViewParagraph({
 }
 
 /**
- * THE WAY BACK, and there is only one of it.
+ * THE BAND'S LEADING EDGE: a stretched, notch-aware column carrying one glyph.
  *
- * A full-screen surface that stands ON another one — a session over its list —
- * leaves by the leading half of its own title band: a stretched, notch-aware
- * column carrying one chevron. It is not an `IconButton`: an icon button is a
- * box inside a row, and this one IS the row's left edge, so it owns the safe
- * area the phone puts outside the paper and grows with the band's height.
+ * The phone's way back from a session and the desk's list toggle both stand here. It
+ * is not an `IconButton`: an icon button is a box inside a row, and this one IS the
+ * row's left edge, so it owns the safe area the phone puts outside the paper and grows
+ * with the band's height.
  *
  * It is INK on the band's own paper, never a plate. `--dialog-title` IS the accent in
  * `blockether-dark`, so a filled way-out painted a yellow block into the navigation
@@ -1058,26 +1057,14 @@ export function ViewParagraph({
  * which is two filled accents on one screen and a bar outranking its own screen. A bar
  * carries navigation, and navigation is a glyph in the page's ink.
  */
-const bandEdgeClass = `${iconControlClass} grid w-[calc(2.75rem+env(safe-area-inset-left))] shrink-0 place-items-center bg-transparent pl-[env(safe-area-inset-left)] text-white transition-[color,transform,translate,scale,rotate] duration-150 enabled:hover:text-accent-ink active:scale-[0.96] motion-reduce:transition-none mouse:w-[calc(2.5rem+env(safe-area-inset-left))]`;
-
-export function BackButton({
-  label,
-  className = '',
-  ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
-  return (
-    <button type="button" aria-label={label} className={`${bandEdgeClass} ${className}`} {...props}>
-      <ChevronIcon back className="size-4" aria-hidden />
-    </button>
-  );
-}
+export const BAND_EDGE_CLASS = `${iconControlClass} grid w-[calc(2.75rem+env(safe-area-inset-left))] shrink-0 place-items-center bg-transparent pl-[env(safe-area-inset-left)] text-white transition-[color,transform,translate,scale,rotate] duration-150 enabled:hover:text-accent-ink active:scale-[0.96] motion-reduce:transition-none mouse:w-[calc(2.5rem+env(safe-area-inset-left))]`;
 
 /**
  * THE DESK'S WAY BACK TO THE LIST, and it stands where the phone's arrow does.
  *
  * On a desk the session list is a column beside the transcript, so a session has
  * nothing to go back to — but the column can be put away to read wide, and this is
- * the ONE way to it. It wears `BackButton`'s own leading column with a panel glyph
+ * the ONE way to it. It wears the phone's way back, `BAND_EDGE_CLASS`, with a panel glyph
  * in it, so it sits at the seam between the list and the pane it toggles and keeps
  * its place whether the list is up or away. In the app bar, beside the mark, it read
  * as a piece of the logo; at the pane's edge it reads as what it is.
@@ -1094,7 +1081,7 @@ export function SidebarToggle({
       aria-label={label}
       title={label}
       aria-expanded={isShown}
-      className={`${bandEdgeClass} ${className}`}
+      className={`${BAND_EDGE_CLASS} ${className}`}
       {...props}
     >
       <SidebarIcon className="size-4" aria-hidden />
@@ -2242,8 +2229,13 @@ export function Modal({
    * `wide` is for the application's two-column settings (this device and the
    * machines). Same scrim, same physics, same desktop width, but a fixed
    * desktop height. Below `sm:` the columns stack and stop at content.
+   *
+   * `split` is a search: the sessions found beside the messages that matched.
+   * It is the whole phone, like `full`, because a query and two result panes
+   * need every row of the glass, and from `sm:` up it takes the width of `wide`
+   * at the fixed desktop height.
    */
-  size?: 'full' | 'fit' | 'fit-wide' | 'wide';
+  size?: 'full' | 'fit' | 'fit-wide' | 'wide' | 'split';
   /**
    * WHAT THE DIALOG STANDS OVER. `app` is every dialog that belongs to the whole
    * application — settings, the machine fleet, a confirmation — and it covers the
@@ -2267,11 +2259,11 @@ export function Modal({
   // same stroke leaves a session. This box IS the layer on top: it drags where it
   // stands, and what it uncovers is already behind it, so nothing waits under.
   const { pane: edgeBack } = useEdgeBack(onDismiss, { isLayer: true });
-  // ONLY `full` PAPERS THE WHOLE PHONE. Reported over settings on an iPhone: with the
+  // ONLY `full` AND `split` PAPER THE WHOLE PHONE. Reported over settings on an iPhone: with the
   // application fold closed and three machines listed, two thirds of the glass below the
   // last row was blank panel. A sheet that stops at its content rises from the bottom
   // edge instead, and its ceiling is the glass minus the notch it never stands under.
-  const stopsAtContent = size !== 'full';
+  const stopsAtContent = size !== 'full' && size !== 'split';
   // A DIALOG THAT BELONGS TO ONE SESSION TAKES THAT SESSION WHOLE. The desktop box keeps a
   // question from papering the window, but a session layer is already bounded by the pane it
   // stands in, so the same cap left an opened run as a small window in the middle of a pane it
@@ -2282,7 +2274,7 @@ export function Modal({
     : fillsPane
       ? 'sm:h-full'
       : DIALOG_DESKTOP_HEIGHT;
-  const desktopWidth = size === 'wide' || size === 'fit-wide'
+  const desktopWidth = size === 'wide' || size === 'fit-wide' || size === 'split'
     ? 'sm:max-w-4xl mouse:max-w-6xl'
     : 'sm:max-w-xl';
   const boxWidth = fillsPane ? 'sm:max-w-none' : desktopWidth;
@@ -2317,7 +2309,8 @@ export function Modal({
           two columns wide, and 36rem split in half is two columns of nothing.
           `fit-wide` shares that width for one-column settings without the fixed
           desktop height. Both stop at content on the phone, where a short fleet
-          otherwise left the glass below the last row as blank paper.
+          otherwise left the glass below the last row as blank paper. `split` is
+          a search with two result panes: `wide` on a desk, `full` on a phone.
 
            A dialog that stands in ONE SESSION is the third, and it is a PLACE rather than
            a size: its layer is the session pane, not the window, so the box takes all of

@@ -143,7 +143,8 @@ function mount(
       context={{
         getClient: () => client as unknown as GatewayClient,
         drafts: {},
-        matches: null,
+        previewId: null,
+        preview: null,
         needle,
         openRow: null,
         actions: {

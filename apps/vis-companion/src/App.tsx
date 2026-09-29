@@ -67,7 +67,7 @@ import {
 import { discardSharedFiles } from './lib/share-files';
 import { applyTheme, resolveTheme } from './lib/theme';
 import { getThemePref } from './lib/storage';
-import { BackButton, CloseButton, IconButton, Input } from './components/ui';
+import { IconButton } from './components/ui';
 import { SearchIcon, SettingsIcon } from './components/icons';
 import { ImproveLauncher } from './components/ImproveLauncher';
 import { ConnectScreen } from './screens/ConnectScreen';
@@ -352,14 +352,17 @@ export function App() {
   // chooser: until a composer takes it, every screen that could receive it has
   // to be able to say what is waiting.
   const [pendingShare, setPendingShare] = useState<SharedPayload | null>(peekPendingShare);
-  // The search question is fleet-wide, so the SHELL owns it: the bar asks it and the
-  // list answers it. Kept here rather than in `SessionsScreen` so the field can sit
-  // above every machine chip instead of under the one that names a machine.
+  // The search question is fleet-wide, so the SHELL owns it: the bar opens the search
+  // dialog, and the list answers in it (`SessionSearchDialog`).
   const [query, setQuery] = useState('');
-  // The search PAGE: the bar becomes a way back plus the field, and the list under it
-  // is the answer. It is shell state rather than the header's own because leaving it
-  // clears the query the list is reading.
+  // The search DIALOG is open. It is shell state rather than the list's own because the
+  // bar opens it, and every way into a session closes it with the query it reads.
   const [searching, setSearching] = useState(false);
+  // Leaving the search clears its query, so the next search starts empty.
+  const closeSearch = useCallback(() => {
+    setSearching(false);
+    setQuery('');
+  }, []);
   const [openTarget, setOpenTarget] = useState<{
     conn: GatewayConn;
     sid: string;
@@ -482,9 +485,10 @@ export function App() {
   const openSharedTarget = useCallback(
     (conn: GatewayConn, sid: string, fresh = false) => {
       claimPendingShare();
+      closeSearch();
       openGatewaySession(conn, sid, fresh);
     },
-    [openGatewaySession],
+    [closeSearch, openGatewaySession],
   );
   // Overlays are screen-scoped, and a navigation can land while one is up: see
   // `isSessionEntered`. Dismissing here covers every way in — list tap, deep
@@ -500,7 +504,8 @@ export function App() {
     if (previous && !screen) void forgetOpenSession().catch(() => undefined);
     if (!isSessionEntered(previous, screen)) return;
     setSettingsDestination(null);
-  }, [screen]);
+    closeSearch();
+  }, [screen, closeSearch]);
 
   // The pointer measures absence, not reading time: re-stamp it as the app goes
   // to the background, so a relaunch minutes after iOS discarded the WebContent
@@ -1317,14 +1322,8 @@ export function App() {
     <Shell>
       {(isChromeVisible || edgeBack.isSwiping) && (
         <Header
-          query={query}
-          onQuery={setQuery}
-          isSearching={searching}
-          onSearch={() => setSearching(true)}
-          onCloseSearch={() => {
-            setSearching(false);
-            setQuery('');
-          }}
+          // There is nothing to search until a session list stands behind the dialog.
+          onSearch={sessionsMounted ? openSearch : null}
           onAppSettings={openSettings}
           improve={
             <ImproveLauncher
@@ -1375,11 +1374,12 @@ export function App() {
               // the row the human taps IS the destination.
               share={pendingShare}
               onDiscardShare={discardShare}
-              // The list's own way into the search page: a pull at the top of it
-              // opens the same door the app bar's glass is, and the page it opens is
-              // this screen with the query over it — so while it is already open,
-              // the gesture has nothing left to open and stands down.
+              // The list's own way into the search dialog: a pull at the top of it
+              // opens the same door the app bar's glass is — so while the dialog is
+              // already open, the gesture has nothing left to open and stands down.
               onSearch={searching ? null : openSearch}
+              isSearchOpen={searching}
+              onCloseSearch={closeSearch}
             />
           </div>
         )}
@@ -1456,102 +1456,41 @@ export function App() {
   );
 }
 
-/** The header's fleet-wide search owns its value, clear action, and focus return. */
-function HeaderSearchField({
-  inputRef,
-  value,
-  onValue,
-  label,
-  placeholder,
-  className = '',
-}: {
-  inputRef: React.RefObject<HTMLInputElement | null>;
-  value: string;
-  onValue: (value: string) => void;
-  label: string;
-  placeholder?: string;
-  className?: string;
-}) {
-  return (
-    <Input
-      ref={inputRef}
-      value={value}
-      onChange={(event) => onValue(event.target.value)}
-      type="search"
-      enterKeyHint="search"
-      autoCorrect="off"
-      autoCapitalize="none"
-      spellCheck={false}
-      className={className}
-      placeholder={placeholder}
-      aria-label={label}
-      icon={<SearchIcon className="size-3" />}
-      action={
-        value ? (
-          <CloseButton
-            label="Clear search"
-            onClick={() => {
-              onValue('');
-              inputRef.current?.focus();
-            }}
-          />
-        ) : null
-      }
-    />
-  );
-}
 export function Header({
-  query,
-  onQuery,
-  isSearching,
   onSearch,
-  onCloseSearch,
   onAppSettings,
   improve,
 }: {
-  query: string;
-  onQuery: (next: string) => void;
-  /** Whether the search PAGE is the screen right now. */
-  isSearching: boolean;
-  onSearch: () => void;
-  onCloseSearch: () => void;
+  /** Open the search dialog. `null` while there is no session list to search. */
+  onSearch: (() => void) | null;
   onAppSettings: () => void;
   improve?: ReactNode;
 }) {
-  // `/` opens the search from anywhere on the shell — unannounced on purpose, and
-  // never stolen from someone already typing. Escape closes it again, because a page
-  // that took the whole bar has to be leavable without aiming at a control.
-  const searchRef = useRef<HTMLInputElement>(null);
+  // `/` opens the search from anywhere on the shell except a field, where it is a
+  // character someone is typing. `Ctrl+/` is never a character, so it opens the search
+  // from a field too: the chord a desktop or browser reader presses mid-sentence. A
+  // Windows AltGr layout types `/` as Ctrl+Alt, so Alt disqualifies the chord. Another
+  // dialog keeps the keyboard while it holds focus, and a key something inside already
+  // handled stays its own. The search dialog it opens owns Escape.
   useEffect(() => {
+    if (!onSearch) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        if (!isSearching) return;
-        event.preventDefault();
-        onCloseSearch();
-        return;
-      }
-      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key !== '/' || event.metaKey || event.altKey || event.defaultPrevented) return;
       const at = document.activeElement as HTMLElement | null;
-      if (
-        at &&
+      if (at?.closest('[role="dialog"]')) return;
+      const isField =
+        !!at &&
         (at.isContentEditable ||
           at.tagName === 'INPUT' ||
           at.tagName === 'TEXTAREA' ||
-          at.tagName === 'SELECT')
-      ) {
-        return;
-      }
+          at.tagName === 'SELECT');
+      if (isField && !event.ctrlKey) return;
       event.preventDefault();
       onSearch();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isSearching, onCloseSearch, onSearch]);
-  // The caret belongs to the page that just opened: a search screen a human still has
-  // to tap into is a screen that asked for the tap twice.
-  useEffect(() => {
-    if (isSearching) searchRef.current?.focus();
-  }, [isSearching]);
+  }, [onSearch]);
   // Reserve the iPhone island inside the header background so every action sits
   // below it. iPad has no island; browsers keep their visible status-bar inset.
   const nativeIos = isIosNativeApp();
@@ -1559,75 +1498,59 @@ export function Header({
     <header
       className={`relative z-30 shrink-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)] ${nativeIos ? 'sm:pt-0' : ''}`}
     >
-      {/* SEARCH IS A PAGE, AND THE BAR IS ITS DOOR.
+      {/* SEARCH IS A DIALOG, AND THE BAR IS ITS DOOR.
 
           The open field used to hold the bar's whole middle at every width — the
           widest box on a 390px phone, permanently, for a question that is asked in
-          bursts. It is a MARK now: one magnifying glass beside the cog, and pressing
-          it turns the whole screen into the search — the bar becomes the way back
-          plus the field, and everything under it is the answer. That is why nothing
-          else rides the bar while it is open: a fleet-wide query is the screen, not a
-          filter parked in a corner of it.
-
-          Leaving the page clears the query, so the list a human comes back to is the
-          one they left rather than a silently filtered copy of it. */}
-      {isSearching ? (
-        <div className="flex h-12 w-full items-stretch pr-[max(0.75rem,env(safe-area-inset-right))] sm:pr-[max(1rem,env(safe-area-inset-right))]">
-          <BackButton label="Close search" onClick={onCloseSearch} />
-          <div className="ml-3 flex min-w-0 flex-1 items-center">
-            <HeaderSearchField
-              inputRef={searchRef}
-              value={query}
-              onValue={onQuery}
-              placeholder="Search all machines…"
-              label="Search sessions on every machine"
-            />
-          </div>
+          bursts. Then the glass turned the bar into the field and filtered the list
+          under it, so a search took over the list the reader was working from. Now
+          the glass beside the cog opens the search in its own dialog
+          (`SessionSearchDialog`), and the list behind it stays as the reader left it. */}
+      <div className="flex w-full items-center gap-3 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))]">
+        {/* THE MARK IS AN ILLUSTRATION, NOT A GLYPH. An eye outline, an iris, a
+            pupil, a highlight, a smile and seven rays share the box, so barely a
+            third of it is ink and it reads smaller than it measures; under 24px a
+            1x screen washes the pupil to grey and closes the smile. It takes the
+            scale's own rung, half the bar's height, never a pixel fitted by hand to
+            the file's proportion. */}
+        {/* AND ITS CANVAS IS NOT ITS CENTRE. The file's top fifth holds only the
+            rays — hairlines that wash out at this rung — so a box centred on the
+            bar leaves the eye itself 2px under the bar's middle, so it reads lower
+            than the wordmark. The nudge is that offset, a twelfth of the mark's
+            height, and it moves the ink only:
+            the box stays where the row put it. */}
+        <div className="flex h-12 items-center gap-2.5" aria-label="Vis">
+          <img src="/vis-logo.png" alt="" className="h-6 w-7 -translate-y-0.5 object-contain" />
+          {/* The face stays in foreground ink. Blockether Dark shares Light's yellow
+              hard offset rather than the dialog's black shadow. */}
+          <span className="font-mono text-head font-extrabold tracking-[0.14em] text-white [text-shadow:2px_2px_0_var(--dialog-shadow)] blockether-dark:[text-shadow:2px_2px_0_var(--primary)]">
+            VIS
+          </span>
         </div>
-      ) : (
-        <div className="flex w-full items-center gap-3 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))]">
-          {/* THE MARK IS AN ILLUSTRATION, NOT A GLYPH. An eye outline, an iris, a
-              pupil, a highlight, a smile and seven rays share the box, so barely a
-              third of it is ink and it reads smaller than it measures; under 24px a
-              1x screen washes the pupil to grey and closes the smile. It takes the
-              scale's own rung, half the bar's height, never a pixel fitted by hand to
-              the file's proportion. */}
-          {/* AND ITS CANVAS IS NOT ITS CENTRE. The file's top fifth holds only the
-              rays — hairlines that wash out at this rung — so a box centred on the
-              bar leaves the eye itself 2px under the bar's middle, so it reads lower
-              than the wordmark. The nudge is that offset, a twelfth of the mark's
-              height, and it moves the ink only:
-              the box stays where the row put it. */}
-          <div className="flex h-12 items-center gap-2.5" aria-label="Vis">
-            <img src="/vis-logo.png" alt="" className="h-6 w-7 -translate-y-0.5 object-contain" />
-            {/* The face stays in foreground ink. Blockether Dark shares Light's yellow
-                hard offset rather than the dialog's black shadow. */}
-            <span className="font-mono text-head font-extrabold tracking-[0.14em] text-white [text-shadow:2px_2px_0_var(--dialog-shadow)] blockether-dark:[text-shadow:2px_2px_0_var(--primary)]">
-              VIS
-            </span>
-          </div>
-          {/* Global destinations share the same labelled icon controls. */}
-          <div className="ml-auto flex h-12 items-center gap-2">
+        {/* Global destinations share the same labelled icon controls. */}
+        <div className="ml-auto flex h-12 items-center gap-2">
+          {onSearch && (
             <IconButton
               type="button"
               label="Search all machines"
-              title="Search all machines"
+              title="Search all machines (Ctrl+/)"
+              aria-keyshortcuts="Control+/ /"
               onClick={onSearch}
             >
               <SearchIcon className="size-4" />
             </IconButton>
-            {improve}
-            <IconButton
-              type="button"
-              label="Open preferences"
-              title="Preferences"
-              onClick={onAppSettings}
-            >
-              <SettingsIcon className="size-4" />
-            </IconButton>
-          </div>
+          )}
+          {improve}
+          <IconButton
+            type="button"
+            label="Open preferences"
+            title="Preferences"
+            onClick={onAppSettings}
+          >
+            <SettingsIcon className="size-4" />
+          </IconButton>
         </div>
-      )}
+      </div>
     </header>
   );
 }

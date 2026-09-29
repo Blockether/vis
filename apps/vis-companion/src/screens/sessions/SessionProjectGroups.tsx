@@ -67,7 +67,6 @@ import {
   GatewayError,
   type GatewayClient,
   type ProjectWindows,
-  type SessionMatch,
 } from '../../lib/gateway';
 import { GROUP_COLORS, groupColor, groupSwatch } from '../../lib/group-colors';
 import { isIosAppOnMac } from '../../lib/host';
@@ -480,7 +479,13 @@ type SessionClient = (conn: GatewayConn) => GatewayClient;
 export type SessionRowsContext = {
   getClient: SessionClient;
   drafts: DraftMessageStore;
-  matches: Map<string, SessionMatch> | null;
+  /** The row whose matching messages the search pane shows; null outside a search. */
+  previewId: string | null;
+  /**
+   * Show a row's matching messages in the search pane. Set only while a search is up:
+   * then a press on another row previews it, and a press on the previewed row opens it.
+   */
+  preview: ((sid: string) => void) | null;
   needle: string;
   actions: SessionListActions;
   /**
@@ -553,7 +558,7 @@ export const ProjectGroup = memo(function ProjectGroup({
 }) {
   const { label: project, root, sessions, tally } = group;
   const { conn, sessions: list } = machine;
-  const { getClient, drafts, matches, needle, actions: rowActions, openRow } = context;
+  const { getClient, drafts, needle, actions: rowActions, openRow, previewId, preview } = context;
   const { pageSize, isVisible } = reading;
   const { state: creating, start: onNewSession } = creation;
   const base = useMemo(() => getClient(conn).base, [conn, getClient]);
@@ -1294,11 +1299,20 @@ export const ProjectGroup = memo(function ProjectGroup({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedIds.length]);
+  // A SEARCH PREVIEWS BEFORE IT OPENS. The pane beside the list shows one row's matching
+  // messages: a press on another row moves the pane to it, and a press on the row it
+  // already shows opens that session. The terminal switcher does the same with its
+  // cursor and Enter.
+  const previews = (id: string): boolean => {
+    if (!preview || previewId === id) return false;
+    preview(id);
+    return true;
+  };
   const onSelectionClick = (id: string, event: MouseEvent<HTMLButtonElement>): boolean => {
     if (!hasHardwarePointer()) {
       anchor.current = { id, scope: selectionScope };
       setSelection(null);
-      return false;
+      return previews(id);
     }
     // On Apple hardware Command selects; Control is the row's context-menu gesture.
     const isApple = isIosAppOnMac() || /Mac|iP(ad|hone|od)/.test(navigator.platform || navigator.userAgent);
@@ -1321,7 +1335,7 @@ export const ProjectGroup = memo(function ProjectGroup({
       // instead of opening the row; keyboard activation and double-click still open it.
       if (selectedIds.length > 1 && selectedSet.has(id) && event.detail === 1) return true;
       setSelection(null);
-      return false;
+      return previews(id);
     }
     event.preventDefault();
     const start = anchor.current?.scope === selectionScope
@@ -1537,7 +1551,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           group={groupById.get(typeof session.group_id === 'string' ? session.group_id : '') ?? null}
           draft={drafts[draftMessageKey(base, session.id)] ?? EMPTY_DRAFT_MESSAGE}
           conn={conn}
-          match={matches?.get(session.id) ?? null}
+          isPreviewed={previewId === session.id}
           needle={needle}
           commands={soleGroup ? soleGroupCommands : rowCommands}
           deletion={deletion}

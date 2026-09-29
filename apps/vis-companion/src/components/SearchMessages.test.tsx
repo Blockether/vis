@@ -1,40 +1,42 @@
 // @vitest-environment jsdom
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { STORY_GATEWAYS, STORY_SESSION_ROW, STORY_SESSION_SEARCH_MATCH } from '../dev/story-data';
-import { EMPTY_DRAFT_MESSAGE } from '../lib/draft-messages';
+import { STORY_SESSION_SEARCH_MATCH } from '../dev/story-data';
+import { timeLabel } from '../lib/fleet';
 import type { SessionMatch } from '../lib/gateway';
-import { SessionRow } from './SessionList';
+import { SearchMessages } from './SearchMessages';
 
-function row(match: SessionMatch = STORY_SESSION_SEARCH_MATCH, needle = 'windows') {
-  return render(
-    <SessionRow
-      session={STORY_SESSION_ROW}
-      group={null}
-      draft={EMPTY_DRAFT_MESSAGE}
-      conn={STORY_GATEWAYS[0]}
+function pane({
+  match = STORY_SESSION_SEARCH_MATCH,
+  query = 'windows',
+  title = 'Release checks',
+  isSearching = false,
+}: { match?: SessionMatch | null; query?: string; title?: string; isSearching?: boolean } = {}) {
+  const onOpen = vi.fn();
+  const view = render(
+    <SearchMessages
+      title={title}
       match={match}
-      needle={needle}
-      commands={{
-        open: vi.fn(),
-        rename: vi.fn(async () => {}),
-        requestDelete: vi.fn(),
-        toggleStar: vi.fn(),
-      }}
-      deletion={null}
+      query={query}
+      isSearching={isSearching}
+      onOpen={onOpen}
     />,
   );
+  return { ...view, onOpen };
 }
 
 function snippet(text: string): SessionMatch {
   return { ...STORY_SESSION_SEARCH_MATCH, hits: [{ side: 'reply', snippet: text, at: null }] };
 }
 
-describe('session search previews', () => {
+const marks = (container: HTMLElement) =>
+  [...container.querySelectorAll('mark')].map((mark) => mark.textContent);
+
+describe('search messages pane', () => {
   // Regression, user screenshot: search displayed raw Markdown and highlighted its source.
   it('renders inline Markdown and highlights visible text within each mark', () => {
-    const { container } = row();
+    const { container } = pane();
 
     expect(container.querySelector('strong')).toHaveTextContent('Windows');
     expect(container.querySelector('em')).toHaveTextContent('macOS');
@@ -45,26 +47,38 @@ describe('session search previews', () => {
     expect(container.querySelector('del mark')).toHaveTextContent('Windows');
     expect(container.querySelectorAll('mark')).toHaveLength(6);
     expect(container.textContent).not.toMatch(/\*\*|~~|`|https:\/\//);
-    expect(screen.getAllByText('Vis')).toHaveLength(2);
-    expect(screen.getByText('You')).toBeInTheDocument();
   });
 
-  it('keeps search text literal and case-insensitive, including regex punctuation', () => {
-    const { container } = row(snippet('**win(dows)+** and WIN(DOWS)+, not windows'), 'win(dows)+');
+  it('labels each message with who wrote it, where and when', () => {
+    pane();
+    const items = screen.getAllByRole('listitem');
 
-    expect([...container.querySelectorAll('mark')].map((mark) => mark.textContent)).toEqual([
-      'win(dows)+',
-      'WIN(DOWS)+',
+    expect(items.map((item) => within(item).getByText(/^(You|Vis)$/).textContent)).toEqual([
+      'You',
+      'Vis',
+      'Vis',
     ]);
+    expect(within(items[2]).getByText('thinking')).toBeVisible();
+    const at = new Date(STORY_SESSION_SEARCH_MATCH.hits[0].at!).toISOString();
+    expect(within(items[0]).getByText(timeLabel(at))).toBeVisible();
+  });
+
+  it('marks each query word on its own, without case, and reads punctuation as a break', () => {
+    const { container } = pane({
+      match: snippet('**win(dows)+** and WIN(DOWS)+, not windows'),
+      query: 'win(dows)+',
+    });
+
+    expect(marks(container)).toEqual(['win', 'dows', 'WIN', 'DOWS', 'win']);
     expect(container.querySelector('strong mark')).toBeInTheDocument();
   });
 
   it('keeps code literal and external content inert while preserving labels', () => {
-    const { container } = row(
-      snippet(
+    const { container } = pane({
+      match: snippet(
         '`<Windows>` [Windows docs](javascript:alert%281%29) ![Windows screenshot](https://example.com/image.png) <script>alert(1)</script>',
       ),
-    );
+    });
 
     expect(container.querySelector('code')).toHaveTextContent('<Windows>');
     expect(container.querySelector('a, img, script')).toBeNull();
@@ -76,26 +90,28 @@ describe('session search previews', () => {
   });
 
   it('renders without highlights for an empty query or a match only in a URL', () => {
-    const { container, unmount } = row(
-      snippet('**Windows** ![diagram](https://example.com/image.png)'),
-      '',
-    );
+    const { container, unmount } = pane({
+      match: snippet('**Windows** ![diagram](https://example.com/image.png)'),
+      query: '',
+    });
     expect(container.querySelector('strong')).toHaveTextContent('Windows');
     expect(container.querySelector('mark, img')).toBeNull();
     expect(container.textContent).toContain('diagram');
     unmount();
 
-    const next = row(snippet('[Documentation](https://example.com/Windows)'));
+    const next = pane({ match: snippet('[Documentation](https://example.com/Windows)') });
     expect(next.container.textContent).toContain('Documentation');
     expect(next.container.querySelector('mark, a')).toBeNull();
   });
 
   it('renders fallback request and reply snippets through the same Markdown path', () => {
-    const { container } = row({
-      ...STORY_SESSION_SEARCH_MATCH,
-      hits: [],
-      requestSnippet: '  **Windows** request  ',
-      replySnippet: '_Windows_ reply',
+    const { container } = pane({
+      match: {
+        ...STORY_SESSION_SEARCH_MATCH,
+        hits: [],
+        requestSnippet: '  **Windows** request  ',
+        replySnippet: '_Windows_ reply',
+      },
     });
 
     expect(container.querySelector('strong mark')).toHaveTextContent('Windows');
@@ -105,9 +121,9 @@ describe('session search previews', () => {
   });
 
   it('keeps block Markdown compact and preserves its words', () => {
-    const { container } = row(
-      snippet('# Windows checks\n\n- **Windows** passes\n- `Windows` is enabled'),
-    );
+    const { container } = pane({
+      match: snippet('# Windows checks\n\n- **Windows** passes\n- `Windows` is enabled'),
+    });
 
     expect(container.textContent).toContain('Windows checks');
     expect(container.textContent).toContain('Windows passes');
@@ -116,16 +132,37 @@ describe('session search previews', () => {
     expect(container.querySelectorAll('mark')).toHaveLength(3);
   });
 
-  it('does not add an empty preview for a title-only match', () => {
-    const { container } = row({
+  it('says why there is no message to show', () => {
+    const titleOnly: SessionMatch = {
       ...STORY_SESSION_SEARCH_MATCH,
+      inTitle: true,
       hits: [],
       requestSnippet: '  ',
       replySnippet: null,
-    });
-
+    };
+    const { container, unmount } = pane({ title: 'Windows release', match: titleOnly });
+    expect(screen.getByText('The title matches. No message matches.')).toBeVisible();
     expect(screen.queryByText('You')).toBeNull();
     expect(screen.queryByText('Vis')).toBeNull();
-    expect(container.querySelector('mark')).toBeNull();
+    expect(marks(container)).toEqual(['Windows']);
+    unmount();
+
+    pane({ match: null, isSearching: true });
+    expect(screen.getByText('Searching messages...')).toBeVisible();
+  });
+
+  it('says so when neither the title nor a message matches', () => {
+    pane({ match: null });
+    expect(screen.getByText('No message matches.')).toBeVisible();
+  });
+
+  it('opens the session from the Open button or from any message', () => {
+    const { onOpen } = pane();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    for (const item of screen.getAllByRole('listitem')) {
+      fireEvent.click(within(item).getByRole('button'));
+    }
+    expect(onOpen).toHaveBeenCalledTimes(4);
   });
 });

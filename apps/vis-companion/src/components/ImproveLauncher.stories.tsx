@@ -19,11 +19,7 @@ export function ImproveHeaderPreview({ mode = 'human' }: { mode?: ImproveMode })
   }, [mode]);
   return ready ? (
     <Header
-      query=""
-      onQuery={fn()}
-      isSearching={false}
       onSearch={fn()}
-      onCloseSearch={fn()}
       onAppSettings={fn()}
       improve={
         <ImproveLauncher gateways={[STORY_GATEWAYS[0]]} primaryUrl={STORY_GATEWAYS[0].url} />

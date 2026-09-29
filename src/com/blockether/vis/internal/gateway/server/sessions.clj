@@ -337,34 +337,57 @@
           {:status 304 :headers base :body nil}
           (update (http/json-response payload) :headers merge base))))))
 
-(defn- search-sessions-handler
-  "GET /v1/sessions/actions/search?q=&channel= — the answer to `q`, in the
-   LIST's own order.
+(def ^:private search-session-window
+  "Rows one search answer carries when the caller names no window: a dialog's worth of
+   recents or hits. A client that wants more walks `next_cursor`."
+  50)
 
-   The SERVER decides that order: `matches` carries every session whose title or
-   transcript matches, FRESHEST first, each with the `rank` band it earned (title
-   0, request 1, reply 2, thinking 3) and `is_in_title`. A running session is not
-   lifted over that - a band that flips mid-turn moves results under the reader's
-   finger. Searching narrows the session list without reshuffling it, so
-   the dates a client paints only ever fall as it scans down; `rank` says WHERE
-   the query hit. Clients PAINT this order and never re-derive one from the
-   flags, so a third client cannot invent a fourth ordering. `session_ids`
-   mirrors it."
+(defn- search-sessions-handler
+  "GET /v1/sessions/actions/search?q=&limit=&after=&archived=&dirty=&channel= - THE
+   session search every surface asks (`state/search-sessions`).
+
+   A blank `q` answers the RECENTS, a query the sessions whose title or transcript
+   matches it. Both are `GET /v1/sessions` rows in one freshest-first order, windowed
+   by the same keyset cursor, and a matched row carries `match` (rank, WHERE flags and
+   snippets). The SERVER decides that order and those rows: clients paint the answer
+   as it stands, with no second read to fetch a hit and no local ranking, so a third
+   client cannot invent a fourth ordering."
   [request]
-  (let [q
-        (str (get-in request [:query-params "q"]))
+  (let [given?
+        (fn [k]
+          (some? (get-in request [:query-params k])))
+
+        limit
+        (http/query-long request "limit")
+
+        after
+        (some-> (get-in request [:query-params "after"])
+                str
+                not-empty)
+
+        archived
+        (http/query-archived request)
 
         channel
         (or (some-> (get-in request [:query-params "channel"])
                     keyword)
-            :all)
+            :all)]
 
-        ;; ONE search per request: `session_ids` is derived from the matches
-        ;; instead of re-running the identical (previously full-table) scan.
-        matches
-        (state/search-session-matches channel q)]
-
-    (http/json-response {:session_ids (mapv :session_id matches) :matches matches})))
+    (cond (= :invalid archived) (http/archived-400)
+          (or (and (given? "limit") (nil? limit))
+              (and (some? after) (nil? (state/parse-session-cursor after))))
+          (http/error-response
+            400
+            :invalid-window
+            "limit must be an integer and after must be a <band>:<key>:<id> cursor")
+          :else (http/json-response (state/search-sessions
+                                      channel
+                                      {:query (str (get-in request [:query-params "q"]))
+                                       :limit
+                                       (max 1 (min 1000 (long (or limit search-session-window))))
+                                       :after after
+                                       :archived archived
+                                       :dirty (http/query-session-ids request "dirty")})))))
 
 (defn- soul-handler
   [request]

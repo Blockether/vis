@@ -14,8 +14,8 @@ const rowOrder = () =>
     (row) => row.dataset.sessionId,
   );
 
-const projectOrder = () =>
-  Array.from(document.querySelectorAll<HTMLElement>('[data-project-root]')).map(
+const projectOrder = (scope: ParentNode = document) =>
+  Array.from(scope.querySelectorAll<HTMLElement>('[data-project-root]')).map(
     (group) => group.dataset.projectRoot,
   );
 
@@ -67,10 +67,22 @@ describe('the order the reader is looking at', () => {
 
     act(() => view.setQuery('Session'));
     await settle(1_000);
-    expect(projectOrder()).toEqual(['/repo/a', '/repo/b']);
+    // The list behind the search dialog and the dialog's results keep one order.
+    const list = screen.getByRole('region', { name: 'Sessions' });
+    const results = screen.getByRole('region', { name: 'Matching sessions' });
+    expect(projectOrder(list)).toEqual(['/repo/a', '/repo/b']);
+    expect(projectOrder(results)).toEqual(['/repo/a', '/repo/b']);
     act(() => view.setQuery(''));
     await settle(50);
-    expect(projectOrder()).toEqual(['/repo/a', '/repo/b']);
+    // A cleared field lists the recents in the dialog, under the same headers.
+    expect(projectOrder(screen.getByRole('region', { name: 'Sessions' }))).toEqual([
+      '/repo/a',
+      '/repo/b',
+    ]);
+    expect(projectOrder(screen.getByRole('region', { name: 'Recent sessions' }))).toEqual([
+      '/repo/a',
+      '/repo/b',
+    ]);
   });
 
   it('uses the same repository order for a cached first paint and its revalidation', async () => {

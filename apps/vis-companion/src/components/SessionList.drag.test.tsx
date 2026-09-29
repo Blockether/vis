@@ -25,7 +25,6 @@ function mount(selected: readonly string[] = []) {
           group={null}
           draft={EMPTY_DRAFT_MESSAGE}
           conn={STORY_GATEWAYS[0]}
-          match={null}
           needle=""
           commands={commands}
           deletion={null}

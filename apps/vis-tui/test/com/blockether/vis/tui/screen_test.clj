@@ -1302,7 +1302,7 @@
     (doseq [store-size [1 50 1000]]
       (let [requests (atom [])
             options (atom nil)
-            db {:session {:id "active"}}]
+            db {:session {:id "0"}}]
 
         (with-redefs-fn {#'screen/with-dialog-lock (fn [f]
                                                      (f))
@@ -1321,20 +1321,84 @@
                                             (range (min store-size (or (:limit opts) 1))))
                             :next-cursor (when (> store-size 50) "next")})}
           (fn []
-            (expect (= {:action :new} (#'screen/show-session-picker! nil "active" db)))
-            (expect (= "active" (:active-session-id @options)))
+            (expect (= {:action :new} (#'screen/show-session-picker! nil "0" db)))
+            (expect (= "0" (:active-session-id @options)))
             (expect (= db (:db @options)))
             (let [page ((:load-initial @options))]
               (expect (= (min 50 store-size) (count (:sessions page))))
               (expect (= "/workspace/project" (:work-dir (first (:sessions page)))))
               (expect (= (when (> store-size 50) "next") (:next-cursor page))))
             ((:load-more @options) "next")
-            ((:fetch-sessions @options) ["matched"])
             ;; The picker asks for its pages GROUPED ASIDE: a session a human filed comes
             ;; back beside the window instead of being cut out of it.
-            (expect (= [{:limit 50 :grouped :aside} {:limit 50 :after "next" :grouped :aside}
-                        {:ids ["matched"] :grouped :aside}]
+            (expect (= [{:limit 50 :grouped :aside} {:limit 50 :after "next" :grouped :aside}]
                        @requests)))))))
+  ;; Regression, user report (paraphrased: the search should start on the session I am in).
+  ;; The navigator stands the session in use on its first row, but only a row it holds: one
+  ;; older than the first window was missing, so the cursor started on the freshest row.
+  (it "opens on the session in use when newer sessions pushed it out of the first page"
+      (let [requests
+            (atom [])
+
+            options
+            (atom nil)]
+
+        (with-redefs-fn {#'screen/with-dialog-lock (fn [f]
+                                                     (f))
+                         #'dlg/navigator-dialog! (fn [_ opts]
+                                                   (reset! options opts)
+                                                   {:action :new})
+                         #'vis/gateway-list-sessions-page
+                         (fn [opts]
+                           (swap! requests conj opts)
+                           (if (:ids opts)
+                             {:sessions (mapv (fn [id]
+                                                {"id" id "title" "In use"})
+                                              (:ids opts))}
+                             {:sessions (mapv (fn [i]
+                                                {"id" (str i) "title" (str "Session " i)})
+                                              (range 50))
+                              :next-cursor "next"}))}
+          (fn []
+            (#'screen/show-session-picker! nil "in-use" {})
+            (let [page ((:load-initial @options))]
+              (expect (= "in-use" (get (first (:sessions page)) "id")))
+              (expect (= 51 (count (:sessions page))))
+              (expect (= "next" (:next-cursor page))))
+            (expect (= [{:limit 50 :grouped :aside} {:ids ["in-use"] :grouped :aside}]
+                       @requests))))))
+  ;; A search answers its hits WITH their rows, so a hit the picker's window does not
+  ;; hold yet is painted without a second read.
+  (it "answers a search with the hits and their rows in one gateway read"
+      (let [calls
+            (atom [])
+
+            options
+            (atom nil)]
+
+        (with-redefs-fn
+          {#'screen/with-dialog-lock (fn [f]
+                                       (f))
+           #'dlg/navigator-dialog! (fn [_ opts]
+                                     (reset! options opts)
+                                     {:action :new})
+           #'vis/gateway-search-sessions
+           (fn [q opts]
+             (swap! calls conj [:search q opts])
+             {:sessions
+              [{"id" "far" "title" "Far away" "turn_count" 1 "workspace" {"root" "/workspace/far"}}]
+              :matches
+              [{:id "far" :rank 1 :in-request? true :request-snippet "…needle…" :hits []}]})}
+          (fn []
+            (#'screen/show-session-picker! nil "active" {})
+            (expect (nil? (:fetch-sessions @options)))
+            (let [answer ((:search-sessions @options) "needle")]
+              (expect (= [[:search "needle" {:limit 60}]] @calls))
+              (expect (= ["far"] (mapv #(get % "id") (:sessions answer))))
+              (expect (= "/workspace/far" (:work-dir (first (:sessions answer)))))
+              (expect
+                (= {:rank 1 :kind :request :request-snippet "…needle…" :reply-snippet nil :hits []}
+                   (get (:matches answer) "far"))))))))
   (it "does not turn a gateway failure into a successful empty page"
       (with-redefs [vis/gateway-list-sessions-page (fn [_]
                                                      (throw (ex-info "Unavailable" {})))]

@@ -17,7 +17,6 @@ import {
   StopIcon,
 } from './icons';
 import {
-  BackButton,
   BandButton,
   BandLabel,
   BandTally,
@@ -250,7 +249,6 @@ export const Marks: Story = {
         </div>
       </Group>
       <Group of="Navigation and the ways out">
-        <BackButton label="Back to sessions" />
         <SidebarToggle isShown />
         <SidebarToggle isShown={false} />
         <CloseButton label="Close the attachment" />

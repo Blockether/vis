@@ -75,6 +75,37 @@ describe('a desk keeps the list beside the conversation', () => {
     view.unmount();
   });
 
+  // Search opens its own dialog: the rail beside the conversation keeps its width and rows.
+  it('searches in a dialog of its own and leaves the rail as it was', async () => {
+    const restoreDensity = onADesk();
+    const view = renderApp({ machines: fleet() });
+    restore = () => {
+      view.restore();
+      restoreDensity();
+    };
+    await screen.findByText('Alpha one');
+    const main = view.baseElement.querySelector('main') as HTMLElement;
+    const rail = () => main.firstElementChild as HTMLElement;
+    const search = () => screen.getByRole('dialog', { name: 'Search sessions' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Search all machines' }));
+    const field = within(search()).getByLabelText('Search sessions on every machine');
+    expect(field).toHaveFocus();
+    fireEvent.change(field, { target: { value: 'alpha' } });
+    await waitFor(() =>
+      expect(within(search()).getByRole('region', { name: 'Matching sessions' })).toHaveTextContent(
+        'Alpha one',
+      ),
+    );
+    expect(rail()).not.toContainElement(field);
+    expect(rail().className).toContain('w-[33%]');
+
+    fireEvent.click(within(search()).getByRole('button', { name: 'Close search' }));
+    expect(screen.queryByRole('dialog', { name: 'Search sessions' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Search all machines' }));
+    expect(within(search()).getByLabelText('Search sessions on every machine')).toHaveValue('');
+  });
+
   it('opens a session beside the list, with no way back because nothing was left', async () => {
     const restoreDensity = onADesk();
     const view = renderApp({ machines: fleet() });

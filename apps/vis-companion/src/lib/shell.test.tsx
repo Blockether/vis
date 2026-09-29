@@ -141,7 +141,8 @@ describe('the app bar', () => {
 
   // Regression: after removing the notch overlay, the iOS controls sat on both
   // sides of the island instead of below it. Keep the safe inset inside the
-  // header background, with the full app bar and search field underneath.
+  // header background, with the full app bar underneath; the search dialog's
+  // frame starts below the island too.
   it('keeps iPhone app actions and search below the island', async () => {
     const platform = vi.spyOn(Capacitor, 'getPlatform').mockReturnValue('ios');
     const native = vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
@@ -154,9 +155,10 @@ describe('the app bar', () => {
         expect(screen.getByRole('button', { name: 'Search all machines' })).toBeVisible();
         expect(screen.getByRole('button', { name: 'Open preferences' })).toBeVisible();
         await userEvent.click(screen.getByRole('button', { name: 'Search all machines' }));
-        expect(header.firstElementChild).toHaveClass('flex', 'h-12');
-        expect(header.firstElementChild).not.toHaveClass('grid');
-        expect(screen.getByRole('button', { name: 'Close search' })).not.toHaveClass('row-start-1');
+        const dialog = await screen.findByRole('dialog', { name: 'Search sessions' });
+        const close = within(dialog).getByRole('button', { name: 'Close search' });
+        expect(close).toBeVisible();
+        expect(close.closest('section')).toHaveClass('pt-[env(safe-area-inset-top)]', 'sm:pt-0');
       } finally {
         view.unmount();
         view.restore();
@@ -168,7 +170,7 @@ describe('the app bar', () => {
   });
 
   // Regression: a centered 1400px cap pulled the app controls away from wide-window edges.
-  it('keeps both app-bar states full width with symmetric safe-area gutters', async () => {
+  it('keeps the app bar full width with symmetric safe-area gutters', async () => {
     const view = await mount();
     try {
       const header = view.baseElement.querySelector('header')!;
@@ -177,12 +179,6 @@ describe('the app bar', () => {
       expect(bar.className).not.toMatch(/max-w-|mx-auto/);
       expect(bar.className).toContain('sm:pl-[max(1rem,env(safe-area-inset-left))]');
       expect(bar.className).toContain('sm:pr-[max(1rem,env(safe-area-inset-right))]');
-      await userEvent.click(screen.getByRole('button', { name: 'Search all machines' }));
-      expect(header.firstElementChild).toHaveClass('w-full');
-      expect(header.firstElementChild!.className).not.toMatch(/max-w-|mx-auto/);
-      expect(header.firstElementChild!.className).toContain(
-        'sm:pr-[max(1rem,env(safe-area-inset-right))]',
-      );
     } finally {
       view.unmount();
       view.restore();
@@ -208,7 +204,7 @@ describe('the app bar', () => {
   it('marks the bar’s two verbs and names them twice', async () => {
     const view = await mount();
     for (const [label, title] of [
-      ['Search all machines', 'Search all machines'],
+      ['Search all machines', 'Search all machines (Ctrl+/)'],
       ['Open preferences', 'Preferences'],
     ]) {
       const mark = screen.getByRole('button', { name: label });
@@ -250,33 +246,43 @@ describe('the app bar', () => {
 
   // Regression, user report ("just search icon that triggers full page search"): the
   // open field was the bar's whole middle at every width — the widest object on a
-  // 390px phone, permanently, for a question that is asked in bursts.
-  it('opens search as a focused page and clears its query on close', async () => {
+  // 390px phone, permanently, for a question that is asked in bursts. A later report
+  // (paraphrased: search filled the list on the left; give it a dialog of its own)
+  // moved the field and its answers out of the list and into a dialog.
+  it('opens search as a focused dialog and clears its query on close', async () => {
     const view = await mount();
     await userEvent.click(screen.getByRole('button', { name: 'Search all machines' }));
-    const field = await screen.findByRole('searchbox', {
+    const dialog = await screen.findByRole('dialog', { name: 'Search sessions' });
+    const field = within(dialog).getByRole('searchbox', {
       name: 'Search sessions on every machine',
     });
     expect(field.getAttribute('placeholder')).toBe('Search all machines…');
     expect(field).toHaveFocus();
-    // The page IS the search: the mark that opened it has given the bar up.
-    expect(screen.queryByRole('button', { name: 'Search all machines' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Close search' })).toBeVisible();
-    // Nothing scopes it: the fleet list is still the answer underneath.
+    expect(within(dialog).getByRole('button', { name: 'Close search' })).toBeVisible();
+    // The list behind the dialog stays whole: nothing in it is filtered away.
     expect(screen.getByRole('button', { name: 'Projects on laptop' })).toBeVisible();
     await userEvent.type(field, 'needle');
     expect(field).toHaveValue('needle');
     await userEvent.keyboard('{Escape}');
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Search all machines' })).toBeVisible(),
+      expect(screen.queryByRole('dialog', { name: 'Search sessions' })).not.toBeInTheDocument(),
     );
-    // Opening by keyboard is the same page, with a fresh query and the caret ready.
+    // Opening by keyboard is the same dialog, with a fresh query and the caret ready.
     await userEvent.keyboard('/');
     const reopened = await screen.findByRole('searchbox', {
       name: 'Search sessions on every machine',
     });
     expect(reopened).toHaveFocus();
     expect(reopened).toHaveValue('');
+    await userEvent.click(screen.getByRole('button', { name: 'Close search' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Search sessions' })).not.toBeInTheDocument(),
+    );
+    // `Ctrl+/` is the same door: the chord a desktop or browser reader presses anywhere.
+    await userEvent.keyboard('{Control>}/{/Control}');
+    expect(
+      await screen.findByRole('searchbox', { name: 'Search sessions on every machine' }),
+    ).toHaveFocus();
     await userEvent.click(screen.getByRole('button', { name: 'Close search' }));
     view.unmount();
     view.restore();

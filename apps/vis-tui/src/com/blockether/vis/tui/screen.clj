@@ -5438,6 +5438,12 @@
    fifty rows."
   50)
 
+(def ^:private picker-search-rows
+  "Rows one picker search asks for, freshest match first. The gateway searches the whole
+   store, so a query can name more sessions than a reader will ever scroll; this bounds
+   what one keystroke costs."
+  60)
+
 (defn- tui-session-page
   "One WINDOW of the picker's list: its rows, enriched for the navigator, and the cursor
    naming the page after them (`nil` when the walk is over). The gateway owns the order,
@@ -5452,6 +5458,24 @@
                      (latest-modified-first (map session-summary
                                                  (concat (:grouped page) (:sessions page)))))
      :next-cursor (:next-cursor page)}))
+
+(defn- picker-first-page
+  "The window the picker opens on, holding the session in use. The navigator stands that
+   session on its first row, so the cursor starts where the reader is. Newer sessions can
+   push it out of the window; then its own row is read by id and joins the page."
+  [active-id]
+  (let [page
+        (tui-session-page {:limit picker-page-size})
+
+        active
+        (some-> active-id
+                str)]
+
+    (if (or (str/blank? active) (some #(= active (str (get % "id"))) (:sessions page)))
+      page
+      ;; The page stands without it: the row places the cursor, it does not make the list.
+      (let [own (try (:sessions (tui-session-page {:ids [active]})) (catch Exception _ []))]
+        (update page :sessions #(into (vec own) %))))))
 
 (defn- fleet-group-index
   "Every session GROUP this machine holds, keyed by group id. A session row names its
@@ -5479,17 +5503,15 @@
 
 (defn- show-session-picker!
   "Open the navigator without gateway I/O on the input thread. The dialog owns
-   page loading, retry and cancellation; search hydrates only its missing rows."
+   page loading, retry and cancellation; a search answers its hits WITH their rows."
   [screen active-id db]
   (with-dialog-lock
     #(dlg/navigator-dialog!
        screen
        {:load-initial (fn []
-                        (tui-session-page {:limit picker-page-size}))
+                        (picker-first-page active-id))
         :load-more (fn [cursor]
                      (tui-session-page {:limit picker-page-size :after cursor}))
-        :fetch-sessions (fn [ids]
-                          (:sessions (tui-session-page {:ids (vec ids)})))
         :load-groups fleet-group-index
         :watch-fleet (fn [sink]
                        (try (vis/gateway-fleet-subscribe! sink)
@@ -5497,26 +5519,26 @@
                               (fn []))))
         :active-session-id active-id
         :db db
-        :search-transcript-ids
+        :search-sessions
         (fn [q]
-          (try (into {}
-                     (map-indexed (fn [idx
-                                       {:keys [id rank in-title? in-request? in-reply? in-thinking?
-                                               request-snippet reply-snippet hits]}]
-                                    [id
-                                     {:rank rank
-                                      ;; Retain the gateway's ordering when hydrating missing rows.
-                                      :order idx
-                                      :kind (cond in-title? :title
-                                                  (and in-request? in-reply?) :both
-                                                  in-request? :request
-                                                  in-reply? :reply
-                                                  in-thinking? :thinking
-                                                  :else :both)
-                                      :request-snippet request-snippet
-                                      :reply-snippet reply-snippet
-                                      :hits hits}]))
-                     (vis/gateway-search-session-matches q))
+          (try (let [answer (vis/gateway-search-sessions q {:limit picker-search-rows})]
+                 {:sessions (mapv enrich-session-row (map session-summary (:sessions answer)))
+                  :matches (into {}
+                                 (map (fn [{:keys [id rank in-title? in-request? in-reply?
+                                                   in-thinking? request-snippet reply-snippet
+                                                   hits]}]
+                                        [id
+                                         {:rank rank
+                                          :kind (cond in-title? :title
+                                                      (and in-request? in-reply?) :both
+                                                      in-request? :request
+                                                      in-reply? :reply
+                                                      in-thinking? :thinking
+                                                      :else :both)
+                                          :request-snippet request-snippet
+                                          :reply-snippet reply-snippet
+                                          :hits hits}]))
+                                 (:matches answer))})
                (catch Throwable _ nil)))})))
 
 (def ^:private startup-session-window
@@ -5659,44 +5681,21 @@
   []
   (max 5 (min 40 (quot (- (long (or (get-in @state/app-db [:layout :rows]) 24)) 8) 2))))
 
-(defn- fetch-project-search-page!
-  "Hydrate one ranked hit window by id, including archived and unloaded sessions."
-  [request-id matches offset]
-  (let [limit
-        (project-search-page-size)
+(def ^:private project-search-rows
+  "Hits one sidebar search asks for. The store bounds a transcript search at 200 sessions
+   (`db-search-session-matches`), so this is the whole answer, painted a page at a time."
+  200)
 
-        window
-        (vec (take limit (drop offset matches)))
-
-        ids
-        (mapv :id window)]
-
-    (try (let [rows
-               (if (seq ids)
-                 (:sessions (vis/gateway-list-sessions-page
-                              {:ids ids :limit limit :archived :include}))
-                 [])
-
-               by-id
-               (into {}
-                     (map (fn [session]
-                            [(str (get session "id")) session])
-                          rows))
-
-               found
-               (into []
-                     (keep (fn [match]
-                             (when-let [session (get by-id (str (:id match)))]
-                               {:session session :match match})))
-                     window)]
-
-           (state/dispatch [:project-search-loaded request-id matches found offset limit
-                            (< (+ offset limit) (count matches))]))
-         (catch Throwable _
-           (state/dispatch [:project-search-failed request-id "gateway unavailable"])))))
+(defn- show-project-search-page!
+  "Paint one page of the hits a search already answered. Every hit arrived WITH its row,
+   so turning a page reads nothing from the gateway."
+  [request-id hits offset]
+  (let [limit (project-search-page-size)]
+    (state/dispatch [:project-search-loaded request-id hits (vec (take limit (drop offset hits)))
+                     offset limit (< (+ offset limit) (count hits))])))
 
 (defn- search-projects!
-  "Settle typing before the gateway search; stale queries never hydrate or repaint."
+  "Settle typing before the gateway search; stale queries never repaint."
   [field]
   (let [request-id
         (str (java.util.UUID/randomUUID))
@@ -5712,9 +5711,22 @@
           (Thread/sleep 200)
           (when (= request-id (get-in @state/app-db [:project-sidebar :search :request-id]))
             (try
-              (let [matches (vis/gateway-search-session-matches needle)]
+              (let [answer
+                    (vis/gateway-search-sessions needle
+                                                 {:limit project-search-rows :archived :include})
+
+                    match-by-id
+                    (into {} (map (juxt :id identity)) (:matches answer))
+
+                    hits
+                    (into []
+                          (keep (fn [session]
+                                  (when-let [match (get match-by-id (str (get session "id")))]
+                                    {:session session :match match})))
+                          (:sessions answer))]
+
                 (when (= request-id (get-in @state/app-db [:project-sidebar :search :request-id]))
-                  (fetch-project-search-page! request-id matches 0)))
+                  (show-project-search-page! request-id hits 0)))
               (catch Throwable _
                 (state/dispatch [:project-search-failed request-id "gateway unavailable"])))))))))
 
@@ -6493,8 +6505,7 @@
 
         (when (seq (:matches search))
           (state/dispatch [:project-search-page request-id offset])
-          (vis/worker-future "tui-project-search-page"
-                             #(fetch-project-search-page! request-id (:matches search) offset))))
+          (show-project-search-page! request-id (:matches search) offset)))
 
       :updates
       (let [db @state/app-db

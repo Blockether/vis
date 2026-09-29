@@ -721,53 +721,60 @@
      :has-more (boolean (get body "has_more"))
      :total (get body "total")}))
 
-(defn search-session-ids
-  "GET /v1/sessions/actions/search?q= — soul-id STRINGS whose transcript (user request +
-   assistant text) matches `query`. Blank query → []. The heavy assistant text
-   never crosses the wire; callers union these ids into a local title filter."
-  [query]
-  (let [q (some-> query
-                  str
-                  str/trim)]
-    (if (or (nil? q) (= "" q))
-      []
-      (get (send-json! "GET" (str "/v1/sessions/actions/search?q=" (enc q))) "session_ids"))))
+(defn- session-match
+  "A row's wire `match` in engine keys, tagged with the row's `id`."
+  [id m]
+  {:id id
+   :rank (long (or (get m "rank") 0))
+   :in-title? (boolean (get m "is_in_title"))
+   :in-request? (boolean (get m "is_in_request"))
+   :in-reply? (boolean (get m "is_in_reply"))
+   :in-thinking? (boolean (get m "is_in_thinking"))
+   :request-snippet (get m "request_snippet")
+   :reply-snippet (get m "reply_snippet")
+   :hits (mapv (fn [h]
+                 {:side (keyword (or (get h "side") "reply"))
+                  :snippet (get h "snippet")
+                  :at (get h "at")})
+               (or (get m "hits") []))})
 
-(defn search-session-matches
-  "GET /v1/sessions/actions/search?q= — like `search-session-ids` but each hit is
-   TAGGED with WHERE it matched, RANKED by the server, and carries up to a handful
-   of snippets:
-   `[{:id str :rank 0-3 :in-title? bool :in-request? bool :in-reply? bool
-      :in-thinking? bool :request-snippet str :reply-snippet str
-      :hits [{:side :request|:reply|:thinking :snippet str :at ms}]}]`.
-   `:in-title?` = the session's own name matched; `:in-request?` = the user's own
-   request; `:in-reply?` = the assistant's answer; `:in-thinking?` = only its
-   reasoning aside. The vector arrives in the gateway's own order — running
-   sessions first, then FRESHEST first, the same order its session list is in —
-   and is painted in it; `:rank` (0 best) says WHERE the query hit and a surface
-   never re-orders. Blank query → []. Heavy assistant text never crosses the
-   wire."
-  [query]
-  (let [q (some-> query
-                  str
-                  str/trim)]
-    (if (or (nil? q) (= "" q))
-      []
-      (->> (get (send-json! "GET" (str "/v1/sessions/actions/search?q=" (enc q))) "matches")
-           (mapv (fn [m]
-                   {:id (get m "session_id")
-                    :rank (long (or (get m "rank") 0))
-                    :in-title? (boolean (get m "is_in_title"))
-                    :in-request? (boolean (get m "is_in_request"))
-                    :in-reply? (boolean (get m "is_in_reply"))
-                    :in-thinking? (boolean (get m "is_in_thinking"))
-                    :request-snippet (get m "request_snippet")
-                    :reply-snippet (get m "reply_snippet")
-                    :hits (mapv (fn [h]
-                                  {:side (keyword (or (get h "side") "reply"))
-                                   :snippet (get h "snippet")
-                                   :at (get h "at")})
-                                (or (get m "hits") []))}))))))
+(defn search-sessions
+  "GET /v1/sessions/actions/search - THE session search, one answer for every surface:
+   `{:sessions rows :matches [match ...] :total n :next-cursor str-or-nil :has-more bool}`.
+
+   A blank `query` answers the RECENTS: every listed session, freshest content first. A
+   query answers the sessions whose title or transcript matches it, in that same order.
+   `:sessions` are list rows exactly as `list-sessions-page` answers them, so a surface
+   paints a hit without fetching it first. `:matches` follows the rows, one per matched
+   row: `{:id str :rank 0-3 :in-title? bool :in-request? bool :in-reply? bool
+   :in-thinking? bool :request-snippet str :reply-snippet str
+   :hits [{:side :request|:reply|:thinking :snippet str :at ms}]}`. `:rank` (0 best)
+   says WHERE the query hit; it is never the order. `opts`: `:limit` rows, `:after` the
+   `:next-cursor` of the previous answer, `:archived` `:exclude`, `:include` or `:only`."
+  ([query] (search-sessions query {}))
+  ([query {:keys [limit after archived]}]
+   (let [qs
+         (->> [(str "q=" (enc (str/trim (str query)))) (when limit (str "limit=" (enc limit)))
+               (when (seq (str after)) (str "after=" (enc after)))
+               (when archived (str "archived=" (enc (name archived))))]
+              (remove nil?)
+              (str/join "&"))
+
+         body
+         (send-json! "GET" (str "/v1/sessions/actions/search?" qs))
+
+         rows
+         (vec (get body "sessions"))]
+
+     {:sessions rows
+      :matches (into []
+                     (keep (fn [row]
+                             (some->> (get row "match")
+                                      (session-match (get row "id")))))
+                     rows)
+      :total (get body "total")
+      :next-cursor (get body "next_cursor")
+      :has-more (boolean (get body "has_more"))})))
 
 (defn close-session! [sid] (send-json! "DELETE" (str "/v1/sessions/" (enc sid))))
 
@@ -2523,7 +2530,7 @@
 
 (def gateway-router-fleet router)
 
-(def gateway-search-session-matches search-session-matches)
+(def gateway-search-sessions search-sessions)
 
 (def gateway-session-artifacts session-artifacts)
 

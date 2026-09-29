@@ -509,15 +509,15 @@
         (expect (= ["muse" "ask" "reply" "named"] (mapv (comp str :id :target) flipped)))
         (expect (= "in thinking"
                    (:status (first (filter #(= "muse" (str (:id (:target %)))) vis)))))))
-    (it "every matching row carries its own snippets, inline, like the app"
+    (it "every matching row carries its own matches for the message pane"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               visible-rows (var-get #'dlg/navigator-visible-rows)
-              hit-entries (var-get #'dlg/navigator-hit-entries)
+              preview-entries (var-get #'dlg/navigator-preview-entries)
               rows (all-rows {:active-session-id "s1" :sessions sessions})
               ids (mapv #(str (:id (:target %))) rows)
               ;; Query DOES match every title, and the body search returns hits for
-              ;; both rows — including the focused one. The app previews all of
-              ;; them, so the TUI must attach a match to all of them too.
+              ;; both rows — including the focused one. Any row can be selected, so
+              ;; each one carries the matches its message pane shows.
               matches (into {}
                             (map (fn [id]
                                    [id {:hits [{:side :reply :snippet "…hit…"}]}])
@@ -525,8 +525,8 @@
               vis (visible-rows rows "session" matches)]
 
           (expect (= (count rows) (count vis)))
-          (expect (every? #(= 1 (count (hit-entries %))) vis))))
-    (it "the inline list budgets painted LINES and never scrolls past the end"
+          (expect (every? #(= 1 (count (preview-entries (:transcript-match %)))) vis))))
+    (it "the list budgets painted LINES and never scrolls past the end"
         (let [heights (var-get #'dlg/navigator-block-heights)
               blocks (var-get #'dlg/navigator-visible-blocks)
               scroll-start (var-get #'dlg/navigator-scroll-start)
@@ -535,21 +535,22 @@
               vis [(hit 3) (hit 0) (hit 2)]
               hs (heights vis)
               shape (fn [plan]
-                      (mapv (juxt #(count (:hits %)) :spacer?) plan))]
+                      (mapv :spacer? plan))]
 
-          ;; Two content lines + one spacer per session, plus one line per snippet.
-          (expect (= [6 3 5] hs))
-          ;; The content base always survives. Snippets clip before the spacer;
-          ;; only a viewport filled exactly by the base omits that spacer.
-          (expect (= [[0 false]] (shape (blocks vis 0 2))))
-          (expect (= [[0 true]] (shape (blocks vis 0 3))))
-          (expect (= [[2 true]] (shape (blocks vis 0 5))))
-          (expect (= [[3 true]] (shape (blocks vis 0 6))))
+          ;; Two content lines + one spacer per session. Matching messages paint in
+          ;; their own pane, so they never add list lines.
+          (expect (= [3 3 3] hs))
+          ;; The content base always survives; only a viewport filled exactly by
+          ;; the base omits the spacer.
+          (expect (= [false] (shape (blocks vis 0 2))))
+          (expect (= [true] (shape (blocks vis 0 3))))
+          (expect (= [true false] (shape (blocks vis 0 5))))
+          (expect (= [true true] (shape (blocks vis 0 6))))
           ;; A project heading keeps one top-margin row with its first session.
           (let [grouped [(assoc (hit 0) :group-start? true)]]
             (expect (empty? (blocks grouped 0 3)))
-            (expect (= [[0 false]] (shape (blocks grouped 0 4))))
-            (expect (= [[0 true]] (shape (blocks grouped 0 5)))))
+            (expect (= [false] (shape (blocks grouped 0 4))))
+            (expect (= [true] (shape (blocks grouped 0 5)))))
           ;; scroll advances only as far as the selected row needs
           (expect (= 1 (scroll-start hs 2 0 4)))
           (expect (= 2 (scroll-start hs 2 2 4)))
@@ -558,7 +559,6 @@
       "keeps selection plain while sessions retain one row of breathing room"
       (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)
             draw-session (var-get #'dlg/draw-navigator-session!)
-            draw-hit (var-get #'dlg/draw-navigator-hit-line!)
             entry {:focused? false
                    :status "idle"
                    :title "First session"
@@ -570,33 +570,114 @@
 
         (try (let [g (.newTextGraphics screen)]
                (draw-session g x row width entry true)
-               (draw-hit g x (+ row 2) width "needle" {:label "U" :role :user :text "needle match"})
-               (draw-session g x (+ row 4) width entry false)
+               (draw-session g x (+ row 3) width entry false)
                (let [selected-title-bg (.getBackgroundColor
                                          (.getBackCharacter screen (int (+ x 2)) (int row)))
                      selected-meta-bg (.getBackgroundColor
                                         (.getBackCharacter screen (int (+ x 2)) (int (inc row))))
-                     selected-hit-bg (.getBackgroundColor
-                                       (.getBackCharacter screen (int (+ x 2)) (int (+ row 2))))
                      inactive-bg (.getBackgroundColor
-                                   (.getBackCharacter screen (int (+ x 2)) (int (+ row 4))))
+                                   (.getBackCharacter screen (int (+ x 2)) (int (+ row 3))))
                      spacer-glyph (.getCharacterString
-                                    (.getBackCharacter screen (int x) (int (+ row 3))))
+                                    (.getBackCharacter screen (int x) (int (+ row 2))))
                      metadata (apply str
                                 (for [column (range 80)]
                                   (.getCharacterString
                                     (.getBackCharacter screen (int column) (int (inc row))))))]
 
-                 (expect (= selected-title-bg selected-meta-bg selected-hit-bg inactive-bg))
+                 (expect (= selected-title-bg selected-meta-bg inactive-bg))
                  (expect (= " " spacer-glyph))
                  ;; A removed workspace-mode column must not survive as an empty separator.
                  (expect (str/includes? metadata "abc1234  ·  now"))
                  (expect (not (str/includes? metadata "·    ·")))))
              (finally (.stopScreen screen)))))
-    (it "highlight segments bold only the case-insensitive needle occurrences"
+    (it "highlight segments mark each query word where a word starts, ignoring case and accents"
         (let [segs (var-get #'dlg/navigator-highlight-segments)]
           (expect (= [["a " false] ["Search" true] [" b" false]] (segs "a Search b" "search")))
+          ;; Every word on its own and in any order: the gateway matches words, not the phrase.
+          (expect (= [["Split the " false] ["search" true] [" " false] ["popup" true]]
+                     (segs "Split the search popup" "popup search")))
+          ;; Only where a word starts, as the index matches; a typed prefix marks itself.
+          (expect (= [["research and " false] ["search" true]]
+                     (segs "research and search" "search")))
+          (expect (= [["Sess" true] ["ions list" false]] (segs "Sessions list" "sess")))
+          ;; The index ignores diacritics, so the highlight does too.
+          (expect (= [["Order a " false] ["café" true] [" au lait" false]]
+                     (segs "Order a café au lait" "cafe")))
           (expect (= [["no needle here" false]] (segs "no needle here" "")))))
+    (it "a query splits the picker: list beside the messages, or above them when narrow"
+        (let [layout (var-get #'dlg/navigator-pane-layout)
+              wide {:left 2 :right 117 :inner-w 114}
+              narrow {:left 2 :right 77 :inner-w 74}]
+
+          ;; No query: the list keeps the whole body.
+          (expect
+            (= {:mode :single :body-x 4 :body-w 110 :scrollbar-col 115 :body-top 7 :list-budget 18}
+               (layout wide 5 20 false 0)))
+          ;; Wide: list, its scrollbar, the border, then the messages up to one blank
+          ;; column before the dialog's right border.
+          (let [{:keys [mode body-x body-w scrollbar-col divider preview-x preview-w preview-top
+                        preview-h]}
+                (layout wide 5 20 true 0)]
+            (expect (= :side mode))
+            (expect (< (+ body-x body-w) scrollbar-col divider preview-x))
+            (expect (= 116 (+ preview-x preview-w)))
+            (expect (= [7 18] [preview-top preview-h])))
+          ;; Narrow: the messages sit under the list, below a border row. A long list
+          ;; keeps three fifths of the body; a short one only the lines it paints.
+          (let [{:keys [mode body-top list-budget divider preview-top preview-h]}
+                (layout narrow 5 20 true 99)]
+            (expect (= :stacked mode))
+            (expect (= (+ body-top list-budget) divider))
+            (expect (= (inc divider) preview-top))
+            (expect (= [10 7] [list-budget preview-h])))
+          (expect (= [5 12] ((juxt :list-budget :preview-h) (layout narrow 5 20 true 5))))))
+    (it "the message pane lists each match: author and time over the snippet, query marked"
+        (let [lines (var-get #'dlg/navigator-preview-lines)
+              entry {:title "Search redesign"
+                     :transcript-match
+                     {:kind :both
+                      :hits [{:side :request :snippet "…change how the session search looks…" :at 0}
+                             {:side :thinking :snippet "…split the popup…"}]}}
+              plan (lines entry "search popup" {:width 30 :height 20})
+              short-plan (lines entry "search popup" {:width 30 :height 5})]
+
+          (expect (= [:title :blank :label :text :text :blank :label :text] (mapv :kind plan)))
+          (expect (= "Search redesign" (:text (first plan))))
+          (expect (= {:label "You" :role :user :place nil :stamp "01-01 00:00"}
+                     (select-keys (nth plan 2) [:label :role :place :stamp])))
+          ;; A thinking hit is the assistant's, and the label says where it matched.
+          (expect (= {:label "Vis" :role :ai :place "thinking"}
+                     (select-keys (nth plan 6) [:label :role :place])))
+          (expect (= [["…change how the session " false] ["search" true]] (:segments (nth plan 3))))
+          (expect (= [["…split the " false] ["popup" true] ["…" false]] (:segments (nth plan 7))))
+          ;; A short pane clips the first message and counts the messages left out.
+          (expect (= [:title :blank :label :text :more] (mapv :kind short-plan)))
+          (expect (= "+1 more message" (:text (last short-plan))))))
+    (it "the message pane says why a row shows no message"
+        (let [lines (var-get #'dlg/navigator-preview-lines)
+              note (fn [entry opts]
+                     (:text (last (lines entry "x" (merge {:width 40 :height 9} opts)))))]
+
+          (expect (= "The title matches. No message matches."
+                     (note {:title "T" :transcript-match {:kind :title}} {})))
+          (expect (= "No message matches." (note {:title "T"} {})))
+          (expect (= "Searching messages…" (note {:title "T"} {:pending? true})))
+          (expect (= "Searching messages…" (note nil {:pending? true})))
+          (expect (= [] (lines nil "x" {:width 40 :height 9})))))
+    (it "the message pane marks the matched words like a highlighter"
+        (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)
+              draw-segments (var-get #'dlg/draw-navigator-segments!)]
+
+          (try (let [g (.newTextGraphics screen)
+                     cell (fn [x]
+                            (.getBackCharacter screen (int x) (int 3)))]
+
+                 (draw-segments g 2 3 20 [["the " false] ["popup" true] [" list" false]])
+                 (expect (= "p" (.getCharacterString (cell 6))))
+                 (expect (= t/dialog-hint-key (.getBackgroundColor (cell 6))))
+                 (expect (= t/dialog-bg (.getBackgroundColor (cell 2))))
+                 (expect (= t/dialog-bg (.getBackgroundColor (cell 11)))))
+               (finally (.stopScreen screen)))))
     (it "visible rows are project-grouped instead of table-shaped"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               visible-rows (var-get #'dlg/navigator-visible-rows)
@@ -1548,19 +1629,32 @@
 
 (defn- capture-navigator!
   "Capture production frames and drive input from terminal flushes."
-  [opts on-flush!]
-  (cap/capture! {:cols 120
-                 :rows 32
-                 :paint! (fn [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}]
-                           (.addVirtualTerminalListener terminal
-                                                        (reify
-                                                          VirtualTerminalListener
-                                                            (onFlush [_] (on-flush! terminal))
-                                                            (onBell [_])
-                                                            (onClose [_])
-                                                            (onResized [_ _terminal _size])))
-                           (try (dlg/navigator-dialog! screen opts)
-                                (finally (.stopScreen screen))))}))
+  ([opts on-flush!] (capture-navigator! opts on-flush! {}))
+  ([opts on-flush! {:keys [cols rows] :or {cols 120 rows 32}}]
+   (cap/capture! {:cols cols
+                  :rows rows
+                  :paint! (fn [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}]
+                            (.addVirtualTerminalListener terminal
+                                                         (reify
+                                                           VirtualTerminalListener
+                                                             (onFlush [_] (on-flush! terminal))
+                                                             (onBell [_])
+                                                             (onClose [_])
+                                                             (onResized [_ _terminal _size])))
+                            (try (dlg/navigator-dialog! screen opts)
+                                 (finally (.stopScreen screen))))})))
+
+(defn- terminal-lines
+  "What the virtual terminal shows, one string per row, read during a flush."
+  [^DefaultVirtualTerminal terminal]
+  (let [size (.getTerminalSize terminal)]
+    (mapv (fn [y]
+            (apply str
+              (map (fn [x]
+                     (.getCharacterString (.getCharacter terminal
+                                                         (TerminalPosition. (int x) (int y)))))
+                   (range (.getColumns size)))))
+          (range (.getRows size)))))
 
 (defdescribe navigator-dialog-paging-test
              (it "pages through session search results and back to the first match"
@@ -1591,6 +1685,146 @@
                    (expect (nil? (:error back)))
                    (expect (not= first-id (:id (:ret later))))
                    (expect (= first-id (:id (:ret back)))))))
+
+(defn- capture-message-pane
+  "Open the picker at `size`, type a query that only one session's messages
+   match, and return the terminal lines once its matching messages show."
+  [size]
+  (let [seen
+        (promise)
+
+        terminal-ref
+        (atom nil)
+
+        paints
+        (atom 0)
+
+        task
+        (future
+          (capture-navigator!
+            {:sessions [{"id" "a" "title" "Alpha plan" "turn_count" 1}
+                        {"id" "b" "title" "Beta notes" "turn_count" 1}]
+             :search-sessions
+             (fn [_query]
+               {:matches
+                {"b"
+                 {:rank 1
+                  :kind :request
+                  :hits
+                  [{:side :request :snippet "…split the search popup with a border…" :at 0}
+                   {:side :reply :snippet "…the popup lists the matching messages…" :at 60000}]}}})}
+            (fn [^DefaultVirtualTerminal terminal]
+              (reset! terminal-ref terminal)
+              (when (= 1 (swap! paints inc))
+                (doseq [k "popup"]
+                  (.addInput terminal (cap/key-stroke k))))
+              (let [lines (terminal-lines terminal)]
+                (when (and (not (realized? seen))
+                           (some #(str/includes? % "split the search popup") lines))
+                  (deliver seen lines)
+                  (.addInput terminal (cap/key-stroke :esc)))))
+            size))
+
+        lines
+        (deref seen 5000 nil)]
+
+    (when-not lines
+      (some-> ^DefaultVirtualTerminal @terminal-ref
+              (.addInput (cap/key-stroke :esc))))
+    {:lines lines :capture (deref task 5000 ::blocked)}))
+
+(defn- column-of
+  "Column of the first line holding `needle`, as `[row col]`, or nil."
+  [lines needle]
+  (first (keep-indexed (fn [row line]
+                         (let [col (str/index-of line needle)]
+                           (when col [row col])))
+                       lines)))
+
+;; The search answers its hits WITH their rows: a hit outside the window the picker
+;; holds is painted from that one answer, and no second read fetches it.
+(defdescribe
+  navigator-search-answer-test
+  (it
+    "paints a hit outside the held window from the search answer's own row"
+    (let [seen
+          (promise)
+
+          terminal-ref
+          (atom nil)
+
+          paints
+          (atom 0)
+
+          task
+          (future
+            (capture-navigator!
+              {:sessions [{"id" "a" "title" "Alpha plan" "turn_count" 1}]
+               :search-sessions (fn [_query]
+                                  {:sessions [{"id" "z" "title" "Zeta far away" "turn_count" 1}]
+                                   :matches {"z" {:rank 0 :kind :title}}})}
+              (fn [^DefaultVirtualTerminal terminal]
+                (reset! terminal-ref terminal)
+                (when (= 1 (swap! paints inc))
+                  (doseq [k "zeta"]
+                    (.addInput terminal (cap/key-stroke k))))
+                (when (and (not (realized? seen))
+                           (some #(str/includes? % "Zeta far away") (terminal-lines terminal)))
+                  (deliver seen true)
+                  (.addInput terminal (cap/key-stroke :esc))))))
+
+          painted?
+          (deref seen 5000 false)]
+
+      (when-not painted?
+        (some-> ^DefaultVirtualTerminal @terminal-ref
+                (.addInput (cap/key-stroke :esc))))
+      (expect (true? painted?))
+      (expect (nil? (:error (deref task 5000 {:error ::blocked})))))))
+
+(defdescribe navigator-message-pane-test
+             (it
+               "a query splits the picker: sessions left of a border, their matching messages right"
+               (let [{:keys [lines capture]}
+                     (capture-message-pane {:cols 120 :rows 32})
+
+                     [_ border-col]
+                     (column-of lines "┬")
+
+                     [ask-row ask-col]
+                     (column-of lines "split the search popup")
+
+                     title-cols
+                     (keep #(str/index-of % "Beta notes") lines)]
+
+                 (expect (nil? (:error capture)))
+                 ;; The border runs from the query separator down to the footer separator.
+                 (expect (some? (column-of lines "┴")))
+                 (expect (= "│" (subs (nth lines ask-row) border-col (inc (long border-col)))))
+                 ;; The session stays in the list, left of the border. Its title heads the
+                 ;; messages on the right, each message under its author and time.
+                 (expect (some #(< (long %) (long border-col)) title-cols))
+                 (expect (some #(> (long %) (long border-col)) title-cols))
+                 (expect (< (long border-col) (long ask-col)))
+                 (expect (some? (column-of lines "You  01-01 00:00")))
+                 (expect (some? (column-of lines "Vis  01-01 00:01")))
+                 (expect (some? (column-of lines "the popup lists the matching messages")))))
+             (it "a narrow picker stacks the messages under the list"
+                 (let [{:keys [lines capture]}
+                       (capture-message-pane {:cols 80 :rows 32})
+
+                       [title-row title-col]
+                       (column-of lines "Beta notes")
+
+                       [ask-row ask-col]
+                       (column-of lines "split the search popup")]
+
+                   (expect (nil? (:error capture)))
+                   (expect (nil? (column-of lines "┬")))
+                   (expect (< (long title-row) (long ask-row)))
+                   (expect (<= (long ask-col) (long title-col)))
+                   ;; A short list leaves the rest of the body to the messages.
+                   (expect (some? (column-of lines "the popup lists the matching messages"))))))
 
 (defdescribe
   navigator-page-responsiveness-test

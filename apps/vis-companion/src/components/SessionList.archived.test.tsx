@@ -33,7 +33,6 @@ describe('an archived session row', () => {
         group={null}
         draft={EMPTY_DRAFT_MESSAGE}
         conn={STORY_GATEWAYS[0]}
-        match={null}
         needle=""
         commands={{
           open: vi.fn(),
@@ -95,7 +94,6 @@ describe('the archive verb on a session row', () => {
         group={null}
         draft={EMPTY_DRAFT_MESSAGE}
         conn={STORY_GATEWAYS[0]}
-        match={null}
         needle=""
         commands={commands}
         deletion={null}

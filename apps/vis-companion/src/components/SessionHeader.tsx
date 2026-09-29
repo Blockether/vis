@@ -6,8 +6,8 @@ import { useDeskRail } from '../lib/fit-rows';
 import { isIosNativeApp } from '../lib/host';
 import { markSessionId } from '../lib/session-id';
 import { Menu, MenuItem, MENU_WIDTH } from './Menu';
-import { AlertIcon, CheckIcon, ClipIcon, CopyIcon, DotsIcon, SettingsIcon } from './icons';
-import { BackButton, Button, DialogFrame, IconButton, Modal, SidebarToggle } from './ui';
+import { AlertIcon, CheckIcon, ChevronIcon, ClipIcon, CopyIcon, DotsIcon, SettingsIcon } from './icons';
+import { BAND_EDGE_CLASS, Button, DialogFrame, IconButton, Modal, SidebarToggle } from './ui';
 
 const GOAL_STATUS = Object.fromEntries(
   gatewaySchema.$defs.session_goal.properties.status.oneOf.map(({ const: status, title }) => [
@@ -31,6 +31,20 @@ function GoalTime({ goal }: { goal: SessionGoal }) {
   const minutes = Math.floor(seconds / 60) % 60;
   const duration = `${hours ? `${hours}h ` : ''}${hours || minutes ? `${minutes}m ` : ''}${seconds % 60}s`;
   return duration;
+}
+
+/**
+ * THE WAY BACK, and there is only one of it.
+ *
+ * On a phone a session stands ON its list, so it leaves by the leading half of its own
+ * title band: the band's edge column carrying one chevron.
+ */
+function BackButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button type="button" aria-label={label} className={BAND_EDGE_CLASS} onClick={onClick}>
+      <ChevronIcon back className="size-4" aria-hidden />
+    </button>
+  );
 }
 
 export type SessionHeaderModel = Readonly<{

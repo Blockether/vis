@@ -242,6 +242,24 @@ export function sessionsWindow(
   };
 }
 
+/**
+ * The gateway's session search (`state/search-sessions`) over one machine's rows, as
+ * `GET /v1/sessions/actions/search` answers it: a blank `q` answers every row as the
+ * RECENTS, in the order the test gave them; a query answers the rows whose TITLE holds
+ * it, as title matches. A test names transcript hits, with their `match`, through its
+ * machine's `routes`.
+ */
+export function searchAnswer(rows: Session[], url: URL) {
+  const query = url.searchParams.get('q')?.trim() ?? '';
+  const needle = query.toLowerCase();
+  const sessions = needle
+    ? rows
+        .filter((row) => (row.title ?? '').toLowerCase().includes(needle))
+        .map((row) => ({ ...row, match: { rank: 0, is_in_title: true } }))
+    : rows;
+  return { query, sessions, total: sessions.length, next_cursor: null, has_more: false };
+}
+
 export function renderSessionsScreen({
   machines = [{}] as MachineFixture[],
   query = '',
@@ -250,6 +268,8 @@ export function renderSessionsScreen({
   onUnreachable,
   isVisible = true,
   onSearch = () => {},
+  isSearchOpen = query !== '',
+  onCloseSearch = () => {},
   at,
   share = null,
   onDiscardShare,
@@ -263,8 +283,12 @@ export function renderSessionsScreen({
   onUnreachable?: (message: string | null) => void;
   /** Mounted but off the glass, the way the shell parks it behind a session. */
   isVisible?: boolean;
-  /** The door to the search page, or `null` when that page is already open. */
+  /** The door to the search dialog, or `null` when that dialog is already open. */
   onSearch?: (() => void) | null;
+  /** Whether the search dialog stands open. A query opens it by default. */
+  isSearchOpen?: boolean;
+  /** The dialog asked to close; `closeSearch` is what the shell then does. */
+  onCloseSearch?: () => void;
   /**
    * Mount these very machines again, instead of minting fresh ones. A relaunch
    * builds the list from nothing while what the app SAVED is still there, and that
@@ -437,7 +461,8 @@ export function renderSessionsScreen({
       }
       return answer(sessionsWindow(machine.sessions ?? [], url, machine.projects, machine.groups));
     }
-    if (url.pathname === '/v1/sessions/actions/search') return answer({ matches: [] });
+    if (url.pathname === '/v1/sessions/actions/search')
+      return answer(searchAnswer(machine.sessions ?? [], url));
     return answer({});
   }) as typeof fetch;
 
@@ -445,6 +470,7 @@ export function renderSessionsScreen({
   let shownConns = conns;
   let shownVisible = isVisible;
   let shownOpenSession = openSession;
+  let shownSearchOpen = isSearchOpen;
   const screen = (next: string, visible: boolean) => (
     <SessionsScreen
       conns={shownConns}
@@ -456,6 +482,8 @@ export function renderSessionsScreen({
       openSession={shownOpenSession}
       onUnreachable={onUnreachable}
       onSearch={onSearch}
+      isSearchOpen={shownSearchOpen}
+      onCloseSearch={onCloseSearch}
       share={share}
       onDiscardShare={onDiscardShare}
     />
@@ -501,10 +529,25 @@ export function renderSessionsScreen({
       shownConns = next;
       view.rerender(screen(shownQuery, shownVisible));
     },
-    /** Hand the list a new filter, the way the app bar's field does. */
+    /**
+     * Type into the search dialog's field, the way the reader does. A query opens the
+     * dialog: it is the only place one is typed.
+     */
     setQuery(next: string) {
       shownQuery = next;
+      if (next) shownSearchOpen = true;
       view.rerender(screen(next, shownVisible));
+    },
+    /** Open the search dialog with an empty field, the way the app bar's glass does. */
+    openSearch() {
+      shownSearchOpen = true;
+      view.rerender(screen(shownQuery, shownVisible));
+    },
+    /** Close the search dialog the way the shell does: the query goes with it. */
+    closeSearch() {
+      shownSearchOpen = false;
+      shownQuery = '';
+      view.rerender(screen('', shownVisible));
     },
     /** Park the list behind a session, or bring it back — mounted either way. */
     setVisible(next: boolean) {

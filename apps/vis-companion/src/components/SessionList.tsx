@@ -8,9 +8,6 @@ import {
   type MouseEvent,
   type ReactNode,
 } from 'react';
-import type { Element, Root, Text } from 'hast';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 
 import { Banner, ConfirmRow, LIST_EDGE } from './ui';
 import { SessionHealth } from './SessionHealth';
@@ -32,7 +29,7 @@ import {
   StarIcon,
   TrashIcon,
 } from './icons';
-import { GatewayClient, GatewayError, type SessionMatch } from '../lib/gateway';
+import { GatewayClient, GatewayError } from '../lib/gateway';
 import type { GatewayConn, Session, SessionGroup, SessionUsage } from '../lib/types';
 import { draftMessageHasUnsent, type DraftMessage } from '../lib/draft-messages';
 import type { PendingAttachment } from '../lib/attachments';
@@ -156,6 +153,7 @@ export type SessionRowDeletion = Omit<SessionListActions['deletion'], 'target'> 
 function SessionRowSurface({
   isEditing,
   isCurrent,
+  isPreviewed = false,
   isSelected,
   sessionId,
   onOpen,
@@ -166,6 +164,8 @@ function SessionRowSurface({
   isEditing: boolean;
   /** This session is the one standing open in the pane beside the list. */
   isCurrent: boolean;
+  /** A search shows this session's matching messages in the pane beside the list. */
+  isPreviewed?: boolean;
   isSelected: boolean;
   sessionId: string;
   onOpen: () => void;
@@ -202,7 +202,7 @@ function SessionRowSurface({
   return (
     <button
       type="button"
-      aria-current={isCurrent ? 'page' : undefined}
+      aria-current={isCurrent ? 'page' : isPreviewed ? 'true' : undefined}
       aria-pressed={onSelectionClick ? isSelected : undefined}
       className={`${layout} data-pressed:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none`}
       data-session-id={sessionId}
@@ -308,11 +308,11 @@ export const SessionRow = memo(function SessionRow({
   group,
   draft,
   conn,
-  match,
   needle,
   commands,
   deletion,
   isOpen = false,
+  isPreviewed = false,
   seenAnswers,
   isSelected = false,
   onSelectionClick,
@@ -330,7 +330,6 @@ export const SessionRow = memo(function SessionRow({
   /** This device's unsent composer content for the session; EMPTY when there is none. */
   draft: DraftMessage;
   conn: GatewayConn;
-  match: SessionMatch | null;
   needle: string;
   commands: SessionRowCommands;
   deletion: SessionRowDeletion;
@@ -340,6 +339,11 @@ export const SessionRow = memo(function SessionRow({
    * group's colour and would read as two marks on one filed row.
    */
   isOpen?: boolean;
+  /**
+   * A search shows this session's matching messages in the pane beside the list. The
+   * row wears the same standing paper as an open row: it is the one that pane is about.
+   */
+  isPreviewed?: boolean;
   /** Answers this device has already visited while the list awaits a read mark. */
   seenAnswers?: number;
   /** Only project lists support Shift-click selection; other rows still open normally. */
@@ -566,7 +570,7 @@ export const SessionRow = memo(function SessionRow({
             }
           : undefined
       }
-      className={`${isSelected ? 'bg-accent/15' : isOpen ? 'bg-standing' : ''} ${isCarried ? 'opacity-40' : ''} [&+&]:border-t ${needle ? '[&+&]:border-dialog-hint' : '[&+&]:border-edge'} ${deletion ? '' : OFFSCREEN_ROW_CLASS}`}
+      className={`${isSelected ? 'bg-accent/15' : isOpen || isPreviewed ? 'bg-standing' : ''} ${isCarried ? 'opacity-40' : ''} [&+&]:border-t ${needle ? '[&+&]:border-dialog-hint' : '[&+&]:border-edge'} ${deletion ? '' : OFFSCREEN_ROW_CLASS}`}
     >
       {/* Rename is direct manipulation: the row stays put and only its title becomes ink
           with a caret. Metadata, status, and disclosure do not blink out around it. */}
@@ -583,7 +587,7 @@ export const SessionRow = memo(function SessionRow({
         <SwipeActions
           paper={paper}
           label={title}
-          isCurrent={isOpen}
+          isCurrent={isOpen || isPreviewed}
           isSelected={isSelected}
           actions={
             renameDraft !== null
@@ -652,6 +656,7 @@ export const SessionRow = memo(function SessionRow({
             <SessionRowSurface
               isEditing={renameDraft !== null}
               isCurrent={isOpen}
+              isPreviewed={isPreviewed}
               isSelected={isSelected}
               sessionId={session.id}
               onOpen={() => {
@@ -832,7 +837,6 @@ export const SessionRow = memo(function SessionRow({
           </div>
         </div>
       </div>
-      {match && <MatchPreview match={match} needle={needle} />}
     </div>
   );
 });
@@ -1196,23 +1200,6 @@ export function draftSearchText(draft: DraftMessage | undefined): string {
     .toLowerCase();
 }
 
-export function sessionSearchText(session: Session): string {
-  return [
-    session.title,
-    session.id,
-    session.project_name,
-    session.workspace?.label,
-    session.workspace?.root,
-    session.status,
-    sessionNeedsInput(session) ? 'input needed waiting human' : '',
-    sessionWasStopped(session) ? 'stopped interrupted failed' : '',
-    sessionIsLive(session) ? 'live running' : 'idle',
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
-}
-
 function dateMillis(value?: string): number {
   if (!value) return 0;
   const millis = new Date(value).getTime();
@@ -1222,112 +1209,6 @@ function dateMillis(value?: string): number {
 function formatExact(value?: string): string {
   const millis = dateMillis(value);
   return millis ? new Date(millis).toLocaleString() : '';
-}
-
-// Search hits stay subordinate to their session: compact transcript rows, not cards.
-function MatchPreview({ match, needle }: { match: SessionMatch; needle: string }) {
-  const rows =
-    match.hits.length > 0
-      ? match.hits
-      : [
-          {
-            side: 'request' as const,
-            snippet: match.requestSnippet?.trim() ?? '',
-            at: null,
-          },
-          {
-            side: 'reply' as const,
-            snippet: match.replySnippet?.trim() ?? '',
-            at: null,
-          },
-        ].filter((h) => h.snippet.length > 0);
-  if (rows.length === 0) return null;
-  return (
-    <div className={`pb-1.5 ${LIST_EDGE} ${LIST_EDGE_END}`}>
-      <div
-        role="list"
-        aria-label="Matching messages"
-        className="divide-y divide-edge border-t border-edge"
-      >
-        {rows.map((hit, index) => (
-          <div
-            key={`${hit.side}-${hit.at ?? index}`}
-            role="listitem"
-            className="grid grid-cols-[2.5rem_minmax(0,1fr)] gap-2 py-1.5"
-          >
-            <span
-              className={`font-mono text-ui font-bold mouse:text-meta ${
-                hit.side === 'request' ? 'text-you-role' : 'text-vis-role'
-              }`}
-            >
-              {hit.side === 'request' ? 'You' : 'Vis'}
-            </span>
-            <div className="line-clamp-2 whitespace-pre-wrap break-words font-mono text-ui text-dialog-foreground">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[[searchPreviewMarkdown, needle]]}
-                skipHtml
-                allowedElements={['p', 'strong', 'em', 'del', 'code', 'br', 'mark']}
-                unwrapDisallowed
-                components={{
-                  p: ({ children }) => <span className="block">{children}</span>,
-                  strong: ({ children }) => <strong className="font-bold">{children}</strong>,
-                  code: ({ children }) => (
-                    <code className="bg-panel-2 px-0.5 font-mono">{children}</code>
-                  ),
-                  mark: ({ children }) => (
-                    <mark className="bg-accent/20 px-0.5 font-bold text-white">{children}</mark>
-                  ),
-                }}
-              >
-                {hit.snippet}
-              </ReactMarkdown>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// Highlight parsed text, never Markdown syntax or URL targets. Images become their
-// labels before rendering, so a search preview cannot fetch remote content.
-function searchPreviewMarkdown(needle: string) {
-  const pattern = needle ? new RegExp(`(${escapeRegExp(needle)})`, 'ig') : null;
-  return (tree: Root) => {
-    function visit(node: Root | Element) {
-      // Work backwards so inserted marks are not visited or highlighted again.
-      for (let index = node.children.length - 1; index >= 0; index -= 1) {
-        let child = node.children[index];
-        if (child.type === 'element' && child.tagName === 'img') {
-          child = { type: 'text', value: String(child.properties.alt ?? '') };
-          node.children[index] = child;
-        }
-        if (child.type === 'element') {
-          visit(child);
-        } else if (child.type === 'text' && pattern) {
-          const parts = child.value.split(pattern);
-          if (parts.length === 1) continue;
-          const highlighted = parts.map<Element | Text>((value, part) =>
-            part % 2 === 1
-              ? {
-                  type: 'element',
-                  tagName: 'mark',
-                  properties: {},
-                  children: [{ type: 'text', value }],
-                }
-              : { type: 'text', value },
-          );
-          node.children.splice(index, 1, ...highlighted);
-        }
-      }
-    }
-    visit(tree);
-  };
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 // The first line of an unsent message, short enough to sit on one row. A dirty

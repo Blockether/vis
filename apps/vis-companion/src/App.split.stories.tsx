@@ -49,6 +49,8 @@ function DeskSplit() {
           subscriptions={null}
           onOpen={fn()}
           onSearch={fn()}
+          isSearchOpen={false}
+          onCloseSearch={fn()}
           isVisible={isShown}
         />
       </div>
