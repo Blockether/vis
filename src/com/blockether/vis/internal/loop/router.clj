@@ -160,46 +160,51 @@
                             keyword)]
     (:network (some #(when (= provider-id (:id %)) %) (:providers router)))))
 
+(def ^:private PROVIDER_BACKSTOP_MARGIN_MS
+  "Room the gateway backstop leaves above Svar's deadlines for one provider
+   attempt: Svar's own abort, its announced re-send wait and the engine unwind."
+  30000)
+
 (defn provider-watchdog-timeouts
-  "Keep gateway backstops outside the provider-owned network deadlines."
+  "Gateway backstops for one provider attempt, kept outside the deadlines Svar
+   enforces for it, so Svar always names and recovers a silent request first.
+   `:first-output-timeout-ms` covers an attempt with no output yet: the response
+   header wait plus the longest body watchdog. `:stall-timeout-ms` covers a quiet
+   stream after output: the longer of the idle and semantic watchdogs. A
+   whole-request `:timeout-ms` caps both. Svar announces each re-send, and the
+   gateway starts a new attempt window there."
   [provider-network]
-  (when (seq provider-network)
-    (let [effective
-          (rt/with-default-ask-code-idle-timeout {} provider-network)
+  (let [effective
+        (rt/with-default-ask-code-idle-timeout {} provider-network)
 
-          positive-ms
-          (fn [v]
-            (when (and (number? v) (pos? (long v))) (long v)))
+        limit-ms
+        (fn [k]
+          (let [v (get effective k)]
+            (if (and (number? v) (pos? (long v))) (long v) 0)))
 
-          ttft-ms
-          (positive-ms (:ttft-timeout-ms effective))
+        longest-ms
+        (fn [ks]
+          (long (reduce max 0 (map limit-ms ks))))
 
-          body-limits
-          (keep (comp positive-ms effective)
-                [:first-byte-timeout-ms :idle-timeout-ms :semantic-timeout-ms])
+        ttft-ms
+        (limit-ms :ttft-timeout-ms)
 
-          body-ms
-          (when (seq body-limits) (apply min body-limits))
+        body-ms
+        (longest-ms [:first-byte-timeout-ms :idle-timeout-ms :semantic-timeout-ms])
 
-          stream-limits
-          (keep (comp positive-ms effective) [:idle-timeout-ms :semantic-timeout-ms])
+        whole-ms
+        (limit-ms :timeout-ms)
 
-          stream-ms
-          (when (seq stream-limits) (apply max stream-limits))
+        backstop
+        (fn [phase-ms]
+          (let [bounded (cond (zero? (long phase-ms)) whole-ms
+                              (pos? whole-ms) (min whole-ms (long phase-ms))
+                              :else (long phase-ms))]
+            (when (pos? bounded) (+ bounded (long PROVIDER_BACKSTOP_MARGIN_MS)))))]
 
-          whole-ms
-          (positive-ms (:timeout-ms effective))
-
-          first-output-ms
-          (when (and ttft-ms body-ms) (+ (long ttft-ms) (long body-ms)))
-
-          bounded
-          (fn [phase-ms]
-            (or (when (and whole-ms phase-ms) (min (long whole-ms) (long phase-ms)))
-                phase-ms
-                whole-ms))]
-
-      {:first-output-timeout-ms (bounded first-output-ms) :stall-timeout-ms (bounded stream-ms)})))
+    {:first-output-timeout-ms (backstop
+                                (if (and (pos? ttft-ms) (pos? body-ms)) (+ ttft-ms body-ms) 0))
+     :stall-timeout-ms (backstop (longest-ms [:idle-timeout-ms :semantic-timeout-ms]))}))
 
 (defn- with-provider-network-defaults
   [router opts]

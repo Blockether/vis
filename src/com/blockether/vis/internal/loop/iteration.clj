@@ -51,56 +51,26 @@
    caps the sequence to avoid consuming the full iteration budget without output."
   3)
 
-(def ^:private MAX_STREAM_RECOVERY_RETRIES
-  "Bound same-iteration recovery for pre-output watchdogs and reasoning-only EOF.
-   Reasoning retries may incur provider usage; announce every retry and never replay tools."
-  2)
-
-(def ^:private STREAM_RECOVERY_RETRY_DELAYS_MS
-  "Brief backoff before each same-iteration stream recovery attempt."
-  [1000 3000])
-
-(defn- pre-output-stream-retryable?
-  "True when `e` is a stream-watchdog abort Vis may re-issue itself.
-
-   Three conditions, all required: the failure is one of svar's typed watchdog
-   aborts anywhere in its cause chain (HTTP clients wrap the typed ex-info), NO
-   output has streamed for this attempt, and the attempt budget is not spent.
-   With output already painted a resend would duplicate visible text — exactly
-   why svar refuses it — so that case stays terminal.
-
-   Measured cause: a provider accepted the POST and sent no response header for
-   the whole TTFT budget; svar declined the retry (`:no-retry-path`), its router
-   had no second candidate under Vis' pinned sticky routing, and a turn carrying
-   ten iterations of finished work died asking the human to type 'Continue'."
-  [^Throwable e {:keys [attempt output-started?]}]
-  (and (not output-started?)
-       (< (long (or attempt 0)) (long MAX_STREAM_RECOVERY_RETRIES))
-       (boolean (some perr/pre-output-stream-abort? (loop-errors/bounded-cause-chain e)))))
-
-(defn- reasoning-only-stream-retryable?
-  "Only the provider-call boundary can verify reasoning-only EOF before code eval.
-   Do not infer replay safety from missing content or from a stream error thrown later.
-   A connection dropped after reasoning replays like a truncated stream: Svar refuses
-   both once output started, so this reasoning-only replay decision belongs to Vis."
-  [^Throwable e attempt]
-  (and (or (perr/stream-truncated-error? e) (perr/stream-connection-error? e))
-       (= :reasoning (:stream-output (ex-data e)))
-       (< (long attempt) (long MAX_STREAM_RECOVERY_RETRIES))))
-
-(defn- stream-recovery-backoff-ms
-  "Backoff in ms before recovery number `attempt` (0-based), clamped to the last step."
-  ^long [attempt]
-  (long (nth STREAM_RECOVERY_RETRY_DELAYS_MS
-             (min (long attempt) (dec (count STREAM_RECOVERY_RETRY_DELAYS_MS))))))
+(defn- stream-recovery-outcome
+  "What Svar did about stream failure `e` before it reached Vis, for the failure
+   card: how many same-provider re-sends its routing trace announced, or that
+   answer output had already streamed, which Svar never re-sends. Nil otherwise."
+  [^Throwable e answer-streamed?]
+  (let [chain (loop-errors/bounded-cause-chain e)]
+    (when (some #(or (perr/stream-truncated-error? %)
+                     (perr/stream-connection-error? %)
+                     (perr/pre-output-stream-abort? %))
+                chain)
+      (let [attempts (count (filter #(= :llm.routing/provider-retry (:event/type %))
+                                    (some #(:routed/trace (ex-data %)) chain)))]
+        (cond answer-streamed? {:attempts attempts :declined :output-started}
+              (pos? attempts) {:attempts attempts :declined :retry-budget-exhausted})))))
 
 (def ^:private RETRY_BUDGET_KINDS
-  "The per-iteration budget each Vis-owned retry sentinel spends. Auth and stream
-   recovery count separately, so one kind of retry never spends another kind's
-   budget. Auth fallback and context-overflow recovery own their bounds."
+  "The per-iteration budget each Vis-owned retry sentinel spends. Auth fallback and
+   context-overflow recovery own their bounds. Svar owns stream recovery."
   {::retry-auth-refresh :auth
    ::retry-auth-backoff :auth
-   ::retry-stream-recovery :stream
    ::retry-auth-fallback nil
    ::retry-context-overflow nil})
 
@@ -112,11 +82,10 @@
         (map? result) (when (contains? result ::retry-auth-fallback) ::retry-auth-fallback)))
 
 (defn- next-retry-counters
-  "Pure counter-threading for Vis-owned context, auth and stream recovery. Svar owns
-   other transport retries, including the larger-budget re-send after output
-   exhaustion. Vis additionally recovers pre-output watchdogs and verified
-   reasoning-only EOF before code eval. `counters` holds one count per budget kind in
-   [[RETRY_BUDGET_KINDS]]. Returns nil for a real result."
+  "Pure counter-threading for Vis-owned context and auth recovery. Svar owns
+   transport retries, including same-provider stream recovery and the
+   larger-budget re-send after output exhaustion. `counters` holds one count per
+   budget kind in [[RETRY_BUDGET_KINDS]]. Returns nil for a real result."
   [result counters]
   (when-let [sentinel (retry-sentinel result)]
     (if-let [kind (get RETRY_BUDGET_KINDS sentinel)]
@@ -127,8 +96,8 @@
   "The request attempt that follows `result`, or nil when `result` is real. An
    attempt carries the per-kind `:retries` counters, the request `:extra-body` and
    the `:env` it ran with. The following attempt spends the sentinel's budget and
-   takes its input: an auth fallback adds the `:routing` to install, and an auth or
-   stream backoff adds the `:backoff-ms` to wait first. An auth refresh re-sends
+   takes its input: an auth fallback adds the `:routing` to install, and an auth
+   backoff adds the `:backoff-ms` to wait first. An auth refresh re-sends
    unchanged because the router hydrates refreshed credentials before dispatch; a
    context-overflow retry re-sends with the projection its recovery installed."
   [{:keys [retries] :as attempt} result]
@@ -141,10 +110,6 @@
         ;; Retry the same fresh token; propagation may still be settling.
         ::retry-auth-backoff
         (assoc following :backoff-ms (loop-router/auth-propagation-backoff-ms (:auth retries)))
-
-        ;; Keep the completed history, route and request unchanged.
-        ::retry-stream-recovery
-        (assoc following :backoff-ms (stream-recovery-backoff-ms (:stream retries)))
 
         following))))
 
@@ -651,6 +616,7 @@
                         (on-chunk {:phase :provider-retry-reset
                                    :iteration iteration-position
                                    :attempt (:attempt chunk)
+                                   :max-retries (:max-retries chunk)
                                    :delay-ms (:delay-ms chunk)
                                    :error {:type :llm.routing/provider-retry
                                            :message (:error chunk)}
@@ -697,13 +663,8 @@
                                                   llm-headers))
           provider-network (loop-router/provider-network-policy (:router environment)
                                                                 resolved-model)
-          provider-deadlines (loop-router/provider-watchdog-timeouts provider-network)
-          first-output-timeout-ms (long (or (:first-output-timeout-ms provider-deadlines)
-                                            rt/ASK_CODE_FIRST_OUTPUT_TIMEOUT_MS))
-          ;; Let Svar abort this attempt and the retry callback run before the
-          ;; gateway's last-resort watchdog can cancel the entire turn.
-          provider-watchdog-timeouts (assoc provider-deadlines
-                                       :first-output-timeout-ms (+ first-output-timeout-ms 10000))
+          ;; Svar owns this call's deadlines; the gateway backstop waits past them.
+          provider-watchdog-timeouts (loop-router/provider-watchdog-timeouts provider-network)
           goal-at-request-start (let [goal (goals/check-goal environment)]
                                   (when (= "active" (get goal "status")) goal))
           provider-started-at-ms (util/now-ms)
@@ -825,10 +786,7 @@
           (svar/with-log-context
             {:query-id (:request-id request-context) :iteration iteration-position}
             ;; Svar remains the owner of provider classification and retries.
-            (try (transcript/ask-code-with-first-output-timeout! environment
-                                                                 resolved-model
-                                                                 ask-opts
-                                                                 first-output-timeout-ms)
+            (try (transcript/ask-code-with-session! environment resolved-model ask-opts)
                  (catch Exception e
                    (when (perr/context-overflow-error? e)
                      (let [model (or (get-in (ex-data e) [:request-accounting :model])
@@ -2877,10 +2835,15 @@
                                                                   window
                                                                   fold-budget)))))
                            :on-chunk (fn [chunk]
-                                       (when (provider-output-chunk? chunk)
-                                         (reset! provider-output-started? true)
-                                         (when (not= :reasoning (:phase chunk))
-                                           (reset! provider-replay-unsafe? true)))
+                                       (cond
+                                         ;; A Svar re-send starts its attempt over.
+                                         (= :provider-retry-reset (:phase chunk))
+                                         (do (reset! provider-output-started? false)
+                                             (reset! provider-replay-unsafe? false))
+                                         (provider-output-chunk? chunk)
+                                         (do (reset! provider-output-started? true)
+                                             (when (not= :reasoning (:phase chunk))
+                                               (reset! provider-replay-unsafe? true))))
                                        (emit-hook! on-chunk chunk "Provider chunk hook failed"))
                            :active-extensions active-exts
                            :answer-validation-context
@@ -2946,45 +2909,6 @@
                                                 :status (:status (ex-data e))}}
                                         "Provider auth recovery exhausted; falling back")
                               {::retry-auth-fallback fallback-routing})
-                            ;; Re-issue only this provider call, before code eval. The
-                            ;; reset supersedes provisional reasoning; prior tool results
-                            ;; remain in the unchanged request. Stop always wins.
-                            (and (not (and cancel-atom @cancel-atom))
-                                 (or (pre-output-stream-retryable? e
-                                                                   {:attempt (:stream retries)
-                                                                    :output-started?
-                                                                    @provider-output-started?})
-                                     (and (not @provider-replay-unsafe?)
-                                          (reasoning-only-stream-retryable? e (:stream retries)))))
-                            (let [delay-ms
-                                  (stream-recovery-backoff-ms (:stream retries))
-
-                                  chunk
-                                  (provider-retry-progress-chunk
-                                    (inc (long iteration))
-                                    e
-                                    {:provider (:provider resolved-model)
-                                     :model (or (:name resolved-model) (:model resolved-model))
-                                     :reason (cond (perr/stream-truncated-error? e)
-                                                   :stream-truncated-reasoning
-                                                   (perr/stream-connection-error? e)
-                                                   :stream-dropped-reasoning
-                                                   :else :stream-watchdog-pre-output)
-                                     :attempt (inc (long (:stream retries)))
-                                     :max-retries MAX_STREAM_RECOVERY_RETRIES
-                                     :delay-ms delay-ms})]
-
-                              (emit-hook! on-chunk chunk "Stream recovery progress hook failed")
-                              (tel/log! {:level :warn
-                                         :id ::stream-recovery-retry
-                                         :data {:iteration iteration
-                                                :provider (:provider resolved-model)
-                                                :attempt (inc (long (:stream retries)))
-                                                :max-retries MAX_STREAM_RECOVERY_RETRIES
-                                                :delay-ms delay-ms
-                                                :type (:type (ex-data e))}}
-                                        "Retrying provider stream before code execution")
-                              ::retry-stream-recovery)
                             :else
                             (if-let [recovery (context-overflow-recovery!
                                                 {:error e
@@ -3014,43 +2938,28 @@
                                    :msg
                                    "Context overflow: retrying with a smaller history projection"})
                                 ::retry-context-overflow)
-                              (do
-                                (when (perr/context-overflow-error? e)
-                                  (tel/log!
-                                    {:level :warn
-                                     :id ::context-overflow-terminal
-                                     :data (merge request-context
-                                                  (transcript/context-overflow-token-data (ex-data
-                                                                                            e))
-                                                  {:output-started? @provider-output-started?
-                                                   :recovery-attempts (:attempts
-                                                                        @context-recovery-state)})
-                                     :msg "Context overflow: no emergency-fold retry scheduled"}))
-                                (loop-errors/handle-iteration-exception!
-                                  e
-                                  {:iteration iteration
-                                   :messages @effective-messages-atom
-                                   :routing @iteration-routing
-                                   :reasoning-level reasoning-level
-                                   :stream-recovery
-                                   (let [stream-abort? (some #(or (perr/stream-truncated-error? %)
-                                                                  (perr/stream-connection-error? %)
-                                                                  (perr/pre-output-stream-abort? %))
-                                                             (loop-errors/bounded-cause-chain e))]
-                                     (when (or (pos? (long (:stream retries))) stream-abort?)
-                                       {:attempts (:stream retries)
-                                        :declined (cond (or @provider-replay-unsafe?
-                                                            (= :content
-                                                               (:stream-output (ex-data e))))
-                                                        :output-started
-                                                        (>= (long (:stream retries))
-                                                            (long MAX_STREAM_RECOVERY_RETRIES))
-                                                        :retry-budget-exhausted
-                                                        stream-abort? :not-reasoning-only
-                                                        :else :provider-failed)}))}))))))]
+                              (do (when (perr/context-overflow-error? e)
+                                    (tel/log!
+                                      {:level :warn
+                                       :id ::context-overflow-terminal
+                                       :data (merge request-context
+                                                    (transcript/context-overflow-token-data (ex-data
+                                                                                              e))
+                                                    {:output-started? @provider-output-started?
+                                                     :recovery-attempts (:attempts
+                                                                          @context-recovery-state)})
+                                       :msg "Context overflow: no emergency-fold retry scheduled"}))
+                                  (loop-errors/handle-iteration-exception!
+                                    e
+                                    {:iteration iteration
+                                     :messages @effective-messages-atom
+                                     :routing @iteration-routing
+                                     :reasoning-level reasoning-level
+                                     :stream-recovery
+                                     (stream-recovery-outcome e @provider-replay-unsafe?)}))))))]
 
                   {:result result :env env}))
-              {:retries {:auth 0 :stream 0} :extra-body iteration-extra-body :env environment}
+              {:retries {:auth 0} :extra-body iteration-extra-body :env environment}
               iteration-routing)))]
 
     (assoc state

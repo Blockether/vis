@@ -160,7 +160,7 @@
           {:event/type :llm.routing/provider-retry
            :provider "zai-coding-plan"
            :model "glm-5.1"
-           :reason :stream-connection-error
+           :reason :stream-dropped
            :attempt 1
            :delay-ms 1000
            :error "Stream connection error: closed"}]

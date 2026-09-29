@@ -457,8 +457,7 @@
   (doseq [[label recovery expected]
           [["exhausted" {:attempts 2 :declined :retry-budget-exhausted} "after 2 retries"]
            ["output" {:attempts 0 :declined :output-started} "answer text or tool input"]
-           ["unverified" {:attempts 0 :declined :not-reasoning-only}
-            "not a verified reasoning-only"]]]
+           ["one retry" {:attempts 1 :declined :retry-budget-exhausted} "after 1 retry."]]]
     (doseq [throwable? [false true]]
       (it (str label " / throwable=" throwable?)
           (let [data {:type :svar.core/stream-truncated

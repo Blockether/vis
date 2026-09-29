@@ -2866,7 +2866,7 @@
                :provider provider
                :model model)))
 
-(defn- ask-code-with-session!
+(defn ask-code-with-session!
   "Keep one opaque Svar session per effective router for a provider whose prompt
    cache is a server continuation; other providers stay one-shot."
   [environment resolved-model ask-opts]
@@ -2926,89 +2926,6 @@
             (locking session-atom (close-llm-session! session-atom)))
           (svar/ask-code! (:router environment)
                           (update ask-opts :messages apply-cache-breakpoints provider))))))
-
-(defn ask-code-with-first-output-timeout!
-  "Bound one provider attempt without cancelling its turn. Svar polls this attempt's
-   cancel predicate on both SSE and WebSocket transports. Only an abort initiated
-   by this deadline becomes a retryable stream timeout; a user Stop keeps its type.
-   Text, reasoning or tool-input progress disables the first-output deadline.
-   Tag truncated streams with observed output before this call can return any code."
-  [environment resolved-model ask-opts timeout-ms]
-  (let [started
-        (System/nanoTime)
-
-        timeout-ns
-        (* (long timeout-ms) 1000000)
-
-        phase
-        (atom :waiting)
-
-        stream-output
-        (atom :none)
-
-        caller-cancel?
-        (:cancel-fn ask-opts)
-
-        cancelled?
-        (fn []
-          (boolean (and caller-cancel? (caller-cancel?))))
-
-        on-chunk
-        (:on-chunk ask-opts)
-
-        opts
-        (assoc ask-opts
-          :cancel-fn (fn []
-                       (or (cancelled?)
-                           (= :timed-out @phase)
-                           (and (>= (- (System/nanoTime) started) timeout-ns)
-                                (compare-and-set! phase :waiting :timed-out))))
-          :on-chunk
-          (fn [chunk]
-            (when (some seq
-                        ((juxt :content :reasoning :tool-input :tool-call-preview :tool-calls)
-                          chunk))
-              (compare-and-set! phase :waiting :output))
-            ;; Tool arguments may never become visible text. Any such progress
-            ;; disqualifies a reasoning-only retry, even if later frames are empty.
-            (cond (some seq ((juxt :content :tool-input :tool-call-preview :tool-calls) chunk))
-                  (reset! stream-output :content)
-                  (seq (:reasoning chunk)) (compare-and-set! stream-output :none :reasoning))
-            ;; A late frame must not become visible before this attempt is retried.
-            (when (and on-chunk (not= :timed-out @phase)) (on-chunk chunk))))]
-
-    (try (ask-code-with-session! environment resolved-model opts)
-         (catch Exception e
-           (if (and (= :timed-out @phase)
-                    (not (cancelled?))
-                    (some #(or (= :svar.core/stream-cancelled (:type (ex-data %)))
-                               (instance? InterruptedException %))
-                          (loop-errors/bounded-cause-chain e)))
-             (do
-               ;; Svar/HTTP wrappers may restore the interrupt after classifying the
-               ;; abort. Consume only our own deadline's interrupt before retry/backoff.
-               (Thread/interrupted)
-               (throw (ex-info (str "Provider produced no output for " timeout-ms "ms.")
-                               {:type :svar.core/stream-semantic-timeout
-                                :source :vis-first-output-watchdog
-                                :stream? true
-                                :first-output-timeout? true
-                                :semantic-timeout-ms timeout-ms}
-                               e)))
-             (if-let [dropped (some #(when (or (perr/stream-truncated-error? %)
-                                               (perr/stream-connection-error? %))
-                                       %)
-                                    (loop-errors/bounded-cause-chain e))]
-               (let [data (ex-data dropped)
-                     output (if (or (pos? (long (or (:content-acc-len data) 0)))
-                                    (pos? (long (or (:tool-args-acc-len data) 0)))
-                                    (seq (:partial-content data))
-                                    (seq (:tool-calls data)))
-                              :content
-                              @stream-output)]
-
-                 (throw (ex-info (ex-message dropped) (assoc data :stream-output output) e)))
-               (throw e)))))))
 
 (defn context-overflow-token-data
   "Keep rejection counts separate from response usage. Preflight may count remotely;

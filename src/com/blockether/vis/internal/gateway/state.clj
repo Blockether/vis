@@ -19,7 +19,6 @@
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.improve.core :as improve]
             [com.blockether.vis.internal.improve.review :as improve-review]
-            [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.internal.attachment.core :as attachments]
@@ -2812,11 +2811,11 @@
   (* 6 60 1000))
 
 (def ^:private TURN_FIRST_OUTPUT_TIMEOUT_MS
-  "Backstop for a started turn with no output. An active provider call supplies
-   its attempt deadline plus unwind grace, so the engine can retry a silent request
-   before this watchdog cancels the whole turn. Reaching this backstop is terminal;
-   the gateway never replays a failed turn. Provider policy may widen the deadline."
-  rt/ASK_CODE_FIRST_OUTPUT_TIMEOUT_MS)
+  "Backstop for a started turn with no output while no provider call has named its
+   own window. Each provider call supplies a window past Svar's worst case for one
+   attempt, and each Svar re-send starts a new one. Reaching this backstop is
+   terminal; the gateway never replays a failed turn."
+  120000)
 
 (def ^:private first-output-exempt-phases
   "Phases where a started turn may legitimately still owe its first output:
@@ -2833,7 +2832,7 @@
   [stall]
   (or (:stall-detail (some-> stall
                              deref))
-      (str "no output for " TURN_STALL_TIMEOUT_MS "ms")))
+      (str "no new output for " (fmt/format-duration TURN_STALL_TIMEOUT_MS))))
 
 (defn- stall-attribution
   "WHO went quiet: the provider and model named by the live `:provider-call`
@@ -2871,11 +2870,43 @@
                                              deref)]
     (boolean (or provider produced?))))
 
+(defn- stall-phase-text
+  "Plain words for the phase a stalled turn was in."
+  [phase]
+  (case phase
+    (:provider-call :provider-retry-reset :provider-fallback)
+    "while waiting for the model to answer"
+
+    :reasoning
+    "while the model was thinking"
+
+    (:content :assistant-prose)
+    "while the model was writing its answer"
+
+    :response-parse
+    "while Vis read the answer"
+
+    :iteration-final
+    "between two steps"
+
+    :awaiting-permit
+    "while waiting for another turn to finish"
+
+    :engine-start
+    "while Vis prepared the session"
+
+    (if phase (str "in the " (name phase) " step") "before any progress")))
+
+(def ^:private stall-next-step
+  "What a reader can do after the watchdog stopped a turn that reached a provider."
+  "NEXT STEP: send \"continue\" to try again. If it happens again, switch to another model.")
+
 (defn- stall-failure-text
   "The stall failure a human reads. `Provider stream stalled: no output for
    362142ms in phase :provider-call` named the symptom and nothing else, so the
    card could not say that it was github-copilot / claude-opus-5 whose
-   connection died — the log knew, the turn did not.
+   connection died — the log knew, the turn did not. It also gave the reader raw
+   milliseconds and an engine phase instead of a duration and a next step.
 
    A turn that never reached a provider must not blame one either: a turn parked
    on its own session's wedged engine died with `Provider stream stalled: no
@@ -2884,8 +2915,12 @@
   [stall]
   (let [who (stall-attribution stall)]
     (if (stall-reached-provider? stall)
-      (str "Provider stream stalled" (when who (str " (" who ")")) ": " (stall-detail-text stall))
-      (str "Turn stalled before reaching the provider: " (stall-detail-text stall)))))
+      (str "Provider stopped responding" (when who (str " (" who ")"))
+           ": " (stall-detail-text stall)
+           ". Vis stopped the turn. " stall-next-step)
+      (str "Turn stalled before reaching the provider: "
+           (stall-detail-text stall)
+           ". NEXT STEP: send your message again."))))
 
 (def ^:private stall-exempt-phases
   "Phases where a running turn may legitimately produce no chunk for a long time:
@@ -2896,6 +2931,11 @@
   #{:form-start :form-activity :form-result :tool-start :shell-run :shell-bg
     :attachment-transcription})
 
+(def ^:private provider-attempt-phases
+  "Markers that start a provider attempt with no output yet: the call itself, a
+   Svar re-send after a broken stream, and a switch to another provider."
+  #{:provider-call :provider-retry-reset :provider-fallback})
+
 (def ^:private stall-lifecycle-phases
   "Phases whose chunks are engine LIFECYCLE markers, not model output. `loop`
    emits `{:phase :provider-call}` the moment it STARTS the call, so counting it
@@ -2903,8 +2943,9 @@
    it kept the full cancel grace and the full [[TURN_STALL_TIMEOUT_MS]] ceiling.
    The marker still moves the idle deadline — the wait legitimately begins there —
    it just no longer claims the model said anything. Output already produced by an
-   earlier iteration remains turn-level progress."
-  #{:provider-call :attachment-transcription})
+   earlier iteration remains turn-level progress. Every provider attempt marker is
+   such a marker."
+  (conj provider-attempt-phases :attachment-transcription))
 
 (defn- advance-turn-stall-state
   "Records the live phase, but moves the deadline only for real progress.
@@ -2913,7 +2954,9 @@
 
    `:produced?` is stricter than the deadline: only actual model output sets it,
    never a [[stall-lifecycle-phases]] marker. It is the flag that separates a turn
-   the provider is answering slowly from one it never answered at all."
+   the provider is answering slowly from one it never answered at all.
+   `:call-output?` is the same flag for the current provider attempt, which each
+   [[provider-attempt-phases]] marker starts again."
   [state chunk now]
   (let [meaningful?
         (or (not (contains? chunk :delta)) (seq (:delta chunk)) (:done? chunk))
@@ -2928,7 +2971,10 @@
         (cond-> (assoc state :phase (:phase chunk))
           provider-call?
           (-> (dissoc :first-output-timeout-ms :stall-timeout-ms)
-              (update :produced? boolean)))]
+              (update :produced? boolean))
+
+          (contains? provider-attempt-phases (:phase chunk))
+          (assoc :call-output? false))]
 
     (cond-> state
       ;; Provider calls may carry a wider provider-owned prefill envelope. Keep
@@ -2953,7 +2999,7 @@
       (assoc :last-ms now)
 
       output?
-      (assoc :produced? true))))
+      (merge {:produced? true :call-output? true}))))
 
 (defonce ^:private turn-terminal-claims
   ;; `[sid tid]` -> the claim key of the run that owns the turn's one terminal
@@ -3119,16 +3165,25 @@
   60000)
 
 (defn- turn-stall-decision
-  [{:keys [phase started? produced? first-output-timeout-ms stall-timeout-ms]} idle-ms]
-  (let [silent?
-        (and started? (not produced?) (not (contains? first-output-exempt-phases phase)))
+  [{:keys [phase started? produced? call-output? first-output-timeout-ms stall-timeout-ms]} idle-ms]
+  (let [owes-output?
+        (and started? (not (contains? first-output-exempt-phases phase)))
+
+        silent?
+        (and owes-output? (not produced?))
+
+        ;; A later provider call keeps its own first-output window: the stall
+        ;; ceiling would cancel the turn before Svar's own deadlines fire.
+        awaiting-output?
+        (and owes-output? (not call-output?))
 
         ceiling-ms
         (long (cond (not started?) TURN_LAUNCH_TIMEOUT_MS
                     silent? (or first-output-timeout-ms TURN_FIRST_OUTPUT_TIMEOUT_MS)
+                    (and awaiting-output? first-output-timeout-ms) first-output-timeout-ms
                     :else (or stall-timeout-ms TURN_STALL_TIMEOUT_MS)))]
 
-    {:silent? silent?
+    {:awaiting-output? awaiting-output?
      :ceiling-ms ceiling-ms
      :tripped? (and (or (not started?) (not (contains? stall-exempt-phases phase)))
                     (>= (long idle-ms) ceiling-ms))}))
@@ -3226,10 +3281,12 @@
 
      - a turn whose worker body NEVER began trips after
        [[TURN_LAUNCH_TIMEOUT_MS]] — the orphaned launch;
-     - a started turn that has produced NO output yet trips after
-       [[TURN_FIRST_OUTPUT_TIMEOUT_MS]] — the provider that never answered;
+     - a started turn whose current provider attempt has shown NO output trips
+       after that call's first-output window, or [[TURN_FIRST_OUTPUT_TIMEOUT_MS]]
+       before any output — the provider that never answered;
      - a started turn that streamed and then went quiet in a non-exempt phase
-       trips after [[TURN_STALL_TIMEOUT_MS]] — the stalled provider stream.
+       trips after that call's stall window, or [[TURN_STALL_TIMEOUT_MS]] — the
+       stalled provider stream.
 
    Tripping cancels the token, closing the in-flight stream so the blocked worker
    unwinds and the queue drains. A wedged worker can ignore `cancel!` forever
@@ -3255,14 +3312,16 @@
                      (when (turn-watchdog-live? sid tid cancel-token)
                        (let [{:keys [phase last-ms started?] :as stall-state} @stall
                              idle-ms (- (util/now-ms) (long (or last-ms 0)))
-                             {:keys [silent? tripped?]} (turn-stall-decision stall-state idle-ms)]
+                             {:keys [awaiting-output? tripped?]} (turn-stall-decision stall-state
+                                                                                      idle-ms)]
 
                          (if tripped?
-                           (let [detail
-                                 (cond (not started?) (str "no worker activity for " idle-ms "ms")
-                                       silent? (str "no output at all for " idle-ms
-                                                    "ms since the turn started, in phase " phase)
-                                       :else (str "no output for " idle-ms "ms in phase " phase))
+                           (let [idle (or (fmt/format-duration idle-ms) "0ms")
+                                 detail (cond (not started?) (str "no worker activity for " idle)
+                                              awaiting-output? (str "no response for " idle
+                                                                    " " (stall-phase-text phase))
+                                              :else (str "no new output for " idle
+                                                         " " (stall-phase-text phase)))
                                  _ (swap! stall assoc :stalled? true :stall-detail detail)
                                  reason (if started?
                                           (stall-failure-text stall)

@@ -3017,8 +3017,9 @@
         (let [chunks (chunks-of (fn [on-chunk]
                                   (on-chunk {:reasoning "partial thought" :done? false})
                                   (on-chunk {:event/type :llm.routing/provider-retry
-                                             :reason :stream-timeout
+                                             :reason :stream-stalled
                                              :attempt 1
+                                             :max-retries 2
                                              :content ""
                                              :done? false})
                                   (on-chunk {:reasoning "replacement thought" :done? false})))
@@ -3027,6 +3028,8 @@
 
           (expect (= 1 (count resets)))
           (expect (= :llm.routing/provider-retry (get-in (first resets) [:event :event/type])))
+          (expect (= {:attempt 1 :max-retries 2}
+                     (select-keys (first resets) [:attempt :max-retries])))
           (expect (= ["partial thought" "replacement thought"] deltas))))
     (it "reports no increment when the provider rewrites the reasoning cumulative"
         ;; Regression: the increment was sliced at the previous LENGTH, so when
@@ -6190,9 +6193,9 @@
   ask-code-idle-timeout-test
   (it "leaves a provider with no policy on Vis' own 200s/300s/240s defaults"
       ;; 200s, not svar's two minutes: under Vis' pinned provider+model route
-      ;; svar's router has no second candidate to cross to, and the first header
-      ;; is the ONE wait Vis can retry for free — `pre-output-stream-retryable?`
-      ;; does, so a slow queue gets three visible tries instead of one verdict.
+      ;; svar's router has no second candidate to cross to, so it re-sends a
+      ;; silent request to the same provider and a slow queue gets three visible
+      ;; tries instead of one verdict.
       (expect (= 200000 rt/ASK_CODE_TTFT_TIMEOUT_MS))
       (expect (= 300000 rt/ASK_CODE_IDLE_TIMEOUT_MS))
       ;; A live transport without model progress is bounded independently.
@@ -7252,53 +7255,6 @@
 ;; no second candidate under Vis' sticky provider+model pin, and the turn died with
 ;; ten iterations of finished work — the human had to type "Continue".
 (defdescribe
-  pre-output-stream-retry-test
-  "A stream watchdog that fires before ANY output is the one provider failure Vis
-   re-issues itself: no header, no byte, no token, nothing billed, nothing painted."
-  (let [retryable?
-        @#'iteration/pre-output-stream-retryable?
-
-        backoff
-        @#'iteration/stream-recovery-backoff-ms
-
-        next-counters
-        @#'iteration/next-retry-counters
-
-        ttft
-        (ex-info "Stream TTFT timeout (60000 ms)" {:type :svar.core/stream-ttft-timeout})]
-
-    (it "re-issues every typed watchdog abort while no output has streamed"
-        (doseq [error-type [:svar.core/stream-ttft-timeout :svar.core/stream-idle-timeout
-                            :svar.core/stream-semantic-timeout]]
-          (expect (true? (retryable? (ex-info "watchdog" {:type error-type})
-                                     {:attempt 0 :output-started? false})))))
-    (it "sees the typed abort through the HTTP client's wrapper exception"
-        (expect (true? (retryable? (ex-info "HTTP client request failed" {} ttft)
-                                   {:attempt 0 :output-started? false}))))
-    (it "never resends once output has been painted"
-        (expect (false? (retryable? ttft {:attempt 0 :output-started? true}))))
-    (it "stops at the attempt budget instead of hiding a wedged endpoint"
-        (expect (true? (retryable? ttft {:attempt 1 :output-started? false})))
-        (expect (false? (retryable? ttft {:attempt 2 :output-started? false}))))
-    (it "leaves a cancellation and every unrelated failure terminal"
-        (expect (false? (retryable? (ex-info "cancelled" {:type :svar.core/stream-cancelled})
-                                    {:attempt 0 :output-started? false})))
-        (expect (false? (retryable? (ex-info "unauthorized" {:status 401})
-                                    {:attempt 0 :output-started? false}))))
-    (it "backs off briefly and spends exactly one attempt per re-issue"
-        (expect (= 1000 (backoff 0)))
-        (expect (= 3000 (backoff 1)))
-        (expect (= 3000 (backoff 7)))
-        (expect (= {:auth 0 :stream 1}
-                   (next-counters :com.blockether.vis.internal.loop.iteration/retry-stream-recovery
-                                  {:auth 0 :stream 0}))))
-    (it "still fails the turn once the pre-output budget is spent"
-        (expect (true? (:com.blockether.vis.internal.loop.errors/fatal-iteration-error
-                         (loop-errors/handle-iteration-exception!
-                           ttft
-                           {:iteration 3 :messages [{:role "user" :content "hi"}]})))))))
-
-(defdescribe
   request-attempt-test
   "Each Vis-owned retry sentinel moves the request attempt forward on its own budget
    and carries its input into the next attempt."
@@ -7309,7 +7265,7 @@
         @#'iteration/request-with-retries
 
         attempt
-        {:retries {:auth 1 :stream 1} :extra-body {"max_tokens" 100} :env ::env}]
+        {:retries {:auth 1} :extra-body {"max_tokens" 100} :env ::env}]
 
     (it "ends on a real result"
         (expect (nil? (next-attempt attempt {:answer "done"})))
@@ -7323,11 +7279,6 @@
                        (assoc-in [:retries :auth] 2)
                        (assoc :backoff-ms 2400))
                    (next-attempt attempt ::iteration/retry-auth-backoff))))
-    (it "waits before re-issuing a recoverable stream"
-        (expect (= (-> attempt
-                       (assoc-in [:retries :stream] 2)
-                       (assoc :backoff-ms 3000))
-                   (next-attempt attempt ::iteration/retry-stream-recovery))))
     (it "resends unchanged after an auth refresh or a context-overflow fold"
         (expect (= (assoc-in attempt [:retries :auth] 2)
                    (next-attempt attempt ::iteration/retry-auth-refresh)))
@@ -7353,22 +7304,22 @@
         (expect (= {:answer "done"}
                    (request-with-retries
                      send!
-                     {:retries {:auth 0 :stream 0} :extra-body {"max_tokens" 100} :env :env}
+                     {:retries {:auth 0} :extra-body {"max_tokens" 100} :env :env}
                      routing)))
         (expect
-          (= [{:retries {:auth 0 :stream 0}
+          (= [{:retries {:auth 0}
                :extra-body {"max_tokens" 100}
                :env :env
                :routing {:provider :openai}}
-              {:retries {:auth 0 :stream 0}
+              {:retries {:auth 0}
                :extra-body {"max_tokens" 100}
                :env [:env 0]
                :routing {:provider :anthropic}}
-              {:retries {:auth 0 :stream 0}
+              {:retries {:auth 0}
                :extra-body {"max_tokens" 100}
                :env [:env 1]
                :routing {:provider :anthropic}}
-              {:retries {:auth 1 :stream 0}
+              {:retries {:auth 1}
                :extra-body {"max_tokens" 100}
                :env [:env 2]
                :routing {:provider :anthropic}}]
@@ -7402,13 +7353,12 @@
 
 (defdescribe
   stream-watchdog-terminal-error-test
-  "Stream watchdog failures that reach here have spent BOTH svar's bounded
-   retry/fallback policy and Vis' own pre-output re-issue budget
-   (`pre-output-stream-retry-test`). They must end the turn instead of becoming
+  "Stream watchdog failures that reach here have spent Svar's bounded stream
+   recovery and fallback policy. They must end the turn instead of becoming
    visible model-feedback iterations."
   (let [ctx {:iteration 5 :messages [] :routing {} :reasoning-level nil}]
-    (doseq [error-type [:svar.core/stream-cancelled :svar.core/stream-idle-timeout
-                        :svar.core/stream-semantic-timeout]]
+    (doseq [error-type [:svar.core/stream-cancelled :svar.core/stream-ttft-timeout
+                        :svar.core/stream-idle-timeout :svar.core/stream-semantic-timeout]]
       (it (str error-type " is fatal and cannot create a duplicate next iteration")
           (let [result (loop-errors/handle-iteration-exception!
                          (ex-info "Terminal stream watchdog failure" {:type error-type})
@@ -7416,173 +7366,6 @@
             (expect (contains? result :com.blockether.vis.internal.loop.errors/iteration-error))
             (expect (true? (:com.blockether.vis.internal.loop.errors/fatal-iteration-error
                              result))))))))
-
-(defdescribe
-  provider-first-output-deadline-test
-  (doseq [chunk [{:content "answer"} {:reasoning "thinking"} {:tool-input "partial"}
-                 {:tool-call-preview {:name "python_execution"}}]]
-    (it (str "does not interrupt an attempt that has produced " (keys chunk))
-        (with-redefs-fn {#'transcript/ask-code-with-session! (fn [_ _ opts]
-                                                               ((:on-chunk opts) chunk)
-                                                               (Thread/sleep 5)
-                                                               (expect (false? ((:cancel-fn opts))))
-                                                               :complete)}
-          #(expect (= :complete (#'transcript/ask-code-with-first-output-timeout! {} {} {} 1))))))
-  (doseq [stop? [false true]]
-    (it (str "drops late output and preserves an overriding Stop=" stop?)
-        (let [cancelled (atom false)
-              chunks (atom [])
-              error (with-redefs-fn {#'transcript/ask-code-with-session!
-                                     (fn [_ _ opts]
-                                       (Thread/sleep 5)
-                                       (expect (true? ((:cancel-fn opts))))
-                                       ((:on-chunk opts) {:content "late output"})
-                                       (reset! cancelled stop?)
-                                       (throw (ex-info "cancelled"
-                                                       {:type :svar.core/stream-cancelled})))}
-                      #(try (#'transcript/ask-code-with-first-output-timeout!
-                             {}
-                             {}
-                             {:on-chunk (fn [chunk]
-                                          (swap! chunks conj chunk))
-                              :cancel-fn (fn []
-                                           @cancelled)}
-                             1)
-                            (catch Exception e e)))]
-
-          (expect (= [] @chunks))
-          (expect (= (if stop? :svar.core/stream-cancelled :svar.core/stream-semantic-timeout)
-                     (:type (ex-data error))))))))
-
-(defdescribe provider-first-output-svar-boundary-test
-             (it "uses Svar's real pre-header cancellation without cancelling the turn"
-                 (let [environment
-                       (loop-env/create-environment (helper-router :lmstudio nil) {:db :memory})
-
-                       requests
-                       (atom 0)]
-
-                   (try (with-redefs [rt/ASK_CODE_FIRST_OUTPUT_TIMEOUT_MS
-                                      25
-
-                                      http/post
-                                      (fn [& _]
-                                        (swap! requests inc)
-                                        (Thread/sleep 2000)
-                                        (throw (ex-info "Request was not interrupted" {})))]
-
-                          (let [error (try (iteration/run-iteration
-                                             environment
-                                             [{:role "user" :content "timeout"}]
-                                             {:iteration 0
-                                              :resolved-model {:provider :lmstudio :name "model"}
-                                              :routing {:provider :lmstudio :model "model"}})
-                                           (catch Exception e e))]
-                            (expect (= :svar.core/stream-semantic-timeout (:type (ex-data error))))
-                            (expect (= :vis-first-output-watchdog (:source (ex-data error))))
-                            (expect (= 1 @requests))
-                            (expect (not (.isInterrupted (Thread/currentThread))))))
-                        (finally (loop-env/dispose-environment! environment))))))
-
-(defdescribe
-  provider-first-output-recovery-test
-  ;; Regression: session 86f0b252-41c2-4727-be85-733f139e2462 reached the
-  ;; gateway's first-output watchdog as stream-cancelled, bypassing bounded retry.
-  (doseq [[label mode expected-status expected-calls]
-          [["recovers" :recover :success 3] ["exhausts its budget" :exhaust :error 4]
-           ["honors Stop" :stop :cancelled 2]
-           ["honors Stop during retry backoff" :stop-retry :cancelled 2]]]
-    (it
-      label
-      (let
-        [cancelled (atom false)
-         environment (assoc (loop-env/create-environment (helper-router :lmstudio nil)
-                                                         {:db :memory})
-                       :cancel-atom cancelled)
-         db (:db-info environment)
-         tid (persistance/db-store-session-turn! db
-                                                 {:parent-session-id (:session-id environment)
-                                                  :user-request "timeout recovery"})
-         calls (atom 0)
-         chunks (atom [])
-         code
-         "provider_retry_runs = globals().get('provider_retry_runs', 0) + 1\nprint(provider_retry_runs)"]
-
-        (try
-          (let [result
-                (with-redefs-fn
-                  {#'loop-router/provider-network-policy
-                   (fn [_ _]
-                     {:ttft-timeout-ms 30 :idle-timeout-ms 30 :semantic-timeout-ms 30})
-                   #'iteration/STREAM_RECOVERY_RETRY_DELAYS_MS [0 0]
-                   #'svar/ask-code!
-                   (fn [_ opts]
-                     (let [call (swap! calls inc)]
-                       (cond
-                         (= 1 call) {:stop-reason :tool-calls
-                                     :tool-calls
-                                     [{:id "once" :name "python_execution" :input {:code code}}]}
-                         (and (= :recover mode) (= 3 call))
-                         {:stop-reason :end :content "Recovered without repeating the tool."}
-                         :else
-                         (do
-                           ;; Empty callbacks are keepalives, not model output.
-                           ((:on-chunk opts) {:content "" :reasoning "" :done? false})
-                           (when (= :stop mode) (reset! cancelled true))
-                           (let [deadline (+ (System/currentTimeMillis) 500)]
-                             (loop []
-
-                               (cond ((:cancel-fn opts))
-                                     (throw (ex-info
-                                              "Responses WebSocket operation cancelled by caller."
-                                              {:type :svar.core/stream-cancelled
-                                               :stream? true
-                                               :transport :websocket}))
-                                     (>= (System/currentTimeMillis) deadline)
-                                     (throw (ex-info "First-output deadline was not enforced"
-                                                     {:type :svar.core/http-error :stream? true}))
-                                     :else (do (Thread/sleep 2) (recur)))))))))}
-                  #(iteration/iteration-loop
-                     environment
-                     "timeout recovery"
-                     {:session-turn-id tid
-                      :cancel-atom cancelled
-                      :hooks {:on-chunk (fn [chunk]
-                                          (swap! chunks conj chunk)
-                                          (when (and (= :stop-retry mode)
-                                                     (= :stream-watchdog-pre-output
-                                                        (get-in chunk [:event :reason])))
-                                            (reset! cancelled true)))}}))
-                forms (mapcat :forms (persistance/db-list-session-turn-iterations db tid))
-                retries (filter #(= :stream-watchdog-pre-output (get-in % [:event :reason]))
-                                @chunks)]
-
-            (expect (= expected-status (or (:status result) :success)))
-            (when (= :recover mode)
-              (expect (str/includes? (str (:answer result))
-                                     "Recovered without repeating the tool.")))
-            (expect (= expected-calls @calls))
-            (expect (= (repeat expected-calls 10060)
-                       (map :first-output-timeout-ms
-                            (filter #(= :provider-call (:phase %)) @chunks))))
-            (expect (= [code] (mapv :src forms)))
-            (expect (= "1" (str/trim (:stdout (first forms)))))
-            (expect (= (contains? #{:stop :stop-retry} mode) @cancelled))
-            (expect (= (case mode
-                         :recover
-                         1
-
-                         :exhaust
-                         2
-
-                         :stop
-                         0
-
-                         :stop-retry
-                         1)
-                       (count retries)))
-            (when (= :exhaust mode) (expect (= "error" (get (first (:answer result)) "type")))))
-          (finally (loop-env/dispose-environment! environment)))))))
 
 (defn- anthropic-sse-event
   [type payload]
@@ -7669,12 +7452,12 @@
 (defdescribe
   provider-ttft-recovery-real-router-test
   ;; Regression, issue #210: a provider accepted the POST and sent no response
-  ;; header for the whole TTFT budget. Svar's typed watchdog fired, Vis announced
-  ;; its pre-output retry, and the retry backoff died with `sleep interrupted`:
-  ;; the router had re-armed the interrupt the watchdog already consumed, and the
-  ;; autonomous goal was paused with a generic notice. This drives the REAL Svar
-  ;; router over a loopback HTTP stub - no mocked `ask-code!` - through Vis'
-  ;; nonzero backoff, so the interrupt boundary between the two is what is tested.
+  ;; header for the whole TTFT budget. Svar's typed watchdog fired, the retry
+  ;; backoff died with `sleep interrupted` because the router had re-armed the
+  ;; interrupt the watchdog already consumed, and the autonomous goal was paused
+  ;; with a generic notice. This drives the REAL Svar router over a loopback HTTP
+  ;; stub - no mocked `ask-code!` - through Svar's nonzero stream-recovery wait,
+  ;; so the interrupt boundary and Vis' handling of the re-send are what is tested.
   (doseq [[label behavior expected-status expected-requests]
           [["retries once after a pre-header TTFT timeout and finishes on the second request"
             (fn [n]
@@ -7688,10 +7471,12 @@
             {:keys [base-url requests stop!]} (start-messages-stub!
                                                 (fn [n]
                                                   (if @warming? [:answer "Ready."] (behavior n))))
+            ;; NONZERO recovery wait: a leaked interrupt would abort Svar's sleep.
             router (svar/make-router [{:id :lmstudio
                                        :api-key "test"
                                        :base-url base-url
-                                       :models [{:name "model" :context 200000}]}])
+                                       :models [{:name "model" :context 200000}]}]
+                                     {:stream-recovery-delays-ms [25 25]})
             environment (loop-env/create-environment router {:db :memory})
             db (:db-info environment)
             sid (:session-id environment)
@@ -7729,16 +7514,13 @@
                           #'svar/ask-code!
                           (fn [router opts]
                             (try (ask-code! router opts)
-                                 (catch Exception e (swap! provider-errors conj e) (throw e))))
-                          ;; NONZERO backoff: a leaked interrupt would abort the sleep.
-                          #'iteration/STREAM_RECOVERY_RETRY_DELAYS_MS [25 25]}
+                                 (catch Exception e (swap! provider-errors conj e) (throw e))))}
                          #(#'turn/run-normal-turn!
                             environment
                             "loopback recovery"
                             {:hooks {:on-chunk (fn [chunk]
                                                  (swap! chunks conj chunk))}}))
-                retries (filter #(= :stream-watchdog-pre-output (get-in % [:event :reason]))
-                                @chunks)
+                retries (filter #(= :no-response (get-in % [:event :reason])) @chunks)
                 goal-after (goals/check-goal environment)
                 row (first (filter #(= (:session-turn-id result) (:id %))
                                    (persistance/db-list-session-turns db sid)))]
@@ -7746,9 +7528,9 @@
             (expect (= expected-status (:status result)))
             (expect (= expected-requests @requests))
             (expect (= (dec expected-requests) (count retries)))
-            ;; A generic first-output cancellation is not the TTFT regression.
-            (expect (= (if (= :success expected-status) 1 expected-requests)
-                       (count @provider-errors)))
+            ;; Svar re-sends inside one call, so only an exhausted recovery reaches
+            ;; Vis, and it names the TTFT watchdog, not a generic cancellation.
+            (expect (= (if (= :success expected-status) 0 1) (count @provider-errors)))
             (expect (every? (fn [error]
                               (some #(= :svar.core/stream-ttft-timeout (:type (ex-data %)))
                                     (take-while some? (iterate ex-cause error))))
@@ -7789,24 +7571,10 @@
 
 (defdescribe
   auth-then-stream-recovery-budget-test
-  ;; Auth refresh and pre-output stream recovery once spent ONE per-iteration counter:
-  ;; after a single forced OAuth refresh the first watchdog retry already announced its
-  ;; last try, and the second stalled request failed the turn. Each recovery kind now
-  ;; spends only its own budget.
-  (it "spends each recovery kind from its own budget"
-      (let [next-counters
-            @#'iteration/next-retry-counters
-
-            fresh
-            {:auth 0 :stream 0}
-
-            refreshed
-            (next-counters ::iteration/retry-auth-refresh fresh)]
-
-        (expect (= {:auth 1 :stream 0} refreshed))
-        (expect (= {:auth 1 :stream 1} (next-counters ::iteration/retry-stream-recovery refreshed)))
-        (expect (= {:auth 2 :stream 0} (next-counters ::iteration/retry-auth-backoff refreshed)))
-        (expect (nil? (next-counters {:answer "done"} fresh)))))
+  ;; Auth refresh and stream recovery once spent ONE per-iteration counter: after a
+  ;; single forced OAuth refresh the first watchdog retry already announced its last
+  ;; try, and the second stalled request failed the turn. Vis now owns only the auth
+  ;; retry, and Svar owns the whole stream recovery schedule.
   (it
     "keeps both stream recoveries after a forced auth refresh"
     (let [warming?
@@ -7822,7 +7590,8 @@
           (svar/make-router [{:id :lmstudio
                               :api-key "test"
                               :base-url base-url
-                              :models [{:name "model" :context 200000}]}])
+                              :models [{:name "model" :context 200000}]}]
+                            {:stream-recovery-delays-ms [25 25]})
 
           environment
           (loop-env/create-environment router {:db :memory})
@@ -7866,8 +7635,7 @@
                     #'loop-router/refresh-just-failed? (constantly false)
                     #'loop-router/auth-refreshable-error? (fn [e _]
                                                             (= 401 (:status (ex-data e))))
-                    #'loop-router/try-refresh-provider-token! (constantly true)
-                    #'iteration/STREAM_RECOVERY_RETRY_DELAYS_MS [25 25]}
+                    #'loop-router/try-refresh-provider-token! (constantly true)}
                    #(#'turn/run-normal-turn!
                       environment
                       "auth then stalls"
@@ -7875,52 +7643,12 @@
                                            (swap! chunks conj chunk))}}))
 
                  retries
-                 (filter #(= :stream-watchdog-pre-output (get-in % [:event :reason])) @chunks)]
+                 (filter #(= :no-response (get-in % [:event :reason])) @chunks)]
 
              (expect (= :success (:status result)))
              (expect (= 3 @requests))
              (expect (= [1 2] (mapv #(get-in % [:event :attempt]) retries))))
            (finally (stop!) (loop-env/dispose-environment! environment))))))
-
-(defdescribe
-  reasoning-only-stream-boundary-test
-  ;; A stream that ends early and a streaming connection that drops mid-response
-  ;; (z.ai does this on long reasoning) take the same reasoning-only path.
-  (doseq [[cause-label cause]
-          [["truncated" {:type :svar.core/stream-truncated}]
-           ["dropped" {:type :svar.core/http-error :stream? true}]]
-
-          [label reasoning? data expected]
-          [["observed reasoning" true {} :reasoning]
-           ["unobserved reasoning" false {:reasoning-acc-len 10} :none]
-           ["accumulated content" true {:content-acc-len 1} :content]
-           ["streamed tool arguments" true {:tool-args-acc-len 12} :content]
-           ["partial content" true {:partial-content "partial code"} :content]
-           ["tool calls" true {:tool-calls [{:name "python_execution"}]} :content]]]
-
-    (it
-      (str cause-label " stream with " label)
-      (let [error (with-redefs-fn {#'transcript/ask-code-with-session!
-                                   (fn [_ _ opts]
-                                     (when reasoning? ((:on-chunk opts) {:reasoning "thinking"}))
-                                     (throw (ex-info "HTTP wrapper"
-                                                     {}
-                                                     (ex-info "Stream ended before terminal marker."
-                                                              (merge data cause)))))}
-                    #(try (#'transcript/ask-code-with-first-output-timeout! {} {} {} 1000)
-                          (catch Exception e e)))]
-        (expect (= expected (:stream-output (ex-data error))))
-        (expect (= (= :reasoning expected) (#'iteration/reasoning-only-stream-retryable? error 0)))
-        (expect (false? (#'iteration/reasoning-only-stream-retryable? error 2))))))
-  (it "does not reinterpret cancellation, incomplete responses or watchdogs as EOF"
-      (doseq [error-type [:svar.core/stream-cancelled :svar.core/stream-incomplete
-                          :svar.core/stream-semantic-timeout]]
-        (let [error (ex-info "Stopped" {:type error-type :stream-output :reasoning})]
-          (expect (false? (#'iteration/reasoning-only-stream-retryable? error 0))))))
-  (it "does not treat a failed request without a stream as a dropped stream"
-      (let [error (ex-info "Bad gateway"
-                           {:type :svar.core/http-error :status 502 :stream-output :reasoning})]
-        (expect (false? (#'iteration/reasoning-only-stream-retryable? error 0))))))
 
 (defdescribe
   reasoning-only-stream-no-replay-test
@@ -7940,8 +7668,7 @@
                                      (swap! calls inc)
                                      ((:on-chunk opts) {:phase phase :iteration 1 :delta "started"})
                                      (throw (ex-info "Stream ended before terminal marker."
-                                                     {:type :svar.core/stream-truncated
-                                                      :stream-output :reasoning})))}
+                                                     {:type :svar.core/stream-truncated})))}
                     #(iteration/iteration-loop environment
                                                "do not replay"
                                                {:session-turn-id tid
@@ -7951,125 +7678,6 @@
               (expect (= 1 @calls))
               (expect (empty? (filter #(= :provider-retry-reset (:phase %)) @chunks))))
             (finally (loop-env/dispose-environment! environment)))))))
-
-;; Regression: session e05334de-291b-4457-aab5-7206d0cb7e5e stopped after
-;; reasoning-only EOF, although the preceding tool results were complete.
-(defdescribe
-  reasoning-only-stream-recovery-test
-  (doseq [[mode expected-status expected-calls expected-retries]
-          [[:recover :success 3 1] [:dropped :success 3 1] [:exhaust :error 4 2]
-           [:connect :error 3 1] [:content :error 2 0] [:tool-input :error 2 0]
-           [:tool-call-preview :error 2 0] [:tool-calls :error 2 0] [:stop :cancelled 2 0]
-           [:stop-retry :cancelled 2 1]]]
-    (it
-      (name mode)
-      (let
-        [cancelled (atom false)
-         environment (assoc (loop-env/create-environment (helper-router :lmstudio nil)
-                                                         {:db :memory})
-                       :cancel-atom cancelled)
-         db (:db-info environment)
-         tid (persistance/db-store-session-turn! db
-                                                 {:parent-session-id (:session-id environment)
-                                                  :user-request "stream recovery"})
-         requests (atom [])
-         chunks (atom [])
-         code
-         "stream_retry_runs = globals().get('stream_retry_runs', 0) + 1\nprint(stream_retry_runs)"
-         partial-code "print('must not execute')"]
-
-        (try
-          (let [result
-                (with-redefs-fn
-                  {#'iteration/STREAM_RECOVERY_RETRY_DELAYS_MS [0 0]
-                   #'svar/ask-code!
-                   (fn [_ opts]
-                     (let [call (count (swap! requests conj (:messages opts)))]
-                       (cond
-                         (= 1 call) {:stop-reason :tool-calls
-                                     :tool-calls
-                                     [{:id "once" :name "python_execution" :input {:code code}}]}
-                         (and (#{:recover :dropped} mode) (= 3 call))
-                         (do ((:on-chunk opts) {:reasoning "replacement reasoning"})
-                             {:stop-reason :end :content "Recovered without repeating the tool."})
-                         (and (= :connect mode) (= 3 call)) (throw (java.net.ConnectException.))
-                         :else
-                         (do ((:on-chunk opts) {:reasoning "interrupted reasoning"})
-                             (when (#{:content :tool-input :tool-call-preview :tool-calls} mode)
-                               ((:on-chunk opts)
-                                 {mode (case mode
-                                         :tool-call-preview
-                                         {:name "python_execution"}
-
-                                         :tool-calls
-                                         [{:name "python_execution" :input {:code partial-code}}]
-
-                                         partial-code)})
-                               ;; Later empty frames or reasoning must not erase earlier tool input.
-                               ((:on-chunk opts)
-                                 {:content "" :tool-input "" :reasoning "later reasoning"}))
-                             (when (= :stop mode) (reset! cancelled true))
-                             (throw (if (= :dropped mode)
-                                      ;; Svar's shape for a connection that drops mid-stream.
-                                      (ex-info "Stream connection error: closed"
-                                               {:type :svar.core/http-error
-                                                :stream? true
-                                                :reasoning-acc-len 21
-                                                :content-acc-len 0})
-                                      (ex-info "Stream ended before terminal marker."
-                                               {:type :svar.core/stream-truncated
-                                                :reasoning-acc-len 21
-                                                :content-acc-len
-                                                (if (= :content mode) (count partial-code) 0)
-                                                :stream-finalization
-                                                {:terminal? false :last-event-type "ping"}})))))))}
-                  #(iteration/iteration-loop
-                     environment
-                     "stream recovery"
-                     {:session-turn-id tid
-                      :cancel-atom cancelled
-                      :hooks {:on-chunk (fn [chunk]
-                                          (swap! chunks conj chunk)
-                                          (when (and (= :stop-retry mode)
-                                                     (= :provider-retry-reset (:phase chunk)))
-                                            (reset! cancelled true)))}}))
-                iterations (persistance/db-list-session-turn-iterations db tid)
-                forms (mapcat :forms iterations)
-                retries (filter #(= :provider-retry-reset (:phase %)) @chunks)]
-
-            (expect (= expected-status (or (:status result) :success)))
-            (expect (= expected-calls (count @requests)))
-            (expect (= expected-retries (count retries)))
-            (expect (= [code] (mapv :src forms)))
-            (expect (= "1" (str/trim (:stdout (first forms)))))
-            (doseq [retry retries]
-              (expect (= 2 (:iteration retry)))
-              (expect (=
-                        (if (= :dropped mode) :stream-dropped-reasoning :stream-truncated-reasoning)
-                        (get-in retry [:event :reason]))))
-            (when (#{:recover :dropped} mode)
-              (expect (= (second @requests) (nth @requests 2)))
-              (expect (= ["interrupted reasoning" "replacement reasoning"]
-                         (vec (keep :delta
-                                    (filter #(and (= :reasoning (:phase %)) (seq (:delta %)))
-                                            @chunks)))))
-              (expect (str/includes? (str (:answer result)) "Recovered without repeating")))
-            (when (= :error expected-status)
-              (let [block (first (:answer result))
-                    message (get block "message")]
-
-                (if (= :connect mode)
-                  (do (expect (= "Could not connect to provider" (get block "title")))
-                      (expect (str/includes? message
-                                             "connection to the provider could not be established"))
-                      (expect (str/includes? message "after 1 retry"))
-                      (expect (not (str/includes? message "raise the provider request timeout"))))
-                  (do (expect (str/includes? message "connection ended"))
-                      (expect (str/includes? message
-                                             (if (= :exhaust mode)
-                                               "after 2 retries"
-                                               "answer text or tool input"))))))))
-          (finally (loop-env/dispose-environment! environment)))))))
 
 (defdescribe
   provider-unavailable-is-terminal-test
@@ -11836,13 +11444,22 @@
                              :provider nil
                              :model nil}
                             (#'transcript/provider-call-chunk 0 {} 1))))
-             (it "carries the provider's bounded pre-output envelope to the gateway"
-                 (expect (= {:first-output-timeout-ms 800000 :stall-timeout-ms 600000}
+             (it "keeps the gateway backstop past Svar's worst case for one attempt"
+                 ;; Copilot's policy: the stall ceiling once equalled Svar's 300s semantic
+                 ;; watchdog, so the gateway raced Svar and cancelled a recoverable turn.
+                 (expect (= {:first-output-timeout-ms 570000 :stall-timeout-ms 330000}
                             (#'loop-router/provider-watchdog-timeouts
-                             {:timeout-ms 1800000
-                              :first-byte-timeout-ms 600000
-                              :idle-timeout-ms 600000
-                              :semantic-timeout-ms 600000})))
+                             {:timeout-ms 900000
+                              :ttft-timeout-ms 240000
+                              :first-byte-timeout-ms 240000
+                              :idle-timeout-ms 120000
+                              :semantic-timeout-ms 300000})))
+                 ;; Vis defaults: a 200s header wait plus the 300s idle watchdog.
+                 (expect (= {:first-output-timeout-ms 530000 :stall-timeout-ms 330000}
+                            (#'loop-router/provider-watchdog-timeouts nil)))
+                 ;; A whole-request cap bounds both phases.
+                 (expect (= {:first-output-timeout-ms 430000 :stall-timeout-ms 330000}
+                            (#'loop-router/provider-watchdog-timeouts {:timeout-ms 400000})))
                  (expect (= {:first-output-timeout-ms 700 :stall-timeout-ms 600}
                             (select-keys (#'transcript/provider-call-chunk
                                           1
@@ -12530,7 +12147,7 @@
               [[environment request codes]
                [[a "publish" [source]]
                 [b "receive"
-                 [:retry :error :empty
+                 [:error :empty
                   "page = await council.threads()\nentries = await council.read(thread_id=page['entries'][0]['thread_id'], limit=1)\nentry = await council.get(entry_id=entries['entries'][0]['entry_id'])\nprint(len(entry['content']))"
                   "before = await read_session()\nping = before['transcript']['turns'][0]['iterations'][0]['council_input']\nfold_session('-t1/i1', 'Council reviewed')\nafter = await read_session()\nassert ping == after['transcript']['turns'][0]['iterations'][0]['council_input']"]]]]
               (let [idx (atom -1)
@@ -12539,18 +12156,12 @@
                           db
                           {:parent-session-id (:session-id environment) :user-request request})]
 
-                (with-redefs [iteration/STREAM_RECOVERY_RETRY_DELAYS_MS [0 0]
-                              svar/ask-code!
+                (with-redefs [svar/ask-code!
                               (fn [_ opts]
                                 (swap! requests conj
                                   {:sid (str (:session-id environment)) :messages (:messages opts)})
                                 (let [code (get codes (swap! idx inc))]
-                                  (cond (= :retry code)
-                                        ;; A watchdog abort before any output is a
-                                        ;; transparent, same-iteration Vis retry.
-                                        (throw (ex-info "Retry fixture"
-                                                        {:type :svar.core/stream-ttft-timeout}))
-                                        (= :error code) (throw (ex-info
+                                  (cond (= :error code) (throw (ex-info
                                                                  "Recoverable model-format fixture"
                                                                  {:type :fixture/format-error}))
                                         (= :empty code)
@@ -12564,7 +12175,6 @@
                                                :content "done"
                                                :tool-calls []
                                                :tokens {}})))]
-
                   (let [result
                         (iteration/iteration-loop environment request {:session-turn-id tid})]
                     (reset! loop-result
@@ -12635,8 +12245,9 @@
             (expect (not (str/includes? system-text "Boundary message")))
             (expect (str/includes? data-text "Boundary message"))
             (expect (str/includes? data-text "truncated"))
-            ;; C13/C14: a transparent retry and a tool-free continuation do not consume
-            ;; or duplicate the first input snapshot.
+            ;; C14: a tool-free continuation does not consume or duplicate the first input
+            ;; snapshot. Svar re-sends a broken stream inside one ask-code! call, so C13 needs
+            ;; no Vis-side replay here.
             (let [received
                   (mapv :messages (filter #(= bid (:sid %)) @requests))
 
@@ -12654,9 +12265,9 @@
                            %)
                         received)]
 
-              (expect (= 6 (count received)))
-              (expect (= [1 1 1 1 1 0] (mapv count previews)))
-              (expect (apply = (take 5 previews)))))
+              (expect (= 5 (count received)))
+              (expect (= [1 1 1 1 0] (mapv count previews)))
+              (expect (apply = (take 4 previews)))))
           (finally (doseq [sid [aid bid]]
                      (drop! sid))
                    (loop-env/dispose-environment! b)

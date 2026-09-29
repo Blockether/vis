@@ -2486,7 +2486,8 @@
         ;; turn the provider never answered therefore looked like a producing one
         ;; and kept both the full cancel grace and the full stall ceiling.
         (let [marker (advance {} {:phase :provider-call :iteration 0 :started-at-ms 1} 100)]
-          (expect (= {:phase :provider-call :produced? false :last-ms 100} marker))
+          (expect (= {:phase :provider-call :produced? false :call-output? false :last-ms 100}
+                     marker))
           (expect (true? (:produced? (advance marker {:phase :content :delta "hi"} 200))))))
     (it "force-cancels a started turn the provider never answered at all"
         ;; Regression: a turn sat 3m47s with zero iterations, holding the whole
@@ -2516,7 +2517,10 @@
                  (watchdog sid tid token stall)
                  (expect (true? (await-cancel token 4000))))
                (expect (true? (:stalled? @stall)))
-               (expect (str/includes? (str (:stall-detail @stall)) "no output at all"))
+               (expect (str/includes? (str (:stall-detail @stall)) "no response for"))
+               (expect (str/includes? (str (:stall-detail @stall))
+                                      "while waiting for the model to answer"))
+               (expect (not (re-find #"\d{4,}ms|:provider-call" (str (:stall-detail @stall)))))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
     ;; Regression, issue td-e06f95: the gateway's fixed two-minute first-output
     ;; watchdog cancelled LM Studio before its provider-scoped prefill budget elapsed.
@@ -2587,6 +2591,50 @@
           (expect (not (contains? answered :first-output-timeout-ms)))
           (expect (not (contains? answered :stall-timeout-ms)))
           (expect (false? (:tripped? (decision (assoc answered :started? true) 120001))))))
+    ;; Regression: GitHub Copilot turns failed as stalled while a later iteration still
+    ;; waited for its first token. That call named a longer first-output window, but the
+    ;; turn had already produced output, so the gateway applied the shorter stall ceiling
+    ;; and cancelled the prefill before the provider watchdog could act.
+    (it "gives a later provider call its own first-output window"
+        (let [call
+              (-> {:produced? true :call-output? true}
+                  (advance {:phase :provider-call
+                            :provider "github-copilot"
+                            :model "claude-opus-5"
+                            :first-output-timeout-ms 700
+                            :stall-timeout-ms 600}
+                           0)
+                  (assoc :started? true))
+
+              streaming
+              (advance call {:phase :content :delta "hi"} 10)]
+
+          (expect (true? (:produced? call)))
+          (expect (false? (:call-output? call)))
+          (expect (false? (:tripped? (decision call 650))))
+          (expect (true? (:tripped? (decision call 700))))
+          (expect (true? (:call-output? streaming)))
+          (expect (true? (:tripped? (decision streaming 600))))))
+    (it "restarts the first-output window when Svar re-sends a broken stream"
+        (let [streaming
+              (-> {:started? true}
+                  (advance
+                    {:phase :provider-call :first-output-timeout-ms 700 :stall-timeout-ms 600}
+                    0)
+                  (advance {:phase :reasoning :delta "thinking"} 10))
+
+              re-sent
+              (advance streaming {:phase :provider-retry-reset :attempt 1} 20)]
+
+          (expect (true? (:call-output? streaming)))
+          (expect (false? (:call-output? re-sent)))
+          (expect (= 20 (:last-ms re-sent)))
+          (expect (false? (:tripped? (decision re-sent 650))))
+          (expect (true? (:tripped? (decision re-sent 700))))))
+    (it "never counts a re-send marker as model output"
+        (let [re-sent (advance {:started? true} {:phase :provider-retry-reset} 5)]
+          (expect (not (:produced? re-sent)))
+          (expect (false? (:call-output? re-sent)))))
     (it "holds a turn that already streamed output to the full stall ceiling"
         (let [sid
               (str "stall-" (java.util.UUID/randomUUID))
@@ -5755,7 +5803,7 @@
           "t-stalled"
 
           reason
-          "Provider stream stalled: no output"
+          "Provider stopped responding: no response for 6m 0s. Vis stopped the turn."
 
           registry
           @#'state/registry]
@@ -5897,14 +5945,18 @@
           (expect (= "github-copilot" (:provider streaming)))
           (expect (= "claude-opus-5" (:model streaming)))))
     (it "names them in the failure a human reads"
-        (expect (= (str "Provider stream stalled (github-copilot / claude-opus-5): "
-                        "no output for 362142ms in phase :provider-call")
-                   (failure-text (atom {:stall-detail
-                                        "no output for 362142ms in phase :provider-call"
-                                        :provider :github-copilot
-                                        :model "claude-opus-5"})))))
+        (expect (= (str "Provider stopped responding (github-copilot / claude-opus-5): "
+                        "no response for 6m 2s while waiting for the model to answer. "
+                        "Vis stopped the turn. NEXT STEP: send \"continue\" to try again. "
+                        "If it happens again, switch to another model.")
+                   (failure-text (atom
+                                   {:stall-detail
+                                    "no response for 6m 2s while waiting for the model to answer"
+                                    :provider :github-copilot
+                                    :model "claude-opus-5"})))))
     (it "refuses to blame a provider the turn never reached"
-        (expect (= "Turn stalled before reaching the provider: no worker activity for 5ms"
+        (expect (= (str "Turn stalled before reaching the provider: no worker activity for 5ms. "
+                        "NEXT STEP: send your message again.")
                    (failure-text (atom {:stall-detail "no worker activity for 5ms"})))))))
 
 ;; Regression, issue #128: a session was keyed by whatever spelling the caller
@@ -5975,15 +6027,19 @@
                    (expect (= :engine-start (deref seen 4000 ::timeout)))))
                (finally (swap! registry dissoc sid)))))
     (it "keeps naming the provider once a stream had actually produced output"
-        (expect (= "Provider stream stalled: no output for 362142ms in phase :content"
-                   (failure-text (atom {:stall-detail "no output for 362142ms in phase :content"
-                                        :produced? true})))))
-    (it
-      "says what a turn wedged before its first provider call really did"
-      (expect
-        (=
-          "Turn stalled before reaching the provider: no output for 360047ms in phase :engine-start"
-          (failure-text (atom {:stall-detail "no output for 360047ms in phase :engine-start"})))))))
+        (expect (= (str "Provider stopped responding: no new output for 6m 2s while the model was "
+                        "writing its answer. Vis stopped the turn. NEXT STEP: send \"continue\" to "
+                        "try again. If it happens again, switch to another model.")
+                   (failure-text (atom
+                                   {:stall-detail
+                                    "no new output for 6m 2s while the model was writing its answer"
+                                    :produced? true})))))
+    (it "says what a turn wedged before its first provider call really did"
+        (expect
+          (= (str "Turn stalled before reaching the provider: no response for 6m 0s while Vis "
+                  "prepared the session. NEXT STEP: send your message again.")
+             (failure-text (atom {:stall-detail
+                                  "no response for 6m 0s while Vis prepared the session"})))))))
 
 (defdescribe
   cross-process-liveness-test

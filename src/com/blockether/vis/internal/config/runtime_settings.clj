@@ -44,12 +44,6 @@
   "Dynamic timeout in milliseconds for Python code evaluation."
   DEFAULT_EVAL_TIMEOUT_MS)
 
-(def ASK_CODE_FIRST_OUTPUT_TIMEOUT_MS
-  "Host deadline for a provider attempt with no text, reasoning or tool-input output.
-   It aborts only that request, allowing bounded retry without cancelling the turn.
-   A provider-scoped network policy may widen this prefill window."
-  120000)
-
 (def ASK_CODE_TTFT_TIMEOUT_MS
   "Default time-to-first-token timeout for Vis `svar/ask-code!` calls (ms).
 
@@ -65,19 +59,19 @@
    svar's `router/DEFAULT_TIMEOUT_MS` (the 300s whole-request cap Vis leaves
    at its default), so this watchdog — not the HTTP client — is what names the
    failure and the abort keeps its type (`:svar.core/stream-ttft-timeout`)
-   for the retry below to recognize. A project that lowers `network.timeout_ms`
-   under 200s reaches the client's own timeout first.
+   for Svar's stream recovery to recognize. A project that lowers
+   `network.timeout_ms` under 200s reaches the client's own timeout first.
 
    Measured: a pinned zai-coding-plan turn spent its last 120s waiting for
    headers that never came and died with ten iterations of finished work
    behind it, because svar's router had no second candidate to cross to. The
-   re-issue is what fixed that; this number only decides how long one try
-   waits. Because the abort is raised while no output exists,
-   `loop/pre-output-stream-retryable?` re-issues it seconds apart up to
-   `MAX_PRE_OUTPUT_STREAM_RETRIES` times, so a wedged endpoint is named by
-   three visible retries — about ten minutes at 200s, where 60s bought three —
-   instead of by one silent gap. Never shorten this without that retry in
-   place: alone it would only kill healthy slow-queue turns faster.
+   re-send is what fixed that; this number only decides how long one try
+   waits. Because the abort is raised while no output exists, Svar re-sends it
+   to the same provider on its `:stream-recovery-delays-ms` schedule, so a
+   wedged endpoint is named by three visible tries — about ten minutes at
+   200s, where 60s bought three — instead of by one silent gap. Never shorten
+   this without that re-send in place: alone it would only kill healthy
+   slow-queue turns faster.
 
    Model-progress silence while keepalives continue is a separate, opt-in
    semantic watchdog below."

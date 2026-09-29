@@ -557,20 +557,11 @@
   (let [{:keys [attempts declined]} (:stream-recovery (or (:data err) (ex-data err) err))]
     (case declined
       :retry-budget-exhausted
-      (str " Automatic recovery stopped after " attempts " retries.")
+      (str " Automatic recovery stopped after " attempts (if (= 1 attempts) " retry." " retries."))
 
       :output-started
       (str " Automatic recovery was skipped because answer text or tool input had already "
            "streamed, or tool execution had started. Replay could duplicate output or actions.")
-
-      :not-reasoning-only
-      " Automatic recovery was skipped because this was not a verified reasoning-only interruption."
-
-      :provider-failed
-      (str " Automatic stream recovery stopped after "
-           attempts
-           (if (= 1 attempts) " retry" " retries")
-           "; the retry failed.")
 
       "")))
 
