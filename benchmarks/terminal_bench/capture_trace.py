@@ -16,6 +16,9 @@ from pathlib import Path
 from urllib.parse import quote, quote_plus
 
 REDACTED = b"[REDACTED]"
+# Settings such as VNC_KEY_DELAY_MS=40 match the name test; redacting short or
+# numeric values would corrupt every matching number in the trace.
+MIN_CREDENTIAL_LENGTH = 8
 
 
 def credential_variants(environ=None) -> tuple[bytes, ...]:
@@ -23,8 +26,10 @@ def credential_variants(environ=None) -> tuple[bytes, ...]:
     environ = os.environ if environ is None else environ
     variants = set()
     for name, value in environ.items():
-        if not value or not re.search(
-            r"KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL", name.upper()
+        if (
+            len(value) < MIN_CREDENTIAL_LENGTH
+            or value.isdigit()
+            or not re.search(r"KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL", name.upper())
         ):
             continue
         raw = value.encode("utf-8")

@@ -31,10 +31,27 @@ def test_credentials_redacted_across_every_chunk_boundary(size):
 
 def test_redaction_keeps_nonsecret_bytes_and_numeric_types():
     assert Redactor(()).feed(b"ordinary output") == b"ordinary output"
-    variants = credential_variants({"OTHER_API_KEY": "123"})
-    assert redact_value({"123": [123, True, None, "123"]}, variants) == {
-        "[REDACTED]": [123, True, None, "[REDACTED]"]
-    }
+    variants = credential_variants({"OTHER_API_KEY": "fixture-key-1234"})
+    assert redact_value(
+        {"fixture-key-1234": [1234, True, None, "fixture-key-1234"]}, variants
+    ) == {"[REDACTED]": [1234, True, None, "[REDACTED]"]}
+
+
+def test_short_or_numeric_settings_are_not_credentials():
+    # VNC_KEY_DELAY_MS=40 once turned trace timestamps into invalid JSON.
+    key = "fixture-zai-credential-12345"
+    variants = credential_variants(
+        {
+            "ZAI_CODING_API_KEY": key,
+            "VNC_KEY_DELAY_MS": "40",
+            "UI_TOKEN": "short",
+            "MAX_TOKENS": "16384000",
+        }
+    )
+    frame = b'{"started-at-ms":1790636409460,"note":"' + key.encode() + b'"}'
+    assert Redactor(variants).feed(frame, final=True) == (
+        b'{"started-at-ms":1790636409460,"note":"[REDACTED]"}'
+    )
 
 
 @pytest.mark.parametrize("compressed", [False, True])
