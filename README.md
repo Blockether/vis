@@ -48,10 +48,23 @@ commands. Switch devices to follow the same work, rather than start again.
 Read [Why I built Vis](resources/vis-docs/motivation.md) for the full motivation,
 or [Getting started](resources/vis-docs/index.md) to try it.
 
+## Documentation
+
+Read the manual at [vis.blockether.com](https://vis.blockether.com/); its sidebar
+lists every guide. The same pages are in [`resources/vis-docs/`](resources/vis-docs/).
+Good places to start:
+
+- [Getting started](resources/vis-docs/index.md) — install Vis, connect the apps and try a first task.
+- [Managing sessions](resources/vis-docs/sessions.md) — find a saved session, fork a conversation and organize sessions into groups.
+- [Keyboard shortcuts](resources/vis-docs/keyboard-shortcuts.md) — every key in the terminal, including the commands after **Ctrl+X**.
+- [Configuration](resources/vis-docs/configuration.md) — providers, models and settings.
+- [Extending Vis](resources/vis-docs/extending.md) — add your own tools and checks.
+- [Python SDK](resources/vis-docs/python-sdk.md) — run Vis from your own code.
+
 ## Screenshot gallery
 
 The terminal images show an earlier header with session tabs. Current builds show
-only the active session title; [Projects](resources/vis-docs/index.md#find-and-manage-saved-sessions-in-the-terminal)
+only the active session title; [Projects](resources/vis-docs/sessions.md#find-a-saved-session)
 lists saved sessions.
 
 <table width="100%">

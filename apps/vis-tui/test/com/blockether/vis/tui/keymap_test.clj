@@ -1,5 +1,6 @@
 (ns com.blockether.vis.tui.keymap-test
-  (:require [clojure.set :as set]
+  (:require [clojure.java.io :as io]
+            [clojure.set :as set]
             [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.transient :as tr]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -184,3 +185,42 @@
                  (expect (= :session-group (keymap/prefix-action-for \d)))
                  (expect (nil? (keymap/prefix-action-for keymap/abort-key)))
                  (expect (= "C-x d" (keymap/label-for :session-group)))))
+
+(defn- shortcuts-page
+  "The Keyboard shortcuts guide, found by walking up from the working directory."
+  []
+  (some (fn [^java.io.File dir]
+          (let [page (io/file dir "resources/vis-docs/keyboard-shortcuts.md")]
+            (when (.isFile page) (slurp page))))
+        (take-while some?
+                    (iterate (fn [^java.io.File dir]
+                               (.getParentFile dir))
+                             (.getAbsoluteFile (io/file (System/getProperty "user.dir")))))))
+
+(defdescribe
+  shortcuts-page-test
+  ;; C-x y and C-x t forked sessions long before the page listed them.
+  (it "lists every published C-x command in a Keyboard shortcuts table, and no other letter"
+      (let [page
+            (shortcuts-page)
+
+            listed
+            (into #{}
+                  (comp (map second)
+                        (mapcat #(re-seq #"Ctrl\+X ([a-z])\b" %))
+                        (map (comp first second)))
+                  (re-seq #"(?m)^\|([^|\n]*)\|" (or page "")))
+
+            ;; Improve is experimental, and the published manual leaves experimental
+            ;; features out (docs core-test, experimental-feature-docs-test).
+            published
+            (conj (into #{}
+                        (comp (remove #(= :improve (:show-when %))) (map :key))
+                        keymap/prefix-commands)
+                  keymap/prefix-palette-key)]
+
+        (expect (some? page)
+                "resources/vis-docs/keyboard-shortcuts.md is above the working directory")
+        (expect (= published listed)
+                (str "undocumented " (sort (set/difference published listed))
+                     ", unexpected " (sort (set/difference listed published)))))))

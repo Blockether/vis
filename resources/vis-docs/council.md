@@ -75,7 +75,7 @@ checkouts and isolated drafts from that repository share a group within one
 engine unless assigned to different projects. Separate engines have separate
 logs and participants.
 
-Filing sessions into a [session group](index.md#organize-sessions-into-groups) narrows
+Filing sessions into a [session group](sessions.md#organize-sessions-into-groups) narrows
 that boundary further: the sessions in one group talk to each other instead of to the
 whole project.
 

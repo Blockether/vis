@@ -188,7 +188,7 @@ Whole skill body."}
                               ["llm provider" "provider-extensions"] ["workflow" "skills"]
                               ["stop" "queue-and-cancel"] ["team" "council"] ["embed" "python-sdk"]
                               ["remote" "gateway-service"] ["keybindings" "keyboard-shortcuts"]
-                              ["new line" "keyboard-shortcuts"]]]
+                              ["new line" "keyboard-shortcuts"] ["fork" "sessions"]]]
           (expect (some #{page} (map :name (dc/search es words))) (str words " -> " page))))))
 
 (defdescribe experimental-guide-discovery-test

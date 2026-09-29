@@ -17,6 +17,7 @@
  {:kind "doc" :name "exporting-sessions" :resource "vis-docs/exporting-sessions.md"}
  {:kind "doc" :name "skills" :resource "vis-docs/skills.md"}
  {:kind "doc" :name "queue-and-cancel" :resource "vis-docs/queue-and-cancel.md"}
+ {:kind "doc" :name "sessions" :resource "vis-docs/sessions.md"}
  {:kind "doc" :name "keyboard-shortcuts" :resource "vis-docs/keyboard-shortcuts.md"}
  {:kind "doc" :name "council" :resource "vis-docs/council.md"}
  {:kind "doc" :name "reporting-bugs" :resource "vis-docs/reporting-bugs.md"}

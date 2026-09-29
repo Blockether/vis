@@ -8,6 +8,8 @@ iPad or Android device.
   <a href="#install">Install</a>
   <a href="#first-session">First session</a>
   <a href="#connecting-the-companion-app">Desktop and mobile</a>
+  <a href="sessions.md">Managing sessions</a>
+  <a href="#learn-more">All guides</a>
 </nav>
 
 ## Why Vis
@@ -26,7 +28,7 @@ terminal, desktop and phone let you follow the same work. Read
 ## See Vis in action
 
 The terminal images show an earlier header with session tabs. Current builds show
-only the active session title; use [Projects](#find-and-manage-saved-sessions-in-the-terminal)
+only the active session title; use [Projects](sessions.md#find-a-saved-session)
 to browse saved sessions.
 
 <section class="screenshot-gallery" id="screenshot-gallery" data-screenshot-gallery role="region" aria-roledescription="carousel" aria-label="Vis screenshots">
@@ -371,50 +373,8 @@ survive restarts, and the full history stays stored even when Vis summarizes
 completed work to make room for the next task. See
 [How Vis manages context](token-optimization.md).
 
-### Find and manage saved sessions in the terminal
-
-Press **Ctrl+X w** to open **Projects**. It lists saved sessions from the connected
-gateway, including ones you have not opened in this terminal. Use **↑** and **↓** to
-choose a project, group or session. Press **Enter** to expand a project or group, or
-resume a session. The header shows only your current session title. **Tab** does not
-switch sessions; **Ctrl+X s** opens the session picker if you prefer it.
-
-Press **/** while Projects has focus to search saved session titles and conversation
-text, even outside the pages on screen. Use the result-page rows to see more matches;
-press **Esc** to return to your previous folds and page. Projects keeps a window of
-sessions and groups at a time. Choose **More sessions** or **More groups** to page each
-list separately. When new rows arrive, choose **new updates** to show them without
-moving the list you were reading.
-
-Press **g** on a session row for details, star, rename, move, archive or delete actions.
-Press **Space** to mark several sessions, then use the group or Sessions menu to move
-them together. Use **g** on Groups to create a group or show archived groups; the
-Sessions menu starts a new session or shows archived sessions. Removing a project or
-deleting a group or session asks for confirmation; deleting saved sessions cannot be
-undone. You can use the same row and menu actions with a mouse when your terminal
-reports clicks.
-
-### Organize sessions into groups
-
-A busy project collects more sessions than one screen holds. Put the ones that belong
-together into a group — "Release apps", "Bug triage" — and that group gets its own name,
-colour and session count under the project, opened and closed like any other fold.
-
-In the desktop or phone app, open the **⋮** menu in a project's header and choose **New
-group**. The same menu renames a group, changes its colour, deletes it and files the
-sessions listed on that page into a group. A session row also carries **Move to...** in
-its own actions, and you can drag a row onto a group's band to file it there. In the
-terminal, press **Ctrl+X w** for Projects and **g** on a project, group or session
-row for its menu. **Ctrl+X d** moves the session you are in.
-
-To start a conversation straight inside a group, use the **+** on the group's band in the app,
-or **＋ New session here** in the terminal's **g** menu on that group row. The new session is
-filed as it is created, so it opens at the top of that group instead of loose in the project.
-
-Deleting a group asks what becomes of the sessions filed under it: keep them, and they
-return to the project ungrouped, or delete them with the group. Deleting the sessions
-cannot be undone. A group also narrows who a session talks to in
-[Council](council.md#groups-and-settings).
+To find an earlier session, fork one to try another approach or file sessions into
+groups, see [Managing sessions](sessions.md).
 
 ## Updating vis
 
@@ -546,6 +506,7 @@ A value `<= 0` disables an eviction threshold.
 - [Project instructions](context-and-prompts.md) — tell the agent how your codebase works.
 - [Skills](skills.md) — reusable task instructions.
 - [Controlling a session](queue-and-cancel.md) — send follow-ups, cancel a task and exit.
+- [Managing sessions](sessions.md) — find, fork and organize saved sessions.
 - [Drafts](drafts.md) — try a change in an isolated working copy and review it before approval.
 - [Exporting sessions](exporting-sessions.md) — save or share a session.
 - [Council](council.md) — ask another session for help or a second review.

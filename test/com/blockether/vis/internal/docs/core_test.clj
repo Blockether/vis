@@ -586,6 +586,7 @@
 
 ;; Regression: quick links inherited paragraph justification and split at separators on mobile.
 ;; Motivation must open the full guide, not jump to the homepage summary.
+;; The sessions guide and the full page list must be reachable from the top of the page.
 (defdescribe
   getting-started-quick-links-test
   (it
@@ -618,7 +619,9 @@
 
         (expect (= [[(if (= mode :static) "motivation.html" "/docs/motivation") "Motivation"]
                     ["#install" "Install"] ["#first-session" "First session"]
-                    ["#connecting-the-companion-app" "Desktop and mobile"]]
+                    ["#connecting-the-companion-app" "Desktop and mobile"]
+                    [(if (= mode :static) "sessions.html" "/docs/sessions") "Managing sessions"]
+                    ["#learn-more" "All guides"]]
                    links))
         (expect (not (str/includes? (or navigation "") "·")))
         (expect (not (str/includes? html "<p><nav class=\"quick-links\"")))

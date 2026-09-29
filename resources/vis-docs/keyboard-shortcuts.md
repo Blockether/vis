@@ -15,6 +15,9 @@ To see the most common shortcuts while you work, press **Ctrl+X h** in Vis.
   its name, or look it up in [Run a command](#run-a-command).
 - **You want to read an earlier part of a long session.** Use the keys in [Move
   through a session](#move-through-a-session) to scroll, jump and fold.
+- **You want to fork a session, go back to an earlier turn or move a session to a
+  group.** Use the keys under [Sessions](#sessions); [Managing sessions](sessions.md)
+  explains each task.
 - **You want to know what cancelling or quitting does to your queued messages.** Read
   [Controlling a session](queue-and-cancel.md) instead.
 
@@ -50,24 +53,49 @@ not something Vis can change:
 ## Run a command
 
 Most commands use **Ctrl+X** and a letter: press **Ctrl+X**, then the letter. After
-**Ctrl+X**, Vis shows the most common choices.
+**Ctrl+X**, Vis shows the most common choices; the other commands on this page work
+the same way. A command that needs something first, such as a turn to fork, appears
+once it can act.
 
 | Keys | What they do |
 |---|---|
 | Ctrl+X p | Open the command palette with every command; type to filter |
 | Ctrl+X h | Show or hide the keyboard shortcuts |
+
+### Sessions
+
+| Keys | What they do |
+|---|---|
 | Ctrl+X n | Start a new session |
 | Ctrl+X s | Switch to another session |
 | Ctrl+X w | Open **Projects**, the list of saved sessions |
+| Ctrl+X y | Fork this session: open a new session with a copy of the whole conversation |
+| Ctrl+X t | Fork from an earlier turn: choose the last turn the new session keeps |
+| Ctrl+X d | Move this session to a group |
+| Ctrl+X u | Show session metrics: context health, totals and cache |
+
+[Managing sessions](sessions.md) explains forks, groups and how to find a saved session.
+
+### Models and answers
+
+| Keys | What they do |
+|---|---|
 | Ctrl+X o | Open **Providers** to add a provider and sign in |
 | Ctrl+X c | Choose a model from a searchable list |
 | Ctrl+X m | Switch to the next model |
 | Ctrl+X r | Change the reasoning effort |
 | Ctrl+X l | Change the answer length |
+| Ctrl+X q | Turn fast mode on or off for OpenAI Codex models |
+
+### Files, voice and search
+
+| Keys | What they do |
+|---|---|
 | Ctrl+X f | Search in the session |
 | Ctrl+X a | Attach a file |
+| Ctrl+X i | Review your attached files and the files this session produced |
 | Ctrl+X v | Start or stop a voice recording |
-| Ctrl+X u | Show session metrics: context health, totals and cache |
+| Ctrl+X b | Turn voice conversation on or off: Vis reads each answer aloud and sends each recording once it is transcribed |
 
 ## Cancel or quit
 
@@ -119,5 +147,6 @@ terminal's paste key.
 ## See also
 
 - [Controlling a session](queue-and-cancel.md) — what Enter, Esc and Ctrl+C do while Vis works, and what happens to queued messages.
+- [Managing sessions](sessions.md) — find, fork and organize sessions with the keys on this page.
 - [Getting started](index.md#in-the-terminal) — start Vis in your terminal and send a first task.
 - [Reporting a bug](reporting-bugs.md) — report a shortcut that does not work in your terminal, with details that let someone reproduce it.
