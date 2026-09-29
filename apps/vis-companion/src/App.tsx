@@ -1429,6 +1429,7 @@ export function App() {
           gateways={conns}
           primaryUrl={primary?.url}
           providerMachineUrl={settingsDestination.providerMachineUrl}
+          contextSession={openTarget ? { url: openTarget.conn.url, sid: openTarget.sid } : undefined}
           onAddMachine={addConnection}
           onMakePrimary={async (conn) => {
             await Promise.all([setPrimaryUrl(conn.url), setActiveUrl(conn.url)]);

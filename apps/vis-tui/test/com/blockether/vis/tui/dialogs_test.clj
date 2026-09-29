@@ -3349,11 +3349,104 @@
         (binding [dlg/*settings-target* {:scope "group" :target-id "g1" :label "g1"}
                   dlg/*local-settings-inventory* local]
 
-          (with-redefs [vis/gateway-settings (fn [_ target]
+          (with-redefs [vis/gateway-settings (fn [_ target _context]
                                                (expect (= "g1" (:target-id target)))
                                                {"label" "Backend team" "groups" []})]
             (dlg/load-settings-inventory!)))
-        (expect (= "Backend team" (:label @local))))))
+        (expect (= "Backend team" (:label @local)))))
+  (it "asks for the open session's locks, also from the parallel global load"
+      (let [load-inventories!
+            (var-get #'dlg/load-inventories!)
+
+            inventory
+            (var-get #'dlg/settings-inventory)
+
+            original
+            @inventory
+
+            seen
+            (atom nil)]
+
+        (try (with-redefs-fn {#'dlg/load-mcp-inventory! (fn []
+                                                          nil)
+                              #'dlg/load-agent-name! (fn []
+                                                       nil)
+                              #'dlg/load-provider-inventory! (fn []
+                                                               nil)
+                              #'vis/gateway-settings (fn [_ target context]
+                                                       (reset! seen [target context])
+                                                       {"groups" []})}
+               #(binding [dlg/*settings-context* "s1"] (load-inventories!)))
+             (expect (= [nil "s1"] @seen))
+             (finally (reset! inventory original)))))
+  (it "locks a row the open session's own scopes decide and says where to change it"
+      ;; A project `vis.yml` with `shell: false` decides Shell for its sessions, so
+      ;; flipping the global row would change nothing there.
+      (let [registry-toggle-rows
+            (var-get #'dlg/registry-toggle-rows)
+
+            settings-option-label
+            (var-get #'dlg/settings-option-label)
+
+            activate-settings-row!
+            (var-get #'dlg/activate-settings-row!)
+
+            inventory
+            (var-get #'dlg/settings-inventory)
+
+            original
+            @inventory
+
+            events
+            (atom [])
+
+            shell-note
+            "Project settings turn this off for this session. Change it in Project settings."]
+
+        (try (reset! inventory {:status :ok
+                                :error nil
+                                :groups [{"id" "tools"
+                                          "title" "Tools"
+                                          "toggles"
+                                          [{"id" "shell"
+                                            "label" "Shell commands"
+                                            "type" "boolean"
+                                            "enabled" true
+                                            "is_override" true
+                                            "overridden_by" {"scope" "project" "enabled" false}}
+                                           {"id" "reasoning_effort"
+                                            "label" "Reasoning"
+                                            "type" "enum"
+                                            "value" "high"
+                                            "choices" ["low" "high"]
+                                            "overridden_by" {"scope" "group" "value" "low"}}
+                                           {"id" "plans"
+                                            "label" "Plan before coding"
+                                            "type" "boolean"
+                                            "enabled" true}]}]})
+             (let [[_ shell inherit reasoning plans] (registry-toggle-rows)]
+               (expect (= shell-note (:locked shell)))
+               (expect (str/ends-with? (:description shell) (str " · Locked: " shell-note)))
+               (expect (= "Shell commands  [Locked]" (settings-option-label shell {})))
+               (expect (= [:inherit shell-note] [(:type inherit) (:locked inherit)]))
+               (expect
+                 (= "Group settings set this to low for this session. Change it in Group settings."
+                    (:locked reasoning)))
+               (expect (= "Reasoning: high  [Locked]" (settings-option-label reasoning {})))
+               (expect (nil? (:locked plans)))
+               (with-redefs-fn {#'dlg/mini-note! (fn [_ _ _ title line]
+                                                   (swap! events conj [title line]))
+                                #'dlg/activate-unlocked-row!
+                                (fn [& args]
+                                  (swap! events conj [:changed (:toggle-id (last args))]))}
+                 #(doseq [row [shell inherit plans]] (activate-settings-row! nil
+                                                                             nil
+                                                                             nil
+                                                                             (atom {})
+                                                                             {}
+                                                                             row))))
+             (expect (= [["Locked" shell-note] ["Locked" shell-note] [:changed "plans"]] @events))
+             (finally (reset! inventory original))))))
 
 (defn- back-buffer-text
   "What the last paint asked the terminal to show, one line per screen row."

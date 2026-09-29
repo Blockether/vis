@@ -52,6 +52,7 @@ export function SettingsDialog({
   onRemove,
   onSelectAddress,
   onClose,
+  contextSession,
 }: {
   gateways: GatewayConn[];
   primaryUrl?: string | null;
@@ -74,6 +75,8 @@ export function SettingsDialog({
    */
   onSelectAddress?: (conn: GatewayConn, url: string, pinned: boolean) => void | Promise<void>;
   onClose: () => void;
+  /** The session open behind this dialog: its machine locks the rows that session's own scopes decide. */
+  contextSession?: { url: string; sid: string };
 }) {
   const showPythonCode = usePythonCodeShown();
   const summarizeSteps = useStepsSummarized();
@@ -246,6 +249,7 @@ export function SettingsDialog({
                     gateway={conn}
                     speechPrefs={speechPrefs}
                     onSpeechChange={changeSpeech}
+                    contextSessionId={contextSession?.url === conn.url ? contextSession.sid : undefined}
                   />
                 )}
               />

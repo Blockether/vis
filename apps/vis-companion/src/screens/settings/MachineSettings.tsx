@@ -57,10 +57,13 @@ import { IMPROVE_MODE_LABELS, type ImproveMode } from '../../lib/improve';
 export function EnumSetting({
   toggle,
   busy = false,
+  disabled = false,
   onPick,
 }: {
   toggle: Toggle;
   busy?: boolean;
+  /** Locked by a more specific scope: the value shows, but cannot change. */
+  disabled?: boolean;
   onPick: (value: string) => void;
 }) {
   return (
@@ -69,7 +72,7 @@ export function EnumSetting({
       aria-label={toggle.label}
       aria-busy={busy}
       value={toggle.value ?? ''}
-      disabled={busy}
+      disabled={busy || disabled}
       onValueChange={onPick}
       options={(toggle.choices ?? []).map((choice) => ({
         value: choice,
@@ -85,10 +88,13 @@ export function EnumSetting({
 export function StringSetting({
   toggle,
   busy,
+  disabled = false,
   onSave,
 }: {
   toggle: Toggle;
   busy: boolean;
+  /** Locked by a more specific scope: the value shows, but cannot change. */
+  disabled?: boolean;
   onSave: (value: string) => Promise<boolean>;
 }) {
   const [draft, setDraft] = useState(toggle.value ?? '');
@@ -98,7 +104,7 @@ export function StringSetting({
       className="flex min-w-0 flex-col gap-2 px-3 py-2 sm:px-4"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!busy && changed && draft.trim()) {
+        if (!busy && !disabled && changed && draft.trim()) {
           void onSave(draft).then((saved) => {
             if (saved) setDraft(draft.trim());
           });
@@ -116,13 +122,13 @@ export function StringSetting({
         )}
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        {toggle.multiline ? <textarea aria-label={toggle.label} value={draft} disabled={busy}
+        {toggle.multiline ? <textarea aria-label={toggle.label} value={draft} disabled={busy || disabled}
           className="min-h-24 w-full border border-dialog-edge bg-input p-2 font-mono text-meta"
           onChange={(event) => setDraft(event.target.value)} /> : <Input
           aria-label={toggle.label}
           value={draft}
           maxLength={toggle.max_length}
-          disabled={busy}
+          disabled={busy || disabled}
           required
           className="flex-1"
           onChange={(event) => setDraft(event.target.value)}
@@ -153,6 +159,23 @@ export function StringSetting({
   );
 }
 
+/**
+ * Why a more specific scope decides this row for the open session, or null. Such a
+ * row stays locked: changing it here would not change what that session uses.
+ */
+export function lockNote(toggle: Toggle): string | null {
+  const by = toggle.overridden_by;
+  if (!by) return null;
+  const where = `${by.scope.charAt(0).toUpperCase()}${by.scope.slice(1)} settings`;
+  const effect =
+    by.enabled !== undefined
+      ? `turn this ${by.enabled ? 'on' : 'off'}`
+      : toggle.type === 'enum' && by.value !== undefined
+        ? `set this to ${String(by.value)}`
+        : 'set this';
+  return `Locked: ${where} ${effect} for this session. Change it in ${where}.`;
+}
+
 /** The same value row is used for gateway and scoped settings. */
 export function SettingRow({ toggle, busy, onToggle, onPick, onInherit }: {
   toggle: Toggle;
@@ -161,10 +184,11 @@ export function SettingRow({ toggle, busy, onToggle, onPick, onInherit }: {
   onPick: (value: string) => Promise<boolean>;
   onInherit?: () => void;
 }) {
+  const lock = lockNote(toggle);
   return (
     <div>
       {toggle.type === 'string' ? (
-        <StringSetting key={`${toggle.id}:${toggle.value}`} toggle={toggle} busy={busy} onSave={onPick} />
+        <StringSetting key={`${toggle.id}:${toggle.value}`} toggle={toggle} busy={busy} disabled={lock !== null} onSave={onPick} />
       ) : (
         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-2 sm:px-4">
           <div className="min-w-0">
@@ -176,14 +200,15 @@ export function SettingRow({ toggle, busy, onToggle, onPick, onInherit }: {
             </div>
             {toggle.description && <Text as="p" variant="description" className="mt-0.5 break-words">{toggle.description}</Text>}
           </div>
-          {toggle.type === 'boolean' && <Switch className="self-center" label={toggle.label} isOn={!!toggle.enabled} isBusy={busy} disabled={busy} onClick={onToggle} />}
-          {toggle.type === 'enum' && <EnumSetting toggle={toggle} busy={busy} onPick={(value) => void onPick(value)} />}
+          {toggle.type === 'boolean' && <Switch className="self-center" label={toggle.label} isOn={!!toggle.enabled} isBusy={busy} disabled={busy || lock !== null} onClick={onToggle} />}
+          {toggle.type === 'enum' && <EnumSetting toggle={toggle} busy={busy} disabled={lock !== null} onPick={(value) => void onPick(value)} />}
         </div>
       )}
+      {lock && <Text as="p" variant="description" className="break-words px-3 pb-2 sm:px-4">{lock}</Text>}
       {onInherit && (
         <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2 sm:px-4">
           <Text variant="description">{toggle.is_override ? 'Set here' : `Inherited from ${toggle.source ?? 'default'}`}</Text>
-          {toggle.is_override && <Button variant="secondary" density="panel" disabled={busy} onClick={onInherit}>Use inherited value</Button>}
+          {toggle.is_override && <Button variant="secondary" density="panel" disabled={busy || lock !== null} onClick={onInherit}>Use inherited value</Button>}
         </div>
       )}
     </div>
@@ -203,10 +228,13 @@ export function MachineSettings({
   gateway,
   speechPrefs,
   onSpeechChange,
+  contextSessionId,
 }: {
   gateway: GatewayConn;
   speechPrefs: SpeechPrefs;
   onSpeechChange: SaveSpeechPrefs;
+  /** The session open on this machine: rows its own scopes decide stay locked. */
+  contextSessionId?: string;
 }) {
   // ONE CLIENT PER MACHINE, and the transport pair is its whole identity. A fresh
   // `new GatewayClient(...)` per render re-fired every panel's `load` on every
@@ -234,7 +262,7 @@ export function MachineSettings({
       // caller has been torn down — so mounting this loader writes no state
       // synchronously and none after unmount.
       try {
-        const settings = await client.settings();
+        const settings = await client.settings(undefined, undefined, contextSessionId);
         if (signal?.aborted) return;
         setErr(null);
         setFailure(null);
@@ -259,7 +287,7 @@ export function MachineSettings({
         setFailure('unreachable');
       }
     },
-    [client],
+    [client, contextSessionId],
   );
 
   useEffect(() => {

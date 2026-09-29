@@ -599,6 +599,15 @@ disable plans in a group, enable them in one session, then choose **Use inherite
 value** in that session to follow the group's disabled value again. Changing the
 group does not overwrite another session's explicit choice.
 
+A more specific value wins, so Settings locks a row when a more specific scope
+decides it for the session you have open. For example, if your project's `vis.yml`
+sets `toggles.shell: false`, the global **Shell commands** row is locked in TUI
+**Settings** and in the app while a session from that project is open: turning it
+on globally would not change that session. The row names the scope that decides
+it. Open **Project settings** and turn it on there; Vis writes the change to
+`.vis/config.yml`, which overrides `vis.yml` without editing it. From a session
+outside that project, the global row stays editable.
+
 Global means this gateway, shared by its connected clients. Project settings use
 the canonical project root, not a draft's working-copy path. Edits go to the
 project's `.vis/config.yml`; checked-in `vis.yml` stays intact. Group and session
@@ -656,6 +665,12 @@ and lifecycle commands remain global-only.
 parameters. Omitted scope means global, never the currently viewed session.
 Non-global requests require a target. Rows include `scopes`, `scope`, `source`
 and `is_override`; boolean rows use `enabled`, other rows use `value`.
+
+Add `context_session_id` to either `GET` to mark the rows that a more specific scope
+decides for that session. Such a row includes `overridden_by` with the deciding
+`scope` and its `enabled` or `value`. An unknown session, or one outside the
+requested target, marks no rows. Writes are not refused: the global value still
+applies to other projects, so clients lock the row only for the open session.
 
 `POST /v1/settings` accepts the same target with `id` and `action`: `value`,
 `toggle`, `cycle` or `inherit`. A `value` action also requires `value`, including

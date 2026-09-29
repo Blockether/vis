@@ -2377,6 +2377,26 @@
         "is_override": {
           "type": "boolean"
         },
+        "overridden_by": {
+          "type": "object",
+          "required": [
+            "scope"
+          ],
+          "properties": {
+            "scope": {
+              "$ref": "https://contract.blockether.com/vis/schema/toggle.json#/$defs/scope"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "value": {
+              "type": [
+                "boolean",
+                "string"
+              ]
+            }
+          }
+        },
         "enabled": {
           "type": "boolean"
         },

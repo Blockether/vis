@@ -81,6 +81,47 @@ describe('global settings provenance', () => {
     expect(screen.queryByText('Inherited from default')).toBeNull();
   });
 });
+describe('settings the open session decides elsewhere', () => {
+  // A project `vis.yml` with `shell: false` decides Shell for its sessions, so the
+  // global row stays locked while such a session is open: flipping it changes nothing.
+  it('locks those rows and says where to change them', async () => {
+    const settings = vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue({
+      groups: [{
+        id: 'sandbox', title: 'Sandbox', toggles: [
+          { ...backend, overridden_by: { scope: 'group', value: 'off' } },
+          {
+            id: 'shell', label: 'Shell commands', type: 'boolean', enabled: true,
+            source: 'global', is_override: true, overridden_by: { scope: 'project', enabled: false },
+          },
+          { id: 'council', label: 'Council', type: 'boolean', enabled: true },
+        ],
+      }],
+    });
+    const save = vi.spyOn(GatewayClient.prototype, 'setSetting');
+    render(
+      <MachineSettings
+        gateway={gateway}
+        speechPrefs={DEFAULT_SPEECH_PREFS}
+        onSpeechChange={async () => DEFAULT_SPEECH_PREFS}
+        contextSessionId="s1"
+      />,
+    );
+    const shell = await screen.findByRole('switch', { name: 'Shell commands: on' });
+    expect(settings).toHaveBeenCalledWith(undefined, undefined, 's1');
+    expect(shell).toBeDisabled();
+    expect(
+      screen.getByText('Locked: Project settings turn this off for this session. Change it in Project settings.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Use inherited value' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Draft backend' })).toBeDisabled();
+    expect(
+      screen.getByText('Locked: Group settings set this to off for this session. Change it in Group settings.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Council: on' })).toBeEnabled();
+    await userEvent.click(shell);
+    expect(save).not.toHaveBeenCalled();
+  });
+});
 
 describe('draft backend dropdown', () => {
   // #242 and #243: opening Settings must not opt the user into draft isolation.

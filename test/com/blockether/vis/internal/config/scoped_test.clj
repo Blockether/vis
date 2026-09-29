@@ -440,7 +440,68 @@
                                         "id" "agent_name"
                                         "value" "Local")))))
           (toggles/register-toggle! {:id "http_global_feature" :label "Global" :default true})
-          (expect (= 400 (:status (write! (assoc target "id" "http_global_feature"))))))))))
+          (expect (= 400 (:status (write! (assoc target "id" "http_global_feature")))))))))
+  (it
+    "marks rows a more specific scope decides for the context session and nothing else"
+    (with-empty-config
+      (let [db
+            (h/store)
+
+            project
+            (store/db-create-project! db
+                                      {:name "Context"
+                                       :workspace-root (.getCanonicalPath
+                                                         (java.io.File. "/tmp/context-project"))})
+
+            sid
+            (h/store-session! db {:title "In project"})
+
+            loose
+            (h/store-session! db {:title "Outside the project"})
+
+            id
+            "context_feature"
+
+            row
+            (fn [response]
+              (let [body (json/read-json (:body response))]
+                (or (some #(when (= id (get % "id")) %)
+                          (mapcat #(get % "toggles") (get body "groups")))
+                    body)))
+
+            list!
+            (fn [params]
+              (row (#'settings-api/list-settings-handler {:query-params params})))]
+
+        (toggles/register-toggle! {:id id :label "Context" :default true :scopes contract/scopes})
+        (store/db-set-session-project! db sid (:id project))
+        (with-redefs [lp/db-info
+                      (constantly db)
+
+                      discovery/all-skills
+                      (constantly [])
+
+                      config/load-project-tiers-raw
+                      (constantly {"toggles" {id false}})]
+
+          (let [locked (list! {"context_session_id" (str sid)})]
+            (expect (document/valid? "gateway" "setting" locked))
+            (expect (true? (get locked "enabled")))
+            (expect (= {"scope" "project" "enabled" false} (get locked "overridden_by"))))
+          (expect (= {"scope" "project" "enabled" false}
+                     (get (row (#'settings-api/get-setting-handler
+                                {:path-params {:id id}
+                                 :query-params {"context_session_id" (str sid)}}))
+                          "overridden_by")))
+          (doseq [params [{} {"context_session_id" "missing-session"} {"context_session_id" " "}]]
+            (expect (not (contains? (list! params) "overridden_by"))))
+          (scoped/set-setting! db (scoped/target db "session" sid) id "value" true)
+          (let [project-params {"scope" "project" "target_id" (str (:id project))}]
+            (expect (= {"scope" "session" "enabled" true}
+                       (get (list! (assoc project-params "context_session_id" (str sid)))
+                            "overridden_by")))
+            (expect (not (contains? (list! (assoc project-params "context_session_id" (str loose)))
+                                    "overridden_by")))))))))
 
 (defdescribe
   scoped-skill-visibility

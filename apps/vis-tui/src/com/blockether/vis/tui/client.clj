@@ -629,14 +629,20 @@
   "Every settings group the gateway serves for `channel`, in ITS order — the same
    payload the companion app renders. Clients project this catalog instead of
    re-deriving one from a process-local registry copy, which drifts the moment the
-   engine or an extension registers a toggle this binary never heard of."
+   engine or an extension registers a toggle this binary never heard of.
+
+   With `context-session-id`, the gateway marks each row that a more specific
+   scope decides for that session with `overridden_by`."
   ([] (settings :tui))
   ([channel] (settings channel nil))
-  ([channel target]
+  ([channel target] (settings channel target nil))
+  ([channel target context-session-id]
    (send-json! "GET"
                (str "/v1/settings?channel="
                     (enc (name channel))
-                    (when target (str "&" (settings-query target)))))))
+                    (when target (str "&" (settings-query target)))
+                    (when context-session-id
+                      (str "&context_session_id=" (enc (str context-session-id))))))))
 
 (defn create-session! [opts] (send-json! "POST" "/v1/sessions" opts))
 

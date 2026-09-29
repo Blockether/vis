@@ -13,7 +13,8 @@
             [com.blockether.vis.internal.gateway.state :as state]))
 
 (defn- toggle-json
-  [{:keys [id label description type choices value experimental? scopes source scope is-override]}]
+  [{:keys [id label description type choices value experimental? scopes source scope is-override
+           overridden-by]}]
   (cond-> {:id id
            :label label
            :type (name type)
@@ -32,7 +33,13 @@
     (assoc :value value)
 
     choices
-    (assoc :choices choices)))
+    (assoc :choices choices)
+
+    overridden-by
+    (assoc :overridden-by
+      (if (= type :boolean)
+        {:scope (:scope overridden-by) :enabled (boolean (:value overridden-by))}
+        {:scope (:scope overridden-by) :value (:value overridden-by)}))))
 
 (defn- resource-inventory
   [target]
@@ -58,6 +65,14 @@
   [request body]
   (let [params (merge (:query-params request) body)]
     (scoped/target (lp/db-info) (get params "scope") (get params "target_id"))))
+
+(defn- mark-overridden
+  "Mark rows the optional `context_session_id` session takes from a more specific scope."
+  [request target rows]
+  (scoped/mark-overridden (lp/db-info)
+                          target
+                          rows
+                          (get-in request [:query-params "context_session_id"])))
 
 (defn- settings-response
   [f]
@@ -124,7 +139,8 @@
               (scoped/settings (lp/db-info) target))
 
             grouped
-            (sort-by (comp str key) (group-by #(or (:group %) :other) rows))]
+            (sort-by (comp str key)
+                     (group-by #(or (:group %) :other) (mark-overridden request target rows)))]
 
         (http/json-response
           {:scope (:scope target)
@@ -158,7 +174,10 @@
             (resource-inventory target)
 
             spec
-            (first (filter #(= id (:id %)) (scoped/settings (lp/db-info) target)))]
+            (first (mark-overridden request
+                                    target
+                                    (filter #(= id (:id %))
+                                            (scoped/settings (lp/db-info) target))))]
 
         (cond
           (not (toggle-contract/toggle-id? id))

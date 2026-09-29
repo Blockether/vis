@@ -263,6 +263,50 @@
                   (:scope target)
                   (own-values db target)))
 
+(defn- specificity
+  "Position in resolution order: later scopes win; `default` precedes them all."
+  ^long [scope]
+  (.indexOf ^java.util.List contract/scopes scope))
+
+(defn mark-overridden
+  "Mark each row read at `owner` that a more specific scope decides for session
+   `session-id`, naming that scope and the value the session uses. A blank or
+   unknown session, or one outside the owner, such as another project's, marks nothing."
+  [db owner rows session-id]
+  (let [context
+        (when-let [id (some-> session-id
+                              str
+                              str/trim
+                              not-empty)]
+          (try (target db "session" id) (catch clojure.lang.ExceptionInfo _ nil)))
+
+        related?
+        (when context
+          (case (:scope owner)
+            "global"
+            true
+
+            "project"
+            (= (:project-id owner) (:project-id context))
+
+            "group"
+            (= (:target-id owner) (:group-id context))
+
+            false))
+
+        winners
+        (when related? (into {} (map (juxt :id identity)) (settings db context)))
+
+        rank
+        (specificity (:scope owner))]
+
+    (mapv (fn [{:keys [id] :as row}]
+            (let [{:keys [source value]} (get winners id)]
+              (cond-> row
+                (and source (< rank (specificity source)))
+                (assoc :overridden-by {:scope source :value value}))))
+          rows)))
+
 (defn values
   "The session snapshot used by callbacks; does not mutate the global registry."
   [db session-id]

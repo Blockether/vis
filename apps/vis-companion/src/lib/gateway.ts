@@ -2108,10 +2108,18 @@ export class GatewayClient {
     return response.machine_ids;
   }
 
-  async settings(signal?: AbortSignal, target?: SettingsTarget): Promise<SettingsResponse> {
+  async settings(
+    signal?: AbortSignal,
+    target?: SettingsTarget,
+    contextSessionId?: string,
+  ): Promise<SettingsResponse> {
+    // Naming the open session marks the rows its own scopes decide (`overridden_by`).
+    const context = contextSessionId
+      ? `&context_session_id=${encodeURIComponent(contextSessionId)}`
+      : '';
     const response = await this.request<SettingsResponse>(
       'GET',
-      `/v1/settings?channel=all&${this.settingsQuery(target)}`,
+      `/v1/settings?channel=all&${this.settingsQuery(target)}${context}`,
       undefined,
       signal,
     );

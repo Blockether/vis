@@ -3087,6 +3087,10 @@
 
 (def ^:dynamic *settings-target* nil)
 
+(def ^:dynamic *settings-context*
+  "The session whose project, group and session settings may decide a row, or nil."
+  nil)
+
 (def ^:dynamic *local-settings-inventory* nil)
 
 (defn- settings-inventory-atom [] (or *local-settings-inventory* settings-inventory))
@@ -3111,7 +3115,7 @@
    that cannot answer keeps the catalog Settings last read — and, before the
    first answer, the process-registry projection — instead of a blank pane."
   []
-  (let [answer (try (let [response (vis/gateway-settings :tui *settings-target*)]
+  (let [answer (try (let [response (vis/gateway-settings :tui *settings-target* *settings-context*)]
                       {:status :ok
                        :groups (vec (get response "groups"))
                        ;; The gateway names a group or project; the caller only has its id.
@@ -3180,6 +3184,36 @@
                                 rows)))))
             (or groups []))))
 
+(defn- override-note
+  "Explain why a more specific scope decides this catalog row for the session
+   Settings opened from, or nil. The gateway marks such rows only when the
+   request names that session."
+  [row]
+  (when-let [{:strs [scope enabled value]} (get row "overridden_by")]
+    (let [where (str (str/capitalize (str scope)) " settings")]
+      (str where
+           (cond (some? enabled) (if enabled " turn this on" " turn this off")
+                 (= "enum" (get row "type")) (str " set this to " value)
+                 :else " set this")
+           " for this session. Change it in "
+           where
+           "."))))
+
+(defn- lock-overridden-rows
+  "Lock each catalog row that a more specific scope decides for the session
+   Settings opened from; its description says where to change it instead."
+  [groups rows]
+  (let [notes (into {}
+                    (keep #(when-let [note (override-note %)] [(get % "id") note]))
+                    (mapcat #(get % "toggles") groups))]
+    (mapv (fn [{:keys [toggle-id description] :as row}]
+            (if-let [note (get notes toggle-id)]
+              (cond-> (assoc row :locked note)
+                description
+                (assoc :description (str description " · Locked: " note)))
+              row))
+          rows)))
+
 (defn- registry-toggle-rows
   "Settings rows for the feature toggles this channel shows.
 
@@ -3192,7 +3226,7 @@
   []
   (let [groups (:groups @(settings-inventory-atom))]
     (if (or *settings-target* (seq groups))
-      (catalog-toggle-rows groups)
+      (lock-overridden-rows groups (catalog-toggle-rows groups))
       ;; `toggles-for-channel` drops provider-specific knobs whose provider
       ;; isn't configured (`:visible-fn`) AND toggles scoped to OTHER channels
       ;; (`:channels`) — e.g. the web theme never shows in the TUI dialog.
@@ -3504,7 +3538,7 @@
           (vis/worker-future "vis-tui-settings-mcp-inventory" load-mcp-inventory!)
 
           catalog
-          (vis/worker-future "vis-tui-settings-catalog" load-settings-inventory!)]
+          (vis/worker-future "vis-tui-settings-catalog" (bound-fn* load-settings-inventory!))]
 
       (let [agent (vis/worker-future "vis-tui-settings-agent-name" load-agent-name!)]
         (load-provider-inventory!)
@@ -3533,7 +3567,7 @@
                  (or (mcp-settings-rows) [])))))
 
 (defn- settings-option-label
-  [{:keys [key label type choices toggle-id toggle-type toggle-value experimental?]} values]
+  [{:keys [key label type choices toggle-id toggle-type toggle-value experimental? locked]} values]
   (case type
     :agent-name
     (str label ": " (or (get @agent-name-setting "value") "unavailable — Enter to retry"))
@@ -3564,8 +3598,8 @@
                   (some-> current
                           clojure.core/name))
              label)
-           (when (if (some? experimental?) experimental? (:experimental? spec))
-             "  [Experimental]")))
+           (when (if (some? experimental?) experimental? (:experimental? spec)) "  [Experimental]")
+           (when locked "  [Locked]")))
 
     label))
 
@@ -3935,7 +3969,7 @@
                           [:init :selected]
                           (max 0 (.indexOf ^java.util.List choices current)))))))
 
-(defn- activate-settings-row!
+(defn- activate-unlocked-row!
   [^TerminalScreen screen g region values callbacks row]
   (case (:type row)
     :text-setting
@@ -4025,6 +4059,14 @@
       (activate-theme-row! screen g region values callbacks row)
       (->> (swap! values apply-settings-option row)
            (notify-settings-change! callbacks)))))
+
+(defn- activate-settings-row!
+  "Activate one Settings row. A row that a more specific scope decides for the
+   session Settings opened from explains where to change it instead."
+  [^TerminalScreen screen g region values callbacks row]
+  (if-let [note (:locked row)]
+    (mini-note! screen g region "Locked" note)
+    (activate-unlocked-row! screen g region values callbacks row)))
 
 (defn- settings-section-text
   [label inner-w]
@@ -4245,12 +4287,17 @@
    `:mcp-add` / `:provider-add` (the add row of each section), `:mcp-action`
    (the verb a server's transient fired) and `:provider-transient` (one
    provider's transient, handed the graphics and the region it paints into).
+   `:context-session-id` names the session whose more specific settings lock the
+   rows they decide.
    Esc clears an active search first, then closes and returns the
    current settings map."
   ([^TerminalScreen screen settings] (settings-dialog! screen settings nil))
   ([^TerminalScreen screen settings callbacks]
    (binding [*settings-target*
              (:settings-target callbacks)
+
+             *settings-context*
+             (:context-session-id callbacks)
 
              *local-settings-inventory*
              (when (:settings-target callbacks) (atom {:status :unloaded :groups [] :error nil}))

@@ -3624,6 +3624,7 @@
                   screen
                   (:settings @state/app-db)
                   {:focus-section focus-section
+                   :context-session-id (get-in @state/app-db [:session :id])
                    :mcp-add (fn [{:keys [g region]}]
                               (mcp/save-server! screen g region nil))
                    ;; One verb the server's transient fired — the manager runs
@@ -3674,6 +3675,7 @@
              {:settings-target {:scope scope
                                 :target-id (str target-id)
                                 :label (if (= scope "session") (get row "title") (str target-id))}
+              :context-session-id sid
               :mcp-add (fn [{:keys [g region]}]
                          (mcp/save-server! screen g region nil))
               :mcp-action (fn [{:keys [server action g region]}]

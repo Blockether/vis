@@ -338,6 +338,13 @@ export interface SettingsTarget {
   label?: string;
 }
 
+/** The more specific scope that decides a setting for the requested session, and its value there. */
+export interface SettingOverride {
+  scope: SettingsScope;
+  enabled?: boolean;
+  value?: string | boolean;
+}
+
 export interface Toggle {
   id: string;
   label: string;
@@ -353,6 +360,8 @@ export interface Toggle {
   scope?: SettingsScope;
   source?: SettingsScope | 'default';
   is_override?: boolean;
+  /** Present only when the request named a session whose own scopes decide this row. */
+  overridden_by?: SettingOverride;
 }
 
 export interface ToggleGroup {
