@@ -20,6 +20,9 @@ heads. Then decide when a human must review a result before you rely on it.
 - **The baseline does not fit your data.** [Train with your own
   labels](#train-locally-with-the-python-sdk), then [publish a verified version and
   select it](#publish-explicitly-and-select-a-version).
+- **Long GLiNER training stops before it finishes.** Save partial checkpoints and
+  [resume from the last saved step](#resume-or-continue-gliner-training). The same
+  section shows how to continue a trained version on new labels.
 - **A long input fails or loses late context.** Check the
   [token budget and truncation policy](#handle-long-inputs).
 
@@ -240,20 +243,69 @@ with GlinerTrainer(base) as trainer:
         training_config="gliner-config.json",
         validation_policy="policy.json",
         output_dir="my-gliner-version",  # must not exist yet
+        progress=print,
     )
 print(result.checkpoint_dir, result.inference_bundle, result.validation_report)
 ```
 
+While it trains, `progress` receives `training` events with `step`, `max_steps`, `epoch` and
+`loss`. Before the first step, one event shows the start step without `epoch` or `loss`. After
+that, you get an event at the first step, about once per percent of the steps and at the last
+step. `epoch` counts passes over your training rows, so `0.5` is half a pass. Then the
+`checkpoint_saved`, `exporting` and `validated` events follow.
+
 You can reopen `result.checkpoint_dir` with `GlinerTrainingBundle.open` in a new process. Then you
-can train or export again without network access. To export without training, call
-`trainer.prepare_fp32` on a complete checkpoint with `eval_data`, `validation_policy` and a new
-`output_dir`. Use `Decisions.upload_model(result)` and the same version, alias and inference calls
-below.
+can [train it again](#resume-or-continue-gliner-training) or export it without network access. To
+export without training, call `trainer.prepare_fp32` on a complete checkpoint with `eval_data`,
+`validation_policy` and a new `output_dir`. Use `Decisions.upload_model(result)` and the same
+version, alias and inference calls below.
 
 The archive that goes to the gateway contains only ONNX inference files, not the checkpoint or
 labeled examples. Here, GLiNER inference covers decision classification and act/escalate, not entity
 or JSON extraction. Export and training use a lot of CPU, RAM and disk. Do not use these weights for
 autonomous actions without representative, held-out validation.
+
+### Resume or continue GLiNER training
+
+Long GLiNER training can fail or stop before it finishes. To keep its progress, add
+`checkpoint_steps` to the GLiNER configuration:
+
+```json
+{"epochs":3,"batch_size":8,"encoder_lr":0.00001,"task_lr":0.0005,"checkpoint_steps":500}
+```
+
+With this setting, `finetune` saves a partial checkpoint every 500 steps. Each save replaces
+`output_dir/checkpoint` and sends a `checkpoint_saved` event. It also writes
+`output_dir/training_report.json` with the saved `steps`, the planned `max_steps` and a
+`status`. One run can plan at most 100,000 steps.
+
+If training fails or stops, `output_dir/checkpoint` keeps the last saved step. To resume, open
+that checkpoint and train it again with the same rows and settings:
+
+```python
+stopped = GlinerTrainingBundle.open("my-gliner-version/checkpoint")
+with GlinerTrainer(stopped) as trainer:
+    result = trainer.finetune(
+        train_data="train.jsonl",
+        eval_data="eval.jsonl",
+        training_config="gliner-config.json",
+        validation_policy="policy.json",
+        output_dir="my-gliner-version-2",  # must not exist yet
+        progress=print,
+    )
+```
+
+The first event shows the saved step. Training then uses only the batches that the stopped run
+did not train. The optimizer state and the learning rate warmup start again. So, the result can
+be a little different from a run that did not stop. You can change `checkpoint_steps` when you
+resume.
+
+To continue a trained version on new labels, open its checkpoint and train it with the new rows.
+Other rows or settings always start a new run at step 0 from the saved weights. In both cases,
+`PROVENANCE.json` records the start checkpoint as `parent_revision`.
+
+A partial checkpoint records a digest of its rows and settings, not the rows. If export or
+validation fails, `output_dir` keeps the final checkpoint without inference files.
 
 ## Publish explicitly and select a version
 
@@ -339,6 +391,11 @@ The gateway stages bounded inputs and starts an isolated offline CPU worker. It 
 checkpoint and validates a new FP32 inference version. To continue from it, pass the completed or
 failed `job_id` as `source_job_id` **with the same model_id**. Do not delete that job first. A
 resume across model families fails. It does not fall back to another checkpoint.
+
+The GLiNER `checkpoint_steps` setting also saves partial checkpoints on the gateway. If a job
+reaches the time limit or fails, it keeps its last saved step. To resume, start a new job with
+that `job_id` as `source_job_id`. Use the same data and configuration. Other data or settings
+start at step 0 from the saved weights. You cannot continue a cancelled job.
 
 Training does not activate an alias. Review the held-out metrics and use
 `activate_model` separately. A quality failure, interruption or cancellation

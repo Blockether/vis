@@ -30,6 +30,19 @@ _OPTIONAL = {"special_tokens_map.json"}
 _MAX_EXPANDED_BYTES = 3_000_000_000
 
 
+def _valid_partial(value: object) -> bool:
+    """Accept only the step counts and run digest that a resumable checkpoint needs."""
+    return (
+        isinstance(value, dict)
+        and set(value) == {"step", "max_steps", "fingerprint"}
+        and type(value["step"]) is int
+        and type(value["max_steps"]) is int
+        and 1 <= value["step"] < value["max_steps"]
+        and isinstance(value["fingerprint"], str)
+        and re.fullmatch(r"[0-9a-f]{64}", value["fingerprint"]) is not None
+    )
+
+
 @dataclass(frozen=True)
 class GlinerTrainingBundle(TrainingBundle):
     """A verified full FP32 checkpoint, never the encoder-only ONNX graph."""
@@ -87,6 +100,7 @@ class GlinerTrainingBundle(TrainingBundle):
                     )
                 )
             )
+            or ("partial" in metadata and not _valid_partial(metadata["partial"]))
         ):
             raise ValueError("Unsupported GLiNER checkpoint identity or architecture")
         declared = metadata.get("files")
@@ -145,8 +159,13 @@ class GlinerTrainingBundle(TrainingBundle):
         revision: str,
         license_file: str | Path,
         parent_revision: str | None = None,
+        partial: dict | None = None,
     ) -> GlinerTrainingBundle:
-        """Atomically inventory an explicit local full checkpoint without downloading."""
+        """Atomically inventory an explicit local full checkpoint without downloading.
+
+        ``partial`` marks unfinished training with its step and run digest, so that
+        ``GlinerTrainer.finetune`` can resume the same run from this checkpoint.
+        """
         if model_id not in ARCHITECTURES:
             raise ValueError("Unsupported GLiNER checkpoint model")
         if not isinstance(revision, str) or not re.fullmatch(
@@ -179,6 +198,8 @@ class GlinerTrainingBundle(TrainingBundle):
             or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", parent_revision)
         ):
             raise ValueError("Invalid parent checkpoint revision")
+        if partial is not None and not _valid_partial(partial):
+            raise ValueError("Invalid partial training progress")
         destination.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(
             prefix=".gliner-checkpoint-", dir=destination.parent
@@ -209,6 +230,8 @@ class GlinerTrainingBundle(TrainingBundle):
             }
             if parent_revision is not None:
                 metadata["parent_revision"] = parent_revision
+            if partial is not None:
+                metadata["partial"] = partial
             (staging / "PROVENANCE.json").write_text(
                 json.dumps(metadata, indent=2) + "\n"
             )

@@ -1,16 +1,21 @@
 """Offline GLiNER decision/action labels, held-out evaluation and FP32 training.
 
 Only constructing the trainer imports tensor dependencies. JSONL rows and their
-contents never enter provenance, reports or upload archives.
+contents never enter provenance, reports or upload archives. A partial checkpoint
+records only a digest of its rows and settings, so that the same run can resume.
 """
 
 from __future__ import annotations
 
 import gc
+import hashlib
 import json
 import math
+import os
+import random
+import shutil
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -135,12 +140,14 @@ def _training_config(source: str | Path) -> dict:
         "encoder_lr",
         "task_lr",
         "seed",
+        "checkpoint_steps",
     }:
         raise ValueError("Unknown GLiNER training configuration option")
     for name, lower, upper in (
         ("epochs", 1, 100),
         ("max_steps", 1, 100_000),
         ("batch_size", 1, 32),
+        ("checkpoint_steps", 1, 100_000),
     ):
         value = config.get(name, 1)
         if type(value) is not int or not lower <= value <= upper:
@@ -156,6 +163,90 @@ def _training_config(source: str | Path) -> dict:
     if type(config.get("seed", 42)) is not int:
         raise ValueError("Training seed must be an integer")
     return config
+
+
+def _fingerprint(rows: list[_Example], config: dict) -> str:
+    """Identify one training run by its ordered rows and trajectory settings."""
+    digest = hashlib.sha256()
+    settings = {
+        "epochs": config.get("epochs", 1),
+        "max_steps": config.get("max_steps"),
+        "batch_size": config.get("batch_size", 1),
+        "encoder_lr": config["encoder_lr"],
+        "task_lr": config["task_lr"],
+        "seed": config.get("seed", 42),
+    }
+    digest.update(json.dumps(settings, sort_keys=True).encode())
+    for row in rows:
+        digest.update(
+            json.dumps(
+                [row.text, row.tasks, row.target, row.action], ensure_ascii=False
+            ).encode()
+        )
+    return digest.hexdigest()
+
+
+class _Schedule:
+    """Seeded batch order; a resumed run skips the batches that it already trained."""
+
+    def __init__(self, count: int, config: dict) -> None:
+        self.count = count
+        self.batch = min(config.get("batch_size", 1), count)
+        # Like gliner2, drop an incomplete batch at the end of each pass.
+        self.per_pass = count // self.batch
+        self.total = config.get("max_steps", self.per_pass * config.get("epochs", 1))
+        self.seed = config.get("seed", 42)
+        self.done = 0
+
+    def __len__(self) -> int:
+        return (self.total - self.done) * self.batch
+
+    def __iter__(self) -> Iterator[int]:
+        generator = random.Random(self.seed)
+        start, stop = self.done * self.batch, self.total * self.batch
+        position = 0
+        while position < stop:
+            order = list(range(self.count))
+            generator.shuffle(order)
+            for index in order[: self.per_pass * self.batch]:
+                if start <= position < stop:
+                    yield index
+                position += 1
+
+
+def _extractor(
+    base: type, schedule: _Schedule, after_step: Callable[[Any, dict], None]
+) -> type:
+    """Adapt the pinned gliner2 2.0.0 trainer to the Vis batch order and step hook."""
+
+    class Extractor(base):
+        def _create_dataloader(
+            self,
+            dataset: Any,
+            batch_size: int,
+            shuffle: bool = True,
+            is_training: bool = True,
+        ) -> Any:
+            loader = super()._create_dataloader(
+                dataset, batch_size, shuffle=False, is_training=is_training
+            )
+            if not is_training:
+                return loader
+            return type(loader)(
+                loader.dataset,
+                batch_size=schedule.batch,
+                sampler=schedule,
+                collate_fn=loader.collate_fn,
+            )
+
+        def _log_metrics(self, metrics: Any, prefix: str = "") -> None:
+            super()._log_metrics(metrics, prefix)
+            if prefix == "train":
+                after_step(
+                    self, metrics if isinstance(metrics, dict) else metrics.to_dict()
+                )
+
+    return Extractor
 
 
 class GlinerTrainer:
@@ -300,11 +391,21 @@ class GlinerTrainer:
         output_dir: str | Path,
         progress: Callable[[dict], None] | None = None,
     ) -> TrainingResult:
-        """Train both labels, save a complete checkpoint and atomically publish FP32."""
+        """Train both labels, keep resumable checkpoints and publish validated FP32.
+
+        ``progress`` receives the step, ``max_steps``, epoch and loss about once per
+        percent of the run. With ``checkpoint_steps``, ``output_dir/checkpoint`` keeps
+        the latest partial checkpoint when training fails or stops. Training that
+        checkpoint with the same rows and settings resumes at its saved step.
+        """
         if self._closed:
             raise RuntimeError("Trainer is closed")
         from gliner2.training.data import Classification, InputExample
-        from gliner2.training.trainer import ExtractorTrainer, TrainingConfig
+        from gliner2.training.trainer import (
+            ExtractorDataset,
+            ExtractorTrainer,
+            TrainingConfig,
+        )
 
         rows, evaluation = _examples(train_data), _examples(eval_data)
 
@@ -324,16 +425,12 @@ class GlinerTrainer:
         target.parent.mkdir(parents=True, exist_ok=True)
         from .gliner_training import GlinerTrainingBundle
 
-        with tempfile.TemporaryDirectory(
-            prefix=".gliner-train-", dir=target.parent
-        ) as temporary:
-            staging = Path(temporary)
-            GlinerTrainingBundle.open(self.checkpoint.path)
-            model = self._exporter.load_checkpoint(
-                self.checkpoint.path, model_id=self.checkpoint.model_id
-            )
-            self.model = model
-            examples = [
+        GlinerTrainingBundle.open(self.checkpoint.path)
+        original = json.loads(
+            (self.checkpoint.path / "PROVENANCE.json").read_text(encoding="utf-8")
+        )
+        dataset = ExtractorDataset(
+            [
                 InputExample(
                     text=row.text,
                     classifications=[
@@ -348,12 +445,114 @@ class GlinerTrainer:
                     ],
                 )
                 for row in rows
-            ]
+            ],
+            shuffle=False,
+            validate=True,
+        )
+        if len(dataset) != len(rows):
+            raise ValueError("GLiNER rejected a training example")
+        fingerprint = _fingerprint(rows, config)
+        schedule = _Schedule(len(dataset), config)
+        if schedule.total > 100_000:
+            raise ValueError("GLiNER training must plan at most 100000 steps")
+        partial = original.get("partial")
+        if (
+            partial
+            and partial["fingerprint"] == fingerprint
+            and partial["max_steps"] == schedule.total
+        ):
+            schedule.done = partial["step"]
+        every = config.get("checkpoint_steps")
+        interval = max(1, schedule.total // 100)
+        with tempfile.TemporaryDirectory(
+            prefix=".gliner-train-", dir=target.parent
+        ) as temporary:
+            staging = Path(temporary)
+
+            def publish(saved: Path, step: int) -> Path:
+                pending = staging / "pending"
+                GlinerTrainingBundle.from_local(
+                    saved,
+                    pending,
+                    model_id=self.checkpoint.model_id,
+                    revision=_sha256(saved / "model.safetensors"),
+                    license_file=self.checkpoint.path / "LICENSE.txt",
+                    parent_revision=original["revision"],
+                    partial=None
+                    if step == schedule.total
+                    else {
+                        "step": step,
+                        "max_steps": schedule.total,
+                        "fingerprint": fingerprint,
+                    },
+                )
+                shutil.rmtree(saved)
+                target.mkdir(exist_ok=True)
+                current = target / "checkpoint"
+                if current.exists():
+                    current.rename(staging / "replaced")
+                pending.rename(current)
+                shutil.rmtree(staging / "replaced", ignore_errors=True)
+                report = staging / "training_report.json"
+                report.write_text(
+                    json.dumps(
+                        {
+                            "steps": step,
+                            "max_steps": schedule.total,
+                            "status": "checkpoint_saved"
+                            if step == schedule.total
+                            else "partial",
+                        },
+                        indent=2,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                os.replace(report, target / "training_report.json")
+                if progress:
+                    progress(
+                        {
+                            "stage": "checkpoint_saved",
+                            "step": step,
+                            "max_steps": schedule.total,
+                        }
+                    )
+                return current
+
+            def after_step(extractor: Any, metrics: dict) -> None:
+                step = schedule.done + extractor.global_step
+                loss = float(metrics["loss"])
+                if not math.isfinite(loss):
+                    raise ValueError(
+                        "GLiNER training did not complete with finite loss"
+                    )
+                if progress and (
+                    step == schedule.done + 1
+                    or step % interval == 0
+                    or step == schedule.total
+                ):
+                    progress(
+                        {
+                            "stage": "training",
+                            "step": step,
+                            "max_steps": schedule.total,
+                            "epoch": round(step / schedule.per_pass, 4),
+                            "loss": loss,
+                        }
+                    )
+                if every and step % every == 0 and step < schedule.total:
+                    extractor._save_checkpoint(f"checkpoint-{step}")
+                    publish(extractor.output_dir / f"checkpoint-{step}", step)
+
+            model = self._exporter.load_checkpoint(
+                self.checkpoint.path, model_id=self.checkpoint.model_id
+            )
+            self.model = model
             training = TrainingConfig(
                 output_dir=str(staging / "training"),
-                num_epochs=config.get("epochs", 1),
-                max_steps=config.get("max_steps", -1),
-                batch_size=config.get("batch_size", 1),
+                num_epochs=1,
+                max_steps=schedule.total - schedule.done,
+                batch_size=schedule.batch,
                 num_workers=0,
                 encoder_lr=config["encoder_lr"],
                 task_lr=config["task_lr"],
@@ -361,15 +560,25 @@ class GlinerTrainer:
                 eval_strategy="no",
                 save_best=False,
                 scheduler_type="constant",
+                logging_steps=1,
                 fp16=False,
                 bf16=False,
                 report_to_wandb=False,
             )
             try:
                 if progress:
-                    progress({"stage": "training"})
-                summary = ExtractorTrainer(model, training).train(examples)
-                if summary["total_steps"] < 1 or any(
+                    progress(
+                        {
+                            "stage": "training",
+                            "step": schedule.done,
+                            "max_steps": schedule.total,
+                        }
+                    )
+                trainer = _extractor(ExtractorTrainer, schedule, after_step)
+                summary = trainer(model, training).train(dataset)
+                if summary["total_steps"] != schedule.total - schedule.done:
+                    raise ValueError("GLiNER training stopped before its planned steps")
+                if any(
                     not math.isfinite(row["classification_loss"])
                     for row in summary["train_metrics_history"]
                 ):
@@ -380,37 +589,19 @@ class GlinerTrainer:
                 self.model = None
                 del model
                 gc.collect()
-            original = json.loads(
-                (self.checkpoint.path / "PROVENANCE.json").read_text(encoding="utf-8")
-            )
-            trained = staging / "training" / "final"
-            if not (trained / "model.safetensors").is_file():
+            final = staging / "training" / "final"
+            if not (final / "model.safetensors").is_file():
                 raise FileNotFoundError("GLiNER training did not save full weights")
-            revision = _sha256(trained / "model.safetensors")
+            checkpoint = publish(final, schedule.total)
+            if progress:
+                progress({"stage": "exporting"})
             prepared = staging / "prepared"
             prepared.mkdir()
-            checkpoint = GlinerTrainingBundle.from_local(
-                trained,
-                prepared / "checkpoint",
-                model_id=self.checkpoint.model_id,
-                revision=revision,
-                license_file=self.checkpoint.path / "LICENSE.txt",
-                parent_revision=original["revision"],
-            ).path
-            if progress:
-                progress({"stage": "checkpoint_saved"})
             self._prepare(checkpoint, prepared, evaluation, policy)
-            (prepared / "training_report.json").write_text(
-                json.dumps(
-                    {
-                        "steps": summary["total_steps"],
-                        "status": "checkpoint_saved",
-                    },
-                    indent=2,
-                )
-                + "\n"
+            (prepared / "inference").rename(target / "inference")
+            (prepared / "validation_report.json").rename(
+                target / "validation_report.json"
             )
-            prepared.rename(target)
         if progress:
             progress({"stage": "validated"})
         return TrainingResult(
