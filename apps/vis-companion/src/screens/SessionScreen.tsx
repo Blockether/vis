@@ -1723,13 +1723,14 @@ export function SessionScreen({
   // Pass the session's meta `row` and the transcript is re-read ONLY when that
   // row says a turn was persisted since the copy already on screen — a long
   // session's transcript is tens of megabytes, so a blind re-read is the most
-  // expensive thing this screen can do. Called with no row it always refetches.
+  // expensive thing this screen can do. Called with no row it reads the newest page,
+  // joining a read the session list already started when the reader reached for it.
   const loadTranscript = useCallback(
     async (row?: Session | null, signal?: AbortSignal) => {
       try {
         const next =
           row === undefined
-            ? await client.transcript(sid, signal)
+            ? await client.openingTranscript(sid, signal)
             : await client.transcriptIfMoved(sid, row, signal);
         // This screen deliberately survives a sid change. Its outgoing read may
         // still settle after the next session is already painted (some WebViews

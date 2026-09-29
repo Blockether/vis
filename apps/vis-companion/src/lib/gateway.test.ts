@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import './gateway';
 import { STORY_GOAL } from '../dev/story-data';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
+import type { Session } from './types';
 
 class MemoryStorage implements Storage {
   private readonly rows = new Map<string, string>();
@@ -1364,6 +1365,73 @@ describe('GatewayClient transcript revalidation', () => {
     // Re-opening the session must go and fetch, not trust that stamp.
     turns = fresh;
     expect(await client.transcriptIfMoved('session-1', answered)).toHaveLength(2);
+  });
+});
+
+// Regression, this Vis session (paraphrased: "switching between sessions on the web is
+// very slow"): a cold open asked for its transcript only after the screen's own polls
+// had filled this gateway's four request slots, so it waited out whole round trips.
+describe('GatewayClient opening a session', () => {
+  const page = (sid: string) =>
+    new Response(
+      JSON.stringify({
+        turns: [{ id: `turn-${sid}`, status: 'completed' }],
+        total: 1,
+        offset: 0,
+        has_more: false,
+      }),
+    );
+
+  it('reads the opening transcript ahead of requests already queued', async () => {
+    const paths: string[] = [];
+    const held: Array<() => void> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string) => {
+        const url = new URL(String(input));
+        paths.push(url.pathname);
+        if (url.pathname.endsWith('/transcript')) return Promise.resolve(page('session-1'));
+        return new Promise<Response>((resolve) => held.push(() => resolve(new Response('{}'))));
+      }),
+    );
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    // Four polls take this gateway's slots and three more queue behind them.
+    for (let index = 0; index < 7; index += 1) void client.status().catch(() => null);
+    await vi.waitFor(() => expect(paths).toHaveLength(4));
+    const opening = client.openingTranscript('session-1');
+    held.shift()?.();
+
+    await vi.waitFor(() => expect(paths.length).toBeGreaterThanOrEqual(5));
+    expect(paths[4]).toBe('/v1/sessions/session-1/transcript');
+    expect((await opening).map((turn) => turn.id)).toEqual(['turn-session-1']);
+    for (const release of held.splice(0)) release();
+  });
+
+  it('joins the transcript read its row started instead of asking again', async () => {
+    let answer: (() => void) | undefined;
+    const fetch = vi.fn(
+      () => new Promise<Response>((resolve) => (answer = () => resolve(page('session-1')))),
+    );
+    vi.stubGlobal('fetch', fetch);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+    const row = {
+      id: 'session-1',
+      title: 'Reached for',
+      live: false,
+      turn_count: 1,
+      modified_at: '2026-08-15T12:00:00Z',
+    } as Session;
+
+    client.warmTranscript(row);
+    const opening = client.openingTranscript('session-1');
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    answer?.();
+
+    expect((await opening).map((turn) => turn.id)).toEqual(['turn-session-1']);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
 

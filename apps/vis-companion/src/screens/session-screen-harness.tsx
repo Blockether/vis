@@ -83,6 +83,10 @@ export function renderSessionScreen({
     attachmentUrl: () => Promise.resolve(null),
     ...clientOverrides,
   };
+  // With no read already in flight, a cold open's `openingTranscript` IS a newest-page
+  // `transcript` read, so a test that stages `transcript` stages the open as well.
+  known.openingTranscript ??= (...args: unknown[]) =>
+    (known.transcript as (...read: unknown[]) => unknown)(...args);
   // Anything else the screen or one of its children reaches for answers the way
   // an empty gateway does: a cache knows nothing, a request resolves to nothing.
   // Naming every member instead would make this harness a second, staler copy

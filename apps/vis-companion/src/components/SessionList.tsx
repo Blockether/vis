@@ -64,6 +64,11 @@ const SKELETON_GROUPS = [
 // number only decides when the panel may leave the tree.
 const STATS_MOTION_MS = 200;
 
+// How long a mouse pointer rests on a row before its transcript is read ahead of
+// the click. Shorter also reads the rows a pointer merely crosses; longer gives
+// back the head start a deliberate click leaves between arriving and pressing.
+const INTENT_DWELL_MS = 80;
+
 // What a row says when the archive is aimed at work a human is still waiting on: an archived
 // session takes no new turns, so putting a running one away would bury the turn it is holding.
 const STILL_WORKING = 'This session is still active. Archive it once its turn is done.';
@@ -100,6 +105,8 @@ export type SessionRowCommands = {
   open: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
   /** Remember the answers visible on this row before opening its transcript. */
   read?: (conn: GatewayConn, session: Session) => void;
+  /** Start reading this session's transcript: the reader is reaching for its row. */
+  warm?: (conn: GatewayConn, session: Session) => void;
   rename: (session: Session, conn: GatewayConn, title: string) => Promise<void>;
   /** Copy the entire conversation and open the fork; absent in standalone rows. */
   fork?: (session: Session, conn: GatewayConn) => Promise<void>;
@@ -141,6 +148,10 @@ export type SessionRowDeletion = Omit<SessionListActions['deletion'], 'target'> 
  * The paper arrives and leaves at once, with no transition on it. The row's other
  * cells take it instantly, so a button that eased its own background over 150ms was
  * still lit after they had let go, and the light appeared to wipe across the row.
+ *
+ * A mouse pointer resting on the row, or any press, calls `onIntent` before the
+ * click lands, so the transcript read starts while the reader is still reaching
+ * instead of after the screen mounts behind its own burst of requests.
  */
 function SessionRowSurface({
   isEditing,
@@ -148,6 +159,7 @@ function SessionRowSurface({
   isSelected,
   sessionId,
   onOpen,
+  onIntent,
   onSelectionClick,
   children,
 }: {
@@ -157,6 +169,8 @@ function SessionRowSurface({
   isSelected: boolean;
   sessionId: string;
   onOpen: () => void;
+  /** The reader is reaching for this row: a mouse pointer rests on it, or it is pressed. */
+  onIntent?: () => void;
   onSelectionClick?: (event: MouseEvent<HTMLButtonElement>) => boolean;
   children: ReactNode;
 }) {
@@ -176,6 +190,8 @@ function SessionRowSurface({
       window.removeEventListener('dragend', release);
     };
   }, [isPressed]);
+  const intentTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(intentTimer.current), []);
   if (isEditing) {
     return (
       <div className={layout} data-session-id={sessionId}>
@@ -192,9 +208,17 @@ function SessionRowSurface({
       data-session-id={sessionId}
       data-row-surface=""
       data-pressed={isPressed ? '' : undefined}
+      onPointerEnter={(event) => {
+        if (event.pointerType !== 'mouse' || !onIntent) return;
+        window.clearTimeout(intentTimer.current);
+        intentTimer.current = window.setTimeout(onIntent, INTENT_DWELL_MS);
+      }}
+      onPointerLeave={() => window.clearTimeout(intentTimer.current)}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
         setIsPressed(true);
+        window.clearTimeout(intentTimer.current);
+        onIntent?.();
       }}
       onClick={(event) => {
         if (!onSelectionClick?.(event)) onOpen();
@@ -634,6 +658,9 @@ export const SessionRow = memo(function SessionRow({
                 commands.read?.(conn, session);
                 void commands.open(conn, session.id);
               }}
+              onIntent={
+                isOpen || !commands.warm ? undefined : () => commands.warm?.(conn, session)
+              }
               onSelectionClick={
                 onSelectionClick ? (event) => onSelectionClick(session.id, event) : undefined
               }

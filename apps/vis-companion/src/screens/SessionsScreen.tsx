@@ -209,6 +209,11 @@ function clientFor(conn: GatewayConn): GatewayClient {
   return client;
 }
 
+/** Read a session's transcript ahead of the click that is about to open it. */
+function warmTranscript(conn: GatewayConn, session: Session): void {
+  clientFor(conn).warmTranscript(session);
+}
+
 // Persist known outages across remounts and start those machines drained until they
 // answer again.
 
@@ -1699,6 +1704,7 @@ export function SessionsScreen({
     () => ({
       open: onOpen,
       read: noteOpenedRead,
+      warm: warmTranscript,
       rename: renameSession,
       fork: forkSession,
       archive: archiveSession,

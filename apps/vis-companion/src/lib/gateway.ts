@@ -315,10 +315,18 @@ function takeGatewaySlot(base: string): (() => void) | null {
   return releaseGatewaySlot(gate);
 }
 
-/** Wait for this gateway's next free slot, then take it. */
-async function awaitGatewaySlot(base: string): Promise<() => void> {
+/**
+ * Wait for this gateway's next free slot, then take it. An `urgent` request is one
+ * the reader is waiting on, such as the transcript of the session being opened: it
+ * goes to the FRONT of the queue instead of behind the polls the same navigation
+ * fired. It still counts against the cap, so the streams keep their sockets.
+ */
+async function awaitGatewaySlot(base: string, urgent = false): Promise<() => void> {
   const gate = slotsOf(base);
-  await new Promise<void>((resume) => gate.waiting.push(resume));
+  await new Promise<void>((resume) => {
+    if (urgent) gate.waiting.unshift(resume);
+    else gate.waiting.push(resume);
+  });
   return releaseGatewaySlot(gate);
 }
 
@@ -1162,6 +1170,7 @@ export class GatewayClient {
    * One request, reported in full: status and validator, not just the parsed
    * body. `304 Not Modified` is NOT an error here — it is the success case of a
    * revalidation, so it returns early, before the body read, with no data.
+   * `urgent` queues it ahead of other waiting requests; see `awaitGatewaySlot`.
    */
   private async requestFull<T>(
     method: string,
@@ -1169,6 +1178,7 @@ export class GatewayClient {
     body?: unknown,
     signal?: AbortSignal,
     extraHeaders?: Record<string, string>,
+    urgent = false,
   ): Promise<{
     status: number;
     data: T | undefined;
@@ -1191,7 +1201,7 @@ export class GatewayClient {
     // Queue for one of this gateway's few sockets BEFORE the clock starts: the
     // wait is this app's own backpressure, not a slow gateway, and reporting it
     // as a timeout would blame the machine for the app's own burst.
-    const release = takeGatewaySlot(this.base) ?? (await awaitGatewaySlot(this.base));
+    const release = takeGatewaySlot(this.base) ?? (await awaitGatewaySlot(this.base, urgent));
     const diagnostic = startRequestDiagnostic(this.base, method, path);
     let exchangeStatus = 0;
     let exchangeFailure: { cause: unknown } | undefined;
@@ -1287,8 +1297,9 @@ export class GatewayClient {
     path: string,
     body?: unknown,
     signal?: AbortSignal,
+    urgent = false,
   ): Promise<T> {
-    return (await this.requestFull<T>(method, path, body, signal)).data as T;
+    return (await this.requestFull<T>(method, path, body, signal, undefined, urgent)).data as T;
   }
 
   // ── Health / status ─────────────────────────────────────────────
@@ -2877,11 +2888,12 @@ export class GatewayClient {
   /**
    * Warm one session's newest transcript page. Concurrent list polls and an opening
    * screen share the same flight; a newer row queues one re-check behind an older one.
+   * `urgent` reads it ahead of queued polls, for a reader about to open the session.
    */
-  private prefetchTranscript(row: Session): Promise<boolean> {
+  private prefetchTranscript(row: Session, urgent = false): Promise<boolean> {
     const key = this.snapshotKey('transcript', row.id);
     const warming = transcriptPrefetches.get(key);
-    if (warming) return warming.then(() => this.prefetchTranscript(row));
+    if (warming) return warming.then(() => this.prefetchTranscript(row, urgent));
 
     const held = this.cachedSession(row.id);
     const merged = reconcileSession(
@@ -2896,7 +2908,7 @@ export class GatewayClient {
     if (this.cachedTranscript(row.id) !== null && transcriptPrefetchStamps.get(key) === stamp)
       return Promise.resolve(true);
 
-    const task = this.transcriptIfMoved(row.id, merged).then(
+    const task = this.transcriptIfMoved(row.id, merged, undefined, urgent).then(
       () => {
         transcriptPrefetchStamps.set(key, stamp);
         return true;
@@ -2908,6 +2920,16 @@ export class GatewayClient {
       if (transcriptPrefetches.get(key) === task) transcriptPrefetches.delete(key);
     });
     return task;
+  }
+
+  /**
+   * Read one session's newest transcript page because the reader is reaching for
+   * its row: a pointer resting on it, or a press. The read goes ahead of queued
+   * polls, and the screen that opens the session joins it through
+   * `openingTranscript` instead of asking a second time.
+   */
+  warmTranscript(row: Session): void {
+    void this.prefetchTranscript(row, true);
   }
 
   /** Pull every active session visible in a list response into the rolling cache. */
@@ -3970,6 +3992,7 @@ export class GatewayClient {
     sid: string,
     query: Record<string, number>,
     signal?: AbortSignal,
+    urgent = false,
   ): Promise<TranscriptPage> {
     const search = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) search.set(key, String(value));
@@ -3984,6 +4007,7 @@ export class GatewayClient {
       `/v1/sessions/${encodeURIComponent(sid)}/transcript${suffix ? `?${suffix}` : ''}`,
       undefined,
       signal,
+      urgent,
     );
     const turns = response.turns ?? [];
     const total = typeof response.total === 'number' ? response.total : turns.length;
@@ -4050,15 +4074,17 @@ export class GatewayClient {
 
   /**
    * The NEWEST page of a session's transcript, merged onto whatever we already
-   * hold (so earlier pages the user pulled in stay loaded).
+   * hold (so earlier pages the user pulled in stay loaded). `urgent` reads it
+   * ahead of queued polls; see `awaitGatewaySlot`.
    */
   async transcript(
     sid: string,
     signal?: AbortSignal,
     limit: number = TRANSCRIPT_PAGE,
+    urgent = false,
   ): Promise<TranscriptTurn[]> {
     const key = this.snapshotKey('transcript', sid);
-    const page = await this.fetchTranscriptPage(sid, { limit }, signal);
+    const page = await this.fetchTranscriptPage(sid, { limit }, signal, urgent);
     const cached = this.cachedTranscript(sid);
     const held = transcriptWindows.get(key);
     const heldOffset = cached?.length ? (held?.offset ?? 0) : page.offset;
@@ -4102,6 +4128,21 @@ export class GatewayClient {
         : transcriptStamp(meta),
     );
     return turns;
+  }
+
+  /**
+   * The newest transcript page for a screen that opens with nothing to paint. It
+   * joins a read already in flight for this session — `warmTranscript` starts one
+   * when the reader reaches for its row — so the click costs no second request.
+   * Without one, it reads the page ahead of queued polls.
+   */
+  async openingTranscript(sid: string, signal?: AbortSignal): Promise<TranscriptTurn[]> {
+    const warming = transcriptPrefetches.get(this.snapshotKey('transcript', sid));
+    if (warming && (await warming)) {
+      const rows = this.cachedTranscript(sid);
+      if (rows) return rows;
+    }
+    return this.transcript(sid, signal, TRANSCRIPT_PAGE, true);
   }
 
   /**
@@ -4151,12 +4192,14 @@ export class GatewayClient {
    * Revalidate the transcript against a session meta row and fetch ONLY when
    * that row says a turn was actually persisted. Returns `null` when the cached
    * rows are still current — the caller keeps its state, its scroll, and its
-   * rendered markdown, and the body never crosses the wire.
+   * rendered markdown, and the body never crosses the wire. `urgent` reads the page
+   * ahead of queued polls.
    */
   async transcriptIfMoved(
     sid: string,
     row: Session | null,
     signal?: AbortSignal,
+    urgent = false,
   ): Promise<TranscriptTurn[] | null> {
     const key = this.snapshotKey('transcript', sid);
     const warming = transcriptPrefetches.get(key);
@@ -4185,7 +4228,7 @@ export class GatewayClient {
       typeof row?.turn_count === 'number' && row.turn_count > this.transcriptWindow(sid).total;
     if (stamp && cached !== null && !provisional && !short && transcriptStamps.get(key) === stamp)
       return null;
-    const turns = await this.transcript(sid, signal);
+    const turns = await this.transcript(sid, signal, TRANSCRIPT_PAGE, urgent);
     if (stamp) transcriptStamps.set(key, stamp);
     return turns;
   }
