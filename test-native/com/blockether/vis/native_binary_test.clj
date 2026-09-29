@@ -1704,6 +1704,16 @@
           store
           (ps/db-create-connection! :memory)
 
+          ;; Scoped settings resolve against a stored session, as for every live environment.
+          session-id
+          (ps/db-store-session! store
+                                {:title "Native package check"
+                                 :workspace-id (:id (ps/db-workspace-insert!
+                                                      store
+                                                      {:repo-id "native-package-check"
+                                                       :repo-root (.getAbsolutePath dir)
+                                                       :root (.getAbsolutePath dir)}))})
+
           index
           {"python" {"index_url" "https://pypi.org/simple"}}]
 
@@ -1814,7 +1824,7 @@
                                      nil)
                               ctx (:python-context made)
                               env {:python-context ctx
-                                   :session-id "native-package-check"
+                                   :session-id session-id
                                    :extensions (atom [ext])
                                    :active-extensions (atom [])
                                    :db-info store}]
