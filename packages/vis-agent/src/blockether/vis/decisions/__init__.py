@@ -47,6 +47,13 @@ class Decisions:
         ``model`` is required and must name an installed version or alias. Results keep
         the selected model and ``routing.model`` fields. Baseline action probabilities
         are not approved for autonomous execution.
+
+        GLiNER counts the state, instructions, criteria and structural tokens for
+        each question against the installed encoder limit. It never truncates input.
+        Overlong input raises ``GatewayError`` with code ``input-too-long``,
+        ``input_tokens`` and ``max_input_tokens``. Shorten the state, instructions or
+        criteria before retrying. There is no model-independent character limit.
+        The gateway validates tokens because this client does not load tokenizers.
         """
         if not isinstance(model, str) or not model.strip():
             raise ValueError("model is required")

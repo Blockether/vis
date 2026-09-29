@@ -1955,6 +1955,16 @@
             },
             "message": {
               "type": "string"
+            },
+            "input_tokens": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Token count of the rejected per-question decision sequence, including state and question structure."
+            },
+            "max_input_tokens": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Configured encoder token limit for one decision question."
             }
           },
           "required": [

@@ -20,6 +20,8 @@ heads. Then decide when a human must review a result before you rely on it.
 - **The baseline does not fit your data.** [Train with your own
   labels](#train-locally-with-the-python-sdk), then [publish a verified version and
   select it](#publish-explicitly-and-select-a-version).
+- **A long input fails or loses late context.** Check the
+  [token budget and truncation policy](#handle-long-inputs).
 
 For open-ended work that needs files or tools, run an agent task with the [Python
 SDK](python-sdk.md) instead.
@@ -101,6 +103,32 @@ explicitly with the CLI above. The baseline `act_probability` in an answer is a
 diagnostic score, not authorization to act. Only install `[decisions-training]` when you
 need local training or export. Neither installation downloads model weights
 automatically.
+
+### Handle long inputs
+
+GLiNER models use `max_position_embeddings` from the installed bundle's
+`encoder_config/config.json` as their token limit. Each question has a separate budget.
+The state, question type, instructions, criterion text, action labels and structural tokens
+share that budget. Object and list states use their JSON representation.
+
+GLiNER does not truncate the state or question. The gateway rejects a sequence above the
+limit before model inference. A sequence exactly at the limit is accepted. Character counts
+cannot predict this boundary because each model uses its own tokenizer.
+
+For overlong input, `Decisions.infer` raises `GatewayError` with `status == 400` and
+`code == "input-too-long"`. Its `input_tokens` attribute gives the rejected sequence's token
+count. Its `max_input_tokens` attribute gives the configured limit. The error also tells you
+what to shorten. These attributes are `None` if the gateway supplies no valid counts.
+
+Shorten the state, question instructions or criteria before retrying. Do not remove important
+context without checking the effect on your results. The SDK sends the request without
+estimating a character limit. Exact validation uses the installed tokenizer on the gateway,
+not an extra tokenizer dependency in your application.
+
+The Laya baseline has a different policy. It uses `max_len` from the installed `config.json`,
+with a default of 512 tokens per question. It truncates instructions and option text to fit
+the question head. It then keeps only the leading state tokens that fit the remaining space.
+Late state context can therefore be omitted. Keep important context early when you use Laya.
 
 ## Train locally with the Python SDK
 

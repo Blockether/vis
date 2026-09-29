@@ -160,6 +160,18 @@
                                     "error_response"
                                     (contract/error-body :invalid "Bad request" {:detail "extra"})))
       (expect (not (document/valid-json? "gateway" "error_response" {"error" {"type" "invalid"}}))))
+  (it "validates decision token counts in error responses"
+      ;; #295: token diagnostics are positive integers, never private request text.
+      (let [body (contract/error-body :decisions/input-too-long
+                                      "Shorten the state."
+                                      {:input-tokens 780 :max-input-tokens 512})]
+        (expect (document/valid-json? "gateway" "error_response" body))
+        (doseq [field ["input_tokens" "max_input_tokens"]
+                value [0 -1 1.5 true "private state"]]
+
+          (expect (not (document/valid-json? "gateway"
+                                             "error_response"
+                                             (assoc-in body ["error" field] value)))))))
   (it "validates stamped events and refuses unknown event names"
       (let [event (contract/stamp-session-event {"text" "hello"} "s1" 7 9 "turn.started")]
         (expect (document/valid-json? "gateway" "session_event" event))

@@ -54,12 +54,38 @@ class ProtocolError(TransportError):
 
 
 class GatewayError(RuntimeError):
-    """HTTP failure. You can inspect status and code without logging bodies."""
+    """HTTP failure with a safe code, never the gateway's free-form message.
 
-    def __init__(self, status: int, code: str):
+    Decision input-limit errors also expose ``input_tokens`` and ``max_input_tokens``.
+    These are ``None`` when the gateway does not supply valid numeric diagnostics.
+    """
+
+    def __init__(
+        self,
+        status: int,
+        code: str,
+        *,
+        input_tokens: int | None = None,
+        max_input_tokens: int | None = None,
+    ):
         self.status = status
         self.code = code
-        super().__init__(f"Gateway HTTP {status} ({code})")
+        self.input_tokens = input_tokens
+        self.max_input_tokens = max_input_tokens
+        message = f"Gateway HTTP {status} ({code})"
+        if code == "input-too-long":
+            if input_tokens is not None and max_input_tokens is not None:
+                message += (
+                    f": Decision input has {input_tokens} tokens; "
+                    f"the per-question limit is {max_input_tokens}."
+                )
+            else:
+                message += ": Decision input exceeds the per-question token limit."
+            message += (
+                " Shorten the state, question instructions or criteria."
+                " Input is not truncated."
+            )
+        super().__init__(message)
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -72,15 +98,23 @@ def _gateway_error(
 ) -> GatewayError:
     """Decode the shared error envelope without exposing its message or credentials."""
     code = "http_error"
+    counts = {}
     try:
         error = json.loads(content).get("error")
         if isinstance(error, dict) and isinstance(error.get("type"), str):
             code = error["type"]
             if token and token in code:
                 code = "http_error"
+            if code == "input-too-long":
+                validate("gateway", "error_response", {"error": error})
+                counts = {
+                    key: int(error[key])
+                    for key in ("input_tokens", "max_input_tokens")
+                    if key in error and not (token and token in str(int(error[key])))
+                }
     except (ValueError, AttributeError):
         pass
-    return GatewayError(status, code)
+    return GatewayError(status, code, **counts)
 
 
 def _duration(value: float) -> float:

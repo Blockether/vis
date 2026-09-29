@@ -254,9 +254,16 @@
 
                             nil)]
 
-               (if status
-                 (http/error-response status :decisions/error (.getMessage e) :reason (name type))
-                 (throw e))))))))
+               (cond (= :decisions/input-too-long type)
+                     (http/error-response 400
+                                          type
+                                          (.getMessage e)
+                                          :input-tokens (:input-tokens (ex-data e))
+                                          :max-input-tokens (:max-input-tokens (ex-data e)))
+                     status (http/error-response status
+                                                 :decisions/error (.getMessage e)
+                                                 :reason (name type))
+                     :else (throw e))))))))
 
 (def handlers
   "Handlers for this namespace's routes, keyed by the gateway contract's `[method path]`."

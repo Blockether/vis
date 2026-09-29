@@ -17,6 +17,7 @@ from blockether.vis.engine import (
     ProtocolError,
     TransportError,
     VisTimeout,
+    _client,
 )
 
 _HANDSHAKE = definition("gateway", "handshake")["properties"]
@@ -156,6 +157,108 @@ def test_decisions_infer_uses_existing_authenticated_gateway_client():
             == "Bearer test-credential"
             for call in requests
         )
+
+
+@pytest.mark.parametrize("model", ["gliner2.5-base", "gliner2.5-decide"])
+def test_decision_input_limit_error_is_actionable_without_private_text(model):
+    # #295: the SDK must retain safe counts instead of a generic HTTP 400.
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        assert (method, path) == ("POST", "/v1/systemone")
+        return 400, {
+            "error": {
+                "type": "input-too-long",
+                "message": "private state and test-credential must not appear",
+                "input_tokens": 780,
+                "max_input_tokens": 512,
+                "state": "private state",
+            }
+        }
+
+    with endpoint(respond) as (url, calls):
+        with GatewayClient(url, token="test-credential") as gateway:
+            with pytest.raises(GatewayError) as raised:
+                Decisions(gateway).infer(
+                    model=model,
+                    state="Example task: " + "alpha beta gamma " * 250,
+                    questions={
+                        "priority": {
+                            "type": "choice",
+                            "instructions": "Select a label.",
+                            "criteria": ["low", "high"],
+                        }
+                    },
+                )
+        error = raised.value
+        assert error.status == 400
+        assert error.code == "input-too-long"
+        assert "780 tokens" in str(error)
+        assert "limit is 512" in str(error)
+        assert "Shorten" in str(error)
+        assert error.input_tokens == 780
+        assert error.max_input_tokens == 512
+        assert "private state" not in repr(error)
+        assert "test-credential" not in repr(error)
+        assert sum(path == "/v1/systemone" for _, path, _, _ in calls) == 1
+
+
+@pytest.mark.parametrize("field", ["input_tokens", "max_input_tokens"])
+@pytest.mark.parametrize("value", [0, -1, 1.5, True, None, "test-credential", [], {}])
+def test_decision_input_limit_rejects_invalid_diagnostics(field, value):
+    # #295: do not expose arbitrary error bodies while adding actionable counts.
+    payload = {
+        "type": "input-too-long",
+        "message": "private state and test-credential",
+        "input_tokens": 780,
+        "max_input_tokens": 512,
+        field: value,
+    }
+    error = _client._gateway_error(
+        400, json.dumps({"error": payload}).encode(), "test-credential"
+    )
+    assert error.code == "input-too-long"
+    assert error.input_tokens is None
+    assert error.max_input_tokens is None
+    assert "Shorten" in str(error)
+    assert "private state" not in repr(error)
+    assert "test-credential" not in repr(error)
+
+
+@pytest.mark.parametrize("code", ["input-too-long", "invalid-request"])
+def test_input_limit_without_counts_preserves_safe_error_handling(code):
+    error = _client._gateway_error(
+        400,
+        json.dumps({"error": {"type": code, "message": "test-credential"}}).encode(),
+        "test-credential",
+    )
+    assert error.code == code
+    assert error.input_tokens is None
+    assert error.max_input_tokens is None
+    assert "test-credential" not in repr(error)
+    assert ("Shorten" in str(error)) == (code == "input-too-long")
+
+
+@pytest.mark.parametrize("code", ["invalid-request", "input-too-long"])
+def test_error_counts_do_not_expose_credentials_or_unrelated_diagnostics(code):
+    error = _client._gateway_error(
+        400,
+        json.dumps(
+            {
+                "error": {
+                    "type": code,
+                    "message": "private state",
+                    "input_tokens": 12345,
+                    "max_input_tokens": 1234,
+                }
+            }
+        ).encode(),
+        "1234",
+    )
+    assert error.input_tokens is None
+    assert error.max_input_tokens is None
+    assert "1234" not in repr(error)
+    assert "private state" not in repr(error)
 
 
 def test_decision_model_catalog_uses_gateway_auth_and_preserves_separate_states():

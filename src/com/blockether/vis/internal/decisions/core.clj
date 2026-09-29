@@ -271,9 +271,22 @@
                 [[] []]
                 tokens)]
 
-    (when (or (> (count ids) (long (get config "max_position_embeddings")))
-              (not= (count markers) (+ (count choices) 2)))
-      (invalid! (str "GLiNER decision exceeds the encoder limit for " (:id item))))
+    (let [input-tokens
+          (count ids)
+
+          max-input-tokens
+          (long (get config "max_position_embeddings"))]
+
+      (when (> input-tokens max-input-tokens)
+        (throw (ex-info (str "GLiNER decision input has " input-tokens
+                             " tokens; the per-question limit is " max-input-tokens
+                             ". Shorten the state, question instructions or criteria. "
+                             "Input is not truncated.")
+                        {:type :decisions/input-too-long
+                         :input-tokens input-tokens
+                         :max-input-tokens max-input-tokens}))))
+    (when (not= (count markers) (+ (count choices) 2))
+      (invalid! "GLiNER decision classifier markers do not match the labels"))
     (assoc item
       :ids ids
       :markers markers)))

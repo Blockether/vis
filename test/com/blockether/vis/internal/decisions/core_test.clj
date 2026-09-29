@@ -83,6 +83,70 @@
                 nil)})
 
 (defdescribe
+  gliner-input-budget
+  ;; #295: count the full per-question sequence, not characters or state alone.
+  (it "accepts the exact token limit and reports the count above it"
+      (with-redefs [decisions/raw-token-ids (fn [_ value]
+                                              (vec (repeat (count (str/split value #"\s+")) 1)))]
+        (let [item {:id "private-question"
+                    :type "choice"
+                    :instruction "Select a label."
+                    :options [["low" "low"] ["high" "high"]]}
+              state (str "Example task: " (apply str (repeat 250 "alpha beta gamma ")))
+              encoded
+              (#'decisions/gliner-sequence-item nil {"max_position_embeddings" 2048} state item)
+              size (count (:ids encoded))
+              error (try (#'decisions/gliner-sequence-item
+                          nil
+                          {"max_position_embeddings" (dec size)}
+                          state
+                          item)
+                         (catch clojure.lang.ExceptionInfo e e))]
+
+          (expect
+            (= encoded
+               (#'decisions/gliner-sequence-item nil {"max_position_embeddings" size} state item)))
+          (expect
+            (= {:type :decisions/input-too-long :input-tokens size :max-input-tokens (dec size)}
+               (ex-data error)))
+          (expect (str/includes? (ex-message error) (str size " tokens")))
+          (expect (str/includes? (ex-message error) (str "limit is " (dec size))))
+          (expect (str/includes? (ex-message error) "Shorten"))
+          (expect (not (str/includes? (ex-message error) "private-question"))))))
+  (it "includes instructions and criteria in the same budget without truncating"
+      (with-redefs [decisions/raw-token-ids (fn [_ value]
+                                              (vec (repeat (count (str/split value #"\s+")) 1)))]
+        (let [item {:id "priority"
+                    :type "choice"
+                    :instruction "Select."
+                    :options [["low" "low"] ["high" "high"]]}
+              state "alpha"
+              size (count (:ids (#'decisions/gliner-sequence-item
+                                 nil
+                                 {"max_position_embeddings" 512}
+                                 state
+                                 item)))]
+
+          (doseq [expanded [(assoc item :instruction "Select a label.")
+                            (assoc item :options [["low" "low urgency"] ["high" "high"]])]]
+            (let [expected (count (:ids (#'decisions/gliner-sequence-item
+                                         nil
+                                         {"max_position_embeddings" 512}
+                                         state
+                                         expanded)))
+                  error (try (#'decisions/gliner-sequence-item
+                              nil
+                              {"max_position_embeddings" size}
+                              state
+                              expanded)
+                             (catch clojure.lang.ExceptionInfo e e))]
+
+              (expect (> expected size))
+              (expect
+                (= {:type :decisions/input-too-long :input-tokens expected :max-input-tokens size}
+                   (ex-data error)))))))))
+
+(defdescribe
   gliner-reference-tokenization-logits-and-typed-answers
   (it
     "gliner reference tokenization logits and typed answers"
@@ -175,7 +239,7 @@
 
                     "noul"
                     (expect (<= 0.0 (double (get result "noul")) 1.0) (str model-id " / " id)))))
-              (expect (= :decisions/invalid-request
+              (expect (= :decisions/input-too-long
                          (:type (ex-data (try (#'decisions/gliner-sequence-item
                                                (:tokenizer loaded)
                                                (:config loaded)
