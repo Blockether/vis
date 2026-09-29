@@ -204,6 +204,9 @@ def verifier_details(directory: Path) -> dict | None:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             continue
+        # Per-trace results arrive as a bare list of checks.
+        if isinstance(payload, list):
+            payload = {"checks": payload}
         if not isinstance(payload, dict):
             continue
         fields = {

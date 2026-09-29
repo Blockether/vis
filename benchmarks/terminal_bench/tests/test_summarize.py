@@ -178,8 +178,15 @@ def test_verifier_details_keep_only_numeric_task_scores(tmp_path):
         )
     )
     (tmp_path / "cases.json").write_text(json.dumps([1, 2]))
+    (tmp_path / "trace_results.json").write_text(
+        json.dumps([{"passed": False, "error": "private"}, {"passed": True}])
+    )
     (tmp_path / "broken.json").write_text("{")
-    assert verifier_details(tmp_path) == {"reward_details.json": {"score": 0.0}}
+    assert verifier_details(tmp_path) == {
+        "reward_details.json": {"score": 0.0},
+        "trace_results.json": {"checks": {"passed": 1, "total": 2}},
+    }
+    assert "private" not in json.dumps(verifier_details(tmp_path))
     assert verifier_details(tmp_path / "missing") is None
 
 
