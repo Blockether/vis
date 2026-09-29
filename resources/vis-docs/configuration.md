@@ -586,10 +586,11 @@ Run `/reload` after editing.
 
 ## Project, group and session settings
 
-Open **Session settings** from the session's **…** menu in the app. Project and
-organizational group menus offer their own settings. In the TUI, use **Session
-settings**, **Group settings** or **Project settings** from the command palette.
-The familiar settings rows show the effective value and where it comes from.
+In the app, choose **Session** with the cog icon from a session's **…** menu.
+Choose **Project** or **Group** with the cog icon from the corresponding menus.
+In the TUI, use **Session settings**, **Group settings** or **Project settings**
+from the command palette. The settings rows show the effective value and where
+it comes from.
 **Use inherited value** removes only the override at the scope you opened.
 
 Values resolve per setting: **global → project → group → session**. A scope with

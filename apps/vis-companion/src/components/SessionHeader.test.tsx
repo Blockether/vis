@@ -51,6 +51,25 @@ describe('SessionHeader', () => {
     expect(back).toHaveBeenCalledOnce();
   });
 
+  it('offers session settings as a cog-marked Session action', () => {
+    const settings = vi.fn();
+    render(
+      <SessionHeader
+        model={model}
+        commands={{ back: vi.fn(), toggleArtifacts: vi.fn(), settings }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions, 3 artifacts' }));
+    const action = within(screen.getByRole('dialog', { name: 'Session actions' })).getByRole(
+      'button',
+      { name: 'Session' },
+    );
+    expect(action.querySelector('svg.lucide-settings')).toBeInTheDocument();
+    fireEvent.click(action);
+    expect(settings).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('dialog', { name: 'Session actions' })).not.toBeInTheDocument();
+  });
+
   it('renders the reconnecting state and omits an empty artifact door', () => {
     render(
       <SessionHeader

@@ -6,7 +6,7 @@ import { useDeskRail } from '../lib/fit-rows';
 import { isIosNativeApp } from '../lib/host';
 import { markSessionId } from '../lib/session-id';
 import { Menu, MenuItem, MENU_WIDTH } from './Menu';
-import { AlertIcon, CheckIcon, ClipIcon, CopyIcon, DotsIcon } from './icons';
+import { AlertIcon, CheckIcon, ClipIcon, CopyIcon, DotsIcon, SettingsIcon } from './icons';
 import { BackButton, Button, DialogFrame, IconButton, Modal, SidebarToggle } from './ui';
 
 const GOAL_STATUS = Object.fromEntries(
@@ -179,7 +179,7 @@ export function SessionHeader({
       {menu && (
         <Menu label="Session actions" at={menu} onDismiss={closeMenu}>
           {commands.settings && (
-            <MenuItem title="Session settings" onSelect={() => { closeMenu(); commands.settings?.(); }} />
+            <MenuItem title="Session" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { closeMenu(); commands.settings?.(); }} />
           )}
           {model.artifacts.count > 0 && (
             <MenuItem

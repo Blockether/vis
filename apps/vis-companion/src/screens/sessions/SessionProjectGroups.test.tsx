@@ -12,7 +12,7 @@ import {
   dropTargetAt,
   releaseLift,
 } from '../../lib/session-drag';
-import type { ArchiveView, BandWindow, Session, SessionGroup } from '../../lib/types';
+import type { ArchiveView, BandWindow, Session, SessionGroup, SettingsTarget } from '../../lib/types';
 import { ProjectGroup, type ProjectCreation } from './SessionProjectGroups';
 
 const conn = STORY_FLEET_CONNS[0];
@@ -494,6 +494,39 @@ describe('ProjectGroup groups', () => {
     expect(screen.getByRole('button', { name: `Actions for groups in ${ROOT}` })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^New session/ })).toBeNull();
+  });
+
+  it('opens project and group settings from cog-marked owner actions', async () => {
+    const read = vi.fn(async (_signal: AbortSignal | undefined, owner: SettingsTarget) => ({
+      scope: owner.scope,
+      target_id: owner.target_id,
+      groups: [],
+    }));
+    const { user } = mount(
+      machine({
+        cachedSettings: () => null,
+        settings: read,
+        cachedMcpServers: () => [],
+        mcpServers: vi.fn(async () => []),
+      }),
+    );
+    await user.click(await screen.findByRole('button', { name: `Actions for groups in ${ROOT}` }));
+    const project = within(sheet(`Groups in ${ROOT}`)).getByRole('button', { name: 'Project' });
+    expect(project.querySelector('svg.lucide-settings')).toBeInTheDocument();
+    await user.click(project);
+    expect(screen.getByRole('dialog', { name: 'Project settings' })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(read).toHaveBeenCalledWith(expect.any(AbortSignal), { scope: 'project', target_id: ROOT }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Close Project settings' }));
+    await user.click(screen.getByRole('button', { name: 'Actions for Wallet work' }));
+    const group = within(sheet(`Groups in ${ROOT}`)).getByRole('button', { name: 'Group' });
+    expect(group.querySelector('svg.lucide-settings')).toBeInTheDocument();
+    await user.click(group);
+    expect(screen.getByRole('dialog', { name: 'Group settings' })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(read).toHaveBeenCalledWith(expect.any(AbortSignal), { scope: 'group', target_id: WALLET }),
+    );
   });
 
   it('starts an ungrouped session from the Sessions menu', async () => {
