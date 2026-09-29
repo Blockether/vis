@@ -138,7 +138,57 @@ describe('a session list carried by the fleet stream', () => {
     expect(screen.queryByText('First')).toBeNull();
   });
 
-  it('paints a run the stream announced without reading the window again', async () => {
+  it('refreshes canonical order when a known session becomes live', async () => {
+    const fleet = fleetHub();
+    const recent = listSession({
+      id: 'recent', title: 'Recent', modified_at: new Date(6000).toISOString(),
+    });
+    const older = listSession({
+      id: 'older', title: 'Older', modified_at: new Date(1000).toISOString(),
+    });
+    const rowOrder = () => Array.from(
+      document.querySelectorAll<HTMLElement>('[data-session-id]'),
+      (row) => row.dataset.sessionId,
+    );
+    const view = renderSessionsScreen({
+      machines: [{ sessions: [recent, older] }],
+      subscriptions: fleet.hub as never,
+    });
+    restore = view.restore;
+    fleet.hub.gatewayUrl = view.conns[0]!.url;
+    await settle(200);
+    const read = listReads(view.requests);
+    view.setRows(0, [{ ...older, live: true, current_turn_id: 'turn-old' }, recent]);
+
+    await fleet.emit({
+      type: 'session.status',
+      session_id: 'older',
+      is_live: true,
+      current_turn_id: 'turn-old',
+    });
+    await settle(200);
+    expect(listReads(view.requests)).toBe(read + 1);
+    expect(rowOrder()).toEqual(['older', 'recent']);
+
+    // Another status for the same live run only changes its badges, not its rank.
+    await fleet.emit({
+      type: 'session.status',
+      session_id: 'older',
+      is_live: true,
+      current_turn_id: 'turn-old',
+      is_awaiting_input: true,
+    });
+    await settle(200);
+    expect(listReads(view.requests)).toBe(read + 1);
+
+    view.setRows(0, [recent, older]);
+    await fleet.emit({ type: 'session.status', session_id: 'older', is_live: false });
+    await settle(200);
+    expect(rowOrder()).toEqual(['recent', 'older']);
+    expect(listReads(view.requests)).toBe(read + 2);
+  });
+
+  it('paints a run the stream announced without waiting for the window read', async () => {
     const fleet = fleetHub();
     const view = oneRow(fleet);
     restore = view.restore;
@@ -412,13 +462,14 @@ describe('a session list carried by the fleet stream', () => {
     };
     await settle(30_000);
     expect(screen.getByText('LIVE')).toBeVisible();
-    expect(reads).toBe(1);
+    // One extra window read adopts the idle-to-live promotion, not every status.
+    expect(reads).toBe(2);
 
     announce = false;
     await fleet.emit({ type: 'session.status', session_id: 's1', is_live: false });
     await settle(200);
     expect(screen.queryByText('LIVE')).toBeNull();
-    expect(reads).toBe(2);
+    expect(reads).toBe(3);
   });
 
   it('keeps a terminal resync queued behind a slow poll', async () => {

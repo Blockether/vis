@@ -2785,6 +2785,58 @@
                            (expect (= (str prefix ":" (get roots (get row "id")))
                                       (get row "agent_name")))))))))))
 
+;; Regression: a navigator must follow liveness and content recency before paging.
+(defdescribe
+  gateway-session-live-order-test
+  (it
+    "keeps stars and drafts first, then live sessions and idle sessions newest first"
+    (let [records
+          [{:id "idle-new" :title "idle-new" :created-at 6000}
+           {:id "live-old" :title "live-old" :created-at 1000}
+           {:id "live-new" :title "live-new" :created-at 4000}
+           {:id "live-tie" :title "live-tie" :created-at 4000}
+           {:id "idle-old" :title "idle-old" :created-at 2000}
+           {:id "starred" :title "starred" :created-at 0 :favorite-rank 1}
+           {:id "draft" :created-at 0}]
+
+          live
+          (atom {"live-old" "turn-1" "live-new" "turn-2" "live-tie" "turn-3"})]
+
+      (with-redefs [lp/db-info
+                    (constantly nil)
+
+                    persistance/db-session-turn-stats
+                    (constantly nil)
+
+                    lp/by-channel
+                    (constantly records)
+
+                    bus/live-turns
+                    (fn []
+                      @live)
+
+                    bus/waiting-requests
+                    (constantly {})
+
+                    state/soul
+                    (fn [sid]
+                      {"id" (str sid) "live" (contains? @live (str sid))})]
+
+        (let [head
+              (state/list-sessions-page :all {:limit 3 :dirty #{"draft"}})
+
+              tail
+              (state/list-sessions-page :all
+                                        {:limit 10 :dirty #{"draft"} :after (:next-cursor head)})]
+
+          (expect (= ["starred" "draft" "live-new"] (mapv #(get % "id") (:sessions head))))
+          (expect (= ["live-tie" "live-old" "idle-new" "idle-old"]
+                     (mapv #(get % "id") (:sessions tail)))))
+        (reset! live {"idle-old" "turn-4"})
+        (expect (= ["starred" "draft" "idle-old" "idle-new" "live-new" "live-tie" "live-old"]
+                   (mapv #(get % "id")
+                         (:sessions (state/list-sessions-page :all {:dirty #{"draft"}})))))))))
+
 (defdescribe gateway-session-order-test
              (it "orders by content time alone, whatever happens to be running"
                  (let [order-summaries
@@ -2863,7 +2915,7 @@
 
         (let [head (state/list-sessions-page :all {:limit 2})]
           (expect (= ["e" "d"] (mapv #(get % "id") (:sessions head))))
-          (expect (= "2:-4000:d" (:next-cursor head)))
+          (expect (= "3:-4000:d" (:next-cursor head)))
           (expect (:has-more head))
           ;; A turn lands in the OLDEST session while the client is still
           ;; walking. Its content time is now the freshest in the fleet, so it
@@ -2898,11 +2950,11 @@
 
         (let [head (state/list-sessions-page :all {:limit 1})]
           (expect (= ["x"] (mapv #(get % "id") (:sessions head))))
-          (expect (= "2:-2000:x" (:next-cursor head)))
+          (expect (= "3:-2000:x" (:next-cursor head)))
           (expect (= ["y"]
                      (mapv #(get % "id")
                            (:sessions
-                             (state/list-sessions-page :all {:limit 1 :after "2:-2000:x"}))))))))
+                             (state/list-sessions-page :all {:limit 1 :after "3:-2000:x"}))))))))
   (it "reads a cursor back, and answers nil for anything that is not one"
       (expect (= [2 -4000 "d"] (state/parse-session-cursor "2:-4000:d")))
       ;; Only the first TWO colons end the numbers; the rest is the id.
@@ -2949,12 +3001,12 @@
              (it "leaves out the taps nobody ever used, and counts what is left"
                  ;; "New session" creates the row before the first message exists, so an
                  ;; abandoned tap is a session with no title, no turns and nothing running.
-                 (expect (= ["starred" "used" "busy"] (navigator-ids {})))
+                 (expect (= ["starred" "busy" "used"] (navigator-ids {})))
                  (expect (= 3 (:total (navigator-page {})))))
              (it "lists an empty session the reader marked, and bands it above the rest"
                  ;; A star is the gateway's own fact; unsent words are the device's, and the
                  ;; only part of this list it has to be told about.
-                 (expect (= ["starred" "typed" "used" "busy"] (navigator-ids {:dirty ["typed"]})))
+                 (expect (= ["starred" "typed" "busy" "used"] (navigator-ids {:dirty ["typed"]})))
                  (expect (= 4 (:total (navigator-page {:dirty ["typed"]})))))
              (it "walks the bands with ONE cursor, so a page boundary inside them holds"
                  (let [head (navigator-page {:limit 1 :dirty ["typed"]})]
@@ -2963,8 +3015,8 @@
                    (let [second-page (navigator-page
                                        {:limit 2 :after (:next-cursor head) :dirty ["typed"]})]
                      ;; Across the band boundary: no row served twice, none skipped.
-                     (expect (= ["typed" "used"] (mapv #(get % "id") (:sessions second-page))))
-                     (expect (= "2:-3000:used" (:next-cursor second-page)))))))
+                     (expect (= ["typed" "busy"] (mapv #(get % "id") (:sessions second-page))))
+                     (expect (= "2:-100:busy" (:next-cursor second-page)))))))
 
 ;; Regression, reported in this Vis session ("po co my w ogóle wysyłamy wiersze ... to
 ;; powinny być najpotrzebniejsze rzeczy"): every listed session carried the prose it

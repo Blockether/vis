@@ -1,5 +1,4 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { useState } from 'react';
 import { expect, fireEvent, fn, userEvent, waitFor, within } from 'storybook/test';
 
 import {
@@ -16,8 +15,6 @@ import { ProjectGroup } from './SessionProjectGroups';
 
 const conn = STORY_FLEET_CONNS[0];
 const fixture = STORY_NEWER_PROJECT;
-const epoch = fixture.rows.slice(1).map((row) => row.id);
-const pendingIds = [fixture.rows[0].id];
 
 const meta = {
   title: 'Session/Project updates',
@@ -53,31 +50,15 @@ const meta = {
     },
     reading: {
       pageSize: 10,
-      epoch,
-      admitted: new Set<string>(),
       isVisible: true,
-      pendingByRoot: new Map([[fixture.root, pendingIds]]),
-      acceptUpdates: fn(),
     },
     creation: { state: null, start: fn(async () => {}) },
     initiallyOpen: true,
   },
   render: function Render(args) {
-    const [admitted, setAdmitted] = useState(new Set<string>());
     return (
       <div className="@container min-h-dvh bg-page">
-        <ProjectGroup
-          {...args}
-          reading={{
-            ...args.reading,
-            admitted,
-            pendingByRoot: admitted.size ? new Map() : args.reading.pendingByRoot,
-            acceptUpdates: (ids) => {
-              args.reading.acceptUpdates(ids);
-              setAdmitted(new Set(ids));
-            },
-          }}
-        />
+        <ProjectGroup {...args} />
       </div>
     );
   },
@@ -92,9 +73,6 @@ export const Collapsed: Story = { args: { initiallyOpen: false } };
 
 /** A path-derived project name appears once; the second line carries only counts. */
 export const ProjectPathName: Story = {
-  args: {
-    reading: { ...meta.args.reading, epoch: null, pendingByRoot: new Map() },
-  },
   play: async ({ canvasElement, args }) => {
     const page = within(canvasElement);
     const heading = page.getByRole('button', { name: `Collapse ${args.group.label}` });
@@ -109,28 +87,16 @@ export const ProjectPathName: Story = {
   },
 };
 
-export const AcceptNewerSession: Story = {
+export const ShowNewerSession: Story = {
   play: async ({ canvasElement, args }) => {
     const page = within(canvasElement);
     await page.findByText('Fix balance refresh');
     const disclosure = page.getByRole('button', { name: 'Collapse /CryptoSafe' });
     const header = disclosure.closest('header')!;
-    const updates = within(header).getByRole('button', { name: 'Show 1 newer session' });
     const rows = header.closest('section')!.lastElementChild!;
 
-    // Arrivals sit at the END of the caption, on the total's baseline, not beside the
-    // trailing actions — and never between the total and the states it qualifies
-    // (reported: a project's arrival count belongs to the RIGHT of live, not its left).
-    await expect(updates.closest('button[aria-expanded]')).toBeNull();
-    const total = within(header).getByText(`${args.group.tally.count} sessions`);
-    const live = args.group.tally.live;
-    const caption = updates.parentElement!;
-    await expect(caption).toContainElement(total);
-    await expect(caption).toHaveTextContent(
-      live > 0
-        ? `${args.group.tally.count} sessions·${live} live | 1 new`
-        : `${args.group.tally.count} sessions | 1 new`,
-    );
+    // Fresh rows arrive in gateway order without an extra acceptance action.
+    await expect(await page.findByText('Check transaction confirmations')).toBeVisible();
     await expect(within(header).getByText(`${args.group.tally.count} sessions`)).toBeVisible();
     const pageCount = Math.ceil(args.group.tally.count / args.reading.pageSize);
     if (pageCount > 1) {
@@ -147,14 +113,10 @@ export const AcceptNewerSession: Story = {
       await expect(set).toContainElement(pager);
       await expect(within(pager).getByText(`Page 1 of ${pageCount}`)).toBeInTheDocument();
     }
-    await expect(updates).toHaveTextContent(/^1 new$/);
-    await expect(updates).toBeVisible();
 
     await userEvent.click(page.getByRole('button', { name: 'Collapse /CryptoSafe' }));
     await expect(canvasElement.querySelector('[data-session-id]')).toBeNull();
-    updates.focus();
-    await userEvent.keyboard('{Enter}');
-    await expect(args.reading.acceptUpdates).toHaveBeenCalledWith(pendingIds);
+    await userEvent.click(page.getByRole('button', { name: 'Expand /CryptoSafe' }));
     await expect(await page.findByText('Check transaction confirmations')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Collapse /CryptoSafe' })).toHaveAttribute(
       'aria-expanded',
@@ -186,7 +148,7 @@ const pagedArgs = {
 };
 
 export const PhoneWithPaging: Story = {
-  ...AcceptNewerSession,
+  ...ShowNewerSession,
   args: pagedArgs,
 };
 
@@ -276,7 +238,6 @@ export const Groups: Story = {
   args: {
     group: { ...meta.args.group, sessions: GROUPED },
     machine: { conn, sessions: GROUPED },
-    reading: { ...meta.args.reading, epoch: null, pendingByRoot: new Map() },
   },
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
@@ -491,7 +452,6 @@ export const StickySectionHeaders: Story = {
           sessions: NEXT_ROWS,
         }}
         machine={{ conn, sessions: NEXT_ROWS }}
-        reading={{ ...args.reading, epoch: null, pendingByRoot: new Map() }}
       />
     </div>
   ),
@@ -671,10 +631,8 @@ export const LiveCountOpensTheRun: Story = {
     const header = heading.closest('header')!;
     const live = within(header).getByRole('button', { name: 'Open the live session' });
     await expect(live.textContent).toMatch(/^1 live$/);
-    // The caption still reads as one line of type: totals, the running count, arrivals.
-    await expect(live.parentElement).toHaveTextContent(
-      `${args.group.tally.count} sessions·1 live | 1 new`,
-    );
+    // The caption keeps the total and running count on one line.
+    await expect(live.parentElement).toHaveTextContent(`${args.group.tally.count} sessions·1 live`);
     await userEvent.click(live);
     await expect(args.context.actions.commands.open).toHaveBeenCalledWith(conn, 'live-run');
     await expect(heading).toHaveAttribute('aria-expanded', 'true');

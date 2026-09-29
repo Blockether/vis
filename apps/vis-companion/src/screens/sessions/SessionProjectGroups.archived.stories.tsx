@@ -86,11 +86,7 @@ const meta = {
     },
     reading: {
       pageSize: 10,
-      epoch: null,
-      admitted: new Set<string>(),
       isVisible: true,
-      pendingByRoot: new Map(),
-      acceptUpdates: fn(),
     },
     creation: { state: null, start: fn(async () => {}) },
     initiallyOpen: true,

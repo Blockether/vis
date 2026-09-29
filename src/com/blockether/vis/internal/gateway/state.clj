@@ -5547,7 +5547,9 @@
    fact."
   1)
 
-(def ^:private rest-band "Everything else, by content time alone." 2)
+(def ^:private live-band "Running sessions, newest content first." 2)
+
+(def ^:private rest-band "Idle sessions, newest content first." 3)
 
 (defn- session-listed?
   "Is this session one a NAVIGATOR paints at all?
@@ -5583,55 +5585,52 @@
    ONE ascending compare walks the whole list and a keyset cursor can name any row
    in it (`->session-cursor`).
 
-   Only a HUMAN's own decisions band a row - a star, and words they typed and have
-   not sent. Nothing a TURN does may. The key used to LEAD with a lifecycle band -
-   parked on a human 0, turn in flight 1, everything else 2 - so starting a turn
-   lifted its session to the absolute top and finishing it dropped the session back
-   down, under the finger of whoever was reading; and because the band sits in the
-   key BEFORE the page is cut (`list-sessions-page`), a turn starting anywhere also
-   pushed another session out of the window a client was walking. Liveness and
-   demand reach every surface as FIELDS instead - `live` and `is_awaiting_input` on
-   the row, plus the parked rows a listing carries BESIDE its window
-   (`awaiting-summaries`) - so a dot and a strip report them without moving
-   anything.
+   Stars and unsent drafts keep their explicit priority. Running sessions follow,
+   then idle sessions. Within each lifecycle band, newest content comes first.
+   The live-turn scan supplies the same machine-wide verdict used by session rows.
+   Rank before cutting the page so an older live session can reach the first window.
+   Parked rows also travel beside the window (`awaiting-summaries`), so requests for
+   input remain accessible from every page.
 
    The recency travels WITH the id because it is what a client's header counts and
    what `projects-overview` tallies; the cursor is built from the band and the sort
    key beside it."
   [channel stats live dirty]
   (->> (lp/by-channel channel)
-       (into []
-             (keep
-               (fn [record]
-                 (let [id
-                       (str (:id record))
+       (into
+         []
+         (keep
+           (fn [record]
+             (let [id
+                   (str (:id record))
 
-                       st
-                       (get stats id)
+                   st
+                   (get stats id)
 
-                       pin
-                       (:favorite-rank record)]
+                   pin
+                   (:favorite-rank record)]
 
-                   (when (session-listed? id record st live dirty)
-                     (let [recency (record-recency-ms record st)]
-                       {:id id
-                        :band (cond (some? pin) favorite-band
-                                    (contains? dirty id) dirty-band
-                                    :else rest-band)
-                        :sort-key (if (some? pin) (long pin) (unchecked-negate (long recency)))
-                        :recency-ms recency
-                        ;; A project's tab set is a QUESTION about this list, so the id
-                        ;; travels with the row and `list-sessions-page` cuts to one
-                        ;; project BEFORE the window instead of after it.
-                        :project-id (some-> (:project-id record)
-                                            str)
-                        ;; A filed session is painted BESIDE the window (`:grouped
-                        ;; :aside`), so which group holds it has to be known before
-                        ;; the page is cut, exactly like the project id above.
-                        :group-id (some-> (:group-id record)
-                                          str)
-                        ;; The ARCHIVE cut lands on the RANKING, like the ids above.
-                        :archived-at (:archived-at record)}))))))
+               (when (session-listed? id record st live dirty)
+                 (let [recency (record-recency-ms record st)]
+                   {:id id
+                    :band (cond (some? pin) favorite-band
+                                (contains? dirty id) dirty-band
+                                (contains? live id) live-band
+                                :else rest-band)
+                    :sort-key (if (some? pin) (long pin) (unchecked-negate (long recency)))
+                    :recency-ms recency
+                    ;; A project's tab set is a QUESTION about this list, so the id
+                    ;; travels with the row and `list-sessions-page` cuts to one
+                    ;; project BEFORE the window instead of after it.
+                    :project-id (some-> (:project-id record)
+                                        str)
+                    ;; A filed session is painted BESIDE the window (`:grouped
+                    ;; :aside`), so which group holds it has to be known before
+                    ;; the page is cut, exactly like the project id above.
+                    :group-id (some-> (:group-id record)
+                                      str)
+                    ;; The ARCHIVE cut lands on the RANKING, like the ids above.
+                    :archived-at (:archived-at record)}))))))
        (sort-by (juxt :band :sort-key :id))
        vec))
 
@@ -5677,9 +5676,8 @@
   "Does ranking `row` sit strictly AFTER `cursor` under `[band, sort-key, id]`, all
    ascending?
 
-   The whole point of a keyset window: this answer depends only on the row and the
-   cursor, never on how many rows the gateway happened to rank in front of them, so
-   a page cannot shift under a client that is still walking."
+   Compare ordering keys rather than offsets. Changes ahead of the cursor do not
+   shift unaffected rows, but a session can cross it when its lifecycle changes."
   [cursor row]
   (pos? (compare [(:band row) (:sort-key row) (:id row)] cursor)))
 
@@ -5766,14 +5764,12 @@
    expects, and a device that names none simply gets the list without that band.
 
    The window is a KEYSET, not an offset: `:after` is the cursor of the last row a
-   client already holds (`:next-cursor` of its previous answer) and the answer is
-   the rows that sort strictly after it. An offset indexes a list that is RECOMPUTED
-   per request, so content moving during a walk - another machine finishes a turn -
-   made one row arrive twice (a duplicate id) and dropped another entirely, with the
-   merged count still equal to `total` so nothing downstream could notice. A cursor
-   names a ROW, so the same page comes back however much the fleet moved meanwhile:
-   the tear is not detected, it cannot happen. An unparsable cursor is no cursor here
-   (the server answers 400 first, see `parse-session-cursor`).
+   client already holds (`:next-cursor` of its previous answer). The answer contains
+   rows whose current ordering keys sort strictly after that cursor. Recency or
+   liveness changes can move a session across it. Clients refresh the head on
+   lifecycle updates to pick up promotions rather than walking an outdated window.
+   An unparsable cursor is no cursor here (the server answers 400 first, see
+   `parse-session-cursor`).
 
    `:awaiting` stands BESIDE the window: the sessions parked on an unanswered
    human-input request, complete however deep in the fleet they sit, because a

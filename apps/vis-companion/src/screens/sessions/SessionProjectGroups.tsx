@@ -71,7 +71,6 @@ import {
 } from '../../lib/gateway';
 import { GROUP_COLORS, groupColor, groupSwatch } from '../../lib/group-colors';
 import { isIosAppOnMac } from '../../lib/host';
-import { holdOrder, type OrderEpoch } from '../../lib/order-epoch';
 import { compactProjectPath } from '../../lib/path';
 import { hasHardwarePointer } from '../../lib/pointer';
 import {
@@ -497,11 +496,7 @@ export type SessionRowsContext = {
 /** The reader agreement shared by every project on one machine. */
 export type ProjectGroupReading = {
   pageSize: number;
-  epoch: OrderEpoch | null;
-  admitted: ReadonlySet<string>;
   isVisible: boolean;
-  pendingByRoot: ReadonlyMap<string, readonly string[]>;
-  acceptUpdates: (ids: readonly string[]) => void;
 };
 
 /** One project-creation lifecycle, shared so headers report the request they started. */
@@ -559,9 +554,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   const { label: project, root, sessions, tally } = group;
   const { conn, sessions: list } = machine;
   const { getClient, drafts, matches, needle, actions: rowActions, openRow } = context;
-  const { pageSize, epoch, admitted, isVisible, pendingByRoot, acceptUpdates } = reading;
-  const pendingIds = pendingByRoot.get(root) ?? [];
-  const hasPending = pendingIds.length > 0;
+  const { pageSize, isVisible } = reading;
   const { state: creating, start: onNewSession } = creation;
   const base = useMemo(() => getClient(conn).base, [conn, getClient]);
   const pendingDeleteId =
@@ -975,11 +968,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     },
     [searching, groupArchive, archivedGroupIds, isGroupRevealing, isSessionRevealing],
   );
-  // NOTHING MOVES WHILE THE READER IS LOOKING AT IT (`lib/order-epoch`). The list
-  // of projects is held by the screen; a page read from the gateway is held HERE,
-  // or a turn finishing on another machine would slide this page under the thumb on
-  // the next poll. A search answer arrives held already, and a row this reader
-  // started or is holding words for is admitted rather than parked behind the pill.
+  // Keep the gateway order as liveness and content recency change on this page.
   const rows = useMemo(() => {
     const api = getClient(conn);
     const shown = painting
@@ -987,25 +976,19 @@ export const ProjectGroup = memo(function ProjectGroup({
       .map((session) => settled(session, local, refiled))
       .filter(paints);
     if (searching) return shown;
-    const held = holdOrder(
-      epoch,
-      shown,
-      (session) => ({ id: session.id, millis: sessionMillis(session) }),
-      admitted,
-    ).rows;
     // A RUN PARKED ON A HUMAN IS SAID WHERE IT LIVES, however deep it sits. The
     // gateway carries the project's parked sessions BESIDE every window it cuts
     // (`ProjectPage.awaiting`) instead of lifting them into the order, so they are
     // pinned above the page here: the header said `1 needs input` while the row
     // it counted sat forty pages down and no page showed INPUT NEEDED. A parked row
     // the page already holds is painted once, in its place.
-    const onPage = new Set(held.map((session) => session.id));
+    const onPage = new Set(shown.map((session) => session.id));
     const parked = (paged?.awaiting ?? NO_ROWS)
       .filter((session) => !onPage.has(session.id) && !api.isSessionDeleted(session.id))
       .map((session) => settled(session, local, refiled))
       .filter(paints);
-    return parked.length === 0 ? held : [...parked, ...held];
-  }, [searching, painting, local, refiled, paints, epoch, admitted, paged, getClient, conn, list]);
+    return parked.length === 0 ? shown : [...parked, ...shown];
+  }, [searching, painting, local, refiled, paints, paged, getClient, conn, list]);
   // Each response can land first: never put a new band's name over the previous page's
   // sessions, or create an unnamed band from rows whose own page has not arrived yet.
   const matchedRows =
@@ -1760,25 +1743,6 @@ export const ProjectGroup = memo(function ProjectGroup({
                 className="mr-1 inline-block size-1.5 animate-pulse bg-ok align-[0.05em] motion-reduce:animate-none"
               />
               {running} live
-            </TextButton>
-          </>
-        )}
-        {hasPending && (
-          <>
-            <span aria-hidden className="shrink-0 whitespace-pre"> | </span>
-            {/* The arrival takes the caption's step, so the line stays one run of type and
-                its bottom stays on the total's (`AcceptNewerSession` measures it). */}
-            <TextButton
-              isCaption
-              className="pointer-events-auto relative shrink-0 whitespace-nowrap"
-              aria-label={`Show ${pendingIds.length} newer ${pendingIds.length === 1 ? 'session' : 'sessions'}`}
-              onClick={() => {
-                acceptUpdates(pendingIds);
-                setFirst(0);
-                fold(true);
-              }}
-            >
-              {pendingIds.length} new
             </TextButton>
           </>
         )}

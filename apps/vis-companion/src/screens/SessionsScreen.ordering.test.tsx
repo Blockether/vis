@@ -4,13 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { listSession, renderSessionsScreen } from './sessions-screen-harness';
 
-// Regression, user report (paraphrased: "the non-determinism of sorting in the app
-// drives me mad — I click something and suddenly it is the freshest thing and goes
-// to the top; the list keeps jumping around like mad"). The ordering key is content
-// time now and no band lifts a running session any more, so this device cannot move
-// a row — but a turn landing on ANOTHER machine still reordered the rows under the
-// reading thumb on the next ten-second poll, and a session created elsewhere was
-// inserted above what was being read.
+// Regression: the list must follow recency and liveness while it remains open.
+// Opening a session does not change its content clock or move project headers.
 
 let restore = () => {};
 
@@ -98,7 +93,7 @@ describe('the order the reader is looking at', () => {
     expect(projectOrder()).toEqual(['/repo/a', '/repo/b']);
   });
 
-  it('does not move a row a turn on another machine just made the freshest', async () => {
+  it('moves a session to its current recency position while the list stays open', async () => {
     const view = renderSessionsScreen({
       machines: [{ label: 'alpha', sessions: [row('a1', 12), row('a2', 11), row('a3', 10)] }],
     });
@@ -110,13 +105,29 @@ describe('the order the reader is looking at', () => {
     view.setRows(0, [row('a3', 18), row('a1', 12), row('a2', 11)]);
     await settle(10_000);
 
-    // The rows are the reader's, in the reader's order, and nothing is waiting:
-    // every row the answer promoted is already on screen.
-    expect(rowOrder()).toEqual(['a1', 'a2', 'a3']);
+    // Regression: polling updated row content but kept the old accepted order.
+    expect(rowOrder()).toEqual(['a3', 'a1', 'a2']);
     expect(screen.queryByRole('button', { name: /newer session/ })).toBeNull();
   });
 
-  it('holds a session created elsewhere behind a count, and lands it on the tap', async () => {
+  it('promotes live sessions and restores recency order when they stop', async () => {
+    const recent = row('recent', 12);
+    const older = row('older', 10);
+    const view = renderSessionsScreen({ machines: [{ sessions: [recent, older] }] });
+    restore = view.restore;
+    await settle(50);
+    expect(rowOrder()).toEqual(['recent', 'older']);
+
+    view.setRows(0, [{ ...older, live: true }, recent]);
+    await settle(10_000);
+    expect(rowOrder()).toEqual(['older', 'recent']);
+
+    view.setRows(0, [recent, older]);
+    await settle(10_000);
+    expect(rowOrder()).toEqual(['recent', 'older']);
+  });
+
+  it('shows sessions created elsewhere in the next response without a tap', async () => {
     const view = renderSessionsScreen({
       machines: [{ label: 'alpha', sessions: [row('a1', 12), row('a2', 11)] }],
     });
@@ -127,22 +138,8 @@ describe('the order the reader is looking at', () => {
     view.setRows(0, [row('new-1', 20), row('new-2', 19), row('a1', 12), row('a2', 11)]);
     await settle(10_000);
 
-    // New arrivals belong under their project name, not in a fleet-wide divider.
-    expect(rowOrder()).toEqual(['a1', 'a2']);
     const header = screen.getByRole('button', { name: 'Collapse project' }).closest('header')!;
-    const updates = within(header).getByRole('button', { name: 'Show 2 newer sessions' });
-    expect(updates).toHaveTextContent(/^2 new$/);
-    const count = within(header).getByText('4 sessions');
-    // The arrival is the caption's LAST word — after the total and after any state the
-    // project reports — never wedged between them.
-    const caption = updates.parentElement!;
-    expect(caption).toContainElement(count);
-    expect(caption).toHaveTextContent('4 sessions | 2 new');
-    expect(updates.closest('button[aria-expanded]')).toBeNull();
-
-    await act(async () => {
-      updates.click();
-    });
+    expect(within(header).getByText('4 sessions')).toBeVisible();
     expect(rowOrder()).toEqual(['new-1', 'new-2', 'a1', 'a2']);
     expect(screen.queryByRole('button', { name: /newer session/ })).toBeNull();
   });
@@ -191,7 +188,7 @@ describe('the order the reader is looking at', () => {
     expect(screen.queryByRole('button', { name: /newer session/ })).toBeNull();
   });
 
-  it('counts arrivals per project and opens only the project whose updates were accepted', async () => {
+  it('updates each project without opening projects the reader collapsed', async () => {
     const inProject = (id: string, hour: number, root: string) =>
       listSession({ ...row(id, hour), workspace: { root } });
     const a = inProject('a', 12, '/repo/a');
@@ -209,20 +206,13 @@ describe('the order the reader is looking at', () => {
 
     const header = (name: string) =>
       screen.getByRole('button', { name: new RegExp(`^(Expand|Collapse) ${name}$`) }).closest('header')!;
-    expect(within(header('a')).getByRole('button', { name: 'Show 1 newer session' })).toBeEnabled();
-    expect(within(header('quiet')).queryByRole('button', { name: /newer session/ })).toBeNull();
-    expect(rowOrder()).toEqual(['a']);
-    act(() => within(header('b')).getByRole('button', { name: 'Show 2 newer sessions' }).click());
-    await settle(50);
-    expect(screen.getByRole('button', { name: 'Collapse b' })).toHaveAttribute('aria-expanded', 'true');
-    expect(rowOrder()).toEqual(['a', 'b-new', 'b-next', 'b']);
-    expect(within(header('b')).queryByRole('button', { name: /newer session/ })).toBeNull();
-    expect(within(header('a')).getByRole('button', { name: 'Show 1 newer session' })).toBeEnabled();
+    expect(within(header('a')).getByText('2 sessions')).toBeVisible();
+    expect(within(header('b')).getByText('3 sessions')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Expand b' })).toHaveAttribute('aria-expanded', 'false');
+    expect(rowOrder()).toEqual(['a-new', 'a']);
+    expect(screen.queryByRole('button', { name: /newer session/ })).toBeNull();
 
-    // A later poll keeps accepted arrivals visible without adopting other projects.
-    await settle(10_000);
-    expect(rowOrder()).toEqual(['a', 'b-new', 'b-next', 'b']);
-    act(() => within(header('a')).getByRole('button', { name: 'Show 1 newer session' }).click());
+    act(() => screen.getByRole('button', { name: 'Expand b' }).click());
     await settle(50);
     expect(rowOrder()).toEqual(['a-new', 'a', 'b-new', 'b-next', 'b']);
     expect(screen.queryByRole('button', { name: /newer session/ })).toBeNull();
@@ -251,7 +241,7 @@ describe('the order the reader is looking at', () => {
 
     view.setRows(0, [row('new-1', 20), row('a1', 12), row('a2', 11)]);
     await settle(10_000);
-    expect(rowOrder()).toEqual(['a1', 'a2']);
+    expect(rowOrder()).toEqual(['new-1', 'a1', 'a2']);
 
     // Away for two minutes, then foreground again: a glance at a notification is not
     // this (`WakeInfo.awayMs`), and the list a reader comes back to is the current one.

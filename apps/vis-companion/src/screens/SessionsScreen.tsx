@@ -41,13 +41,11 @@ import {
   useListScrollPark,
   type ListAnchor,
 } from '../lib/list-scroll';
-import { EPOCH_STALE_AWAY_MS, holdOrder, useOrderEpoch, type OrderEpoch } from '../lib/order-epoch';
 import { usePullToSearch, type PullPhase } from '../lib/pull-to-search';
 import { ManageProjectsSheet, type ManagedProject } from '../components/ManageProjectsSheet';
 import { useDeskRail, useFitRows, useMouseDensity } from '../lib/fit-rows';
 import { clearMachineOutage, machineOutage, rememberMachineOutage } from '../lib/fleet-outage';
 import {
-  dirtySessionIds,
   draftMessageHasUnsent,
   draftMessageKey,
   useDraftMessages,
@@ -56,7 +54,6 @@ import { shareSummary, type SharedPayload } from '../lib/share-intake';
 import { favoriteRank, nextFavoriteRank } from '../lib/favorites';
 import {
   fleetError,
-  groupByWorkDir,
   isFleetLoaded,
   machineCounts,
   machineKey,
@@ -74,7 +71,6 @@ import {
   searchOrder,
   searchTally,
   sessionIsLive,
-  sessionMillis,
   sessionOrder,
   sessionRowKey,
   withSearchHits,
@@ -115,9 +111,6 @@ const STALE_POLL_MS = 20_000;
 // It stays a net — a stream can stop without saying so — just a slack one, and a
 // stream that drops puts the five-second cadence back on the very next tick.
 const STREAMED_POLL_MS = 30_000;
-
-/** How many just-created sessions stay admitted past the held order at once. */
-const MINTED_KEEP = 8;
 
 // A query can name more sessions than a phone will ever scroll. Hydrating the
 // unloaded hits is one GET each, so the tail is cut rather than paid for.
@@ -533,24 +526,6 @@ export function SessionsScreen({
       noteOpenedRead(prior.conn, cached, answeredTurnCount(cached) - unreadTurnCount(cached));
   }, [openSession, noteOpenedRead]);
 
-  // The order the list is HELD in is renewed by reader actions that legitimately
-  // move a row, and this ref is how a callback declared above the hook reaches it.
-  const adoptRef = useRef<() => void>(() => {});
-
-  // Ids this device just created, freshest first. `MINTED_KEEP` is past any burst
-  // of taps and keeps the set from growing for the life of the screen.
-  const [minted, setMinted] = useState<readonly string[]>([]);
-  // A fork is created in the transcript, not through `createSession` on this list.
-  // Its fresh open reaches the still-mounted list even when the transcript covers it:
-  // admit that row before the fleet read lands instead of parking it behind "1 new".
-  const freshSessionId = openSession?.fresh ? openSession.sid : null;
-  useEffect(() => {
-    if (!freshSessionId) return;
-    setMinted((was) =>
-      was.includes(freshSessionId) ? was : [freshSessionId, ...was].slice(0, MINTED_KEEP),
-    );
-  }, [freshSessionId]);
-
   // ONE machine's list. Machines load independently on purpose: a gateway that is
   // asleep must not keep the machines next to it off the screen, and its failure
   // drops that machine out of the fleet view instead of taking the whole list down.
@@ -711,8 +686,6 @@ export function SessionsScreen({
         .then(async (row) => {
           patchMachine(key, withRank(favoriteRank(row)));
           await loadMachine(conn);
-          // Adopt order only after the gateway-owned list returns.
-          adoptRef.current();
         })
         .catch(() => patchMachine(key, withRank(before)));
     },
@@ -847,8 +820,7 @@ export function SessionsScreen({
     [loadMachine, reconnectMachine],
   );
 
-  // Draft presence changes list ordering, so reload and explicitly adopt the resulting
-  // order as a reader-authored mutation.
+  // Draft presence changes the gateway-owned order, so reload when it changes.
   const dirtyOverlay = useMemo(
     () =>
       Object.entries(draftMessages)
@@ -858,7 +830,6 @@ export function SessionsScreen({
         .join('|'),
     [draftMessages],
   );
-  const overlayRef = useRef(dirtyOverlay);
 
   // Rehydrate connection metadata without refetching rows when labels, IDs or recovered
   // addresses change.
@@ -906,24 +877,15 @@ export function SessionsScreen({
       void load(controller.signal, true);
     };
 
-    void load(controller.signal).then(() => {
-      if (controller.signal.aborted || overlayRef.current === dirtyOverlay) return;
-      // Adopt this device's draft changes only after the gateway answers. Hidden
-      // renders leave the last loaded overlay intact, so returning adopts them too.
-      overlayRef.current = dirtyOverlay;
-      adoptRef.current();
-    });
+    void load(controller.signal);
     lastWindowReadAt.current = Date.now();
     // The session-list request is also the reachability check. Drop overlapping polls
     // and do not trust mobile `visibilityState` as the sole visibility signal.
     const timer = window.setInterval(refreshLiveStates, 5_000);
     // Waking is the one moment the rows are guaranteed stale, and a suspended
     // poll may still be latched: drop the latch, then refresh.
-    const stopWake = onWake(({ awayMs }) => {
+    const stopWake = onWake(() => {
       pollStartedAt.current = null;
-      // Away long enough that "where you were" stopped being a place: come back to
-      // what is current, the ORDER included (see `lib/order-epoch`).
-      if (awayMs >= EPOCH_STALE_AWAY_MS) adoptRef.current();
       refreshLiveStates();
     });
     return () => {
@@ -974,11 +936,9 @@ export function SessionsScreen({
     [patchMachine],
   );
 
-  // A fleet frame normally carries the whole answer for one row, so live and title
-  // changes repaint without a window read. A SETTLED frame is the exception: metadata
-  // can raise NEW before the finished transcript page exists in this device's cache. It
-  // answers false below so the canonical list read warms that page before painting the
-  // finished row. False also covers membership news for a row this window does not hold.
+  // Titles and badges can update in place. Starting a run changes its rank, so
+  // refresh the canonical window as well. A settled frame also needs that read to
+  // warm the finished transcript before replacing LIVE with NEW.
   const applyFleetFrame = useCallback(
     (event: SseEvent): boolean => {
       // A copied title frame lives in every watched session's replay ring. Its
@@ -1019,6 +979,11 @@ export function SessionsScreen({
       const holders = machinesRef.current.filter((machine) =>
         machine.sessions?.some((row) => row.id === sid),
       );
+      const orderChanged =
+        event.type === 'session.status' &&
+        holders.some((machine) =>
+          machine.sessions?.some((row) => row.id === sid && row.live !== update.live),
+        );
       for (const machine of holders)
         patchMachine(machineKey(machine.conn), (current) =>
           current.sessions
@@ -1030,7 +995,7 @@ export function SessionsScreen({
               }
             : current,
         );
-      return holders.length > 0;
+      return holders.length > 0 && !orderChanged;
     },
     [patchMachine],
   );
@@ -1403,84 +1368,14 @@ export function SessionsScreen({
     });
   }, [inScope, searchNeedle, matches, searchPlaces, searchHits, draftMessages]);
 
-  // Hold row order while the reader looks, except while fleet/search answers are still
-  // arriving. Scope or query changes create a new epoch; later promotions wait for
-  // explicit adoption.
-  const naturalIds = useMemo(
-    () => filtered.flatMap((entry) => entry.sessions.map((session) => session.id)),
-    [filtered],
-  );
-  const isOrderSettled =
-    !searchNeedle && !searchPending && sessions !== null && isFleetLoaded(machines, scope);
-  const { epoch, adopt } = useOrderEpoch(
-    `${scope}\u0000${searchNeedle}`,
-    naturalIds,
-    isOrderSettled,
-  );
-  adoptRef.current = adopt;
-
-  // Regression, user report (paraphrased: a session I just started should not
-  // need a tap to appear): the pill is for rows ANOTHER machine wrote under a
-  // still thumb. A session this device just created is the reader's own action,
-  // so it is admitted into the held order at once. A few are kept, because the
-  // ones before the last are not necessarily in the epoch yet either.
-  const mintedSet = useMemo(() => new Set(minted), [minted]);
-  // A project action admits only its own arrivals, keeping other projects in place.
-  // Scope changes and full adoption replace the epoch and retire these admissions.
-  const [acceptedUpdates, setAcceptedUpdates] = useState<{
-    epoch: OrderEpoch | null;
-    ids: ReadonlySet<string>;
-  } | null>(null);
-  const acceptUpdates = useCallback(
-    (ids: readonly string[]) => {
-      setAcceptedUpdates((previous) => ({
-        epoch,
-        ids: new Set([...(previous?.epoch === epoch ? previous.ids : []), ...ids]),
-      }));
-    },
-    [epoch],
-  );
-
-  const heldRows = useMemo(
-    () =>
-      filtered.map((entry) => {
-        // A row this device is HOLDING WORDS for is the reader's own action too.
-        // The gateway lifted it into the dirty band BECAUSE this device said so
-        // (`dirty=`), so the move is already agreed to: making the writer tap a
-        // pill to see where their own unsent sentence went is the same complaint
-        // that admitted a just-created session.
-        const admitted = new Set(mintedSet);
-        for (const id of dirtySessionIds(clientFor(entry.machine.conn).base)) admitted.add(id);
-        if (acceptedUpdates?.epoch === epoch) {
-          for (const id of acceptedUpdates.ids) admitted.add(id);
-        }
-        const held = holdOrder(
-          epoch,
-          entry.sessions,
-          (session) => ({ id: session.id, millis: sessionMillis(session) }),
-          admitted,
-        );
-        const pending = new Set(held.pending);
-        return {
-          machine: entry.machine,
-          admitted,
-          ...held,
-          pendingByRoot: new Map(
-            groupByWorkDir(entry.sessions.filter((session) => pending.has(session.id))).map(
-              ([root, rows]) => [root, rows.map((session) => session.id)],
-            ),
-          ),
-        };
-      }),
-    [epoch, filtered, mintedSet, draftMessages, acceptedUpdates],
-  );
   // A filter is a FLEET question: it runs on every machine in scope, so the header
   // reports what came back and from how many of them.
   const searchCounts = useMemo(() => searchTally(filtered), [filtered]);
 
+  // Apply every canonical response immediately, including live and recent arrivals.
   const visible = useMemo(
-    () => (sessions === null ? null : heldRows.flatMap((entry) => entry.rows)),
-    [heldRows, sessions],
+    () => (sessions === null ? null : filtered.flatMap((entry) => entry.sessions)),
+    [filtered, sessions],
   );
 
   // The row the transcript beside this list belongs to, named the way a row names
@@ -1558,7 +1453,6 @@ export function SessionsScreen({
         const session = await clientFor(on).createSession({ root, groupId });
         // Open before refreshing the fleet. The full list walk is background work,
         // while the session the reader just requested is their immediate destination.
-        if (session.id) setMinted((was) => [session.id, ...was].slice(0, MINTED_KEEP));
         if (session.id) await onOpen(on, session.id, true);
         void load();
       } catch (cause) {
@@ -1574,7 +1468,6 @@ export function SessionsScreen({
   const forkSession = useCallback(
     async (session: Session, conn: GatewayConn) => {
       const forked = await clientFor(conn).forkSession(session.id);
-      if (forked.id) setMinted((was) => [forked.id, ...was].slice(0, MINTED_KEEP));
       if (forked.id) await onOpen(conn, forked.id, true);
       void load();
     },
@@ -1749,28 +1642,24 @@ export function SessionsScreen({
   // complete local match set, always within their owning machine.
   const sections = useMemo(
     () =>
-      heldRows.map((entry) => ({
+      filtered.map((entry) => ({
         machine: entry.machine,
         // Carry page agreement with each machine entry.
         reading: {
           pageSize,
-          epoch,
-          admitted: entry.admitted,
           isVisible,
-          pendingByRoot: entry.pendingByRoot,
-          acceptUpdates,
         },
         // Keep canonical gateway paths for identity and creation; shorten only for paint.
         groups: searching
-          ? searchGroups(entry.rows, (session) => isRowUnread(entry.machine.conn, session))
+          ? searchGroups(entry.sessions, (session) => isRowUnread(entry.machine.conn, session))
           : projectGroups(
               entry.machine.overview,
-              entry.rows,
+              entry.sessions,
               (session) => isRowUnread(entry.machine.conn, session),
               readSinceCounted(entry.machine, (session) => isRowSeen(entry.machine.conn, session)),
             ),
       })),
-    [heldRows, searching, pageSize, epoch, isVisible, acceptUpdates, isRowUnread, isRowSeen],
+    [filtered, searching, pageSize, isVisible, isRowUnread, isRowSeen],
   );
 
   // Project management uses gateway overview counts, matching the visible headers.

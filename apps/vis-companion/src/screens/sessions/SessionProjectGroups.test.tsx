@@ -164,11 +164,7 @@ function mount(
       }}
       reading={{
         pageSize: 10,
-        epoch: null,
-        admitted: new Set<string>(),
         isVisible: true,
-        pendingByRoot: new Map(),
-        acceptUpdates: vi.fn(),
       }}
       creation={started}
       initiallyOpen
