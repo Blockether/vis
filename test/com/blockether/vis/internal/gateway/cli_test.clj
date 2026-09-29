@@ -4,6 +4,7 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.gateway.cli :as gateway-cli]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
+            [com.blockether.vis.internal.gateway.pairing :as pairing]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
@@ -150,3 +151,62 @@
             (#'gateway-cli/cli-gateway-stop! {} [])))
         (expect (str/includes? (first @lines) "no final state"))
         (expect (not (str/includes? (first @lines) "{"))))))
+
+(defdescribe
+  web-command-test
+  (it "takes a TCP port and refuses anything else"
+      (expect (nil? (#'gateway-cli/web-port nil)))
+      (expect (= 8080 (#'gateway-cli/web-port " 8080 ")))
+      (doseq [bad ["0" "65536" "http" "-1"]]
+        (expect (try (#'gateway-cli/web-port bad)
+                     false
+                     (catch clojure.lang.ExceptionInfo e
+                       (and (:vis/user-error (ex-data e))
+                            (str/includes? (ex-message e) "1 to 65535"))))
+                bad)))
+  (it "refuses --host or --port together with --gateway"
+      (with-redefs-fn {#'config/init-cli! (constantly nil)
+                       #'gateway-client/remote-gateway
+                       (constantly {:host "10.0.0.5" :port 7890 :remote? true})}
+        (fn []
+          (expect (try (#'gateway-cli/cli-web! {"port" "8080"} [])
+                       false
+                       (catch clojure.lang.ExceptionInfo e
+                         (str/includes? (ex-message e) "--gateway already names one")))))))
+  (it "says where a gateway that cannot move runs and how to open the app there"
+      (let [e (#'gateway-cli/web-error
+               (ex-info "moved"
+                        {:type :gateway/elsewhere
+                         :url "http://127.0.0.1:7890/"
+                         :host "127.0.0.1"
+                         :port 7890
+                         :reason :clients
+                         :clients 2
+                         :running-turns 1}))]
+        (expect (:vis/user-error (ex-data e)))
+        (expect (str/includes? (ex-message e) "already runs at http://127.0.0.1:7890/"))
+        (expect (str/includes? (ex-message e) "in use by 2 clients and 1 running turn"))
+        (expect (str/includes? (ex-message e) "`vis-agent web --host 127.0.0.1 --port 7890`"))))
+  (it "leaves an error it cannot explain unchanged"
+      (let [e (ex-info "boom" {:type :gateway/start-failed})]
+        (expect (identical? e (#'gateway-cli/web-error e)))))
+  (it "lists other devices and the token for a gateway bound beyond loopback"
+      (let [lines (atom [])]
+        (with-redefs-fn {#'commandline/stdout! #(swap! lines conj %)
+                         #'pairing/candidate-hosts (constantly ["10.0.0.5"])}
+          (fn []
+            (#'gateway-cli/web-ready!
+             {"no-open" true}
+             {:url "http://127.0.0.1:7890/" :host "0.0.0.0" :port 7890 :remote? false})))
+        (expect (= ["Vis web app: http://127.0.0.1:7890/" "Other devices: http://10.0.0.5:7890/"
+                    "This gateway requires its token: `vis-agent gateway pair` prints it."
+                    "Press Ctrl-C to stop."]
+                   @lines))))
+  (it "prints only the address for a loopback or remote gateway"
+      (doseq [ready [{:url "http://127.0.0.1:7890/" :host "127.0.0.1" :port 7890 :remote? false}
+                     {:url "http://10.0.0.5:7890/" :host "10.0.0.5" :port 7890 :remote? true}]]
+        (let [lines (atom [])]
+          (with-redefs-fn {#'commandline/stdout! #(swap! lines conj %)}
+            (fn []
+              (#'gateway-cli/web-ready! {"no-open" true} ready)))
+          (expect (= [(str "Vis web app: " (:url ready)) "Press Ctrl-C to stop."] @lines))))))

@@ -2451,8 +2451,9 @@
      (help-row "--gateway HOST[:PORT]|URL" "Drive another machine's gateway (VIS_GATEWAY_URL).")
      (help-row "--gateway-token TOKEN" "Bearer token that gateway requires (VIS_GATEWAY_TOKEN).") ""
      "WEB APP"
-     (help-row "vis-agent web" "Start the local gateway and open the web app in a browser.") ""
-     "DESKTOP APP"
+     (help-row "vis-agent web" "Open the web app, starting the local gateway when needed.")
+     (help-row "vis-agent web --port PORT"
+               "Use the gateway on PORT, or start it there (also --host).") "" "DESKTOP APP"
      (help-row "vis-agent desktop" "Open the selected track: release download or dev source build.")
      (help-row "vis-agent desktop --update"
                "Check release updates, or rebuild the current dev source.")

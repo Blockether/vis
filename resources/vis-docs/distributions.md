@@ -225,24 +225,54 @@ lifecycle management.
 ## Open the web app
 
 The web app is the Companion app, served by your own gateway. Use it when you want Vis
-in a browser on the computer where it is installed, without installing a desktop app.
+in a browser without installing a desktop app, on the computer where Vis runs or on
+another device on your network.
 
 ```bash
-vis-agent web             # start the gateway if needed and open the web app
-vis-agent web --no-open   # print the address without opening a browser
+vis-agent web                  # use or start the gateway on 127.0.0.1:7890 and open the app
+vis-agent web --port 8080      # use or start the gateway on port 8080 instead
+vis-agent web --host 0.0.0.0   # also serve other devices on your network
+vis-agent web --no-open        # print the address without opening a browser
 ```
 
 The command prints the address it opens. Keep it running while you use the app, and
 press Ctrl-C when you are done. If the gateway stops answering, the command ends and
-tells you.
+tells you. `vis-agent gateway start` serves the web app too, and prints its address when
+the web app is installed.
 
-Release and beta builds include the web app, and `vis-agent update` installs it beside
-the native runtime, so you do not need Node.js. If `vis-agent web` reports that the web
-app is not installed, run `vis-agent update`. On the dev track, which runs Vis from
-source, the first `vis-agent web` builds the web app with Node.js and npm, and later
-runs rebuild it only after the Companion sources change. A gateway that is already
-running serves the new build without a restart. To serve a different build, set
-`VIS_WEB_DIR` to a directory that contains its `index.html` before the gateway starts.
+### Choose the gateway address
+
+`--host` and `--port` name the gateway the web app uses. They default to `127.0.0.1`
+and `7890`.
+
+- If your gateway already answers at that address, the web app uses it.
+- If no gateway is running, `vis-agent web` starts one there.
+- If your gateway runs at another address and nothing is using it, `vis-agent web`
+  restarts it at the new address. A gateway that another Vis session is using, or one
+  you started with `vis-agent gateway start`, stays where it is: the command tells you
+  where it runs and how to open the web app there.
+- If the host is another machine, or another gateway already answers at that address,
+  `vis-agent web` opens the web app of that gateway. Set `VIS_GATEWAY_TOKEN` when that
+  gateway requires a token.
+
+A gateway bound to `0.0.0.0` or to a network address always requires its token, also in
+your own browser. The web app asks for it, and `vis-agent gateway pair` shows it. The
+command also prints the addresses that other devices can open.
+
+### Get the web app
+
+Release and beta builds publish the web app with the native runtime, and
+`vis-agent update` installs it beside the runtime, so you do not need Node.js. If an
+installation has no web app, for example because an older `vis-agent` ran the update,
+the first `vis-agent web` downloads the copy published with the installed build. A build
+published before the web app existed has none: install a newer one with
+`vis-agent update` or `vis-agent update --track beta`.
+
+On the dev track, which runs Vis from source, the first `vis-agent web` builds the web
+app with Node.js and npm, and later runs rebuild it only after the Companion sources
+change. A gateway that is already running serves the new build without a restart. To
+serve a different build, set `VIS_WEB_DIR` to a directory that contains its
+`index.html` before the gateway starts.
 
 <a id="windows-app"></a>
 

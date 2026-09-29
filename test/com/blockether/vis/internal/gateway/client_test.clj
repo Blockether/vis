@@ -57,38 +57,128 @@
                                     (catch java.io.IOException _ true)))
                        (expect (= 1 @released)))))))
 
-(defdescribe web-app-holds-the-lease-until-its-gateway-stops-answering
-             (it "web app holds the lease until its gateway stops answering"
-                 ;; `vis-agent web` is the only client an auto-started gateway sees while the
-                 ;; browser tab is open, so it keeps its lease until the gateway itself is gone.
-                 (let [calls
-                       (atom [])
+(defdescribe
+  web-app-holds-the-lease-until-its-gateway-stops-answering
+  (it "web app holds the lease until its gateway stops answering"
+      ;; `vis-agent web` is the only client an auto-started gateway sees while the
+      ;; browser tab is open, so it keeps its lease until the gateway itself is gone.
+      (let [calls
+            (atom [])
 
-                       answers
-                       (atom [200 503 200 :down 500 404])]
+            answers
+            (atom [200 503 200 :down 500 404])]
 
-                   (with-redefs-fn {(rv 'ensure-gateway-serving!) (fn [path]
-                                                                    (swap! calls conj [:serve path])
-                                                                    fake-entry)
-                                    (rv 'ensure-client!) (fn [entry]
-                                                           (expect (= fake-entry entry))
-                                                           (swap! calls conj :acquire))
-                                    (rv 'gw-send!)
-                                    (fn [entry method path _]
-                                      (expect (= [fake-entry "GET" "/healthz"] [entry method path]))
-                                      (let [[answer] @answers]
-                                        (swap! answers rest)
-                                        (swap! calls conj :check)
-                                        (if (= :down answer)
-                                          (throw (java.net.ConnectException. "refused"))
-                                          {:status answer})))
-                                    (rv 'release-client!) #(swap! calls conj :release)}
-                     (fn []
-                       (expect (= 1 (client/run-web! #(swap! calls conj [:ready %]) 0)))
-                       (expect (= [[:serve "/"] :acquire [:ready "http://127.0.0.1:7890/"] :check
-                                   :check :check :check :check :check :release]
-                                  @calls))
-                       (expect (empty? @answers)))))))
+        (with-redefs-fn {(rv 'ensure-gateway-serving!) (fn [path & _]
+                                                         (swap! calls conj [:serve path])
+                                                         fake-entry)
+                         (rv 'ensure-client!) (fn [entry]
+                                                (expect (= fake-entry entry))
+                                                (swap! calls conj :acquire))
+                         (rv 'gw-send!) (fn [entry method path _]
+                                          (expect (= [fake-entry "GET" "/healthz"]
+                                                     [entry method path]))
+                                          (let [[answer] @answers]
+                                            (swap! answers rest)
+                                            (swap! calls conj :check)
+                                            (if (= :down answer)
+                                              (throw (java.net.ConnectException. "refused"))
+                                              {:status answer})))
+                         (rv 'release-client!) #(swap! calls conj :release)}
+          (fn []
+            (expect (= 1 (client/run-web! #(swap! calls conj [:ready (:url %)]) {:interval-ms 0})))
+            (expect (= [[:serve "/"] :acquire [:ready "http://127.0.0.1:7890/"] :check :check :check
+                        :check :check :check :release]
+                       @calls))
+            (expect (empty? @answers)))))))
+
+(defdescribe
+  web-app-uses-or-starts-the-gateway-at-its-address
+  ;; `vis-agent web --host/--port` names the gateway to use: this DB's daemon when it
+  ;; answers there, else that daemon started there, else the gateway answering there.
+  (let [running
+        (fn [m]
+          (merge {"status" "running" "managed" true "clients" 0 "running_turns" 0} m))
+
+        decide
+        (fn [{:keys [registered fresh? local? port-free? status]} opts]
+          (let [calls (atom [])]
+            (with-redefs-fn {(rv 'db-target) (constantly {:backend :sqlite
+                                                          :path "/tmp/vis-web-test.mdb"})
+                             #'discovery/read-registry (constantly registered)
+                             #'discovery/registry-fresh? (fn [entry _]
+                                                           (boolean (and fresh? entry)))
+                             #'client/local-host? (constantly (not= false local?))
+                             (rv 'port-free?) (fn [host port]
+                                                (swap! calls conj [:port-free? host port])
+                                                (not= false port-free?))
+                             (rv 'status) (constantly (running status))
+                             (rv 'stop-daemon!) #(swap! calls conj :stop)
+                             (rv 'await-daemon-down!) (fn [_ host port]
+                                                        (swap! calls conj [:down host port]))
+                             #'client/connect-remote! (fn [{:keys [url]}]
+                                                        (swap! calls conj [:attach url]))
+                             (rv 'ensure-gateway-serving!) (fn [& args]
+                                                             (swap! calls conj (into [:serve] args))
+                                                             fake-entry)}
+              (fn []
+                (try ((rv 'web-gateway!) opts)
+                     @calls
+                     (catch clojure.lang.ExceptionInfo e
+                       (conj @calls (select-keys (ex-data e) [:type :url :reason]))))))))
+
+        elsewhere
+        {:registered {:host "127.0.0.1" :port 7890 :pid 4242 :secret "s"} :fresh? true}]
+
+    (it "uses the database's gateway wherever it runs when no address is given"
+        (expect (= [[:serve "/"]] (decide elsewhere nil))))
+    (it "reuses the database's gateway when it already answers at the address"
+        (expect (= [[:serve "/"]]
+                   (decide {:registered {:host "0.0.0.0" :port 8080 :pid 4242 :secret "s"}
+                            :fresh? true}
+                           {:host "127.0.0.1" :port 8080}))))
+    (it "starts the gateway at the address when none runs, dialing loopback for every interface"
+        (expect (= [[:port-free? "127.0.0.1" 8080] [:serve "/" {:host "127.0.0.1" :port 8080}]]
+                   (decide {} {:port 8080})))
+        (expect (= [[:port-free? "127.0.0.1" 8080] [:serve "/" {:host "0.0.0.0" :port 8080}]]
+                   (decide {} {:host "0.0.0.0" :port 8080}))))
+    (it "moves an idle managed gateway to the address"
+        (expect (= [[:port-free? "127.0.0.1" 8080] :stop [:down "127.0.0.1" 7890]
+                    [:serve "/" {:host "127.0.0.1" :port 8080}]]
+                   (decide elsewhere {:port 8080}))))
+    (it "leaves a busy or user-owned gateway where it runs"
+        (expect (= [[:port-free? "127.0.0.1" 8080]
+                    {:type :gateway/elsewhere :url "http://127.0.0.1:7890/" :reason :clients}]
+                   (decide (assoc elsewhere :status {"clients" 1}) {:port 8080})))
+        (expect (= [[:port-free? "127.0.0.1" 8080]
+                    {:type :gateway/elsewhere :url "http://127.0.0.1:7890/" :reason :user-owned}]
+                   (decide (assoc elsewhere :status {"managed" false}) {:port 8080}))))
+    (it "attaches to the gateway on another machine or behind an occupied local port"
+        (expect (= [[:attach "10.0.0.5:8080"] [:serve "/"]]
+                   (decide {:local? false} {:host "10.0.0.5" :port 8080})))
+        (expect (= [[:port-free? "127.0.0.1" 8080] [:attach "127.0.0.1:8080"] [:serve "/"]]
+                   (decide {:port-free? false} {:port 8080}))))))
+
+(defdescribe web-app-addresses
+             (it "opens a bind on every interface on loopback and keeps IPv6 and remote URLs valid"
+                 (expect (= "http://127.0.0.1:7890/" ((rv 'web-url) {:host "0.0.0.0" :port 7890})))
+                 (expect (= "http://[::1]:7890/" ((rv 'web-url) {:host "::1" :port 7890})))
+                 (expect (= "https://gateway.example.com:443/"
+                            ((rv 'web-url)
+                              {:base-url "https://gateway.example.com:443" :remote? true}))))
+             (it "matches a daemon by its port and its bound address, every interface or loopback"
+                 (let [answers-at? (rv 'answers-at?)]
+                   (expect (answers-at? {:host "0.0.0.0" :port 8080} "127.0.0.1" 8080))
+                   (expect (answers-at? {:host "127.0.0.1" :port 8080} "127.0.0.1" 8080))
+                   (expect (answers-at? {:host "127.0.0.1" :port 8080} "localhost" 8080))
+                   (expect (answers-at? {:host "::1" :port 8080} "127.0.0.1" 8080))
+                   (expect (not (answers-at? {:host "127.0.0.1" :port 7890} "127.0.0.1" 8080)))
+                   (expect (not (answers-at? {:host "127.0.0.1" :port 8080} "0.0.0.0" 8080)))))
+             (it "starts gateways only on addresses of this machine"
+                 (expect (client/local-host? "127.0.0.1"))
+                 (expect (client/local-host? "0.0.0.0"))
+                 (expect (client/local-host? "::1"))
+                 ;; 192.0.2.0/24 is reserved for documentation (RFC 5737): never a local interface.
+                 (expect (not (client/local-host? "192.0.2.1")))))
 
 ;; Regression: direct API debugging reimplemented registry discovery and authentication
 ;; instead of using the gateway client's canonical transport.

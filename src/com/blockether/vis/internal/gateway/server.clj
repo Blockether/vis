@@ -2250,6 +2250,9 @@
           (.flush config/original-stdout))]
 
     (emit! (str "vis-agent gateway listening on http://" host ":" port))
+    (when (web/configured-root)
+      (emit!
+        (str "web app: http://" (if (pairing/wildcard-bind? host) "127.0.0.1" host) ":" port "/")))
     (if require-token?
       (emit! (str "bearer token: " token-file))
       (emit! "auth: disabled (loopback default; pass --require-token to enable)"))

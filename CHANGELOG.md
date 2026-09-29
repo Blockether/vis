@@ -20,7 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   builds include the web app, and `vis-agent update` installs it with the native
   runtime. On the dev track, the command builds the web app with npm when it is
   missing or out of date, and a gateway that is already running serves the new build
-  without a restart.
+  without a restart. `--host` and `--port` choose the gateway: the command uses the
+  gateway at that address, or starts it there. A release or beta installation without
+  the web app, such as one updated by an older `vis-agent`, downloads the copy
+  published with its build the first time you run the command.
 
 ### Changed
 - Documentation is easier to find. `apropos()` also matches documentation pages

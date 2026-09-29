@@ -125,18 +125,20 @@ and launcher options.
 
 ## Web app (browser)
 
-Open Vis in a browser on the computer where it is installed:
+Open Vis in a browser:
 
 ```bash
 vis-agent web
 ```
 
 This starts the gateway if needed and opens the web app in your default browser. The
-gateway serves the web app itself, so you do not need Node.js or another download. Keep
-the command running while you use the app, and press Ctrl-C when you are done. If the
-command reports that the web app is not installed, run `vis-agent update`. See
-[Web app setup](resources/vis-docs/distributions.md#open-the-web-app) for launcher
-options and source checkouts.
+gateway serves the web app itself, so you do not need Node.js. Keep the command running
+while you use the app, and press Ctrl-C when you are done. Choose the gateway address
+with `--host` and `--port`: for example, `vis-agent web --host 0.0.0.0` also serves
+other devices on your network. Release and beta installations download a missing web app
+the first time you run the command. See
+[Web app setup](resources/vis-docs/distributions.md#open-the-web-app) for addresses,
+tokens and source checkouts.
 
 ## Companion app (iPhone / Android)
 

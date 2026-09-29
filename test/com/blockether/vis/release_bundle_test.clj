@@ -361,7 +361,9 @@
           "{\"browser_download_url\":\"https://github.com/example/vis/releases/download/v9.9.9/vis-tui-linux-x64.tar.gz\"}]}' ;;\n"
           "  */vis-agent-linux-x64.tar.gz) cp \"$VIS_TEST_ARCHIVE\" \"$dest\" ;;\n"
           "  */vis-tui-linux-x64.tar.gz) cp \"$VIS_TEST_TUI_ARCHIVE\" \"$dest\" ;;\n"
-          "  */vis-web.tar.gz) cp \"$VIS_TEST_WEB_ARCHIVE\" \"$dest\" ;;\n"
+          ;; GitHub answers 404 (curl exit 22) for an asset the release does not publish.
+          "  */vis-web.tar.gz) [[ -f $VIS_TEST_WEB_ARCHIVE ]] || exit 22\n"
+          "    cp \"$VIS_TEST_WEB_ARCHIVE\" \"$dest\" ;;\n"
           "  */vis-companion-9.9.9-linux-x64.AppImage)\n"
           "    [[ ${VIS_TEST_DESKTOP_FAIL:-0} != 1 ]] || exit 22\n"
           "    printf '#!/usr/bin/env bash\\necho desktop-app\\n' > \"$dest\" ;;\n"
@@ -574,6 +576,55 @@
                                            env)]
             (expect (str/includes? output (str "web=" (.getCanonicalPath (io/file bin "vis-web"))))
                     output)))))
+  ;; An older launcher updates the runtime without `vis-web/`. The launcher it
+  ;; installs fetches the web app published with that runtime on first use.
+  (it "downloads the web app published with the installed runtime when it is missing"
+      (doseq [[stamp tag]
+              [["9.9.9 abc123 release now" "v9.9.9"]
+               [(str "9.9.9 " (apply str (repeat 40 "c")) " beta now")
+                (str "beta-" (apply str (repeat 40 "c")))]]
+
+              command
+              [["web" "--no-open"] ["gateway" "start"]]]
+
+        (with-native-install-fixture
+          {:installed? true :web? true}
+          (fn [{:keys [exit output bin native launcher env]}]
+            (expect (zero? exit) output)
+            (delete-tree! (io/file bin "vis-web"))
+            (spit (io/file bin "vis-agent-native.build") (str stamp "\n"))
+            (write-executable! native
+                               "#!/usr/bin/env bash\nprintf 'web=%s\\n' \"${VIS_WEB_DIR:-}\"\n")
+            (let [{:keys [exit output]}
+                  (run-bash (into ["bash" (.getAbsolutePath launcher)] command) env)
+
+                  urls
+                  (slurp (get env "VIS_TEST_URLS"))]
+
+              (expect (zero? exit) output)
+              (expect (str/includes? output (str "downloading the web app for " tag)) output)
+              (expect (str/includes? urls (str "/releases/download/" tag "/vis-web.tar.gz")) urls)
+              (expect (= "web-app" (slurp (io/file bin "vis-web/index.html"))))
+              (expect (str/includes? output
+                                     (str "web=" (.getCanonicalPath (io/file bin "vis-web"))))
+                      output))))))
+  (it "downloads nothing for help, a remote gateway or a command that serves no web app"
+      (with-native-install-fixture
+        {:installed? true :web? true}
+        (fn [{:keys [exit output bin native launcher env]}]
+          (expect (zero? exit) output)
+          (delete-tree! (io/file bin "vis-web"))
+          (write-executable! native "#!/usr/bin/env bash\necho ran\n")
+          (let [before (slurp (get env "VIS_TEST_URLS"))]
+            (doseq [[args extra-env] [[["web" "--help"] {}] [["--gateway" "10.0.0.5" "web"] {}]
+                                      [["web" "--no-open"] {"VIS_GATEWAY_URL" "10.0.0.5"}]
+                                      [["gateway" "status"] {}]]]
+              (let [{:keys [exit output]} (run-bash (into ["bash" (.getAbsolutePath launcher)] args)
+                                                    (merge env extra-env))]
+                (expect (zero? exit) output)
+                (expect (str/includes? output "ran") output)))
+            (expect (= before (slurp (get env "VIS_TEST_URLS"))))
+            (expect (not (.exists (io/file bin "vis-web"))))))))
   (it "removes an installed web app when the new release publishes none"
       (with-native-install-fixture
         {:installed? true :stale-web? true}
@@ -588,6 +639,10 @@
                              "#!/usr/bin/env bash\nprintf 'web=%s\\n' \"${VIS_WEB_DIR:-}\"\n")
           (let [{:keys [output]} (run-bash ["bash" (.getAbsolutePath launcher) "web" "--no-open"]
                                            env)]
+            (expect (str/includes? output "could not download the web app published for v9.9.9") output)
+            (expect (not (.exists (io/file bin "vis-web"))))
+            (expect (empty? (filter #(str/starts-with? (.getName ^java.io.File %) ".vis-web.")
+                                    (.listFiles ^java.io.File bin))))
             (expect (str/includes? output (str "web=" (.getCanonicalPath (io/file bin "vis-web"))))
                     output)))))
   (it "rejects incomplete bundles before replacing any installed component"

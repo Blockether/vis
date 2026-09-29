@@ -23,7 +23,7 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util])
   (:import (java.io BufferedReader File InputStream InputStreamReader)
-           (java.net URI URLEncoder)
+           (java.net InetAddress NetworkInterface URI URLEncoder)
            (java.nio.charset StandardCharsets)
            (java.util.concurrent.locks ReentrantLock)))
 
@@ -729,6 +729,17 @@
   "True for a bind a phone (or any other machine) can never reach."
   [host]
   (contains? #{"127.0.0.1" "::1" "localhost"} (str host)))
+
+(defn local-host?
+  "True when `host` names this machine: loopback, every interface, or the address of
+   one of its interfaces, so a gateway can be started there. A host that does not
+   resolve, or resolves to another machine, is remote."
+  [host]
+  (try (let [address (InetAddress/getByName (str host))]
+         (or (.isAnyLocalAddress address)
+             (.isLoopbackAddress address)
+             (some? (NetworkInterface/getByInetAddress address))))
+       (catch Exception _ false)))
 
 (defn status
   "Admin status of the gateway this process drives — the REMOTE target when one is
@@ -2150,17 +2161,116 @@
    refreshes this client's lease, the only liveness a remote lease has."
   5000)
 
+(defn- dial-host
+  "The host a client on this machine dials for a daemon bound to `host`. A bind on
+   every interface answers on loopback, and browsers refuse to open 0.0.0.0."
+  [host]
+  (if (contains? #{"" "0.0.0.0" "::" "[::]"} (str/trim (str host))) DEFAULT_HOST (str host)))
+
+(defn- url-host
+  "`host` as a URL writes it: an IPv6 literal goes in brackets."
+  [host]
+  (let [host (str host)]
+    (if (and (str/includes? host ":") (not (str/starts-with? host "["))) (str "[" host "]") host)))
+
+(defn- web-url
+  "The address a browser on this machine opens the web app of gateway `entry` at."
+  [entry]
+  (if (:remote? entry)
+    (str (base-url entry) "/")
+    (str "http://" (url-host (dial-host (:host entry))) ":" (:port entry) "/")))
+
+(defn- answers-at?
+  "True when daemon `entry` answers at `host`:`port`: it listens on that port, bound
+   to that address or to every interface. Loopback addresses count as one, so
+   `localhost` finds a daemon bound to 127.0.0.1."
+  [entry host port]
+  (and (= (long port) (long (or (:port entry) -1)))
+       (try (let [bound
+                  (InetAddress/getByName (str (:host entry)))
+
+                  wanted
+                  (InetAddress/getByName (str host))]
+
+              (or (.isAnyLocalAddress bound)
+                  (= bound wanted)
+                  (and (.isLoopbackAddress bound) (.isLoopbackAddress wanted))))
+            (catch Exception _ false))))
+
+(defn- web-gateway!
+  "The gateway `vis-agent web` opens the app on, serving `/`.
+
+   Without `:host` and `:port` it is the daemon for the current DB, started when none
+   runs. An address names the gateway to use: the DB's daemon when it already
+   answers there, else that daemon started there. A daemon listening elsewhere moves
+   only when it is managed and idle; a busy or user-owned one stays where it is and
+   the call throws `:gateway/elsewhere`. Any other gateway answering at the address,
+   and every gateway on another machine, is attached to like `--gateway`, with
+   `VIS_GATEWAY_TOKEN` as its token."
+  [{:keys [host port]}]
+  (if-not (or host port)
+    (ensure-gateway-serving! "/")
+    (let [host
+          (or host DEFAULT_HOST)
+
+          port
+          (long (or port DEFAULT_PORT))
+
+          attach!
+          (fn []
+            (connect-remote! {:url (str (url-host host) ":" port)
+                              :token (System/getenv REMOTE_TOKEN_ENV)})
+            (ensure-gateway-serving! "/"))]
+
+      (if-not (local-host? host)
+        (attach!)
+        (let [db
+              (db-target)
+
+              entry
+              (discovery/read-registry db)
+
+              running?
+              (discovery/registry-fresh? entry probe-entry?)]
+
+          (cond (and running? (answers-at? entry host port)) (ensure-gateway-serving! "/")
+                (not (port-free? (dial-host host) port)) (attach!)
+                (not running?) (ensure-gateway-serving! "/" {:host host :port port})
+                :else (let [{:keys [idle? reason clients running-turns]} (daemon-idle? (status))]
+                        (when-not idle?
+                          (throw (ex-info (str "the gateway for this DB runs at "
+                                               (web-url entry)
+                                               " and stays there ("
+                                               (name reason)
+                                               ")")
+                                          {:type :gateway/elsewhere
+                                           :url (web-url entry)
+                                           :host (:host entry)
+                                           :port (:port entry)
+                                           :reason reason
+                                           :clients clients
+                                           :running-turns running-turns})))
+                        (stop-daemon!)
+                        (await-daemon-down! db (:host entry) (:port entry))
+                        (ensure-gateway-serving! "/" {:host host :port port}))))))))
+
 (defn run-web!
-  "Serve the Companion web app from this runtime's gateway while holding a client
-   lease, as [[run-tui!]] does for the terminal client. `on-ready` receives the app
-   URL once the gateway serves it. Blocks while the gateway answers and returns
-   exit code 1 after three failed checks in a row; Ctrl-C ends the process, and the
-   shutdown hook releases the lease."
-  ([on-ready] (run-web! on-ready web-watch-interval-ms))
-  ([on-ready interval-ms]
-   (try (let [entry (ensure-gateway-serving! "/")]
+  "Serve the Companion web app from a gateway while holding a client lease, as
+   [[run-tui!]] does for the terminal client. `opts` may name the gateway address
+   (`:host`, `:port`; see [[web-gateway!]]) and the milliseconds between health
+   checks (`:interval-ms`). `on-ready` receives `{:url :host :port :remote?}` once
+   the gateway serves the app: the browser address, then the daemon's bind host
+   and port. Blocks while the gateway answers and returns exit code 1 after three
+   failed checks in a row; Ctrl-C ends the process, and the shutdown hook releases
+   the lease."
+  ([on-ready] (run-web! on-ready nil))
+  ([on-ready {:keys [interval-ms] :or {interval-ms web-watch-interval-ms} :as opts}]
+   (try (let [entry (web-gateway! opts)]
           (ensure-client! entry)
-          (on-ready (str (base-url entry) "/"))
+          (on-ready {:url (web-url entry)
+                     :host (:host entry)
+                     :port (:port entry)
+                     :remote? (boolean (:remote? entry))})
           (loop [misses 0]
             (if (>= misses 3)
               1

@@ -289,51 +289,126 @@
                          "  vis-agent gateway status"))))))
 
 (def ^:private web-app-missing
-  (str "The Vis web app is not installed.\n"
-       "  Run `vis-agent update` to install it with the native runtime, or build it in a\n"
-       "  source checkout with `npm run build:web` in apps/vis-companion."))
+  (str "The Vis web app is not installed with this runtime.\n"
+       "  Release and beta installations download it when `vis-agent web` first runs, and\n"
+       "  report a failed download above. Builds published before the web app have none:\n"
+       "  install a newer one with `vis-agent update` or `vis-agent update --track beta`."))
+
+(defn- web-port
+  "The `--port` of `vis-agent web` as a TCP port, or nil when none was given."
+  [raw]
+  (when-let [raw (some-> raw
+                         str
+                         str/trim
+                         not-empty)]
+    (let [port (parse-long raw)]
+      (when-not (and port (<= 1 port 65535))
+        (throw (ex-info (str "--port takes a TCP port from 1 to 65535, not " (pr-str raw))
+                        {:vis/user-error true})))
+      port)))
+
+(defn- web-error
+  "The user-facing form of a gateway error `vis-agent web` can explain, else `e`."
+  [e]
+  (let [{:keys [type url host port reason clients running-turns]} (ex-data e)]
+    (case type
+      :gateway/route-missing-busy
+      (ex-info (str "The running gateway was started without the web app and is in use.\n"
+                    "  Close the Vis sessions using it, or run `vis-agent gateway stop`,\n"
+                    "  then run `vis-agent web` again.")
+               {:vis/user-error true}
+               e)
+
+      :gateway/elsewhere
+      (ex-info (str "This database's gateway already runs at "
+                    url
+                    ", "
+                    (case reason
+                      :user-owned
+                      "started with `vis-agent gateway start`,"
+
+                      (:clients :running-turns)
+                      (str "in use by "
+                           (plural clients "client")
+                           " and "
+                           (plural running-turns "running turn")
+                           ",")
+
+                      "in a state Vis could not read,")
+                    " so it stays there.\n"
+                    "  Open the web app on it with `vis-agent web --host " host
+                    " --port " port
+                    "`,\n" "  or stop it with `vis-agent gateway stop` and run this command again.")
+               {:vis/user-error true}
+               e)
+
+      e)))
+
+(defn- web-ready!
+  "Print where the web app runs, and open it unless `--no-open` was given. A gateway
+   bound beyond loopback also serves other devices, and requires its token there."
+  [parsed {:keys [url host port remote?]}]
+  (commandline/stdout! (str "Vis web app: " url))
+  (when-not (or remote? (contains? #{"127.0.0.1" "::1" "localhost"} (str host)))
+    (when-let [others (->> (pairing/candidate-hosts host)
+                           (remove #{"127.0.0.1" "::1" "localhost"})
+                           (map #(str "http://" % ":" port "/"))
+                           seq)]
+      (commandline/stdout! (str "Other devices: " (str/join ", " others))))
+    (commandline/stdout! "This gateway requires its token: `vis-agent gateway pair` prints it."))
+  (commandline/stdout! "Press Ctrl-C to stop.")
+  (when-not (or (get parsed "no-open") (= :ok (:status (external-opener/open! url))))
+    (commandline/stdout! "Could not open a browser; open the address above.")))
 
 (defn- cli-web!
-  "Start or reuse the local gateway, open the web app it serves, and hold a client
-   lease until Ctrl-C so an auto-started gateway stays up while the app is in use."
+  "Open the web app on the gateway at `--host`/`--port`, starting this database's
+   gateway there when none answers, and hold a client lease until Ctrl-C so an
+   auto-started gateway stays up while the app is in use."
   [parsed _residual]
   (config/init-cli!)
   (when-let [db (get parsed "db")]
     (System/setProperty "vis.db.path" db))
-  (when-not (or (gateway-client/remote-gateway) (web/configured-root))
-    (throw (ex-info web-app-missing {:vis/user-error true})))
-  (let [exit
-        (try (gateway-client/run-web!
-               (fn [url]
-                 (commandline/stdout! (str "Vis web app: " url "\nPress Ctrl-C to stop."))
-                 (when-not (or (get parsed "no-open") (= :ok (:status (external-opener/open! url))))
-                   (commandline/stdout! "Could not open a browser; open the address above."))))
-             (catch clojure.lang.ExceptionInfo e
-               (throw (if (= :gateway/route-missing-busy (:type (ex-data e)))
-                        (ex-info
-                          (str
-                            "The running gateway was started without the web app and is in use.\n"
-                            "  Close the Vis sessions using it, or run `vis-agent gateway stop`,\n"
-                            "  then run `vis-agent web` again.")
-                          {:vis/user-error true}
-                          e)
-                        e))))]
-    (commandline/stdout! "The gateway stopped answering; the web app is closed.")
-    (shutdown-agents)
-    (System/exit (int exit))))
+  (let [host
+        (some-> (get parsed "host")
+                str/trim
+                not-empty)
+
+        port
+        (web-port (get parsed "port"))]
+
+    (when (and (or host port) (gateway-client/remote-gateway))
+      (throw (ex-info (str "--host and --port choose the gateway `vis-agent web` uses or starts;\n"
+                           "  --gateway already names one. Pass one or the other.")
+                      {:vis/user-error true})))
+    (when-not (or (gateway-client/remote-gateway)
+                  (and host (not (gateway-client/local-host? host)))
+                  (web/configured-root))
+      (throw (ex-info web-app-missing {:vis/user-error true})))
+    (let [exit (try (gateway-client/run-web! #(web-ready! parsed %) {:host host :port port})
+                    (catch clojure.lang.ExceptionInfo e (throw (web-error e))))]
+      (commandline/stdout! "The gateway stopped answering; the web app is closed.")
+      (shutdown-agents)
+      (System/exit (int exit)))))
 
 (def web-command
   {:cmd/name "web"
    :cmd/doc
-   "Start the local gateway and open the Vis web app it serves. Keep it running while you use the app; Ctrl-C stops it."
-   :cmd/usage "vis-agent web [--no-open] [--db PATH]"
+   "Open the Vis web app in a browser from the gateway at --host/--port, starting this database's gateway there when none answers. Keep it running while you use the app; Ctrl-C stops it."
+   :cmd/usage "vis-agent web [--host 127.0.0.1] [--port 7890] [--no-open] [--db PATH]"
    :cmd/args
-   [{:name "no-open" :kind :flag :type :boolean :doc "Print the address without opening a browser."}
+   [{:name "host"
+     :kind :flag
+     :type :string
+     :doc
+     "Gateway host (default 127.0.0.1). 0.0.0.0 or a LAN address serves other devices too, and requires the gateway token. A host on another machine attaches to the gateway running there, with VIS_GATEWAY_TOKEN as its token."}
+    {:name "port" :kind :flag :type :string :doc "Gateway port (default 7890)."}
+    {:name "no-open" :kind :flag :type :boolean :doc "Print the address without opening a browser."}
     {:name "db"
      :kind :flag
      :type :string
      :doc "SQLite DB path whose gateway serves the app (default ~/.vis/vis.mdb or VIS_DB_PATH)."}]
-   :cmd/examples ["vis-agent web" "vis-agent web --no-open"]
+   :cmd/examples ["vis-agent web" "vis-agent web --port 8080"
+                  "vis-agent web --host 0.0.0.0 --no-open"]
    :cmd/run-fn cli-web!})
 
 (def command

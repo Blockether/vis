@@ -1488,6 +1488,51 @@ vis_prepare_dev_web() {
   export VIS_WEB_DIR="$build"
 }
 
+# The commands that serve the web app from a gateway on THIS machine: `web` and
+# `gateway start`, unless they target a remote gateway or only print help.
+vis_serves_local_web() {
+  local arg
+  [[ -z "${VIS_GATEWAY_URL:-}" || -z "${VIS_GATEWAY_URL// /}" ]] || return 1
+  [[ "${1:-}" == web || "${1:-} ${2:-}" == "gateway start" ]] || return 1
+  for arg in "$@"; do
+    case "$arg" in --gateway|--gateway=*|--help|-h) return 1 ;; esac
+  done
+}
+
+# A release or beta runtime serves the web app published with it from `vis-web/`
+# beside it. A launcher older than the web app updates the runtime without that
+# folder, so fetch it from the runtime's own release before the first use. A
+# failure is reported and left to the command, which explains what is missing.
+vis_install_native_web() {
+  local native_home="$1" stamp="$2" version commit track _metadata tag url staging
+  [[ ! -f "$native_home/vis-web/index.html" && -f "$stamp" ]] || return 0
+  read -r version commit track _metadata < "$stamp" || return 0
+  case "$track" in
+    release) tag="v$version" ;;
+    beta) tag="beta-$commit" ;;
+    *) return 0 ;;
+  esac
+  if ! command -v curl >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1; then
+    warn "web: downloading the web app for $tag needs curl and tar"
+    return 0
+  fi
+  if ! staging="$(mktemp -d "$native_home/.vis-web.XXXXXX")"; then
+    warn "web: cannot install the web app into $native_home"
+    return 0
+  fi
+  url="https://github.com/$vis_repo_slug/releases/download/$tag/vis-web.tar.gz"
+  say "downloading the web app for $tag"
+  # curl names the reason: a release without the asset answers 404.
+  if ! curl -fsSL --connect-timeout 10 "$url" -o "$staging/vis-web.tar.gz"; then
+    warn "web: could not download the web app published for $tag"
+  elif ! tar -xzf "$staging/vis-web.tar.gz" -C "$staging" 2>/dev/null || [[ ! -f "$staging/vis-web/index.html" ]]; then
+    warn "web: the web app published for $tag has no index.html"
+  elif ! { rm -rf "$native_home/vis-web" && mv "$staging/vis-web" "$native_home/vis-web"; }; then
+    warn "web: cannot install the web app into $native_home"
+  fi
+  rm -rf "$staging"
+}
+
 # ── Wrapper-owned commands. The Vis app never sees these. ────────────────────
 case "${1:-}" in
   runtime) die "unknown command: runtime" "Run: vis-agent update --help" ;;
@@ -1579,7 +1624,10 @@ case "$runtime" in
     fi
     # The gateway serves the web app from the static build installed beside this
     # runtime, so `vis-agent web` needs no Node. The folder is named even before
-    # `vis-agent update` installs it: the gateway looks it up per request.
+    # it is installed: the gateway looks it up per request.
+    if [[ -z "${VIS_WEB_DIR:-}" ]] && vis_serves_local_web "$@"; then
+      vis_install_native_web "$native_home" "$native_runtime.build"
+    fi
     export VIS_WEB_DIR="${VIS_WEB_DIR:-$native_home/vis-web}"
     stream_trace_args=()
     if stream_trace_on; then stream_trace_args=("-Dsvar.stream.trace=true"); fi
