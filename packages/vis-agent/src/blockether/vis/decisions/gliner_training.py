@@ -17,7 +17,14 @@ from urllib.request import urlopen
 
 from ._models import ARCHITECTURES
 from ._trainer import TrainingResult
-from .training import TrainingBundle, _inventory, _manifest, _safe_name, _sha256
+from .training import (
+    TrainingBundle,
+    _inventory,
+    _manifest,
+    _safe_name,
+    _sha256,
+    _valid_partial,
+)
 
 _REQUIRED = {
     "config.json",
@@ -28,19 +35,6 @@ _REQUIRED = {
 }
 _OPTIONAL = {"special_tokens_map.json"}
 _MAX_EXPANDED_BYTES = 3_000_000_000
-
-
-def _valid_partial(value: object) -> bool:
-    """Accept only the step counts and run digest that a resumable checkpoint needs."""
-    return (
-        isinstance(value, dict)
-        and set(value) == {"step", "max_steps", "fingerprint"}
-        and type(value["step"]) is int
-        and type(value["max_steps"]) is int
-        and 1 <= value["step"] < value["max_steps"]
-        and isinstance(value["fingerprint"], str)
-        and re.fullmatch(r"[0-9a-f]{64}", value["fingerprint"]) is not None
-    )
 
 
 @dataclass(frozen=True)

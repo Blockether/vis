@@ -8,10 +8,8 @@ records only a digest of its rows and settings, so that the same run can resume.
 from __future__ import annotations
 
 import gc
-import hashlib
 import json
 import math
-import os
 import random
 import shutil
 import tempfile
@@ -20,7 +18,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ._trainer import TrainingResult, _config, _export_fp32, _quality_report
+from ._trainer import (
+    TrainingResult,
+    _config,
+    _export_fp32,
+    _fingerprint,
+    _publish_checkpoint,
+    _quality_report,
+)
 from .training import _sha256
 
 if TYPE_CHECKING:
@@ -163,27 +168,6 @@ def _training_config(source: str | Path) -> dict:
     if type(config.get("seed", 42)) is not int:
         raise ValueError("Training seed must be an integer")
     return config
-
-
-def _fingerprint(rows: list[_Example], config: dict) -> str:
-    """Identify one training run by its ordered rows and trajectory settings."""
-    digest = hashlib.sha256()
-    settings = {
-        "epochs": config.get("epochs", 1),
-        "max_steps": config.get("max_steps"),
-        "batch_size": config.get("batch_size", 1),
-        "encoder_lr": config["encoder_lr"],
-        "task_lr": config["task_lr"],
-        "seed": config.get("seed", 42),
-    }
-    digest.update(json.dumps(settings, sort_keys=True).encode())
-    for row in rows:
-        digest.update(
-            json.dumps(
-                [row.text, row.tasks, row.target, row.action], ensure_ascii=False
-            ).encode()
-        )
-    return digest.hexdigest()
 
 
 class _Schedule:
@@ -451,7 +435,17 @@ class GlinerTrainer:
         )
         if len(dataset) != len(rows):
             raise ValueError("GLiNER rejected a training example")
-        fingerprint = _fingerprint(rows, config)
+        fingerprint = _fingerprint(
+            {
+                "epochs": config.get("epochs", 1),
+                "max_steps": config.get("max_steps"),
+                "batch_size": config.get("batch_size", 1),
+                "encoder_lr": config["encoder_lr"],
+                "task_lr": config["task_lr"],
+                "seed": config.get("seed", 42),
+            },
+            ([row.text, row.tasks, row.target, row.action] for row in rows),
+        )
         schedule = _Schedule(len(dataset), config)
         if schedule.total > 100_000:
             raise ValueError("GLiNER training must plan at most 100000 steps")
@@ -487,37 +481,12 @@ class GlinerTrainer:
                     },
                 )
                 shutil.rmtree(saved)
-                target.mkdir(exist_ok=True)
-                current = target / "checkpoint"
-                if current.exists():
-                    current.rename(staging / "replaced")
-                pending.rename(current)
-                shutil.rmtree(staging / "replaced", ignore_errors=True)
-                report = staging / "training_report.json"
-                report.write_text(
-                    json.dumps(
-                        {
-                            "steps": step,
-                            "max_steps": schedule.total,
-                            "status": "checkpoint_saved"
-                            if step == schedule.total
-                            else "partial",
-                        },
-                        indent=2,
-                    )
-                    + "\n",
-                    encoding="utf-8",
+                return _publish_checkpoint(
+                    pending,
+                    target,
+                    {"steps": step, "max_steps": schedule.total},
+                    progress,
                 )
-                os.replace(report, target / "training_report.json")
-                if progress:
-                    progress(
-                        {
-                            "stage": "checkpoint_saved",
-                            "step": step,
-                            "max_steps": schedule.total,
-                        }
-                    )
-                return current
 
             def after_step(extractor: Any, metrics: dict) -> None:
                 step = schedule.done + extractor.global_step

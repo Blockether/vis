@@ -1,17 +1,21 @@
 """Laya decision-head fine-tuning and the shared FP32 export/validation path.
 
 Heavy dependencies are imported only after constructing ModernBertTrainer. Raw
-training and evaluation examples never enter checkpoint provenance or reports.
+training and evaluation examples never enter checkpoint provenance or reports. A
+partial checkpoint records only a digest of its rows and settings, so that the same
+run can resume.
 """
 
 from __future__ import annotations
 
 import gc
+import hashlib
 import json
 import math
+import os
 import shutil
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -85,6 +89,7 @@ def _config(source: str | Path, *, kind: str) -> dict:
             "train_encoder",
             "seed",
             "max_steps",
+            "checkpoint_steps",
         }:
             raise ValueError("Unknown training configuration option")
         epochs = config.get("epochs")
@@ -106,6 +111,11 @@ def _config(source: str | Path, *, kind: str) -> dict:
             or not 1 <= config.get("max_steps", 1000) <= 100_000
         ):
             raise ValueError("Training max_steps must be in [1,100000]")
+        if "checkpoint_steps" in config and (
+            type(config["checkpoint_steps"]) is not int
+            or not 1 <= config["checkpoint_steps"] <= 100_000
+        ):
+            raise ValueError("Training checkpoint_steps must be in [1,100000]")
     return config
 
 
@@ -168,6 +178,48 @@ def _export_fp32(
     )
 
 
+def _fingerprint(settings: dict, rows: Iterable[object]) -> str:
+    """Identify one training run by its trajectory settings and ordered rows."""
+    digest = hashlib.sha256(json.dumps(settings, sort_keys=True).encode())
+    for row in rows:
+        digest.update(json.dumps(row, ensure_ascii=False, sort_keys=True).encode())
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _publish_checkpoint(
+    pending: Path,
+    target: Path,
+    report: dict,
+    progress: Callable[[dict], None] | None,
+) -> Path:
+    """Replace ``target/checkpoint`` and its training report with a verified checkpoint.
+
+    ``pending`` is in a staging directory on the same file system as ``target``.
+    """
+    step, total = report["steps"], report["max_steps"]
+    target.mkdir(exist_ok=True)
+    current = target / "checkpoint"
+    replaced = pending.with_name("replaced")
+    if current.exists():
+        current.rename(replaced)
+    pending.rename(current)
+    shutil.rmtree(replaced, ignore_errors=True)
+    written = pending.with_name("training_report.json")
+    written.write_text(
+        json.dumps(
+            {**report, "status": "checkpoint_saved" if step == total else "partial"},
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    os.replace(written, target / "training_report.json")
+    if progress:
+        progress({"stage": "checkpoint_saved", "step": step, "max_steps": total})
+    return current
+
+
 class ModernBertTrainer:
     """Explicit CPU training. An ONNX inference bundle is never a checkpoint.
 
@@ -216,7 +268,9 @@ class ModernBertTrainer:
             raise ValueError("Decision target exceeds the number of options")
         return batch
 
-    def _checkpoint(self, directory: Path, *, parent: Path) -> None:
+    def _checkpoint(
+        self, directory: Path, *, parent: Path, partial: dict | None = None
+    ) -> None:
         directory.mkdir(parents=True)
         exporter = self._exporter
         exporter.save_file(
@@ -245,6 +299,8 @@ class ModernBertTrainer:
             "license": source.get("license", "Apache-2.0"),
             "files": files,
         }
+        if partial is not None:
+            metadata["partial"] = partial
         (directory / "PROVENANCE.json").write_text(
             json.dumps(metadata, indent=2) + "\n"
         )
@@ -368,7 +424,15 @@ class ModernBertTrainer:
         output_dir: str | Path,
         progress: Callable[[dict], None] | None = None,
     ) -> TrainingResult:
-        """Train both heads, persist a resumable checkpoint and prepare FP32."""
+        """Train both heads, keep resumable checkpoints and prepare FP32.
+
+        ``progress`` receives the step, ``max_steps``, epoch and loss about once per
+        percent of the run. With ``checkpoint_steps``, ``output_dir/checkpoint`` keeps
+        the latest partial checkpoint when training fails or stops. Training that
+        checkpoint with the same rows and settings resumes at its saved step.
+        """
+        if self._closed:
+            raise RuntimeError("Trainer is closed")
         rows = _examples(train_data)
         evaluation = _examples(eval_data)
         if {json.dumps(row, sort_keys=True) for row in rows} & {
@@ -380,7 +444,31 @@ class ModernBertTrainer:
         target = Path(output_dir).expanduser().resolve()
         if target.exists():
             raise FileExistsError(target)
-        target.mkdir(parents=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # One row per step in file order; every epoch starts again at the first row.
+        total = min(config.get("max_steps", 1000), len(rows) * config["epochs"])
+        fingerprint = _fingerprint(
+            {
+                "epochs": config["epochs"],
+                "max_steps": config.get("max_steps", 1000),
+                "learning_rate": config["learning_rate"],
+                "train_encoder": config.get("train_encoder", False),
+                "seed": config.get("seed", 42),
+            },
+            rows,
+        )
+        partial = json.loads(
+            (self.checkpoint.path / "PROVENANCE.json").read_text(encoding="utf-8")
+        ).get("partial")
+        done = (
+            partial["step"]
+            if partial
+            and partial["fingerprint"] == fingerprint
+            and partial["max_steps"] == total
+            else 0
+        )
+        every = config.get("checkpoint_steps")
+        interval = max(1, total // 100)
         model = self.agent.model
         torch = self._torch
         torch.manual_seed(config.get("seed", 42))
@@ -394,10 +482,39 @@ class ModernBertTrainer:
         losses = []
         model.train()
         try:
-            for _ in range(config["epochs"]):
-                for row in rows:
-                    if len(losses) >= config.get("max_steps", 1000):
-                        break
+            with tempfile.TemporaryDirectory(
+                prefix=".decision-train-", dir=target.parent
+            ) as temporary:
+
+                def save(step: int) -> Path:
+                    pending = Path(temporary) / "pending"
+                    self._checkpoint(
+                        pending,
+                        parent=self.checkpoint.path,
+                        partial=None
+                        if step == total
+                        else {
+                            "step": step,
+                            "max_steps": total,
+                            "fingerprint": fingerprint,
+                        },
+                    )
+                    return _publish_checkpoint(
+                        pending,
+                        target,
+                        {
+                            "steps": step,
+                            "max_steps": total,
+                            "initial_loss": losses[0],
+                            "final_loss": losses[-1],
+                        },
+                        progress,
+                    )
+
+                if progress:
+                    progress({"stage": "training", "step": done, "max_steps": total})
+                for step in range(done + 1, total + 1):
+                    row = rows[(step - 1) % len(rows)]
                     batch = self._batch(row)
                     optimizer.zero_grad(set_to_none=True)
                     logits, action_logits = model(*batch)
@@ -415,40 +532,22 @@ class ModernBertTrainer:
                     optimizer.step()
                     losses.append(float(loss.detach()))
                     if progress and (
-                        len(losses) == 1
-                        or len(losses) % max(1, config.get("max_steps", 1000) // 100)
-                        == 0
+                        step == done + 1 or step % interval == 0 or step == total
                     ):
                         progress(
                             {
                                 "stage": "training",
-                                "step": len(losses),
-                                "max_steps": min(
-                                    config.get("max_steps", 1000),
-                                    len(rows) * config["epochs"],
-                                ),
+                                "step": step,
+                                "max_steps": total,
+                                "epoch": round(step / len(rows), 4),
+                                "loss": losses[-1],
                             }
                         )
-                if len(losses) >= config.get("max_steps", 1000):
-                    break
-            optimizer.zero_grad(set_to_none=True)
-            model.eval()
-            checkpoint = target / "checkpoint"
-            self._checkpoint(checkpoint, parent=self.checkpoint.path)
-            if progress:
-                progress({"stage": "checkpoint_saved"})
-            (target / "training_report.json").write_text(
-                json.dumps(
-                    {
-                        "steps": len(losses),
-                        "initial_loss": losses[0],
-                        "final_loss": losses[-1],
-                        "status": "checkpoint_saved",
-                    },
-                    indent=2,
-                )
-                + "\n"
-            )
+                    if every and step % every == 0 and step < total:
+                        save(step)
+                optimizer.zero_grad(set_to_none=True)
+                model.eval()
+                checkpoint = save(total)
             if progress:
                 progress({"stage": "exporting"})
             result = self._prepare(

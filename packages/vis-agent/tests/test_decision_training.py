@@ -3,9 +3,11 @@
 import hashlib
 import io
 import json
+import math
 import sys
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from blockether.vis.decisions.training import TrainingBundle
@@ -273,3 +275,304 @@ def test_fp32_export_publishes_only_a_completed_preparation(tmp_path):
     with pytest.raises(ValueError, match="disagrees"):
         export("failed", fail)
     assert [path.name for path in exports.iterdir()] == ["fp32"]
+
+
+def trained_states(path: Path) -> list[str]:
+    """Fake Laya weights are the ordered example states that trained them."""
+    weights = (path / "model.safetensors").read_bytes()
+    return [] if weights == b"placeholder weights" else json.loads(weights)
+
+
+class FakeLoss(float):
+    def __add__(self, other: float) -> "FakeLoss":
+        return FakeLoss(float(self) + float(other))
+
+    def backward(self) -> None:
+        pass
+
+    def detach(self) -> "FakeLoss":
+        return self
+
+
+class FakeParameter:
+    requires_grad = True
+
+    def requires_grad_(self, value: bool) -> None:
+        self.requires_grad = value
+
+
+class FakeLaya:
+    """Laya stand-in whose loss falls with every state that it trained."""
+
+    def __init__(self, trained: list[str]) -> None:
+        self.trained = trained
+        self.current = None
+        self.head, self.encoder_weight = FakeParameter(), FakeParameter()
+        self.encoder = SimpleNamespace(
+            parameters=lambda: [self.encoder_weight],
+            config=SimpleNamespace(save_pretrained=self.save_encoder),
+        )
+
+    @staticmethod
+    def save_encoder(directory: Path) -> None:
+        directory.mkdir()
+        (directory / "config.json").write_text('{"model_type": "modernbert"}')
+
+    def parameters(self) -> list[FakeParameter]:
+        return [self.head, self.encoder_weight]
+
+    def train(self) -> None:
+        pass
+
+    def eval(self) -> None:
+        pass
+
+    def state_dict(self) -> dict:
+        return {"trained": list(self.trained)}
+
+    def __call__(self, state: str, *_) -> tuple[FakeLoss, FakeLoss]:
+        self.current = state
+        loss = math.nan if state == "poisoned" else 1 / (len(self.trained) + 1)
+        return FakeLoss(loss / 2), FakeLoss(loss / 2)
+
+
+def laya_trainer(bundle: TrainingBundle, prepare=None):
+    """Run the real ModernBertTrainer loop over Torch, Laya and export stand-ins."""
+    from blockether.vis.decisions._trainer import ModernBertTrainer, TrainingResult
+
+    model = FakeLaya(trained_states(bundle.path))
+
+    def validated(*, checkpoint, destination, **_):
+        (destination / "inference").mkdir()
+        (destination / "validation_report.json").write_text("{}")
+        return TrainingResult(
+            checkpoint,
+            destination / "inference",
+            destination / "validation_report.json",
+        )
+
+    trainer = object.__new__(ModernBertTrainer)
+    trainer.checkpoint = bundle
+    trainer.agent = SimpleNamespace(
+        model=model, cfg=json.loads((bundle.path / "rl_agent_config.json").read_text())
+    )
+    trainer._exporter = SimpleNamespace(
+        make_batch=lambda agent, state, questions: (
+            state,
+            None,
+            None,
+            [SimpleNamespace(sum=lambda: 2)],
+        ),
+        save_file=lambda weights, path: Path(path).write_text(
+            json.dumps(weights["trained"])
+        ),
+    )
+    optimizer = SimpleNamespace(
+        zero_grad=lambda set_to_none: None,
+        step=lambda: model.trained.append(model.current),
+    )
+    trainer._torch = SimpleNamespace(
+        manual_seed=lambda seed: None,
+        tensor=lambda value: value,
+        isfinite=math.isfinite,
+        optim=SimpleNamespace(AdamW=lambda parameters, lr: optimizer),
+        nn=SimpleNamespace(
+            functional=SimpleNamespace(cross_entropy=lambda logits, target: logits),
+            utils=SimpleNamespace(clip_grad_norm_=lambda *_, **__: None),
+        ),
+    )
+    trainer._prepare = prepare or validated
+    trainer._closed = False
+    return trainer
+
+
+def write_rows(path: Path, states: list[str]) -> Path:
+    question = {"type": "choice", "instructions": "Choose", "criteria": ["a", "b"]}
+    path.write_text(
+        "".join(
+            json.dumps(
+                {"state": state, "question": question, "target": index % 2, "action": 1}
+            )
+            + "\n"
+            for index, state in enumerate(states)
+        )
+    )
+    return path
+
+
+def laya_training(tmp_path: Path):
+    """Train a fake Laya checkpoint into ``tmp_path / name`` with one quality gate."""
+    evaluation = write_rows(tmp_path / "eval.jsonl", ["held out"])
+    policy = tmp_path / "policy.json"
+    policy.write_text('{"min_decision_accuracy": 0.5, "min_action_accuracy": 0.5}')
+
+    def train(bundle, name, data, config, *, progress=None, prepare=None):
+        with laya_trainer(bundle, prepare) as trainer:
+            return trainer.finetune(
+                train_data=data,
+                eval_data=evaluation,
+                training_config=config,
+                validation_policy=policy,
+                output_dir=tmp_path / name,
+                progress=progress,
+            )
+
+    return train
+
+
+def test_laya_training_resumes_a_partial_checkpoint_or_continues_on_new_rows(tmp_path):
+    """#297: Laya reports steps, keeps partial checkpoints and resumes like GLiNER."""
+    train = laya_training(tmp_path)
+    base = TrainingBundle.open(checkpoint(tmp_path / "base"))
+    rows = write_rows(tmp_path / "train.jsonl", [f"s{index}" for index in range(5)])
+    settings = {"epochs": 3, "learning_rate": 0.0001, "max_steps": 12}
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps(settings))
+    saving = tmp_path / "saving.json"
+    saving.write_text(json.dumps({**settings, "checkpoint_steps": 5}))
+    expected = [f"s{step % 5}" for step in range(12)]
+
+    events = []
+    reference = train(base, "reference", rows, config, progress=events.append)
+    assert trained_states(reference.checkpoint_dir) == expected
+    assert [event["step"] for event in events if event["stage"] == "training"] == list(
+        range(13)
+    )
+    assert events[1] == {
+        "stage": "training",
+        "step": 1,
+        "max_steps": 12,
+        "epoch": 0.2,
+        "loss": 1.0,
+    }
+    assert events[-3:] == [
+        {"stage": "checkpoint_saved", "step": 12, "max_steps": 12},
+        {"stage": "exporting"},
+        {"stage": "validated"},
+    ]
+    first = json.loads((reference.checkpoint_dir / "PROVENANCE.json").read_text())
+    assert "partial" not in first and first["parent_revision"] == "pinned"
+
+    def stop(event):
+        if event["stage"] == "training" and event["step"] == 8:
+            raise RuntimeError("Training stopped")
+
+    with pytest.raises(RuntimeError, match="stopped"):
+        train(base, "stopped", rows, saving, progress=stop)
+    stopped = tmp_path / "stopped"
+    assert sorted(path.name for path in stopped.iterdir()) == [
+        "checkpoint",
+        "training_report.json",
+    ]
+    assert not list(tmp_path.glob(".decision-train-*"))
+    assert trained_states(stopped / "checkpoint") == expected[:5]
+    report = json.loads((stopped / "training_report.json").read_text())
+    assert (report["steps"], report["max_steps"], report["status"]) == (
+        5,
+        12,
+        "partial",
+    )
+    partial = json.loads((stopped / "checkpoint/PROVENANCE.json").read_text())
+    assert partial["partial"]["step"] == 5 and partial["parent_revision"] == "pinned"
+
+    events = []
+    resumed = train(
+        TrainingBundle.open(stopped / "checkpoint"),
+        "resumed",
+        rows,
+        config,
+        progress=events.append,
+    )
+    assert events[:2] == [
+        {"stage": "training", "step": 5, "max_steps": 12},
+        {
+            "stage": "training",
+            "step": 6,
+            "max_steps": 12,
+            "epoch": 1.2,
+            "loss": pytest.approx(1 / 6),
+        },
+    ]
+    assert trained_states(resumed.checkpoint_dir) == expected
+    final = json.loads((resumed.checkpoint_dir / "PROVENANCE.json").read_text())
+    assert "partial" not in final
+    assert final["parent_revision"] == partial["revision"]
+    assert final["revision"] == first["revision"]
+
+    events = []
+    continued = train(
+        TrainingBundle.open(stopped / "checkpoint"),
+        "continued",
+        write_rows(tmp_path / "other.jsonl", ["n0", "n1"]),
+        config,
+        progress=events.append,
+    )
+    assert events[0] == {"stage": "training", "step": 0, "max_steps": 6}
+    assert trained_states(continued.checkpoint_dir) == expected[:5] + ["n0", "n1"] * 3
+
+
+def test_laya_training_failure_keeps_only_a_verified_checkpoint(tmp_path):
+    train = laya_training(tmp_path)
+    base = TrainingBundle.open(checkpoint(tmp_path / "base"))
+    config = tmp_path / "config.json"
+    config.write_text('{"epochs": 1, "learning_rate": 0.0001}')
+
+    def reject(*, destination, **_):
+        (destination / "inference").mkdir()
+        (destination / "validation_report.json").write_text("{}")
+        raise ValueError("Decision accuracy is below the quality policy")
+
+    rows = write_rows(tmp_path / "train.jsonl", ["s0", "s1"])
+    with pytest.raises(ValueError, match="below the quality policy"):
+        train(base, "rejected", rows, config, prepare=reject)
+    rejected = tmp_path / "rejected"
+    assert sorted(path.name for path in rejected.iterdir()) == [
+        "checkpoint",
+        "training_report.json",
+    ]
+    report = json.loads((rejected / "training_report.json").read_text())
+    assert report["status"] == "checkpoint_saved"
+    assert trained_states(TrainingBundle.open(rejected / "checkpoint").path) == [
+        "s0",
+        "s1",
+    ]
+    poisoned = write_rows(tmp_path / "poisoned.jsonl", ["poisoned"])
+    with pytest.raises(ValueError, match="non-finite"):
+        train(base, "poisoned", poisoned, config)
+    assert not (tmp_path / "poisoned").exists()
+    assert not list(tmp_path.glob(".decision-train-*"))
+
+
+def test_laya_checkpoint_steps_and_partial_provenance_are_validated(tmp_path):
+    from blockether.vis.decisions._trainer import _config
+
+    config = tmp_path / "config.json"
+    for value in (1, 100_000, 0, 100_001, True, 2.0):
+        config.write_text(
+            json.dumps(
+                {"epochs": 1, "learning_rate": 0.0001, "checkpoint_steps": value}
+            )
+        )
+        if value in (1, 100_000) and type(value) is int:
+            assert (
+                _config(config, kind="training configuration")["checkpoint_steps"]
+                == value
+            )
+        else:
+            with pytest.raises(ValueError, match="checkpoint_steps"):
+                _config(config, kind="training configuration")
+    root = checkpoint(tmp_path / "checkpoint")
+    provenance = json.loads((root / "PROVENANCE.json").read_text())
+    valid = {"step": 1, "max_steps": 3, "fingerprint": "a" * 64}
+    (root / "PROVENANCE.json").write_text(json.dumps({**provenance, "partial": valid}))
+    assert TrainingBundle.open(root).path == root.resolve()
+    for partial in (
+        {**valid, "step": 3},
+        {"step": 1, "max_steps": 3},
+        {**valid, "fingerprint": "A" * 64},
+    ):
+        (root / "PROVENANCE.json").write_text(
+            json.dumps({**provenance, "partial": partial})
+        )
+        with pytest.raises(ValueError, match="partial"):
+            TrainingBundle.open(root)

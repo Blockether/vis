@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import tempfile
 import zipfile
@@ -76,6 +77,19 @@ def _inventory(directory: Path) -> dict[str, dict]:
     }
 
 
+def _valid_partial(value: object) -> bool:
+    """Accept only the step counts and run digest that a resumable checkpoint needs."""
+    return (
+        isinstance(value, dict)
+        and set(value) == {"step", "max_steps", "fingerprint"}
+        and type(value["step"]) is int
+        and type(value["max_steps"]) is int
+        and 1 <= value["step"] < value["max_steps"]
+        and isinstance(value["fingerprint"], str)
+        and re.fullmatch(r"[0-9a-f]{64}", value["fingerprint"]) is not None
+    )
+
+
 @dataclass(frozen=True)
 class TrainingBundle:
     """Complete local checkpoint with both decision heads, not an ONNX graph."""
@@ -99,6 +113,8 @@ class TrainingBundle:
             raise ValueError(
                 "Only a complete safetensors training checkpoint is supported"
             )
+        if "partial" in provenance and not _valid_partial(provenance["partial"]):
+            raise ValueError("Invalid partial training progress")
         declared = provenance.get("files")
         if not isinstance(declared, dict) or not _REQUIRED <= declared.keys():
             raise ValueError(
