@@ -147,3 +147,51 @@ describe('the NEW badge', () => {
     expect(screen.queryByText('NEW')).not.toBeInTheDocument();
   });
 });
+
+// Regression, user report (paraphrased: when Council notifications wake sessions, the
+// sessions that were new drop out of the project's count): the header counted NEW over
+// the head window this device holds. A wake lifts the sessions it runs above every
+// conversation still waiting to be read, and pushes those out of that window.
+describe("the project header's NEW count", () => {
+  const woken = (count: number) =>
+    Array.from({ length: count }, (_, index) =>
+      listSession({
+        id: `w${index}`,
+        title: `Woken ${index}`,
+        live: true,
+        running_request_kind: 'council',
+        answer_count: 1,
+      }),
+    );
+  const unread = (id: string) =>
+    listSession({ id, title: id, answer_count: 2, is_unread: true, unread_answers: 1 });
+
+  it('counts every conversation the gateway calls new, not the window it served', async () => {
+    const view = renderSessionsScreen({
+      machines: [{ sessions: [...woken(20), unread('n1'), unread('n2')] }],
+    });
+    restore = view.restore;
+
+    expect(await screen.findByText('2 new')).toBeVisible();
+  });
+
+  it('takes a visit off the count once, before and after the read mark returns', async () => {
+    const rows = [unread('n1'), ...woken(19), unread('n2')];
+    const view = renderSessionsScreen({ machines: [{ sessions: rows }] });
+    restore = view.restore;
+    expect(await screen.findByText('2 new')).toBeVisible();
+
+    view.holdList();
+    act(() => view.setOpenSession({ conn: view.conns[0], sid: 'n1' }));
+    expect(screen.getByText('1 new')).toBeVisible();
+
+    // The gateway's next answer no longer counts n1: the visit is not taken off twice.
+    const read = { ...unread('n1'), title: 'Read loaded', is_unread: false, unread_answers: 0 };
+    view.setRows(0, [read, ...rows.slice(1)]);
+    act(() => view.setVisible(false));
+    act(() => view.setVisible(true));
+    act(() => view.releaseList());
+    expect(await screen.findByText('Read loaded')).toBeVisible();
+    expect(screen.getByText('1 new')).toBeVisible();
+  });
+});

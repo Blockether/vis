@@ -152,7 +152,11 @@ function listCursor(row: Session, dirty: ReadonlySet<string>): string {
   return `${band}:${sortKey(row, band)}:${row.id}`;
 }
 
-/** The stable totals the real gateway carries beside its session-list head. */
+/**
+ * The stable totals the real gateway carries beside its session-list head. NEW is the
+ * verdict each row is served with (`is_unread`), over every row, as the gateway's
+ * watermarks decide it for the whole store.
+ */
 function overviewFor(rows: Session[], saved: ProjectOverview[] = []) {
   const byRoot = new Map<string, Session[]>();
   for (const row of rows)
@@ -169,6 +173,7 @@ function overviewFor(rows: Session[], saved: ProjectOverview[] = []) {
       session_count: group.length,
       live_count: group.filter(sessionIsLive).length,
       awaiting_count: group.filter((row) => row.is_awaiting_input === true).length,
+      unread_count: group.filter((row) => row.is_unread === true).length,
       last_activity_ms: project?.last_activity_ms ?? 0,
     };
   });
@@ -178,6 +183,7 @@ function overviewFor(rows: Session[], saved: ProjectOverview[] = []) {
     session_count: rows.length,
     live_count: rows.filter(sessionIsLive).length,
     awaiting_count: rows.filter((row) => row.is_awaiting_input === true).length,
+    unread_count: rows.filter((row) => row.is_unread === true).length,
   };
 }
 /**

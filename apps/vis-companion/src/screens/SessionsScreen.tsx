@@ -62,10 +62,12 @@ import {
   machineKey,
   machineLabel,
   projectGroups,
+  readSinceCounted,
   searchGroups,
   reconcileMachines,
   resolveScope,
   sameOverview,
+  servedUnread,
   scopedMachines,
   SEARCH_UNPLACED,
   searchFanout,
@@ -612,18 +614,23 @@ export function SessionsScreen({
             reportedOverview && held?.overview && sameOverview(held.overview, reportedOverview)
               ? held.overview
               : reportedOverview;
+          // Rows are muted above for visits made here, but the overview counted what the
+          // gateway SERVED: that verdict travels beside the rows it no longer matches.
+          const countedUnread = servedUnread(rows, held?.countedUnread);
           if (
             held &&
             held.error === null &&
             held.answered &&
             merged === held.sessions &&
-            overview === held.overview
+            overview === held.overview &&
+            countedUnread === held.countedUnread
           )
             return;
           patchMachine(key, (machine) => ({
             ...machine,
             sessions: merged,
             overview,
+            countedUnread,
             error: null,
             answered: true,
             isRemembered: false,
@@ -949,6 +956,9 @@ export function SessionsScreen({
               session_count: projects.reduce((total, entry) => total + entry.session_count, 0),
               live_count: projects.reduce((total, entry) => total + entry.live_count, 0),
               awaiting_count: projects.reduce((total, entry) => total + entry.awaiting_count, 0),
+              ...(typeof overview.unread_count === 'number' && {
+                unread_count: projects.reduce((total, entry) => total + (entry.unread_count ?? 0), 0),
+              }),
             };
           }
         }
@@ -1435,16 +1445,30 @@ export function SessionsScreen({
       unreadAfterVisit(session, readFloors.get(sessionRowKey(conn, session.id))) > 0,
     [openRow, readFloors],
   );
+  // A row read to its newest answer HERE: open beside the list, or visited since. The
+  // gateway keeps counting it as new until its read mark returns with the next overview.
+  const isRowSeen = useCallback(
+    (conn: GatewayConn, session: Session) => {
+      const key = sessionRowKey(conn, session.id);
+      return key === openRow || (readFloors.get(key) ?? -1) >= answeredTurnCount(session);
+    },
+    [openRow, readFloors],
+  );
   // Per-machine tallies for the strip and the machine headers.
   const tallies = useMemo(
     () =>
       new Map(
         machines.map((machine) => [
           machineKey(machine.conn),
-          machineCounts(machine, sessionIsLive, (session) => isRowUnread(machine.conn, session)),
+          machineCounts(
+            machine,
+            sessionIsLive,
+            (session) => isRowUnread(machine.conn, session),
+            readSinceCounted(machine, (session) => isRowSeen(machine.conn, session)),
+          ),
         ]),
       ),
-    [machines, isRowUnread],
+    [machines, isRowUnread, isRowSeen],
   );
   const scopeMachine = scope
     ? (machines.find((machine) => machineKey(machine.conn) === scope) ?? null)
@@ -1692,9 +1716,10 @@ export function SessionsScreen({
               entry.machine.overview,
               entry.rows,
               (session) => isRowUnread(entry.machine.conn, session),
+              readSinceCounted(entry.machine, (session) => isRowSeen(entry.machine.conn, session)),
             ),
       })),
-    [heldRows, searching, pageSize, epoch, isVisible, acceptUpdates, isRowUnread],
+    [heldRows, searching, pageSize, epoch, isVisible, acceptUpdates, isRowUnread, isRowSeen],
   );
 
   // Project management uses gateway overview counts, matching the visible headers.

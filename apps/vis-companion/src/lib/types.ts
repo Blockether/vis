@@ -743,6 +743,12 @@ export interface ProjectOverview {
   session_count: number;
   live_count: number;
   awaiting_count: number;
+  /**
+   * Conversations in this project holding an answer the reader has not seen: every one
+   * the gateway holds, not only the rows a window happened to download. A snapshot saved
+   * before the gateway counted NEW does not carry it.
+   */
+  unread_count?: number;
   last_activity_ms: number;
 }
 
@@ -821,6 +827,8 @@ export interface GatewayOverview {
   session_count: number;
   live_count: number;
   awaiting_count: number;
+  /** Every conversation on this gateway holding an unseen answer, as each project counts it. */
+  unread_count?: number;
   server_time_ms?: number;
 }
 

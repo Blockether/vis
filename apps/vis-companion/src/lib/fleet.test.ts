@@ -9,6 +9,7 @@ import {
   machineLabel,
   projectGroups,
   projectLabel,
+  readSinceCounted,
   machineTally,
   reconcileMachines,
   resolveScope,
@@ -23,11 +24,13 @@ import {
   sessionInputCount,
   sessionIsLive,
   sessionOrder,
+  servedUnread,
   timeLabel,
   withSearchHits,
   type FleetMachine,
 } from './fleet';
 import type { GatewayConn, GatewayOverview, Session } from './types';
+import { unreadTurnCount } from './unread';
 
 const studio: GatewayConn = { url: 'http://studio.local:7890', label: 'studio' };
 const tower: GatewayConn = { url: 'http://tower.local:7890' };
@@ -789,5 +792,91 @@ describe('machineTally', () => {
       awaiting: 0,
       unread: 0,
     });
+  });
+});
+
+// Regression, user report (paraphrased: when Council notifications wake sessions, the
+// sessions that were new drop out of the project's count): a header counted NEW over the
+// head window, and a wake lifts the sessions it runs above every unread conversation.
+// A running session never shows NEW on its own row either.
+describe('the NEW a header counts', () => {
+  const overviewOf = (unread?: number): GatewayOverview => {
+    const counted = unread === undefined ? {} : { unread_count: unread };
+    return {
+      projects: [
+        {
+          root: '/repo/a',
+          project_id: 'p-a',
+          name: 'Vis',
+          session_count: 40,
+          live_count: 2,
+          awaiting_count: 0,
+          ...counted,
+          last_activity_ms: 300,
+        },
+      ],
+      project_count: 1,
+      session_count: 40,
+      live_count: 2,
+      awaiting_count: 0,
+      ...counted,
+    };
+  };
+  const inA = { root: '/repo/a' };
+  // The window after a wake: the two sessions it runs on top, one of them unread, and one
+  // unread conversation left under them. The gateway counts a third the wake pushed out.
+  const woken = (): Session[] => [
+    session('w1', { live: true, running_request_kind: 'council', workspace: inA }),
+    session('w2', {
+      live: true,
+      running_request_kind: 'council',
+      answer_count: 2,
+      is_unread: true,
+      unread_answers: 1,
+      workspace: inA,
+    }),
+    session('n1', { answer_count: 4, is_unread: true, unread_answers: 1, workspace: inA }),
+  ];
+  const isUnread = (row: Session) => unreadTurnCount(row) > 0;
+  const held = (rows: Session[], overview: GatewayOverview): FleetMachine => ({
+    ...machine(studio, rows),
+    overview,
+    countedUnread: servedUnread(rows),
+  });
+
+  it('keeps every conversation the gateway counted while a wake reorders the window', () => {
+    const overview = overviewOf(3);
+    expect(projectGroups(overview, woken(), isUnread)[0]?.tally.unread).toBe(3);
+    expect(machineCounts(held(woken(), overview), sessionIsLive, isUnread).unread).toBe(3);
+  });
+
+  it('takes a row read here off the count until the gateway has caught up', () => {
+    const rows = woken();
+    const before = held(rows, overviewOf(3));
+    const seen = readSinceCounted(before, (row) => row.id === 'n1');
+    expect(projectGroups(before.overview, rows, isUnread, seen)[0]?.tally.unread).toBe(2);
+    expect(machineCounts(before, sessionIsLive, isUnread, seen).unread).toBe(2);
+
+    // The read mark came back: n1 is neither counted nor served as new any more.
+    const read = rows.map((row) =>
+      row.id === 'n1' ? { ...row, is_unread: false, unread_answers: 0 } : row,
+    );
+    const after = held(read, overviewOf(2));
+    const stillSeen = readSinceCounted(after, (row) => row.id === 'n1');
+    expect(projectGroups(after.overview, read, isUnread, stillSeen)[0]?.tally.unread).toBe(2);
+    expect(machineCounts(after, sessionIsLive, isUnread, stillSeen).unread).toBe(2);
+  });
+
+  it('keeps the served verdict while an answer repeats it', () => {
+    const first = servedUnread(woken());
+    expect([...first].sort()).toEqual(['n1', 'w2']);
+    expect(servedUnread(woken(), first)).toBe(first);
+    expect(servedUnread(woken().slice(0, 2), first)).toEqual(new Set(['w2']));
+  });
+
+  it('counts the rows on screen for an overview without a NEW count', () => {
+    const overview = overviewOf();
+    expect(projectGroups(overview, woken(), isUnread)[0]?.tally.unread).toBe(1);
+    expect(machineCounts(held(woken(), overview), sessionIsLive, isUnread).unread).toBe(1);
   });
 });

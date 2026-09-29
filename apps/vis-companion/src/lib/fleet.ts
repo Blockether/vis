@@ -47,6 +47,13 @@ export interface FleetMachine {
    * counts, page by page.
    */
   overview?: GatewayOverview | null;
+  /**
+   * The rows of the answer that carried `overview` which the gateway served as NEW: the
+   * ones its `unread_count` includes. A visit mutes a held row's NEW long before the
+   * gateway's read mark returns in a fresh overview, so this is how a header tells a row
+   * the gateway still counts from one it has already let go (`readSinceCounted`).
+   */
+  countedUnread?: ReadonlySet<string>;
 }
 
 /** Identity of a machine in this screen: its transport URL. */
@@ -237,19 +244,66 @@ export function fleetError(machines: FleetMachine[]): string | null {
  *
  * WHAT IT HOLDS is the gateway's own count, never a count of the rows this device
  * paged in: the list is a window, so counting it read low and moved as pages landed.
- * Unread is counted over the window this device holds — the gateway marks each row
- * it serves — and an answer older than that window is not news any more.
+ * NEW is the gateway's count for the same reason. A Council wake lifts the sessions it
+ * runs to the top of the list, and a count taken over the window lost every unread
+ * conversation the wake pushed out of it. Rows read here since the gateway counted
+ * them come off until its read mark returns.
  */
 export function machineCounts(
   machine: FleetMachine,
   isLive: (session: Session) => boolean,
   isUnread: (session: Session) => boolean,
+  isReadSince: (session: Session) => boolean = () => false,
 ): { sessions: number; live: number; unread: number } {
   const rows = machine.sessions ?? [];
   const counted = machine.overview
     ? { sessions: machine.overview.session_count, live: machine.overview.live_count }
     : { sessions: rows.length, live: rows.filter(isLive).length };
-  return { ...counted, unread: rows.filter(isUnread).length };
+  return {
+    ...counted,
+    unread: unreadTally(machine.overview?.unread_count, rows, isUnread, isReadSince),
+  };
+}
+
+/**
+ * The rows a session-list answer served as NEW, which is the verdict the overview
+ * beside them counted. `previous` is returned when nothing changed, so an unchanged
+ * answer keeps the identity every memo hangs off.
+ */
+export function servedUnread(
+  rows: Session[],
+  previous?: ReadonlySet<string>,
+): ReadonlySet<string> {
+  const ids = new Set(rows.filter((row) => row.is_unread === true).map((row) => row.id));
+  const isSame =
+    previous !== undefined && previous.size === ids.size && [...ids].every((id) => previous.has(id));
+  return isSame ? previous : ids;
+}
+
+/**
+ * The rows of a machine's window the gateway COUNTED as new that this device has read
+ * since, as `isSeen` decides. Taking off exactly those keeps a header level with the
+ * rows under it after a visit, and never takes a visit off twice once the gateway's
+ * own count has caught up.
+ */
+export function readSinceCounted(
+  machine: FleetMachine,
+  isSeen: (session: Session) => boolean,
+): (session: Session) => boolean {
+  const counted = machine.countedUnread;
+  if (!counted || counted.size === 0) return () => false;
+  return (session) => counted.has(session.id) && isSeen(session);
+}
+
+/** The gateway's NEW less what was read here since; the rows' own when it counted none. */
+function unreadTally(
+  counted: number | undefined,
+  sessions: Session[],
+  isUnread: (session: Session) => boolean,
+  isReadSince: (session: Session) => boolean,
+): number {
+  if (typeof counted !== 'number') return sessions.filter(isUnread).length;
+  return Math.max(0, counted - sessions.filter(isReadSince).length);
 }
 
 /**
@@ -570,7 +624,7 @@ export interface Tally {
   live: number;
   /** Live sessions parked on human input. */
   awaiting?: number;
-  /** Finished answers the reader has not seen yet. */
+  /** Conversations holding an answer the reader has not seen yet. */
   unread?: number;
 }
 
@@ -630,12 +684,15 @@ export interface ProjectGroupView {
  * A machine's projects in canonical root order, matching the gateway contract.
  * Apply it to cached overviews and local-only roots too: response order, activity
  * and a root gaining an overview must not move existing headers.
- * The gateway owns counts; roots absent from its overview use the rows on screen.
+ * The gateway owns counts, NEW included; roots absent from its overview use the rows
+ * on screen. `isReadSince` names the rows read here since the gateway counted them
+ * (`readSinceCounted`).
  */
 export function projectGroups(
   overview: GatewayOverview | null | undefined,
   rows: Session[],
   isUnread: (session: Session) => boolean = () => false,
+  isReadSince: (session: Session) => boolean = () => false,
 ): ProjectGroupView[] {
   const held = groupByWorkDir(rows);
   const byRoot = new Map(held);
@@ -650,7 +707,7 @@ export function projectGroups(
         count: project.session_count,
         live: project.live_count ?? 0,
         awaiting: project.awaiting_count ?? 0,
-        unread: sessions.filter(isUnread).length,
+        unread: unreadTally(project.unread_count, sessions, isUnread, isReadSince),
       },
       sessions,
     };

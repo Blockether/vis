@@ -6156,6 +6156,28 @@
               (expect (= 1 (get-in by-root ["/repo/a" "unread_count"])))
               (expect (= 0 (get-in by-root ["/repo/b" "unread_count"])))
               (expect (= 1 (:unread_count overview))))))))
+  ;; Regression, user report (paraphrased: when Council notifications wake sessions,
+  ;; the sessions that were new drop out of the project's count): a wake runs a council
+  ;; turn, so the woken session is live and ranks first, and it still holds its NEW.
+  (it "keeps counting a NEW conversation while a Council wake runs it"
+      (with-redefs-fn {#'lp/db-info (constantly ::db)
+                       #'lp/projects (constantly [])
+                       ;; s1 and s3 were woken: their council turns are the newest turns
+                       ;; anywhere, yet only settled human answers count toward NEW.
+                       #'persistance/db-session-turn-stats
+                       (constantly {"s1" {:latest-turn-at 900 :turn-count 5 :answer-count 2}
+                                    "s2" {:latest-turn-at 100 :turn-count 3 :answer-count 3}
+                                    "s3" {:latest-turn-at 800 :turn-count 2 :answer-count 1}})
+                       #'lp/by-channel (constantly [{:id "s1"} {:id "s2"} {:id "s3"}])
+                       #'lp/session-read-marks (constantly {"s1" 1 "s2" 2 "s3" 1})
+                       #'state/session-project-root (constantly "/repo/a")
+                       #'bus/live-turns (constantly {"s1" "council" "s3" "council"})
+                       #'bus/waiting-requests (constantly {})}
+        (fn []
+          (let [overview (state/projects-overview)]
+            (expect (= 2 (:live_count overview)))
+            (expect (= 2 (get (first (:projects overview)) "unread_count")))
+            (expect (= 2 (:unread_count overview)))))))
   ;; Regression: live updates must not move project headers.
   (it "keeps root order across activity, liveness and input-order changes"
       (let [stats
