@@ -871,6 +871,12 @@ update_native() {
     die "update: the release bundle is missing its Python runtime"
   fi
   [[ -x "$tui_unpack/vis-tui" ]] || die "update: the release bundle is missing its terminal client"
+  case "$(uname -s)" in
+    Darwin) tui_library=libjsound.dylib ;;
+    Linux) tui_library=libjsound.so ;;
+    *) die "update: unsupported terminal client platform: $(uname -s)" ;;
+  esac
+  [[ -s "$tui_unpack/$tui_library" ]] || die "update: the release bundle is missing its Java Sound library"
   [[ -z "$web_dl" || -f "$web_unpack/vis-web/index.html" ]] || die "update: the release web app bundle is missing its index.html"
   read -r native_version native_commit _native_metadata < "$unpack/vis-agent-native.build" || \
     die "update: invalid build stamp; native installation unchanged."
@@ -892,6 +898,8 @@ update_native() {
   fi
   mv -f "$unpack/vis-agent-native" "$native_dir/vis-agent-native"
   mv -f "$unpack/vis-agent-native.build" "$native_dir/vis-agent-native.build"
+  rm -f "$native_dir/libjsound.dylib" "$native_dir/libjsound.so"
+  mv -f "$tui_unpack/$tui_library" "$native_dir/$tui_library"
   mv -f "$tui_unpack/vis-tui" "$native_dir/vis-tui"
   # The embedded-CPython sidecar travels WITH the runtime it was built for: the
   # interpreter is a cdylib plus a vendored tree, never part of the binary.
@@ -1566,7 +1574,7 @@ tui_local=1
 [[ -z "${VIS_GATEWAY_URL:-}" || -z "${VIS_GATEWAY_URL// /}" ]] || tui_local=0
 for arg in "$@"; do
   case "$arg" in
-    --gateway|--gateway=*|--gateway-token|--gateway-token=*|--help|-h|help|--version|-V|version) tui_local=0 ;;
+    --gateway|--gateway=*|--gateway-token|--gateway-token=*|--help|-h|help|--version|-V|version|--check-audio) tui_local=0 ;;
   esac
 done
 if (( tui_requested )) && [[ "$runtime" == native ]]; then

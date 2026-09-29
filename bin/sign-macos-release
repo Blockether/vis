@@ -6,7 +6,8 @@
 #
 #   bin/sign-macos-release --entitlements bin/vis-agent-macos.entitlements \
 #     target/vis target/vis-agent-python
-#   bin/sign-macos-release apps/vis-tui/target/vis-tui
+#   bin/sign-macos-release --entitlements bin/vis-tui-macos.entitlements \
+#     apps/vis-tui/target/vis-tui apps/vis-tui/target/libjsound.dylib
 #
 # Every Mach-O below the given paths is signed with the hardened runtime and a
 # secure timestamp: the native runtime, the interpreter cdylib, libpython, each

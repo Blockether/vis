@@ -224,8 +224,9 @@
 
 (defn- with-native-install-fixture
   "Exercise installed commands with local release archives; Git/JVM are denied by default."
-  [{:keys [installer? installed? missing-worker? missing-tui? web? broken-web? stale-web? track
-           previous-track prepare! build-commit extra-env target desktop desktop-fail?]} f]
+  [{:keys [installer? installed? missing-worker? missing-tui? missing-tui-library? web? broken-web?
+           stale-web? track previous-track prepare! build-commit extra-env target desktop
+           desktop-fail?]} f]
   (let [root
         (.toFile (Files/createTempDirectory "vis-native-install-" (make-array FileAttribute 0)))
 
@@ -305,6 +306,7 @@
         (spit (io/file payload "vis-agent-python/libvispython.so") "runtime"))
       (when-not missing-tui?
         (write-executable! (io/file tui "vis-tui") "#!/usr/bin/env bash\necho native-tui\n"))
+      (when-not missing-tui-library? (spit (io/file tui "libjsound.so") "native-audio"))
       (doseq [[dir dest] [[payload archive] [tui tui-archive]]]
         (let [{:keys [exit output]} (run-bash ["tar" "-czf" (.getAbsolutePath ^java.io.File dest)
                                                "-C" (.getAbsolutePath ^java.io.File dir) "."]
@@ -555,6 +557,7 @@
           (expect (not (.exists (io/file (get env "VIS_HOME") "install" "src"))))
           (expect (.isDirectory (io/file bin "vis-agent-python/python")))
           (expect (.canExecute (io/file bin "vis-tui")))
+          (expect (= "native-audio" (slurp (io/file bin "libjsound.so"))))
           (let [runtime (run-bash ["bash" (.getAbsolutePath launcher) "--version"] env)]
             (expect (str/includes? (:output runtime) "new-runtime") (:output runtime))))))
   (it "acquires native releases when a standalone wrapper has no runtime yet"
@@ -646,7 +649,7 @@
             (expect (str/includes? output (str "web=" (.getCanonicalPath (io/file bin "vis-web"))))
                     output)))))
   (it "rejects incomplete bundles before replacing any installed component"
-      (doseq [missing [:missing-worker? :missing-tui? :broken-web?]]
+      (doseq [missing [:missing-worker? :missing-tui? :missing-tui-library? :broken-web?]]
         (with-native-install-fixture {:installed? true missing true}
                                      (fn [{:keys [exit output native]}]
                                        (expect (not (zero? exit)) output)
@@ -906,12 +909,20 @@
 (defdescribe
   stage-tui-release-test
   (it
-    "packs only the standalone executable and rejects a missing binary"
+    "packs the executable and Java Sound library; rejects missing components"
     (let [root
           (.toFile (Files/createTempDirectory "vis-tui-release-test-" (make-array FileAttribute 0)))
 
           binary
           (io/file root "vis-tui")
+
+          library-name
+          (if (str/starts-with? (System/getProperty "os.name") "Mac")
+            "libjsound.dylib"
+            "libjsound.so")
+
+          library
+          (io/file root library-name)
 
           bundle-dir
           (io/file root "bundle")
@@ -930,13 +941,21 @@
              (expect (str/includes? output "missing vis-tui binary") output))
            (write-executable! binary "#!/usr/bin/env bash\nexit 0\n")
            (let [{:keys [exit output]} (stage!)]
+             (expect (not= 0 exit) output)
+             (expect (str/includes? output "missing Java Sound library") output))
+           (spit library "native-audio")
+           (let [{:keys [exit output]} (stage!)]
              (expect (= 0 exit) output)
              (expect (.isFile asset) output)
              (expect (.canExecute (io/file bundle-dir "vis-tui")) output)
-             (expect (= #{"vis-tui"}
+             (expect (= "native-audio" (slurp (io/file bundle-dir library-name))))
+             (expect (= #{"vis-tui" library-name}
                         (->> (.listFiles bundle-dir)
                              (map #(.getName ^java.io.File %))
-                             set))))
+                             set)))
+             (let [{:keys [exit output]} (run-bash ["tar" "-tzf" (.getAbsolutePath asset)] {})]
+               (expect (zero? exit) output)
+               (expect (= #{"vis-tui" library-name} (set (str/split-lines output))) output)))
            (finally (delete-tree! root))))))
 
 (defdescribe
@@ -2815,7 +2834,7 @@
                                     (str "engine<" (.getCanonicalPath (io/file bin "vis-tui")) ">"))
                      output)
              (expect (str/includes? output "engine<--continue>") output))
-           (doseq [[args extra-env] [[["--help"] {}] [["--version"] {}]
+           (doseq [[args extra-env] [[["--help"] {}] [["--version"] {}] [["--check-audio"] {}]
                                      [["--gateway" "gateway.example.com" "--continue"] {}]
                                      [["--continue"]
                                       {"VIS_GATEWAY_URL" "http://gateway.example.com:7890"}]]]
@@ -4081,6 +4100,9 @@
           entitlements
           (slurp "bin/vis-agent-macos.entitlements")
 
+          tui-entitlements
+          (slurp "bin/vis-tui-macos.entitlements")
+
           steps
           (get-in (yaml/load workflow) ["jobs" "macos" "steps"])
 
@@ -4107,9 +4129,16 @@
                        "bin/stage-release-bundle target/vis")
               "the engine bundle must be staged from signed bytes")
       (expect (before? macos-script
-                       "bin/sign-macos-release apps/vis-tui/target/vis-tui"
+                       "apps/vis-tui/target/vis-tui apps/vis-tui/target/libjsound.dylib"
                        "bin/stage-tui-release apps/vis-tui/target/vis-tui")
-              "the terminal client ships the same identity as the engine")
+              "the terminal client and Java Sound library must both be signed before staging")
+      (expect (str/includes? macos-script "--entitlements bin/vis-tui-macos.entitlements")
+              "the standalone client needs microphone permission")
+      (expect (str/includes? macos-script
+                             "apps/vis-tui/target/vis-tui apps/vis-tui/target/libjsound.dylib")
+              "the same notarization submission includes the Java Sound library")
+      (expect (str/includes? tui-entitlements "com.apple.security.device.audio-input")
+              "hardened runtime allows microphone capture")
       (expect (before? local
                        "bin/sign-macos-release --entitlements"
                        "bin/stage-release-bundle target/vis")

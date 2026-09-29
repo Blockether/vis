@@ -16,10 +16,13 @@
             [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.screen :as screen])
+  (:import [java.util ServiceLoader]
+           [javax.sound.sampled AudioFormat AudioSystem DataLine$Info SourceDataLine TargetDataLine]
+           [javax.sound.sampled.spi MixerProvider])
   (:gen-class))
 
 (def usage
-  "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue]")
+  "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue | --check-audio]")
 
 (def ^:private help-text
   [usage "" "The Vis terminal application. It talks to a Vis gateway over HTTP and SSE;"
@@ -30,6 +33,7 @@
    "  --session-id ID        open one existing session"
    "  --resume, -r           pick a session to resume"
    "  --continue, -c         reopen the most recent session"
+   "  --check-audio          compare Java Sound devices without opening a microphone"
    "  --version, -V          print the version" "  --help, -h             print this help"])
 
 (defn- version
@@ -46,6 +50,30 @@
   [^String s]
   (.println ^java.io.PrintStream vis/original-stdout s)
   (.flush ^java.io.PrintStream vis/original-stdout))
+
+(defn- configure-native-audio!
+  "Native images have no java.home/conf/sound.properties. Skip that JVM-only
+   lookup unless a line provider was already selected explicitly."
+  []
+  (when (nil? (System/getProperty "java.home"))
+    (doseq [key ["javax.sound.sampled.TargetDataLine" "javax.sound.sampled.SourceDataLine"]]
+      (when (nil? (System/getProperty key)) (System/setProperty key "")))))
+
+(defn- line-status
+  [line-type format]
+  (try (let [line (AudioSystem/getLine (DataLine$Info. line-type format))]
+         (.close line)
+         "available")
+       (catch Throwable t (str "unavailable: " (or (ex-message t) (str t))))))
+
+(defn- check-audio!
+  []
+  (let [format (AudioFormat. 16000.0 16 1 true false)]
+    (print-line! (str "providers="
+                      (count (iterator-seq (.iterator (ServiceLoader/load MixerProvider))))))
+    (print-line! (str "mixers=" (alength (AudioSystem/getMixerInfo))))
+    (print-line! (str "target-line=" (line-status TargetDataLine format)))
+    (print-line! (str "source-line=" (line-status SourceDataLine format)))))
 
 (defn- missing-value? [v] (or (nil? v) (str/starts-with? v "--")))
 
@@ -88,6 +116,9 @@
           ("--version" "-V" "version")
           (recur more (assoc opts :version true))
 
+          "--check-audio"
+          (recur more (assoc opts :check-audio true))
+
           (recur more (update opts :screen-args conj arg)))))))
 
 (defn -main
@@ -97,8 +128,10 @@
              (catch clojure.lang.ExceptionInfo e
                (print-line! (str "vis-agent tui: " (.getMessage e)))
                (System/exit 2)))]
+    (configure-native-audio!)
     (cond help (doseq [line help-text]
                  (print-line! line))
           (:version opts) (print-line! (version))
+          (:check-audio opts) (check-audio!)
           :else (do (vis/configure! {:url gateway :token gateway-token})
                     (screen/channel-main screen-args)))))

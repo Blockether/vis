@@ -287,6 +287,7 @@ jobs:
           bin/verify-linux-abi target/tui-release-bundle
           target/tui-release-bundle/vis-tui --version
           target/tui-release-bundle/vis-tui --help >/dev/null
+          target/tui-release-bundle/vis-tui --check-audio
       # Catch a native JNI link failure before running the slower full image suite.
       - name: Smoke-test shared ONNX Runtime (native Linux)
         if: runner.os == 'Linux'
@@ -564,12 +565,15 @@ jobs:
           log_dir="$RUNNER_TEMP/vis-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           mkdir -p "$log_dir"
           (cd apps/vis-tui && clojure -X:deps prep && clojure -T:build native) 2>&1 | tee "$log_dir/tui.log"
-          # The terminal client loads no foreign code, so it needs no
-          # entitlements — only the same identity and notary ticket.
-          HOME="$VIS_MACOS_SIGNING_HOME" bin/sign-macos-release apps/vis-tui/target/vis-tui
+          # Java Sound loads a sibling dylib; both binaries must be signed and
+          # notarized, and microphone capture needs a hardened-runtime entitlement.
+          HOME="$VIS_MACOS_SIGNING_HOME" bin/sign-macos-release \
+            --entitlements bin/vis-tui-macos.entitlements \
+            apps/vis-tui/target/vis-tui apps/vis-tui/target/libjsound.dylib
           bin/stage-tui-release apps/vis-tui/target/vis-tui "$VIS_TUI_ASSET"
           target/tui-release-bundle/vis-tui --version
           target/tui-release-bundle/vis-tui --help >/dev/null
+          target/tui-release-bundle/vis-tui --check-audio
       - name: Test the native binaries
         shell: bash
         env:

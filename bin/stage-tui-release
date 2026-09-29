@@ -5,7 +5,8 @@
 #   bin/stage-tui-release apps/vis-tui/target/vis-tui vis-tui-linux-arm64.tar.gz
 #
 # Archive layout:
-#   vis-tui    standalone native executable
+#   vis-tui                standalone native executable
+#   libjsound.so or .dylib Java Sound provider loaded beside the executable
 set -euo pipefail
 
 die() { printf 'stage-tui-release: %s\n' "$@" >&2; exit 1; }
@@ -20,10 +21,19 @@ asset="${2:-}"
 [[ -x "$binary" ]] || die "vis-tui binary is not executable: $binary"
 [[ "$asset" == *.tar.gz ]] || die "asset must end in .tar.gz: $asset"
 
+case "$(uname -s)" in
+  Darwin) library_name=libjsound.dylib ;;
+  Linux) library_name=libjsound.so ;;
+  *) die "unsupported TUI platform: $(uname -s)" ;;
+esac
+library="$(dirname "$binary")/$library_name"
+[[ -s "$library" ]] || die "missing Java Sound library: $library"
+
 rm -rf "$bundle"
 mkdir -p "$bundle"
 cp "$binary" "$bundle/vis-tui"
+cp "$library" "$bundle/$library_name"
 chmod 755 "$bundle/vis-tui"
 rm -f "$asset"
-tar -C "$bundle" -czf "$asset" vis-tui
+tar -C "$bundle" -czf "$asset" vis-tui "$library_name"
 printf 'stage-tui-release: %s (%s)\n' "$asset" "$(du -sh "$asset" | cut -f1)"

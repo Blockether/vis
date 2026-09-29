@@ -28,7 +28,76 @@
           "sun.misc.SignalHandler"
         ]
       }
+    },
+    {
+      "type": "com.sun.media.sound.DirectAudioDevice",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "addFormat",
+          "parameterTypes": [
+            "java.util.Vector",
+            "int",
+            "int",
+            "int",
+            "float",
+            "int",
+            "boolean",
+            "boolean"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "com.sun.media.sound.DirectAudioDeviceProvider$DirectAudioDeviceInfo",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "int",
+            "int",
+            "int",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "com.sun.media.sound.PortMixerProvider$PortMixerInfo",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "int",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "java.lang.Boolean",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "getBoolean",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        }
+      ]
     }
   ],
-  "resources": []
+  "resources": [
+    {
+      "glob": "META-INF/services/javax.sound.sampled.spi.MixerProvider"
+    }
+  ]
 }
