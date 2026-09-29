@@ -86,6 +86,29 @@ def test_every_bundled_tool_declares_a_bounded_natural_language_activity(
             )
 
 
+def test_runs_activity_shows_short_commit_sha(monkeypatch):
+    module = _load_extension(monkeypatch, "gh")
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    runs = (
+        module.RunSummary(
+            1, "CI", "main", sha, "Checks", "push", "completed", "success", "", ""
+        ),
+        module.RunSummary(2, "CI", "main", "", "Checks", "push", "queued", "", "", ""),
+    )
+    render = module.gh.runs.__vis_symbol_activity__.render
+    view = render(phase="success", result=runs)
+    table = next(
+        block for block in view.content if isinstance(block, vis.ActivityTable)
+    )
+    assert view.summary == "2 runs · showing 2"
+    assert table.columns == ("Workflow", "Branch", "Commit SHA", "Status")
+    assert table.rows == (
+        ("CI", "main", sha[:12], "success"),
+        ("CI", "main", "", "queued"),
+    )
+    assert render(phase="success", result=()).summary == "0 runs · showing 0"
+
+
 @pytest.mark.parametrize(
     "ending, conclusion, verdict",
     [
@@ -194,6 +217,7 @@ def test_bundled_activities_keep_unicode_within_portable_limits(monkeypatch, fil
                 (
                     module.RunSummary(
                         1,
+                        long_text,
                         long_text,
                         long_text,
                         "Checks",

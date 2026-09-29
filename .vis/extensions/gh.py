@@ -73,7 +73,7 @@ RUN_FIELDS = "jobs,status,conclusion,workflowName,headBranch,url,displayTitle,nu
 
 # `gh run list --json <these>` is what `runs()` reads: the identity and state of the
 # latest runs, without a watch and without job detail.
-RUN_LIST_FIELDS = "databaseId,workflowName,headBranch,displayTitle,event,status,conclusion,url,createdAt"
+RUN_LIST_FIELDS = "databaseId,workflowName,headBranch,headSha,displayTitle,event,status,conclusion,url,createdAt"
 
 # The tick a person watches things move on, and the one a long run settles into. Three seconds is
 # the slowest tick a counter still reads as LIVE on; a poll is one `gh run view --json` call, so
@@ -132,12 +132,13 @@ class RunSummary:
     `status` and `conclusion` use GitHub's own spellings: `in_progress` or `completed` for `status`,
     and `success`, `failure`, `cancelled` and so on for `conclusion`. `conclusion` is empty while
     the run is still going. `started_at` is the run's UTC creation timestamp, empty when GitHub did
-    not report one.
+    not report one. `head_sha` is the full commit SHA, empty when GitHub did not report one.
     """
 
     run_id: int
     workflow: str
     branch: str
+    head_sha: str
     title: str
     event: str
     status: str
@@ -1104,6 +1105,7 @@ def run_list(repo=None, limit=10):
             run_id=int(row["databaseId"]),
             workflow=str(row.get("workflowName") or "?"),
             branch=str(row.get("headBranch") or ""),
+            head_sha=str(row.get("headSha") or ""),
             title=str(row.get("displayTitle") or ""),
             event=str(row.get("event") or ""),
             status=str(row.get("status") or ""),
@@ -1880,11 +1882,12 @@ def _runs_activity(*, phase, result, **_):
         f"{len(result)} runs · showing {min(len(result), 20)}",
         (
             vis.ActivityTable(
-                ("Workflow", "Branch", "Status"),
+                ("Workflow", "Branch", "Commit SHA", "Status"),
                 tuple(
                     (
                         run.workflow[:80],
                         run.branch[:80],
+                        run.head_sha[:12],
                         (run.conclusion or run.status).replace("_", " ")[:80],
                     )
                     for run in result[:20]

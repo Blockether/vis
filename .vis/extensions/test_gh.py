@@ -1696,6 +1696,7 @@ def test_runs_lists_recent_runs_as_typed_rows(monkeypatch):
                     {
                         "databaseId": 32146686161,
                         "workflowName": "CI",
+                        "headSha": "0123456789abcdef0123456789abcdef01234567",
                         "headBranch": "main",
                         "displayTitle": "docs: release",
                         "event": "push",
@@ -1714,6 +1715,7 @@ def test_runs_lists_recent_runs_as_typed_rows(monkeypatch):
         gh.RunSummary(
             run_id=32146686161,
             workflow="CI",
+            head_sha="0123456789abcdef0123456789abcdef01234567",
             branch="main",
             title="docs: release",
             event="push",
@@ -1724,6 +1726,14 @@ def test_runs_lists_recent_runs_as_typed_rows(monkeypatch):
         ),
     )
     assert commands == [f"gh run list -L 10 --json {gh.RUN_LIST_FIELDS}"]
+    assert "headSha" in gh.RUN_LIST_FIELDS.split(",")
+
+
+def test_runs_preserves_missing_head_sha_as_empty(monkeypatch):
+    monkeypatch.setattr(
+        gh, "_capture", lambda command, seconds=120: (0, '[{"databaseId": 1}]')
+    )
+    assert gh.gh.runs()[0].head_sha == ""
 
 
 def test_runs_clamps_limit_and_reports_ghs_own_failure(monkeypatch):
