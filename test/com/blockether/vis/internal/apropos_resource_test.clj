@@ -16,6 +16,7 @@
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.manifest :as manifest]
+            [com.blockether.vis.test-prose :as prose]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -381,3 +382,19 @@ def __vis_harvest__(modules, names):
       (doseq [{:keys [apropos shims]} entries]
         (expect (= (apropos-entries (pack-harvest live-harvest shims)) (stored-entries apropos))
                 (str apropos " is stale; run apropos-resource-test/regenerate!"))))))
+
+(defdescribe shim-doc-prose-test
+             (it "keeps every shim page within the prose limits of the manual"
+                 (let [broken (concat (for [{:keys [apropos]} (shim-entries)
+                                            {:keys [name text]} (stored-entries apropos)
+                                            message (prose/breaks (str text))]
+
+                                        (str apropos " " name ": " message))
+                                      (for [shim (registered-shims)
+                                            :when (:shim/docs shim)
+                                            message (prose/breaks (:shim/docs shim))]
+
+                                        (str (:shim/name shim) " :shim/docs: " message)))]
+                   (expect (empty? broken)
+                           (str/join "\n"
+                                     (cons "shim pages that break the prose limits:" broken))))))

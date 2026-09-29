@@ -581,65 +581,69 @@ def __vis_install_attach__():
             " · label (one-line caption)"
             " · audience ('both', 'user' or 'model')"
             " · commentable (boolean, default False)",
-            "Persist a produced artifact as a durable attachment, across restarts. "
-            "source is a confined PATH, in-memory BYTES (name them with filename), "
-            "or an in-memory image or figure object. SAME DOCUMENT, SAME NAME: "
-            "re-attaching a filename stores the next VERSION of that artifact, never "
-            "report_v2.png beside report.png; a new name is a different document. "
-            "Attach one or two artifacts per turn - compose many images into ONE "
-            "sheet. Set commentable=True to allow human review; otherwise the attachment "
-            "is read-only. Capability is explicit for each version, never inferred from its name. "
-            "audience routes it: 'both' (default), 'user' (human only), "
-            "'model' (context only). A CSV/TSV becomes a transcript table whose rows "
-            "stay out of the model's context; a *.pdf/*.html is a human-only document "
-            "and refuses audience='model'. kind, media_type and filename override "
-            "inference; label is a one-line caption. A near-miss spelling FOLDS onto "
-            "the keyword it meant instead of costing the call: name/file_name/fname "
-            "-> filename, path/file/src -> source, title/caption/description/alt -> "
-            "label, mime/mime_type/content_type -> media_type, type -> kind. Naming "
-            "one idea twice - canonical and alias in the same call - is refused."
-            "\n\nRaw result: that artifact's DESCRIPTOR dict - id, filename, version, "
-            "media_type, kind, size, audience, commentable - which every read verb here takes as "
-            "its target, in this same block.",
+            "Store a produced artifact as a durable attachment that survives restarts. "
+            "source is a confined PATH, in-memory BYTES (name them with filename), or "
+            "an in-memory image or figure object. SAME DOCUMENT, SAME NAME: "
+            "re-attaching a filename stores the next VERSION of that artifact. Never "
+            "put report_v2.png beside report.png, because a new name is a different "
+            "document. Attach one or two artifacts per turn, and compose many images "
+            "into ONE sheet."
+            "\n\nSet commentable=True to allow human review. Otherwise the attachment "
+            "is read-only. The capability is explicit for each version and never comes "
+            "from the name. audience routes it: 'both' (default), 'user' (human only) "
+            "or 'model' (context only). A CSV/TSV becomes a transcript table whose "
+            "rows stay out of the model's context. A *.pdf/*.html is a human-only "
+            "document and refuses audience='model'."
+            "\n\nkind, media_type and filename override inference, and label is a "
+            "one-line caption. A near-miss spelling FOLDS onto the keyword it meant, "
+            "so the call does not fail. The folds are name/file_name/fname -> "
+            "filename, path/file/src -> source, title/caption/description/alt -> "
+            "label, mime/mime_type/content_type -> media_type and type -> kind. Naming "
+            "one idea twice, the main name and an alias in the same call, is refused."
+            "\n\nRaw result: the DESCRIPTOR dict of that artifact, with id, filename, "
+            "version, media_type, kind, size, audience and commentable. Every read "
+            "verb here takes it as its target, also in this same block.",
         ),
         (
             list_attachments,
             "Keys: name (one artifact's versions, oldest first)",
-            "This session's artifacts - the ones this very block attached included - "
-            "or, given a filename, that ONE artifact's versions oldest first."
+            "List the artifacts of this session, including the ones that this block "
+            "attached. Given a filename, list the versions of that ONE artifact, "
+            "oldest first."
             "\n\nRaw result: a list of descriptor dicts (id, filename, version, "
-            "media_type, kind, size, audience, turn_id, is_pending, ...); [] when "
-            "nothing was ever attached under that name.",
+            "media_type, kind, size, audience, turn_id, is_pending, ...). It is [] "
+            "when nothing was ever attached under that name.",
         ),
         (
             get_attachment,
             __vis_target_keys,
-            "ONE artifact's descriptor, never its bytes. target is the FILENAME you "
-            "attached under - the artifact, its latest cut unless you name a version "
-            "(negative counts back) - an id, or a descriptor attach() handed back, "
-            "which is one exact cut. That same addressing holds for every read verb "
-            "here."
-            "\n\nRaw result: one descriptor dict, no bytes; a catchable host error when nothing "
-            "in this session carries that target.",
+            "Get the descriptor of ONE artifact, never its bytes. target is the "
+            "FILENAME you attached under, an id, or a descriptor that attach() "
+            "returned. A filename means the latest cut, unless you name a version "
+            "(negative counts back). A descriptor is one exact cut. Every read verb "
+            "here uses the same addressing."
+            "\n\nRaw result: one descriptor dict, without bytes. If nothing in this "
+            "session has that target, you get a catchable host error.",
         ),
         (
             read_attachment,
             __vis_target_keys,
-            "The artifact's raw BYTES, for Python - the only door to them - addressed "
-            "exactly like get_attachment."
-            "\n\nRaw result: bytes, and nothing else, so printing this call can never "
-            "spill a metadata map nobody asked for.",
+            "Get the raw BYTES of the artifact for Python. This is the only way to get "
+            "them. The target works exactly as in get_attachment."
+            "\n\nRaw result: bytes and nothing else, so printing this call never shows "
+            "a metadata map that nobody asked for.",
         ),
         (
             show_attachment,
             __vis_target_keys,
-            "Put a stored IMAGE in front of the model for exactly the NEXT request, "
-            "then stored-only again; nothing is re-stored. A local path is a source, "
-            "not an attachment address: use show_attachment(attach(path)). Images "
-            "replay only while they fit the request's image budget, and this is the "
-            "way back to one that dropped out. Same addressing as get_attachment - "
-            "an image this block attached for the model is on the wire already, so "
-            "showing it is a no-op."
+            "Show a stored IMAGE to the model for exactly the NEXT request. After "
+            "that, it is stored-only again, and nothing is stored twice. A local path "
+            "is a source, not an attachment address, so use "
+            "show_attachment(attach(path)). Images replay only while they fit the "
+            "image budget of the request. This verb brings back an image that dropped "
+            "out. The target works as in get_attachment."
+            "\n\nAn image that this block attached for the model is already on the "
+            "wire, so showing it does nothing."
             "\n\nRaw result: {id, filename, media_type, size} for the image now queued "
             "for the next request.",
         ),

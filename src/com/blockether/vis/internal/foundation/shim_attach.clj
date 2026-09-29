@@ -314,20 +314,22 @@
                       "show_attachment"]
        :shim/docs
        (str
-         "`attach` persists artifacts (images, CSV/TSV tables, JSON, PDF, audio) as durable "
-         "DB-owned iteration attachments with sniffed media types, surviving restarts. "
-         "SAME DOCUMENT, SAME NAME — a revision goes back under its OWN filename as that "
-         "artifact's next VERSION, never `report_v2.png` beside `report.png`; a fresh name "
-         "is a different document, and `list_attachments(name)` walks the thread. Compose "
-         "many images into one sheet per call; `audience='both'|'user'|'model'` routes who "
-         "sees it. Human review is opt-in per version: `commentable=True`; the default "
-         "is read-only, independent of filename. ONE ADDRESSING RULE on the read side: `get_attachment(target, "
-         "version=None)`, `read_attachment` and `show_attachment` take the FILENAME (latest "
-         "cut unless you name a version) or an `id` from a descriptor — `attach` RETURNS "
-         "that descriptor, and an artifact this block just attached is addressable at once. "
-         "`read_attachment` is "
-         "the only door to the BYTES; `show_attachment` puts a stored image back in front of "
-         "the MODEL for the next request. Vis-native; no upstream library.")
+         "`attach` stores artifacts (images, CSV/TSV tables, JSON, PDF, audio) as durable "
+         "attachments of the iteration. The database owns them, sniffs their media types and "
+         "keeps them across restarts. SAME DOCUMENT, SAME NAME: a revision goes back under its "
+         "OWN filename as the next VERSION of that artifact. Never put `report_v2.png` beside "
+         "`report.png`, because a new name is a different document. `list_attachments(name)` "
+         "walks the versions.\n\n"
+         "Compose many images into one sheet per call. `audience='both'|'user'|'model'` sets who "
+         "sees it. Human review is opt-in per version with `commentable=True`. The default is "
+         "read-only, whatever the filename.\n\n"
+         "ONE ADDRESSING RULE applies on the read side. `get_attachment(target, version=None)`, "
+         "`read_attachment` and `show_attachment` take the FILENAME or an `id` from a "
+         "descriptor. A filename means the latest cut, unless you name a version. `attach` "
+         "RETURNS that descriptor, and an artifact that this block attached is addressable at "
+         "once. `read_attachment` is the only way to get the BYTES. `show_attachment` puts a "
+         "stored image back in front of the MODEL for the next request.\n\n"
+         "The shim is native to Vis and uses no upstream library.")
        :shim/bindings attach-bridge-bindings
        :shim/source "vis-shims/attach.py"}]}))
 

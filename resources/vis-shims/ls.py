@@ -99,33 +99,7 @@ def __vis_install_ls__():
         pattern=None,
         as_paths=False,
     ):
-        """Map a tree through the host's ignore-aware walk, as a compact STRING.
-
-        ls(dir) returns a ready-to-print tree: a `path  Nd Nf` header, then one
-        line per entry with directories first then alphabetical. A directory is
-        `name/` (plus its child count once depth expanded it), a file is
-        `name size` with the size in at most four characters (`812`, `7.2k`,
-        `2.1M`). Children indent two spaces per level, so depth costs little width.
-        ls([dir, ...]) renders one such section per directory, in request order,
-        separated by a blank line; an entry may be a dict
-        {"path": dir, "depth": 2} whose own options override the shared ones. A
-        path is a str or any os.PathLike, so pathlib.Path works wherever a
-        string does.
-
-        pattern=None leaves the listing unchanged. A string filters file and
-        directory basenames with a case-sensitive glob (*, ?, [abc], {a,b}),
-        at every requested depth; ancestors of matches remain visible.
-        A per-path spec may override pattern, including None to disable it.
-        Dotfiles need is_hidden=True (alias: hidden=True). If supplied, hidden
-        overrides is_hidden; gitignored entries are never listed.
-        as_paths=True answers the same walk as a flat list of paths instead of
-        the tree, in the same order: each one is the requested path joined with
-        the entry name, directories keeping a trailing "/", so a relative
-        request answers relative paths. Ready for cat, grep or Path().
-        Start at a known parent and batch only confirmed directories. A missing,
-        protected or non-directory path fails the batch with a host tool error.
-        A missing path names its nearest existing parent; read files with cat.
-        """
+        """List directories as a compact tree STRING. `docs["ls"]` below replaces this text."""
         if hidden is not None:
             is_hidden = hidden
         bridge = globals().get("__vis_list_directories__")
@@ -158,29 +132,33 @@ def __vis_install_ls__():
 
     docs = g.setdefault("__vis_docs__", {})
     docs["ls"] = (
-        "ls(paths='.', depth=1, is_hidden=False, *, hidden=None, pattern=None, as_paths=False): "
-        "directory contents from the "
-        "host's ignore-aware walk, rendered as a compact printable STRING. "
-        "ls(dir) -> a `path  Nd Nf` header then one tree line per entry, "
-        "directories first then alphabetical: a directory is `name/` (with its "
-        "child count once depth expanded it), a file is `name size` "
-        "(`812`, `7.2k`, `2.1M`), children indented two spaces per level; "
-        "ls([dir, ...]) -> one such section per "
-        "directory in request order, blank-line separated. Optional pattern=None "
-        "leaves the listing unchanged; a string is a case-sensitive basename glob "
-        "(*, ?, [abc], {a,b}), not a regex. Applied at every requested depth, keeping "
-        "ancestors of matches. Per-path specs override pattern (None disables it). "
-        "Example: ls(dir, pattern='*snapshot*'). Dotfiles need "
-        "is_hidden=True (alias: hidden=True). When not None, hidden overrides "
-        "is_hidden; gitignored entries are never listed. Start at a known "
-        "parent; batch only confirmed directories. One missing, protected or "
-        "non-directory path fails the batch with a host tool error; a missing path "
-        "names the nearest existing directory. Read files with cat. A path is a "
-        "str or a pathlib.Path. as_paths=True answers the same walk as a flat list "
-        "of paths instead of the tree, in the same order: each is the requested path "
-        "joined with the entry name, directories ending in '/', so a relative request "
-        "answers relative paths. ls(dir, depth=3, as_paths=True) is the whole file "
-        "list, ready for cat, grep or Path()."
+        "ls(paths='.', depth=1, is_hidden=False, *, hidden=None, pattern=None, "
+        "as_paths=False) lists directory contents from the ignore-aware walk of the "
+        "host, as a compact printable STRING. `ls(dir)` gives a `path  Nd Nf` header, "
+        "then one tree line per entry, with directories first and then in alphabetical "
+        "order. A directory is `name/`, with its child count when depth expanded it. A "
+        "file is `name size`, for example `812`, `7.2k` or `2.1M`. Children indent two "
+        "spaces per level."
+        "\n\n`ls([dir, ...])` gives one such section per directory, in request order, "
+        "separated by a blank line. A path is a str or a pathlib.Path. A batch entry "
+        'can also be a per-path spec, such as `{"path": dir, "depth": 2}`, whose '
+        "options override the shared ones."
+        "\n\nStart at a known parent, and batch only confirmed directories. One "
+        "missing, protected or non-directory path fails the batch with a host tool "
+        "error. A missing path names the nearest existing directory. Read files with "
+        "cat."
+        "\n\npattern=None leaves the listing unchanged. A string is a case-sensitive "
+        "basename glob (*, ?, [abc], {a,b}), not a regex. It applies at every "
+        "requested depth and keeps the ancestors of matches. A per-path spec can "
+        "override pattern, and None disables it there. Example: `ls(dir, "
+        "pattern='*snapshot*')`."
+        "\n\nDotfiles need is_hidden=True (alias: hidden=True). When hidden is not "
+        "None, it overrides is_hidden. The listing never includes gitignored entries."
+        "\n\nas_paths=True returns the same walk as a flat list of paths instead of "
+        "the tree, in the same order. Each path is the requested path joined with the "
+        "entry name, and directories end in '/'. So a relative request gives relative "
+        "paths. `ls(dir, depth=3, as_paths=True)` is the whole file list, ready for "
+        "cat, grep or Path()."
     )
 
     # ONE text for one handle: `help(ls)` and `doc("ls")` read the same

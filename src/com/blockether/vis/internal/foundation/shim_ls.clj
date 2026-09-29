@@ -189,25 +189,9 @@
      :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/kind "foundation"
-     :ext/sandbox-shims
-     [{:shim/name "ls"
-       :shim/globals ["ls"]
-       :shim/docs
-       (str
-         "`ls(paths, depth=1, is_hidden=False)` maps a tree from the host's ignore-aware walk as "
-         "a compact STRING: a `path  Nd Nf` header, then one line per entry, directories first "
-         "then alphabetical — a directory is `name/` (with its child count once `depth` expanded "
-         "it), a file is `name size` (`812`, `7.2k`, `2.1M`), children indented two spaces "
-         "per level. `ls([dir, ...])` renders one "
-         "blank-line separated section per directory, and a batch entry may be a per-path spec "
-         "(`{\"path\": dir, \"depth\": 2}`). Optional `pattern=None` leaves the listing unchanged; "
-         "a string filters basenames by case-sensitive glob (`*`, `?`, `[abc]`, `{a,b}`), not regex, "
-         "at each requested depth, retaining ancestors of matches. Per-path specs override it; "
-         "None disables filtering. Example: `ls(dir, pattern='*snapshot*')`. Dotfiles need `is_hidden=True`; gitignored "
-         "entries are never listed. Use confirmed directories: one missing, protected or "
-         "non-directory path fails the batch with a host tool error. Read files with `cat`. "
-         "A path is a `str` or a `pathlib.Path`.")
-       :shim/bindings ls-bridge-bindings
-       :shim/source "vis-shims/ls.py"}]}))
+     :ext/sandbox-shims [{:shim/name "ls"
+                          :shim/globals ["ls"]
+                          :shim/bindings ls-bridge-bindings
+                          :shim/source "vis-shims/ls.py"}]}))
 
 (defn register! [] (ext/register-extension! vis-extension))
