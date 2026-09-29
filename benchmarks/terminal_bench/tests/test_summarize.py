@@ -6,7 +6,7 @@ import shutil
 import subprocess
 
 import pytest
-from summarize import elapsed_seconds, make_report, trace_summary
+from summarize import elapsed_seconds, make_report, trace_summary, verifier_details
 
 
 def test_elapsed_seconds_requires_both_timestamps():
@@ -62,6 +62,19 @@ def test_report_keeps_exceptions_out_of_reward_mean(tmp_path):
     (verified / "verifier").mkdir()
     (verified / "verifier/ctrf.json").write_text(
         json.dumps({"results": {"summary": {"tests": 3, "passed": 2, "failed": 1}}})
+    )
+    (verified / "verifier/trace_results.json").write_text(
+        json.dumps(
+            {
+                "diagnostic_score": 0.5,
+                "points": 1.0,
+                "total": 2.0,
+                "checks": [
+                    {"name": "output exists", "passed": True},
+                    {"name": "totals match", "passed": False, "detail": "private"},
+                ],
+            }
+        )
     )
     (verified / "agent/vis-trace.jsonl").write_text(
         json.dumps(
@@ -136,7 +149,29 @@ def test_report_keeps_exceptions_out_of_reward_mean(tmp_path):
     assert good["trace"]["provider_calls"] == {"zai-coding-plan/glm-5.3-flash": 1}
     assert good["trace"]["tool_calls"] == {"python_execution": 1}
     assert good["verifier_tests"] == {"tests": 3, "passed": 2, "failed": 1}
+    assert good["verifier_details"] == {
+        "trace_results.json": {
+            "diagnostic_score": 0.5,
+            "points": 1.0,
+            "total": 2.0,
+            "checks": {"passed": 1, "total": 2},
+        }
+    }
     assert "private" not in json.dumps(report)
+
+
+def test_verifier_details_keep_only_numeric_task_scores(tmp_path):
+    (tmp_path / "ctrf.json").write_text(json.dumps({"results": {"summary": {}}}))
+    (tmp_path / "reward.json").write_text(json.dumps({"reward": 0.0}))
+    (tmp_path / "reward_details.json").write_text(
+        json.dumps(
+            {"score": 0.0, "passed": True, "note": "text", "checks": [{"passed": "no"}]}
+        )
+    )
+    (tmp_path / "cases.json").write_text(json.dumps([1, 2]))
+    (tmp_path / "broken.json").write_text("{")
+    assert verifier_details(tmp_path) == {"reward_details.json": {"score": 0.0}}
+    assert verifier_details(tmp_path / "missing") is None
 
 
 def test_report_scores_each_task_by_latest_verified_model_attempt(tmp_path):

@@ -194,6 +194,41 @@ def verifier_test_counts(path: Path) -> dict | None:
     } or None
 
 
+def verifier_details(directory: Path) -> dict | None:
+    """Keep numeric partial scores from task-specific verifier reports."""
+    details = {}
+    for path in sorted(directory.glob("*.json")):
+        if path.name in {"ctrf.json", "reward.json"}:
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        fields = {
+            key: value
+            for key, value in payload.items()
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        }
+        checks = payload.get("checks")
+        if (
+            isinstance(checks, list)
+            and checks
+            and all(
+                isinstance(check, dict) and isinstance(check.get("passed"), bool)
+                for check in checks
+            )
+        ):
+            fields["checks"] = {
+                "passed": sum(check["passed"] for check in checks),
+                "total": len(checks),
+            }
+        if fields:
+            details[path.name] = fields
+    return details or None
+
+
 def trial_summary(result_path: Path, root: Path) -> dict:
     result = json.loads(result_path.read_text(encoding="utf-8"))
     agent = result.get("agent_result") or {}
@@ -230,6 +265,7 @@ def trial_summary(result_path: Path, root: Path) -> dict:
         "verifier_tests": verifier_test_counts(
             result_path.parent / "verifier/ctrf.json"
         ),
+        "verifier_details": verifier_details(result_path.parent / "verifier"),
         "tokens": {
             "input": agent.get("n_input_tokens"),
             "cached": agent.get("n_cache_tokens"),
