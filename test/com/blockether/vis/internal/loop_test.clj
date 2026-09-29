@@ -4755,6 +4755,47 @@
           (expect (zero? @title-requests)))))))
 
 (defdescribe
+  responses-output-budget-retry-test
+  ;; Issue #296: Responses reports the same budget exhaustion through a different error.
+  (let [data
+        {:type :svar.core/stream-incomplete
+         :reason "max_output_tokens"
+         :max-output-tokens 32768
+         :content-acc-len 0
+         :api-usage {:output-tokens 32768 :output-tokens-details {:reasoning 32000}}}
+
+        error
+        (ex-info "Output budget exhausted" data)]
+
+    (doseq [failure [error (ex-info "HTTP wrapper" {} error)]]
+      (it "recognizes direct and wrapped Responses output exhaustion"
+          (expect (true? (max-tokens-exceeded-error? failure)))
+          (expect
+            (= {:prev-max 32768 :extra-body {"max_output_tokens" 65536} :reasoning-tokens 32000}
+               (max-tokens-retry failure nil {:output-ceiling 131072})))))
+    (it "replaces the Responses wire key instead of adding a shadowed max_tokens"
+        (expect (= {"max_output_tokens" 65536 "store" false}
+                   (:extra-body (max-tokens-retry error
+                                                  {"max_output_tokens" 32768 "store" false}
+                                                  {:output-ceiling 131072})))))
+    (it "uses the actual request cap when the incomplete response omits usage"
+        (expect (= 32768
+                   (:prev-max (max-tokens-retry (ex-info "Capped" (dissoc data :api-usage))
+                                                nil
+                                                {:output-reserve 8192 :output-ceiling 131072})))))
+    (it "does not retry an endpoint that did not accept an output-budget control"
+        (expect (nil? (max-tokens-retry (ex-info "Server cap" (dissoc data :max-output-tokens))
+                                        nil
+                                        {:output-ceiling 131072}))))
+    (doseq [partial [{:content-acc-len 1} {:tool-args-acc-len 1} {:tool-call-count 1}
+                     {:stream-output :content}]]
+      (it "does not transparently replay partial content or tool calls"
+          (expect (false? (max-tokens-exceeded-error? (ex-info "Partial" (merge data partial)))))))
+    (it "does not treat a content filter as output exhaustion"
+        (expect (false? (max-tokens-exceeded-error?
+                          (ex-info "Filtered" (assoc data :reason "content_filter"))))))))
+
+(defdescribe
   max-tokens-exceeded-retry-test
   (it "recognises :svar.llm/max-tokens-exceeded as retry-able"
       (let [e (ex-info "max_tokens hit"
@@ -4825,6 +4866,127 @@
         (expect (= {"max_tokens" 131072}
                    (:extra-body (max-tokens-retry (capped 100000) nil budget))))
         (expect (nil? (max-tokens-retry (capped 131072) nil budget))))))
+
+(defdescribe
+  responses-output-budget-loop-test
+  ;; Issue #296: a bounded budget bump, then one compact recovery, never an endless turn.
+  (doseq [mode [:raise :ceiling :exhaust :partial :cancel]]
+    (it
+      (name mode)
+      (let [cancelled (atom false)
+            environment (assoc (loop-env/create-environment (helper-router :lmstudio nil)
+                                                            {:db :memory})
+                          :cancel-atom cancelled)
+            tid (persistance/db-store-session-turn! (:db-info environment)
+                                                    {:parent-session-id (:session-id environment)
+                                                     :user-request "finish compactly"})
+            requests (atom [])
+            cap-data {:type :svar.core/stream-incomplete
+                      :reason "max_output_tokens"
+                      :max-output-tokens 32768
+                      :content-acc-len (if (= :partial mode) 12 0)
+                      :api-usage {:output-tokens 32768}}]
+
+        (try
+          (let [result
+                (with-redefs [loop-router/resolved-context-budget
+                              (fn [& _]
+                                {:max-input-tokens 100000
+                                 :output-reserve 32768
+                                 :output-ceiling (if (#{:ceiling :exhaust} mode) 32768 65536)})
+                              svar/ask-code!
+                              (fn [_ opts]
+                                (let [call (count (swap! requests conj
+                                                    (select-keys opts [:messages :extra-body])))]
+                                  (if (or (= 1 call) (and (= :exhaust mode) (< call 4)))
+                                    (do (when (= :cancel mode) (reset! cancelled true))
+                                        (throw (ex-info "Output budget exhausted" cap-data)))
+                                    {:stop-reason :end :content "Finished compactly."})))]
+
+                  (iteration/iteration-loop environment
+                                            "finish compactly"
+                                            {:session-turn-id tid :cancel-atom cancelled}))]
+            (expect (= (case mode
+                         :cancel
+                         :cancelled
+
+                         :exhaust
+                         :error
+
+                         :success)
+                       (or (:status result) :success)))
+            (expect (= (if (= :cancel mode) 1 2) (count @requests)))
+            (when (= :raise mode)
+              (expect (= 65536 (get-in @requests [1 :extra-body "max_output_tokens"])))
+              (expect (= (:messages (first @requests)) (:messages (second @requests)))))
+            (when (#{:ceiling :partial} mode)
+              (expect (some #(str/includes? (pr-str (:content %)) "Use a compact path now")
+                            (:messages (second @requests)))))
+            (when (= :exhaust mode)
+              (expect (str/includes? (pr-str (:answer result)) "output budget"))))
+          (finally (loop-env/dispose-environment! environment)))))))
+
+(defdescribe
+  responses-output-budget-svar-boundary-test
+  ;; Issue #296: exercise the actual Svar stream error and the next request's wire budget.
+  (it
+    "raises max_output_tokens across the Svar boundary without executing partial calls"
+    (let [router
+          (svar/make-router
+            [{:id :fixture
+              :api-key "test"
+              :base-url "https://gateway.example.com/v1"
+              :api-style :openai-compatible-responses
+              :models
+              [{:name "gpt-6-sol" :context 272000 :output-limit 32768 :output-ceiling 65536}]}])
+
+          environment
+          (loop-env/create-environment router {:db :memory})
+
+          tid
+          (persistance/db-store-session-turn! (:db-info environment)
+                                              {:parent-session-id (:session-id environment)
+                                               :user-request "Reply briefly"})
+
+          requests
+          (atom [])]
+
+      (try
+        (let [result
+              (with-redefs [http/post
+                            (fn [_ opts]
+                              (let [body (json/read-json (:body opts))
+                                    attempt (count (swap! requests conj body))
+                                    events (if (= 1 attempt)
+                                             [{"type" "response.incomplete"
+                                               "response" {"incomplete_details"
+                                                           {"reason" "max_output_tokens"}
+                                                           "usage" {"input_tokens" 1000
+                                                                    "output_tokens" 32768
+                                                                    "output_tokens_details"
+                                                                    {"reasoning_tokens" 32768}}}}]
+                                             [{"type" "response.output_text.delta" "delta" "Done."}
+                                              {"type" "response.completed"
+                                               "response" {"status" "completed"
+                                                           "usage" {"input_tokens" 1000
+                                                                    "output_tokens" 4}}}])
+                                    stream (apply str
+                                             (map #(str "data: " (json/write-json-str %) "\n\n")
+                                                  events))]
+
+                                {:status 200
+                                 :body (java.io.ByteArrayInputStream. (.getBytes stream
+                                                                                 "UTF-8"))}))]
+                (iteration/iteration-loop environment "Reply briefly" {:session-turn-id tid}))
+
+              iterations
+              (persistance/db-list-session-turn-iterations (:db-info environment) tid)]
+
+          (expect (= :success (or (:status result) :success)))
+          (expect (= [32768 65536] (mapv #(get % "max_output_tokens") @requests)))
+          (expect (every? #(not (contains? % "max_tokens")) @requests))
+          (expect (empty? (mapcat :forms iterations))))
+        (finally (loop-env/dispose-environment! environment))))))
 
 (defdescribe
   llm-provider-error-context-test

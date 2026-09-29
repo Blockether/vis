@@ -1366,20 +1366,32 @@
    output-cap on subsequent calls."
   2.0)
 
-(defn- max-tokens-exceeded-error?
-  "True when an exception represents `:svar.llm/max-tokens-exceeded`
-   from svar's `ask-code!*` blank-content guard. The model produced
-   reasoning but the visible content slot was empty because the
-   provider's `finish_reason: \"length\"` truncated the response.
-   Retry-able via `:extra-body {\"max_tokens\" N}` bump."
+(defn- max-tokens-error-data
+  "Find the canonical output-cap evidence, including HTTP-wrapped Responses failures."
   [^Throwable e]
-  (= :svar.llm/max-tokens-exceeded (:type (ex-data e))))
+  (some (fn [cause]
+          (let [data (ex-data cause)]
+            (when (or (= :svar.llm/max-tokens-exceeded (:type data))
+                      (loop-errors/output-budget-exhausted-data? data))
+              data)))
+        (loop-errors/bounded-cause-chain e)))
+
+(defn- max-tokens-exceeded-error?
+  "True for output exhaustion before visible content or tool output. Partial output
+   is never replayed transparently, even when only reasoning was observed live."
+  [^Throwable e]
+  (let [data (max-tokens-error-data e)]
+    (boolean (and data
+                  (not= :content (:stream-output (ex-data e)))
+                  (not= :content (:stream-output data))
+                  (not (seq (:partial-content data)))
+                  (not (seq (:tool-calls data)))
+                  (every? #(zero? (long (or (get data %) 0)))
+                          [:content-acc-len :tool-args-acc-len :tool-call-count])))))
 
 (defn- max-tokens-usage
-  "Token counts of a `:svar.llm/max-tokens-exceeded` failure, from Svar's canonical
-   `:api-usage`. A capped call stops exactly at the cap the provider enforced, so
-   `:output-tokens` is the budget a retry has to exceed. `:reasoning-tokens` is nil
-   when the provider does not report its reasoning share."
+  "Token counts of an output-budget failure from Svar's canonical `:api-usage`.
+   `:reasoning-tokens` is nil when the provider does not report its reasoning share."
   [data]
   (let [usage (:api-usage data)]
     {:output-tokens (:output-tokens usage)
@@ -1399,20 +1411,41 @@
     (when (> bumped (long prev-max)) (assoc prev-extra-body "max_tokens" bumped))))
 
 (defn- max-tokens-retry
-  "Plan the retry of a `:svar.llm/max-tokens-exceeded` failure `e`: the enforced cap,
-   the bumped `:extra-body` and the reported reasoning share. The cap comes from the
-   failure's usage, else an explicit `max_tokens`, else 8192. Nil when
-   `request-budget`'s `:output-ceiling` leaves no room for a larger budget."
+  "Plan one larger-budget request, bounded by the provider's output ceiling.
+   Responses must have sent an adjustable wire budget; Codex strips that control.
+   Use the actual cap and usage, not an estimate that can shrink the failed budget."
   [^Throwable e extra-body request-budget]
-  (let [{:keys [output-tokens reasoning-tokens]}
-        (max-tokens-usage (ex-data e))
+  (let [data
+        (max-tokens-error-data e)
+
+        responses?
+        (loop-errors/output-budget-exhausted-data? data)
+
+        {:keys [output-tokens reasoning-tokens]}
+        (max-tokens-usage data)
+
+        requested
+        (or (:max-output-tokens data)
+            (get extra-body "max_output_tokens")
+            (get extra-body "max_tokens")
+            (:output-reserve request-budget)
+            output-tokens
+            8192)
 
         prev-max
-        (long (or output-tokens (get extra-body "max_tokens") 8192))]
+        (long (max (or output-tokens 0) requested))]
 
-    (when-let [bumped
-               (bumped-max-tokens-extra-body extra-body prev-max (:output-ceiling request-budget))]
-      {:prev-max prev-max :extra-body bumped :reasoning-tokens reasoning-tokens})))
+    (when (and data (or (not responses?) (pos? (long (or (:max-output-tokens data) 0)))))
+      (when-let [bumped (bumped-max-tokens-extra-body extra-body
+                                                      prev-max
+                                                      (:output-ceiling request-budget))]
+        {:prev-max prev-max
+         :extra-body (if responses?
+                       (-> bumped
+                           (dissoc "max_tokens")
+                           (assoc "max_output_tokens" (get bumped "max_tokens")))
+                       bumped)
+         :reasoning-tokens reasoning-tokens}))))
 
 (defn- max-tokens-exhausted?
   "True for `:svar.llm/max-tokens-exceeded` errors that survived all
@@ -2637,7 +2670,7 @@
    trailer, the council input and the provider messages, with the context-recovery
    state the provider call shares."
   [{:keys [canonical-messages effective-fold-budget emergency-summaries-atom environment iteration
-           iteration-extra-body message-base-atom pre-resolved-model raw-reasoning-level
+           iteration-extra-body loop-state message-base-atom pre-resolved-model raw-reasoning-level
            reasoning-effort reasoning-level replay-target routing session-turn-id trailer-iters
            turn-position user-request]
     :as state}]
@@ -2719,8 +2752,14 @@
                  {:iteration-scope (str "t" (or turn-position 1) "/i" (inc (long iteration)))
                   :council-input council-input}]))
 
+        append-live-input
+        (fn [provider-messages]
+          (cond-> (council/append-input provider-messages council-input)
+            (:provider-error-feedback loop-state)
+            (conj {:role "user" :content (:provider-error-feedback loop-state)})))
+
         provider-messages
-        (council/append-input provider-base council-input)
+        (append-live-input provider-base)
 
         effective-messages-atom
         (atom provider-messages)
@@ -2731,8 +2770,7 @@
             (reset! message-base-atom {:messages base :summaries summaries :resumed? false}))
           (when-let [summary (:summary projection)]
             (swap! emergency-summaries-atom conj summary))
-          (reset! effective-messages-atom (council/append-input (:messages projection)
-                                                                council-input)))
+          (reset! effective-messages-atom (append-live-input (:messages projection))))
 
         context-estimator
         (request-context-estimator @(:prompt-cache-history-atom environment)
@@ -2972,33 +3010,36 @@
                            :extra-body current-extra-body})
                         (catch Exception e
                           (cond
-                            ;; Max-tokens cap: model burnt the entire output
-                            ;; budget on hidden reasoning before emitting a
-                            ;; tool call. Double the enforced cap once, within the
-                            ;; provider's output ceiling; with no room left the same
-                            ;; call would stop at the same cap, so it fails now.
-                            ;; Reasoning-heavy iterations hit this when the provider's
-                            ;; finish_reason: \"length\" leaves content-acc empty.
-                            (and (max-tokens-exceeded-error? e)
+                            ;; Retry once with a larger wire budget, before visible output
+                            ;; or code execution. Responses and Chat report different
+                            ;; errors for the same exhaustion; neither permits an
+                            ;; unchanged replay or a budget above the provider ceiling.
+                            (and (not (and cancel-atom @cancel-atom))
+                                 (not @provider-replay-unsafe?)
+                                 (max-tokens-exceeded-error? e)
                                  (< (long (:max-tokens retries))
                                     (long MAX_MAX_TOKENS_EXCEEDED_RETRIES))
                                  (max-tokens-retry e current-extra-body @request-budget-atom))
                             (let [{:keys [prev-max reasoning-tokens] bumped :extra-body}
-                                  (max-tokens-retry e current-extra-body @request-budget-atom)]
+                                  (max-tokens-retry e current-extra-body @request-budget-atom)
+
+                                  new-max
+                                  (or (get bumped "max_output_tokens") (get bumped "max_tokens"))]
+
                               (tel/log! {:level :warn
                                          :id ::max-tokens-exceeded-retry
                                          :data {:iteration iteration
                                                 :attempt (inc (long (:max-tokens retries)))
                                                 :max-retries MAX_MAX_TOKENS_EXCEEDED_RETRIES
                                                 :prev-max prev-max
-                                                :new-max (get bumped "max_tokens")
+                                                :new-max new-max
                                                 :reasoning-tokens reasoning-tokens}}
                                         (str "max_tokens exhausted on reasoning (~"
                                              (or reasoning-tokens "?")
                                              " reasoning tokens); retry " (inc (long (:max-tokens
                                                                                        retries)))
                                              "/" MAX_MAX_TOKENS_EXCEEDED_RETRIES
-                                             " with max_tokens=" (get bumped "max_tokens")))
+                                             " with output budget=" new-max))
                               ;; Spend the max-token budget so a second cap-hit
                               ;; cannot loop forever.
                               {::retry-max-tokens bumped})
@@ -3210,7 +3251,15 @@
                               (accounting/turn-cost @accounting-atom turn-pricing))]
 
             result))
-      (let [llm-provider-error (llm-provider-error-context iteration iteration-error-data)
+      (let [output-recovery-exhausted? (and (or (stream-output-overflow? iteration-error-data)
+                                                (max-tokens-exhausted? iteration-error-data))
+                                            (contains? #{:llm-provider/output-budget-exhausted
+                                                         :llm-provider/max-tokens-exhausted}
+                                                       (get-in loop-state
+                                                               [:llm-provider :error :type])))
+            fatal? (or (::loop-errors/fatal-iteration-error iteration-result)
+                       output-recovery-exhausted?)
+            llm-provider-error (llm-provider-error-context iteration iteration-error-data)
             error-feedback (iteration-error-feedback iteration iteration-error-data user-request)
             trace-entry {:iteration iteration :error iteration-error-data :final? false}
             ;; Preserve the provider's raw reasoning, content and usage on every failure
@@ -3263,7 +3312,7 @@
         ;; Terminal failures instead produce exactly one canonical provider
         ;; card below; emitting this raw chunk first made the TUI show an
         ;; unformatted error followed by the formatted terminal card.
-        (when-not (::loop-errors/fatal-iteration-error iteration-result)
+        (when-not fatal?
           (emit-hook! on-chunk
                       {:phase :iteration-error
                        :iteration (inc (long iteration))
@@ -3271,31 +3320,40 @@
                        :error iteration-error-data
                        :done? true}
                       "on-chunk (iteration error)"))
-        (if (::loop-errors/fatal-iteration-error iteration-result)
-          (let [trace' (conj trace trace-entry)
-                fallback (or (some-> (:error trace-entry)
-                                     loop-errors/python-error-content)
-                             (some-> (:error trace-entry)
-                                     loop-errors/user-error-content)
-                             (some-> (:error trace-entry)
-                                     perr/provider-error-content)
-                             [(content/error
-                                "provider_unavailable"
-                                "The model provider failed before Vis received a usable response."
-                                true)])
-                result (merge {:answer fallback
-                               :status :error
-                               :status-id (loop-router/status->id :error)
-                               :trace trace'
-                               :iteration-count (inc (long iteration))}
-                              (accounting/turn-cost @accounting-atom turn-pricing))]
+        (if fatal?
+          (let
+            [trace' (conj trace trace-entry)
+             fallback
+             (or
+               (when output-recovery-exhausted?
+                 [(content/error
+                    "output_budget_exhausted"
+                    (str
+                      "The provider exhausted its output budget again after a compact recovery request. "
+                      "Try a smaller task or another model. No partial tool call was executed.")
+                    false)])
+               (some-> (:error trace-entry)
+                       loop-errors/python-error-content)
+               (some-> (:error trace-entry)
+                       loop-errors/user-error-content)
+               (some-> (:error trace-entry)
+                       perr/provider-error-content)
+               [(content/error "provider_unavailable"
+                               "The model provider failed before Vis received a usable response."
+                               true)])
+             result (merge {:answer fallback
+                            :status :error
+                            :status-id (loop-router/status->id :error)
+                            :trace trace'
+                            :iteration-count (inc (long iteration))}
+                           (accounting/turn-cost @accounting-atom turn-pricing))]
 
             result)
           {::next-state (assoc loop-state
                           :iteration (inc (long iteration))
                           :empty-iteration-streak 0
                           :trailer-iters (compact-trailer council-trailer)
-                          :messages (conj messages {:role "user" :content error-feedback})
+                          :provider-error-feedback error-feedback
                           :llm-provider {:error llm-provider-error}
                           :trace (conj trace (store-trace! trace-store trace-entry)))})))
     (let [_ (note-prompt-cache-status! (:prompt-cache iteration-result))
@@ -3693,7 +3751,7 @@
                            :attachment-count (count iteration-attachments)
                            :final nil
                            :done? false}))
-              {::next-state (merge (dissoc loop-state :llm-provider)
+              {::next-state (merge (dissoc loop-state :llm-provider :provider-error-feedback)
                                    {:iteration (inc (long iteration))
                                     :empty-iteration-streak 0
                                     :messages messages
