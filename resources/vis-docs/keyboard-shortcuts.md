@@ -1,8 +1,7 @@
 # Keyboard shortcuts
 
-Use these keyboard shortcuts, also called keybindings, in the Vis terminal app to send
-a message, start a new line, run commands, move through a session and edit what you
-type.
+Use these keyboard shortcuts, also called keybindings, in the Vis terminal app. With them you can
+send a message, start a new line, run commands, move through a session and edit your text.
 
 To see the most common shortcuts while you work, press **Ctrl+X h** in Vis.
 
@@ -16,7 +15,7 @@ To see the most common shortcuts while you work, press **Ctrl+X h** in Vis.
 - **You want to read an earlier part of a long session.** Use the keys in [Move
   through a session](#move-through-a-session) to scroll, jump and fold.
 - **You want to fork a session, go back to an earlier turn or move a session to a
-  group.** Use the keys under [Sessions](#sessions); [Managing sessions](sessions.md)
+  group.** Use the keys under [Sessions](#sessions). [Managing sessions](sessions.md)
   explains each task.
 - **You want to know what cancelling or quitting does to your queued messages.** Read
   [Controlling a session](queue-and-cancel.md) instead.
@@ -42,9 +41,8 @@ not something Vis can change:
 - **Terminal on macOS:** turn on **Use Option as Meta key** in **Settings** >
   **Profiles** > **Keyboard**, then use Option+Enter.
 - **tmux:** add `set -g extended-keys on` to `~/.tmux.conf`.
-- **Windows Terminal over SSH:** if Vis runs on a computer that you connect to with
-  `ssh`, open **Settings**, select **Open JSON file** and add this entry to the
-  `actions` list:
+- **Windows Terminal over SSH:** use this when Vis runs on a computer that you connect to with
+  `ssh`. Open **Settings** and select **Open JSON file**. Then add this entry to the `actions` list:
 
   ```json
   { "command": { "action": "sendInput", "input": "\u001b[13;2u" }, "keys": "shift+enter" }
@@ -53,13 +51,13 @@ not something Vis can change:
 ## Run a command
 
 Most commands use **Ctrl+X** and a letter: press **Ctrl+X**, then the letter. After
-**Ctrl+X**, Vis shows the most common choices; the other commands on this page work
+**Ctrl+X**, Vis shows the most common choices. The other commands on this page work
 the same way. A command that needs something first, such as a turn to fork, appears
 once it can act.
 
 | Keys | What they do |
 |---|---|
-| Ctrl+X p | Open the command palette with every command; type to filter |
+| Ctrl+X p | Open the command palette with every command, then type to filter |
 | Ctrl+X h | Show or hide the keyboard shortcuts |
 
 ### Sessions

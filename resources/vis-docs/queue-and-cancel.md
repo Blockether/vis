@@ -6,13 +6,12 @@ running turn or quit the session.
 
 ## When to use
 
-- **You think of a follow-up while Vis is still working.** Send it now; it [waits in
+- **You think of a follow-up while Vis is still working.** Send it now. It [waits in
   the queue](#queue-a-message) and runs when the current turn finishes.
-- **A queued message has a mistake.** Edit it before it runs: in the terminal, [move
-  it back into the composer](#queue-a-message); in the Companion app, tap it to edit
-  or remove it.
+- **A queued message has a mistake.** Edit it before it runs. In the terminal, [move it back into
+  the composer](#queue-a-message). In the Companion app, tap it to edit or remove it.
 - **Vis is going in the wrong direction and you want to stop it.** [Cancel the
-  turn](#cancel-a-turn); your queued messages return to the composer so you can
+  turn](#cancel-a-turn). Your queued messages return to the composer so you can
   send them again.
 - **You want to leave the session.** See [Quit](#quit) for what **Ctrl+C** does in
   each state.
@@ -22,8 +21,8 @@ running turn or quit the session.
 Press **Enter** to send. If no turn is running, the message starts one.
 Otherwise it is added to the queue below the progress display.
 
-Queued messages run in submission order. The queue pauses after a failed turn;
-resume it manually to send the next message.
+Queued messages run in submission order. The queue pauses after a failed turn.
+Resume it manually to send the next message.
 
 To edit a queued message:
 
@@ -47,7 +46,7 @@ draft. To run them, submit the draft again.
 | State | Ctrl+C |
 |---|---|
 | Nothing typed, nothing running | Quits |
-| A draft in the composer | Clears the draft; press again to quit |
+| A draft in the composer | Clears the draft. A second press quits |
 | A turn is running | Cancels the turn |
 | A cancel is in progress | Quits immediately |
 

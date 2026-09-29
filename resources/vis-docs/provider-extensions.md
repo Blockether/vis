@@ -15,7 +15,7 @@ models alongside the built-in providers.
   Register a [managed provider](#managed-providers).
 
 If your service needs only an endpoint and API key, use
-[Configuration](configuration.md#providers-and-models) instead; no extension is
+[Configuration](configuration.md#providers-and-models) instead. No extension is
 needed.
 
 ## Before you start
@@ -66,11 +66,11 @@ vis.register_extension(vis.Extension(
    [environment resolution](extension-api.md#environment).
 3. Start Vis in that project or run `/reload`, then inspect
    `vis-agent providers status example` in the terminal. The status callback reports
-   whether a credential is present; it does not verify it with the service.
-4. Add `example` through **Add provider** or `providers` configuration, select the
-   real model name and make a request to verify the connection.
+   whether a credential is present. It does not verify it with the service.
+4. Add `example` through **Add provider** or the `providers` configuration. Select the real model
+   name. Send a request to check the connection.
 
-The preset supplies endpoint and model defaults; callbacks supply credentials and
+The preset supplies endpoint and model defaults. Callbacks supply credentials and
 status. Registration or a positive local status is not proof that the service accepts
 the key. No interactive login is defined in this minimal example.
 
@@ -98,22 +98,22 @@ not a record with an empty token.
 
 | Callback | Signature | Purpose |
 | --- | --- | --- |
-| `get_token_fn`, `detect_fn` | `() -> ProviderCredential \| None` | passive credential read; never starts a login |
-| `refresh_token_fn` | `(rejected: str \| None) -> ProviderCredential \| None` | renew a token; a zero-argument form is accepted |
+| `get_token_fn`, `detect_fn` | `() -> ProviderCredential \| None` | passive credential read that never starts a login |
+| `refresh_token_fn` | `(rejected: str \| None) -> ProviderCredential \| None` | renew a token (a zero-argument form also works) |
 | `status_fn` | `() -> ProviderStatus \| None` | connection state, not quota |
 | `limits_fn` | `() -> ProviderLimits \| None` | usage report |
-| `auth_fn` | `(printer) -> str \| bool \| None` | interactive login; print instructions with `printer(line)` |
+| `auth_fn` | `(printer) -> str \| bool \| None` | interactive login (print instructions with `printer(line)`) |
 | `auth_prompt_fn` | `() -> Sequence[str] \| str \| None` | static login guidance |
 | `logout_fn` | `() -> None` | discard the credential |
-| `enrich_models_fn` | `(provider, router_opts) -> Sequence[ProviderModel] \| None` | extend the model list; `None` keeps defaults |
+| `enrich_models_fn` | `(provider, router_opts) -> Sequence[ProviderModel] \| None` | extend the model list (`None` keeps the defaults) |
 | `on_selected_fn` | `(event) -> None` | notification after selection |
 
 Callbacks are optional and synchronous. Async functions and invalid signatures
 are rejected at declaration. Passive callback errors are logged and return no
-result; authentication errors are returned to the caller.
+result. Authentication errors are returned to the caller.
 
-Startup, status probes and limits polling run without a session. `vis.shell`
-and `vis.jailed_shell` work there; `vis.ask` does not.
+Startup, status probes and limits polling run without a session. `vis.shell` and `vis.jailed_shell`
+work there, but `vis.ask` does not.
 
 Report usage with the limits contract:
 
@@ -169,7 +169,7 @@ To implement one:
    `refresh_token_fn()`.
 
 With `auth_fn`, a request that finds no usable token runs the login once,
-calls `get_token_fn()` again and resumes; concurrent requests share the flow.
+calls `get_token_fn()` again and resumes. Concurrent requests share the flow.
 Status probes, startup and opening the model picker never run `auth_fn`. Test
 the explicit path with `vis-agent providers auth <id>`, then make a request
 while signed out to verify first-use login.

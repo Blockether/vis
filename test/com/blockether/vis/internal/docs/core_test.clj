@@ -817,8 +817,8 @@
   (it "documents layout, text formatting, and interruption"
       (let [md (page-md "live-views")]
         (doseq [needle ["vis.row(" "vis.column(" "inline Markdown" "wraps and is justified"
-                        "Log terminal controls display as visible escapes"
-                        "other text stays literal" "`Escape` or `Enter` confirms"]]
+                        "Terminal controls in logs show as visible escapes"
+                        "Other text stays literal" "`Escape` or `Enter` confirms"]]
           (expect (str/includes? md needle) (str "live-views.md never mentions " needle))))))
 
 ;;; ── The page contract ───────────────────────────────────────────────────────
@@ -936,6 +936,44 @@
                                "<p>Readable copy.</p>\n" "Continues here.\n")]
                    (expect (= [[5 "<p>Readable copy.</p> Continues here."]] (text-units md))))))
 
+(def ^:private max-sentence-words
+  "Words one prose sentence may carry: the ASD-STE100 Simplified Technical English
+   limit for descriptive writing. Instructions keep to 20 by review, not by test."
+  25)
+
+(def ^:private max-unit-sentences
+  "Sentences one paragraph, or one list item, may carry: the ASD-STE100 limit."
+  6)
+
+(defn- sentences
+  "PURE: the sentences of one text unit as plain text. The list marker, link targets,
+   images, tags and emphasis are dropped, and a code span becomes one word, the way
+   ASD-STE100 counts a technical name."
+  [^String unit]
+  (let [plain (-> unit
+                  (str/replace #"^(?:[-*+]|\d+[.)])\s+" "")
+                  (str/replace #"`[^`]*`" "code")
+                  (str/replace #"!\[[^\]]*\]\([^)]*\)" "")
+                  (str/replace #"\[([^\]]*)\]\([^)]*\)" "$1")
+                  (str/replace #"<[^>]+>" "")
+                  (str/replace "*" ""))]
+    (remove str/blank? (str/split plain #"(?<=[.!?])[\"'”)\]]*\s+"))))
+
+(defn- word-count
+  "PURE: the words of `sentence`, its spaced tokens that carry a letter or a digit."
+  [^String sentence]
+  (count (filter #(re-find #"[\p{L}\p{N}]" %) (str/split sentence #"\s+"))))
+
+(defn- semicolon?
+  "PURE: whether `unit` joins clauses with a semicolon outside code spans, link
+   targets and HTML entities."
+  [^String unit]
+  (str/includes? (-> unit
+                     (str/replace #"`[^`]*`" "")
+                     (str/replace #"\]\([^)]*\)" "]")
+                     (str/replace #"&#?\w+;" ""))
+                 ";"))
+
 (defn- page-canon
   "PURE: every way `page` breaks the page contract, as reader-facing lines.
    `anchors` is `{slug #{anchor-id}}` for the whole site, so a cross-page
@@ -963,6 +1001,9 @@
 
         ids
         (map :id toc)
+
+        units
+        (text-units md)
 
         say
         (fn [& parts]
@@ -1025,7 +1066,7 @@
         (say "the fence on line " line
              " declares " (if (str/blank? lang) "no language" (pr-str lang))))
       (for [[line text]
-            (text-units md)
+            units
 
             :when (> (count text) (long max-unit-chars))]
 
@@ -1036,6 +1077,42 @@
              " characters — over "
              max-unit-chars
              ", so it is a list or a table wearing prose"))
+      (for [[line text]
+            units
+
+            sentence
+            (sentences text)
+
+            :let [n
+                  (word-count sentence)]
+            :when (> (long n) (long max-sentence-words))]
+
+        (say "a sentence in the paragraph on line " line
+             " runs " n
+             " words — over " max-sentence-words
+             ", so split it: " (pr-str sentence)))
+      (for [[line text]
+            units
+
+            :let [n
+                  (count (sentences text))]
+            :when (> (long n) (long max-unit-sentences))]
+
+        (say "the paragraph on line "
+             line
+             " holds "
+             n
+             " sentences — over "
+             max-unit-sentences
+             ", so it covers more than one topic"))
+      (for [[line text]
+            units
+
+            :when (semicolon? text)]
+
+        (say "the paragraph on line "
+             line
+             " joins clauses with a semicolon — end the first clause with a full stop"))
       (when (str/blank? (str blurb)) [(say "has no `:blurb` in vis-docs/site.edn")])
       (for [[_ target frag]
             (re-seq #"\]\((?!https?:|/|#)([A-Za-z0-9._-]+\.md)(#[A-Za-z0-9._-]+)?\)" md)
@@ -1100,6 +1177,43 @@
       (expect (empty? (when-to-use-breaks (canon-fixture "Guides" "When to use" ["a" "b"])))))
   (it "leaves the unsectioned introduction pages alone"
       (expect (empty? (when-to-use-breaks (canon-fixture nil "Why Vis" []))))))
+
+(defn- plain-english-breaks
+  "The page-contract lines a page whose body is `prose` earns for its sentences."
+  [prose]
+  (filter #(re-find #"sentence|semicolon" %)
+          (page-canon
+            {:slug "fixture"
+             :title "Fixture"
+             :md
+             (str
+               "# Fixture\n\nA lead paragraph long enough to count as the page's introduction.\n\n"
+               prose
+               "\n\n## See also\n")}
+            {}
+            [])))
+
+(defn- sentence-of "A sentence of `n` plain words." [n] (str (str/join " " (repeat n "word")) "."))
+
+(defdescribe
+  plain-english-canon-test
+  "ASD-STE100 Simplified Technical English keeps a page readable with basic English
+   and through translation tools, so a sentence over 25 words, a paragraph over six
+   sentences or a semicolon between clauses breaks the page contract."
+  (it "accepts a 25-word sentence and a six-sentence paragraph"
+      (expect (empty? (plain-english-breaks (sentence-of 25))))
+      (expect (empty? (plain-english-breaks (str/join " " (repeat 6 (sentence-of 3)))))))
+  (it "flags a 26-word sentence and a seven-sentence paragraph"
+      (expect (seq (plain-english-breaks (sentence-of 26))))
+      (expect (seq (plain-english-breaks (str/join " " (repeat 7 (sentence-of 3)))))))
+  (it "counts a code span as one word and a link as its text"
+      (expect (empty? (plain-english-breaks (str
+                                              "Run `vis sessions fork --at 3 --title copy` or read "
+                                              "[Managing sessions](sessions.md#fork-a-session) "
+                                              (sentence-of 19))))))
+  (it "flags a semicolon between clauses, not one in code or in an HTML entity"
+      (expect (seq (plain-english-breaks "The fork keeps its turns; the original stays.")))
+      (expect (empty? (plain-english-breaks "Type `a; b` and a&nbsp;space.")))))
 
 (defdescribe
   extension-center-public-link-test

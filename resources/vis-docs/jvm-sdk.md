@@ -2,7 +2,7 @@
 
 Create a session on a running gateway, submit a task and read the answer from a
 Java or Clojure application. The gateway runs the tools and owns the project
-files; your JVM application acts as its client.
+files. Your JVM application acts as its client.
 
 ## When to use
 
@@ -10,7 +10,7 @@ files; your JVM application acts as its client.
   [Connect from Java](#connect-from-java) or [call the same API from
   Clojure](#call-the-same-api-from-clojure).
 - **You deploy a JVM application next to a native gateway.** Java does not need
-  GraalVM to connect; see [Package a JVM application or a native
+  GraalVM to connect. See [Package a JVM application or a native
   runtime](#package-a-jvm-application-or-a-native-runtime).
 
 For a Python program, use the [Python SDK](python-sdk.md). To add Java or Clojure
@@ -20,8 +20,8 @@ extensions](jvm-native-image.md).
 ## Prepare the JVM classpath
 
 Use JDK 25 and the Clojure CLI. The published Vis library includes its runtime
-dependencies; you do not need a Vis source checkout. Java calls the public
-`com.blockether.vis.core` namespace through `clojure.java.api.Clojure`; there is
+dependencies. You do not need a Vis source checkout. Java calls the public
+`com.blockether.vis.core` namespace through `clojure.java.api.Clojure`. There is
 no standalone Java-only SDK.
 
 Add the published library to your application's `deps.edn`:
@@ -39,8 +39,8 @@ dependencies and prepare the classpath:
 export VIS_CLASSPATH="$(clojure -Spath)"
 ```
 
-The client loads the engine's JVM libraries even though the gateway performs
-the actual tasks. For a Python client, use the [Python SDK](python-sdk.md).
+The client loads the engine's JVM libraries, but the gateway does the actual work. For a Python
+client, use the [Python SDK](python-sdk.md).
 
 ## Connect from Java
 
@@ -60,7 +60,7 @@ a securely supplied token and a project path **on the gateway machine**. See
 Requests can use that machine's tools and incur model charges.
 
 The JVM client reads these settings itself and uses one process-wide gateway
-target. Without an explicit URL it can discover or start a local gateway; this
+target. Without an explicit URL it can discover or start a local gateway. This
 example requires the URL to avoid that side effect. Do not switch targets by
 changing environment settings per request.
 
@@ -120,10 +120,10 @@ public final class VisExample {
 }
 ```
 
-The options use Clojure **keyword** keys; gateway records returned here use
+The options use Clojure **keyword** keys. Gateway records returned here use
 **string** keys. Passing an ordinary Java map with `"root"` as the option key
 is not equivalent to passing `:root`. Do not use `Clojure.read` to parse untrusted
-requests; this example reads only a fixed namespace symbol.
+requests. This example reads only a fixed namespace symbol.
 
 Save `VisExample.java` beside `deps.edn`, then compile and run it on macOS or Linux:
 
@@ -139,9 +139,9 @@ result is different: it has no `status` on success and uses `needs_input` for a
 suspended turn. A returned Java method alone does not establish task success.
 
 `gateway-release-session!` releases runtime resources for that session and the
-process's client lease; it does not delete the saved conversation or stop the
+process's client lease. It does not delete the saved conversation or stop the
 gateway. Passing `null` releases only the lease. `shutdown-agents` is appropriate
-for this one-shot program; do not call it after every request in a long-lived
+for this one-shot program. Do not call it after every request in a long-lived
 JVM application. Likewise, release the shared client lease only when your
 application is finished with it, not while other requests are using it.
 
@@ -184,11 +184,10 @@ already implement process ownership and the stdio protocol.
 Use a prebuilt Vis engine for either connection mode. You do not rebuild Vis
 merely to connect from Java or Clojure, wrap it from Python or host a gateway.
 
-Only if you are adding Java/Clojure capabilities **inside the engine**, follow
-[Native builds for JVM extensions](jvm-native-image.md). That workflow compiles
-Vis with your code, its Clojure AOT classes, resources and reachability metadata.
-It does not compile arbitrary SDK applications or provide a Java-only embedding
-recipe. Keep an external client and the engine as separate processes.
+Follow [Native builds for JVM extensions](jvm-native-image.md) only when you add Java or Clojure
+code **inside the engine**. That workflow compiles Vis with your code, its Clojure AOT classes,
+resources and reachability metadata. It does not compile other SDK applications, and it gives no
+Java-only embedding recipe. Keep an external client and the engine as separate processes.
 
 ## See also
 

@@ -17,7 +17,7 @@ iPad or Android device.
 You know which tests matter, how your team reviews changes and what must be
 checked before a release. Vis lets you turn that knowledge into reusable tools
 and automatic checks, rather than rely only on instructions the agent has to
-remember. The model combines those tools in Python; you can inspect both the
+remember. The model combines those tools in Python. You can inspect both the
 code and the results.
 
 Start with the built-in tools. Add your own when you want Vis to follow a
@@ -28,7 +28,7 @@ terminal, desktop and phone let you follow the same work. Read
 ## See Vis in action
 
 The terminal images show an earlier header with session tabs. Current builds show
-only the active session title; use [Projects](sessions.md#find-a-saved-session)
+only the active session title. Use [Projects](sessions.md#find-a-saved-session)
 to browse saved sessions.
 
 <section class="screenshot-gallery" id="screenshot-gallery" data-screenshot-gallery role="region" aria-roledescription="carousel" aria-label="Vis screenshots">
@@ -111,7 +111,7 @@ to browse saved sessions.
 ### Install Vis where your work runs
 
 The stable release includes the engine, Python and terminal client. Native
-packages support Apple silicon macOS and Linux (x64 or ARM64); installation
+packages support Apple silicon macOS and Linux (x64 or ARM64). Installation
 needs `curl` and `tar`, not Java or Git. For other platforms or a source build,
 see [Runtime distributions](distributions.md).
 
@@ -163,8 +163,8 @@ The apps connect to a **gateway**, the service running Vis on the computer where
 your projects live. Your files, commands and sessions stay on that computer.
 
 [Install Vis](#install) on the computer that will run your work: macOS, Linux, or
-Linux in WSL2 on Windows. You do not need a separate Vis account to connect an app;
-model providers may require their own account or API key.
+Linux in WSL2 on Windows. You do not need a separate Vis account to connect an app.
+Model providers may require their own account or API key.
 
 ### Connect the desktop app
 
@@ -180,8 +180,8 @@ Keep that terminal open: this command runs the gateway in the foreground.
 Open Vis from your computer's application launcher.
 
 In **Add a machine**, paste the gateway's address (`http://127.0.0.1:7890` for
-the command above). Leave the bearer token empty for the default local gateway;
-if you enabled token authentication, supply its token. Once connected, open
+the command above). Leave the bearer token empty for the default local gateway.
+If you enabled token authentication, supply its token. Once connected, open
 your project and start or resume a session. The
 [first-session guide](#first-session) covers choosing a model and a task.
 
@@ -189,9 +189,9 @@ The app reaches a local WSL2 gateway through localhost forwarding. On an Intel M
 use the [JVM source distribution](distributions.md) for a local gateway, or connect
 to a gateway on another computer.
 
-For a gateway on another computer, follow the phone pairing steps below and
-paste the pairing link instead of scanning its QR code. `127.0.0.1` always means
-the device you are using; it cannot reach a different computer.
+For a gateway on another computer, follow the phone pairing steps below. Paste the pairing link
+instead of scanning its QR code. `127.0.0.1` always means the device you are using. It cannot reach
+a different computer.
 
 ### Pair a phone
 
@@ -221,7 +221,7 @@ vis-agent gateway pair
 
 If that gateway is bound to `127.0.0.1`, the command asks you to restart with a
 reachable address. Check that other clients and sessions can be interrupted
-before stopping it; see [Starting the gateway](#starting-the-gateway).
+before stopping it. See [Starting the gateway](#starting-the-gateway).
 
 Every pairing link carries more than one address. It leads with the most durable
 one this computer holds — a tailnet address before a LAN address — and lists the
@@ -230,14 +230,13 @@ a phone that cannot reach the first address still connects. Only addresses this
 computer actually answers on are offered, so nothing in the link points at a
 device that never replies.
 
-To reach Vis from outside your network, forward the gateway's port on your router
-and start Vis with `--advertise` set to the public host or domain that forward
-leads to. Pairing prints that reminder together with your router's address.
+To reach Vis from outside your network, forward the gateway's port on your router. Then start Vis
+with `--advertise` set to the public host or domain of that forward. Pairing prints this reminder
+together with your router's address.
 
-If the address your network needs is none of those — a proxy in front of the
-gateway, a forward on a different port, or a hostname only DNS knows — name it
-with `--advertise`. The pairing link then leads with that address, and the
-detected ones follow as fallbacks:
+If your network needs an address that is not one of those, name it with `--advertise`. Examples are
+a proxy in front of the gateway, a forward on a different port, or a hostname that only DNS knows.
+The pairing link then puts your address first. The detected addresses follow as fallbacks:
 
 ```bash
 vis-agent gateway start --host 0.0.0.0 --require-token --pair --advertise 10.0.0.5
@@ -248,8 +247,8 @@ vis-agent gateway pair --advertise https://gateway.example.com
 link says, not what the gateway listens on, so the address still has to reach
 this computer.
 
-If the same address is always the right one on this computer, name it once and
-every pairing link uses it without the flag. Either as an environment variable:
+If the same address is always right on this computer, name it once. Then every pairing link uses it
+without the flag. You can set it as an environment variable:
 
 ```bash
 export VIS_GATEWAY_ADVERTISE=10.0.0.5
@@ -257,9 +256,9 @@ vis-agent gateway start --require-token --pair
 vis-agent gateway pair
 ```
 
-or in your [configuration file](configuration.md#gateway-pairing-address), which
-a gateway started by launchd or systemd can still read, because a service unit
-starts without your shell profile:
+You can also set it in your [configuration file](configuration.md#gateway-pairing-address). A
+gateway that launchd or systemd starts can still read that file, because a service unit starts
+without your shell profile:
 
 ```yaml
 # ~/.vis/config.yml
@@ -267,10 +266,10 @@ gateway:
   advertise: 10.0.0.5
 ```
 
-The flag wins when you set more than one, then `VIS_GATEWAY_ADVERTISE`, then the
-config file. What you are choosing is which address *leads*: the link carries a
-bearer token, and the app trusts the leading address first, so an address this
-computer does not hold rides along as a fallback until you name it yourself.
+If you set more than one, the flag wins, then `VIS_GATEWAY_ADVERTISE`, then the config file. The
+setting chooses which address *leads*. The link carries a bearer token, and the app trusts the
+leading address first. So an address that this computer does not hold stays a fallback until you
+name it yourself.
 
 You can also type a reachable address and supply the token from
 `~/.vis/gateway.token` on the gateway's computer. Each saved machine shows its
@@ -282,12 +281,13 @@ Put both devices on a [Tailscale](https://tailscale.com) tailnet to reach your
 gateway away from the local network. Listen on the computer's Tailscale address,
 then pair the app. The pairing QR prefers the machine's `100.x` Tailscale address.
 
-You can use `--host 0.0.0.0` to listen on all IPv4 interfaces, but that includes
-public interfaces if present. The pairing link then carries the machine's other
-addresses as fallbacks, so the app can move between networks without a new QR
-code. Bind to a specific private address when you only need private access: the
-link offers that address alone, because it is the only one the gateway answers
-on. A bearer token controls access; it does not encrypt HTTP.
+You can use `--host 0.0.0.0` to listen on all IPv4 interfaces. This includes public interfaces, if
+the computer has them. The pairing link then carries the other addresses of the computer as
+fallbacks. So the app can move between networks without a new QR code.
+
+When you need only private access, bind to one private address. The link then offers only
+that address, because the gateway answers only on it. A bearer token controls access. It
+does not encrypt HTTP.
 
 ## First session
 
@@ -297,7 +297,7 @@ also use Ollama or LM Studio for a local model. See
 [Providers and models](configuration.md#providers-and-models).
 
 Vis can edit files and run commands in your workspace. Start with a read-only
-task while you get familiar with it. Review changes before using them; you can
+task while you get familiar with it. Review changes before using them. You can
 [restrict file and network access](jail.md).
 
 ### In the terminal
@@ -316,7 +316,7 @@ Vis starts a local gateway if needed.
 3. Select a model.
 
 Press **Enter** to send a message. To start a new line instead, press
-**Shift+Enter** or **Alt+Enter**. Most terminals need no setup; if yours sends the
+**Shift+Enter** or **Alt+Enter**. Most terminals need no setup. If yours sends the
 message instead, see [New lines in your terminal](keyboard-shortcuts.md#new-lines-in-your-terminal).
 [Keyboard shortcuts](keyboard-shortcuts.md) lists the other keys.
 
@@ -341,7 +341,7 @@ ask Vis to run the relevant tests and inspect the diff.
 Use `AGENTS.md` for project context and [Skills](skills.md) for reusable
 procedures. When you need an operation to follow the same rules every time,
 turn it into a tool or check. [Extending Vis](extending.md) starts with one
-Python file; you do not need to build an extension before using Vis.
+Python file. You do not need to build an extension before using Vis.
 
 ### Combine steps in Python
 
@@ -356,15 +356,15 @@ Activities show actions and their results in the conversation. Vis also writes
 short notes as it works, such as its first step, the change it is about to make
 or what a check found. Use [desktop and mobile apps](#connecting-the-companion-app)
 to follow the same session from another device. You can send a follow-up or stop
-a task while it runs; see [Controlling a session](queue-and-cancel.md).
+a task while it runs. See [Controlling a session](queue-and-cancel.md).
 
-Vis combines the steps between two notes into one Activity, so a turn reads as
-its notes with the work between them, and the answer comes last. Each Activity
-counts its steps, such as `1 mutation · 6 observations · 2 checks, 1 failing`,
-and you can open it to see every step. Files and images from those steps appear
-right after it. A finished turn keeps the same layout. To show one Activity for
-each step instead, turn off **Summarize steps between notes** in Settings, under
-**Responses**. The terminal and each app keep their own choice.
+Vis combines the steps between two notes into one Activity. A turn then shows its notes with the
+work between them, and the answer comes last. Each Activity counts its steps, such as
+`1 mutation · 6 observations · 2 checks, 1 failing`. Open an Activity to see every step. Files and
+images from those steps appear right after it. A finished turn keeps the same layout.
+
+To show one Activity for each step instead, turn off **Summarize steps between notes** in Settings,
+under **Responses**. The terminal and each app keep their own choice.
 
 ### Keep useful work when you return
 
@@ -383,7 +383,7 @@ vis-agent update
 ```
 
 This selects the latest stable release, even if you previously used another
-track. For beta or source builds, name the track explicitly; see
+track. For beta or source builds, name the track explicitly. See
 [updates and release tracks](distributions.md#updating-and-selecting-a-track).
 
 ## Native vs JVM
@@ -413,9 +413,9 @@ vis-agent gateway stop --if-idle  # stop only when nobody is using it
 vis-agent gateway stop            # stop even if clients are connected
 ```
 
-`vis-agent gateway start` runs in the foreground and does not stop on its own.
-For a gateway you want to keep available, run it under a process supervisor
-such as systemd or launchd, or in a terminal multiplexer such as tmux.
+`vis-agent gateway start` runs in the foreground and does not stop on its own. To keep a gateway
+available, run it under a process supervisor such as systemd or launchd. You can also run it in a
+terminal multiplexer such as tmux.
 
 `vis-agent update` stops an idle managed gateway so the next client starts the
 new build. Use `--keep-gateway` if you want to leave it running.
@@ -430,7 +430,7 @@ vis-agent --gateway 10.0.0.5 --gateway-token "$TOKEN" tui
 vis-agent --gateway https://gateway.example.com/vis --gateway-token "$TOKEN" gateway status
 ```
 
-`--gateway` accepts `HOST`, `HOST:PORT` or a full URL; a bare host means HTTP on
+`--gateway` accepts `HOST`, `HOST:PORT` or a full URL. A bare host means HTTP on
 port `7890`. You can instead set `VIS_GATEWAY_URL` and `VIS_GATEWAY_TOKEN` in
 your shell. To reach a local-only gateway through an SSH tunnel:
 
@@ -454,7 +454,7 @@ not a fallback to a local one. The `sessions` commands (`list`, `show`, `fork`,
 
 Vis creates the token in `~/.vis/gateway.token` with owner-only permissions
 (mode `600`). `--token-file PATH` chooses a different file. Local CLI clients
-read it automatically; remote clients receive it through pairing. In the
+read it automatically. Remote clients receive it through pairing. In the
 desktop app, supply it when adding a token-protected local gateway.
 
 An `HTTP 401` error means the gateway is reachable but the token is missing or
@@ -470,17 +470,17 @@ curl -sS http://127.0.0.1:7890/openapi.json -o vis-gateway.json
 ```
 
 Use the schema for routes, request formats and responses. Protected routes
-require the gateway token. An incompatible client receives `HTTP 426`;
-update the client or gateway to a compatible version.
+require the gateway token. An incompatible client receives `HTTP 426`.
+Update the client or gateway to a compatible version.
 
 ### Python SDK
 
-Start with the [Python SDK](python-sdk.md) to run a task in your project with
-`Agent(project=".")`, or pass `gateway_url` to the same Agent interface for remote
-work. Follow-up requests reuse the conversation. For JVM applications, see the
-[Java and Clojure SDK](jvm-sdk.md). To share the engine across clients,
-[run a gateway](gateway-service.md); no native build is needed. Use `GatewayClient`
-when your program needs to create or manage several gateway sessions.
+Start with the [Python SDK](python-sdk.md). Run a task in your project with `Agent(project=".")`.
+For remote work, pass `gateway_url` to the same Agent interface. Follow-up requests reuse the
+conversation. For JVM applications, see the [Java and Clojure SDK](jvm-sdk.md).
+
+To share the engine across clients, [run a gateway](gateway-service.md). No native build is needed.
+When your program must create or manage several gateway sessions, use `GatewayClient`.
 
 ### Resource limits
 

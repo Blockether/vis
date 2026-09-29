@@ -10,9 +10,9 @@ Skills written for Claude Code, pi, opencode or the
 
 ## When to use
 
-- **You explain the same workflow to Vis for every release, review or migration.**
-  [Write it once as a skill](#write-a-skill), with any scripts and templates it
-  needs, and Vis reads it when a task calls for it.
+- **You explain the same workflow to Vis for every release, review or migration.** [Write it once as
+  a skill](#write-a-skill), with the scripts and templates it needs. Vis reads the skill when a task
+  needs it.
 - **The procedure is too long to keep in `AGENTS.md`**, which Vis includes in every
   turn. Vis lists only a skill's name and description until a task needs the full
   instructions.
@@ -62,7 +62,7 @@ description: Use when the user requests a release. Verifies, tags and publishes.
 ```
 
 Vis reads `name` and `description` from the frontmatter. State when the skill
-should be used in `description`; the model uses it to select a skill. If `name`
+should be used in `description`. The model uses it to select a skill. If `name`
 is missing, Vis uses the folder name.
 
 Bundled files (scripts, templates, references) are read with ordinary file tools
@@ -70,8 +70,8 @@ when the skill is used.
 
 ## Where Vis looks
 
-Vis searches these sources in order. The first skill with a given name is used;
-later matches are ignored.
+Vis searches these sources in order. The first skill with a given name is used.
+Later matches are ignored.
 
 | Location | Scope |
 |---|---|
@@ -90,7 +90,7 @@ later matches are ignored.
 
 Project locations are also searched in parent directories up to the Git root.
 Changes to local skills are loaded without restarting Vis. Skills bundled with
-an extension update when you run `/reload`; if reload fails, Vis keeps the last
+an extension update when you run `/reload`. If reload fails, Vis keeps the last
 working version. A local skill with the same qualified name overrides the
 package skill without changing the package's tools.
 
@@ -108,7 +108,7 @@ followed by an optional task:
 /skill:release-checklist for the 2.1 branch
 ```
 
-Skills are hidden from the initial `/` list but appear when you search by name.
+The `/` list does not show skills at first. They appear when you search by name.
 
 ## See also
 

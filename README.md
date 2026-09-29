@@ -25,17 +25,16 @@ work from your terminal, desktop or phone, with the same sessions on each.
 
 ## Why Vis
 
-A capable model can write code, but it does not know how your team works: which
-tests matter, how changes get reviewed or what must be checked before a release.
-You do. Vis lets you put that knowledge into tools the agent can use, instead of
-relying on a growing list of reminders.
+A capable model can write code, but it does not know how your team works. It does not know which
+tests matter, how changes get reviewed or what to check before a release. You do. Vis lets you put
+that knowledge into tools the agent can use, instead of a growing list of reminders.
 
 For example, a function can select and run the right tests for a change. A hook
 can check the code after an edit and report problems. You define the operations
-and checks; the model decides how to combine them. Your instructions explain the
+and checks. The model decides how to combine them. Your instructions explain the
 process, while your code carries out its repeatable parts.
 
-Python connects those steps. Models already use it to work with code and data;
+Python connects those steps. Models already use it to work with code and data.
 Vis lets them use the same language to compose your tools, inspect results and
 reuse useful helper functions. You can start with the built-in tools and add
 [extensions](resources/vis-docs/extending.md) as you need them.
@@ -49,7 +48,7 @@ Read [Why I built Vis](resources/vis-docs/motivation.md) for the full motivation
 
 ## Documentation
 
-Read the manual at [vis.blockether.com](https://vis.blockether.com/); its sidebar
+Read the manual at [vis.blockether.com](https://vis.blockether.com/). Its sidebar
 lists every guide. The same pages are in [`resources/vis-docs/`](resources/vis-docs/).
 Good places to start:
 
@@ -63,7 +62,7 @@ Good places to start:
 ## Screenshot gallery
 
 The terminal images show an earlier header with session tabs. Current builds show
-only the active session title; [Projects](resources/vis-docs/sessions.md#find-a-saved-session)
+only the active session title. [Projects](resources/vis-docs/sessions.md#find-a-saved-session)
 lists saved sessions.
 
 <table width="100%">
@@ -87,7 +86,7 @@ lists saved sessions.
 ## Install
 
 Install Vis on the computer where your projects live. The default release
-includes the engine, Python and terminal client; it does not need Java or Git.
+includes the engine, Python and terminal client. It does not need Java or Git.
 Native packages support Apple silicon macOS and Linux (x64 or ARM64). See
 [Runtime distributions](resources/vis-docs/distributions.md) for source builds
 and other installation options.
@@ -109,7 +108,7 @@ vis-agent tui
 ```
 
 Choose a provider, sign in and select a model. Your provider may charge for model
-usage; you can also use a supported local model. Try a read-only first task:
+usage. You can also use a supported local model. Try a read-only first task:
 “Explain how this project is organized. Don't change any files.”
 
 Vis can edit files and run commands within its configured permissions. Review
@@ -173,7 +172,7 @@ vis-agent update
 ```
 
 This selects the latest stable release. Preview and source-build updates need
-an explicit track; see [updates and release tracks](resources/vis-docs/distributions.md#updating-and-selecting-a-track).
+an explicit track. See [updates and release tracks](resources/vis-docs/distributions.md#updating-and-selecting-a-track).
 
 ## Native vs JVM
 
@@ -189,7 +188,7 @@ Browse the generated [Python API reference](https://vis.blockether.com/python-sd
 for classes, methods, signatures and types. It follows `main` and can include
 unreleased APIs not yet available on PyPI.
 For JVM applications, follow the [Java and Clojure guide](resources/vis-docs/jvm-sdk.md).
-For a shared engine, [run a gateway](resources/vis-docs/gateway-service.md); no native build is needed.
+For a shared engine, [run a gateway](resources/vis-docs/gateway-service.md). No native build is needed.
 
 ## Add your own tools and checks
 

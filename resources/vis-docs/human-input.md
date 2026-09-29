@@ -1,8 +1,8 @@
 # Forms and user input
 
-Use a form when your extension needs to ask the user to choose an option, enter a
-password or token, or confirm a step. `vis.ask` displays the form in the terminal
-or Companion app, waits for an answer and returns it to your Python code.
+Use a form when your extension must ask the user for something. For example, the user chooses an
+option, enters a password or token, or confirms a step. `vis.ask` shows the form in the terminal or
+Companion app. It waits for an answer and returns it to your Python code.
 
 ## When to use
 
@@ -11,7 +11,7 @@ or Companion app, waits for an answer and returns it to your Python code.
   person cancels.
 - **The tool needs a token or one-time code that must not appear in the
   conversation.** A `password` or `otp` field returns [a handle instead of the
-  value](#the-answer); only the handle is recorded or sent to the model.
+  value](#the-answer). Only the handle is recorded or sent to the model.
 - **Only a person can make the choice**, such as which environment to deploy to.
   Offer the options as [fields](#fields).
 - **The input must be valid before the tool continues.** Add
@@ -24,14 +24,14 @@ To show progress instead of asking a question, use a [live view](live-views.md).
 Call `vis.ask` from a registered tool, user command or session-bound hook. It
 needs a calling session and an available TUI or Companion client, so it cannot
 run during registration or from a passive provider callback. When you test the
-SDK outside Vis, it uses terminal input instead; see
+SDK outside Vis, it uses terminal input instead. See
 [testing outside Vis](extension-design.md#test-the-python-implementation).
 
 ## Ask and handle cancellation
 
 This fragment belongs inside your tool's implementation. Import
 `blockether.vis.extension as vis` in that module and supply your own `deploy`
-function. The form does not deploy anything by itself; call the operation only
+function. The form does not deploy anything by itself. Call the operation only
 after a submitted answer and handle cancellation explicitly.
 
 ```python
@@ -49,7 +49,7 @@ else:
 ```
 
 The request opens this form in the Vis terminal. Select a target, enter
-notes and submit; the extension resumes with the answer. Password input stays
+notes and submit. The extension resumes with the answer. Password input stays
 masked. This capture uses example data. Select the image to view it full size.
 
 [![Vis terminal form with Target, Release notes and a masked Deploy token field](assets/screenshots/ask.png)](assets/screenshots/ask.png)
@@ -61,7 +61,7 @@ Request options:
 | `description` | Markdown under the title. |
 | `submit_label`, `cancel_label` | Button labels. |
 | `is_cancellable` | `False` removes the cancel button. |
-| `timeout_ms` | 5 minutes by default; `0` waits until the person answers or cancels. |
+| `timeout_ms` | 5 minutes by default. `0` waits until the person answers or cancels. |
 
 Every key is a snake_case string (`is_required`, `max_length`, `timeout_ms`).
 A camelCase or kebab-case key is refused with an error naming the right
@@ -74,14 +74,13 @@ when the person confirmed:
 
 | Attribute | Meaning |
 | --- | --- |
-| `answer.values` | every field's value, defaults included; `answer["env"]` reads one |
+| `answer.values` | every field's value, defaults included (`answer["env"]` reads one) |
 | `answer.reason` | `cancelled`, `timeout`, `undeliverable` or the host's reason when the answer is falsy |
 | `answer.reveal(name)` | resolve a secret handle in process |
 
-A `password` or `otp` field returns an opaque `vis-secret:` handle. Only the
-handle is recorded in the transcript and logs or sent to the model. Retrieve
-the value with `answer.reveal(name)` or `vis.reveal(handle)` when needed;
-`vis.forget(handle)` removes it. Do not print or log the revealed value.
+A `password` or `otp` field returns an opaque `vis-secret:` handle. The transcript, the logs and the
+model get only the handle. When you need the value, get it with `answer.reveal(name)` or
+`vis.reveal(handle)`. `vis.forget(handle)` removes it. Do not print or log the revealed value.
 
 If no client can display the dialog, the request immediately returns
 `undeliverable` and logs an error rather than waiting for the timeout.
@@ -98,10 +97,10 @@ an alias for `name`.
 | `password` | secret handle | shown as dots |
 | `multiline` | string | |
 | `select` | one option value | exclusive: exactly one option, never none |
-| `multiselect` | list of option values, in declared order | inclusive: any number; empty is legal unless required |
+| `multiselect` | list of option values, in declared order | inclusive: any number, and empty is legal unless required |
 | `checkbox` | `true` or `false` | a required checkbox must be ticked |
-| `range` | number | `min` (0), `max` (100), `step` (1); an out-of-range value is refused |
-| `otp` | secret handle | digits only, one box per digit; `min_length`/`max_length` set the length (default 6, at most 12) |
+| `range` | number | `min` (0), `max` (100), `step` (1), and out-of-range values are refused |
+| `otp` | secret handle | digits only, one box per digit, and `min_length`/`max_length` set the length (default 6, at most 12) |
 
 Common keys: `placeholder`, `default`, `is_required`, `min_length`,
 `max_length`, `validate`, and `options` for the two select types. An option is
@@ -115,14 +114,14 @@ confirmation, whether the answer comes from a dialog or an HTTP request.
 
 Use the same `row` and `column` layout vocabulary for Ask forms and
 [Live views](live-views.md#layout-and-text). A `group` arranges its `fields` in a
-`column` (default) or `row`. Groups can nest; each nested group uses the width
+`column` (default) or `row`. Groups can nest. Each nested group uses the width
 available inside its parent, not the full screen width.
 
 In Companion, rows use equal-width columns with a minimum width of `12rem`,
 wrapping into fewer columns as space narrows and eventually stacking. A single
 column can shrink below that minimum to fit a very narrow panel. In the TUI,
 rows use equal-width columns when each child has at least 24 terminal text cells
-after spacing; otherwise the entire row stacks vertically. Columns always stack.
+after spacing. Otherwise the entire row stacks vertically. Columns always stack.
 
 Ask groups can have a `label` and a plain-text `description`. Layout nodes
 produce no answer values: a `heading` displays plain text and a `paragraph`
@@ -142,10 +141,10 @@ vis.ask("Where should the pool connect?", [
 ])
 ```
 
-`answer.values` is a flat map keyed by field name, regardless of layout. Names
-must be unique. Groups reject value keys (`default`, `options`, `validate`);
-fields reject layout keys (`fields`, `direction`). Headings and paragraphs
-cannot receive focus and do not appear in the answer.
+`answer.values` is a flat map keyed by field name. The layout does not change it. Names must be
+unique. Groups reject value keys (`default`, `options`, `validate`). Fields reject layout keys
+(`fields`, `direction`). Headings and paragraphs cannot receive focus and do not appear in the
+answer.
 
 ## Builders
 
@@ -174,11 +173,11 @@ field keys above.
 
 ## Validation
 
-`validate` is a function, or a list of functions run in order until one
-refuses. A validator receives the coerced value, or the value and the flat map
-of every answer, and returns `None` or `True` to accept or a message string to
-refuse. This fragment assumes your module imports `re` and defines `is_free`, a
-validator returning `None` for an available slug or an error message otherwise:
+`validate` is a function, or a list of functions that run in order until one refuses. A validator
+receives the coerced value, or the value and the flat map of every answer. To accept, it returns
+`None` or `True`. To refuse, it returns a message string. This fragment assumes that your module
+imports `re` and defines the validator `is_free`. `is_free` returns `None` for an available slug and
+an error message for any other slug:
 
 ```python
 def a_slug(text):
@@ -198,9 +197,9 @@ answer = vis.ask("Sign up", [
 
 - A validator with any other signature, or a non-function such as a regex
   string, is refused when the request is built.
-- `False` refuses with `is not valid`; a validator that raises refuses with
+- `False` refuses with `is not valid`. A validator that raises refuses with
   `could not be validated: <exception>`.
-- Validators do not run on blank answers; use `is_required` to reject them.
+- Validators do not run on blank answers. Use `is_required` to reject them.
 - Validation runs in the engine on confirmation. The dialog displays each
   field's error message. Validator functions are not sent to clients.
 

@@ -42,7 +42,7 @@ missing directories and adds `.html` if the output path has no extension:
 vis-agent sessions export 3a7b2c1d --html report.html
 ```
 
-Exports are not redacted. Read one before sharing it; see
+Exports are not redacted. Read one before sharing it. See
 [Reporting a bug](reporting-bugs.md).
 
 ## See also

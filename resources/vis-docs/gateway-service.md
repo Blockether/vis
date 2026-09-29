@@ -1,8 +1,8 @@
 # Running a gateway
 
 Run a gateway when you want the Vis app, your scripts and other clients to share
-one agent service. The gateway owns sessions and runs tools on its machine;
-clients send requests and follow progress. You can run it in your terminal or
+one agent service. The gateway owns sessions and runs tools on its machine.
+Clients send requests and follow progress. You can run it in your terminal or
 keep it running as a daemon under a service manager such as systemd.
 
 ## When to use
@@ -32,7 +32,7 @@ curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install
 
 The installer places `vis-agent` and its companion runtime files under
 `~/.local/bin`. Put that directory on `PATH`, then check `vis-agent --version`.
-Native releases do not require Java; the Python SDK package alone is not an
+Native releases do not require Java. The Python SDK package alone is not an
 engine installation. See
 [Runtime distributions](distributions.md) for supported platforms, release
 tracks and updates.
@@ -51,19 +51,18 @@ Choose an unused port and start the gateway in a terminal:
 vis-agent gateway start --host 127.0.0.1 --port 7890 --require-token
 ```
 
-This runs in the foreground until you stop it; leave the terminal open. In
-another terminal, run `vis-agent gateway status`, then connect your
-[Python](python-sdk.md#connect-to-a-gateway-and-run-a-task) or
-[JVM](jvm-sdk.md#connect-from-java) program to `http://127.0.0.1:7890`.
-If a gateway is already running, check its status and port before starting
-another; do not stop a shared gateway just to try an example.
+This runs in the foreground until you stop it. Leave the terminal open. In another terminal, run
+`vis-agent gateway status`, then connect your
+[Python](python-sdk.md#connect-to-a-gateway-and-run-a-task) or [JVM](jvm-sdk.md#connect-from-java)
+program to `http://127.0.0.1:7890`. If a gateway is already running, check its status and port
+before you start another. Do not stop a shared gateway only to try an example.
 
-`--require-token` enables authentication even on loopback. The default token
-file is `~/.vis/gateway.token` and is restricted to its owner; `--token-file`
-selects another location. Treat this token as access to an agent that can run
-tools. Keep it out of source control, logs, screenshots and command arguments.
-The CLI can use the local token automatically; an SDK client needs its documented
-connection settings.
+`--require-token` enables authentication, even on loopback. The default token file is
+`~/.vis/gateway.token`, and only its owner can read it. `--token-file` selects another location.
+
+This token gives access to an agent that can run tools. Keep it out of source control, logs,
+screenshots and command arguments. The CLI can use the local token automatically. An SDK client
+needs its documented connection settings.
 
 An automatically started gateway can exit when it has no clients or active
 work. Explicit `gateway start` is different: it stays running without clients,
@@ -88,10 +87,9 @@ with no path prefix if you use the Python SDK. Your proxy must forward
 authorization headers and let server-sent events stream without buffering or
 short idle timeouts.
 
-Supply the token through your application's secret configuration. Pairing links
-and QR codes also contain connection credentials: generate or view them only in
-a private terminal, and do not use them as public examples. See
-[remote app connections](index.md#pair-a-phone) for pairing the Vis app.
+Supply the token through the secret configuration of your application. Pairing links and QR codes
+also contain connection credentials. Create or view them only in a private terminal, and do not use
+them as public examples. To pair the Vis app, see [remote app connections](index.md#pair-a-phone).
 
 ## Keep it running on Linux
 
@@ -103,7 +101,7 @@ The following systemd example uses an account named `visgw`. Before enabling
 it, create that account, install Vis for it, prepare `/srv/vis-project` and
 complete provider setup as that account. The account must own its state
 directory and have only the project permissions it needs. Adapt paths to your
-machine; installing a unit alone does not prepare these prerequisites.
+machine. Installing a unit alone does not prepare these prerequisites.
 
 Save the unit as `/etc/systemd/system/vis-gateway.service`:
 
@@ -144,35 +142,34 @@ loop. Run `vis-agent gateway status` as the service account to inspect the same
 local gateway. Avoid exporting `VIS_GATEWAY_URL` or `VIS_GATEWAY_TOKEN` into the
 service: those select a remote target for clients, not the listener's address.
 
-To give every pairing link from the service the same address, set
-`gateway: advertise:` in the configuration file the service account reads: a
-service unit starts without your shell profile, so a `VIS_GATEWAY_ADVERTISE`
-exported in a login shell never reaches it. See
+Set `gateway: advertise:` in the configuration file that the service account reads. Then every
+pairing link from the service uses the same address. A service unit starts without your shell
+profile. So a `VIS_GATEWAY_ADVERTISE` that you export in a login shell never reaches it. See
 [gateway pairing address](configuration.md#gateway-pairing-address).
 
 Keep the complete native bundle together. Its launcher sets up the Python
-sidecar; copying only `vis-agent-native` can leave a process that starts but
+sidecar. Copying only `vis-agent-native` can leave a process that starts but
 cannot run Python tools. A custom launcher must preserve the bundle layout and
 runtime environment. Prefer the supplied wrapper unless you maintain and test
 that setup yourself.
 
 ## Operate a small server
 
-Use prebuilt native releases on a small VPS; compile native images on a larger
+Use prebuilt native releases on a small VPS. Compile native images on a larger
 builder for the target operating system and architecture. A native engine does
 not eliminate the memory used by Python workers, extensions or commands the
 agent starts. Begin with modest concurrency and monitor memory under your real
-workload; see [resource limits](index.md#resource-limits).
+workload. See [resource limits](index.md#resource-limits).
 
 The service account's `~/.vis` holds persistent configuration and history.
 Protect its backups and leave room for databases, attachments, logs and project
 builds. Do not store it in a replaceable release directory. `VIS_HOME` controls
-launcher installation state; it does not relocate all engine configuration.
+launcher installation state. It does not relocate all engine configuration.
 Use a separate OS account for a separate service's home and credentials.
 
 Before an update, review the [update behavior](distributions.md) and check for
-active work. `vis-agent update --keep-gateway` leaves the running gateway alone;
-the new runtime is used after a planned restart. Restarting a service can
+active work. `vis-agent update --keep-gateway` leaves the running gateway alone.
+The new runtime is used after a planned restart. Restarting a service can
 interrupt requests and tools, so do it in a maintenance window, not on every
 client connection.
 
@@ -181,16 +178,15 @@ client connection.
 | Symptom | Check |
 | --- | --- |
 | Connection refused | Service state, listener port, tunnel and firewall |
-| Authentication fails | The token belongs to this gateway and is passed to the client; never print it to debug |
+| Authentication fails | The token must belong to this gateway, and the client must receive it. Never print the token to debug. |
 | Client reports an incompatible protocol | Update the SDK and gateway to compatible versions |
 | Requests work but progress stalls | Proxy SSE buffering, idle timeouts and the client's transport timeout |
 | Python tools fail after a manual install | The launcher, Python sidecar, file permissions and service environment |
 | A session cannot find the project | The path exists and is accessible on the gateway machine |
 
-Stopping a shared gateway affects every client. `vis-agent gateway stop --if-idle`
-requests an idle-only stop; `vis-agent gateway stop` can interrupt active work.
-For a supervised service, use the service manager for an intentional stop so its
-restart policy does not undo your action.
+Stopping a shared gateway affects every client. `vis-agent gateway stop --if-idle` stops the gateway
+only when it is idle. `vis-agent gateway stop` can interrupt active work. To stop a supervised
+service, use the service manager. Then its restart policy does not undo your action.
 
 ## Collect evidence when work stops progressing
 

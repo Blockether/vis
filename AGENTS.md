@@ -95,6 +95,12 @@ extension guides and API reference address developers building with it.
 - Address the reader as "you". Use plain words, active voice, short paragraphs and a clear,
   conversational but professional tone. Be direct and literal; avoid unexplained jargon,
   metaphors, slogans, rhetorical filler and forced friendliness.
+- Write Simplified Technical English (ASD-STE100), so that readers with basic English and
+  translation tools get the same meaning. Follow its writing rules, not its dictionary: choose the
+  most common word and give each term one meaning. Write one instruction per sentence, in the
+  imperative, with any condition first, and keep instructions to 20 words. Keep noun clusters to
+  three words. The page contract in `docs/core.clj` enforces the sentence, paragraph and semicolon
+  limits.
 - Do not use apologetic or defensive prose, AI/generated-content disclaimers, or commentary
   about how the text or screenshots were produced. State facts, actions and limitations directly;
   retain provenance only when it affects how the reader uses or verifies the information.
@@ -110,6 +116,7 @@ extension guides and API reference address developers building with it.
 
 Apply these writing guides within the repository's rules:
 
+- [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/) — short sentences, one meaning per word and one instruction per step.
 - [Google: tone and style](https://developers.google.com/style/tone) — clear, direct and conversational.
 - [Microsoft: simple and human](https://learn.microsoft.com/en-us/style-guide/brand-voice-above-all-simple-human) — everyday words and the reader's task first.
 - [Diátaxis: how-to guides](https://diataxis.fr/how-to-guides/) — goal-focused instructions, separate from explanation and reference.

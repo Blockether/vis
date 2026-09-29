@@ -1,7 +1,7 @@
 # Extending Vis
 
 An extension is a Python plugin that adds custom tools, user commands or
-integrations to Vis. Start with one file and one tool; add a package only when
+integrations to Vis. Start with one file and one tool. Add a package only when
 you need dependencies, reusable code or distribution. You can write it yourself
 or ask Vis to build it.
 
@@ -9,10 +9,9 @@ or ask Vis to build it.
 
 - **Vis rebuilds the same steps in every session**, such as running your tests with
   the right options or querying a service. Turn them into a tool with one clear
-  result; [your first extension](#your-first-extension) takes one file.
-- **A rule must be checked every time, not just remembered.** Put the check in code,
-  such as a [hook that runs after each
-  edit](extension-design.md#check-code-complexity-after-edits).
+  result. [Your first extension](#your-first-extension) takes one file.
+- **A rule must be checked every time, not only remembered.** Put the check in code, such as a [hook
+  that runs after each edit](extension-design.md#check-code-complexity-after-edits).
 - **You want a command that you run yourself from the chat.** Add a [slash
   command](extension-api.md#slash-commands).
 - **You would rather not write the code.** [Ask Vis to build the
@@ -29,19 +28,19 @@ need](#choose-what-you-need) compares the options.
 | Let the agent call Python code or an external service | A tool, declared with `vis.Symbol` | [Your first extension](#your-first-extension) |
 | Add a command a person types, such as `/hello` | `vis.SlashCommand` | [Slash commands](extension-api.md#slash-commands) |
 | Explain when to use an extension's tools | The extension's short `prompt` | [Prompts and discovery](extension-api.md#prompts-and-discovery) |
-| Describe a reusable, multi-step procedure | A skill (`SKILL.md`); no Python extension required | [Skills](skills.md) |
+| Describe a reusable, multi-step procedure | A skill (`SKILL.md`), with no Python extension | [Skills](skills.md) |
 | Check calls before they run or inspect results afterward | `vis.OpHook` | [Op hooks](extension-api.md#op-hooks) |
 | Ask for input or display progress | `vis.ask` or `vis.live` inside a tool | [Forms](human-input.md) · [Live views](live-views.md) |
 | Add an LLM service with custom authentication | `vis.Provider` | [Provider extensions](provider-extensions.md) |
 
-Tools do work; prompts and skills explain when or how to use them. Instructions
-alone do not register a callable, run a procedure or authorize its side effects.
-If a rule needs to be checked every time, implement the check in a domain
-function or hook rather than rely on the agent remembering it. You decide what
-counts as a valid result. See the [tested post-edit complexity check](extension-design.md#check-code-complexity-after-edits)
-for an example that covers patches and plain Python writes. Before hooks can
-refuse calls; after hooks inspect outcomes and can supply context for what to do
-next. They do not undo completed work.
+Tools do work. Prompts and skills explain when or how to use them. Instructions alone do not
+register a callable, run a procedure or authorize its side effects.
+
+If a rule must be checked every time, put the check in a domain function or hook. Do not rely on the
+agent to remember it. You decide what counts as a valid result. Before hooks can refuse calls. After
+hooks inspect outcomes and can give context for the next step, but they do not undo completed work.
+For an example that covers patches and plain Python writes, see the [tested post-edit complexity
+check](extension-design.md#check-code-complexity-after-edits).
 
 ## Your first extension
 
@@ -49,9 +48,9 @@ next. They do not undo completed work.
 only Python's standard library and the SDK supplied by Vis: no pip install, uv,
 manifest or separate virtual environment is needed.
 
-**Review extensions before loading them.** They run with your user permissions,
-outside the model's jail. This includes their dependencies and extension files
-already present in a project you have just checked out.
+**Review extensions before you load them.** They run with your user permissions, outside the model's
+jail. This includes their dependencies. It also includes extension files that come with a project
+that you check out.
 
 ### 1. Create the entry file
 
@@ -101,16 +100,16 @@ vis.register_extension(
 )
 ```
 
-The filename identifies the entry file; `name` identifies the extension;
-`Symbol(hello)` exposes the callable as `hello`. `alias` does not add a prefix.
-Keep entry filenames different from the packages they import. Declare an Activity
-beside every tool binding. Activities are meant for human consumption: use clear
-sentence-case English labels, not Python identifiers or serialized objects. The
-callback shows the greeting and a useful count while the return value stays
-available to Python.
+The filename identifies the entry file. `name` identifies the extension. `Symbol(hello)` exposes the
+callable as `hello`. `alias` does not add a prefix. Keep entry filenames different from the packages
+that they import.
+
+Declare an Activity next to every tool binding. Activities are for people to read, so use clear
+sentence-case English labels, not Python identifiers or serialized objects. The callback shows the
+greeting and a useful count, and the return value stays available to Python.
 
 This fast greeting uses `show_start=False`, so only its end
-result is shown. Quick local reads and patches also need no running row; slow
+result is shown. Quick local reads and patches also need no running row. Slow
 work and network requests should keep `show_start=True`. The engine still tracks
 start/end internally and preserves failures and cancellation.
 See [Activity presentation](extension-api.md#activity-presentation) for human-readable
@@ -147,10 +146,10 @@ See [documenting defaults](extension-design.md#document-default-behavior).
 
 ### 4. Check an edit
 
-Change the greeting text, run `/reload`, and ask for another greeting on the next
-turn. Check both the result and `doc("hello")`. If a reload fails, Vis retains the
-last working version and marks it stale; fix the error before testing the edit.
-Registration or a successful reload alone does not prove that a tool call works.
+Change the greeting text, run `/reload`, and ask for another greeting on the next turn. Check both
+the result and `doc("hello")`. If a reload fails, Vis keeps the last working version and marks it
+stale. Fix the error before you test the edit. Registration or a successful reload alone does not
+prove that a tool call works.
 
 ## Ask Vis to build an extension
 
@@ -168,10 +167,10 @@ Do not publish or install it globally.
 When implementing a requested extension:
 
 1. Check whether an existing tool or skill already covers the task.
-2. Choose one file for a small integration, an existing Python package for reusable
-   logic, or a distributable package when sharing it is part of the request.
-3. Register once; annotate inputs and results. Keep docstrings focused on meaning,
-   preconditions, side effects and failures rather than copied signatures or schemas.
+2. Choose one file for a small integration or an existing Python package for reusable logic. Choose
+   a distributable package when the request includes sharing it.
+3. Register once, and annotate inputs and results. In docstrings, describe meaning, preconditions,
+   side effects and failures. Do not copy signatures or schemas into them.
 4. Test ordinary Python behavior, then discovery and a real tool call in Vis.
 5. Report any untested boundary or required reload. Do not substitute registration
    success for execution or add publishing steps the user did not request.

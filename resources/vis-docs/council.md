@@ -40,8 +40,8 @@ Vis sends the question to a relevant session. An explicit ping also resumes an
 idle session in the group, so it can answer with its saved context.
 
 If another session is unavailable or has not replied, Vis reports the missing
-response. Check earlier findings against the current code or running system;
-they may be out of date.
+response. Check earlier findings against the current code or running system.
+They may be out of date.
 
 ## Work on a task together
 
@@ -59,7 +59,7 @@ external actions. This helps avoid two sessions changing the same file.
 
 An agent accepting work is not the same as finishing it. The requesting agent
 checks the result and asks a specific follow-up if something is missing. If a
-peer declines, the original task remains unfinished; Vis needs to continue it,
+peer declines, the original task remains unfinished. Vis needs to continue it,
 arrange a handoff or explain the blocker.
 
 Council does not grant new permissions. A question does not authorize unrelated
@@ -81,7 +81,7 @@ whole project.
 
 Everyone in a group can read the whole log. **Council has no private messages.**
 Keep credentials, private data and full logs out of shared messages. Changing a
-session's project or group selects that log; it does not move old messages.
+session's project or group selects that log. It does not move old messages.
 
 Council is on by default. To turn it off, use gateway settings or add this to
 your [configuration](configuration.md):
@@ -97,7 +97,7 @@ delivery. Existing messages remain saved.
 ## API reference
 
 The rest of this page describes the calls behind those conversations. The async
-examples run in the agent's Python sandbox; the [Python SDK](#python-sdk) section
+examples run in the agent's Python sandbox. The [Python SDK](#python-sdk) section
 covers calls from your own application. You do not need these APIs to use Council
 through chat.
 
@@ -112,7 +112,7 @@ print(matches)
 print(await council.members())
 ```
 
-Search rows use `id`; Council members use `session_id`. Titles and matching
+Search rows use `id`. Council members use `session_id`. Titles and matching
 snippets help the agent choose a relevant session. Existing Council threads or
 `read_session(session_id)` supply more evidence when needed. A search match alone
 does not establish group membership.
@@ -122,13 +122,12 @@ while waiting for a tool. Opening it in the UI does not activate it. `members()`
 reports held queues as `held`.
 
 The current group is `session["council"]["default_group_id"]`. Only that group is
-accepted; a `group_id` argument cannot select another project's log.
+accepted. A `group_id` argument cannot select another project's log.
 
 ### Ask another session
 
-Use a session ID from discovery as `other_session_id`. Include the question,
-relevant files or revision, what has already been checked, and how the answer
-will help the current task:
+Use a session ID from discovery as `other_session_id`. Give the question, the relevant files or
+revision and what was already checked. Also say how the answer helps the current task:
 
 ```python
 request = await council.publish(
@@ -150,7 +149,7 @@ Every message, including a reply, needs a `kind`:
 | `coordination` | Questions, work ownership and dependencies. |
 | `informational` | Answers, findings, progress and decisions. |
 
-The kind describes one message, not the whole thread. `ping` selects recipients;
+The kind describes one message, not the whole thread. `ping` selects recipients.
 `reply_required=True` requests an answer and needs at least one recipient.
 
 ### Report a problem
@@ -180,8 +179,8 @@ print(reply["entry_id"])
 ```
 
 `reply_to` selects the original thread and notifies the requester, without a
-return ping. An answer can report findings, uncertainty, a refusal or a blocker;
-it does not have to agree with the request.
+return ping. An answer can report findings, uncertainty, a refusal or a blocker.
+It does not have to agree with the request.
 
 Delivered required requests appear in `session["council"]["pending_replies"]`.
 The recipient can read, calculate and do authorized work across tool calls, but
@@ -199,7 +198,7 @@ print(status["replies"])
 | --- | --- |
 | `pending` | No model invocation has received the request yet. |
 | `delivered` | The recipient received it but has not answered. |
-| `replied` | An answer was saved; `reply_entry_id` identifies it. |
+| `replied` | An answer was saved. `reply_entry_id` identifies it. |
 | `unavailable` | The recipient could not be reached. |
 | `interrupted` | The recipient's active run ended without an answer. |
 
@@ -214,9 +213,8 @@ A work request needs the goal, acceptance criteria, existing user authorization,
 file ownership, current state and any limits. A question about earlier findings
 is not a work assignment.
 
-Each recipient can use `reply_to` once per request. An early reply can accept a
-longer task, but the eventual result then needs a new message in the same thread
-with an explicit ping to the requester:
+Each recipient can use `reply_to` once per request. An early reply can accept a longer task. The
+result then needs a new message in the same thread, with an explicit ping to the requester:
 
 ```python
 result = await council.publish(
@@ -239,7 +237,7 @@ unfinished task, it answers without resuming unrelated work.
 
 ### Threads and notifications
 
-Omitting `thread_id` starts a thread; passing it adds a message. Threads are flat,
+Omitting `thread_id` starts a thread. Passing it adds a message. Threads are flat,
 not nested reply trees. A `title` is allowed only on the first message. Without
 one, Council uses the first nonempty line of the content.
 
@@ -259,13 +257,13 @@ group and thread filter. Reading the log does not consume notifications.
 - **`ping=[session_id]`** targets specific sessions in the same group.
 - **`ping="all"`** targets active peers in the group, excluding the author. It does
   not wake saved sessions from the archive. With no active peers, it notifies nobody.
-- **No ping** normally just records a message. A continuation can also answer a
-  request automatically, as described below.
+- **No ping** usually only records a message. A continuation can also answer a request
+  automatically, as described below.
 
 Explicit targets accept a bare session UUID or `vis_session_id#<uuid>`. A missing
 session, a session outside the group or a self-target rejects the publication.
 
-Notifications reach an active session at a model invocation; they do not queue
+Notifications reach an active session at a model invocation. They do not queue
 another turn. Held and paused queues stay held. Delivery is best-effort: a stored
 message does not prove the recipient ran, and ordinary pings are not replayed
 after cancellation or restart. Return notifications from `reply_to` can wait for
@@ -304,7 +302,7 @@ print(conversation.read(thread_id=entry.thread_id))
 ```
 
 For ordinary `publish`, acquire the handle while the session is active. It stays
-bound to that group and active run; acquire a new handle for a later run. Reads
+bound to that group and active run. Acquire a new handle for a later run. Reads
 do not require an active publishing handle.
 
 If Council is disabled or the session has no available group, communication and
@@ -314,8 +312,8 @@ changing the Council configuration or session group.
 ### Retry a publication
 
 Supply an `idempotency_key` and retry the identical request through the same
-handle. Council returns the original entry without another message or notification;
-required reply states reflect their current values. Changing the request while
+handle. Council returns the original entry without another message or notification.
+Required reply states reflect their current values. Changing the request while
 reusing its key returns `idempotency-conflict`. Keys are scoped to the author.
 
 ### IDs and limits
@@ -326,7 +324,7 @@ reusing its key returns `idempotency-conflict`. Keys are scoped to the author.
 | `thread_id` | The first message's `entry_id`. |
 | `reply_to`, `reply_entry_id` | Entry IDs, not session IDs. |
 | `session_id`, `group_id` | Opaque strings returned by discovery or session metadata. |
-| `after` | An exclusive entry-ID cursor; `0` starts pagination. |
+| `after` | An exclusive entry-ID cursor. `0` starts pagination. |
 
 Entry IDs are local to one store, not transferable between independent engines.
 Session and group IDs come from discovery or session metadata, not invented values.
@@ -337,14 +335,14 @@ Session and group IDs come from discovery or session metadata, not invented valu
 | Title or idempotency key | 256 UTF-8 bytes |
 | Recipients | 256 |
 | Read page | 50 entries or 256 KiB of JSON |
-| Notification preview | 1 KiB per entry; up to 20 previews or 8 KiB per delivery |
+| Notification preview | 1 KiB per entry, and up to 20 previews or 8 KiB per delivery |
 
 Attribution, JSON overhead and available model context can reduce a notification batch.
 
 ### How Council works
 
 Council stores messages and reply relationships in SQLite. The gateway tracks
-active sessions; the model loop delivers messages and checks required replies
+active sessions. The model loop delivers messages and checks required replies
 before a turn ends. There is no separate agent scheduler or synchronous call
 between sessions.
 

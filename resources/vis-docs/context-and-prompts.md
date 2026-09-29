@@ -13,7 +13,7 @@ restart.
 ## When to use
 
 - **Vis keeps missing a project convention**, such as how to run the tests or which
-  files must not change. Write it once in [`AGENTS.md`](#project-rules-agents-md);
+  files must not change. Write it once in [`AGENTS.md`](#project-rules-agents-md).
   Vis includes the file in every turn.
 - **You type the same request again and again**, such as a review of the staged
   changes. Save it as a [prompt template](#prompt-templates-name) and run it with
@@ -30,9 +30,9 @@ it.
 
 ## Project rules: AGENTS.md
 
-Put instructions for your codebase in `AGENTS.md` at the project root: how to
-run tests, coding conventions and files that must not change. Vis includes the
-file in every turn.
+Put instructions for your codebase in `AGENTS.md` at the project root. For example, say how to run
+tests, which coding conventions to follow and which files must not change. Vis includes the file in
+every turn.
 
 Several files can apply at once, from broadest to narrowest:
 
@@ -84,7 +84,7 @@ Slash commands registered by extensions take precedence over templates.
 ## Explicit goals: /goal
 
 Use `/goal` when you want Vis to keep working toward a stated result, rather than
-stop after an ordinary reply. A session has one goal at a time; setting a new one
+stop after an ordinary reply. A session has one goal at a time. Setting a new one
 replaces it. Ordinary messages never create a goal.
 
 ```text
@@ -99,8 +99,8 @@ replaces it. Ordinary messages never create a goal.
 The goal appears in the Companion header and in the TUI's **Goal: <status>**
 button. Open it to see the objective, status, iterations used and their limit,
 elapsed time, and any completion evidence or blocker. The TUI's separate
-**Limits** button shows provider quotas and reset times. No toggle is needed;
-goal details appear when the session has a goal.
+**Limits** button shows provider quotas and reset times. No toggle is needed.
+Goal details appear when the session has a goal.
 
 Pause, resume and cancel commands use the normal message queue. To interrupt
 work immediately, use **Stop**. An interrupted or failed goal turn pauses the
@@ -108,10 +108,9 @@ goal. Sending a new message resumes a paused or blocked goal if it has budget
 left, keeping its objective and usage. Use `/goal --resume` to resume without
 adding instructions.
 
-Completed, cancelled and budget-limited goals stay stopped. Command-only turns
-and Council notifications do not resume goals. A goal does not give Vis extra
-permissions or override your newer instructions, and there is no background
-scheduler to restart it without a new user message.
+Completed, cancelled and budget-limited goals stay stopped. Command-only turns and Council
+notifications do not resume goals. A goal does not give Vis extra permissions or override your newer
+instructions. No background scheduler restarts a goal without a new user message.
 
 ### Iteration budget
 
@@ -128,7 +127,7 @@ Vis returns the recorded evidence or blocker without another model call.
 
 Pausing and resuming preserve the count. Once the budget is spent, set a new
 goal and budget to continue. Without `--budget`, there is no goal-specific
-iteration limit; provider limits and failure handling still apply.
+iteration limit. Provider limits and failure handling still apply.
 
 The budget option can go before or after the objective. A leading `--` keeps
 everything after it as literal objective text, including any `--budget` text.
@@ -145,24 +144,26 @@ g = session["goal"]
 print(update_goal(g["id"], g["version"], "complete", "Parser regression tests pass."))
 ```
 
-The agent can set only `complete` or `blocked`. It cannot use this command to
-create, cancel, replace, resume or enlarge a goal. Stale goal IDs and lifecycle
-versions are rejected. Saying "complete" in a reply does not update the goal;
-even a recorded completion is the model's assessment, not an independent check.
-After the current iteration's tools finish, Vis returns the recorded evidence or
-blocker as the final reply without another model request, even with no budget limit.
+The agent can set only `complete` or `blocked`. It cannot use this command to create, cancel,
+replace, resume or enlarge a goal. Vis rejects stale goal IDs and lifecycle versions. Saying
+"complete" in a reply does not update the goal.
+
+Even a recorded completion is the model's assessment, not an independent check. When the tools of
+the current iteration finish, Vis returns the recorded evidence or blocker as the final reply. It
+makes no further model request, even when there is no budget limit.
 
 While the goal is active, you can receive a progress reply without ending the
-work. Vis keeps that reply and automatically continues the same turn; it does
+work. Vis keeps that reply and automatically continues the same turn. It does
 not reject the reply or require the agent to mark the goal `blocked` to answer.
 
-Before reporting `blocked`, the agent is instructed to check the whole objective
-for progress, a verified operation still running, or no progress. The same
-concrete blocker must prevent all meaningful authorized work for at least three
-consecutive goal continuations. New user input, a resume or new progress resets
-that audit. One waiting branch or missing verification is not enough: the agent
-should continue other available work, without repeatedly polling just to reach
-the count. This is a model-assessed policy, not an independent engine check.
+Before it reports `blocked`, the agent checks the whole objective. It looks for progress, a verified
+operation that still runs, or no progress. The same concrete blocker must prevent all useful
+authorized work for at least three goal continuations in a row. New user input, a resume or new
+progress resets that count.
+
+One waiting branch or one missing verification is not enough. The agent continues other available
+work and does not poll again and again only to reach the count. The model applies this policy. The
+engine does not check it.
 
 Repeated empty replies stop the turn and pause an unresolved goal. An exhausted
 iteration budget instead leaves it `budget_limited`.
@@ -172,7 +173,7 @@ iteration budget instead leaves it `budget_limited`.
 In the Python SDK, `session.goal("Implement and verify the change", iteration_budget=30)`
 creates a goal and returns the same `Turn` as `session.send()`. Use `turn.wait()`
 or its event stream to follow the work. `session.read()["goal"]` contains the
-current state; `session.send("/goal --pause")` submits a control command. There
+current state. `session.send("/goal --pause")` submits a control command. There
 are no separate public SDK getter or updater methods for goals.
 
 Session detail and list responses include `goal` as an object or `null`.
@@ -183,21 +184,21 @@ define the fields and labels.
 
 Statuses are `active`, `paused`, `blocked`, `budget_limited` (shown as
 "iteration-limit reached"), `complete` and `cancelled`. `iteration_budget` is
-a positive integer or `null`; `iterations_used` is a nonnegative integer.
-`tokens_used` records measured input, output and cached input for statistics;
-it does not limit execution and is not shown in goal details.
+a positive integer or `null`. `iterations_used` is a nonnegative integer.
+`tokens_used` records measured input, output and cached input for statistics.
+It does not limit execution and is not shown in goal details.
 
 `time_used_ms` records active wall-clock time through `updated_at`, including
 model requests, tools and time between iterations. While active, the duration is
 `time_used_ms + max(0, now - updated_at)` in milliseconds. The clock stops for
 paused, blocked, budget-limited, complete and cancelled goals. Resuming continues
-from the saved duration; replacing the goal resets it. Companion updates the
+from the saved duration. Replacing the goal resets it. Companion updates the
 clock every second while goal details are open.
 
 ## Skills: /skill:name
 
-Every [skill](skills.md) is available as `/skill:<name> [task]`. Skills are
-hidden from the initial `/` list but appear when you search by name.
+Every [skill](skills.md) is available as `/skill:<name> [task]`. Skills do not show in the first `/`
+list, but they show when you search by name.
 
 ## Shell shortcuts: ! and !&
 

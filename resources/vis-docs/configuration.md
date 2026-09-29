@@ -8,7 +8,7 @@ when you want settings shared across projects or checked into a repository.
 - **You want to use a model from OpenAI, Ollama, another provider or your own
   endpoint, or set its API key.** Add it from the app in [Quick setup](#quick-setup),
   or declare it in YAML under [Providers and models](#providers-and-models).
-- **Your team should share the same settings.** Commit a project `vis.yml`;
+- **Your team should share the same settings.** Commit a project `vis.yml`.
   [Configuration files](#configuration-files) shows which file wins when several set
   the same key.
 - **One session or group needs different behavior.** Open its
@@ -32,9 +32,8 @@ codebase, and the [process jail](jail.md) to limit what commands can access.
 
 ## Quick setup
 
-Open the provider picker in the terminal and choose **Add Provider**, or use
-**Settings → Providers → Add provider** in the Companion app. Sign in, then pick
-a model.
+In the terminal, open the provider picker and choose **Add Provider**. In the Companion app, use
+**Settings → Providers → Add provider**. Sign in, then pick a model.
 
 For API keys, local models and custom endpoints, see
 [Providers and models](#providers-and-models). For project instructions, see
@@ -51,15 +50,16 @@ agent_name: Ada
 The default name is `Vis`. You can also change it in **Settings → Agent → Agent
 name** in the TUI, or **Settings → your gateway → Agent** in Companion. Saving in
 Settings writes to the gateway's `~/.vis/state.yml`, not the client's disk. This
-gateway-wide name overrides project names; remove the key from `state.yml` to
+gateway-wide name overrides project names. Remove the key from `state.yml` to
 use project defaults again.
 
-Names can contain up to 80 characters, with no control characters, and cannot be
-blank. Vis trims surrounding spaces. A change in Settings updates open sessions
-immediately, including remote clients. After editing YAML manually, reopen the
-session to refresh the name. Product branding and session titles do not change.
-The next default system prompt uses the name; a full custom prompt keeps its own
-identity.
+A name can have up to 80 characters. It cannot be blank or contain control characters. Vis removes
+spaces at the start and end.
+
+A change in Settings updates open sessions immediately, also on remote clients. If you edit the YAML
+file by hand, reopen the session to show the new name. The name changes the next default system
+prompt. It does not change product branding, session titles or a full custom prompt, which keeps its
+own identity.
 
 For client integrations, `GET /v1/settings/agent_name` reads the setting and
 `POST /v1/settings` with `{"id":"agent_name","action":"value","value":"Ada"}`
@@ -70,7 +70,7 @@ so reconnecting clients receive the current value.
 
 ## Configuration files
 
-Files are read in this order. Later files override earlier ones; nested maps
+Files are read in this order. Later files override earlier ones. Nested maps
 merge, scalars and lists are replaced. The gateway-wide `agent_name` saved in
 `state.yml` is an exception: it overrides the project tiers. `extensions` merges
 by package name, replacing each complete declaration rather than mixing source
@@ -80,16 +80,15 @@ for global/project installation scopes and `vis-agent extension sync --trust`.
 | File | Purpose |
 | --- | --- |
 | `~/.vis/config.yml` | Your global settings |
-| `~/.vis/state.yml` | Settings and credentials written by Vis; manage them from the UI |
+| `~/.vis/state.yml` | Settings and credentials that Vis writes. Change them in the UI. |
 | `<project>/vis.yml` | Settings shared with the project |
 | `<project>/.vis/config.yml` | Local project overrides, usually gitignored |
 
-Global configuration in `~/.vis` accepts `config.yml`, `config.yaml`,
-`vis.yml` or `vis.yaml`. The project root accepts `vis.yml` or `vis.yaml`;
-`<project>/.vis` accepts `config.yml` or `config.yaml`. The project is the
-directory where you start `vis-agent`.
+Global configuration in `~/.vis` accepts `config.yml`, `config.yaml`, `vis.yml` or `vis.yaml`. The
+project root accepts `vis.yml` or `vis.yaml`. The `<project>/.vis` directory accepts `config.yml` or
+`config.yaml`. The project is the directory where you start `vis-agent`.
 
-Keys are `snake_case` strings; boolean keys start with `is_`. Unknown keys are
+Keys are `snake_case` strings. Boolean keys start with `is_`. Unknown keys are
 rejected, and an invalid file prints every offending path and exits with status
 2 instead of starting:
 
@@ -100,7 +99,7 @@ Invalid Vis configuration in /project/.vis/config.yml:
   - mcp.servers.docs.transport: value rejected by the transport contract
 ```
 
-Model names are free-form and are not validated; a wrong one fails at the
+Model names are free-form and are not validated. A wrong one fails at the
 provider.
 
 A small config:
@@ -155,7 +154,7 @@ no `api_key`.
 Model keys: `context`, `output_limit`, `is_tool_call`, `api_style`. Filling in
 the limits makes context checks and output capping accurate.
 
-Models are offered in the order you list them; models discovered from the
+Models are offered in the order you list them. Models discovered from the
 provider are appended after them.
 
 ### API format
@@ -174,9 +173,9 @@ per-model value only when models on one endpoint use different APIs.
 Case, `_` and `-` are normalised. An unknown value is rejected when the config
 loads. A `responses_path` without a format implies `openai-responses`.
 
-Declare the API you actually use. A gateway that serves both chat completions
-and Responses accepts either, but tool-call ids from one are rejected by the
-other and the turn fails with a 400.
+Declare the API that you actually use. A gateway that serves both chat completions and Responses
+accepts either API. But each API rejects tool-call IDs from the other, and the turn fails with a 400
+error.
 
 ### Default and fallback
 
@@ -188,7 +187,7 @@ default_model: glm-5.2        # or one line: zai-coding-plan/glm-5.2
 ```
 
 - There is one default pair for the whole config, not one per provider.
-- `default_model` is looked up in that provider's catalog; an unknown name
+- `default_model` is looked up in that provider's catalog. An unknown name
   falls back to the provider's first model.
 - Without a default, the first provider and its first model are used.
 
@@ -199,11 +198,11 @@ fallback_provider: anthropic-coding-plan   # must differ from default_provider
 fallback_model: claude-sonnet-5
 ```
 
-The fallback provider is tried right after the default; other providers follow
+The fallback provider is tried right after the default. Other providers follow
 in configured order. Logging out of a provider clears its pair.
 
 Both pairs are per user. They are ignored with a warning in a committed
-`<project>/vis.yml`; put them in `~/.vis/config.yml`, `~/.vis/state.yml` or the
+`<project>/vis.yml`. Put them in `~/.vis/config.yml`, `~/.vis/state.yml` or the
 gitignored `<project>/.vis/config.yml`.
 
 On the command line, `--model provider/model` selects both for one run without
@@ -217,7 +216,7 @@ vis-agent --model glm-5.2 "task"          # on the active provider
 
 ### Environment references
 
-Any string value may use `${NAME}`; `$NAME` is not recognised. Map keys are
+Any string value may use `${NAME}`. `$NAME` is not recognised. Map keys are
 not interpolated.
 
 An unset variable does not fail the load. The provider manager and
@@ -235,7 +234,7 @@ text-only or unknown model gets the text results and no image block.
 
 Vis sends `X-Initiator: user` on the first call of each turn and
 `X-Initiator: agent` on tool-call continuations and internal calls such as
-session titling. Copilot determines billing; these headers do not guarantee a
+session titling. Copilot determines billing. These headers do not guarantee a
 particular charge. Setting `X-Initiator` in `llm_headers` overrides this
 behavior. Trivial messages to Claude models on Copilot, such as a greeting or
 a thank-you, are sent without a reasoning parameter.
@@ -244,7 +243,7 @@ a thank-you, are sent without a reasoning parameter.
 
 `--reasoning-effort high|max` sends the provider's exact effort value instead of
 Vis's adaptive levels. The run exits `2` if the provider, model or value is not
-accepted, or if any iteration switched provider or model; the JSON output
+accepted, or if any iteration switched provider or model. The JSON output
 includes an `eval` object describing the run.
 
 To add another provider, see
@@ -333,23 +332,22 @@ router:
 
 ## Jail, filesystem and network
 
-The jail is off by default. Enable it whenever the model runs untrusted code;
-without it, shells and language processes run with your full permissions. With
+The jail is off by default. Enable it whenever the model runs untrusted code.
+Without it, shells and language processes run with your full permissions. With
 `jail.enabled: true`, commands run under Seatbelt (macOS) or bubblewrap (Linux)
 and through the gateway's egress proxy. Unsupported hosts return an error.
 
-Declare directories in `workspace.filesystem`, then allow them by id in
-`jail.filesystem.allow`. The jail does not expose unlisted roots. To keep specific
-files out of every grant, list patterns under `jail.filesystem.deny_read` or
-`jail.filesystem.deny_write`. Vis' own file tools honor those rules whether or
-not the jail is on; child processes are kept out only with `jail.enabled: true`.
-See [Deny specific files](jail.md#deny-specific-files).
+Declare directories in `workspace.filesystem`, then allow them by ID in `jail.filesystem.allow`. The
+jail does not expose unlisted roots. To keep specific files out of every grant, list patterns under
+`jail.filesystem.deny_read` or `jail.filesystem.deny_write`. The file tools of Vis obey these rules
+whether the jail is on or off. Only `jail.enabled: true` keeps child processes out. See [Deny
+specific files](jail.md#deny-specific-files).
 
 | Key | Meaning |
 |---|---|
 | `id` | Name used by the allow list and the UI |
 | `path` | Absolute or `~`-relative directory |
-| `description` | Optional; what the model is told the root is for |
+| `description` | Optional. Tells the model what the root is for. |
 | `python_name` | Optional Python variable for the path, e.g. `runtime_path` |
 | `access` | `read-write` or `read-only` |
 | `search` | Whether search indexes it |
@@ -363,7 +361,7 @@ to choose another name. `project_root_path` is the current project. Access to
 
 You can ask Vis to create one draft across several added read/write repositories,
 even when their policies are `shared`. `draft_create("task", roots=[project_root_path, sibling_path])`
-selects participants without changing the catalog; the first root is primary.
+selects participants without changing the catalog. The first root is primary.
 See [Work in another repository](drafts.md#work-in-another-repository).
 
 ```yaml
@@ -415,12 +413,12 @@ is reported by `vis-agent doctor`.
 A tool that attaches to an already running process cannot jail it. Processes
 Vis starts are jailed when `jail.enabled` is true.
 
-[Process jail and network policy](jail.md) explains the policy in full, including
-network rules and how to diagnose a refusal. If a native tool such as `bb` or
-`clj-kondo` fails with `CSunMiscSignal.open() failed` after an upgrade, restart
-Vis: the jail profile is inherited by running processes.
+[Process jail and network policy](jail.md) explains the full policy, including network rules and how
+to diagnose a refusal. Running processes keep the jail profile that they started with. So if a
+native tool such as `bb` or `clj-kondo` fails with `CSunMiscSignal.open() failed` after an upgrade,
+restart Vis.
 
-Shared Python installs use `~/.vis/python/packages`; project installs stay in their
+Shared Python installs use `~/.vis/python/packages`. Project installs stay in their
 uv environment. `VIS_PYTHON_PACKAGES` overrides only the shared location. Bytecode
 caches use `~/.vis/python/pycache`, overridden by `VIS_PYTHON_PYCACHE_PREFIX`.
 `VIS_PYTHON_HOME` and `VIS_PYTHON_NATIVE_PATH` select another runtime. These variables
@@ -436,9 +434,9 @@ python:
   tls_strict: true
 ```
 
-The default is `true`, preserving Python's TLS validation behavior. Set it to
-`false` only for compatibility with a trusted corporate CA that fails strict
-X.509 checks, for example because its CA `Basic Constraints` is not critical:
+The default is `true`, which keeps Python's TLS validation. Set it to `false` only for a trusted
+corporate CA that fails strict X.509 checks. For example, a CA fails these checks when its
+`Basic Constraints` extension is not marked critical:
 
 ```yaml
 python:
@@ -449,7 +447,7 @@ This clears only `ssl.VERIFY_X509_STRICT` when Python SSL contexts receive their
 verification flags. Trust-chain, certificate-signature, expiry and hostname
 verification remain enabled. It does not add trusted certificates or retry a
 failed handshake with verification disabled. STRICT covers multiple X.509
-requirements; disabling it is a security trade-off, not a certificate repair.
+requirements. Disabling it is a security trade-off, not a certificate repair.
 Prefer a correctly issued CA when your administrator can provide one.
 
 The same merged value applies to **`python_execution` and trusted Python
@@ -458,10 +456,9 @@ contexts, including contexts created by stdlib clients and libraries that use
 `ssl.SSLContext`. It does not affect JVM TLS, `gh`, `curl`, uv, external Python
 processes or libraries using a different TLS implementation.
 
-The value is read when a worker starts. Run `/reload` after changing it to rebuild
-session workers; restart Vis if a gateway-wide extension registration worker
-already exists. Existing connections are not modified. Only YAML booleans are
-accepted: use `false`, not the string `"false"`.
+Vis reads the value when a worker starts. After you change it, run `/reload` to rebuild session
+workers. If the gateway already runs a worker that registers extensions, restart Vis. Existing
+connections do not change. Use a YAML boolean: `false`, not the string `"false"`.
 
 ## Python package index
 
@@ -482,8 +479,8 @@ command-line override. uv's deprecated `--index-url` and `-i` do not override
 `index_url` overrides pip's primary index from `PIP_INDEX_URL` or `pip.conf`.
 When absent, both installers keep their inherited settings. Other installer
 settings, including extra indexes, proxies and certificates, remain unchanged.
-Prefer one company virtual index serving both private and public packages;
-extra indexes are not ordered fallback sources and can introduce dependency confusion.
+Prefer one company virtual index serving both private and public packages.
+Extra indexes are not ordered fallback sources and can introduce dependency confusion.
 
 Use a literal HTTP(S) URL without credentials, a query string or a fragment.
 Keep authentication outside committed YAML, for example in the gateway user's
@@ -506,7 +503,7 @@ selects one dependency environment before Python starts:
   even inside a project. It skips project activation and configured or inferred
   source roots. An explicit `PYTHONPATH` still applies.
 
-`UV_PROJECT_ENVIRONMENT` selects another project environment; relative paths
+`UV_PROJECT_ENVIRONMENT` selects another project environment. Relative paths
 resolve against the current directory. The CLI does not search parent directories,
 create an environment or sync dependencies on startup. A `pyproject.toml` with no
 prepared environment reports a sync error instead of borrowing shared packages.
@@ -519,7 +516,7 @@ To use the project's own interpreter instead, run
 
 Environment activation happens inside the sandbox: editable source and custom
 environments still need to be within allowed filesystem roots. Only activate
-environments you trust; editable import hooks can execute code. This standalone
+environments you trust. Editable import hooks can execute code. This standalone
 CLI behavior does not add the project's environment to agent `python_execution`.
 
 `vis-agent python` also puts declared source roots on `sys.path`, so
@@ -534,24 +531,24 @@ python:
   source_paths: [src, lib/vendor, ~/shared/py]
 ```
 
-Configured paths come first, then inferred ones; `PYTHONPATH` precedes both.
-These roots precede packages from the selected environment; project and shared packages are not merged.
-An [editable package install](extension-development.md) supplies its own import
-roots through `.pth` files or backend hooks; it does not need these layout overrides.
-Import roots do not grant filesystem permissions or install dependencies.
+Configured paths come first, then inferred ones. `PYTHONPATH` comes before both. All these roots
+come before the packages of the selected environment. Vis does not merge project and shared
+packages. An [editable package install](extension-development.md) supplies its own import roots
+through `.pth` files or backend hooks, so it does not need these layout overrides. Import roots do
+not grant filesystem permissions or install dependencies.
 
 ## MCP servers
 
 Servers you add from the UI, the API or `vis-agent gateway mcp` are written to
 `~/.vis/state.yml`. Servers declared by hand elsewhere are used too, but the UI
-cannot edit them; change the file that declares them.
+cannot edit them. Change the file that declares them.
 
-The gateway keeps one connection per enabled server, shared by every session,
-and reconnects a crashed one. **Kill** closes the connection until **Start** or
-a gateway restart; `enabled: false` persists.
+The gateway keeps one connection for each enabled server, which all sessions share. It reconnects a
+connection that crashed. **Kill** closes the connection until you press **Start** or the gateway
+restarts. To keep a server off after a restart, set `enabled: false`.
 
 The gateway starts an OAuth flow when an HTTP MCP server requests it with
-`401`. From the terminal, use **MCP Servers**; from the CLI:
+`401`. From the terminal, use **MCP Servers**. From the CLI:
 
 ```bash
 vis-agent gateway mcp add linear --url https://mcp.linear.app/mcp
@@ -593,41 +590,42 @@ from the command palette. The settings rows show the effective value and where
 it comes from.
 **Use inherited value** removes only the override at the scope you opened.
 
-Values resolve per setting: **global → project → group → session**. A scope with
-no value is skipped; `false` is an explicit value, not inheritance. For example,
-disable plans in a group, enable them in one session, then choose **Use inherited
-value** in that session to follow the group's disabled value again. Changing the
-group does not overwrite another session's explicit choice.
+Vis resolves each setting in this order: **global → project → group → session**. A scope with no
+value is skipped. `false` is an explicit value, not inheritance. For example, disable plans in a
+group and enable them in one session. To make that session follow the group again, choose **Use
+inherited value** in it. A change to the group does not overwrite an explicit choice in another
+session.
 
-A more specific value wins, so Settings locks a row when a more specific scope
-decides it for the session you have open. For example, if your project's `vis.yml`
-sets `toggles.shell: false`, the global **Shell commands** row is locked in TUI
-**Settings** and in the app while a session from that project is open: turning it
-on globally would not change that session. The row names the scope that decides
-it. Open **Project settings** and turn it on there; Vis writes the change to
-`.vis/config.yml`, which overrides `vis.yml` without editing it. From a session
-outside that project, the global row stays editable.
+A more specific value wins. So Settings locks a row when a more specific scope decides it for the
+open session. The row names the scope that decides it.
 
-Global means this gateway, shared by its connected clients. Project settings use
-the canonical project root, not a draft's working-copy path. Edits go to the
-project's `.vis/config.yml`; checked-in `vis.yml` stays intact. Group and session
-overrides persist in the gateway database. Moving a session keeps its own values
-and follows its new ancestors. New sessions and forks inherit their ancestors,
-not the source session's overrides. Ungrouped sessions skip the group layer.
+In this example, your project's `vis.yml` sets `toggles.shell: false`. While a session from that
+project is open, the global **Shell commands** row is locked in TUI **Settings** and in the app.
+Turning it on globally would not change that session. Open **Project settings** and turn it on
+there. Vis writes the change to `.vis/config.yml`, which overrides `vis.yml` without editing it.
+From a session outside that project, you can still edit the global row.
+
+Global means this gateway, which all its connected clients share. Project settings use the canonical
+project root, not the working-copy path of a draft. Edits go to the project's `.vis/config.yml`, and
+the checked-in `vis.yml` does not change.
+
+The gateway database keeps group and session overrides. A session that you move keeps its own values
+and follows its new ancestors. New sessions and forks inherit from their ancestors, not the
+overrides of the source session. Sessions without a group skip the group layer.
 
 Response options, including reasoning, verbosity and fast mode, are captured
 when you submit a message. Later edits do not change running or queued responses.
 Paths and access rows accept JSON configuration and apply on the next turn.
 Local permissions cannot expand the host's global access policy. Draft settings
-govern future operations; changing them does not move or delete an existing draft.
+govern future operations. Changing them does not move or delete an existing draft.
 
 Skill and MCP availability applies to the next lookup or call, including a call
 by an already-known name. An ongoing external call can finish. Disable a skill
 globally or locally to remove it from discovery, `doc()`, prompt inventories and
-slash entry points; this does not erase text already read or deny filesystem access.
+slash entry points. This does not erase text already read or deny filesystem access.
 
 Optional tool extensions have **Auto**, **On** and **Off** engine settings.
-Auto uses the extension's existing applicability check; On keeps it active; Off
+Auto uses the extension's existing applicability check. On keeps it active. Off
 hides its tools and rejects new calls, including saved handles. This is extension
 activation, not model routing. Core, provider and channel infrastructure is not
 switchable here.
@@ -656,7 +654,7 @@ vis-agent gateway mcp remove docs --scope group --target-id <group-id>
 ```
 
 Omit both flags to manage global servers. Project targets accept the project ID
-or its canonical root; group and session targets use their IDs. Authentication
+or its canonical root. Group and session targets use their IDs. Authentication
 and lifecycle commands remain global-only.
 
 ### Settings HTTP reference
@@ -664,7 +662,7 @@ and lifecycle commands remain global-only.
 `GET /v1/settings` and `GET /v1/settings/:id` take `scope` and `target_id` query
 parameters. Omitted scope means global, never the currently viewed session.
 Non-global requests require a target. Rows include `scopes`, `scope`, `source`
-and `is_override`; boolean rows use `enabled`, other rows use `value`.
+and `is_override`. Boolean rows use `enabled`, other rows use `value`.
 
 Add `context_session_id` to either `GET` to mark the rows that a more specific scope
 decides for that session. Such a row includes `overridden_by` with the deciding
@@ -674,7 +672,7 @@ applies to other projects, so clients lock the row only for the open session.
 
 `POST /v1/settings` accepts the same target with `id` and `action`: `value`,
 `toggle`, `cycle` or `inherit`. A `value` action also requires `value`, including
-explicit JSON `false`. Invalid values and disallowed scopes return 400; unknown
+explicit JSON `false`. Invalid values and disallowed scopes return 400. Unknown
 targets or setting IDs return 404. Inheritance removes one key, not a parent map.
 
 ## Session titling
@@ -691,10 +689,9 @@ titling:
 
 ## Gateway pairing address
 
-The pairing link for the companion app carries an address Vis detects on this
-computer. When your network needs a different one — a port forward, a proxy, or
-the single address the network allows — name it here and every pairing link
-leads with it:
+The pairing link for the companion app has an address that Vis finds on this computer. Your network
+can need a different address, for example a port forward, a proxy or the one address that the
+network allows. Name that address here, and every pairing link puts it first:
 
 ```yaml
 gateway:
@@ -704,7 +701,7 @@ gateway:
 The value is a host, `host:port` or a full URL, and the detected addresses still
 follow in the same link as fallbacks. `--advertise` on `vis-agent gateway start`
 or `vis-agent gateway pair` wins over this key, and `VIS_GATEWAY_ADVERTISE` sits
-between the two; the config file is the source a gateway started by launchd or
+between the two. The config file is the source a gateway started by launchd or
 systemd can read, because a service unit starts without your shell profile.
 Setting it changes what the link says, not what the gateway listens on, so the
 address still has to reach this computer.
@@ -731,12 +728,11 @@ grep:
   include_gitignored_paths: [repositories/]
 ```
 
-Both lists use `.gitignore` pattern syntax. Omit `always_exclude` to use the
-defaults: `.git/`, `node_modules/`, `target/`, `build/`, `dist/`, `__pycache__/`,
-`.venv/`, `.gradle/`, `vendor/`, `.next/`, `out/`, `.m2/`, `.shadow-cljs/`,
-`cljs-runtime/`, `.cpcache/`, `.clj-kondo/`, `.calva/`, `.lsp/` and `.rift/`.
-Setting `always_exclude` replaces, rather than extends, that list.
-Run `/reload` after editing.
+Both lists use `.gitignore` pattern syntax. Omit `always_exclude` to use the defaults. The defaults
+are `.git/`, `node_modules/`, `target/`, `build/`, `dist/`, `__pycache__/`, `.venv/`, `.gradle/`,
+`vendor/`, `.next/`, `out/`, `.m2/`, `.shadow-cljs/`, `cljs-runtime/`, `.cpcache/`, `.clj-kondo/`,
+`.calva/`, `.lsp/` and `.rift/`. If you set `always_exclude`, it replaces that list. It does not add
+to it. Run `/reload` after you edit these lists.
 
 ## See also
 

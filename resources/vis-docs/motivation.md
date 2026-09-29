@@ -1,9 +1,8 @@
 # Why I built Vis
 
-I wanted a coding agent that understood more than the source code. It needed to
-work with my tools and processes, show me how it reached a result and let me
-follow the same work from my terminal, desktop or phone. That is why I started
-Vis.
+I wanted a coding agent that understood more than the source code. It had to work with my tools and
+processes. It had to show me how it got to a result. I also wanted to follow the same work from my
+terminal, desktop or phone. That is why I started Vis.
 
 ## Fewer reminders, better tools
 
@@ -34,7 +33,7 @@ The goal is to make the repeatable parts of the work predictable. It does not
 make the model deterministic. You still decide which checks matter and review
 the result. For a concrete example, the
 [code-check hook](extension-design.md#check-code-complexity-after-edits) measures
-Python nesting after edits and reports findings; it does not undo the edit.
+Python nesting after edits and reports findings. It does not undo the edit.
 
 ## Let Python connect the steps
 
@@ -45,23 +44,22 @@ orchestrating tasks this way.
 
 Vis gives the model access to its tools and engine through Python functions.
 It can search, inspect the results, decide what to do next and combine operations
-in one program. Independent operations can overlap when the tools support it;
-steps that depend on a result wait for it. The conversation still has a
+in one program. Independent operations can overlap when the tools support it.
+Steps that depend on a result wait for it. The conversation still has a
 model/tool loop, but a repeatable procedure can be ordinary code you can read
 and test.
 
 Useful helper definitions can be reused when you return to the same session,
-even after restarting Vis. That saves rebuilding the same procedure each time;
-it preserves the helper's source, not every object in memory. Vis also gives
+even after restarting Vis. That saves rebuilding the same procedure each time.
+It preserves the helper's source, not every object in memory. Vis also gives
 the agent information about its workspace, permissions and available context.
 It can keep the evidence that matters and summarize completed work as the
 conversation grows, while the full history remains stored.
 
-Once your own tools cover a workflow, you can disable shell access and have the
-agent use those tools instead. That makes it easier to control the operations
-it can perform. Model-written Python runs in a [sandbox](python-sandbox.md),
-but installed extensions are trusted Python code with access to the host.
-Only install extensions you trust.
+When your own tools cover a workflow, you can disable shell access and let the agent use those tools
+instead. That makes it easier to control what the agent can do. Model-written Python runs in a
+[sandbox](python-sandbox.md), but installed extensions are trusted Python code with access to the
+host. Only install extensions you trust.
 
 ## Understand the work, not just the answer
 
@@ -75,16 +73,16 @@ counts. A file change can show its diff. You can open the details when you need
 them, rather than work backward from the agent's final summary.
 
 When you write an extension, you also choose how its work appears. The agent
-gets structured data for its next step; you get an explanation suited to the
+gets structured data for its next step. You get an explanation suited to the
 task. Reading a report successfully should still leave its failed tests visible.
 The [Activity example](extension-design.md#show-a-ci-report-without-hiding-failures)
 shows how to do that, including empty results and errors.
 
 ## One view from the terminal, desktop and phone
 
-I wanted to leave my desk without losing track of a session. I use the terminal
-for development, the desktop app when I want a separate window, and my phone to
-check progress or respond while I am away.
+I wanted to leave my desk and still follow a session. I use the terminal for development and the
+desktop app when I want a separate window. I use my phone to check progress or reply while I am
+away.
 
 All of these connect to the same gateway, the service running your sessions.
 The work stays on that computer. Switching devices does not start a second
@@ -100,4 +98,4 @@ and the different apps let you stay involved wherever you are.
 - [Getting started](index.md) — install Vis, connect an app and try your first task.
 - [Extending Vis](extending.md) — turn a repeated task into a tool.
 - [Extension design](extension-design.md) — working examples of checks and Activities.
-- [How Vis manages context](token-optimization.md) — how long sessions retain useful work.
+- [How Vis manages context](token-optimization.md) — how long sessions keep useful work.

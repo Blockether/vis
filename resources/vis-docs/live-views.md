@@ -18,7 +18,7 @@ The view appears in the terminal or Companion app and can be stopped at any time
   when they stop watching.
 
 For a tool's ordinary status, choose [Activity
-presentation](extension-api.md#activity-presentation) instead; use a live view when
+presentation](extension-api.md#activity-presentation) instead. Use a live view when
 the user needs to watch or interact with ongoing work. To ask a question and wait
 for the answer, use a [form](human-input.md).
 
@@ -37,7 +37,7 @@ it full size.
 
 Press F3 for keyboard controls: expand a disclosure, select a row or activate a button.
 Press Escape to open the stop confirmation. You can add a note for the agent
-before stopping the view; cancelling the confirmation keeps it running.
+before stopping the view. Cancelling the confirmation keeps it running.
 
 [![Vis live view stop confirmation with an optional note for the agent](assets/screenshots/live-stop.png)](assets/screenshots/live-stop.png)
 
@@ -45,7 +45,7 @@ before stopping the view; cancelling the confirmation keeps it running.
 
 This implementation belongs in a trusted extension module. Register `watch_run`
 with `vis.Symbol` to call it from Vis. It requires the GitHub CLI, authentication
-and a working directory inside the target repository; `run_id` is a numeric Actions
+and a working directory inside the target repository. `run_id` is a numeric Actions
 run ID. The function returns the final view receipt, not a GitHub run object.
 For a complete integration with typed results and error handling, use the
 [repository's GitHub extension](https://github.com/Blockether/vis/blob/main/.vis/extensions/gh.py).
@@ -106,19 +106,18 @@ def watch_run(run_id: int) -> dict:
         return view.close(summary=f"Run result: {run['conclusion']}")
 ```
 
-GitHub may return a run before publishing its jobs. Declare progress without a
-`total` while the count is unknown; `total=0` is invalid. Set both `done` and
-`total` when jobs appear, and update the total if more jobs are added. The example
-keeps the last known counts across later empty polls.
+GitHub can return a run before it publishes its jobs. While the count is unknown, declare progress
+without a `total`. `total=0` is invalid. When jobs appear, set both `done` and `total`. If more jobs
+are added, update the total. The example keeps the last known counts across later empty polls.
 
 
 ## Monitor a fixed build set
 
-Use one synchronous tool and one live view to observe several **already selected**
-builds. The coordinator below runs at most two read-only requests concurrently,
-consumes completed reads without waiting for a slower peer, and retains each
-build's last observation. It does not launch deployments, schedule dependencies,
-or cancel remote jobs. General model shell access is not needed.
+Use one synchronous tool and one live view to observe several **already selected** builds. The
+coordinator below runs at most two read-only requests at the same time. It uses each completed read
+without waiting for a slower one, and it keeps the last observation of each build. It does not
+launch deployments, schedule dependencies, or cancel remote jobs. The model does not need general
+shell access.
 
 Supply a domain adapter `read_once(build, *, deadline, stop)` that returns
 `"running"`, `"succeeded"` or `"failed"` for that exact environment and build ID.
@@ -128,13 +127,13 @@ This adapter is your CI client's code, **not a Vis API**. It must:
 - Enforce the absolute `time.monotonic()` deadline across connection, reads,
   retries and pagination, and cooperate with the `threading.Event` named `stop`.
 - Close responses, sockets and any per-request client in `finally` or `with`.
-- Perform reads only. Keep authentication in the trusted extension's configuration;
-  do not return credentials or raw exception messages.
+- Make only read requests. Keep authentication in the trusted extension's configuration. Do not
+  return credentials or raw exception messages.
 - Avoid Vis host calls from the reader threads. Only the invoking thread owns
   and updates the view.
 
 A socket read timeout alone is not a total request deadline. Python cannot forcibly
-stop a running thread; use a client with bounded operations and test its cleanup.
+stop a running thread. Use a client with bounded operations and test its cleanup.
 
 ```python
 # monitor.py
@@ -272,13 +271,14 @@ vis.register_extension(vis.Extension(
 ))
 ```
 
-**Fail-fast and cleanup are separate.** Once a completed read reports failure,
-no new work is scheduled and the view closes before joining slower readers.
-The caller returns only after those readers finish their bounded cleanup;
-`Future.cancel()` cannot kill an in-flight request. Do not replace this with
-`shutdown(wait=False)` and silently leave work running after return. Snapshots
-are the last observations consumed before stopping; `unobserved` does not mean
-running or successful, and late results during cleanup do not overwrite them.
+**Fail-fast and cleanup are separate.** When a completed read reports failure, the coordinator
+schedules no new work. The view closes before the coordinator joins slower readers. The caller
+returns only after those readers finish their bounded cleanup. `Future.cancel()` cannot kill a
+request that is already running.
+
+Do not replace this with `shutdown(wait=False)`. That leaves work running after the return, with no
+sign of it. Snapshots are the last observations used before the stop. `unobserved` does not mean
+running or successful. Late results during cleanup do not overwrite the snapshots.
 
 **This is not durable background execution.** The open live view suspends the
 invoking block's ordinary wall-time limit, not network deadlines or the recipe's
@@ -287,12 +287,19 @@ model cannot call a second “stop” tool on that same blocked call. Use the UI
 an independent SDK client. There is no monitoring after return and no recovery
 across a worker or gateway restart.
 
-Before shipping your adapter, test a fast failure beside a slow read, successful
-completion, Stop during waiting and updating, request errors, the overall timeout,
-and release of every locally owned thread and response. The repository's
+Before you ship your adapter, test these cases:
+
+- A fast failure beside a slow read.
+- Successful completion.
+- Stop during waiting and during updating.
+- Request errors.
+- The overall timeout.
+- Release of every locally owned thread and response.
+
+The repository's
 [recipe tests](https://github.com/Blockether/vis/blob/main/packages/vis-agent/tests/test_monitor_recipe.py)
-execute these code blocks with controlled readers and `LiveRecorder`; they do not
-verify your CI service or credentials.
+run these code blocks with controlled readers and `LiveRecorder`. They do not check your CI service
+or credentials.
 
 ## Nodes
 
@@ -310,13 +317,13 @@ A view declares its nodes once, each with an id, and addresses them by id.
 | `vis.link(id, links=[…])` | links a person can open | `.add(link_id, label, target, target_kind=, tone=)` |
 | `vis.paragraph(id, text)` | a paragraph with inline formatting | `.set(text)` |
 | `vis.heading(id, text, level=2)` | a heading at level 1–6 | `.set(text, level=)` |
-| `vis.divider(id)` | a horizontal rule between sections | none; use `view.add(...)` or `view.drop(id)` |
+| `vis.divider(id)` | a horizontal rule between sections | none (use `view.add(...)` or `view.drop(id)`) |
 | `vis.code(id, text, language=None)` | literal, whitespace-preserving code | `.set(text, language=)` |
 | `vis.spinner(id, text="Working", variant="braille")` | an explicit activity indicator | `.set(text=, variant=, is_active=)` |
 | `vis.button(id, label, is_disabled=False)` | an operator action | `.set(label=, is_disabled=)` |
 | `vis.disclosure(id, label, *nodes, default_expanded=False)` | a collapsible column | children update by their own ids |
 
-`vis.output(...)` builds a `log` node; it is named `output` so it never shadows
+`vis.output(...)` builds a `log` node. It is named `output` so it never shadows
 `vis.log`, the engine log line.
 
 To update a status without changing its detail, omit `detail`. To remove the
@@ -328,40 +335,39 @@ view["state"].set("Running")             # Keeps the detail.
 view["state"].set("Complete", detail="")  # Clears the detail.
 ```
 
-Keyed updates insert new ids or update existing ones without changing their
-position. Log lines have no ids and are appended. `.clear()` removes both
-displayed and recorded lines. Every log starts collapsed independently.
-Expanding one never opens another; patches preserve the reader's choice.
-`default_expanded=True` changes only the initial active state. Completed
-receipts start collapsed again, and their retained output remains available when
-expanded.
+Keyed updates insert new ids or update existing ones without changing their position. Log lines have
+no ids and are appended. `.clear()` removes both displayed and recorded lines.
 
-A live view shows the whole log. Companion and the TUI both read the record back
-to its first line when you open one, so output that arrived before your surface
-attached is painted rather than counted. `window_lines` only sizes the tail the
-model reads and the tail a client is handed when it attaches; it never hides
-output from you. While those earlier lines are still being read, one line says
-so, and it says so as well when a read fails. Search reaches the record either way.
+Each log starts collapsed and has its own expanded state. Expanding one never opens another. Patches
+keep the reader's choice. `default_expanded=True` changes only the first active state. Completed
+receipts start collapsed again. When you expand one, its saved output is still there.
 
-Expanded logs offer **Search** in Companion and **Search log** through the TUI's
-F3 controls or pointer. Search is a literal substring, case-insensitive, across
-the retained record, including lines outside `window_lines` and closed views.
-Results include original one-based line numbers and are paged in groups of 200.
-They are a snapshot: **Refresh results** includes new output. Clearing a log
-resets its searchable history. Search never sends an action to the producer.
+A live view shows the whole log. When you open a log, Companion and the TUI both read the record
+back to its first line. So they show output that arrived before your surface attached, not only a
+count of it. `window_lines` only sets the size of two tails: the tail the model reads and the tail a
+client gets when it attaches. It never hides output from you.
 
-In Companion, **Clear search** or Escape in the search field restores normal output; `/` while the
+While the earlier lines are still loading, one line tells you so. The same line also tells you when
+a read fails. Search reaches the record in both cases.
+
+Expanded logs offer **Search** in Companion and **Search log** through the TUI's F3 controls or
+pointer. Search finds a literal, case-insensitive substring across the saved record, including lines
+outside `window_lines` and closed views. Results include original one-based line numbers and come in
+pages of 200. They are a snapshot, and **Refresh results** adds new output. Clearing a log resets
+its searchable history. Search never sends an action to the producer.
+
+In Companion, **Clear search** or Escape in the search field restores normal output. `/` while the
 output is focused moves focus to search. Without a record loader, the panel
 explicitly limits search to loaded lines. In the TUI, an empty query browses the
 record, Enter opens a full wrapped line, and Escape cancels an in-flight read.
 
-The existing `GET /v1/sessions/:sid/views/live/:view-id/log` route names the log node in
-its `node` query parameter (node ids may hold `/`, which a path segment cannot carry) and
-accepts `query`, `from` and `limit`. `from` is a zero-based match offset; an empty query
-matches all lines. The response includes `lines`, `line_numbers`, `matched` and
-`total`. The gateway caps pages at the default log-window size; it streams the
-record and retains only the requested result page. Styled pages also include
-`line_tones`, aligned with `lines`; a `null` entry means plain text.
+The existing `GET /v1/sessions/:sid/views/live/:view-id/log` route names the log node in its `node`
+query parameter. Node ids can contain `/`, which a path segment cannot carry. The route accepts
+`query`, `from` and `limit`. `from` is a zero-based match offset. An empty query matches all lines.
+
+The response includes `lines`, `line_numbers`, `matched` and `total`. The gateway caps pages at the
+default log-window size. It streams the record and keeps only the requested result page. Styled
+pages also include `line_tones`, aligned with `lines`. A `null` entry means plain text.
 
 ### Add severity to streaming output
 
@@ -379,32 +385,33 @@ with vis.live("Build output", [vis.output("log", label="Build log")]) as view:
     view["log"].write("    at compile (src/build.ts:42:7)")
 ```
 
-Keep severity words in the text so the log also makes sense without color.
-TUI and Companion use their theme's semantic colors; plain stderr and Markdown
-receipts keep the same readable text. Companion's search results retain colors;
-the TUI's search and full-line dialogs provide a plain-text fallback. Completed
-live-view receipts retain the style metadata as well as the original line numbers.
+Keep severity words in the text so the log also makes sense without color. TUI and Companion use
+their theme's semantic colors. Plain stderr and Markdown receipts keep the same readable text.
+Companion's search results keep colors. The TUI's search and full-line dialogs provide a plain-text
+fallback. Completed live-view receipts keep the style metadata and the original line numbers.
 
-Redact secrets **before** calling `write` or seeding `lines`. Engine presentation
-redaction is an additional safeguard, not a detector for arbitrary secrets. Styles
-are separate metadata: they never divide, hide or replace text before redaction,
-search or copying. HTML and URLs in output remain literal, not links or executable
-markup. ANSI is not a styling API: C0/C1 controls other than tab and newline are
-shown as visible `\uXXXX` text (for example, Escape becomes `\u001b`). Cursor moves,
-OSC links, clipboard escapes and color escapes are never executed.
+Redact secrets **before** you call `write` or seed `lines`. Engine presentation redaction is an
+extra safeguard. It does not detect every kind of secret. Styles are separate metadata. They never
+divide, hide or replace text before redaction, search or copying. HTML and URLs in output stay
+literal, not links or executable markup.
 
-Each argument to `write` is a complete retained line, not a raw network fragment.
-Decode and assemble partial lines in your adapter before redacting and appending
-them. Successive batches keep their own tones, even when updates are coalesced.
-Append incremental output rather than clearing and replacing snapshots. Styling
-does not change `window_lines`, retention or search pagination; the earlier pages
-a surface reads back keep the tones they were written with. Use `vis.code(..., language=...)` for a separate,
-known-language snippet, not to reinterpret the mixed log.
+ANSI is not a styling API. C0/C1 controls other than tab and newline show as visible `\uXXXX` text
+(for example, Escape becomes `\u001b`). Cursor moves, OSC links, clipboard escapes and color escapes
+are never executed.
 
-For raw wire clients, an `append` operation may carry `tone` only for a log node.
-Log snapshots may carry `line_tones`, with one tone or `null` per line. Clojure uses
-`:tone` on log append operations and `:line-tones` on seeded log nodes. These
-closed enums accept no CSS, arbitrary color values, HTML or terminal commands.
+Each argument to `write` is one complete line of the record, not a raw network fragment. In your
+adapter, decode and assemble partial lines before you redact and append them. Append incremental
+output. Do not clear and replace snapshots.
+
+Successive batches keep their own tones, even when updates are coalesced. Styling does not change
+`window_lines`, retention or search pagination. The earlier pages that a surface reads back keep the
+tones they were written with. Use `vis.code(..., language=...)` for a separate snippet in a known
+language, not to reinterpret the mixed log.
+
+For raw wire clients, an `append` operation can carry `tone` only for a log node. Log snapshots can
+carry `line_tones`, with one tone or `null` per line. Clojure uses `:tone` on log append operations
+and `:line-tones` on seeded log nodes. These closed enums accept no CSS, free-form color values,
+HTML or terminal commands.
 
 ### Add spinners and buttons
 
@@ -446,26 +453,27 @@ with vis.live("Review", [
 With one argument, `vis.heading(text)` and `vis.paragraph(text)` remain form
 decorations. Two positional arguments declare addressed live nodes. The Clojure
 builders in `com.blockether.vis.view` expose the same primitives, using kebab-case
-option keys; `disclosure` takes a vector of children and optional options, and
+option keys. `disclosure` takes a vector of children and optional options, and
 `log` is the Clojure name of Python's `output`.
 
 Tables support `order="insertion"` (default), `"newest-first"` or
-`{"by": "duration", "dir": "desc"}`. Rows sharing a `parent="tests"` appear
-under one collapsible group, closed until the reader opens it. Every surface
-renders that group the same way: the group shows its name and how many rows it
-holds, so keep the name stable and let Vis do the counting. A group you never
-declare is named by its id and sorts after the declared ones, by the arrival of
-its first row.
+`{"by": "duration", "dir": "desc"}`. Rows that share a `parent="tests"` appear under one collapsible
+group. The group stays closed until the reader opens it. Every surface shows that group the same
+way, with its name and the number of rows it holds. So keep the name stable and let Vis do the
+counting.
 
-Declare a group when you want to name, ink or order it:
-`vis.table_group("tests", label="Tests", tone="error", order=0)` when you build
-the table, or `view["jobs"].group("tests", tone="error")` while the run moves.
-Declarations merge by id, so a later call changes only the keys it passes, and
-renaming a group keeps the reader's fold. `is_open=True` opens the group when it
-first arrives; after that the reader's own choice stands. A declared group that
-holds no rows is not painted.
+A group that you never declare gets its id as its name. It sorts after the declared groups, in the
+order its first row arrived.
 
-With `is_selectable=True`, users can select rows; read the selection with
+Declare a group when you want to name, color or order it. When you build the table, use
+`vis.table_group("tests", label="Tests", tone="error", order=0)`. While the run moves, use
+`view["jobs"].group("tests", tone="error")`.
+
+Declarations merge by id, so a later call changes only the keys it passes. Renaming a group keeps
+the reader's fold. `is_open=True` opens the group when it first arrives. After that, the reader's
+own choice stands. A declared group that holds no rows is not shown.
+
+With `is_selectable=True`, users can select rows. Read the selection with
 `view.state()`.
 
 When a view has exactly one node of a type, its verb is available on the view
@@ -477,14 +485,14 @@ itself: `view.status(...)`, `view.progress(...)`, `view.write(...)`,
 
 Use `vis.row(id, *nodes)` and `vis.column(id, *nodes)` to arrange nodes with
 the same row/column layout vocabulary as [Ask forms](human-input.md#layout).
-Every Live group has an id. Groups can nest; each nested group uses the width
+Every Live group has an id. Groups can nest. Each nested group uses the width
 available inside its parent, not the full screen width.
 
 In Companion, rows use equal-width columns with a minimum width of `12rem`,
 wrapping into fewer columns as space narrows and eventually stacking. A single
 column can shrink below that minimum to fit a very narrow panel. In the TUI,
 rows use equal-width columns when each child has at least 24 terminal text cells
-after spacing; otherwise the entire row stacks vertically. Columns always stack.
+after spacing. Otherwise the entire row stacks vertically. Columns always stack.
 
 Declare at least one child in every `vis.row`, `vis.column` and
 `vis.disclosure`. These Python builders raise `ValueError` immediately when
@@ -501,7 +509,7 @@ view.add(vis.status("summary", "Watching"), after="builds")  # After the group.
 ```
 
 To grow a group, name one of its children in `after=`, not the group itself.
-Remove a node with `view.drop(id)`; removing a group also removes its children.
+Remove a node with `view.drop(id)`. Removing a group also removes its children.
 Groups preserve their children’s live interactions and do not produce form
 answer values.
 
@@ -510,13 +518,15 @@ its current container’s width in the terminal and Companion, including inside
 columns and disclosures, and remains visible in completed receipts. A divider
 has only an id: it has no label, content, style options or update verbs. Use a
 heading for a section title, and `view.drop("section-break")` to remove the rule.
-The Clojure builder is `(view/divider "section-break")`; the wire node is
+The Clojure builder is `(view/divider "section-break")`. The wire node is
 `{"id": "section-break", "type": "divider"}`.
 
-Display text accepts inline Markdown: `` `code` ``, `**bold**`, `_italic_` and
-links. Status text wraps and is justified within its column.
-Log lines and code blocks are never executed. Log terminal controls display as visible escapes;
-other text stays literal. There is no arbitrary Markdown node; each node type has its own Markdown output.
+Display text accepts inline Markdown: `` `code` ``, `**bold**`, `_italic_` and links. Status text
+wraps and is justified within its column.
+
+Log lines and code blocks are never executed. Terminal controls in logs show as visible escapes.
+Other text stays literal. There is no general Markdown node. Each node type has its own Markdown
+output.
 
 ## Updating
 
@@ -524,8 +534,8 @@ other text stays literal. There is no arbitrary Markdown node; each node type ha
   timeout expires. It returns `True` for a change or close, `False` for a timeout.
   There is no periodic state polling while it waits, and an unchanged timeout
   returns no view payload. Use it instead of `time.sleep` in view loops.
-- Waiting does not publish view updates or activity. Send only changed data;
-  external services still need their own polling interval. A click or Stop
+- Waiting does not publish view updates or activity. Send only changed data.
+  External services still need their own polling interval. A click or Stop
   should not trigger another GitHub request.
   The example keeps a five-second deadline even when a view event wakes it early.
 - Wait durations must be finite and at most 86400 seconds. Nonpositive durations
@@ -540,10 +550,9 @@ other text stays literal. There is no arbitrary Markdown node; each node type ha
 
 ## Interruption
 
-The user can stop watching at any time. In the terminal, `Escape` opens a
-stop confirmation with an optional note. `Escape` or `Enter` confirms;
-`Backspace` on an empty line resumes watching. The Companion app's Interrupt
-button opens the same input.
+The user can stop watching at any time. In the terminal, `Escape` opens a stop confirmation with an
+optional note. `Escape` or `Enter` confirms. `Backspace` on an empty line resumes watching. The
+Companion app's Interrupt button opens the same input.
 
 - `view.is_interrupted` is true if the view ended without the extension closing
   it. Reading it uses at most one host call per batching interval.
@@ -552,7 +561,7 @@ button opens the same input.
 - Updating an ended view raises `vis.Interrupted` with the note, even if the
   loop does not check the flag.
 - From the producer, `view.close(reason="interrupted", summary="Stopped monitoring")`
-  closes the owned view; it does not kill threads or remote jobs.
+  closes the owned view. It does not kill threads or remote jobs.
 - From an independent SDK client, list `sdk_session.live_views()` and call
   `sdk_session.view_action(view_id, "interrupt", note="Stop monitoring")`. The
   action is `interrupt`, not `cancel`. The producer must still handle
@@ -570,7 +579,7 @@ group hierarchy and the current log window.
   saved artifact still receive the full view state. A concurrent user stop
   takes precedence and returns an interruption result.
 - Repeated closes return the first result. Exiting a context manager closes
-  the view; an exception closes it with reason `failed`.
+  the view. An exception closes it with reason `failed`.
 - `selection_snapshots` stores alternate states for selectable rows in the
   artifact, so users can inspect them after the extension exits. The limit is
   500 snapshots and 1 MiB.

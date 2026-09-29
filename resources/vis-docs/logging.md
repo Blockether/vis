@@ -3,8 +3,8 @@
 Use this page to debug Vis: find startup errors, command output and hang reports.
 Vis writes log files and other diagnostics under `~/.vis/logs/YYYY-MM-DD/` on the
 machine running the process.
-The date is UTC. A process or command keeps the directory chosen when it starts;
-a hang report uses its capture date.
+The date is UTC. A process or command keeps the directory chosen when it starts.
+A hang report uses its capture date.
 
 ## When to use
 
@@ -16,7 +16,7 @@ a hang report uses its capture date.
   the [hang reports](#hang-reports) and the [evidence collected from outside the
   gateway](#when-the-whole-jvm-stops-answering).
 - **You are about to attach logs to a bug report.** [Review them
-  first](#review-before-sharing); logs can contain anything a command printed.
+  first](#review-before-sharing). Logs can contain anything a command printed.
 - **You want to know how long logs are kept.** See [Rotation and
   retention](#rotation-and-retention).
 
@@ -45,7 +45,7 @@ that change between runs.
 | Gateway hang evidence | `gateway-hang-<id>/report.json` | JSON |
 | JVM performance recording | `vis-<client-or-gateway>-<PID>-<UTC-start>.jfr` | Java Flight Recorder |
 
-Shell results expose their exact `log_path`; it stays the same after midnight or
+Shell results expose their exact `log_path`. It stays the same after midnight or
 a gateway restart. Hang warnings also include the report path. Ordinary process
 logs use a start timestamp such as `20260914T153000Z` to distinguish runs.
 
@@ -62,7 +62,7 @@ another log directory: Vis forwards its in-process JSONL diagnostic stream to
 the process logger at debug level.
 
 JVM fallback workers write fatal-error reports beside `worker.log`. If JVM heap
-dumping is enabled, their heap dumps also go there; Vis does not enable heap
+dumping is enabled, their heap dumps also go there. Vis does not enable heap
 dumping itself. These JVM options are not passed to packaged native workers.
 Operating-system crash reports follow the operating system's own reporting policy.
 
@@ -79,42 +79,40 @@ threads.
 
 ### When the whole JVM stops answering
 
-A running local Vis CLI client can collect evidence from outside the gateway.
-After a successful authenticated health check, a later failed check can trigger
-`jcmd` if the same JVM process is still alive and `jcmd` is beside its Java
-executable. This collects platform and virtual threads.
+A running local Vis CLI client can collect evidence from outside the gateway. First, the client must
+get a successful authenticated health check. If a later check fails, the client can run `jcmd` to
+collect platform and virtual threads. This needs two conditions: the same JVM process is still
+alive, and `jcmd` is next to its Java executable.
 
-The client writes `threads.json`, `attach.log` and `report.json` in a
-`gateway-hang-<id>/` directory under **its own** dated log directory. Attempts are
-limited to one per minute per client, with a five-second deadline for the helper.
-Collection does not signal, stop or restart the gateway.
+The client writes `threads.json`, `attach.log` and `report.json` in a `gateway-hang-<id>/` directory
+under **its own** dated log directory. Each client tries at most once per minute, and the helper has
+a five-second deadline. Collection does not signal, stop or restart the gateway.
 
-External collection requires a local JVM gateway and a client that continues
-checking the connection. It does not attach to native gateways or remote targets.
-Failed or timed-out attempts are recorded in `report.json`. Stopping the helper
-cannot cancel a dump the JVM has already accepted.
+External collection needs a local JVM gateway and a client that continues to check the connection.
+It does not attach to native gateways or remote targets. `report.json` records failed and timed-out
+tries. If the JVM has already accepted a dump, stopping the helper does not cancel it.
 
 ## Rotation and retention
 
-- At engine startup and every hour while it runs, Vis removes diagnostic files
-  whose last modification was more than 14 days ago, then removes empty directories.
-  This covers the entire log tree, including shell and Python worker output,
-  rotated logs, hang reports, JFR recordings and heap dumps. A running process keeps
-  writing to its original date directory; cleanup uses file age, not folder date.
+- When the engine starts, and every hour while it runs, Vis removes diagnostic files last changed
+  more than 14 days ago. Then it removes empty directories. This covers the full log tree, including
+  shell and Python worker output, rotated logs, hang reports, JFR recordings and heap dumps. A
+  running process continues to write to its original date directory. Cleanup uses file age, not
+  folder date.
 - Ordinary process logs rotate monthly or at 4,000,000 bytes. Rotated parts use
-  gzip; the handler limits them to eight parts per interval and six intervals.
+  gzip. The handler limits them to eight parts per interval and six intervals.
   The 14-day age policy also applies to these files.
 - Hang-report cleanup keeps the ten newest completed reports across all dates.
   It runs after a report completes. Incomplete captures remain subject to the
   14-day age policy.
 - Starting a JFR recording keeps the six newest existing recordings across dates.
   The new recording may add a seventh file. Enable recording with `VIS_JFR=1` or
-  `--jfr`; it dumps on exit, with a 128 MiB client or 256 MiB gateway limit.
+  `--jfr`. It dumps on exit, with a 128 MiB client or 256 MiB gateway limit.
 - Deleting a session also deletes its shell logs across dates.
 
 The standalone Python SDK cleans its own shell logs after the first shell
 command starts and every hour while that Python process runs. It uses the same
-14-day cutoff. By default these logs share `~/.vis/logs/`; setting
+14-day cutoff. By default these logs share `~/.vis/logs/`. Setting
 `VIS_OUTSIDE_HOME` moves them to
 `<VIS_OUTSIDE_HOME>/logs/YYYY-MM-DD/outside/`, with the same automatic cleanup.
 
@@ -123,7 +121,7 @@ CLI or Python process may exit before its first pass finishes. If both are
 stopped, expired logs remain until a later run. Save diagnostic files you need
 longer outside the log tree before they expire.
 
-Existing files are not moved into the dated layout. New writers use it; the
+Existing files are not moved into the dated layout. New writers use it. The
 engine's age cleanup still removes old files beneath `~/.vis/logs/`.
 
 ## Review before sharing
@@ -132,12 +130,12 @@ Read the relevant files and share only the lines needed to show the problem.
 Command output and ordinary logs can contain anything the command or extension
 prints, including credentials, private code and local paths. JVM fatal-error
 reports can include environment and memory details. Heap dumps contain process
-memory; do not share them without a separate privacy review.
+memory. Do not share them without a separate privacy review.
 
 Hang reports omit prompts, tool arguments, HTTP bodies and credentials from
 their metadata. Thread names and stacks can still expose paths and application
 details. On POSIX filesystems, hang-report directories use mode `700` and files
-use `600`; other filesystems use the account's inherited access controls. These
+use `600`. Other filesystems use the account's inherited access controls. These
 permissions apply to hang reports, not every file in the log tree.
 
 ## Session state is separate

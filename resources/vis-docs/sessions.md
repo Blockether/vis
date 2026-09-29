@@ -22,10 +22,10 @@ the desktop and phone apps and from the command line.
 
 ## Start a new session
 
-In the terminal, press **Ctrl+X n**. In the desktop or phone app, choose **New
-session**. To start it inside a group, use the **+** on the group's band in the
-app, or **＋ New session here** in the group's **g** menu in
-[Projects](#find-a-saved-session). The session then opens at the top of that group.
+In the terminal, press **Ctrl+X n**. In the desktop or phone app, choose **New session**. To start
+it inside a group, use the **+** on the group's band in the app. You can also choose **＋ New session
+here** in the group's **g** menu in [Projects](#find-a-saved-session). The session then opens at the
+top of that group.
 
 ## Find a saved session
 
@@ -50,12 +50,13 @@ terminal. Use **↑** and **↓** to choose a project, group or session, and pre
 If your terminal reports mouse clicks, you can click rows and menu items instead.
 **Tab** does not switch sessions.
 
-Press **/** while Projects has focus to search saved session titles and
-conversation text, even outside the pages on screen. Result-page rows show more
-matches, and **Esc** returns you to your previous folds and page. Projects shows a
-window of sessions and groups at a time: choose **More sessions** or **More
-groups** to page each list, and **new updates** to show rows that arrived without
-moving the list you were reading.
+To search saved session titles and conversation text, press **/** while Projects has focus. The
+search also finds sessions outside the pages on screen. Result-page rows show more matches. Press
+**Esc** to go back to your previous folds and page.
+
+Projects shows only part of your sessions and groups at a time. To see the next page of a list,
+choose **More sessions** or **More groups**. To show rows that arrived while you were reading,
+choose **new updates**. The list you were reading does not move.
 
 ### In the desktop or phone app
 

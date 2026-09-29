@@ -40,6 +40,11 @@
        lines — stays under 800 characters. Past that the reader is handed a
        table or a list as prose, and the structure is usually already in the
        sentence (`A; B; C`, `first … then … finally`): write it as the list it is.
+     * PLAIN ENGLISH: prose follows ASD-STE100 Simplified Technical English, so a
+       reader with basic English, or a translation tool, gets the same meaning.
+       No sentence runs past 25 words and no paragraph past six sentences, where
+       a code span counts as one word. A clause ends with a full stop, never with
+       a semicolon.
 
    One renderer, two outputs:
      * `build-site!` writes a static, themed HTML bundle for the public Worker.
