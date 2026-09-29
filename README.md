@@ -45,8 +45,7 @@ and failures in the conversation. Your extensions choose what to show, so you
 can read a test result or build summary without deciphering a stream of shell
 commands. Switch devices to follow the same work, rather than start again.
 
-Read [Why I built Vis](resources/vis-docs/motivation.md) for the full motivation,
-or [Getting started](resources/vis-docs/index.md) to try it.
+Read [Why I built Vis](resources/vis-docs/motivation.md) for the full motivation.
 
 ## Documentation
 

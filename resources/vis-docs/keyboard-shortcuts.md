@@ -74,8 +74,6 @@ once it can act.
 | Ctrl+X d | Move this session to a group |
 | Ctrl+X u | Show session metrics: context health, totals and cache |
 
-[Managing sessions](sessions.md) explains forks, groups and how to find a saved session.
-
 ### Models and answers
 
 | Keys | What they do |
