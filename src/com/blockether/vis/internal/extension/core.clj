@@ -1760,16 +1760,17 @@
 (defn- environment-op-hooks
   [op-kw env]
   (if-let [extensions (:extensions env)]
-    (concat (remove ::descriptor? (get @op-hooks op-kw))
-            (for [ext @extensions
-                  :when (not= "off" (scoped/engine-mode env ext))
-                  hook (:ext/op-hooks ext)
-                  :let [gate-kw (gate-op (:op hook))]
-                  :when (= op-kw (or gate-kw (keyword (:op hook))))]
+    (let [live (delay (scoped/live-values env))]
+      (concat (remove ::descriptor? (get @op-hooks op-kw))
+              (for [ext @extensions
+                    hook (:ext/op-hooks ext)
+                    :let [gate-kw (gate-op (:op hook))]
+                    :when (and (= op-kw (or gate-kw (keyword (:op hook))))
+                               (not= "off" (scoped/engine-mode env ext @live)))]
 
-              (assoc hook
-                :owner (ext-op-hook-owner ext)
-                :phase (if gate-kw :gate (or (:phase hook) :after)))))
+                (assoc hook
+                  :owner (ext-op-hook-owner ext)
+                  :phase (if gate-kw :gate (or (:phase hook) :after))))))
     (get @op-hooks op-kw)))
 
 (defn- run-op-before-hooks

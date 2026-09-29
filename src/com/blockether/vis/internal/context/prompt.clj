@@ -635,23 +635,24 @@
   (when-let [exts (some-> (:extensions environment)
                           deref
                           seq)]
-    (vec (filter (fn [ext]
-                   (try (case (scoped/engine-mode environment ext)
-                          "off"
-                          false
+    (let [live (scoped/live-values environment)]
+      (vec (filter (fn [ext]
+                     (try (case (scoped/engine-mode environment ext live)
+                            "off"
+                            false
 
-                          "on"
-                          true
+                            "on"
+                            true
 
-                          (boolean
-                            (call-extension-callback ext (:ext/activation-fn ext) environment)))
-                        (catch Throwable t
-                          (tel/log! {:level :error
-                                     :id ::ext-activation-error
-                                     :data {:ext (:ext/name ext) :error (ex-message t)}}
-                                    (str "Extension '" (:ext/name ext) "' activation-fn threw"))
-                          false)))
-                 exts))))
+                            (boolean
+                              (call-extension-callback ext (:ext/activation-fn ext) environment)))
+                          (catch Throwable t
+                            (tel/log! {:level :error
+                                       :id ::ext-activation-error
+                                       :data {:ext (:ext/name ext) :error (ex-message t)}}
+                                      (str "Extension '" (:ext/name ext) "' activation-fn threw"))
+                            false)))
+                   exts)))))
 
 (defn extensions-snapshot
   "Build the active extension summary placed under `(:extensions ctx)` from a

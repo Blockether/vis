@@ -364,16 +364,14 @@
                         [session-id name]
 
                         cached
-                        (get @scoped-spec-cache k)
+                        (get @scoped-spec-cache k)]
 
-                        spec
-                        (if (= value (:raw cached))
-                          (:spec cached)
-                          ;; Never attach a global OAuth token to a scoped namesake.
-                          (->client-spec nil (config/runtime-config value)))]
-
-                    (swap! scoped-spec-cache assoc k {:raw value :spec spec})
-                    [name spec]))))
+                    (if (= value (:raw cached))
+                      [name (:spec cached)]
+                      ;; Never attach a global OAuth token to a scoped namesake.
+                      (let [spec (->client-spec nil (config/runtime-config value))]
+                        (swap! scoped-spec-cache assoc k {:raw value :spec spec})
+                        [name spec]))))))
         (session-definitions session-id)))
 
 (defn- session-spec-of
@@ -432,12 +430,18 @@
   "`{server spec}` visible to `session-id`: the configured (daemon-wide) servers
    plus that session's own, which win on a name clash."
   [session-id]
-  (into
-    {}
-    (filter (fn [[name spec]]
-              (and (enabled? spec)
-                   (scoped/resource-enabled? extension/*current-environment* :mcp name))))
-    (merge (configured-servers) (local-session-specs session-id) (get @session-specs session-id))))
+  (let [env
+        extension/*current-environment*
+
+        live
+        (delay (scoped/live-values env))]
+
+    (into {}
+          (filter (fn [[name spec]]
+                    (and (enabled? spec) (scoped/resource-enabled? env :mcp name @live))))
+          (merge (configured-servers)
+                 (local-session-specs session-id)
+                 (get @session-specs session-id)))))
 
 (defn- reconcile!
   "Reconcile the daemon-wide pool to config: connect newly-enabled servers,
@@ -827,35 +831,40 @@
   [db target]
   (if (= "global" (:scope target))
     (gateway-servers)
-    {"scope" (:scope target)
-     "target_id" (:target-id target)
-     "servers"
-     (mapv (fn [{:keys [name value source is-override]}]
-             (scoped/register-resource! :mcp name)
-             (let [conn
-                   (if (= "global" source)
-                     (get-in @conns [name :conn])
-                     (when (= "session" (:scope target))
-                       (get-in @session-conns [[(:target-id target) name] :conn])))
+    (let [definitions
+          (scoped/definitions db target ["mcp" "servers"])
 
-                   connected?
-                   (boolean (and conn (mcp/alive? conn)))]
+          ;; Register every server first so its availability row is in the settings.
+          available
+          (do (run! #(scoped/register-resource! :mcp (:name %)) definitions)
+              (into {} (map (juxt :id :value)) (scoped/settings db target)))]
 
-               (merge (select-keys value ["command" "args" "cwd" "url" "timeout_ms"])
-                      {"name" name
-                       "transport" (wire-transport (config/runtime-config value))
-                       "enabled"
-                       (and (not (false? (get value "enabled")))
-                            (not (false? (:value (first (filter #(= (scoped/resource-id :mcp name)
-                                                                    (:id %))
-                                                                (scoped/settings db target)))))))
-                       "status" (if connected? "connected" "disconnected")
-                       "is_connected" connected?
-                       "tools" (tool-count conn)
-                       "source" source
-                       "is_override" is-override
-                       "is_managed" true})))
-           (scoped/definitions db target ["mcp" "servers"]))}))
+      {"scope" (:scope target)
+       "target_id" (:target-id target)
+       "servers" (mapv (fn [{:keys [name value source is-override]}]
+                         (let [conn
+                               (if (= "global" source)
+                                 (get-in @conns [name :conn])
+                                 (when (= "session" (:scope target))
+                                   (get-in @session-conns [[(:target-id target) name] :conn])))
+
+                               connected?
+                               (boolean (and conn (mcp/alive? conn)))]
+
+                           (merge (select-keys value ["command" "args" "cwd" "url" "timeout_ms"])
+                                  {"name" name
+                                   "transport" (wire-transport (config/runtime-config value))
+                                   "enabled" (and (not (false? (get value "enabled")))
+                                                  (not (false? (get available
+                                                                    (scoped/resource-id :mcp
+                                                                                        name)))))
+                                   "status" (if connected? "connected" "disconnected")
+                                   "is_connected" connected?
+                                   "tools" (tool-count conn)
+                                   "source" source
+                                   "is_override" is-override
+                                   "is_managed" true})))
+                       definitions)})))
 
 (defn save-scoped-server!
   "Write a scoped definition. Credentials and OAuth administration stay global."

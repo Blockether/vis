@@ -573,7 +573,15 @@
 (defn skills
   "Only skills available to this callback's session, including exact-name doc reads."
   []
-  (filterv #(scoped/resource-enabled? extension/*current-environment* :skills (:name %))
-    (all-skills)))
+  (let [env
+        extension/*current-environment*
+
+        skills
+        (all-skills)
+
+        live
+        (scoped/live-values env)]
+
+    (filterv #(scoped/resource-enabled? env :skills (:name %) live) skills)))
 
 (defn commands [] (:commands (ensure!)))

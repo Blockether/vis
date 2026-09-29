@@ -45,6 +45,15 @@
       (set (concat (map #(scoped/register-resource! :skills (:name %)) skills)
                    (map #(scoped/register-resource! :mcp (:name %)) servers))))))
 
+(defn- group-title
+  "The heading clients show for a settings group. Outside global settings the
+   provider group holds only response options, because providers are global."
+  [group local?]
+  (cond (and local? (= group :provider)) "Response"
+        (= group :mcp) "MCP availability"
+        (= group :engines) "Extension engines"
+        :else (str/capitalize (str/replace (name group) #"[-_]+" " "))))
+
 (defn- request-target
   [request body]
   (let [params (merge (:query-params request) body)]
@@ -97,14 +106,22 @@
                     keyword)
 
             rows
-            (filter #(and (some #{(:scope target)} (:scopes %))
-                          (or (not (#{:skills :mcp} (:group %))) (resources (:id %)))
-                          (or local?
-                              (and (not (false? (:settings? %))) (toggles/toggle-visible? %)))
-                          (or (nil? channel)
-                              (#{:all :*} channel)
-                              (toggles/toggle-for-channel? channel %)))
-                    (scoped/settings (lp/db-info) target))
+            (filter
+              #(and
+                 (some #{(:scope target)} (:scopes %))
+                 (case (:group %)
+                   :skills
+                   (resources (:id %))
+
+                   ;; Below global, the MCP servers section's own switch
+                   ;; writes this same availability setting.
+                   :mcp
+                   (and (not local?) (resources (:id %)))
+
+                   true)
+                 (or local? (and (not (false? (:settings? %))) (toggles/toggle-visible? %)))
+                 (or (nil? channel) (#{:all :*} channel) (toggles/toggle-for-channel? channel %)))
+              (scoped/settings (lp/db-info) target))
 
             grouped
             (sort-by (comp str key) (group-by #(or (:group %) :other) rows))]
@@ -122,9 +139,7 @@
                                   :toggles [(assoc (agent-name-setting) :scopes ["global"])]}))
                          (map (fn [[group specs]]
                                 {:id (name group)
-                                 :title (if (and local? (= group :provider))
-                                          "Response"
-                                          (str/capitalize (str/replace (name group) #"[-_]+" " ")))
+                                 :title (group-title group local?)
                                  :toggles (mapv toggle-json specs)}))
                          grouped)})))))
 

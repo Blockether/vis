@@ -308,22 +308,39 @@
                                    :owner (:ext/name ext)}))
       id)))
 
+(defn live-values
+  "The session values [[engine-mode]] and [[resource-enabled?]] read for `env`,
+   resolved once so a caller checking many extensions, skills or servers pays
+   for one resolution. Nil outside a session, where both read the process-wide
+   settings."
+  [env]
+  (when (and (:db-info env) (:session-id env)) (values (:db-info env) (:session-id env))))
+
+(defn- live-value
+  "`id`'s live value from `live`, resolved afresh when `live` predates the id's
+   registration."
+  [env live id]
+  (if (contains? live id)
+    (get live id)
+    (if-let [fresh (live-values env)]
+      (get fresh id)
+      (toggles/value-of id))))
+
 (defn engine-mode
-  "Live availability is independent of the response snapshot."
-  [env ext]
-  (if-let [id (engine-setting! ext)]
-    (if (and (:db-info env) (:session-id env))
-      (get (values (:db-info env) (:session-id env)) id "auto")
-      (toggles/value-of id))
-    "auto"))
+  "Live Auto/On/Off mode, independent of the response snapshot. Pass `live`
+   from [[live-values]] when checking several extensions."
+  ([env ext] (engine-mode env ext nil))
+  ([env ext live]
+   (if-let [id (engine-setting! ext)]
+     (or (live-value env live id) "auto")
+     "auto")))
 
 (defn resource-enabled?
-  "Live gate: saved names and cached handles cannot bypass a scoped disable."
-  [env kind resource-name]
-  (let [id (register-resource! kind resource-name)]
-    (if (and (:db-info env) (:session-id env))
-      (not (false? (get (values (:db-info env) (:session-id env)) id)))
-      (toggles/enabled? id))))
+  "Live gate: saved names and cached handles cannot bypass a scoped disable.
+   Pass `live` from [[live-values]] when checking several resources."
+  ([env kind resource-name] (resource-enabled? env kind resource-name nil))
+  ([env kind resource-name live]
+   (not (false? (live-value env live (register-resource! kind resource-name))))))
 
 (defn set-setting!
   "Write one eligible key, or inherit by deleting it. Validate before any write."

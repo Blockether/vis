@@ -476,3 +476,63 @@
                                 (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
                 (scoped/set-setting! db (scoped/target db "session" sid) id "inherit" nil)
                 (expect (= [skill] (discovery/skills))))))))))
+
+(defdescribe
+  scoped-live-values
+  (it "reads a resource registered after a batch snapshot from the store"
+      (with-empty-config
+        (let [db
+              (h/store)
+
+              sid
+              (h/store-session! db {:title "Live"})
+
+              env
+              {:db-info db :session-id sid}
+
+              live
+              (scoped/live-values env)
+
+              id
+              (scoped/register-resource! :skills "late_fixture")]
+
+          (scoped/set-setting! db (scoped/target db "session" sid) id "value" false)
+          (expect (not (contains? live id)))
+          (expect (false? (scoped/resource-enabled? env :skills "late_fixture" live)))
+          (expect
+            (false?
+              (scoped/resource-enabled? env :skills "late_fixture" (scoped/live-values env)))))))
+  (it "titles settings groups in plain words and leaves scoped MCP availability to its section"
+      (with-empty-config
+        (let [db
+              (h/store)
+
+              sid
+              (h/store-session! db {:title "Titles"})
+
+              target
+              (scoped/target db "session" sid)]
+
+          (scoped/engine-setting! {:ext/name "title-fixture"
+                                   :ext/engine {:ext.engine/symbols ['fixture]}})
+          (scoped/set-definition! db target ["mcp" "servers"] "title_fixture" {"command" "true"})
+          (with-redefs [lp/db-info
+                        (constantly db)
+
+                        discovery/all-skills
+                        (constantly [])]
+
+            (let [groups
+                  (-> (#'settings-api/list-settings-handler
+                       {:query-params {"scope" "session" "target_id" (str sid)}})
+                      :body
+                      json/read-json
+                      (get "groups"))
+
+                  titles
+                  (into {} (map (juxt #(get % "id") #(get % "title"))) groups)]
+
+              (expect (= "Extension engines" (get titles "engines")))
+              (expect (= "Response" (get titles "provider")))
+              (expect (not (contains? titles "mcp")))
+              (expect (= "MCP availability" (#'settings-api/group-title :mcp false)))))))))
