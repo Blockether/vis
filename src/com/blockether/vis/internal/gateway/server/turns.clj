@@ -5,7 +5,6 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
             [com.blockether.vis.internal.attachment.core :as attachments]
-            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.gateway.server.http :as http]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
@@ -129,21 +128,6 @@
 
 (defn- path-tid [request] (get-in request [:path-params :tid]))
 
-(defn- configured-reasoning-level
-  "The shared `reasoning_level` toggle as a plain wire string (`quick` /
-   `balanced` / `deep`), or nil when it is unreadable.
-
-   The gateway is the ONLY reasoning source for channels that do not send
-   `reasoning_default` themselves (the companion app, plain HTTP clients): the
-   TUI reads the same toggle and passes it per turn, so honouring it here makes
-   one flip mean the same thing everywhere instead of silently falling back to
-   the engine's `balanced`."
-  []
-  (let [v (try (toggles/value-of "reasoning_level") (catch Throwable _ nil))]
-    (cond (keyword? v) (name v)
-          (string? v) (not-empty v)
-          :else nil)))
-
 (defn- submit-turn-handler
   [request]
   (let [sid
@@ -174,8 +158,7 @@
                                    :idempotency-key (get body "idempotency_key")
                                    :provider (get body "provider")
                                    :model (get body "model")
-                                   :reasoning-default (or (get body "reasoning_default")
-                                                          (configured-reasoning-level))
+                                   :reasoning-default (get body "reasoning_default")
                                    :extra-body (get body "extra_body")
                                    :turn-features (get body "turn_features")
                                    :workspace (wire/->engine (get body "workspace"))

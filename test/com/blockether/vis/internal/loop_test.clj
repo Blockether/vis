@@ -5923,6 +5923,59 @@
           (expect (= {"service_tier" "auto" "max_tokens" 1024}
                      (sanitize {"service_tier" "auto" "max_tokens" 1024})))))))
 
+;; Regression: channels stopped sending response options per turn when settings
+;; gained project, group and session scopes, so the engine reads them from the
+;; turn's resolved setting snapshot instead.
+(defdescribe
+  scoped-response-settings-test
+  (describe "reasoning level"
+            (it "maps the setting's quick level to svar's low level"
+                (expect (= :low (loop-router/normalize-reasoning-level "quick")))
+                (expect (= :deep (loop-router/normalize-reasoning-level "deep")))
+                (expect (nil? (loop-router/normalize-reasoning-level "unknown"))))
+            (it "fills only an unset reasoning default from the snapshot"
+                (let [defaults (deref #'turn/with-setting-defaults)]
+                  (expect (= "deep" (:reasoning-default (defaults {} {"reasoning_level" "deep"}))))
+                  (expect (= "quick"
+                             (:reasoning-default (defaults {:reasoning-default "quick"}
+                                                           {"reasoning_level" "deep"})))))))
+  (describe "fast mode"
+            (it "turns on the provider fast modes the snapshot enables"
+                (expect (= {"codex_fast_mode" true}
+                           (loop-router/setting-turn-features {"codex_fast_mode" true})))
+                (expect (nil? (loop-router/setting-turn-features {"codex_fast_mode" false})))
+                (expect (nil? (loop-router/setting-turn-features {}))))
+            (it "keeps explicit caller features over the snapshot"
+                (let [defaults
+                      (deref #'turn/with-setting-defaults)
+
+                      snapshot
+                      {"codex_fast_mode" true}]
+
+                  (expect (= {"codex_fast_mode" true "voice_projection" true}
+                             (:turn/features (defaults {:turn/features {"voice_projection" true}}
+                                                       snapshot))))
+                  (expect (= {"codex_fast_mode" false}
+                             (:turn/features (defaults {:turn/features {"codex_fast_mode" false}}
+                                                       snapshot))))
+                  (expect (not (contains? (defaults {} {}) :turn/features))))))
+  (describe "verbosity"
+            (let [request-body
+                  (deref #'iteration/request-extra-body)
+
+                  responses-model
+                  {:name "gpt-5.6-sol" :verbosity-style :responses}]
+
+              (it "sends the snapshot verbosity only to models that accept one"
+                  (binding [toggles/*overrides* {"verbosity" "high"}]
+                    (expect (= {"text" {"verbosity" "high"}} (request-body nil responses-model)))
+                    (expect (nil? (request-body nil {:name "claude-opus-5"})))))
+              (it "keeps a caller verbosity and removes fast service tiers"
+                  (binding [toggles/*overrides* {"verbosity" "high"}]
+                    (expect (= {"text" {"verbosity" "low"}}
+                               (request-body {"text" {"verbosity" "low"} "service_tier" "priority"}
+                                             responses-model))))))))
+
 (defdescribe ask-code-block-observation-test
              (it "reports the block count (lenient mode: only the count is meaningful)"
                  (expect (= {:form-count 1}

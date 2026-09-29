@@ -27,7 +27,11 @@
             [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel]))
 
-(defn normalize-reasoning-level [v] (svar/normalize-reasoning-level v))
+(defn normalize-reasoning-level
+  "Coerce a reasoning level to svar's canonical `:low`, `:balanced` or `:deep`,
+   or nil. The `reasoning_level` setting spells the lowest level `quick`."
+  [v]
+  (svar/normalize-reasoning-level (get {"quick" :low :quick :low} v v)))
 
 (defn- adaptive-reasoning-model?
   "True when `resolved-model`'s provider declares, in its policy's
@@ -1541,6 +1545,17 @@
     (not-empty (cond-> extra-body
                  (contains? fast-tiers (service-tier extra-body))
                  (dissoc "service_tier")))))
+
+(defn setting-turn-features
+  "The provider fast-mode turn features a resolved setting `snapshot` switches
+   on, JSON-keyed like a caller's `turn_features`, or nil. Each provider policy
+   names its own feature; [[fast-mode-router]] keeps its tier on that provider."
+  [snapshot]
+  (not-empty (into {}
+                   (keep (fn [policy]
+                           (when-let [feature (:turn-feature (:fast-mode policy))]
+                             (when (true? (get snapshot feature)) [feature true]))))
+                   (vals (catalog/policies)))))
 
 (defn fast-mode-cost-multiplier
   "The price multiplier of `provider`'s fast mode when this turn requested it,

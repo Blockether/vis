@@ -17,6 +17,7 @@
             [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.channel.render :as render]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.context.engine :as ctx-engine]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
@@ -2010,6 +2011,20 @@
                       {:type ::recording-transcription-timeout :timeout-ms RECORDING_WAIT_MS})))
     transcribed))
 
+(defn- request-extra-body
+  "The caller's `extra-body` for one request to `resolved-model`: the turn's
+   `verbosity` setting becomes `text.verbosity` when that model accepts one and
+   the caller named none, and fast service tiers stay on their provider's router
+   entry (see [[loop-router/provider-extra-body]])."
+  [extra-body resolved-model]
+  (let [verbosity (when (and (transcript/verbosity-configurable? resolved-model)
+                             (nil? (get-in extra-body ["text" "verbosity"])))
+                    (some-> (toggles/value-of "verbosity")
+                            name))]
+    (loop-router/provider-extra-body (cond-> extra-body
+                                       verbosity
+                                       (assoc-in ["text" "verbosity"] verbosity)))))
+
 (defn- prepare-turn
   "Resolves what a turn holds constant across its iterations: the routed environment,
    the model and reasoning defaults, the stable prompt, the prompt bases, the turn
@@ -2199,7 +2214,7 @@
         (loop-router/resolve-effective-model (:router environment) (or routing {}))
 
         initial-extra-body
-        (loop-router/provider-extra-body extra-body)
+        (request-extra-body extra-body initial-resolved-model)
 
         initial-prompt-cache-context
         (transcript/resolved-prompt-cache-context environment
@@ -2543,7 +2558,7 @@
         (loop-router/casual-reasoning-level pre-resolved-model user-request raw-reasoning-level)
 
         iteration-extra-body
-        (loop-router/provider-extra-body extra-body)
+        (request-extra-body extra-body pre-resolved-model)
 
         ;; The window the NEXT request is actually measured against —
         ;; the rescued peer's when this turn moved, else the pin's.
