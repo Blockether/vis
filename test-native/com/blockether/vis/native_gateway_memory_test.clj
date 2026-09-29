@@ -49,9 +49,11 @@
 
 (defn- replay-through-terminal!
   [sid tid]
+  ;; `replay=full` keeps a settled turn's stream frames, as SDK followers ask;
+  ;; by default the gateway replays only that turn's lifecycle frames.
   (let [{:keys [status body]}
         (gateway-client/request! :get
-                                 (str "/v1/events?sids=" sid ":0")
+                                 (str "/v1/events?sids=" sid ":0&replay=full")
                                  {:as :stream :timeout-ms 15000})
 
         seen
