@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.extension.manifest :as manifest]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.activity.event :as activity-event]
@@ -11,6 +12,7 @@
             [com.blockether.vis.internal.loop.iteration :as iteration]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.workspace.core :as workspace]
+            [com.blockether.vis.test-prose :as prose]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- sample-channel-fn [& _] nil)
@@ -1421,3 +1423,39 @@
                                                          :ext.engine/exact-symbol-names? true}}
                                            'spel.reserve)))
       (expect (= 'cat (extension/symbol-binding {:ext/engine {}} 'cat)))))
+
+(defdescribe
+  symbol-doc-prose-test
+  "The `doc(name)` pages and extension descriptions that Vis ships follow the prose
+   limits of the manual: short sentences, short paragraphs and no semicolons."
+  (it "keeps every built-in symbol document, parameter note and extension description within them"
+      (manifest/initialize!)
+      (let [built-ins
+            (filter #(= "vis" (:ext/owner %)) (extension/registered-extensions))
+
+            broken
+            (concat (for [ext
+                          built-ins
+
+                          message
+                          (prose/breaks (str (:ext/description ext)))]
+
+                      (str (:ext/name ext) ": " message))
+                    (for [ext
+                          built-ins
+
+                          entry
+                          (extension/ext-symbols ext)
+
+                          text
+                          (cons (extension/symbol-doc-text entry)
+                                (map :note (:ext.symbol/params entry)))
+
+                          message
+                          (prose/breaks (str text))]
+
+                      (str (:ext.symbol/symbol entry) ": " message)))]
+
+        (expect (seq built-ins))
+        (expect (empty? broken)
+                (str/join "\n" (cons "built-in documents that break the prose limits:" broken))))))

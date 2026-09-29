@@ -53,7 +53,36 @@
                               opts)))))
 
 (defn publish
-  "Publish an entry with required kind: complain for failures or concrete improvements, coordination for work/questions, or informational for results/decisions. When Improve is enabled, complaints enter the persistent improve register. Include the goal, environment/version, preconditions, minimal reproduction steps and sanitized input/tool arguments, expected versus actual behavior, diagnostics, frequency, impact and workaround. Separate evidence from hypotheses; mark missing facts unknown or not attempted. Identify the affected session and turn/iteration/form; source_ref stamps this publication, not another execution. Use read_session(session_id) to inspect original evidence; never copy secrets or private data into the report or replay unsafe operations. Select individual pings, all, or none; kind never selects recipients. With Improve enabled, FAILED python_execution is already recorded as autocomplain without pings, with failure/timeout, duration and a source-session lookup; enrich its thread with an informational continuation instead of duplicating it. A no-ping continuation answers the latest addressed unanswered request and notifies its author; reply_to selects an unanswered request explicitly, once per recipient. reply_required=True requires an answer before ending the turn, not after every tool invocation. Read or perform authorized work first; acceptance is not task completion. Council is asynchronous message passing: put the delegated goal, authorized scope, acceptance criteria and progress/result in content, not new fields. Explicit IDs wake an idle peer of this group with its saved context, and members of a managed agent team; all selects active peers only. A peer that is already running reads the ping inside its turn only with reply_required=True. With Subagents enabled, spawn owned children with council.publish_spawn rather than treating project peers as subagents. See doc(\"council\") for delivery and work protocols."
+  "Publish a Council entry. `kind` is required: `complain` for failures or concrete improvements,
+   `coordination` for work and questions, and `informational` for results and decisions. When
+   Improve is enabled, complaints enter the persistent improve register. `kind` never selects
+   recipients. Choose individual pings, all, or none.
+
+   A complaint gives the goal, environment and version, preconditions, minimal reproduction steps
+   and sanitized input or tool arguments. It also gives expected and actual behavior, diagnostics,
+   frequency, impact and workaround. Keep evidence apart from hypotheses, and mark a missing fact
+   as unknown or not attempted. Name the affected session and its turn/iteration/form. `source_ref`
+   identifies this publication, not another execution.
+
+   Use `read_session(session_id)` to inspect the original evidence. Never copy secrets or private
+   data into the report, and never replay unsafe operations. With Improve enabled, a failed
+   python_execution is already recorded as an autocomplain without pings. That record has the
+   failure or timeout, the duration and a source-session lookup. Add to its thread with an
+   informational continuation instead of a duplicate.
+
+   A no-ping continuation answers the latest addressed unanswered request and notifies its author.
+   `reply_to` selects an unanswered request explicitly, once per recipient. `reply_required=True`
+   requires an answer before ending the turn, not after every tool call. Read or do authorized work
+   first. Acceptance is not task completion.
+
+   Council is asynchronous message passing. Put the delegated goal, authorized scope,
+   acceptance criteria and progress or result in content, not in new fields. Explicit IDs wake an
+   idle peer of this group with its saved context, and members of a managed agent team.
+   `ping=\"all\"` selects active peers only. A peer that is already running reads the ping inside
+   its turn only with `reply_required=True`.
+
+   With Subagents enabled, spawn owned children with `council.publish_spawn` instead of treating
+   project peers as subagents. See `doc(\"council\")` for the delivery and work protocols."
   ([env content] (publish env content {}))
   ([env content opts]
    (let [db
@@ -101,7 +130,12 @@
      (result env :council.publish opts entry))))
 
 (defn threads
-  "List thread roots/kinds ascending by thread_id, without content. group_id defaults to the session group. after is an exclusive nonnegative integer thread_id cursor (default 0); limit is an integer 1–50 (default 50). Returns entries, after, has_more; pass returned after for the next page while has_more. Pages may be shorter due to the byte budget. Does not accept thread_id."
+  "List thread roots and their kinds by ascending thread_id, without content. group_id defaults to
+   the session group. after is an exclusive nonnegative integer thread_id cursor (default 0). limit
+   is an integer 1–50 (default 50). It returns entries, after and has_more. While has_more is true,
+   pass the returned after for the next page.
+
+   A page can be shorter because of the byte budget. It does not accept thread_id."
   ([env] (threads env {}))
   ([env opts]
    (let [opts (walk/keywordize-keys opts)]
@@ -111,7 +145,13 @@
              (council/threads (:db-info env) (str (:session-id env)) opts)))))
 
 (defn read
-  "Read the group log ascending by entry_id; does not consume pings. group_id defaults to the session group; optional thread_id is a positive root entry_id. after is an exclusive nonnegative integer entry_id cursor (default 0); limit is an integer 1–50 (default 50). Returns entries, after, has_more; pass returned after for the next page while has_more. Pages may be shorter due to the byte budget."
+  "Read the group log by ascending entry_id. It does not consume pings. group_id defaults to the
+   session group, and the optional thread_id is a positive root entry_id. after is an
+   exclusive nonnegative integer entry_id cursor (default 0). limit is an integer 1–50
+   (default 50).
+
+   It returns entries, after and has_more. While has_more is true, pass the returned after for the
+   next page. A page can be shorter because of the byte budget."
   ([env] (read env {}))
   ([env opts]
    (let [opts (walk/keywordize-keys opts)]
@@ -121,7 +161,7 @@
              (council/read-entries (:db-info env) (str (:session-id env)) opts)))))
 
 (defn get
-  "Fetch a full entry by entry_id; a truncated ping never changes the stored content."
+  "Get a full entry by entry_id. A truncated ping never changes the stored content."
   ([env entry-id] (get env entry-id {}))
   ([env entry-id opts]
    (let [opts (assoc (walk/keywordize-keys opts) :entry_id entry-id)]
@@ -148,7 +188,12 @@
                        params)
          :description (:doc (meta v))
          :result
-         "Members: `{session_id, title, state}`. Entries: `{entry_id, thread_id, group_id, kind, content, author_session_id, created_at, source, ping}` plus root `title`, host `source_ref`, and optional `reply_required`, `replies` or `reply_to`. Replies report `{session_id, state, reply_entry_id?}`. Pages: `{entries, after, has_more}`; thread summaries: `{thread_id, kind, title, author_session_id, created_at}`."}))
+         (str
+           "Members: `{session_id, title, state}`. Entries: `{entry_id, thread_id, group_id, kind, "
+           "content, author_session_id, created_at, source, ping}`, plus the root `title`, the host "
+           "`source_ref` and optional `reply_required`, `replies` or `reply_to`. Replies report "
+           "`{session_id, state, reply_entry_id?}`. Pages: `{entries, after, has_more}`. Thread "
+           "summaries: `{thread_id, kind, title, author_session_id, created_at}`.")}))
     [[#'members 'council.members :observation ["group_id"]]
      [#'publish 'council.publish :external
       ["kind" "group_id" "thread_id" "title" "ping" "idempotency_key" "reply_required" "reply_to"]

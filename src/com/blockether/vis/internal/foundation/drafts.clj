@@ -428,18 +428,19 @@
      :tag :observation
      :description
      (str
-       "Where this session's work lands — `draft_status()` says whether the session is inside a "
-       "draft (an isolated working copy opened with `draft_create`) and, if so, which backend "
-       "holds it, its `vis/<name>` branch and the default `target_branch`, how many draft commits "
-       "the target lacks (`ahead`) and how many paths still differ from the draft branch (`pending`). "
-       "It reports every participating repository and task-only review counts. Outside a "
-       "draft it reports the trunk root and the `draft_backend` setting. A draft-rooted session "
-       "with missing ownership reports recovery_required and a safe recovery_hint instead.")
+       "Show where the work of this session lands. `draft_status()` says whether the session is "
+       "inside a draft, an isolated working copy opened with `draft_create`. In a draft, it gives "
+       "the backend, the `vis/<name>` branch and the default `target_branch`. It also gives how many "
+       "draft commits the target lacks (`ahead`) and how many paths still differ from the draft "
+       "branch (`pending`). It reports every participating repository and the task-only review "
+       "counts.\n\n"
+       "Outside a draft, it reports the trunk root and the `draft_backend` setting. A draft-rooted "
+       "session with missing ownership reports recovery_required and a safe recovery_hint instead.")
      :result
-     (str
-       "String-keyed `{in_draft, root, ...}`; in a draft also `{workspace_id, label, repo_root, "
-       "backend, mechanism, branch, target_branch, ahead, pending, repositories, draft_changes}`. "
-       "Recovery adds `{recovery_required, managed, recovery_hint}`; it never adopts another session's draft.")}))
+     (str "String-keyed `{in_draft, root, ...}`. In a draft, it also has `{workspace_id, label, "
+          "repo_root, backend, mechanism, branch, target_branch, ahead, pending, repositories, "
+          "draft_changes}`. Recovery adds `{recovery_required, managed, recovery_hint}` and never "
+          "adopts the draft of another session.")}))
 
 (def draft-diff-symbol
   (ext/symbol
@@ -449,14 +450,16 @@
      :tag :observation
      :description
      (str
-       "Attach every owned repository's exact changes as a separate reviewable diff. Defaults to "
-       "changes since each seeded fork; copied pending work is excluded from this task-only review. "
-       "Pass since=<checkpoint> from a previous result; for several repositories keep the complete map. "
-       "All checkpoints are validated before any attachment is recorded. Neither working indexes nor commits change. "
-       "Shared roots are excluded. Stable numbered filenames distinguish repositories, including identical relative paths. "
-       "Works with worktree and Rift drafts; old drafts without a review baseline refuse.")
-     :params [{:name "filename" :note "stable JSON filename; default DIFF-<draft-label>.json"}
-              {:name "since" :note "snapshot checkpoint; omit for cumulative diff"}]
+       "Attach the exact changes of each owned repository as a separate diff for review. By default, "
+       "the diff covers the changes since each seeded fork. Copied pending work is not part of this "
+       "task-only review. To diff from a checkpoint, pass since=<checkpoint> from a previous result. "
+       "For several repositories, keep the complete checkpoint map.\n\n"
+       "All checkpoints are validated before any attachment is recorded. Working indexes and commits "
+       "do not change. Shared roots are excluded. Stable numbered filenames tell repositories apart, "
+       "also when their relative paths are the same. It works with worktree and Rift drafts, and an "
+       "old draft without a review baseline refuses.")
+     :params [{:name "filename" :note "stable JSON filename, default DIFF-<draft-label>.json"}
+              {:name "since" :note "snapshot checkpoint, none for cumulative diff"}]
      :call {:opt-pos ["filename" "since"]}
      :result
      "Single repository: attachment descriptor with `{checkpoint, empty}` and a checkpoint string. Several: `{attachments, checkpoint, repository_count, empty}` with a checkpoint map keyed by source. Patch bytes stay in attachments."}))
@@ -469,19 +472,21 @@
      :tag :mutation
      :description
      (str
-       "Open one draft across selected repositories and move the session into its first working copy. "
-       "Original checkouts are left alone until approval. Drafts default to committed HEAD (clean=True); "
-       "clean=False explicitly copies pending source work, which remains part of approval scope. "
-       "Pass roots=[project_root_path, sibling_path] to select catalog repositories without changing configuration; omit roots for defaults. "
-       "The nonempty list must contain distinct, nonoverlapping read/write Git repository roots. "
-       "Read-only, copy-only, not-allowed and denied paths cannot be selected. "
-       "All selections are validated before creation; failure preserves the original session. "
-       "Approval addresses every participating repository; discard returns to the original project. "
-       "Approval preserves unrelated local work. Discard the current draft before opening another. "
-       "Extension hooks on `draft/create` may refuse.")
-     :params [{:name "label" :note "draft name; also the `vis/<label>` branch"}
-              {:name "clean" :note "False copies pending changes; default True"}
-              {:name "roots" :note "read/write catalog repository Paths; primary first"}]
+       "Open one draft across the selected repositories and move the session into its first working "
+       "copy. The original checkouts stay unchanged until approval. A draft starts from the "
+       "committed HEAD (clean=True). clean=False copies the pending source work, and that work stays "
+       "part of the approval scope.\n\n"
+       "To select catalog repositories without a configuration change, pass "
+       "roots=[project_root_path, sibling_path]. Omit roots for the defaults. The list must not be "
+       "empty and must hold distinct, nonoverlapping read/write Git repository roots. Read-only, "
+       "copy-only, not-allowed and denied paths cannot be selected. All selections are validated "
+       "before creation, and a failure keeps the original session.\n\n"
+       "Approval covers every participating repository and keeps unrelated local work. Discard "
+       "returns to the original project. Discard the current draft before you open another. "
+       "Extension hooks on `draft/create` can refuse.")
+     :params [{:name "label" :note "draft name and `vis/<label>` branch"}
+              {:name "clean" :note "False copies pending changes, default True"}
+              {:name "roots" :note "read/write catalog repository Paths, primary first"}]
      :call {:pos ["label"] :opt-pos ["clean" "roots"]}
      :result
      (str
@@ -497,11 +502,13 @@
      :tag :mutation
      :description
      (str
-       "Fetch and merge local/origin targets into owned draft repositories without changing originals or pushing. "
-       "May checkpoint pending changes and commit merges: requires commit authorization and runs Git/extension hooks. "
-       "Resolve reported conflict files with editing tools, then call action='continue' to stage resolutions and finish; "
-       "unresolved conflict markers refuse. action='abort' cancels only merges this tool owns, retaining pre-sync checkpoints. "
-       "Optional roots selects participating source or clone Paths, never arbitrary repositories.")
+       "Fetch and merge the local and origin targets into the owned draft repositories. It does not "
+       "change the originals and does not push. It can checkpoint pending changes and commit merges, "
+       "so it requires commit authorization and runs Git and extension hooks.\n\n"
+       "Resolve the reported conflict files with the editing tools. Then call action='continue' to "
+       "stage the resolutions and finish. Unresolved conflict markers make it refuse. action='abort' "
+       "cancels only the merges that this tool owns and keeps the pre-sync checkpoints. The optional "
+       "roots selects participating source or clone Paths, never any other repository.")
      :params [{:name "action" :note "start (default), continue, or abort"}
               {:name "message" :note "commit subject"}
               {:name "roots" :note "participating source or clone Paths"}]
@@ -517,21 +524,25 @@
      :tag :mutation
      :description
      (str
-       "Commit the draft and fast-forward the default branch (origin/HEAD, otherwise main or master). "
-       "Fetch origin when configured; the draft must contain both local and origin target commits. "
-       "If synchronization is required, use draft_sync(), resolve its conflicts and retry. "
-       "Approval never merges target history. All pending draft paths are staged; commits carry "
-       "Vis-Session/Vis-Draft trailers. Overlapping local paths are refused before landing. "
-       "Unrelated local changes are stashed including untracked files, then restored with --index. "
-       "Push to origin without force only after restoration succeeds. A failed restore retains the stash; "
-       "a failed push reports landed locally and permits retry. No origin means local-only approval. "
-       "The draft stays open. Hooks on draft/approve and git/commit may veto.")
-     :params [{:name "message" :note "commit subject; default `draft(<name>): approve`"}]
+       "Commit the draft and fast-forward the default branch (origin/HEAD, otherwise main or "
+       "master). When origin is configured, it is fetched, and the draft must contain both the local "
+       "and the origin target commits. If a sync is required, use draft_sync(), resolve its "
+       "conflicts and try again. Approval never merges target history.\n\n"
+       "All pending draft paths are staged, and commits carry Vis-Session/Vis-Draft trailers. "
+       "Overlapping local paths are refused before landing. Unrelated local changes, including "
+       "untracked files, are stashed and then restored with --index. The push to origin never forces "
+       "and starts only after the restore succeeds. A failed restore keeps the stash. A failed push "
+       "reports that the work landed locally and permits a retry.\n\n"
+       "Without an origin, approval is local-only. The draft stays open. Hooks on draft/approve and "
+       "git/commit can veto.")
+     :params [{:name "message" :note "commit subject, default `draft(<name>): approve`"}]
      :call {:lead-opt "message" :rest :never}
      :result
      (str
-       "String-keyed `{status: approved|nothing-to-approve, published, branch, target_branch, commit, files}`; "
-       "`repositories` reports every participant. All targets are preflighted; late publication failures may leave some repositories landed and must be retried without discarding copies.")}))
+       "String-keyed `{status: approved|nothing-to-approve, published, branch, target_branch, "
+       "commit, files}`. `repositories` reports every participant. All targets are checked before "
+       "landing. A late publication failure can leave some repositories landed, so retry it without "
+       "discarding the copies.")}))
 
 (def draft-discard-symbol
   (ext/symbol
@@ -541,12 +552,12 @@
      :tag :mutation
      :description
      (str
-       "Leave the session's current draft and remove its working copy; the session is back on the "
-       "trunk at once. Approved work stays on the default branch; the merged draft branch may be "
-       "removed. Call `draft_approve()` first to keep the work. Unapproved changes are lost. "
-       "For an inherited draft path without ownership, return to the source checkout without deleting "
-       "the existing draft. Unknown ownership requires /cd <original-checkout> instead. "
-       "Extension hooks on `draft/discard` may refuse.")
+       "Leave the current draft of the session and remove its working copy. The session is back on "
+       "the trunk at once. Approved work stays on the default branch, and the merged draft branch "
+       "can be removed. To keep the work, call `draft_approve()` first. Unapproved changes are lost.\n\n"
+       "For an inherited draft path without ownership, it returns to the source checkout and keeps "
+       "the existing draft. Unknown ownership requires /cd <original-checkout> instead. Extension "
+       "hooks on `draft/discard` can refuse.")
      :result
      (str
        "String-keyed `{status: discarded, label, root, branch, approved_ahead}`. Recovery returns "

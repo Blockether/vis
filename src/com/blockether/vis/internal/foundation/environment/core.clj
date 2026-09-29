@@ -174,10 +174,12 @@ Returns {\"is_found\": True, \"source\", \"path\", \"bytes\": N, \"content\", \"
      :symbol 'main-agent-instructions
      :tag :observation
      :description
-     (str "The project's own guidance file — AGENTS.md or CLAUDE.md — WHOLE, with where it was "
-          "found. Takes no arguments.")
-     :result (str "String-keyed `{is_found, source, path, bytes, content, files}`; a miss is "
-                  "`{is_found: False}`, so check `is_found` first.")}))
+     (str
+       "The whole project guidance file, AGENTS.md or CLAUDE.md, with the place where it was found. "
+       "It takes no arguments.")
+     :result
+     (str "String-keyed `{is_found, source, path, bytes, content, files}`. A miss is `{is_found: "
+          "False}`, so check `is_found` first.")}))
 
 (def environment-symbols [main-agent-instructions-symbol])
 

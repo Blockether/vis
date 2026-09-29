@@ -2996,42 +2996,42 @@
      :name "shell"
      :result
      (str
-       "A HANDLE: ONE result shape for every shell answer — `{stage, id, cwd, command, "
-       "status, exit, out, duration_ms, timed_out, offset, next_offset, is_eof, "
-       "started_at, finished_at, log_path, cpu_ms, cpu_percent, rss_bytes, note, …}` plus the "
-       "methods below. A log page slices directly as its `out` text (`page[-4000:]`), continues "
-       "with `next(page)` or `page.pages()`, and keeps ordinary dict iteration as key iteration. "
-       "Printing shows status, exit, timing and bounded log text, with explicit timeout and "
-       "continuation notices. Every field answers by key and by the same name as an attribute "
-       "(`sh[\"out\"]` is `sh.out`); `dict(sh)`/`json.dumps(sh)` carry the whole map. "
-       "A fresh run has `exit=None`; nonzero exit is data. "
-       "`out` is the pty's ONE stream: stdout and stderr are the same channel there, so whatever "
-       "the command wrote to either is IN it, in order — one name, and no `stderr` key. "
-       "`out` is always a string: an empty string means THIS stage returned no output, not "
-       "that the process log is empty. Use `sh.logs()` to read it, including after `sh.stop()`. "
-       "`out` automatically normalizes terminal colours and controls; parse this text view. "
-       "`log_path` preserves the raw terminal stream, including ANSI sequences.")
+       "A HANDLE with one result shape for every shell answer: `{stage, id, cwd, command, status, "
+       "exit, out, duration_ms, timed_out, offset, next_offset, is_eof, started_at, finished_at, "
+       "log_path, cpu_ms, cpu_percent, rss_bytes, note, …}`, plus the methods below. Every field "
+       "answers by key and by the same name as an attribute, so `sh[\"out\"]` is `sh.out`. `dict(sh)` "
+       "and `json.dumps(sh)` carry the whole map. Printing shows the status, exit, timing and "
+       "bounded log text, with explicit timeout and continuation notices.\n\n"
+       "A log page slices directly as its `out` text (`page[-4000:]`). It continues with "
+       "`next(page)` or `page.pages()`, and ordinary dict iteration still yields keys. A fresh run "
+       "has `exit=None`, and a nonzero exit is data.\n\n"
+       "`out` is the one stream of the pty. Stdout and stderr are the same channel there, so `out` "
+       "holds what the command wrote to either, in order. There is one name and no `stderr` key. "
+       "`out` is always a string. An empty string means that this stage returned no output, not that "
+       "the process log is empty. Use `sh.logs()` to read the log, also after `sh.stop()`.\n\n"
+       "`out` normalizes terminal colours and controls automatically, so parse this text view. "
+       "`log_path` keeps the raw terminal stream, including ANSI sequences.")
      :description
      (str
-       "`shell(command, {\"id\": …, \"cwd\": …})` — spawn ONE `bash -lc` `command` under a "
-       "real pty and return its HANDLE NOW; every run is a background run. Chain with `&&`; "
-       "run independent work as separate calls. Drive "
-       "it through the handle: `sh.wait(secs)` (the ONLY wait; `timed_out` means the WAIT "
-       "expired, not the process), `sh.logs(-50)` (the last 50 LINES), or "
-       "`page = sh.logs(0, lines=10)` (a ten-line window; `next(page)` continues and "
-       "`page.pages()` walks ready pages lazily, bounded to ten by default; `lines=-10` walks "
-       "upward), `sh.type(text)`, `sh.stop()` — never a rerun; "
-       "re-issuing a live `id` returns THAT shell. Every answer already carries the "
-       "STATUS — `status`/`exit`, the clock, `log_path` and live cpu/rss — so nothing asks "
-       "twice. NEVER trim inside the command: `| head`, "
-       "`| tail`, `| grep`, `2>/dev/null`, `> file` discard bytes the handle keeps whole, and "
-       "a pipeline's exit is its LAST stage's, so a failed build looks green — run it plain, "
-       "then tail-clip a log page directly (`sh.logs()[-4000:]`) or filter its `out` in Python. "
-       "`env` carries THIS run's variables over the project's — a literal for a switch, a "
-       "source map for a secret ({\"keychain\"|\"env\"|\"dotenv\": …} or "
-       "{\"command\": [\"executable\", \"arg\", …]}; command is an argv list, never a shell string), "
-       "since a literal stays in the transcript for good), null to unset. "
-       "`print((await shell(\"npm test\", {\"env\": {\"NODE_ENV\": \"test\"}})).wait(300)[\"out\"])`.")
+       "`shell(command, {\"id\": …, \"cwd\": …})` starts ONE `bash -lc` `command` under a real pty and "
+       "returns its HANDLE at once. Every run is a background run. Chain steps with `&&`, and run "
+       "independent work as separate calls. Every answer already carries the status "
+       "(`status`/`exit`, the clock, `log_path` and live cpu/rss), so you never need to ask again.\n\n"
+       "Drive the process through the handle. `sh.wait(secs)` is the only wait, and `timed_out` "
+       "means that the wait expired, not the process. `sh.logs(-50)` gives the last 50 LINES. `page "
+       "= sh.logs(0, lines=10)` gives a ten-line window: `next(page)` continues, `page.pages()` "
+       "walks ready pages lazily with a default bound of ten, and `lines=-10` walks upward. Use "
+       "`sh.type(text)` for input and `sh.stop()` to stop, never a rerun. Calling `shell` again with "
+       "a live `id` returns that shell.\n\n"
+       "Never trim output inside the command. `| head`, `| tail`, `| grep`, `2>/dev/null` and `> "
+       "file` throw away bytes that the handle keeps whole. A pipeline also reports the exit of its "
+       "LAST stage, so a failed build looks green. Run the command plain. Then clip a log page "
+       "directly (`sh.logs()[-4000:]`) or filter its `out` in Python.\n\n"
+       "`env` sets the variables of THIS run over those of the project. A value is a literal for a "
+       "switch, or a source map for a secret: `{\"keychain\"|\"env\"|\"dotenv\": …}` or `{\"command\": "
+       "[\"executable\", \"arg\", …]}`. The command is an argv list, never a shell string. Use a source "
+       "map for a secret, because a literal stays in the transcript. Use null to unset a variable. "
+       "Example: `print((await shell(\"npm test\", {\"env\": {\"NODE_ENV\": \"test\"}})).wait(300)[\"out\"])`.")
      :params [{:name "id" :note "reuse to re-attach a live shell"} {:name "cwd"}
               {:name "timeout_secs"} {:name "env" :note "THIS run's variables, over the project's"}]
      :ticker-fn (shell-ticker "run")
@@ -3047,23 +3047,26 @@
      :symbol '_shell-logs
      :name "_shell_logs"
      :result
-     (str "The same shell result shape as every other stage (`stage` is \"logs\"): `out` is the "
-          "window this read returned, and a slice addresses that text directly (`page[-4000:]`). "
-          "The sandbox result remembers the whole request, so `next(page)` follows its cursor and "
-          "`page.pages()` walks ready pages lazily; ordinary dict iteration still yields keys. "
-          "`is_eof` marks the end of this current snapshot.")
+     (str
+       "The same shell result shape as every other stage (`stage` is \"logs\"). `out` is the window "
+       "that this read returned, and a slice addresses that text directly (`page[-4000:]`). The "
+       "sandbox result keeps the whole request, so `next(page)` follows its cursor and "
+       "`page.pages()` walks ready pages lazily. Ordinary dict iteration still yields keys. `is_eof` "
+       "marks the end of the current snapshot.")
      :description
-     (str "TRANSPORT for `sh.logs(offset=…, lines=…)` — call the HANDLE the shell result already "
-          "is, not this. Reads a background shell's log and returns NOW. No offset reads the TAIL; "
-          "`offset=0` starts at the beginning; a NEGATIVE offset is the last n LINES "
-          "(`sh.logs(-50)`), the same reading `cat(path, -50)` has. `lines=10` is the last ten "
-          "lines, a page from offset zero walks forward with `next(page)`, and `lines=-10` walks "
-          "ABOVE its current offset. `page.pages(max_pages=…)` includes the current page and is "
-          "bounded to ten by default; reaching the current EOF never waits for future output.")
+     (str
+       "Transport for `sh.logs(offset=…, lines=…)`. Call the handle that the shell result already "
+       "is, not this. It reads the log of a background shell and returns at once.\n\n"
+       "Without an offset, it reads the tail. `offset=0` starts at the beginning. A negative offset "
+       "gives the last n LINES (`sh.logs(-50)`), the same way that `cat(path, -50)` reads. "
+       "`lines=10` gives the last ten lines. A page from offset zero walks forward with "
+       "`next(page)`, and `lines=-10` walks above its current offset. `page.pages(max_pages=…)` "
+       "includes the current page, has a default bound of ten and never waits for future output at "
+       "the current EOF.")
      :params [{:name "id" :required? true :note "the shell handle's own id"}
-              {:name "offset" :note "byte cursor; negative counts LINES"}
+              {:name "offset" :note "byte cursor, and negative counts LINES"}
               {:name "limit" :note "byte cap for one read"}
-              {:name "lines" :note "N lines; negative scrolls up"}]
+              {:name "lines" :note "N lines, and negative scrolls up"}]
      :inject-env? true
      :tag :observation
      :presenter :shell
@@ -3077,13 +3080,15 @@
      :symbol '_shell-wait
      :name "_shell_wait"
      :result
-     (str "The same shell result shape (`stage` \"wait\"): `out` is everything printed since "
-          "this wait's cursor, `exit`/`status` are final unless `timed_out` is true, which means "
-          "the WAIT expired and the shell keeps running under its id.")
+     (str
+       "The same shell result shape (`stage` \"wait\"). `out` is everything printed since the cursor "
+       "of this wait. `exit`/`status` are final unless `timed_out` is true. `timed_out` means that "
+       "the WAIT expired and the shell keeps running under its id.")
      :description
-     (str "TRANSPORT for `sh.wait(seconds)` — call the HANDLE the shell result already is, not "
-          "this. Blocks until the command exits or the deadline passes; the bounded poll loop "
-          "lives here so no caller writes one.")
+     (str
+       "Transport for `sh.wait(seconds)`. Call the handle that the shell result already is, not "
+       "this. It blocks until the command exits or the deadline passes. The bounded poll loop lives "
+       "here, so no caller writes one.")
      :params [{:name "id" :required? true} {:name "seconds"} {:name "offset"}]
      :inject-env? true
      :tag :observation
@@ -3097,10 +3102,14 @@
     {:activity (presenter/for-tool :_shell-type)
      :symbol '_shell-type
      :name "_shell_type"
-     :result (str "The same shell result shape (`stage` \"send\"): `sent` chars, `keys` label. "
-                  "`out` is an empty string; use `sh.logs()` to read process output.")
+     :result
+     (str
+       "The same shell result shape (`stage` \"send\"), with the `sent` character count and the `keys` "
+       "label. `out` is an empty string. Use `sh.logs()` to read the process output.")
      :description
-     "TRANSPORT for `sh.type(text, is_enter=True)` — call the handle. Writes keystrokes to a background shell's stdin."
+     (str
+       "Transport for `sh.type(text, is_enter=True)`. Call the handle instead. It writes keystrokes "
+       "to the stdin of a background shell.")
      :params [{:name "id" :required? true} {:name "text" :required? true} {:name "is_enter"}]
      :inject-env? true
      :tag :mutation
@@ -3114,10 +3123,13 @@
     {:activity (presenter/for-tool :_shell-stop)
      :symbol '_shell-stop
      :name "_shell_stop"
-     :result (str "The same shell result shape (`stage` \"stop\"): `status` \"stopped\", `exit`. "
-                  "`out` is an empty string; the process log remains readable with `sh.logs()`.")
+     :result
+     (str
+       "The same shell result shape (`stage` \"stop\"), with `status` \"stopped\" and `exit`. `out` is "
+       "an empty string. You can still read the process log with `sh.logs()`.")
      :description
-     "TRANSPORT for `sh.stop()` — call the handle. Kills a background shell's process tree and releases its live resource; the log remains on disk."
+     (str "Transport for `sh.stop()`. Call the handle instead. It kills the process tree of a "
+          "background shell and releases its live resource. The log stays on disk.")
      :call {:pos ["id"]}
      :inject-env? true
      :tag :mutation
@@ -3173,14 +3185,14 @@
                      "vis-agent extension shell attach dev-server"]
       :cmd/run-fn #'shell-attach-command}]}])
 
-(ext/register-toggle!
-  {:id "shell"
-   :label "Shell commands"
-   ;; The full pty-handle, jail, and extension-boundary contract lives in this
-   ;; namespace's docstring; the settings row stays one line.
-   :description "Expose the Python `shell` verb; the model's commands run inside the OS jail."
-   :default true
-   :scopes ["global" "project" "group" "session"]
-   :owner :vis
-   :persist? true
-   :group :sandbox})
+(ext/register-toggle! {:id "shell"
+                       :label "Shell commands"
+                       ;; The full pty-handle, jail, and extension-boundary contract lives in this
+                       ;; namespace's docstring; the settings row stays one line.
+                       :description
+                       "Expose the Python `shell` verb. Model commands run inside the OS jail."
+                       :default true
+                       :scopes ["global" "project" "group" "session"]
+                       :owner :vis
+                       :persist? true
+                       :group :sandbox})

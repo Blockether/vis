@@ -1295,9 +1295,9 @@
       :symbol 'call
       :name "mcp__call"
       :result
-      "String-keyed `{op,server,tool,content,is_error,input_schema?}`; text at `block[\"text\"]`. With `tool` omitted: `{op,server,tools:[{name,description,input_schema}]}`."
+      "String-keyed `{op,server,tool,content,is_error,input_schema?}`. The text of each content block is at `block[\"text\"]`. With `tool` omitted: `{op,server,tools:[{name,description,input_schema}]}`."
       :description
-      "Call a tool on an MCP server; auto-connects. Servers and their tool names are already in `session[\"env\"][\"mcp\"]`, so just name them. Omit `tool` for that server's input schemas. In `python_execution`, call `await mcp_call(...)`."
+      "Call a tool on an MCP server. The call connects automatically. Servers and their tool names are already in `session[\"env\"][\"mcp\"]`, so name them directly. Omit `tool` to get the input schemas of that server. In `python_execution`, call `await mcp_call(...)`."
       :call {:pos ["server"] :opt-pos ["tool" "args"]}
       :tag :mutation
       :inject-env? true
@@ -1397,7 +1397,7 @@
   (ext/extension
     {:ext/name "foundation-mcp"
      :ext/description
-     "MCP client: one gateway-wide pool connects every enabled (`:mcp :servers`) stdio/Streamable HTTP server, health-checks it on the daemon's own clock, and `/reload`-reconciles it. The inventory rides in ctx under `env.mcp`, so the single verb `mcp__call` reaches every session (server alone lists schemas) and there is no per-session connect/disconnect. Supports remote OAuth 2.1 discovery + PKCE (2025-06-18). Always on; active with servers."
+     "MCP client. One gateway-wide pool connects every enabled (`:mcp :servers`) stdio or Streamable HTTP server, checks its health on the daemon clock and reconciles it on `/reload`. The inventory is in ctx under `env.mcp`, so the single verb `mcp__call` reaches every session, and there is no per-session connect or disconnect. A call with only a server lists its schemas. It supports remote OAuth 2.1 discovery with PKCE (2025-06-18). It is always on and active when servers exist."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

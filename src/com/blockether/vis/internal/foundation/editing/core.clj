@@ -4148,19 +4148,21 @@
     #'cat-tool
     {:activity (presenter/for-tool :cat)
      :symbol 'cat
-     :result (str
-               "A plain string: one `<line>:<hash>│ <text>` line per source line, blanks included. "
-               "No map, no keys. Windows are capped at 50 KiB of UTF-8 including the continuation, "
-               "which retains your requested end. An oversized first line returns a diagnostic, "
-               "never a partial patch anchor; use bounded Python file IO slices to inspect it.")
+     :result
+     (str
+       "A plain string with one `<line>:<hash>│ <text>` line for each source line, blank lines "
+       "included. It has no map and no keys. A window is capped at 50 KiB of UTF-8, including the "
+       "continuation line, which keeps the end you asked for. If the first line is too large, you "
+       "get a diagnostic, not a partial patch anchor. Read that line in bounded slices with Python "
+       "file IO.")
      :description
      (str
-       "SHOW the lines of one file — read, view or display any window of any text file, and the "
-       "region comes back as patch-ready `line:hash` text: the read that produces the address "
-       "`patch` spends. `cat(path)`, `cat(path, start)`, `cat(path, start, end)`; `start`/`end` "
-       "are line numbers or anchors, and a NEGATIVE line counts from the end (-1 is the last line), "
-       "so `cat(path, -50)` is the tail 50 lines and `cat(path, -50, -30)` the window between them. "
-       "`ls(dir)` lists directories; `grep` locates the file first.")
+       "Show the lines of one text file, or any window of them. Each line comes back with its "
+       "`line:hash` anchor, which `patch` uses as the edit address. Use `ls(dir)` to list a "
+       "directory, and use `grep` to find a file first.\n\n"
+       "Call `cat(path)`, `cat(path, start)` or `cat(path, start, end)`. `start` and `end` are line "
+       "numbers or anchors. A negative line counts from the end, so -1 is the last line. `cat(path, "
+       "-50)` shows the last 50 lines, and `cat(path, -50, -30)` shows the window between them.")
      :call {:pos ["path"] :opt-pos ["start" "end"]}
      :before-fn (fs-access-before-fn :cat :file "file-read" read-arg-paths)
      :tag :observation
@@ -4174,20 +4176,21 @@
      :symbol 'patch
      :result
      (str
-       "A plain string: one status line — path, edit count, lines before → after — "
-       "then one row per edit with its fresh output range, abbreviated to one anchor for one line. "
-       "Those anchors are LIVE AFTER the write, so the next patch needs no cat.")
+       "A plain string. The first line gives the path, the edit count and the line count before → "
+       "after. Then comes one row per edit with its new output range, or one anchor for a one-line "
+       "edit. Those anchors are LIVE AFTER the write, so the next patch needs no cat.")
      :description
      (str
-       "Apply EVERY anchored edit for one file in one atomic write — replace lines, rewrite a docstring in "
-       "place, swap a function body, rename an identifier through a file, edit a config file without retyping "
-       "it, in prose, code or any language: "
-       "`patch(path, [{\"from\": a, \"replace\": new}, {\"from\": b, \"to\": c, \"replace\": \"\"}])`. A "
-       "range is canonical; `to` defaults to `from` only for one line, and `replace: \"\"` deletes. Every "
-       "endpoint must match its exact current `line:hash`; a mismatch is refused, never relocated by hash. "
-       "The edits may be listed in ANY order because all resolve against ONE read. NEVER restate the text you "
-       "are replacing. Atomic: a stale anchor or an overlap refuses the WHOLE batch "
-       "and writes NOTHING, naming the edit and carrying the current anchor or range.")
+       "Apply all anchored edits for one file in one atomic write. Use it to replace lines, rewrite "
+       "a docstring, swap a function body or rename an identifier, in any language. Call "
+       "`patch(path, [{\"from\": a, \"replace\": new}, {\"from\": b, \"to\": c, \"replace\": \"\"}])`.\n\n"
+       "Each edit covers the lines from `from` to `to`. `to` defaults to `from` for a one-line edit, "
+       "and `replace: \"\"` deletes the lines. Each endpoint must match its current `line:hash` "
+       "exactly. A mismatch is refused and is never moved to another line by its hash. You can list "
+       "the edits in any order, because they all apply to one read. Do not repeat the text that you "
+       "replace.\n\n"
+       "The write is atomic: a stale anchor or an overlap refuses the WHOLE batch and writes "
+       "NOTHING. The refusal names the edit and gives its current anchor or range.")
      :call {:pos ["path" "edits"]}
      :before-fn (fs-access-before-fn :patch :file "file-write" read-arg-paths)
      :tag :mutation
@@ -4201,38 +4204,41 @@
      :symbol 'grep
      :result
      (str
-       "Text, not a map: line 1 summarizes (hits, files, truncation and the exact next call); then "
-       "per path a header and one `  <line>:<hash>│ <text>` row per hit, context lines anchored "
-       "too, `⋮` marking a gap. Fuzzy NAME matches follow as `~ path`, then `hint:`. Feed an "
-       "anchor straight to `patch`. The page CONTINUES ITSELF when capped: `next(r)` is the next "
-       "page (StopIteration when complete, so `next(r, None)` is the sentinel form), `r.pages()` "
-       "walks them bounded, `r.all()` is every page as one text, `r.next_offset` is where the "
-       "next page starts. With `is_files_only` the rows are `<path>  <n>` — the file and how many "
-       "times it matches, no anchors.")
+       "Text, not a map. Line 1 gives the hit count, the file count, any truncation and the exact "
+       "next call. Then each path has a header and one `  <line>:<hash>│ <text>` row per hit. "
+       "Context lines have anchors too, and `⋮` marks a gap. Fuzzy file-name matches follow as `~ "
+       "path`, then a `hint:` line. Give an anchor directly to `patch`.\n\n"
+       "A capped page continues itself. `next(r)` gives the next page and raises StopIteration after "
+       "the last page, so use `next(r, None)` as the sentinel form. `r.pages()` walks the pages with "
+       "a bound, `r.all()` joins every page into one text, and `r.next_offset` is where the next "
+       "page starts. With `is_files_only`, each row is `<path>  <n>`: the file and its match count, "
+       "with no anchors.")
      :description
      (str
-       "FIND WHERE something is — the codebase-wide search that answers `where is X`, `who calls this "
-       "function`, `which file defines this class`, `every usage of this symbol`. Scans the whole repo, "
-       "or only the paths you name. File and directory scopes bound both content and filename matches. "
-       "ONE options map is the whole call — `grep({\"query\": q, \"paths\": [\"src\"], \"context\": 3})`, or that "
-       "same map as kwargs; never a positional query. `context: N` includes N anchored lines on each side "
-       "(default 3); set it to 0 only for pure location/count sweeps. "
-       "Literal smart-case content plus fuzzy filenames; use first when location is unknown. "
-       "`is_regex: True` runs the query as a REGEX over CONTENT instead (names are not matched; a stray "
-       "literal such as the `(` of `(defn foo` is escaped, and `hint` shows the pattern that ran). "
-       "Hits come back ANCHORED, so a hit is already a `patch` argument. "
-       "`include`/`exclude` globs bound which files the content sweep reads (exclude wins). "
-       "`limit` (or `max_results` / `max_count` / `max_matches`) caps total results per page, not per file: "
-       "a positive integer, default 50. "
-       "`is_files_only: True` answers one row per matching FILE with how many times it matches instead of "
-       "the lines — the whole picture when a query matches too much to page through; `limit` then counts "
-       "files (default 500). "
-       "`query: \"\"` lists files. Capped is never silent: line 1 names the next call, and the "
-       "result pages itself — `next(r)` / `r.pages()` / `r.all()`, or pass `offset` by hand. "
-       "`offset` belongs to ONE query: passing another query's offset skips real hits, and the "
-       "empty page says so rather than reporting no match. "
-       "A near-miss key folds onto the one it means — `glob`/`globs`→`include`, `context_lines`→"
-       "`context`, `max_results`/`max_count`/`max_matches`→`limit`, `path`→`paths` — so no search dies over a word.")
+       "Find where something is: where X is defined, who calls a function, which file defines a "
+       "class, or every use of a symbol. `grep` searches the whole repository, or only the paths you "
+       "name. File and directory scopes limit both content matches and file-name matches. Use it "
+       "first when you do not know the location.\n\n"
+       "Give ONE options map as the whole call, for example `grep({\"query\": q, \"paths\": [\"src\"], "
+       "\"context\": 3})`. You can give the same keys as keyword arguments, but never a positional "
+       "query. `context: N` adds N anchored lines on each side (default 3). For pure location/count "
+       "sweeps only, set it to 0. Hits come back anchored, so each hit is already a `patch` "
+       "argument.\n\n"
+       "By default, the query is literal smart-case content, and file names match fuzzily. "
+       "`is_regex: True` runs the query as a regex over content only, and file names do not match. A "
+       "stray literal, such as the `(` of `(defn foo`, is escaped, and `hint` shows the pattern that "
+       "ran. `include` and `exclude` globs limit which files the content search reads, and `exclude` "
+       "wins. `query: \"\"` lists files.\n\n"
+       "`limit` caps the total results per page, not per file: a positive integer, default 50. "
+       "`is_files_only: True` gives one row per matching file with its match count instead of the "
+       "lines. Use it when a query matches too much to page through, and `limit` then counts files "
+       "(default 500). A capped result is never silent: line 1 names the next call, and the result "
+       "pages itself with `next(r)`, `r.pages()` or `r.all()`. You can also pass `offset` by hand. "
+       "`offset` belongs to ONE query: another query's offset skips real hits, and its empty page "
+       "says so.\n\n"
+       "A near-miss key maps to the key it means, so a search does not fail over one word. `glob` "
+       "and `globs` map to `include`, `context_lines` to `context`, and `path` to `paths`. "
+       "`max_results`, `max_count` and `max_matches` map to `limit`.")
      :params [{:name "query"} {:name "paths" :note "or `path`"} {:name "include" :note "or `glob`"}
               {:name "exclude"} {:name "is_regex"} {:name "context" :note "or `context_lines`"}
               {:name "limit" :note "or `max_results` / `max_count` / `max_matches`"}

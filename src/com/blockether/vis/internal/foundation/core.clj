@@ -94,7 +94,7 @@
   (ext/extension
     {:ext/name "foundation-core"
      :ext/description
-     "Foundation kernel: file editing; session workspace/VCS and project-shape helpers; toggle-gated shell and session introspection; `main_agent_instructions`. Vis' own documentation pages are corpus entries the engine verbs `apropos`/`doc` search and retrieve. Bare Python functions return plain Markdown."
+     "Foundation kernel: file editing, session workspace/VCS and project-shape helpers, toggle-gated shell and session introspection, and `main_agent_instructions`. The Vis documentation pages are corpus entries that the engine verbs `apropos` and `doc` search and retrieve. Bare Python functions return plain Markdown."
      :ext/version "0.7.0"
      :ext/author "Blockether"
      :ext/owner "vis"

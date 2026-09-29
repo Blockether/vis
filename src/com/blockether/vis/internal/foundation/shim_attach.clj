@@ -294,16 +294,15 @@
   (ext/extension
     {:ext/name "foundation-shim-attach"
      :ext/description
-     (str "Sandbox `attach(source)` — a confined path, in-memory bytes, an image or a "
-          "figure object: "
-          "persists any artifact (image, CSV/TSV, JSON, PDF, wav) as a durable session "
-          "attachment. Survives restart; `image/*` replays to vision models; a CSV/TSV becomes "
-          "a transcript table whose rows never reach the model. "
-          "SAME DOCUMENT, SAME NAME: a revision goes back under the filename it already had, "
-          "as that artifact's next VERSION; a new name is a different document. "
-          "`attach` returns that artifact's descriptor; `list_attachments()`, `get_attachment` "
-          "and `read_attachment` take the same target — the filename, or an id out of a "
-          "descriptor — including an artifact attached in the very same block.")
+     (str
+       "Sandbox `attach(source)` stores any artifact (image, CSV/TSV, JSON, PDF, wav) as a durable "
+       "session attachment that survives a restart. The source is a confined path, in-memory bytes, "
+       "an image or a figure object. `image/*` replays to vision models, and a CSV/TSV becomes a "
+       "transcript table whose rows never reach the model. SAME DOCUMENT, SAME NAME: a revision goes "
+       "back under its filename as the next VERSION, and a new name is a different document. "
+       "`attach` returns the descriptor of the artifact. `list_attachments()`, `get_attachment` and "
+       "`read_attachment` take the same target, the filename or a descriptor id, also for an "
+       "artifact attached in the same block.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

@@ -135,13 +135,13 @@
       started-goal)))
 
 (defn update-goal
-  "Internal completion tool. Pass id and version from session['goal'], status
-   'complete' or 'blocked', and a concise evidence/reason string. Complete means
-   every requirement is verified; blocked means no meaningful authorized action
-   remains without user input or an external change after the goal blocker audit.
-   Never lower the objective or mark blocked merely to deliver a progress reply.
-   After this iteration's tools finish, the reason becomes the final reply without
-   another model request."
+  "Internal completion tool. Pass id and version from session['goal'], status 'complete'
+   or 'blocked', and a short evidence or reason string. Complete means that every
+   requirement is verified. Blocked means that, after the goal blocker audit, no useful
+   authorized action remains without user input or an external change. Never lower the
+   objective, and never mark blocked only to deliver a progress reply. After the tools of
+   this iteration finish, the reason becomes the final reply without another model
+   request."
   [env goal-id version status reason]
   (when-not (contains? #{"complete" "blocked"} status)
     (fail! "Only complete or blocked may be declared by the model."))

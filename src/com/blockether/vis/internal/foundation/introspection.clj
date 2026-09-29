@@ -1376,22 +1376,23 @@
      :call {:opt-pos ["target"]}
      :description
      (str
-       "Read ONE conversation WHOLE — `read_session()` is the current session, "
-       "`read_session(target)` another; `target` takes a bare id, an unambiguous prefix, or the "
-       "copied `vis_session_id#<uuid>` marker. Filter "
-       "`transcript`/`turns`/`iterations`/`blocks` (`code`/`stdout`/`error`) in python_execution instead "
-       "of dumping it, and read current state off the live `session` map. This is the recovery "
-       "path for raw folded content of THIS session — it does not undo a fold intent or restore "
-       "it. Find ids with `list_sessions(search=…)`; one row alone is `get_session(id)`.")
+       "Read one whole conversation. `read_session()` is the current session, and "
+       "`read_session(target)` is another session. `target` takes a bare id, an unambiguous prefix "
+       "or the copied `vis_session_id#<uuid>` marker. Filter "
+       "`transcript`/`turns`/`iterations`/`blocks` (`code`/`stdout`/`error`) in python_execution "
+       "instead of printing all of it. Read the current state from the live `session` map.\n\n"
+       "This is the recovery path for raw folded content of this session, but it does not undo a "
+       "fold intent or restore it. Find ids with `list_sessions(search=…)`, and read one row with "
+       "`get_session(id)`.")
      :result
      (str
        "String-keyed `{session, current_turn, failures, diagnosis, session_forks, turn_retries, "
-       "usage, transcript}`. `session.goal` is the persisted goal or None. Printing shows a summary; "
-       "all fields remain accessible by key or `dict(r)`/`json.dumps(r)`. The transcript has one "
-       "`turns`/`iterations`/`blocks` projection, "
-       "including folded history and block timing/call metadata, not duplicate `forms`, `dialog`, "
-       "or `timeline`. No global index: use `list_sessions()`. `usage` is compact "
-       "token/cost/outcome/error/routing; its tool rows OVERLAP, so never sum them.")}))
+       "usage, transcript}`. `session.goal` is the persisted goal or None. Printing shows a summary, "
+       "and all fields stay available by key or through `dict(r)`/`json.dumps(r)`.\n\n"
+       "The transcript has one `turns`/`iterations`/`blocks` projection, with folded history and "
+       "block timing and call metadata. It has no duplicate `forms`, `dialog` or `timeline`, and no "
+       "global index, so use `list_sessions()` for that. `usage` gives compact token, cost, outcome, "
+       "error and routing data. Its tool rows OVERLAP, so never sum them.")}))
 
 (def get-session-symbol
   (ext/symbol
@@ -1402,9 +1403,10 @@
      :call {:opt-pos ["target"]}
      :description
      (str
-       "ONE session's descriptor — `get_session()` is the current session, `get_session(target)` "
-       "another (an id, an unambiguous prefix, or the copied `vis_session_id#<uuid>` marker). No "
-       "transcript: the content is `read_session(id)`, the whole index `list_sessions()`.")
+       "Get the descriptor of one session. `get_session()` is the current session, and "
+       "`get_session(target)` is another session. `target` takes an id, an unambiguous prefix or the "
+       "copied `vis_session_id#<uuid>` marker. It has no transcript: read the content with "
+       "`read_session(id)` and the whole index with `list_sessions()`.")
      :result (str
                "String-keyed row `{id, channel, title, goal, turn_count, created_at, modified_at, "
                "is_current}`, plus `provider`/`model`/`provider_model` and `last_turn` "
@@ -1420,20 +1422,22 @@
      :tag :observation
      :call {:opt-pos ["search"]}
      :description
-     (str "The newest-first conversation INDEX — `list_sessions()`, or `list_sessions(search=…)`, "
-          "which is THE session search the TUI and the companion app run: the SERVER ranks title "
-          "(`rank` 0), request (1), reply (2) and thinking (3), answering best band first and "
-          "newest first inside a band — paint that order, never re-sort it. One row alone is "
-          "`get_session(id)`, its content `read_session(id)`. Filter in python_execution; never "
-          "stringify or slice blindly.")
+     (str
+       "The conversation index, newest first. Call `list_sessions()`, or `list_sessions(search=…)` "
+       "for the same session search that the TUI and the companion app run. The server ranks matches "
+       "in the title (`rank` 0), request (1), reply (2) and thinking (3). It gives the best band "
+       "first and the newest first inside a band. Keep that order and never sort it again.\n\n"
+       "Read one row with `get_session(id)` and its content with `read_session(id)`. Filter the rows "
+       "in python_execution, and do not convert them to a string or slice them blindly.")
      :result
-     (str "String-keyed rows `{id, channel, title, goal, turn_count, created_at, modified_at}`; "
-          "`goal` is the persisted goal or None. A starred session adds `favorite_rank`, the "
-          "human's star order, lowest first. A matched "
-          "row adds `rank` and `is_in_title`/`is_in_request`/`is_in_reply`/`is_in_thinking`. "
-          "The `request_snippet` and `reply_snippet` windows are optional: either or both keys "
-          "may be absent. Use `row.get(\"request_snippet\")` and `row.get(\"reply_snippet\")`; "
-          "each returns None when its field is absent.")}))
+     (str
+       "String-keyed rows `{id, channel, title, goal, turn_count, created_at, modified_at}`. `goal` "
+       "is the persisted goal or None. A starred session adds `favorite_rank`, the human's star "
+       "order, lowest first. A matched row adds `rank` and "
+       "`is_in_title`/`is_in_request`/`is_in_reply`/`is_in_thinking`. The `request_snippet` and "
+       "`reply_snippet` windows are optional, and one or both keys can be absent. Use "
+       "`row.get(\"request_snippet\")` and `row.get(\"reply_snippet\")`, which return None for an absent "
+       "field.")}))
 
 ;; Session introspection is part of foundation-core, but its callable symbols and
 ;; prompt guidance remain behind the default-off `introspection` toggle.
