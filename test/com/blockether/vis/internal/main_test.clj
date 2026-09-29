@@ -540,42 +540,41 @@
                  (expect (= 1 (#'main/cli-result-exit-code {:status :error})))
                  (expect (= 1 (#'main/cli-result-exit-code {:error "boom"})))))
 
-(defdescribe
-  toggle-overrides-test
-  (it "parses NAME=VALUE pairs against the registry"
-      (expect (= {"main_test_flag" true "reasoning_level" "deep"}
-                 (#'main/parse-toggle-overrides "main_test_flag=true,reasoning_level=deep"))))
-  (it "rejects unknown toggles as user error"
-      (try (#'main/parse-toggle-overrides "nope-missing=true")
-           (expect false)
-           (catch clojure.lang.ExceptionInfo e
-             (expect (= :vis.cli/unknown-toggle (:type (ex-data e))))
-             (expect (true? (:vis/user-error (ex-data e)))))))
-  (it "rejects enum values outside the registered choices"
-      (try (#'main/parse-toggle-overrides "reasoning_level=bogus")
-           (expect false)
-           (catch clojure.lang.ExceptionInfo e
-             (expect (= :vis.cli/invalid-toggle (:type (ex-data e)))))))
-  (it "rejects non-boolean values on boolean toggles"
-      (try (#'main/parse-toggle-overrides "main_test_flag=maybe")
-           (expect false)
-           (catch clojure.lang.ExceptionInfo e
-             (expect (= :vis.cli/invalid-toggle (:type (ex-data e)))))))
-  (it "applies overrides only while the one-shot body runs"
-      (toggles/set-enabled! "main_test_flag" false)
-      (try (expect (= [true "deep" true]
-                      (#'main/call-with-toggle-overrides
-                       {"main_test_flag" true "reasoning_level" "deep"}
-                       #(vector (toggles/enabled? "main_test_flag")
-                                (toggles/value-of "reasoning_level")
-                                ;; A session started here keeps the flag
-                                ;; over its project's own configuration.
-                                (get (toggles/config-values {} {"toggles" {"main_test_flag" false}})
-                                     "main_test_flag")))))
-           (expect (false? (toggles/enabled? "main_test_flag")))
-           (expect (= "balanced" (toggles/value-of "reasoning_level")))
-           (finally (toggles/reset-to-default! "main_test_flag")
-                    (toggles/reset-to-default! "reasoning_level")))))
+(defdescribe toggle-overrides-test
+             (it "parses NAME=VALUE pairs against the registry"
+                 (expect (= {"main_test_flag" true "reasoning_level" "deep"}
+                            (#'main/parse-toggle-overrides
+                             "main_test_flag=true,reasoning_level=deep"))))
+             (it "rejects unknown toggles as user error"
+                 (try (#'main/parse-toggle-overrides "nope-missing=true")
+                      (expect false)
+                      (catch clojure.lang.ExceptionInfo e
+                        (expect (= :vis.cli/unknown-toggle (:type (ex-data e))))
+                        (expect (true? (:vis/user-error (ex-data e)))))))
+             (it "rejects enum values outside the registered choices"
+                 (try (#'main/parse-toggle-overrides "reasoning_level=bogus")
+                      (expect false)
+                      (catch clojure.lang.ExceptionInfo e
+                        (expect (= :vis.cli/invalid-toggle (:type (ex-data e)))))))
+             (it "rejects non-boolean values on boolean toggles"
+                 (try (#'main/parse-toggle-overrides "main_test_flag=maybe")
+                      (expect false)
+                      (catch clojure.lang.ExceptionInfo e
+                        (expect (= :vis.cli/invalid-toggle (:type (ex-data e)))))))
+             (it "applies overrides only while the one-shot body runs"
+                 (toggles/set-enabled! "main_test_flag" false)
+                 (try (expect (= [true "deep" true]
+                                 (#'main/call-with-toggle-overrides
+                                  {"main_test_flag" true "reasoning_level" "deep"}
+                                  #(vector (toggles/enabled? "main_test_flag")
+                                           (toggles/value-of "reasoning_level")
+                                           ;; Every session started here merges the
+                                           ;; flag over its scoped settings.
+                                           (get toggles/*invocation-overrides* "main_test_flag")))))
+                      (expect (false? (toggles/enabled? "main_test_flag")))
+                      (expect (= "balanced" (toggles/value-of "reasoning_level")))
+                      (finally (toggles/reset-to-default! "main_test_flag")
+                               (toggles/reset-to-default! "reasoning_level")))))
 
 (defdescribe
   cli-merged-toggle-config-test
