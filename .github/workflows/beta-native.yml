@@ -50,7 +50,10 @@ jobs:
           fi
           sha="${EVENT_SHA:-$green_main}"
           [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::Invalid commit'; exit 1; }
-          if [ "$sha" != "$green_main" ]; then
+          # Beta Native 36531710443: the filtered run list can name an older green commit,
+          # and an older commit never supersedes this one.
+          if [ "$sha" != "$green_main" ] &&
+            [ "$(gh api "repos/$REPO/compare/$sha...$green_main" -q .status)" != behind ]; then
             echo 'build=false' >> "$GITHUB_OUTPUT"
             echo '::notice::A newer successful main CI superseded this run'
             exit 0
@@ -123,7 +126,9 @@ jobs:
           [ "$(gh api "repos/$REPO/commits/$TAG" -q .sha)" = "$SHA" ]
           green_main="$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1" \
             -q '.workflow_runs[0].head_sha // empty')"
-          if [ "$green_main" != "$SHA" ]; then
+          # The same run list can name an older green commit, which never supersedes this beta.
+          if [ "$green_main" != "$SHA" ] &&
+            [ "$(gh api "repos/$REPO/compare/$SHA...$green_main" -q .status)" != behind ]; then
             echo 'published=false' >> "$GITHUB_OUTPUT"
             echo '::notice::A newer successful main CI superseded this beta; leaving its draft unpublished'
             exit 0

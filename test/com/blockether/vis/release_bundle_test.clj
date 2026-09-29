@@ -1778,6 +1778,11 @@
        (map #(if (str/blank? %) "" (subs % 10)))
        (str/join "\n")))
 
+;; Beta Native 36531710443: the filtered CI run list named an older green commit and
+;; kept the newest beta a draft.
+(def ^:private stale-green-main
+  {"TEST_GREEN_MAIN" (apply str (repeat 40 "b")) "TEST_ORDER" "behind"})
+
 (defdescribe
   installer-bootstrap-gate-test
   ;; The public bootstrap still rejected dev after main already supported it.
@@ -1792,7 +1797,7 @@
       (expect (not (str/blank? script)))
       (doseq [[overrides expected-exit publish?]
               [[{} 0 true] [{"EVENT_SHA" ""} 0 true] [{"TEST_GREEN_MAIN" ""} 0 false]
-               [{"TEST_GREEN_MAIN" (apply str (repeat 40 "b"))} 0 false]
+               [{"TEST_GREEN_MAIN" (apply str (repeat 40 "b"))} 0 false] [stale-green-main 0 true]
                [{"EVENT_SHA" "main"} 1 false] [{"TEST_GREEN_MAIN" "main" "EVENT_SHA" ""} 1 false]
                [{"TEST_API_EXIT" "22"} 22 false]]]
         (let [dir (.toFile (Files/createTempDirectory "vis-installer-gate-"
@@ -1810,11 +1815,13 @@
                     " *'/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1'*)\n"
                     "  [[ \"$TEST_API_EXIT\" = 0 ]] || return \"$TEST_API_EXIT\"\n"
                     "  printf '%s' \"$TEST_GREEN_MAIN\" ;;\n"
+                    " *\"/compare/$EVENT_SHA...$TEST_GREEN_MAIN\"*) printf '%s' \"$TEST_ORDER\" ;;\n"
                     " *) echo 'unexpected GitHub request' >&2; return 77 ;;\nesac\n}\n" script)]
                  (merge {"GITHUB_REPOSITORY" "example/vis"
                          "EVENT_SHA" sha
                          "TEST_GREEN_MAIN" sha
                          "TEST_API_EXIT" "0"
+                         "TEST_ORDER" "ahead"
                          "GITHUB_OUTPUT" (.getAbsolutePath outputs)}
                         overrides))]
               (expect (= expected-exit exit) output)
@@ -1852,9 +1859,9 @@
          (run-bash
            ["bash" "-c"
             (str
-              "gh() {\ncase \"$*\" in\n"
-              " *'/commits/main'*) printf '%s' \"$TEST_MAIN\" ;;\n"
+              "gh() {\ncase \"$*\" in\n" " *'/commits/main'*) printf '%s' \"$TEST_MAIN\" ;;\n"
               " *'/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1'*) printf '%s' \"$TEST_GREEN_MAIN\" ;;\n"
+              " *\"/compare/$SHA...$TEST_GREEN_MAIN\"*) printf '%s' \"$TEST_ORDER\" ;;\n"
               " *'/actions/workflows/ci.yml/runs?head_sha='*) printf '%s' \"$TEST_GREEN\" ;;\n"
               " *'/releases?per_page=100'*) printf '%s' \"$TEST_DRAFT\" ;;\n"
               " *'/releases/tags/beta-'*) printf '%s' \"$TEST_PUBLISHED\" ;;\n"
@@ -1870,6 +1877,7 @@
                    "TAG" (str "beta-" sha)
                    "TEST_MAIN" sha
                    "TEST_GREEN_MAIN" sha
+                   "TEST_ORDER" "ahead"
                    "TEST_TAG_SHA" sha
                    "TEST_TAG_EXISTS" "1"
                    "TEST_TAG_CREATED" (.getAbsolutePath (io/file dir "created-tag"))
@@ -1893,8 +1901,8 @@
               [[{} true true] [{"EVENT_SHA" ""} true true] [{"TEST_GREEN" "0"} false false]
                [{"TEST_MAIN" (apply str (repeat 40 "b"))} true true]
                [{"TEST_GREEN_MAIN" (apply str (repeat 40 "b"))} false false]
-               [{"TEST_GREEN_MAIN" ""} false false] [{"TEST_DRAFT" "false"} false false]
-               [{"TEST_DRAFT" "true"} true false]]]
+               [stale-green-main true true] [{"TEST_GREEN_MAIN" ""} false false]
+               [{"TEST_DRAFT" "false"} false false] [{"TEST_DRAFT" "true"} true false]]]
         (let [{:keys [exit output outputs calls]} (run-beta-job "pick" overrides {})]
           (expect (zero? exit) output)
           (expect (str/includes? outputs (str "build=" build?)) outputs)
@@ -1934,7 +1942,7 @@
         (doseq [[overrides changes exit-ok? publish?]
                 [[{} {} true true] [{"TEST_MAIN" (apply str (repeat 40 "b"))} {} true true]
                  [{"TEST_GREEN_MAIN" (apply str (repeat 40 "b"))} {} true false]
-                 [{} {:assets (pop assets)} false false]
+                 [stale-green-main {} true true] [{} {:assets (pop assets)} false false]
                  [{} {:assets (assoc-in assets [0 :size] 0)} false false]
                  [{} {:assets (assoc-in assets [0 :state] "new")} false false]
                  [{} {:assets (assoc assets 0 (last assets))} false false]

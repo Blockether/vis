@@ -44,7 +44,9 @@ jobs:
           fi
           sha="${EVENT_SHA:-$green_main}"
           [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::Invalid commit'; exit 1; }
-          if [ "$sha" != "$green_main" ]; then
+          # The filtered run list can name an older green commit, which never supersedes this one.
+          if [ "$sha" != "$green_main" ] &&
+            [ "$(gh api "repos/$GITHUB_REPOSITORY/compare/$sha...$green_main" -q .status)" != behind ]; then
             echo '::notice::A newer successful main CI superseded this bootstrap'
             exit 0
           fi
