@@ -2866,8 +2866,6 @@
 
 (def ^:private target-supports-vision? (deref #'transcript/target-supports-vision?))
 
-(def ^:private next-retry-counters (deref #'iteration/next-retry-counters))
-
 (def ^:private emergency-fold-projection (deref #'iteration/emergency-fold-projection))
 
 (def ^:private context-overflow-recovery! (deref #'iteration/context-overflow-recovery!))
@@ -7250,80 +7248,47 @@
                                                               ctx)]
           (expect (not (:com.blockether.vis.internal.loop.errors/fatal-iteration-error result)))))))
 
-;; Regression: a pinned provider accepted the POST and sent no response header for
-;; the whole TTFT budget. svar declined the retry (:no-retry-path), its router had
-;; no second candidate under Vis' sticky provider+model pin, and the turn died with
-;; ten iterations of finished work — the human had to type "Continue".
 (defdescribe
   request-attempt-test
-  "Each Vis-owned retry sentinel moves the request attempt forward on its own budget
-   and carries its input into the next attempt."
-  (let [next-attempt
-        @#'iteration/next-attempt
-
-        request-with-retries
+  "A context-overflow fold re-sends the request with the projection its recovery
+   installed. Every provider retry, auth included, stays inside Svar's routed call."
+  (let [request-with-retries
         @#'iteration/request-with-retries
 
         attempt
-        {:retries {:auth 1} :extra-body {"max_tokens" 100} :env ::env}]
+        {:extra-body {"max_tokens" 100} :env :env}]
 
-    (it "ends on a real result"
-        (expect (nil? (next-attempt attempt {:answer "done"})))
-        (expect (nil? (next-attempt attempt :unrelated-keyword))))
-    (it "installs an auth fallback route without spending the auth budget"
-        (expect (= (assoc attempt :routing {:provider :anthropic})
-                   (next-attempt attempt
-                                 {::iteration/retry-auth-fallback {:provider :anthropic}}))))
-    (it "waits out token propagation before resending the same token"
-        (expect (= (-> attempt
-                       (assoc-in [:retries :auth] 2)
-                       (assoc :backoff-ms 2400))
-                   (next-attempt attempt ::iteration/retry-auth-backoff))))
-    (it "resends unchanged after an auth refresh or a context-overflow fold"
-        (expect (= (assoc-in attempt [:retries :auth] 2)
-                   (next-attempt attempt ::iteration/retry-auth-refresh)))
-        (expect (= attempt (next-attempt attempt ::iteration/retry-context-overflow))))
+    (it "answers the first real result without re-sending"
+        (let [sent
+              (atom [])
+
+              send!
+              (fn [attempt]
+                (swap! sent conj attempt)
+                {:result {:answer "done"} :env [:env 0]})]
+
+          (expect (= {:answer "done"} (request-with-retries send! attempt)))
+          (expect (= [attempt] @sent))))
+    (it "passes any other keyword result through"
+        (expect (= :unrelated-keyword
+                   (request-with-retries (constantly {:result :unrelated-keyword :env :env})
+                                         attempt))))
     (it
-      "threads each attempt's env and installs the fallback route before resending"
-      (let [routing
-            (atom {:provider :openai})
-
-            sent
+      "re-sends after each context-overflow fold with the env that fold installed"
+      (let [sent
             (atom [])
 
             results
-            [{::iteration/retry-auth-fallback {:provider :anthropic}}
-             ::iteration/retry-context-overflow ::iteration/retry-auth-refresh {:answer "done"}]
+            [::iteration/retry-context-overflow ::iteration/retry-context-overflow {:answer "done"}]
 
             send!
             (fn [attempt]
               (let [n (count @sent)]
-                (swap! sent conj (assoc attempt :routing @routing))
+                (swap! sent conj attempt)
                 {:result (nth results n) :env [:env n]}))]
 
-        (expect (= {:answer "done"}
-                   (request-with-retries
-                     send!
-                     {:retries {:auth 0} :extra-body {"max_tokens" 100} :env :env}
-                     routing)))
-        (expect
-          (= [{:retries {:auth 0}
-               :extra-body {"max_tokens" 100}
-               :env :env
-               :routing {:provider :openai}}
-              {:retries {:auth 0}
-               :extra-body {"max_tokens" 100}
-               :env [:env 0]
-               :routing {:provider :anthropic}}
-              {:retries {:auth 0}
-               :extra-body {"max_tokens" 100}
-               :env [:env 1]
-               :routing {:provider :anthropic}}
-              {:retries {:auth 1}
-               :extra-body {"max_tokens" 100}
-               :env [:env 2]
-               :routing {:provider :anthropic}}]
-             @sent))))))
+        (expect (= {:answer "done"} (request-with-retries send! attempt)))
+        (expect (= [attempt (assoc attempt :env [:env 0]) (assoc attempt :env [:env 1])] @sent))))))
 
 (defdescribe
   halted-turn-test
@@ -7395,12 +7360,17 @@
 (defn- start-messages-stub!
   "Real loopback Anthropic-style `/v1/messages` endpoint, the dialect the helper's
    `:lmstudio` provider speaks. `behavior` maps the 1-based request number to
-   `[:stall ms]` (accept the POST, send NO response header for `ms`) or
-   `[:answer text]` (a complete SSE reply). Returns `{:base-url :requests :stop!}`;
-   `requests` counts POSTs that reached the server."
+   `[:stall ms]` (accept the POST, send NO response header for `ms`),
+   `[:reject status]` (an Anthropic error body with that HTTP status) or
+   `[:answer text]` (a complete SSE reply). Returns
+   `{:base-url :requests :api-keys :stop!}`; `requests` counts POSTs that reached the
+   server, and `api-keys` keeps the credential each of them carried."
   [behavior]
   (let [requests
         (atom 0)
+
+        api-keys
+        (atom [])
 
         server
         (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)
@@ -7422,13 +7392,30 @@
                   n
                   (swap! requests inc)
 
+                  api-key
+                  (let [headers (.getRequestHeaders exchange)]
+                    (or (.getFirst headers "x-api-key")
+                        (some-> (.getFirst headers "Authorization")
+                                (str/replace #"^Bearer " ""))))
+
                   [mode arg]
                   (behavior n)]
 
+              (swap! api-keys conj api-key)
               (try (with-open [_ (.getRequestBody exchange)]
                      (case mode
                        :stall
                        (do (Thread/sleep (long arg)) (.sendResponseHeaders exchange 503 -1))
+
+                       :reject
+                       (let [body (.getBytes (str "{\"type\":\"error\",\"error\":{\"type\":"
+                                                  "\"authentication_error\",\"message\":"
+                                                  "\"invalid x-api-key\"}}")
+                                             "UTF-8")]
+                         (.add (.getResponseHeaders exchange) "Content-Type" "application/json")
+                         (.sendResponseHeaders exchange (int arg) (alength body))
+                         (with-open [out (.getResponseBody exchange)]
+                           (.write out body)))
 
                        :answer
                        (do (.add (.getResponseHeaders exchange) "Content-Type" "text/event-stream")
@@ -7445,6 +7432,7 @@
     (.start server)
     {:base-url (str "http://127.0.0.1:" (.getPort (.getAddress server)) "/v1")
      :requests requests
+     :api-keys api-keys
      :stop! (fn []
               (.stop server 0)
               (.shutdownNow executor))}))
@@ -7569,86 +7557,91 @@
                    (swap! landed conj (quot (- (System/nanoTime) t0) 1000000)))))
           (expect (= [] @landed)))))))
 
-(defdescribe
-  auth-then-stream-recovery-budget-test
-  ;; Auth refresh and stream recovery once spent ONE per-iteration counter: after a
-  ;; single forced OAuth refresh the first watchdog retry already announced its last
-  ;; try, and the second stalled request failed the turn. Vis now owns only the auth
-  ;; retry, and Svar owns the whole stream recovery schedule.
-  (it
-    "keeps both stream recoveries after a forced auth refresh"
-    (let [warming?
-          (atom true)
+(defdescribe auth-then-stream-recovery-budget-test
+             ;; Auth refresh and stream recovery once spent ONE per-iteration counter: after a
+             ;; single forced OAuth refresh the first watchdog retry already announced its last
+             ;; try, and the second stalled request failed the turn. Svar now owns both, the
+             ;; credential re-send and the stream recovery schedule, each on its own budget.
+             (it
+               "keeps both stream recoveries after a credential re-send"
+               (let [warming?
+                     (atom true)
 
-          {:keys [base-url requests stop!]}
-          (start-messages-stub! (fn [n]
-                                  (cond @warming? [:answer "Ready."]
-                                        (<= n 2) [:stall 5000]
-                                        :else [:answer "Recovered after two stalls."])))
+                     {:keys [base-url requests stop!]}
+                     (start-messages-stub! (fn [n]
+                                             (cond @warming? [:answer "Ready."]
+                                                   (= n 1) [:reject 401]
+                                                   (<= n 3) [:stall 5000]
+                                                   :else [:answer "Recovered after two stalls."])))
 
-          router
-          (svar/make-router [{:id :lmstudio
-                              :api-key "test"
-                              :base-url base-url
-                              :models [{:name "model" :context 200000}]}]
-                            {:stream-recovery-delays-ms [25 25]})
+                     router
+                     (svar/make-router [{:id :lmstudio
+                                         :api-key "test"
+                                         :base-url base-url
+                                         :models [{:name "model" :context 200000}]}]
+                                       {:stream-recovery-delays-ms [25 25]})
 
-          environment
-          (loop-env/create-environment router {:db :memory})
+                     environment
+                     (loop-env/create-environment router {:db :memory})
 
-          chunks
-          (atom [])
+                     chunks
+                     (atom [])
 
-          calls
-          (atom 0)
+                     refreshes
+                     (atom [])
 
-          ask-code!
-          svar/ask-code!]
+                     ask-code!
+                     svar/ask-code!]
 
-      (try (goals/set-goal! (:db-info environment)
-                            (:session-id environment)
-                            "Finish the auth and stall drill"
-                            1)
-           ;; Warm the real router before arming the short watchdog budget (see #210).
-           (expect (= "Ready."
-                      (:content (ask-code! router
-                                           {:messages [{:role "user"
-                                                        :content "Warm the transport."}]
-                                            :tools []
-                                            :on-chunk (fn [_])
-                                            :ttft-timeout-ms 5000
-                                            :idle-timeout-ms 5000
-                                            :semantic-timeout-ms 5000}))))
-           (reset! requests 0)
-           (reset! warming? false)
-           (let [result
-                 (with-redefs-fn
-                   {#'loop-router/provider-network-policy
-                    (fn [_ _]
-                      {:ttft-timeout-ms 1000 :idle-timeout-ms 1000 :semantic-timeout-ms 1000})
-                    ;; The first provider call is rejected once and the
-                    ;; forced refresh succeeds; later calls reach the stub.
-                    #'svar/ask-code! (fn [router opts]
-                                       (if (= 1 (swap! calls inc))
-                                         (throw (ex-info "Unauthorized" {:status 401}))
-                                         (ask-code! router opts)))
-                    #'loop-router/refresh-just-failed? (constantly false)
-                    #'loop-router/auth-refreshable-error? (fn [e _]
-                                                            (= 401 (:status (ex-data e))))
-                    #'loop-router/try-refresh-provider-token! (constantly true)}
-                   #(#'turn/run-normal-turn!
-                      environment
-                      "auth then stalls"
-                      {:hooks {:on-chunk (fn [chunk]
-                                           (swap! chunks conj chunk))}}))
+                 (try (goals/set-goal! (:db-info environment)
+                                       (:session-id environment)
+                                       "Finish the auth and stall drill"
+                                       1)
+                      ;; Warm the real router before arming the short watchdog budget (see #210).
+                      (expect (= "Ready."
+                                 (:content (ask-code! router
+                                                      {:messages [{:role "user"
+                                                                   :content "Warm the transport."}]
+                                                       :tools []
+                                                       :on-chunk (fn [_])
+                                                       :ttft-timeout-ms 5000
+                                                       :idle-timeout-ms 5000
+                                                       :semantic-timeout-ms 5000}))))
+                      (reset! requests 0)
+                      (reset! warming? false)
+                      (let [result
+                            (with-redefs-fn {#'loop-router/provider-network-policy
+                                             (fn [_ _]
+                                               {:ttft-timeout-ms 1000
+                                                :idle-timeout-ms 1000
+                                                :semantic-timeout-ms 1000})
+                                             ;; The stub rejects the first request. Its provider counts as
+                                             ;; command-backed and the forced refresh succeeds, so Svar re-sends
+                                             ;; with the credential that Vis' refresher hands back.
+                                             #'config/command-backed? #(= :lmstudio %)
+                                             #'loop-router/try-refresh-provider-token!
+                                             (fn [pid rejected]
+                                               (swap! refreshes conj [pid rejected])
+                                               true)}
+                              #(#'turn/run-normal-turn!
+                                 environment
+                                 "auth then stalls"
+                                 {:hooks {:on-chunk (fn [chunk]
+                                                      (swap! chunks conj chunk))}}))
 
-                 retries
-                 (filter #(= :no-response (get-in % [:event :reason])) @chunks)]
+                            attempts-by-reason
+                            (fn [reason]
+                              (into []
+                                    (comp (filter #(= reason (get-in % [:event :reason])))
+                                          (map #(get-in % [:event :attempt])))
+                                    @chunks))]
 
-             (expect (= :success (:status result)))
-             (expect (= 3 @requests))
-             (expect (= [1 2] (mapv #(get-in % [:event :attempt]) retries))))
-           (finally (stop!) (loop-env/dispose-environment! environment))))))
+                        (expect (= :success (:status result)))
+                        (expect (= 4 @requests))
+                        (expect (= [[:lmstudio "test"]] @refreshes))
+                        (expect (= [1] (attempts-by-reason :authentication)))
+                        (expect (= [1 2] (attempts-by-reason :no-response))))
+                      (finally (stop!) (loop-env/dispose-environment! environment))))))
 
 (defdescribe
   reasoning-only-stream-no-replay-test
@@ -7808,81 +7801,43 @@
 ;; ── post-refresh propagation backoff (gateway-wide OAuth-401 storm guard) ──
 (def ^:private auth-last-refreshed (deref #'auth-health/last-refreshed))
 
-(def ^:private refresh-just-failed? (deref #'loop-router/refresh-just-failed?))
-
 (def ^:private note-provider-request-ok! (deref #'loop-router/note-provider-request-ok!))
-
-(def ^:private auth-refreshable-error? (deref #'loop-router/auth-refreshable-error?))
-
-(def ^:private auth-propagation-backoff-ms (deref #'loop-router/auth-propagation-backoff-ms))
 
 (def ^:private AUTH_PROPAGATION_WINDOW_MS (deref #'auth-health/AUTH_PROPAGATION_WINDOW_MS))
 
-(defn- auth-401
-  []
-  (ex-info "boom"
-           {:status 401 :body "{\"error\":{\"message\":\"Invalid authentication credentials\"}}"}))
-
 (defdescribe
-  auth-provider-fallback-routing-test
-  "Terminal auth recovery releases one dead provider only after refresh handling ends."
-  (it "unpinns the failed provider and enables observable fleet auth fallback"
-      (let [fallback
-            @#'loop-router/auth-fallback-routing
-
-            error
-            (ex-info "OAuth access token has been revoked"
-                     {:type :svar.core/http-error :status 401})
-
-            routing
-            {:provider :openai-codex
-             :model "gpt-5.6-sol"
-             :on-transient-error :fallback-model-in-the-same-provider
-             :reasoning :deep}
-
-            result
-            (fallback error routing {:provider :openai-codex})]
-
-        (expect (= {:on-transient-error :hybrid
-                    :on-auth-error :fallback-provider
-                    :exclude-providers #{:openai-codex}
-                    :reasoning :deep}
-                   result))))
-  (it
-    "preserves existing exclusions and refuses replay after visible output"
-    (let [fallback
-          @#'loop-router/auth-fallback-routing
-
-          base
-          {:provider :openai-codex :model "gpt-5.6-sol" :exclude-providers #{:broken}}
-
-          model
-          {:provider :openai-codex}]
-
-      (expect (= #{:broken :openai-codex}
-                 (:exclude-providers (fallback (ex-info "Unauthorized" {:status 401}) base model))))
-      (expect (nil?
-                (fallback (ex-info "Unauthorized" {:status 401 :content-acc-len 1}) base model)))
-      (expect
-        (nil? (fallback (ex-info "Unauthorized" {:status 401 :reasoning-acc-len 1}) base model)))))
-  (it "runs at most once and only for an identified failing provider"
-      (let [fallback
-            @#'loop-router/auth-fallback-routing
-
-            error
-            (ex-info "Unauthorized" {:status 401})]
-
-        (expect (nil?
-                  (fallback error {:on-auth-error :fallback-provider} {:provider :openai-codex})))
-        (expect (= nil (fallback error {} {})))))
-  (it "threads the auth-fallback retry without consuming another retry budget"
-      (let [next-counters
-            @#'iteration/next-retry-counters
-
-            base
-            {:auth 2 :stream 1}]
-
-        (expect (= base (next-counters {::iteration/retry-auth-fallback {}} base))))))
+  auth-rejection-notes-test
+  "Svar owns auth recovery: it re-sends with refreshed credentials and then applies
+   `:on-auth-error`. Vis remembers which providers Svar left for their credentials,
+   so a dead credential stays excluded after the request ends."
+  (let [cooldown @#'auth-health/cooldowns]
+    (it "starts one cooldown for every provider Svar left for its credentials"
+        (try (reset! cooldown {})
+             (expect (= #{:rbi-genai :openai}
+                        (loop-router/note-auth-rejections!
+                          [{:event/type :llm.routing/provider-retry
+                            :reason :authentication
+                            :provider :rbi-genai}
+                           {:event/type :llm.routing/provider-fallback
+                            :reason :authentication
+                            :from-provider "rbi-genai"}
+                           {:event/type :llm.routing/provider-fallback
+                            :reason :transient-error
+                            :from-provider :anthropic}]
+                          #{:rbi-genai :openai})))
+             (expect (= #{:rbi-genai :openai} (:cooled-providers (auth-health/cooldown-metrics))))
+             (expect (= 1 (:hits (get @cooldown :rbi-genai))))
+             (finally (reset! cooldown {}))))
+    (it "notes nothing when Svar re-sent to the same provider or left none"
+        (try (reset! cooldown {})
+             (expect (= #{} (loop-router/note-auth-rejections! nil nil)))
+             (expect (= #{}
+                        (loop-router/note-auth-rejections! [{:event/type :llm.routing/provider-retry
+                                                             :reason :authentication
+                                                             :provider :rbi-genai}]
+                                                           nil)))
+             (expect (= {} @cooldown))
+             (finally (reset! cooldown {}))))))
 
 (defdescribe
   auth-cooldown-routing-test
@@ -7900,7 +7855,7 @@
             @#'loop-router/note-provider-request-ok!
 
             apply-cooldown
-            @#'loop-router/apply-auth-cooldown-routing
+            loop-router/apply-auth-recovery-routing
 
             base
             {:on-transient-error :fallback-model-in-the-same-provider}]
@@ -7911,50 +7866,46 @@
              ;; A repeat inside the window is not a first trip (logged at :debug).
              (expect (= false (note! :rbi-genai)))
              ;; Iteration 2 therefore STARTS with the dead provider released.
-             (expect (= {:on-transient-error :hybrid
+             (expect (= {:on-transient-error :fallback-model-in-the-same-provider
                          :on-auth-error :fallback-provider
                          :exclude-providers #{:rbi-genai}}
                         (apply-cooldown base)))
              ;; An accepted request (re-login, rotated key) re-admits it immediately.
              (request-ok! {:provider :rbi-genai} {:llm-provider :rbi-genai})
-             (expect (= base (apply-cooldown base)))
+             (expect (= (assoc base :on-auth-error :fallback-provider) (apply-cooldown base)))
              (finally (reset! cooldown {})))))
-  (it
-    "expires with the window and releases even an explicitly pinned provider"
-    (let [cooldown
-          @#'auth-health/cooldowns
+  (it "expires with the window and releases even an explicitly pinned provider"
+      (let [cooldown
+            @#'auth-health/cooldowns
 
-          apply-cooldown
-          @#'loop-router/apply-auth-cooldown-routing
+            apply-cooldown
+            loop-router/apply-auth-recovery-routing
 
-          now
-          (System/currentTimeMillis)]
+            now
+            (System/currentTimeMillis)]
 
-      (try
-        ;; A lapsed window releases routing, but the STRIKE record survives it: the
-        ;; next rejection has to escalate rather than restart at the base window
-        ;; (issue #154). Only a record lapsed for longer than the ceiling is pruned.
-        (reset! cooldown {:rbi-genai {:until (- now 1) :since (- now 60000) :hits 3 :strikes 3}})
-        (expect (= {} (apply-cooldown {})))
-        (expect (= 3 (:strikes (get @cooldown :rbi-genai))))
-        (reset! cooldown {:rbi-genai
-                          {:until (- now 7200000) :since (- now 7260000) :hits 3 :strikes 3}})
-        (expect (= {} (apply-cooldown {})))
-        (expect (= {} @cooldown))
-        ;; A pin does NOT outrank the cooldown: every main turn is pinned, so the
-        ;; old exemption exempted every turn (see `auth-cooldown-storm-test`).
-        (reset! cooldown {:rbi-genai {:until (+ now 60000) :since now :hits 1}})
-        (expect (= {:on-auth-error :fallback-provider
-                    :on-transient-error :hybrid
-                    :exclude-providers #{:rbi-genai}}
-                   (apply-cooldown {:provider :rbi-genai :model "m"})))
-        ;; A pin on a HEALTHY provider survives, with the cooled peer excluded around it.
-        (expect (= {:provider :openai
-                    :on-auth-error :fallback-provider
-                    :on-transient-error :hybrid
-                    :exclude-providers #{:rbi-genai}}
-                   (apply-cooldown {:provider :openai})))
-        (finally (reset! cooldown {})))))
+        (try
+          ;; A lapsed window releases routing, but the STRIKE record survives it: the
+          ;; next rejection has to escalate rather than restart at the base window
+          ;; (issue #154). Only a record lapsed for longer than the ceiling is pruned.
+          (reset! cooldown {:rbi-genai {:until (- now 1) :since (- now 60000) :hits 3 :strikes 3}})
+          (expect (= {:on-auth-error :fallback-provider} (apply-cooldown {})))
+          (expect (= 3 (:strikes (get @cooldown :rbi-genai))))
+          (reset! cooldown {:rbi-genai
+                            {:until (- now 7200000) :since (- now 7260000) :hits 3 :strikes 3}})
+          (expect (= {:on-auth-error :fallback-provider} (apply-cooldown {})))
+          (expect (= {} @cooldown))
+          ;; A pin does NOT outrank the cooldown: every main turn is pinned, so the
+          ;; old exemption exempted every turn (see `auth-cooldown-storm-test`).
+          (reset! cooldown {:rbi-genai {:until (+ now 60000) :since now :hits 1}})
+          (expect (= {:on-auth-error :fallback-provider :exclude-providers #{:rbi-genai}}
+                     (apply-cooldown {:provider :rbi-genai :model "m"})))
+          ;; A pin on a HEALTHY provider survives, with the cooled peer excluded around it.
+          (expect (= {:provider :openai
+                      :on-auth-error :fallback-provider
+                      :exclude-providers #{:rbi-genai}}
+                     (apply-cooldown {:provider :openai})))
+          (finally (reset! cooldown {})))))
   (it "reports the cooldown for observability"
       (let [cooldown @#'auth-health/cooldowns]
         (try (reset! cooldown {})
@@ -7992,19 +7943,17 @@
         @#'loop-router/note-provider-request-ok!
 
         apply-cooldown
-        @#'loop-router/apply-auth-cooldown-routing
+        loop-router/apply-auth-recovery-routing
 
         released
-        {:on-auth-error :fallback-provider
-         :on-transient-error :hybrid
-         :exclude-providers #{:rbi-genai}}]
+        {:on-auth-error :fallback-provider :exclude-providers #{:rbi-genai}}]
 
     (it "releases a PINNED dead provider instead of re-probing it every iteration"
         (try
           (reset! cooldown {})
           (note! :rbi-genai)
           ;; Exactly what a depth-0 turn asks for: the active provider+model, pinned.
-          (expect (= released
+          (expect (= (assoc released :on-transient-error :fallback-model-in-the-same-provider)
                      (apply-cooldown {:provider :rbi-genai
                                       :model "gpt-5"
                                       :on-transient-error :fallback-model-in-the-same-provider})))
@@ -8025,71 +7974,43 @@
              (finally (reset! cooldown {}))))))
 
 (defdescribe
-  wrapped-auth-exhaustion-cooldown-test
-  "Once svar's router has walked the fleet it throws `Provider unavailable` with no
-   status and no auth prose: the 401s survive only on `:attempts`. The auth ladder
-   read the WRAPPER only, so a wrapped credential failure took neither the rescue
-   route nor the cooldown and the dead provider was re-probed every iteration
-   (issue #82)."
-  (let [wrapper
-        (ex-info "Provider unavailable"
-                 {:type :svar.llm/provider-unavailable
-                  :attempts [{:provider :rbi-genai
-                              :model "gpt-5"
-                              :status 401
-                              :reason :authentication
-                              :error "API authentication failed. Check your API key."}
-                             {:provider :openai
-                              :model "gpt-5"
-                              :status 401
-                              :reason :authentication
-                              :error "Incorrect API key provided"}]})
+  auth-rejection-cooldown-real-router-test
+  ;; Regression, issue #82: once Svar's router had walked the fleet it threw
+  ;; `Provider unavailable` with no status and no auth prose, so a ladder that read
+  ;; only that wrapper took no cooldown and re-probed the dead provider on every
+  ;; iteration. Svar names the providers it left in `:auth-failed` and in the routing
+  ;; trace. This drives the REAL Svar router over a loopback stub, so the test covers
+  ;; that contract instead of a hand-built error.
+  (doseq [[label behavior expected-status expected-cooled]
+          [["cools the provider it left when a peer rescues the request"
+            (fn [n]
+              (if (= 1 n) [:reject 401] [:answer "Rescued by the peer."])) :success #{:lmstudio}]
+           ["cools every provider when all of them reject their credentials"
+            (fn [_]
+              [:reject 401]) :error #{:lmstudio :peer}]]]
+    (it label
+        (let [{:keys [base-url requests stop!]} (start-messages-stub! behavior)
+              provider (fn [id]
+                         {:id id
+                          :api-style :anthropic
+                          :api-key (str (name id) "-key")
+                          :base-url base-url
+                          :models [{:name "model" :context 200000}]})
+              router (svar/make-router [(provider :lmstudio) (provider :peer)])
+              environment (loop-env/create-environment router {:db :memory})
+              cooldown @#'auth-health/cooldowns]
 
-        mixed
-        (ex-info
-          "Provider unavailable"
-          {:type :svar.llm/provider-unavailable
-           :attempts
-           [{:provider :rbi-genai :status 401 :reason :authentication :error "bad key"}
-            {:provider :openai :status 503 :reason :transient-error :error "upstream down"}]})
-
-        shaped?
-        @#'loop-router/auth-error-shaped?
-
-        fallback-routing
-        @#'loop-router/auth-fallback-routing
-
-        resolved
-        {:provider :rbi-genai :name "gpt-5"}]
-
-    (it "reads the credential verdict off the attempts when the wrapper hides it"
-        (expect (= true (shaped? wrapper)))
-        ;; One transient attempt means the fleet did NOT die on credentials: that
-        ;; is an outage, and cooling the provider down would be wrong.
-        (expect (= false (shaped? mixed))))
-    (it "gives the wrapped failure the same rescue route a bare 401 gets"
-        (expect (= {:on-auth-error :fallback-provider
-                    :exclude-providers #{:rbi-genai}
-                    :on-transient-error :hybrid}
-                   (fallback-routing wrapper {} resolved)))
-        (expect (nil? (fallback-routing mixed {} resolved)))
-        ;; Visible output already streamed: replaying would duplicate it.
-        (expect (nil? (fallback-routing (ex-info "Provider unavailable"
-                                                 (assoc (ex-data wrapper) :content-acc-len 12))
-                                        {}
-                                        resolved))))
-    (it "arms the cooldown so the NEXT iteration skips the dead credential"
-        (let [cooldown @#'auth-health/cooldowns]
-          (try (reset! cooldown {})
-               (expect (some? (fallback-routing wrapper {} resolved)))
-               (expect (= true (auth-health/note-failure! (:provider resolved))))
-               (expect (= {:on-auth-error :fallback-provider
-                           :exclude-providers #{:rbi-genai}
-                           :on-transient-error :hybrid}
-                          (@#'loop-router/apply-auth-cooldown-routing {})))
-               (@#'loop-router/note-provider-request-ok! resolved {:llm-provider :rbi-genai})
-               (expect (= {} (@#'loop-router/apply-auth-cooldown-routing {})))
-               (finally (reset! cooldown {})))))))
+          (try
+            (reset! cooldown {})
+            (goals/set-goal! (:db-info environment)
+                             (:session-id environment)
+                             "Finish the auth rescue drill"
+                             1)
+            (let [result (#'turn/run-normal-turn! environment "rescue the request" {})]
+              (expect (= expected-status (:status result)))
+              (expect (= 2 @requests))
+              (expect (= expected-cooled (:cooled-providers (auth-health/cooldown-metrics)))))
+            (finally (reset! cooldown {}) (stop!) (loop-env/dispose-environment! environment)))))))
 
 ;; Regression, issue #154: a provider whose credentials had been dead for hours was
 ;; re-probed every five minutes forever, and the session's PICK never moved off it — so
@@ -8272,19 +8193,13 @@
         auth-health/note-failure!
 
         cooldown-routing
-        @#'loop-router/apply-auth-cooldown-routing
-
-        fallback-routing
-        @#'loop-router/auth-fallback-routing
+        loop-router/apply-auth-recovery-routing
 
         refusals
         @#'loop-router/refusal-fallbacks-for
 
         pin
         @#'loop-router/pin-routing-to-model
-
-        auth-error
-        (ex-info "Unauthorized" {:status 401})
 
         pinned
         {:provider :rbi-genai :model "gpt-5"}
@@ -8317,10 +8232,10 @@
              (toggles/set-value! "provider_fallback" false)
              (expect (= pinned (cooldown-routing pinned)))
              (finally (toggles/reset-to-default! "provider_fallback") (reset! cooldown {}))))
-    (it "builds no cross-provider rescue route once fallback is off"
-        (expect (some? (fallback-routing auth-error pinned {:provider :rbi-genai})))
+    (it "hands Svar no cross-provider auth rescue once fallback is off"
+        (expect (= :fallback-provider (:on-auth-error (cooldown-routing pinned))))
         (try (toggles/set-value! "provider_fallback" false)
-             (expect (nil? (fallback-routing auth-error pinned {:provider :rbi-genai})))
+             (expect (= pinned (cooldown-routing pinned)))
              (finally (toggles/reset-to-default! "provider_fallback"))))
     (it "still offers the in-provider refusal switch once provider fallback is off"
         ;; A refusal is not a provider failure: the credential, the provider and the wire
@@ -8674,55 +8589,79 @@
         (expect (= router (materialise router :zai-coding-plan "   ")))
         (expect (= router (materialise router :zai-coding-plan nil))))))
 
+(def ^:private oauth-provider
+  "Registry entry of an OAuth provider whose storage already holds the fresh token."
+  {:provider/get-token-fn (fn []
+                            {:token "T-fresh"})
+   :provider/refresh-token-fn (fn [& _]
+                                :ok)})
+
+(defn- refresher-re-send
+  "Run Vis' credential refresher for a 401 on provider `:ap` that sent `T-old`.
+   Answers `[provider minted]`: the refresher's answer and each forced refresh."
+  [{:keys [registered refreshed? environment attempt]
+    :or {refreshed? true environment {} attempt 1}}]
+  (let [minted (atom [])]
+    (with-redefs [registry/provider-by-id (fn [_]
+                                            registered)
+                  loop-router/try-refresh-provider-token! (fn [pid rejected]
+                                                            (swap! minted conj [pid rejected])
+                                                            refreshed?)]
+
+      [((loop-router/credential-refresher environment)
+         {:provider {:id :ap :api-key "T-old"} :attempt attempt}) @minted])))
+
 (defdescribe
   post-refresh-propagation-backoff-test
   (describe
     "a token we JUST refreshed that 401s again is treated as propagation lag, not dead"
-    (it "refresh-just-failed? fires when we force-refreshed within the propagation window"
+    (it "re-reads storage without minting again inside the propagation window"
+        ;; Regression for the Copilot 401 storm: a value-equality check (minted ==
+        ;; baked token) never matched a rotating-token provider and fell open into an
+        ;; endless re-mint. Recency matches every provider, whatever the token value.
         (reset! auth-last-refreshed {:ap {:at (System/currentTimeMillis)}})
-        (expect (true? (refresh-just-failed? (auth-401) {:provider :ap}))))
-    (it "does NOT fire once the last refresh is older than the window (real rotation → refresh)"
+        (let [[provider minted] (refresher-re-send {:registered oauth-provider})]
+          (expect (= "T-fresh" (:api-key provider)))
+          (expect (= [] minted))))
+    (it "forces one refresh once the last refresh is older than the window (real rotation)"
         (reset! auth-last-refreshed {:ap {:at (- (System/currentTimeMillis)
                                                  (long AUTH_PROPAGATION_WINDOW_MS)
                                                  1)}})
-        (expect (not (refresh-just-failed? (auth-401) {:provider :ap}))))
-    (it "does NOT fire when the provider was never refreshed"
+        (let [[provider minted] (refresher-re-send {:registered oauth-provider})]
+          (expect (= "T-fresh" (:api-key provider)))
+          (expect (= [[:ap "T-old"]] minted))))
+    (it "forces one refresh when the provider was never refreshed"
         (reset! auth-last-refreshed {})
-        (expect (not (refresh-just-failed? (auth-401) {:provider :ap}))))
-    (it "fires regardless of token VALUE — covers providers that mint a fresh token each exchange"
-        ;; Regression for the Copilot 401 storm: the old value-equality check
-        ;; (minted == baked-token) never matched a rotating-token provider and
-        ;; fell open into an endless re-mint. Recency matches every provider.
-        (reset! auth-last-refreshed {:ap {:at (System/currentTimeMillis)}})
-        (with-redefs [config/baked-token (fn [_]
-                                           "a-totally-different-token")]
-          (expect (true? (refresh-just-failed? (auth-401) {:provider :ap})))))
+        (expect (= [[:ap "T-old"]] (second (refresher-re-send {:registered oauth-provider})))))
+    (it "only re-reads storage on the later re-sends of one request"
+        (reset! auth-last-refreshed {})
+        (let [[provider minted] (refresher-re-send {:registered oauth-provider :attempt 2})]
+          (expect (= "T-fresh" (:api-key provider)))
+          (expect (= [] minted))))
     (it "note-provider-request-ok! clears the marker so a later 401 re-mints, not backs off"
         (reset! auth-last-refreshed {:ap {:at (System/currentTimeMillis)}})
         (note-provider-request-ok! {:provider :ap} {:llm-provider :ap})
         (expect (nil? (get @auth-last-refreshed :ap)))
-        (expect (not (refresh-just-failed? (auth-401) {:provider :ap}))))
-    (it "a post-refresh 401 stays REFRESHABLE-shaped but routes to backoff, never a dead latch"
-        ;; No dead-credential latch exists any more: the provider is
-        ;; always eligible to recover; the classifier just prefers the
-        ;; SAME-token backoff over another re-mint while lag settles.
-        (with-redefs [config/baked-token
-                      (fn [_]
-                        "T-fresh")
+        (expect (= [[:ap "T-old"]] (second (refresher-re-send {:registered oauth-provider})))))))
 
-                      registry/provider-by-id
-                      (fn [_]
-                        {:provider/get-token-fn (fn []
-                                                  {:token "T-fresh"})
-                         :provider/refresh-token-fn (fn [& _]
-                                                      :ok)})]
-
-          (reset! auth-last-refreshed {:ap {:at (System/currentTimeMillis)}})
-          (expect (true? (auth-refreshable-error? (auth-401) {:provider :ap})))))
-    (it "backoff widens with the attempt count and is capped at 5s"
-        (expect (= 1200 (auth-propagation-backoff-ms 0)))
-        (expect (= 3600 (auth-propagation-backoff-ms 2)))
-        (expect (= 5000 (auth-propagation-backoff-ms 10))))))
+(defdescribe
+  credential-refresher-test
+  "Svar asks Vis' refresher before each auth re-send. A nil answer ends the re-sends,
+   and Svar applies `:on-auth-error`."
+  (it "declines a provider without a way to renew its credentials"
+      (reset! auth-last-refreshed {})
+      (expect (= [nil []] (refresher-re-send {:registered nil}))))
+  (it "declines when the forced refresh fails"
+      (reset! auth-last-refreshed {})
+      (expect (= [nil [[:ap "T-old"]]]
+                 (refresher-re-send {:registered oauth-provider :refreshed? false}))))
+  (it "keeps the session's provider headers on the new credentials"
+      (reset! auth-last-refreshed {})
+      (expect (= {"x-session" "s-1"}
+                 (:llm-headers (first (refresher-re-send {:registered oauth-provider
+                                                          :environment {:session-llm-headers
+                                                                        {:ap {"x-session"
+                                                                              "s-1"}}}})))))))
 
 ;; ── request-bound OAuth credentials + forced-refresh circuit breaker ──────
 (def ^:private auth-refresh-events (deref #'auth-health/refresh-events))
@@ -8940,8 +8879,8 @@
                  (let [refreshes
                        (atom [])
 
-                       attempt-router
-                       {:providers [{:id :ap :api-key "rejected"}]}]
+                       rejected
+                       "rejected"]
 
                    (reset! auth-refresh-events {})
                    (with-redefs [registry/provider-by-id
@@ -8950,7 +8889,7 @@
                                                              {:token "peer-fresh"})
                                     :provider/refresh-token-fn (fn [rejected]
                                                                  (swap! refreshes conj rejected))})]
-                     (expect (true? (try-refresh-provider-token! attempt-router {:provider :ap})))
+                     (expect (true? (try-refresh-provider-token! :ap rejected)))
                      (expect (= [] @refreshes))
                      (expect (= {} @auth-refresh-events)))))
              (it
@@ -8958,8 +8897,8 @@
                (let [refreshes
                      (atom [])
 
-                     attempt-router
-                     {:providers [{:id :ap :api-key "attempt-rejected"}]}]
+                     rejected
+                     "attempt-rejected"]
 
                  (reset! auth-refresh-events {})
                  (with-redefs [config/baked-token
@@ -8972,15 +8911,15 @@
                                   :provider/refresh-token-fn (fn [rejected]
                                                                (swap! refreshes conj rejected))})]
 
-                   (expect (true? (try-refresh-provider-token! attempt-router {:provider :ap})))
+                   (expect (true? (try-refresh-provider-token! :ap rejected)))
                    (expect (= ["attempt-rejected"] @refreshes))
                    (expect (= 1 (count (get @auth-refresh-events :ap)))))))
              (it "an open breaker neither refreshes nor mistakes the rejected token for a peer"
                  (let [refreshes
                        (atom 0)
 
-                       attempt-router
-                       {:providers [{:id :ap :api-key "same"}]}]
+                       rejected
+                       "same"]
 
                    (reset! auth-refresh-events {:ap (vec (repeat AUTH_REFRESH_WINDOW_MAX
                                                                  (System/currentTimeMillis)))})
@@ -8990,7 +8929,7 @@
                                                              {:token "same"})
                                     :provider/refresh-token-fn (fn [& _]
                                                                  (swap! refreshes inc))})]
-                     (expect (false? (try-refresh-provider-token! attempt-router {:provider :ap})))
+                     (expect (false? (try-refresh-provider-token! :ap rejected)))
                      (expect (= 0 @refreshes))
                      (expect (= AUTH_REFRESH_WINDOW_MAX (count (get @auth-refresh-events :ap))))))
                  (reset! auth-refresh-events {})))
@@ -9027,14 +8966,17 @@
         (reset! auth-refresh-events {})
         (reset! auth-last-refreshed {})
         (with-redefs [registry/provider-by-id (constantly descriptor)]
-          (expect (true? (auth-refreshable-error? (auth-401) {:provider :corp})))
-          (expect (true? (try-refresh-provider-token! (:router environment) {:provider :corp})))
+          ;; Svar's credential hook is the entry point: it refreshes, signs in and
+          ;; answers the hydrated provider for the re-send.
+          (expect (= "signed-in"
+                     (:api-key ((loop-router/credential-refresher {})
+                                 {:provider {:id :corp :api-key "expired"} :attempt 1}))))
           (expect (= (if (= :absent refresh-outcome) [:login] [[:refresh "expired"] :login])
                      @calls))
           (expect (= "signed-in"
                      (get-in (hydrate-environment-router environment :corp)
                              [:router :providers 0 :api-key])))
-          (expect (true? (refresh-just-failed? (auth-401) {:provider :corp})))))))
+          (expect (true? (auth-health/propagation-lag? :corp)))))))
   (it "does not accept the rejected token when interactive login is cancelled"
       (let [calls (atom 0)]
         (reset! auth-refresh-events {})
@@ -9044,9 +8986,7 @@
                                                            :provider/auth-fn (fn [_]
                                                                                (swap! calls inc)
                                                                                false)})]
-          (let [failure (try (try-refresh-provider-token! {:providers [{:id :corp
-                                                                        :api-key "expired"}]}
-                                                          {:provider :corp})
+          (let [failure (try (try-refresh-provider-token! :corp "expired")
                              nil
                              (catch clojure.lang.ExceptionInfo e e))]
             (expect (= 1 @calls))
@@ -9076,20 +9016,15 @@
                                (swap! logins inc)
                                (deliver entered true)
                                @release
-                               (reset! token "signed-in"))}
-
-          attempt-router
-          {:providers [{:id :corp :api-key "expired"}]}]
+                               (reset! token "signed-in"))}]
 
       (with-redefs [registry/provider-by-id (constantly descriptor)]
-        (let [requests (vec (repeatedly 8
-                                        #(future (try-refresh-provider-token! attempt-router
-                                                                              {:provider :corp}))))]
+        (let [requests (vec (repeatedly 8 #(future (try-refresh-provider-token! :corp "expired"))))]
           (try (expect (= true (deref entered 5000 ::timed-out)))
                (deliver release true)
                (expect (every? true? (mapv #(deref % 5000 ::timed-out) requests)))
                (expect (= 1 @logins))
-               (expect (true? (try-refresh-provider-token! attempt-router {:provider :corp})))
+               (expect (true? (try-refresh-provider-token! :corp "expired")))
                (expect (= 1 @logins))
                (finally (deliver release true)
                         (doseq [request requests]
@@ -9112,80 +9047,65 @@
 
           (try (reset! auth-refresh-events {})
                (with-redefs [registry/provider-by-id (constantly descriptor)]
-                 (expect (= managed?
-                            (try-refresh-provider-token! {:providers [{:id :corp
-                                                                       :api-key "expired"}]}
-                                                         {:provider :corp})))
+                 (expect (= managed? (try-refresh-provider-token! :corp "expired")))
                  (expect (zero? @logins)))
                (finally (reset! auth-refresh-events {}) (reset! auth-last-refreshed {})))))))
 
-(defdescribe
-  managed-provider-reauth-turn-test
-  ;; Issue #204: exercise the request/recovery/fallback ladder, not a direct refresh probe.
-  (it
-    "keeps the explicit provider after refresh rejection and interactive sign-in"
-    (let [token
-          (atom "expired")
+(defdescribe managed-provider-reauth-turn-test
+             ;; Issue #204: exercise the request/recovery/fallback ladder, not a direct refresh probe.
+             ;; The REAL Svar router sends to a loopback stub, so the re-send after sign-in is
+             ;; Svar's credential recovery calling Vis' refresher.
+             (it
+               "keeps the explicit provider after refresh rejection and interactive sign-in"
+               (let [token
+                     (atom "expired")
 
-          logins
-          (atom 0)
+                     logins
+                     (atom 0)
 
-          attempts
-          (atom [])
+                     descriptor
+                     {:provider/is-managed true
+                      :provider/get-token-fn #(hash-map :token @token)
+                      :provider/refresh-token-fn (fn [_]
+                                                   (throw (ex-info "Refresh rejected"
+                                                                   {:status 401})))
+                      :provider/auth-fn (fn [_]
+                                          (swap! logins inc)
+                                          (reset! token "signed-in"))}
 
-          descriptor
-          {:provider/is-managed true
-           :provider/get-token-fn #(hash-map :token @token)
-           :provider/refresh-token-fn (fn [_]
-                                        (throw (ex-info "Refresh rejected" {:status 401})))
-           :provider/auth-fn (fn [_]
-                               (swap! logins inc)
-                               (reset! token "signed-in"))}
+                     {:keys [base-url api-keys stop!]}
+                     (start-messages-stub! (fn [n]
+                                             (if (= 1 n) [:reject 401] [:answer "Done"])))
 
-          router
-          (svar/make-router [{:id :corp
-                              :api-key "expired"
-                              :base-url "http://127.0.0.1:1/v1"
-                              :models [{:name "model"}]}
-                             {:id :peer
-                              :api-key "peer"
-                              :base-url "http://127.0.0.1:1/v1"
-                              :models [{:name "model"}]}])
+                     provider
+                     (fn [id api-key]
+                       {:id id
+                        :api-style :anthropic
+                        :api-key api-key
+                        :base-url base-url
+                        :models [{:name "model" :context 200000}]})
 
-          environment
-          (loop-env/create-environment router {:db :memory})]
+                     router
+                     (svar/make-router [(provider :corp "expired") (provider :peer "peer")])
 
-      (reset! auth-refresh-events {})
-      (reset! auth-last-refreshed {})
-      (try (with-redefs [registry/provider-by-id
-                         #(when (= :corp %) descriptor)
+                     environment
+                     (loop-env/create-environment router {:db :memory})]
 
-                         svar/ask-code!
-                         (fn [attempt-router opts]
-                           (let [fallback?
-                                 (contains? (get-in opts [:routing :exclude-providers]) :corp)
-
-                                 request-token
-                                 (#'loop-router/router-provider-token attempt-router :corp)]
-
-                             (swap! attempts conj (if fallback? :peer request-token))
-                             (if (or fallback? (= "signed-in" request-token))
-                               {:stop-reason :end
-                                :content "Done"
-                                :provider (if fallback? :peer :corp)
-                                :model "model"}
-                               (throw (auth-401)))))]
-
-             (let [result (turn/run-turn! environment
-                                          "Reply once"
-                                          {:routing {:provider :corp :model "model"}})]
-               (expect (= "Done" (get-in result [:answer :answer])))
-               (expect (= 1 @logins))
-               (expect (= ["expired" "signed-in"] @attempts))))
-           (finally (loop-env/dispose-environment! environment)
-                    (reset! auth-refresh-events {})
-                    (reset! auth-last-refreshed {})
-                    (reset! @#'auth-health/cooldowns {}))))))
+                 (reset! auth-refresh-events {})
+                 (reset! auth-last-refreshed {})
+                 (try (with-redefs [registry/provider-by-id #(when (= :corp %) descriptor)]
+                        (let [result (turn/run-turn! environment
+                                                     "Reply once"
+                                                     {:routing {:provider :corp :model "model"}})]
+                          (expect (= "Done" (get-in result [:answer :answer])))
+                          (expect (= 1 @logins))
+                          (expect (= ["expired" "signed-in"] @api-keys))
+                          (expect (= #{} (:cooled-providers (auth-health/cooldown-metrics))))))
+                      (finally (stop!)
+                               (loop-env/dispose-environment! environment)
+                               (reset! auth-refresh-events {})
+                               (reset! auth-last-refreshed {})
+                               (reset! @#'auth-health/cooldowns {}))))))
 
 (def ^:private env-cache (deref #'loop-env/cache))
 
@@ -9890,10 +9810,7 @@
         (expect (= original canonical))
         (expect (= :svar.tokens/context-overflow (:type (ex-data terminal))))
         (expect (= 20000 (get-in @ctx-atom ["engine_utilization" "last_request_tokens"])))
-        (expect (= 10000 (get-in @ctx-atom ["engine_utilization" "model_input_limit"])))))
-    (it "has an independent retry budget"
-        (expect (= {:auth 2 :stream 1}
-                   (next-retry-counters ::iteration/retry-context-overflow {:auth 2 :stream 1}))))))
+        (expect (= 10000 (get-in @ctx-atom ["engine_utilization" "model_input_limit"])))))))
 
 (defn- overflow-loop-scenario
   "Exercise overflow handling, Python execution and the following provider request."

@@ -27,11 +27,10 @@
 (def ^:private AUTH_PROPAGATION_WINDOW_MS
   "How long (ms) after a FORCED OAuth refresh a subsequent auth 401 reads as
    PROPAGATION LAG (retry the same freshly-minted token with backoff) rather
-   than a dead credential (re-mint). Comfortably exceeds the loop's full post-refresh
-   backoff sequence (`MAX_AUTH_REFRESH_RETRIES` retries of
-   `auth-propagation-backoff-ms`, ~11s) so the whole settling burst stays
-   classified as lag; the marker is cleared on the first accepted request so it
-   never lingers into a later genuine rotation."
+   than a dead credential (re-mint). Comfortably exceeds Svar's full post-refresh
+   re-send schedule (its router option `:auth-retry-delays-ms`, ~11s) so the whole
+   settling burst stays classified as lag; the marker is cleared on the first
+   accepted request so it never lingers into a later genuine rotation."
   30000)
 
 (defonce ^:private refresh-events

@@ -9,7 +9,6 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.provider.credential-command :as cred]
             [com.blockether.vis.internal.loop.router :as loop-router]
-            [com.blockether.vis.internal.provider.error :as perr]
             [com.blockether.vis.internal.provider.service :as providers]
             [lazytest.core :refer [defdescribe expect it]]
             [yamlstar.core :as yamlstar]))
@@ -221,9 +220,6 @@
   (script! "rotate.sh"
            (str "echo x >> " counter-file "\n" "echo tok-$(wc -l < " counter-file " | tr -d ' ')")))
 
-(def ^:private unauthorized
-  (ex-info "unauthorized" {:status 401 :body "{\"error\":\"invalid api key\"}"}))
-
 (defn- router-with [built] {:providers [(select-keys built [:id :api-key :models :base-url])]})
 
 (defdescribe
@@ -246,7 +242,8 @@
         (expect (not (str/includes? (pr-str @config/router-credential-argv) "tok-1")))
         (expect (= 1 (exec-count)))))
   ;; Regression, issue #105: the credential refresh gate used to classify auth
-  ;; independently from Svar's canonical failure verdict.
+  ;; independently from Svar's canonical failure verdict. Svar now classifies the
+  ;; rejection and asks Vis' refresher only for an auth failure.
   (it "an auth rejection is recoverable with NO OAuth hook, by re-running the helper"
       (fresh!)
       (let [built
@@ -265,11 +262,9 @@
                        first
                        :api-key)))
         (expect (= 1 (exec-count)))
-        (with-redefs [perr/svar-classification (constantly {:category :invalid-request})]
-          (expect (not (#'loop-router/auth-refreshable-error? unauthorized {:provider :sso-401}))))
-        (with-redefs [perr/svar-classification (constantly {:category :auth})]
-          (expect (#'loop-router/auth-refreshable-error? unauthorized {:provider :sso-401})))
-        (expect (#'loop-router/try-refresh-provider-token! router {:provider :sso-401}))
+        (expect (= "tok-2"
+                   (:api-key ((loop-router/credential-refresher {})
+                               {:provider (first (:providers router)) :attempt 1}))))
         ;; …and the retry actually SENDS the freshly minted token: a short-lived
         ;; SSO credential that expired mid-session heals without a restart.
         (expect (= "tok-2"
@@ -309,7 +304,8 @@
         (config/->svar-provider {:id :sso-literal :api-key "literal-key" :models [{:name "m1"}]})
         (expect (not (config/command-backed? :sso-literal)))
         (expect (nil? (config/command-token :sso-literal)))
-        (expect (not (#'loop-router/auth-refreshable-error? unauthorized {:provider :sso-literal})))
+        (expect (nil? ((loop-router/credential-refresher {})
+                        {:provider {:id :sso-literal :api-key "literal-key"} :attempt 1})))
         (expect (= "literal-key"
                    (-> (#'loop-router/hydrate-router-credentials
                         {:providers [{:id :sso-literal :api-key "literal-key"}]})

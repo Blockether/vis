@@ -1466,7 +1466,7 @@
 
 (def ^:private token-fields
   "`get_token_fn` / `refresh_token_fn` / `detect_fn` -> the credential map
-   `config/->svar-provider` and `loop/hydrate-router-credentials` destructure.
+   `config/->svar-provider` and `loop/hydrate-provider-credentials` destructure.
    `api-style` is the wire the ISSUED endpoint speaks, checked exactly like a
    preset's: an extension that mints its own `api_url` is the only thing that
    knows the dialect, and a config `api_style` still wins over it.

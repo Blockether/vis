@@ -33,7 +33,6 @@
             [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.loop.transcript :as transcript]
             [com.blockether.vis.internal.persistance.core :as persistance]
-            [com.blockether.vis.internal.provider.auth-health :as auth-health]
             [com.blockether.vis.internal.provider.error :as perr]
             [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.session.agents :as agents]
@@ -66,122 +65,16 @@
         (cond answer-streamed? {:attempts attempts :declined :output-started}
               (pos? attempts) {:attempts attempts :declined :retry-budget-exhausted})))))
 
-(def ^:private RETRY_BUDGET_KINDS
-  "The per-iteration budget each Vis-owned retry sentinel spends. Auth fallback and
-   context-overflow recovery own their bounds. Svar owns stream recovery."
-  {::retry-auth-refresh :auth
-   ::retry-auth-backoff :auth
-   ::retry-auth-fallback nil
-   ::retry-context-overflow nil})
-
-(defn- retry-sentinel
-  "The retry sentinel `result` carries, or nil for a real result. A map sentinel
-   also carries the retry's input: the fallback routing."
-  [result]
-  (cond (keyword? result) (when (contains? RETRY_BUDGET_KINDS result) result)
-        (map? result) (when (contains? result ::retry-auth-fallback) ::retry-auth-fallback)))
-
-(defn- next-retry-counters
-  "Pure counter-threading for Vis-owned context and auth recovery. Svar owns
-   transport retries, including same-provider stream recovery and the
-   larger-budget re-send after output exhaustion. `counters` holds one count per
-   budget kind in [[RETRY_BUDGET_KINDS]]. Returns nil for a real result."
-  [result counters]
-  (when-let [sentinel (retry-sentinel result)]
-    (if-let [kind (get RETRY_BUDGET_KINDS sentinel)]
-      (update counters kind (fnil inc 0))
-      counters)))
-
-(defn- next-attempt
-  "The request attempt that follows `result`, or nil when `result` is real. An
-   attempt carries the per-kind `:retries` counters, the request `:extra-body` and
-   the `:env` it ran with. The following attempt spends the sentinel's budget and
-   takes its input: an auth fallback adds the `:routing` to install, and an auth
-   backoff adds the `:backoff-ms` to wait first. An auth refresh re-sends
-   unchanged because the router hydrates refreshed credentials before dispatch; a
-   context-overflow retry re-sends with the projection its recovery installed."
-  [{:keys [retries] :as attempt} result]
-  (when-let [retries* (next-retry-counters result retries)]
-    (let [following (assoc attempt :retries retries*)]
-      (case (retry-sentinel result)
-        ::retry-auth-fallback
-        (assoc following :routing (::retry-auth-fallback result))
-
-        ;; Retry the same fresh token; propagation may still be settling.
-        ::retry-auth-backoff
-        (assoc following :backoff-ms (loop-router/auth-propagation-backoff-ms (:auth retries)))
-
-        following))))
-
 (defn- request-with-retries
   "Sends request attempts until one answers a real result, and returns that result.
-   `send!` takes an attempt (see [[next-attempt]]) and answers `{:result r :env e}`,
-   where `e` is the env the attempt ran with. Before the next attempt, a fallback
-   `:routing` is installed into `routing-atom` and any `:backoff-ms` is waited out."
-  [send! attempt routing-atom]
+   `send!` takes an attempt `{:extra-body … :env …}` and answers `{:result r :env e}`,
+   where `e` is the env the attempt ran with. A `::retry-context-overflow` result
+   re-sends with the projection its recovery installed; that recovery owns its bound.
+   Svar owns every provider retry: transport, stream and auth recovery."
+  [send! attempt]
   (loop [attempt attempt]
     (let [{:keys [result env]} (send! attempt)]
-      (if-let [{:keys [routing backoff-ms] :as following} (next-attempt (assoc attempt :env env)
-                                                                        result)]
-        (do (when (contains? following :routing) (reset! routing-atom routing))
-            (when backoff-ms (Thread/sleep (long backoff-ms)))
-            (recur (dissoc following :routing :backoff-ms)))
-        result))))
-
-(defn- provider-retry-event
-  [{:keys [provider model reason attempt delay-ms error status]}]
-  (cond-> {:event/type :llm.routing/provider-retry
-           :reason (or reason :stream-connection-error)
-           :provider provider
-           :model model
-           :attempt attempt
-           :delay-ms delay-ms
-           :error error}
-    provider
-    (assoc :from-provider provider)
-
-    model
-    (assoc :from-model model)
-
-    (some? status)
-    (assoc :status status)))
-
-(defn- provider-retry-progress-chunk
-  "Canonical live-progress chunk for one transparent provider retry. Keeps the
-   concise error identity plus retry/backoff metadata needed by every channel;
-   the full throwable remains in telemetry only."
-  [iteration-position ^Throwable t {:keys [provider model reason attempt max-retries delay-ms]}]
-  (let [delay-ms
-        (long (or delay-ms 0))
-
-        event
-        (provider-retry-event {:provider provider
-                               :model model
-                               :reason reason
-                               :attempt attempt
-                               :delay-ms delay-ms
-                               :status (:status (ex-data t))
-                               :error (ex-message t)})
-
-        error
-        (cond-> (select-keys (loop-errors/format-exception-short t)
-                             [:type :message :status :cause-class])
-          (some? attempt)
-          (assoc :attempt attempt)
-
-          (some? max-retries)
-          (assoc :max-retries max-retries)
-
-          (pos? delay-ms)
-          (assoc :delay-ms delay-ms))]
-
-    {:phase :provider-retry-reset
-     :iteration iteration-position
-     :attempt attempt
-     :max-retries max-retries
-     :delay-ms delay-ms
-     :error error
-     :event event}))
+      (if (= ::retry-context-overflow result) (recur (assoc attempt :env env)) result))))
 
 (defn- empty-reply-resend-chunk
   "Live-progress chunk for ONE of svar's same-model empty-reply re-sends.
@@ -719,7 +612,8 @@
                      :messages (vec messages)
                      :prompt-cache-policy (transcript/prompt-cache-policy (:provider
                                                                             resolved-model))
-                     :routing sticky-routing
+                     :routing (assoc sticky-routing
+                                :refresh-credentials (loop-router/credential-refresher environment))
                      :check-context? true
                      :input-token-estimator input-token-estimator
                      :preserved-thinking? true
@@ -1287,15 +1181,6 @@
          :assistant-message (:assistant-message ask-result)}))))
 
 ;; Multi-iteration turn engine helpers
-
-(def ^:private MAX_AUTH_REFRESH_RETRIES
-  "Max transparent auth-401 retries per iteration. Attempt 0 forces ONE OAuth
-   refresh-token exchange (the stored access token was invalidated server-side,
-   e.g. refresh-token rotation) + router rebuild and re-sends. If that fresh
-   token 401s AGAIN it is almost always PROPAGATION LAG at the provider edge,
-   not a dead credential — so the remaining attempts back off and retry the
-   SAME token (no re-mint) to let it settle, per [[auth-propagation-backoff-ms]]."
-  4)
 
 (defn- output-budget-exhausted?
   "True when the iteration failed on Svar's canonical output-budget signal. Svar
@@ -2685,13 +2570,12 @@
   (let [resolved-model
         pre-resolved-model
 
-        ;; Providers still serving an auth cooldown are excluded up front:
-        ;; the per-iteration rescue route below dies with the iteration, so
-        ;; only this seeding keeps a dead credential from being re-probed.
+        ;; Svar owns auth recovery; providers still serving an auth cooldown
+        ;; are excluded up front so a dead credential is not re-probed.
         effective-routing
-        (loop-router/apply-auth-cooldown-routing routing)
+        (loop-router/apply-auth-recovery-routing routing)
 
-        ;; Mutates once only when exhausted auth recovery releases a dead provider.
+        ;; Follows a mid-turn route change; see `attempt-routing` below.
         iteration-routing
         (atom effective-routing)
 
@@ -2699,20 +2583,16 @@
         (atom (if route-change (:command route-change) route-command-at-turn-start))
 
         iteration-result
-        ;; Per-iteration request attempts. `next-attempt` spends each
-        ;; recovery kind's own budget (see RETRY_BUDGET_KINDS), so no policy
-        ;; spends another's, and carries the fallback route and backoff into
-        ;; the following attempt.
+        ;; Per-iteration request attempts; see [[request-with-retries]].
         (with-council-execution
           environment
           council-active
           [session-turn-id iteration]
           (fn []
             (request-with-retries
-              ;; `env` is threaded so the auth-refresh retry can
-              ;; reseat its `:router` to the rebuilt one (the
-              ;; in-flight env captured the pre-refresh router).
-              (fn [{:keys [retries env] current-extra-body :extra-body}]
+              ;; `env` is threaded so a route change carries its restricted
+              ;; router into the next attempt.
+              (fn [{:keys [env] current-extra-body :extra-body}]
                 (let [route-change
                       (agents/routing-change env @applied-route-command)
 
@@ -2851,65 +2731,12 @@
                             :previous-blocks (vec (mapcat (comp :blocks second) trailer-iters))}
                            :extra-body current-extra-body})
                         (catch Exception e
-                          (cond
-                            ;; Post-refresh auth 401: the token we
-                            ;; JUST force-refreshed 401'd AGAIN. Almost
-                            ;; always OAuth PROPAGATION LAG at the
-                            ;; provider edge (a freshly-minted token is
-                            ;; briefly not-yet-valid), NOT a dead
-                            ;; credential — the same token succeeds
-                            ;; seconds later. Re-minting is what CAUSES
-                            ;; the storm, so DON'T refresh: back off and
-                            ;; retry the SAME token until it settles.
-                            (and (< (long (:auth retries)) (long MAX_AUTH_REFRESH_RETRIES))
-                                 (loop-router/refresh-just-failed? e resolved-model))
-                            ::retry-auth-backoff
-                            ;; Auth 401/403 from a refreshable provider: adopt a
-                            ;; peer credential or persist one forced refresh, then
-                            ;; re-send. The exact attempt router supplies the
-                            ;; rejected token; the next request boundary hydrates
-                            ;; the new value without rebuilding shared routers.
-                            (and (< (long (:auth retries)) (long MAX_AUTH_REFRESH_RETRIES))
-                                 (loop-router/auth-refreshable-error? e resolved-model)
-                                 (loop-router/try-refresh-provider-token! (:router attempt-env)
-                                                                          resolved-model))
-                            ::retry-auth-refresh
-                            ;; Refresh/backoff failed or credentials were revoked.
-                            ;; Release the dead provider, then let svar walk the fleet.
-                            (loop-router/auth-fallback-routing e @iteration-routing resolved-model)
-                            (let [fallback-routing
-                                  (loop-router/auth-fallback-routing e
-                                                                     @iteration-routing
-                                                                     resolved-model)
-
-                                  ;; Persist the release ACROSS iterations. Without the
-                                  ;; cooldown the next iteration rebuilds routing from
-                                  ;; scratch and re-sends to the dead provider.
-                                  first-trip?
-                                  (auth-health/note-failure! (:provider resolved-model))
-
-                                  chunk
-                                  (provider-retry-progress-chunk
-                                    (inc (long iteration))
-                                    e
-                                    {:provider (:provider resolved-model)
-                                     :model (or (:name resolved-model) (:model resolved-model))
-                                     :reason :authentication-fallback
-                                     :attempt 1
-                                     :max-retries 1
-                                     :delay-ms 0})]
-
-                              (when first-trip?
-                                (emit-hook! on-chunk chunk "Auth fallback progress hook failed"))
-                              (tel/log! {:level (if first-trip? :warn :debug)
-                                         :id ::auth-provider-fallback
-                                         :data {:iteration iteration
-                                                :provider (:provider resolved-model)
-                                                :cooldown-ms auth-health/AUTH_COOLDOWN_MS
-                                                :status (:status (ex-data e))}}
-                                        "Provider auth recovery exhausted; falling back")
-                              {::retry-auth-fallback fallback-routing})
-                            :else
+                          (let [chain (loop-errors/bounded-cause-chain e)]
+                            ;; Svar already re-sent with refreshed credentials and fell back;
+                            ;; cool down every provider it left so later iterations skip it.
+                            (loop-router/note-auth-rejections!
+                              (some #(:routed/trace (ex-data %)) chain)
+                              (some #(:auth-failed (ex-data %)) chain))
                             (if-let [recovery (context-overflow-recovery!
                                                 {:error e
                                                  :output-started? provider-output-started?
@@ -2959,8 +2786,7 @@
                                      (stream-recovery-outcome e @provider-replay-unsafe?)}))))))]
 
                   {:result result :env env}))
-              {:retries {:auth 0} :extra-body iteration-extra-body :env environment}
-              iteration-routing)))]
+              {:extra-body iteration-extra-body :env environment})))]
 
     (assoc state
       :iteration-result iteration-result
@@ -3107,6 +2933,9 @@
                           :trace (conj trace (store-trace! trace-store trace-entry)))})))
     (let [_ (note-prompt-cache-status! (:prompt-cache iteration-result))
           _ (swap! accounting-atom accounting/add-usage (:api-usage iteration-result))
+          ;; Providers Svar left for rejecting their credentials start the auth
+          ;; cooldown first: the re-admission and pick move below read it.
+          _ (loop-router/note-auth-rejections! (:llm-routing-trace iteration-result) nil)
           ;; The provider that ACCEPTED the request re-enters routing, never
           ;; the pre-call guess: a turn rescued on a peer used to re-admit the
           ;; dead credential and the next iteration re-probed it (issue #114).

@@ -65,27 +65,25 @@
                                             :dynamic {:note (or @token "signed-out")})}]
 
         (limits/flush-limits-cache! :auth-limits-test)
-        (try (with-redefs [registry/provider-by-id
-                           (constantly provider)
+        (try
+          (with-redefs [registry/provider-by-id
+                        (constantly provider)
 
-                           providers/rebuild-shared-router!
-                           (constantly nil)
+                        providers/rebuild-shared-router!
+                        (constantly nil)
 
-                           limits/auth-change-listeners
-                           (atom #{(fn [pid]
-                                     (swap! observed conj
-                                       (get-in (limits/provider-limits pid) [:dynamic :note])))
-                                   (fn [_]
-                                     (throw (ex-info "Disconnected view" {})))})]
+                        limits/auth-change-listeners
+                        (atom #{(fn [pid]
+                                  (swap! observed conj
+                                    (get-in (limits/provider-limits pid) [:dynamic :note])))
+                                (fn [_]
+                                  (throw (ex-info "Disconnected view" {})))})]
 
-               (expect (= "old"
-                          (get-in (limits/provider-limits :auth-limits-test) [:dynamic :note])))
-               (with-redefs-fn {#'auth-health/refresh-allowed? (constantly true)
-                                #'auth-health/last-refreshed (atom {})}
-                 #(expect (true? (#'loop-router/try-refresh-provider-token!
-                                  {:providers [{:id :auth-limits-test :api-key "old"}]}
-                                  {:provider :auth-limits-test}))))
-               (expect (= ["fresh"] @observed))
-               (expect (:ok? (auth/logout! :auth-limits-test)))
-               (expect (= ["fresh" "signed-out"] @observed)))
-             (finally (limits/flush-limits-cache! :auth-limits-test))))))
+            (expect (= "old" (get-in (limits/provider-limits :auth-limits-test) [:dynamic :note])))
+            (with-redefs-fn {#'auth-health/refresh-allowed? (constantly true)
+                             #'auth-health/last-refreshed (atom {})}
+              #(expect (true? (#'loop-router/try-refresh-provider-token! :auth-limits-test "old"))))
+            (expect (= ["fresh"] @observed))
+            (expect (:ok? (auth/logout! :auth-limits-test)))
+            (expect (= ["fresh" "signed-out"] @observed)))
+          (finally (limits/flush-limits-cache! :auth-limits-test))))))

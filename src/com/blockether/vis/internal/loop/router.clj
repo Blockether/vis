@@ -640,37 +640,29 @@
 ;; every provider attempt gets a shallow router copy whose dynamic credential
 ;; fields are resolved immediately before network I/O. The shared router keeps
 ;; all of its state; only the attempt's provider vector is credential-hydrated.
-;; A 401 then refreshes storage only. The retry boundary reads the new credential
-;; itself, so recovery never depends on rebuilding global or cached routers.
+;; A 401 refreshes storage only: Svar re-sends on the same provider with the
+;; credential [[credential-refresher]] reads back, then falls back across
+;; providers, so recovery never depends on rebuilding global or cached routers.
 
-(def ^:private AUTH_PROPAGATION_BACKOFF_MS
-  "Base backoff (ms) before retrying the SAME just-refreshed token after a
-   post-refresh auth 401. A freshly-minted OAuth token is briefly not-yet-valid
-   at the provider edge; a short wait lets propagation settle instead of
-   re-minting — which only spawns another not-yet-valid token (the 401 storm)."
-  1200)
-
-(defn auth-propagation-backoff-ms
-  "Backoff (ms) for the Nth (0-based) post-refresh propagation retry, capped 5s."
-  [attempt]
-  (long (min 5000 (* (long AUTH_PROPAGATION_BACKOFF_MS) (inc (long attempt))))))
-
-(defn apply-auth-cooldown-routing
-  "Seed an iteration's routing with the providers still serving an auth cooldown so
-   the dead credential is skipped BEFORE the request instead of being rediscovered
-   with another 401.
+(defn apply-auth-recovery-routing
+  "Hand an iteration's auth recovery to Svar. While `provider_fallback` is on, a
+   provider whose credentials stay rejected after the [[credential-refresher]]
+   re-sends is left for the next candidate (`:on-auth-error :fallback-provider`),
+   and the providers still serving an auth cooldown are excluded up front, so a
+   dead credential is skipped BEFORE the request instead of being rediscovered with
+   another 401.
 
    A PIN does not outrank the cooldown. EVERY main turn is pinned — `prepare-turn-context`
    forces the active provider+model into `:routing` so a provider failure surfaces as
    an error the user acts on — so exempting a pinned provider exempted every real
    turn: vis logged a five-minute cooldown and then re-probed, re-minted and
    re-fell-back on the very next iteration, ~12-16s later (issue #114). A COOLED pin
-   is released exactly the way [[auth-fallback-routing]] releases it, which is the
-   route the previous fallback already took. A pin on a HEALTHY provider is left
-   alone, and the provider's own accepted request re-admits it immediately.
+   is released the way Svar releases a pin after an auth rejection. A pin on a
+   HEALTHY provider is left alone, and the provider's own accepted request re-admits
+   it immediately.
 
-   No-op while `provider_fallback` is off: with nowhere to route, excluding the
-   cooled provider would only trade its real error for a routing failure."
+   No-op while `provider_fallback` is off: with nowhere to route, a rejected
+   credential surfaces as the provider's own error."
   [routing]
   (let [current
         (or routing {})
@@ -681,71 +673,18 @@
         pinned
         (or (:provider current) (:force-provider current))]
 
-    (if (or (empty? cooled) (not (provider-fallback-allowed?)))
+    (if-not (provider-fallback-allowed?)
       current
-      (cond-> (-> current
-                  (cond->
-                    (contains? cooled pinned)
-                    (dissoc :provider :model :force-provider :force-model))
-                  (assoc :on-auth-error :fallback-provider)
-                  (update :exclude-providers (fnil into #{}) cooled))
-        (or (nil? (:on-transient-error current))
-            (= :fallback-model-in-the-same-provider (:on-transient-error current)))
-        (assoc :on-transient-error :hybrid)))))
-
-(defn- auth-error-shaped?
-  "True exactly when Svar's canonical failure verdict is authentication.
-
-   Vis uses the verdict only to cool down or mutate credentials; it never
-   reclassifies provider status codes, prose, or routing attempts."
-  [^Throwable e]
-  (= :auth (:category (perr/svar-classification e))))
-
-(defn auth-fallback-routing
-  "Build one cross-provider rescue route after OAuth refresh/backoff is exhausted.
-   Returns nil after visible output, without a provider id, once enabled, or while
-   `provider_fallback` is off."
-  [^Throwable e routing resolved-model]
-  (let [data
-        (ex-data e)
-
-        provider
-        (:provider resolved-model)
-
-        output-started?
-        (or (pos? (long (or (:content-acc-len data) 0)))
-            (pos? (long (or (:reasoning-acc-len data) 0)))
-            (some? (:partial-content data))
-            (some? (:reasoning data)))
-
-        current
-        (or routing {})]
-
-    (when (and provider
-               (provider-fallback-allowed?)
-               (auth-error-shaped? e)
-               (not output-started?)
-               (not= :fallback-provider (:on-auth-error current)))
-      (cond-> (-> current
-                  (dissoc :provider :model :force-provider :force-model)
-                  (assoc :on-auth-error :fallback-provider)
-                  (update :exclude-providers (fnil conj #{}) provider))
-        (or (nil? (:on-transient-error current))
-            (= :fallback-model-in-the-same-provider (:on-transient-error current)))
-        (assoc :on-transient-error :hybrid)))))
-
-(defn refresh-just-failed?
-  "True when we FORCED an OAuth refresh for this provider very recently (inside the
-   [[auth-health/propagation-lag?]] window) and the credential is STILL auth-failing.
-   Signals propagation lag (back off and retry the request-bound hydrated token)
-   rather than a genuinely dead credential. The recency marker is provider-wide
-   and is cleared by [[note-provider-request-ok!]] after accepted I/O."
-  [^Throwable e resolved-model]
-  (and (auth-error-shaped? e) (auth-health/propagation-lag? (:provider resolved-model))))
+      (cond-> (assoc current :on-auth-error :fallback-provider)
+        (seq cooled)
+        (-> (cond->
+              (contains? cooled pinned)
+              (dissoc :provider :model :force-provider :force-model))
+            (update :exclude-providers (fnil into #{}) cooled))))))
 
 (defn note-provider-request-ok!
   "Clear the just-refreshed propagation marker AND any auth cooldown for the provider
-   that ACCEPTED this iteration's request. Keeps [[refresh-just-failed?]]'s recency
+   that ACCEPTED this iteration's request. Keeps [[credential-refresher]]'s recency
    window scoped to the post-refresh settling burst, so a real credential rotation
    later is treated as a fresh 401 (re-mint), never misread as propagation lag, and
    lets a re-authenticated provider re-enter routing immediately instead of waiting
@@ -883,20 +822,6 @@
                   "Session model repointed: the pinned provider's credentials were rejected")
         move))))
 
-(defn auth-refreshable-error?
-  "True when Svar classified `e` as authentication and Vis can produce a new
-   credential for the failing provider.
-
-   Refreshing OAuth or `api_key_command` output mutates the next request; it is
-   not a second provider failure classifier or transport retry policy."
-  [^Throwable e resolved-model]
-  (let [pid (:provider resolved-model)]
-    (boolean (and (= :auth (:category (perr/svar-classification e)))
-                  (or (some-> (registry/provider-by-id pid)
-                              :provider/refresh-token-fn)
-                      (auth-health/managed? (registry/provider-by-id pid))
-                      (config/command-backed? pid))))))
-
 (defn- hydrate-model-metadata
   "Select learned or fallback model facts for this attempt's account, preserving order."
   [provider]
@@ -911,94 +836,98 @@
                      %)))
     provider))
 
-(defn- hydrate-router-credentials
-  "Return an attempt-local copy of `router` with every provider's current
-   credential fields resolved immediately before request dispatch.
+(defn- hydrate-provider-credentials
+  "Return `provider-entry` with its current credential fields resolved immediately
+   before request dispatch.
 
    Two credential sources are hydrated here: a registry-backed
    `:provider/get-token-fn` (OAuth and friends), and a command-backed
    `api_key_command`, whose token is re-read from the credential cache so an
    `invalidate-credential-command!` on a 401 actually reaches the wire instead of
-   waiting for the next router build.
+   waiting for the next router build. A provider token lookup failure is
+   deliberately failure-safe: the provider retains its previous snapshot so normal
+   request/error handling remains authoritative."
+  [{:keys [id] :as provider-entry}]
+  (if-let [get-token-fn (some-> (registry/provider-by-id id)
+                                :provider/get-token-fn)]
+    (try (let [{:keys [token api-url llm-headers responses-path api-style]} (get-token-fn)
+               ;; The credential may also NAME the wire it issued
+               ;; (#152): an extension that mints its own `api_url`
+               ;; is the only thing that knows the dialect. Config
+               ;; precedence was resolved when the router was built,
+               ;; so a runtime dialect fills a gap, never overrides.
+               dialect (when (nil? (:api-style provider-entry))
+                         (config/effective-api-style {:runtime api-style}))]
+
+           (cond-> provider-entry
+             (some? token)
+             (assoc :api-key token)
+
+             (some? api-url)
+             (assoc :base-url api-url)
+
+             (some? llm-headers)
+             (assoc :llm-headers llm-headers)
+
+             (some? responses-path)
+             (assoc :responses-path responses-path)
+
+             (some? dialect)
+             (assoc :api-style dialect)))
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::provider-credential-hydration-failed
+                      :data {:provider id :error (ex-message t)}}
+                     (str "Could not hydrate current credential for "
+                          id
+                          "; retaining the previous request snapshot"))
+           provider-entry))
+    ;; Command-backed: the cache serves the same token in the
+    ;; steady state (no fork per request) and re-execs the
+    ;; helper exactly once after a 401 invalidated it. A helper
+    ;; that is failing right now yields nil and keeps the
+    ;; snapshot, so the provider error stays authoritative.
+    (if-let [token (config/command-token id)]
+      (assoc provider-entry :api-key token)
+      provider-entry)))
+
+(defn- hydrate-router-credentials
+  "Return an attempt-local copy of `router` with every provider's current
+   credential fields resolved by [[hydrate-provider-credentials]].
 
    Router health, budget and retry state are preserved by sharing the original
    map. Stateful session lifecycle compares the effective router snapshots by value,
    so repeated hydration with the same token, endpoint, and headers keeps its opaque
    Svar handle. A changed credential or route produces a different snapshot and
-   replaces that handle. A provider token lookup failure is deliberately failure-safe:
-   that provider retains its previous snapshot so normal request/error handling remains
-   authoritative."
+   replaces that handle."
   [router]
   (let [provider-entries
         (:providers router)
 
         hydrated
-        (mapv
-          (fn [{:keys [id] :as provider-entry}]
-            (if-let [get-token-fn (some-> (registry/provider-by-id id)
-                                          :provider/get-token-fn)]
-              (try (let [{:keys [token api-url llm-headers responses-path api-style]} (get-token-fn)
-                         ;; The credential may also NAME the wire it issued
-                         ;; (#152): an extension that mints its own `api_url`
-                         ;; is the only thing that knows the dialect. Config
-                         ;; precedence was resolved when the router was built,
-                         ;; so a runtime dialect fills a gap, never overrides.
-                         dialect (when (nil? (:api-style provider-entry))
-                                   (config/effective-api-style {:runtime api-style}))]
-
-                     (cond-> provider-entry
-                       (some? token)
-                       (assoc :api-key token)
-
-                       (some? api-url)
-                       (assoc :base-url api-url)
-
-                       (some? llm-headers)
-                       (assoc :llm-headers llm-headers)
-
-                       (some? responses-path)
-                       (assoc :responses-path responses-path)
-
-                       (some? dialect)
-                       (assoc :api-style dialect)))
-                   (catch Throwable t
-                     (tel/log! {:level :warn
-                                :id ::provider-credential-hydration-failed
-                                :data {:provider id :error (ex-message t)}}
-                               (str "Could not hydrate current credential for "
-                                    id
-                                    "; retaining the previous request snapshot"))
-                     provider-entry))
-              ;; Command-backed: the cache serves the same token in the
-              ;; steady state (no fork per request) and re-execs the
-              ;; helper exactly once after a 401 invalidated it. A helper
-              ;; that is failing right now yields nil and keeps the
-              ;; snapshot, so the provider error stays authoritative.
-              (if-let [token (config/command-token id)]
-                (assoc provider-entry :api-key token)
-                provider-entry)))
-          provider-entries)
-
-        hydrated
-        (mapv hydrate-model-metadata hydrated)]
+        (mapv (comp hydrate-model-metadata hydrate-provider-credentials) provider-entries)]
 
     (if (= hydrated provider-entries) router (assoc router :providers hydrated))))
 
-(defn- with-session-llm-headers
-  "Decorate one immutable router snapshot with session-scoped provider headers.
+(defn- with-provider-session-headers
+  "Merge this session's headers for one provider into its `:llm-headers`.
    Configured and credential-derived headers are retained; a provider kickoff hook
-   owns any same-named key it contributes. The shared process router is never mutated."
+   owns any same-named key it contributes."
+  [{:keys [id] :as provider} headers-by-provider]
+  (if-let [headers (not-empty (get headers-by-provider id))]
+    (update provider :llm-headers #(merge (or % {}) headers))
+    provider))
+
+(defn- with-session-llm-headers
+  "Decorate one immutable router snapshot with session-scoped provider headers
+   (see [[with-provider-session-headers]]). The shared process router is never mutated."
   [router headers-by-provider]
   (if (empty? headers-by-provider)
     router
     (update router
             :providers
             (fn [providers]
-              (mapv (fn [{:keys [id] :as provider}]
-                      (if-let [headers (not-empty (get headers-by-provider id))]
-                        (update provider :llm-headers #(merge (or % {}) headers))
-                        provider))
-                    providers)))))
+              (mapv #(with-provider-session-headers % headers-by-provider) providers)))))
 
 (defn kickoff-session-providers
   "Run provider kickoff hooks against every provider in this session's router.
@@ -1037,29 +966,19 @@
    (auth-health/ensure-authenticated! provider-id)
    (hydrate-environment-router environment)))
 
-(defn- router-provider-token
-  "Token actually carried by provider `pid` in this exact router snapshot."
-  [router pid]
-  (some #(when (= pid (:id %)) (:api-key %)) (:providers router)))
-
 (defn try-refresh-provider-token!
-  "Recover a refreshable auth rejection without mutating any router.
+  "Recover a refreshable auth rejection of provider `pid` without mutating any router.
 
-   `attempt-router` is the exact request snapshot that received the 401, making
-   its provider `:api-key` the exact rejected token. Before spending refresh
+   `rejected` is the exact token the refused request carried. Before spending refresh
    budget, resolve current storage once: if a peer already installed a different
-   token, simply retry and let request-bound hydration adopt it. Otherwise force
-   one persisted refresh. The next attempt hydrates from storage; no global
-   rebuild or cached-environment reseat is involved.
+   token, simply adopt it. Otherwise force one persisted refresh. The caller re-reads
+   storage for the re-send; no global rebuild or cached-environment reseat is involved.
 
    A command-backed provider has no OAuth hook at all: its refresh is dropping
-   the memoized `api_key_command` token so the next request boundary re-runs the
-   helper. Same budget, same one-retry contract."
-  [attempt-router resolved-model]
-  (let [pid
-        (:provider resolved-model)
-
-        provider
+   the memoized `api_key_command` token so the next hydration re-runs the
+   helper. Same budget, same contract."
+  [pid rejected]
+  (let [provider
         (registry/provider-by-id pid)
 
         f
@@ -1067,9 +986,6 @@
 
         get-token-fn
         (:provider/get-token-fn provider)
-
-        rejected
-        (router-provider-token attempt-router pid)
 
         current
         (try (some-> get-token-fn
@@ -1156,6 +1072,60 @@
                    (auth-health/reauthenticate! pid provider rejected)
                    (auth-health/note-refreshed! pid)
                    true)))))
+
+(defn credential-refresher
+  "Svar's `:refresh-credentials` hook for one request: answers the provider that
+   rejected its credentials with freshly hydrated ones, or nil when Vis cannot
+   produce new ones for it.
+
+   Only OAuth, managed-login and `api_key_command` providers qualify. On the first
+   re-send it adopts a peer's newer token or forces one refresh through
+   [[try-refresh-provider-token!]]. Later re-sends, and a rejection inside the
+   propagation window of a recent refresh, only re-read storage: minting again
+   would issue another token that is not yet valid. Svar spaces the re-sends by its
+   `:auth-retry-delays-ms` schedule and then applies `:on-auth-error`. Session
+   headers are merged back because hydration can replace `:llm-headers`."
+  [environment]
+  (let [headers-by-provider (:session-llm-headers environment)]
+    (fn [{:keys [provider attempt]}]
+      (let [pid (:id provider)
+            registered (registry/provider-by-id pid)]
+
+        (when (and pid
+                   (or (:provider/refresh-token-fn registered)
+                       (auth-health/managed? registered)
+                       (config/command-backed? pid))
+                   (or (< 1 (long attempt))
+                       (auth-health/propagation-lag? pid)
+                       (try-refresh-provider-token! pid (:api-key provider))))
+          (-> provider
+              hydrate-provider-credentials
+              (with-provider-session-headers headers-by-provider)))))))
+
+(defn note-auth-rejections!
+  "Start the auth cooldown for every provider Svar left in one request because it
+   rejected its credentials, so later iterations skip it up front instead of paying
+   another 401, refresh and fallback. `trace` is the request's routing trace, whose
+   authentication fallbacks name the providers Svar left; `auth-failed` is the set
+   Svar attaches when every candidate refused. Each provider is noted once per
+   request, and only the first trip of a cooldown logs a warning. Call it before
+   [[note-provider-request-ok!]] and [[reseat-pick-after-auth-rescue!]], which read
+   the cooldown. Answers the noted provider ids."
+  [trace auth-failed]
+  (let [pids (into (set (keep (fn [{:keys [from-provider reason] :as event}]
+                                (when (and (= :llm.routing/provider-fallback (:event/type event))
+                                           (= :authentication reason))
+                                  (auth-provider-key from-provider)))
+                              trace))
+                   (keep auth-provider-key)
+                   auth-failed)]
+    (doseq [pid pids]
+      (let [first-trip? (auth-health/note-failure! pid)]
+        (tel/log! {:level (if first-trip? :warn :debug)
+                   :id ::auth-provider-fallback
+                   :data {:provider pid :cooldown-ms auth-health/AUTH_COOLDOWN_MS}}
+                  "Provider credentials rejected; skipping it during the auth cooldown")))
+    pids))
 
 (defn ask-code!
   "One-shot routed `svar/ask-code!` against the global router.
