@@ -1695,10 +1695,13 @@
 (defdescribe
   failed-form-error-surface-test
   (it
-    "paints the failed disclosure on error paper while keeping details on transcript paper in every theme"
+    "keeps the failed disclosure and expanded diagnostics on error paper in every theme and width"
     (try
       (doseq [id
               (shared-theme/available-theme-ids)
+
+              width
+              [40 80 120]
 
               expanded?
               [false true]]
@@ -1706,25 +1709,30 @@
         (t/apply-theme! (keyword id))
         (let [entries
               (format-iteration-entry-entries
-                (iteration/canonicalize {:forms [{:code "print(missing)"
-                                                  :error {:message "MISSING_VALUE"}}]})
-                72
+                (iteration/canonicalize
+                  {:forms [{:code "print(missing)"
+                            :error {:message (str "MISSING_VALUE "
+                                                  (apply str (repeat 12 "recovery details ")))}}
+                           {:code "next_call()" :error {:message "SECOND_FAILURE"}}]})
+                (- width 8)
                 1
                 {:session-id "s"
                  :session-turn-id "t"
                  :detail-expansions (if expanded? {:vis.channel-tui/expand-all-details? true} {})})
 
               captured
-              (cap/capture! {:cols 80
-                             :rows 15
-                             :paint!
-                             (fn [{:keys [g]}]
-                               (render/draw-chat-bubble! g
-                                                         {:role :assistant
-                                                          :prewrapped-lines (mapv :line entries)
-                                                          :line-meta (mapv :meta entries)}
-                                                         0 0
-                                                         76 {:viewport-top 0 :viewport-h 15}))})
+              (cap/capture! {:cols width
+                             :rows 30
+                             :paint! (fn [{:keys [g]}]
+                                       (render/draw-chat-bubble!
+                                         g
+                                         {:role :assistant
+                                          :prewrapped-lines (mapv :line entries)
+                                          :line-meta (mapv :meta entries)}
+                                         0
+                                         0
+                                         (- width 4)
+                                         {:viewport-top 0 :viewport-h 30}))})
 
               frame
               (last (:frames captured))
@@ -1743,22 +1751,29 @@
               (row-for "FAILED")
 
               detail-row
-              (row-for "MISSING_VALUE")]
+              (row-for "MISSING_VALUE")
+
+              last-detail-row
+              (row-for "SECOND_FAILURE")]
 
           (expect (nil? (:error captured)))
           (expect (some? code-row))
           (expect (some? failed-row))
           (expect (= expanded? (some? detail-row)))
+          (expect (= expanded? (some? last-detail-row)))
           (expect (= (get-in (shared-theme/theme id) [:palette :code-block-bg])
                      (get-in frame [code-row 20 :bg])))
-          (doseq [row [(dec failed-row) failed-row (inc failed-row)]]
-            (expect (= (get-in (shared-theme/theme id) [:palette :code-err-bg])
-                       (get-in frame [row 20 :bg]))
-                    (str id " failed band row " row " expanded? " expanded?)))
-          (when detail-row
-            (expect (= (get-in (shared-theme/theme id) [:palette :terminal-bg])
-                       (get-in frame [detail-row 20 :bg]))
-                    (str id " detail row expanded? " expanded?)))))
+          ;; Opening diagnostics keeps wrapped/grouped messages and bottom padding red.
+          (doseq [row
+                  (range (dec failed-row) (+ (or last-detail-row failed-row) 2))
+
+                  col
+                  [4 20 (- width 8)]]
+
+            (expect
+              (= (get-in (shared-theme/theme id) [:palette :code-err-bg])
+                 (get-in frame [row col :bg]))
+              (str id " width " width " failed row " row " col " col " expanded? " expanded?)))))
       (finally (t/apply-theme! (keyword shared-theme/default-theme-id))))))
 
 (defdescribe

@@ -2755,9 +2755,9 @@
                                       :session-id (:session-id meta)
                                       :node-id (:node-id meta)
                                       :collapsed? (:collapsed? meta)}))))
-                    ;; ── Failed disclosure header has error paper; details stay on transcript paper ──
+                    ;; ── Failed disclosure and expanded diagnostics share error paper ──
                     (str/starts-with? line err-result-marker)
-                    (let [row-bg (if (= :toggle-details (:kind meta)) t/code-err-bg t/terminal-bg)]
+                    (let [row-bg t/code-err-bg]
                       (p/set-colors! g t/code-error-result-fg row-bg)
                       (p/fill-rect! g fbx y fill-iw 1)
                       (paint-ansi-line! g x y (subs line 1) t/code-error-result-fg row-bg)
@@ -7737,7 +7737,7 @@
                                                             :duration-ms duration})
                                    [(line-entry (str code-err-pad-marker ""))]
                                    (map #(line-entry (str err-result-marker %)) details)
-                                   ;; Shown diagnostics end on a neutral blank.
+                                   ;; Shown diagnostics end with padding on the same error paper.
                                    (when (seq details) [(line-entry (str err-result-marker ""))])))
                       ;; Noninteractive output cannot offer a toggle: retain all diagnostics.
                       (vec (concat (map #(line-entry (str err-result-marker %))
