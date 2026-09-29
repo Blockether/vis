@@ -6410,6 +6410,21 @@
                    (expect (str/includes? (:explanation info) "rate-limited"))
                    (expect (some #{["HTTP" "429"]} (:facts info))))))
 
+(defdescribe transcript-iteration-wire-test
+             (it "leaves request health out of the iteration a channel downloads"
+                 (let [project
+                       (var-get (ns-resolve 'com.blockether.vis.internal.gateway.state
+                                            'with-display-iteration))
+
+                       projected
+                       (project {:id "iteration-1"
+                                 :thinking nil
+                                 :request-health {:parts [{:label "System instructions"
+                                                           :tokens 1200}]}})]
+
+                   (expect (= "iteration-1" (:id projected)))
+                   (expect (not (contains? projected :request-health))))))
+
 ;; Regression, this Vis session (paraphrased: "the phone and the terminal
 ;; disagree about what is NEW"): each surface counted answers against a
 ;; watermark of its own, and a session it had never listed had no watermark at

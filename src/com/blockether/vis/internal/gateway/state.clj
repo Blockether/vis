@@ -2248,9 +2248,12 @@
          wire/canonical)))
 
 (defn- with-display-iteration
-  "Attach channel display projections absent from the durable store."
+  "Attach channel display projections absent from the durable store, and leave out
+   request health: per-request token provenance no channel renders, which every
+   transcript page and turn trace otherwise downloaded for each iteration."
   [iteration]
   (cond-> (-> iteration
+              (dissoc :request-health)
               (update :thinking util/settled-thinking-text))
     (seq (:forms iteration))
     (update :forms #(mapv form/with-display %))
