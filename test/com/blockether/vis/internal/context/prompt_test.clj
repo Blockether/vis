@@ -1513,7 +1513,26 @@
                                                         :results []}])]
         (expect (str/includes? block "found the cause in loop.clj"))
         (expect (str/includes? block "the answer above is only what you had said by then"))
-        (expect (not (str/includes? block "you produced NO answer"))))))
+        (expect (not (str/includes? block "you produced NO answer")))))
+  ;; A live-view record rendered as a blank line, so the next turn could not see
+  ;; that it existed. The note about left-out lines must be visible too.
+  (it "renders live-view records and omitted-line notes of a prior turn"
+      (let [block (prompt/previous-turn-context-block
+                    [{:turn 1
+                      :user-request "watch the run"
+                      :answer "CI passed"
+                      :results [{:scope "t1/i2"
+                                 :omitted? true
+                                 :note "18 earlier lines are not listed (t1/i2 to t1/i19)"}
+                                {:scope "t1/i20"
+                                 :live-record
+                                 "Live-view record filed: run.live.ndjson (attachment id a1)."}
+                                {:scope "t1/i21" :src "watch()"}]}])]
+        (expect (str/includes? block
+                               "  (omitted) 18 earlier lines are not listed (t1/i2 to t1/i19)\n"))
+        (expect (str/includes? block
+                               "  Live-view record filed: run.live.ndjson (attachment id a1).\n"))
+        (expect (not (re-find #"(?m)^ +$" block))))))
 
 (defdescribe core-prompt-routes-text-edits-to-patch-test
              ;; The verbs exist only if the prompt spends them. Before this, the core

@@ -4253,7 +4253,45 @@
             (expect (= "I patched ChatContent.tsx" (:partial-answer (first out))))
             (expect (nil? (:answer (first out))))
             (expect (= [{:scope "t2/i1" :src "t2/i1 (stored iteration)"}] (:results (second out))))
-            (expect (nil? (:partial-answer (second out)))))))))
+            (expect (nil? (:partial-answer (second out))))))))
+  ;; Reported from the app: a turn that stopped on a provider rate limit after
+  ;; hundreds of iterations reached the next prompt as its FIRST 40 lines, so the
+  ;; next turn lost its newest work. The newest lines and the fold breadcrumbs
+  ;; stay, and one line names the older lines that the recap leaves out.
+  (it
+    "keeps the newest work and the fold breadcrumbs of a long unfinished turn"
+    (with-history-fixture
+      [{:id "t1"
+        :status :error
+        :position 1
+        :user-request "migrate the store"
+        :content [(content/error "provider_rate_limit" "Provider rate-limited" true)]}
+       {:id "t2" :status :running :position 2}]
+      {"t1" (mapv (fn [n]
+                    {:id (str "i" n)
+                     :status :done
+                     :position n
+                     :forms [{:scope (str "t1/i" n) :src (str "step(" n ")")}]})
+                  (range 1 61))}
+      (fn []
+        (let [env
+              {:session-id "s1"
+               :db-info ::db
+               :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1/i1" "t1/i2"}
+                                                      "gist" "schema read"}]})}
+
+              results
+              (:results (first (previous-turn-context env "t2")))
+
+              omitted
+              (second results)]
+
+          (expect (= {:scope "t1/i1" :gist "schema read"} (first results)))
+          (expect (= "t1/i3" (:scope omitted)))
+          (expect (true? (:omitted? omitted)))
+          (expect (str/includes? (:note omitted)
+                                 "18 earlier lines are not listed (t1/i3 to t1/i20)"))
+          (expect (= (mapv #(str "step(" % ")") (range 21 61)) (vec (keep :src results)))))))))
 
 (defdescribe previous-request-usage-test
              (it "loads latest persisted request before current turn for iter-1 utilization"

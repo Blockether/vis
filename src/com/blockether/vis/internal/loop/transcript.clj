@@ -243,6 +243,51 @@
               [[] #{}]
               forms))))
 
+(def ^:private prior-turn-source-lines
+  "How many `you ran:` source lines one prior turn keeps in the resume recap."
+  40)
+
+(defn- newest-lines
+  "Keep the NEWEST source lines of ONE prior turn's scope index.
+
+   The recap is how the next turn continues its own work, so the oldest source
+   lines give way first: keeping the first 40 hid the latest work of a turn that
+   stopped on a provider error after hundreds of iterations. Fold breadcrumbs and
+   live-view records always stay because they carry settled state. One
+   `:omitted?` entry stands where the left-out lines were and names their range."
+  [results]
+  (let [sources
+        (filterv :src results)
+
+        omit
+        (- (count sources) (long prior-turn-source-lines))]
+
+    (if (pos? omit)
+      (let [from
+            (:scope (first sources))
+
+            to
+            (:scope (nth sources (dec omit)))
+
+            note
+            {:scope from
+             :omitted? true
+             :note (str omit
+                        (if (= 1 omit) " earlier line is" " earlier lines are")
+                        " not listed (" (if (= from to) from (str from " to " to))
+                        ")" (when (toggles/enabled? "introspection")
+                              "; recover via `await read_session()`"))}]
+
+        (first (reduce (fn [[out seen] r]
+                         (cond (not (:src r)) [(conj out r) seen]
+                               (< seen omit) [(cond-> out
+                                                (zero? seen)
+                                                (conj note)) (inc seen)]
+                               :else [(conj out r) seen]))
+                       [[] 0]
+                       results)))
+      (vec results))))
+
 (defn user-slash-iteration?
   "True for a synthetic slash-command iteration. These rows stay in local
    transcript/audit history but must never enter a later provider request."
@@ -518,7 +563,7 @@
                                :user-request user-request
                                :answer answer
                                :interrupted? interrupted?
-                               :results (vec (take 40 (prior-turn-scope-index forms resolved)))}
+                               :results (newest-lines (prior-turn-scope-index forms resolved))}
                         partial-answer
                         (assoc :partial-answer partial-answer)
 

@@ -97,6 +97,8 @@
                                                     (:dropped? r) (str "(dropped)"
                                                                        (when (:note r)
                                                                          (str " " (:note r))))
+                                                    (:omitted? r) (str "(omitted) " (:note r))
+                                                    (:live-record r) (:live-record r)
                                                     :else (:src r))))
                                        results))
                         "\n"))
