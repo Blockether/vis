@@ -55,6 +55,33 @@ async function openSettings() {
   return await screen.findByRole('combobox', { name: 'Draft backend' });
 }
 
+describe('global settings provenance', () => {
+  it('omits the default caption but keeps the reset action for explicit values', async () => {
+    let overridden = true;
+    const plans: Toggle = { id: 'plans', label: 'Plans', type: 'boolean', enabled: false };
+    vi.spyOn(GatewayClient.prototype, 'settings').mockImplementation(async () => ({
+      groups: [{
+        id: 'sandbox', title: 'Sandbox', toggles: [
+          { ...backend, source: 'default', is_override: false },
+          { ...plans, source: overridden ? 'global' : 'default', is_override: overridden },
+        ],
+      }],
+    }));
+    const save = vi.spyOn(GatewayClient.prototype, 'setSetting').mockImplementation(async () => {
+      overridden = false;
+      return { ...plans, source: 'default', is_override: false };
+    });
+
+    await openSettings();
+    expect(screen.queryByText('Inherited from default')).toBeNull();
+    expect(screen.getByText('Set here')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Use inherited value' }));
+    expect(save).toHaveBeenCalledWith('plans', 'inherit');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Use inherited value' })).toBeNull());
+    expect(screen.queryByText('Inherited from default')).toBeNull();
+  });
+});
+
 describe('draft backend dropdown', () => {
   // #242 and #243: opening Settings must not opt the user into draft isolation.
   it('shows off without saving and lets the user enable and disable drafts', async () => {

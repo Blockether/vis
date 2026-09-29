@@ -422,7 +422,7 @@ export function MachineSettings({
               {group.toggles.map((toggle) => (
                 <SettingRow key={toggle.id} toggle={toggle} busy={pending === toggle.id}
                   onToggle={() => void flip(toggle)} onPick={(value) => pick(toggle, value)}
-                  onInherit={toggle.id === 'agent_name' ? undefined : () => void inherit(toggle)} />
+                  onInherit={toggle.is_override && toggle.id !== 'agent_name' ? () => void inherit(toggle) : undefined} />
               ))}
             </div>
           </SettingsPanel>
