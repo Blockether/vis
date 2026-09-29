@@ -204,7 +204,11 @@ export function SettingRow({ toggle, busy, onToggle, onPick, onInherit }: {
           {toggle.type === 'enum' && <EnumSetting toggle={toggle} busy={busy} disabled={lock !== null} onPick={(value) => void onPick(value)} />}
         </div>
       )}
-      {lock && <Text as="p" variant="description" className="break-words px-3 pb-2 sm:px-4">{lock}</Text>}
+      {lock && (
+        <div className="px-3 pb-2 sm:px-4">
+          <Text as="p" variant="description" className="break-words">{lock}</Text>
+        </div>
+      )}
       {onInherit && (
         <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2 sm:px-4">
           <Text variant="description">{toggle.is_override ? 'Set here' : `Inherited from ${toggle.source ?? 'default'}`}</Text>
