@@ -1259,7 +1259,7 @@
           ;; an ease was in flight when the user hit Esc
           (expect (= scroll/follow (synced {:mode :follow :pos 100})))
           (expect (= scroll/follow (acked {:mode :follow :pos 100} nil)))
-          ;; the ACK that hands the submitted prompt back must not move the view
+          ;; the ACK that settles the submitted prompt must not move the view
           (expect (= scroll/follow (acked {:mode :follow :pos 100} submitted)))
           ;; reading history while a cancel lands: the viewport stays exactly put
           (expect (= (scroll/parked 30) (synced (scroll/parked 30))))
@@ -1691,14 +1691,16 @@
       (expect (= cancel-key (:cancelling-at-ms local-db)))
       ;; ...but ONLY the invisible send gate stays armed. The turn the user was
       ;; watching is over: no live progress, no elapsed clock ticking on under a
-      ;; transcript whose rows were already dropped and whose prompt is back in
-      ;; the composer. Anything else reads as a frozen, mismatched frame.
+      ;; transcript that already shows the cancelled turn. Anything else reads as a
+      ;; frozen, mismatched frame.
       (expect (nil? (:progress local-db)))
       (expect (nil? (:turn-start-ms local-db)))
       (expect (nil? (:submitted-input local-db)))
-      (expect (empty? (:messages local-db)))
-      (expect (= "first" (input/input->text (:input local-db))))
-      ;; The queued backlog comes back WITH the prompt, not one ACK later.
+      ;; Esc keeps the cancelled prompt in the transcript and never refills the editor.
+      (expect (= [:user :assistant] (mapv :role (:messages local-db))))
+      (expect (= :cancelled (get-in local-db [:messages 1 :status])))
+      (expect (input/input-empty? (:input local-db)))
+      ;; The queued backlog returns to the editor now, not one ACK later.
       ;; A turn settling on the tab in FOCUS is read where it lands, so the
       ;; gateway never reports this session as new to another surface.
       (expect (= [[:mark-session-read "s1"] [:dispatch [:restore-pending-to-input :main]]]
@@ -1712,12 +1714,12 @@
 (defdescribe cancel-settles-once-test
              ;; REGRESSION: a cancel settles in two halves — the LOCAL attach worker's
              ;; synthetic `:cancelled` result and the daemon's `:gateway-cancel-result`
-             ;; ACK — and their order is not guaranteed. Only the local half restored the
-             ;; editor, so when the ACK won the race the turn was released (`:loading?`
-             ;; false, sends allowed) while the composer stayed EMPTY, the submitted
-             ;; prompt sat unreachable in `:submitted-input` and a pending assistant
-             ;; placeholder no event would resolve stayed in the transcript. Either half
-             ;; must now produce the same settled frame.
+             ;; ACK — and their order is not guaranteed. When the ACK won the race, the
+             ;; turn was released (`:loading?` false, sends allowed) while the submitted
+             ;; prompt sat in `:submitted-input` and a pending assistant placeholder no
+             ;; event would resolve stayed in the transcript. Either half must now produce
+             ;; the same settled frame. Neither half refills the editor: Esc keeps the
+             ;; cancelled prompt in the transcript.
              (let [handler
                    (fn [id]
                      (-> #'state/event-registry
@@ -1750,7 +1752,7 @@
                       :submitted-input {:text "first" :pastes {} :paste-counter 0}
                       :pending-sends []})]
 
-               (it "hands the prompt back when the gateway ACK beats the local result"
+               (it "settles the cancelled prompt when the gateway ACK beats the local result"
                    (let [acked
                          (:db ((handler :gateway-cancel-result)
                                 (cancelling-db [])
@@ -1764,28 +1766,31 @@
                                  [:ast {} [:p {} [:span {} "Cancelled by user."]]]
                                  {:status :cancelled :client-turn-id pending-id}]))]
 
-                     (expect (= "first" (input/input->text (:input acked))))
-                     (expect (empty? (:messages acked)))
+                     (expect (input/input-empty? (:input acked)))
+                     (expect (= "first" (get-in acked [:messages 0 :text])))
+                     (expect (= :cancelled (get-in acked [:messages 1 :status])))
+                     (expect (= "turn_cancelled" (get-in acked [:messages 1 :content 0 "code"])))
+                     (expect (not (get-in acked [:messages 1 :pending?])))
                      (expect (nil? (:submitted-input acked)))
                      (expect (false? (:loading? acked)))
                      (expect (nil? (:progress acked)))
-                     (expect (= "first" (input/input->text (:input settled))))
-                     (expect (empty? (:messages settled)))))
-               (it "keeps the bubble and only refills the editor when the cancel had work"
+                     (expect (input/input-empty? (:input settled)))
+                     (expect (= (:messages acked) (:messages settled)))))
+               (it "keeps the bubble and its work without refilling the editor"
                    (let [acked (:db ((handler :gateway-cancel-result)
                                       (cancelling-db [{:n 1 :blocks [{:kind :tool}]}])
                                       [:gateway-cancel-result cancel-key {:status "cancelling"}]))]
                      (expect (= 2 (count (:messages acked))))
                      (expect (= [{:n 1 :blocks [{:kind :tool}]}]
                                 (get-in acked [:messages 1 :terminal-pending :trace])))
-                     (expect (= "first" (input/input->text (:input acked))))
+                     (expect (input/input-empty? (:input acked)))
                      (expect (nil? (:submitted-input acked)))))
-               (it "hands the prompt back when the cancel self-heals"
+               (it "settles the cancelled prompt when the cancel self-heals"
                    (let [healed (:db ((handler :cancel-self-heal-tick)
                                        (cancelling-db [])
                                        [:cancel-self-heal-tick (+ cancel-key 60000)]))]
-                     (expect (= "first" (input/input->text (:input healed))))
-                     (expect (empty? (:messages healed)))
+                     (expect (input/input-empty? (:input healed)))
+                     (expect (= :cancelled (get-in healed [:messages 1 :status])))
                      (expect (nil? (:submitted-input healed)))
                      (expect (false? (:cancelling? healed)))))
                (it "never overwrites a newer draft typed while the cancel settles"
@@ -2584,7 +2589,7 @@
           (expect (= "report.html"
                      (get-in metadata [:terminal-trace 0 :attachments 0 "filename"])))))))
   (it
-    "restores a cancelled prompt to the input instead of rendering a cancelled answer"
+    "keeps a cancelled prompt in the transcript instead of restoring it to the input"
     (let [send-message-fn
           (-> #'state/event-registry
               deref
@@ -2630,19 +2635,19 @@
                                              :token)]
         (let [sent-db (:db (send-message-fn db [:send-message text]))
               reset-db (reset-input-fn sent-db [:reset-input])
-              restored-db (:db (message-received-fn reset-db
-                                                    [:message-received
-                                                     [:ast {}
-                                                      [:p {} [:span {} "Cancelled by user."]]]
-                                                     {:status :cancelled}]))]
+              cancelled-db (:db (message-received-fn reset-db
+                                                     [:message-received
+                                                      [:ast {}
+                                                       [:p {} [:span {} "Cancelled by user."]]]
+                                                      {:status :cancelled}]))]
 
-          (expect (= initial-messages (:messages restored-db)))
-          (expect (= text (input/input->text (:input restored-db))))
-          (expect (= {1 {:id 1 :content "hello"}} (:pastes restored-db)))
-          (expect (= 1 (:paste-counter restored-db)))
-          (expect (= ["prior"] (:input-history restored-db)))
-          (expect (false? (:loading? restored-db)))
-          (expect (not-any? #(= "Cancelled by user." (:text %)) (:messages restored-db))))))))
+          (expect (= (first initial-messages) (first (:messages cancelled-db))))
+          (expect (= [:assistant :user :assistant] (mapv :role (:messages cancelled-db))))
+          (expect (= :cancelled (:status (last (:messages cancelled-db)))))
+          (expect (input/input-empty? (:input cancelled-db)))
+          (expect (= ["prior" (input/expand-paste-placeholders text (:pastes db))]
+                     (:input-history cancelled-db)))
+          (expect (false? (:loading? cancelled-db))))))))
 
 (defdescribe
   gateway-disconnect-reattach-test
@@ -3331,7 +3336,7 @@
         (expect (= ["second"] (mapv :text (:pending-sends db))))))
   (it "restores every pristine editor shape without losing submitted metadata"
       (let [restore-fns
-            [#'state/restore-submitted-input #'state/restore-editor-only]
+            [#'state/restore-editor-only]
 
             submissions
             [{:text "first" :pastes {1 "old paste"} :paste-counter 1}
@@ -3361,7 +3366,7 @@
             (expect (false? (:slash-command-hidden? db)))
             (expect (nil? (:submitted-input db)))))))
   (it
-    "never overwrites any non-pristine draft while cancellation settles"
+    "never overwrites any non-pristine draft while a failed turn settles"
     (let [submitted
           {:text "old prompt" :pastes {1 "old paste"} :paste-counter 1}
 
@@ -3395,18 +3400,13 @@
                            :input-history ["older" visible-submitted]
                            :submitted-input submitted}
                           editor-meta)
-              dropped (#'state/restore-submitted-input base submitted)
               retained (#'state/restore-editor-only base submitted)]
 
-          (expect (= (select-keys base editor-keys) (select-keys dropped editor-keys)))
           (expect (= (select-keys base editor-keys) (select-keys retained editor-keys)))
-          (expect (nil? (:submitted-input dropped)))
           (expect (nil? (:submitted-input retained)))
-          (expect (empty? (:messages dropped)))
           (expect (= messages (:messages retained)))
-          (expect (= ["older"] (:input-history dropped)))
           (expect (= ["older" visible-submitted] (:input-history retained)))))))
-  (it "restoration cleanup is independent from whether a newer draft wins"
+  (it "cancel cleanup settles the turn and never touches the editor"
       (let [submitted
             {:text "old" :pastes {} :paste-counter 0}
 
@@ -3422,15 +3422,16 @@
              :submitted-input submitted}]
 
         (doseq [draft [(input/empty-input) (reduce input/insert-char (input/empty-input) "new")]]
-          (let [db (#'state/restore-submitted-input (assoc base :input draft) submitted)]
+          (let [db (#'state/settle-cancelled-turn (assoc base :input draft))]
             (expect (false? (:loading? db)))
             (expect (false? (:cancelling? db)))
             (expect (nil? (:turn-start-ms db)))
             (expect (nil? (:submitted-input db)))
-            (expect (empty? (:messages db)))
-            (expect (= ["keep"] (:input-history db)))
-            (expect (= (if (input/input-empty? draft) "old" "new")
-                       (input/input->text (:input db))))))))
+            (expect (= [:user :assistant] (mapv :role (:messages db))))
+            (expect (= :cancelled (get-in db [:messages 1 :status])))
+            (expect (not (get-in db [:messages 1 :pending?])))
+            (expect (= ["keep" "old"] (:input-history db)))
+            (expect (= draft (:input db)))))))
   (it
     "an async FX ACK retries against and preserves many concurrent editor updates"
     (let [ack-id
@@ -4556,13 +4557,14 @@
         (expect (= :failed (:status assistant)))
         (expect (not (:pending? assistant)))
         (expect (= "turn_failed" (get-in assistant [:content 0 "code"])))))
-  (it "terminal cancellation uses the pristine-editor restoration contract"
+  (it "terminal cancellation keeps the prompt in the transcript and the editor empty"
       (reset! state/app-db (terminal-test-db {:cancelling? true :cancelling-at-ms 11}))
       (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "cancelled"})
       (settle-marked-terminal!)
       (let [db @state/app-db]
-        (expect (= "first" (input/input->text (:input db))))
-        (expect (= [] (:messages db)))
+        (expect (input/input-empty? (:input db)))
+        (expect (= [:user :assistant] (mapv :role (:messages db))))
+        (expect (= :cancelled (get-in db [:messages 1 :status])))
         (expect (false? (:loading? db)))
         (expect (false? (:cancelling? db)))))
   (it "terminal cancellation never overwrites typing entered during the race"
@@ -4572,7 +4574,7 @@
         (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "cancelled"})
         (settle-marked-terminal!)
         (expect (= draft (:input @state/app-db)))
-        (expect (= [] (:messages @state/app-db)))))
+        (expect (= [:user :assistant] (mapv :role (:messages @state/app-db))))))
   (it "preserves the completed trace when the blocking worker is stranded"
       (let [trace [{:id :iter-1 :forms [{:id :form-1}]}]]
         (reset! state/app-db (terminal-test-db {:progress {:iterations trace}}))

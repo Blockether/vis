@@ -36,6 +36,9 @@ The queue is stored in memory and cleared when the gateway restarts.
 
 Press **Esc** or **Ctrl+G** to cancel the running turn.
 
+The cancelled message stays in the conversation. Vis does not put it back in the
+composer. To send it again in the terminal, press **↑** to recall it.
+
 Cancellation stops the turn and returns queued messages to the composer as a
 draft. To run them, submit the draft again.
 

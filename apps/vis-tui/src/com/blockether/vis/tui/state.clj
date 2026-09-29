@@ -2434,15 +2434,6 @@
   [:loading? :cancelling? :cancelling-at-ms :progress :turn-start-ms :cancel-token :gateway-turn-id
    :live-turn-client-id :liveness-probed-at-ms])
 
-(def ^:private cancel-gate-state-keys
-  "The ONLY turn keys a locally-settled cancel keeps armed while it waits for the
-   gateway ACK — the invisible send gate and the identity needed to match that
-   ACK. Re-arming the full `active-turn-state-keys` instead kept `:progress`,
-   `:turn-start-ms` and `:liveness-probed-at-ms` alive after the transcript rows
-   were already dropped and the prompt handed back, so the composer read 'ready'
-   while the rest of the frame still painted a live turn with a running clock."
-  [:loading? :cancelling? :cancelling-at-ms :cancel-token :gateway-turn-id :live-turn-client-id])
-
 (defn- session-running?
   [session]
   (or (= "running" (:status session)) (some? (:current-turn-id session))))
@@ -2455,7 +2446,7 @@
    synthetic cancellation carries no trace of its own — the same slot the gateway
    terminal path fills. Without the park, the force-cancel (second Esc), the stuck-
    cancel self-heal and the cancel ACK all ran `clear-active-turn-state` FIRST, the
-   worker's `:cancelled` result then looked like `no-work?`, and the whole visible
+   worker's `:cancelled` result then carried no trace, and the whole visible
    run (every tool call already executed) was dropped from the transcript instead of
    being kept for the user to read."
   [db]
@@ -3959,62 +3950,14 @@
               (fn [db [_ view-id pane]]
                 (update-live-pane db view-id (constantly pane))))
 
-(defn- drop-pending-turn-messages
-  "Remove the transient user + assistant placeholder pair created by
-   `:send-message`. Used only when a submitted prompt is cancelled and
-   restored to the editor instead of becoming a transcript turn."
-  [messages]
-  (let [messages
-        (vec (or messages []))
-
-        n
-        (count messages)]
-
-    (cond (and (<= 2 n)
-               (= :assistant (:role (peek messages)))
-               (= :user (:role (nth messages (- n 2)))))
-          (subvec messages 0 (- n 2))
-          :else messages)))
-
 (defn- composer-pristine?
   "True when no work authored after submission occupies the composer."
   [db]
   (and (input/input-empty? (:input db)) (empty? (:attachments db))))
 
-(defn- restore-submitted-input
-  "Drop the pending turn pair and restore the submitted composer only when the
-   editor is still pristine. Work entered while cancellation settles is newer
-   and must never be overwritten by the cancellation ACK."
-  [db {:keys [text pastes paste-counter image-counter attachments]}]
-  (let [visible-text
-        (input/expand-paste-placeholders text pastes)
-
-        restore-editor?
-        (composer-pristine? db)]
-
-    (cond-> (-> db
-                clear-active-turn-state
-                (assoc :messages (drop-pending-turn-messages (:messages db)))
-                (update :input-history
-                        (fn [xs]
-                          (let [xs (vec (or xs []))]
-                            (if (= visible-text (peek xs)) (pop xs) xs))))
-                (dissoc :turn-start-ms :submitted-input))
-      restore-editor?
-      (assoc :input
-        (text->input-state text) :input-history-index
-        nil :input-history-draft
-        nil :slash-command-index
-        0 :slash-command-hidden?
-        false :pastes
-        (or pastes {}) :paste-counter
-        (or paste-counter 0) :image-counter
-        (or image-counter 0) :attachments
-        (vec (or attachments []))))))
-
 (defn- restore-editor-only
-  "Restore a submitted composer after cancellation or failure unless the user
-   already started newer work while the turn settled."
+  "Restore a submitted composer after a failed turn unless the user already
+   started newer work while the turn settled."
   [db {:keys [text pastes paste-counter image-counter attachments]}]
   (cond-> (dissoc db :submitted-input)
     (composer-pristine? db)
@@ -4028,37 +3971,6 @@
       (or paste-counter 0) :image-counter
       (or image-counter 0) :attachments
       (vec (or attachments [])))))
-
-(defn- settle-cancelled-turn
-  "Settle a cancel confirmed by the daemon ACK (or given up on by the self-heal)
-   while the local worker's terminal result has not landed yet.
-
-   Clearing the turn WITHOUT touching the editor left one cancel half-settled:
-   sends flowed again, yet the composer stayed empty, the prompt sat unreachable
-   in `:submitted-input`, and the transcript kept a pending assistant placeholder
-   that no later event would resolve. Settle exactly like the worker's terminal —
-   a stray Esc that ran nothing drops its placeholder pair and hands the prompt
-   back, a cancel with visible work keeps the bubble and only refills the editor —
-   so whichever half arrives first leaves the same frame."
-  [db]
-  (let [submitted
-        (:submitted-input db)
-
-        messages
-        (vec (:messages db))
-
-        idx
-        (pending-assistant-index messages (:live-turn-client-id db))
-
-        trace
-        (or (not-empty (vec (get-in db [:progress :iterations])))
-            (when idx (not-empty (vec (get-in messages [idx :terminal-pending :trace])))))]
-
-    (cond (nil? submitted) (clear-active-turn-state db)
-          (empty? trace) (restore-submitted-input db submitted)
-          :else (-> db
-                    clear-active-turn-state
-                    (restore-editor-only submitted)))))
 
 (reg-event-fx
   :history-up
@@ -5898,6 +5810,48 @@
                (if already-cancelling? :warn :info) cancel-notification-ttl-ms]
               [:gateway-cancel-active sid tid cancel-key (:live-turn-client-id db)]]}))))
 
+(defn- settle-cancelled-turn
+  "Settle a cancel confirmed by the daemon ACK (or given up on by the self-heal)
+   while the local worker's terminal result has not landed yet.
+
+   Clearing the turn alone left one cancel half-settled: sends flowed again, yet
+   the prompt sat unreachable in `:submitted-input` and the transcript kept a
+   pending assistant placeholder that no later event would resolve. Settle like
+   the worker's terminal, so whichever half arrives first leaves the same frame:
+   the prompt stays in the transcript, a stray Esc that ran nothing settles its
+   placeholder as the cancelled notice, and a cancel with visible work keeps its
+   parked trace for the worker's result. Esc never refills the editor; the prompt
+   stays one ArrowUp away in the input history."
+  [db]
+  (let [submitted
+        (:submitted-input db)
+
+        messages
+        (vec (:messages db))
+
+        idx
+        (pending-assistant-index messages (:live-turn-client-id db))
+
+        trace
+        (or (not-empty (vec (get-in db [:progress :iterations])))
+            (when idx (not-empty (vec (get-in messages [idx :terminal-pending :trace])))))
+
+        settled
+        (-> db
+            clear-active-turn-state
+            (dissoc :submitted-input))]
+
+    (if (and submitted idx (empty? trace))
+      (update settled
+              :messages
+              replace-pending-assistant
+              (completion-response
+                (terminal-content {:status :cancelled :turn-id (:gateway-turn-id db)})
+                nil
+                nil
+                {:status :cancelled :client-turn-id (get-in messages [idx :client-turn-id])}))
+      settled)))
+
 (reg-event-fx :gateway-cancel-result
               ;; Do not let the LOCAL attach worker's synthetic `:cancelled` result
               ;; unlock resending before the daemon accepted the cancel. Only this
@@ -6260,99 +6214,70 @@
                                     (:cancelling? workspace)
                                     (:cancelling-at-ms workspace)))
 
-                      ;; A cancellation that captured zero iterations is
-                      ;; usually a stray Esc - drop the placeholder pair
-                      ;; and restore the editor as before. A cancellation
-                      ;; with a non-empty trace means the agent already
-                      ;; did visible work (and persisted those iterations
-                      ;; to SQLite); KEEP the bubble so the user can read
-                      ;; what happened, and only repopulate the editor.
-                      no-work?
-                      (empty? trace)]
+                      start
+                      (:turn-start-ms workspace)
 
-                  (if (and cancelled? (:submitted-input workspace) no-work?)
-                    (let [ws (restore-submitted-input workspace (:submitted-input workspace))]
-                      ;; A cancel must NOT auto-send the backlog — pull it back into
-                      ;; the editor instead (see :restore-pending-to-input).
-                      ;; Restore it NOW, together with the prompt: the backlog is the same
-                      ;; editor state, and deferring it to the ACK refilled the composer twice.
-                      (when (some :mine? (:pending-sends ws)) (vreset! restore-pending? true))
-                      ;; `restore-submitted-input` normally clears the completed local turn.
-                      ;; A synthetic local cancellation is not completion of the SERVER turn:
-                      ;; retain the exact cancellation generation until its gateway ACK arrives.
-                      ;; ONLY the gate (see `cancel-gate-state-keys`) — the visible turn is over,
-                      ;; so progress, the elapsed clock and the liveness probe stay cleared.
-                      (if awaiting-gateway-cancel?
-                        (merge ws (select-keys workspace cancel-gate-state-keys))
-                        ws))
-                    (let [start
-                          (:turn-start-ms workspace)
+                      wall-ms
+                      (when start (- (System/currentTimeMillis) (long start)))
 
-                          wall-ms
-                          (when start (- (System/currentTimeMillis) (long start)))
+                      content
+                      (vec (or answer []))
 
-                          content
-                          (vec (or answer []))
+                      response
+                      (completion-response content trace wall-ms completion)
 
-                          response
-                          (completion-response content trace wall-ms completion)
+                      messages'
+                      (replace-pending-assistant (:messages workspace) response)
 
-                          messages'
-                          (replace-pending-assistant (:messages workspace) response)
+                      still-pending?
+                      (boolean (some pending-assistant-message? messages'))
 
-                          still-pending?
-                          (boolean (some pending-assistant-message? messages'))
+                      workspace'
+                      (cond-> (assoc workspace
+                                ;; A final result replaces the live placeholder atomically.
+                                ;; Settle the view ON that new height rather than easing
+                                ;; toward it, which ended every turn in a visible reflow.
+                                :messages messages'
+                                :utilization utilization
+                                :scroll (scroll/settle (:scroll workspace))
+                                :loading? (or still-pending? awaiting-gateway-cancel?)
+                                :cancelling? awaiting-gateway-cancel?
+                                :cancelling-at-ms (when awaiting-gateway-cancel?
+                                                    (:cancelling-at-ms workspace)))
+                        (and (not still-pending?) (not awaiting-gateway-cancel?))
+                        clear-active-turn-state
 
-                          workspace'
-                          (cond-> (assoc workspace
-                                    ;; A final result replaces the live placeholder atomically.
-                                    ;; Settle the view ON that new height rather than easing
-                                    ;; toward it, which ended every turn in a visible reflow.
-                                    :messages messages'
-                                    :utilization utilization
-                                    :scroll (scroll/settle (:scroll workspace))
-                                    :loading? (or still-pending? awaiting-gateway-cancel?)
-                                    :cancelling? awaiting-gateway-cancel?
-                                    :cancelling-at-ms (when awaiting-gateway-cancel?
-                                                        (:cancelling-at-ms workspace)))
-                            (and (not still-pending?) (not awaiting-gateway-cancel?))
-                            clear-active-turn-state
+                        ;; The cancelled bubble is already painted; only the send gate is
+                        ;; still waiting on the ACK. Stop painting a live turn under it.
+                        (and (not still-pending?) awaiting-gateway-cancel?)
+                        (assoc :progress
+                          nil :turn-start-ms
+                          nil :liveness-probed-at-ms
+                          nil))
 
-                            ;; The cancelled bubble is already painted; only the send gate is
-                            ;; still waiting on the ACK. Stop painting a live turn under it.
-                            (and (not still-pending?) awaiting-gateway-cancel?)
-                            (assoc :progress
-                              nil :turn-start-ms
-                              nil :liveness-probed-at-ms
-                              nil))
+                      ;; A FAILURE keeps its error bubble (the provider card the user
+                      ;; needs to read) AND refills the editor from the snapshot, so
+                      ;; "overloaded, retry" is one Enter away — the failed turn is never
+                      ;; auto-replayed, so this refill IS the retry. A CANCEL never
+                      ;; refills: Esc means stop, so the prompt stays in the transcript
+                      ;; (one ArrowUp away in the input history) and the editor keeps
+                      ;; whatever the user typed since.
+                      ws-final
+                      (if (and (:submitted-input workspace) failed?)
+                        (restore-editor-only workspace' (:submitted-input workspace))
+                        (cond-> workspace'
+                          (not still-pending?)
+                          (dissoc :submitted-input)))]
 
-                          ;; Cancelled-with-work: keep the bubble we just
-                          ;; built AND refill the editor from the snapshot so
-                          ;; the user can edit/resubmit the prompt that
-                          ;; produced this trace without retyping.
-                          ws-final
-                          (if (and (:submitted-input workspace)
-                                   (or (and cancelled? (not no-work?))
-                                       ;; A FAILURE keeps its error bubble (the provider
-                                       ;; card the user needs to read) AND refills the
-                                       ;; editor from the snapshot, so "overloaded, retry"
-                                       ;; is one Enter away — the failed turn is never
-                                       ;; auto-replayed, so this refill IS the retry.
-                                       failed?))
-                            (restore-editor-only workspace' (:submitted-input workspace))
-                            (cond-> workspace'
-                              (not still-pending?)
-                              (dissoc :submitted-input)))]
-
-                      (when (and (or (not (:loading? ws-final)) awaiting-gateway-cancel?)
-                                 (seq (:pending-sends ws-final)))
-                        ;; Only success drains. Failure may arrive before queue.paused:
-                        ;; leave the backlog visible and the composer free to retry.
-                        ;; Cancellation restores authored requests instead.
-                        (cond cancelled? (when (some :mine? (:pending-sends ws-final))
-                                           (vreset! restore-pending? true))
-                              (not failed?) (vreset! drain? true)))
-                      ws-final))))))
+                  (when (and (or (not (:loading? ws-final)) awaiting-gateway-cancel?)
+                             (seq (:pending-sends ws-final)))
+                    ;; Only success drains. Failure may arrive before queue.paused:
+                    ;; leave the backlog visible and the composer free to retry.
+                    ;; Cancellation restores authored requests instead.
+                    (cond cancelled? (when (some :mine? (:pending-sends ws-final))
+                                       (vreset! restore-pending? true))
+                          (not failed?) (vreset! drain? true)))
+                  ws-final))))
 
           ;; A turn the GATEWAY started for this session while this tab was busy
           ;; (normally the queued message it drained on THIS turn's terminal),
