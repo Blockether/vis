@@ -517,7 +517,23 @@
         (expect (= ["index" "motivation"] (subvec slugs 0 2)))
         (expect (not (some #{"gateway"} slugs)))
         (expect (nil? (io/resource "vis-docs/gateway.md")))
-        (expect (< (.indexOf slugs "queue-and-cancel") (.indexOf slugs "python-sandbox")))))
+        (expect (< (.indexOf slugs "sessions") (.indexOf slugs "python-sandbox")))))
+  (it "keeps controlling, managing and exporting sessions in one page"
+      (let [{:keys [pages]}
+            (docs/collect)
+
+            slugs
+            (set (map :slug pages))
+
+            anchors
+            (set (map :id (:toc (first (filter #(= "sessions" (:slug %)) pages)))))]
+
+        (doseq [old ["queue-and-cancel" "exporting-sessions"]]
+          (expect (not (contains? slugs old)) old)
+          (expect (nil? (io/resource (str "vis-docs/" old ".md"))) old))
+        ;; A redirect keeps the fragment of an old bookmark, so every old anchor stays.
+        (doseq [id ["queue-a-message" "cancel-a-turn" "quit" "export-a-session" "markdown" "html"]]
+          (expect (contains? anchors id) id))))
   (it "keeps app setup and gateway reference in the landing page"
       (let [{:keys [pages] :as site}
             (docs/collect)
@@ -621,7 +637,7 @@
         (expect (= [[(if (= mode :static) "motivation.html" "/docs/motivation") "Motivation"]
                     ["#install" "Install"] ["#first-session" "First session"]
                     ["#connecting-the-companion-app" "Desktop and mobile"]
-                    [(if (= mode :static) "sessions.html" "/docs/sessions") "Managing sessions"]
+                    [(if (= mode :static) "sessions.html" "/docs/sessions") "Sessions"]
                     ["#learn-more" "All guides"]]
                    links))
         (expect (not (str/includes? (or navigation "") "·")))
@@ -757,6 +773,19 @@
                  (doseq [uri ["/docs/gateway" "/docs/gateway/" "/docs/gateway.md"
                               "/docs/gateway.html"]]
                    (expect (= {:status 301 :headers {"location" "/docs"} :body ""}
+                              (docs/handle {:uri uri :headers {}}))
+                           uri)))
+             (it "redirects merged session pages to Sessions without replacing their fragments"
+                 (doseq [page
+                         ["queue-and-cancel" "exporting-sessions"]
+
+                         suffix
+                         ["" "/" ".md" ".html"]
+
+                         :let [uri
+                               (str "/docs/" page suffix)]]
+
+                   (expect (= {:status 301 :headers {"location" "/docs/sessions"} :body ""}
                               (docs/handle {:uri uri :headers {}}))
                            uri)))
              (it "an unknown .md path still falls through as nil"

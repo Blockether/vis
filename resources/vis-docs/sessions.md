@@ -1,24 +1,36 @@
-# Managing sessions
+# Sessions
 
 Vis saves each conversation as a session, so you can close it and continue later.
-This page shows how to start, find, fork and organize sessions in the terminal, in
-the desktop and phone apps and from the command line.
+This page shows how to control a session while Vis works, and how to find, fork,
+organize and export saved sessions. It covers the terminal, the desktop and phone
+apps and the command line.
 
 ## When to use
 
+- **You think of a follow-up while Vis is still working.** Send it now. It [waits in
+  the queue](#queue-a-message) and runs when the current turn finishes. You can edit
+  it until then.
+- **Vis is going in the wrong direction and you want to stop it.** [Cancel the
+  turn](#cancel-a-turn). Your queued messages return to the composer so you can
+  send them again.
+- **You want to leave the session.** See [Quit](#quit) for what **Ctrl+C** does in
+  each state.
+- **You need a conversation from last week.** [Find the
+  session](#find-a-saved-session) by its title or by something said in it.
 - **You want to try another approach without losing this conversation.** [Fork
   the session](#fork-a-session).
 - **The last few turns went wrong and you want to go back.** [Fork from an earlier
   turn](#fork-from-an-earlier-turn).
-- **You need a conversation from last week.** [Find the
-  session](#find-a-saved-session) by its title or by something said in it.
 - **Your project has more sessions than you can scan.** [Put them into
   groups](#organize-sessions-into-groups), star the ones you use often and
   [archive](#rename-star-archive-or-delete-a-session) the ones you have finished.
-- **You want to send a follow-up or stop Vis while it works.** Read [Controlling a
-  session](queue-and-cancel.md) instead.
-- **You want to save or share a conversation as a file.** Read [Exporting
-  sessions](exporting-sessions.md) instead.
+- **You want to share a conversation or keep a readable transcript.** [Export the
+  session](#export-a-session) as an HTML page, or as Markdown with every tool call.
+- **A bug report needs the conversation that shows the problem.** Export it, then
+  remove private details as described in [Reporting a
+  bug](reporting-bugs.md#sharing-a-transcript).
+- **You want another session to help or to review the work.** Read
+  [Council](council.md) instead.
 
 ## Start a new session
 
@@ -26,6 +38,49 @@ In the terminal, press **Ctrl+X n**. In the desktop or phone app, choose **New s
 it inside a group, use the **+** on the group's band in the app. You can also choose **＋ New session
 here** in the group's **g** menu in [Projects](#find-a-saved-session). The session then opens at the
 top of that group.
+
+## Control a running session
+
+You can keep typing while Vis works. A message that you send during a running turn
+waits in a queue. You can also cancel the running turn or quit the session.
+
+### Queue a message
+
+Press **Enter** to send. If no turn is running, the message starts one.
+Otherwise it is added to the queue below the progress display.
+
+Queued messages run in submission order. The queue pauses after a failed turn.
+Resume it manually to send the next message.
+
+To edit a queued message:
+
+- **Terminal:** press **↑** to move the newest queued message back into the
+  composer.
+- **Desktop or phone app:** choose the message to edit it, or choose **×** to
+  remove it.
+
+The queue is stored in memory and cleared when the gateway restarts.
+
+### Cancel a turn
+
+Press **Esc** or **Ctrl+G** to cancel the running turn.
+
+The cancelled message stays in the conversation. Vis does not put it back in the
+composer. To send it again in the terminal, press **↑** to recall it.
+
+Cancellation stops the turn and returns queued messages to the composer as a
+draft. To run them, submit the draft again.
+
+### Quit
+
+**Ctrl+C** depends on the current state:
+
+| State | Ctrl+C |
+|---|---|
+| Nothing typed, nothing running | Quits |
+| A draft in the composer | Clears the draft. A second press quits |
+| A turn is running | Cancels the turn |
+| A cancel is in progress | Quits immediately |
 
 ## Find a saved session
 
@@ -152,8 +207,40 @@ vis-agent sessions delete 3a7b2c1d        # permanent
 point in the same session, which `vis-agent sessions show` lists. To get a
 separate copy, fork in the terminal or an app.
 
+## Export a session
+
+Export a saved session to share a conversation, review its tool calls or keep a
+readable transcript. Use a session id from `vis-agent sessions list`:
+
+```bash
+vis-agent sessions export <SESSION-ID> [--md | --html PATH]
+```
+
+Vis does not remove private data from an export. Read an export before you share
+it. To remove private details, follow [Reporting a
+bug](reporting-bugs.md#sharing-a-transcript).
+
+### Markdown
+
+Markdown is the default format. The export prints the transcript, including tool calls, to stdout:
+
+```bash
+vis-agent sessions export 3a7b2c1d > session.md
+```
+
+### HTML
+
+Use `--html` for a self-contained page you can open in a browser. Vis creates
+missing directories and adds `.html` if the output path has no extension:
+
+```bash
+vis-agent sessions export 3a7b2c1d --html report.html
+```
+
 ## See also
 
 - [Keyboard shortcuts](keyboard-shortcuts.md) — every terminal key, including the session commands on this page.
-- [Exporting sessions](exporting-sessions.md) — save a conversation as Markdown or HTML and check it before you share it.
-- [Controlling a session](queue-and-cancel.md) — queue follow-ups, cancel a turn and quit while Vis works.
+- [Desktop and mobile setup](index.md#connecting-the-companion-app) — follow and control the same session from another device.
+- [Council](council.md) — ask another session for help or a second review.
+- [Reporting a bug](reporting-bugs.md) — remove private information before you share an export.
+- [Project instructions](context-and-prompts.md) — slash commands and shell shortcuts you can queue.

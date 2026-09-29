@@ -398,6 +398,12 @@ test('Wrangler serves the home page, HTML paths and assets with production routi
         ['/gateway', '/'],
         ['/gateway.html', '/'],
         ['/gateway.md', '/index.md'],
+        ['/queue-and-cancel', '/sessions.html'],
+        ['/queue-and-cancel.html', '/sessions.html'],
+        ['/queue-and-cancel.md', '/sessions.md'],
+        ['/exporting-sessions', '/sessions.html'],
+        ['/exporting-sessions.html', '/sessions.html'],
+        ['/exporting-sessions.md', '/sessions.md'],
         ['/python-sdk-api', '/python-sdk-api/blockether/vis.html'],
         ['/python-sdk-api/', '/python-sdk-api/blockether/vis.html'],
       ]) {

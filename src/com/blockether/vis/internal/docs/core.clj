@@ -594,6 +594,11 @@
        :headers {"content-type" ct "cache-control" "public,max-age=31536000,immutable"}
        :body (io/input-stream u)})))
 
+(def ^:private moved-pages
+  "Slugs of pages merged into another page, mapped to the route that holds them now.
+   The redirect has no fragment, so a browser keeps the anchor of an old bookmark."
+  {"exporting-sessions" "/docs/sessions" "gateway" "/docs" "queue-and-cancel" "/docs/sessions"})
+
 (defn handle
   "Ring handler for the docs site. Returns nil for paths it does not own (so the
    gateway can fall through). Owns `/docs`, `/docs/<slug>`, `/docs/assets/**`."
@@ -606,6 +611,9 @@
             (str/replace #"^/docs/?" "")
             (str/replace #"/$" ""))
 
+        moved
+        (moved-pages (str/replace path #"\.(?:md|html)$" ""))
+
         accept-encoding
         (get headers "accept-encoding")]
 
@@ -614,8 +622,7 @@
                                                    "cache-control" "no-store"}
                                          :body (search-json :live)}
           (str/starts-with? path "assets/") (asset-response (subs path (count "assets/")))
-          (#{"gateway" "gateway.md" "gateway.html"} path)
-          {:status 301 :headers {"location" "/docs"} :body ""}
+          moved {:status 301 :headers {"location" moved} :body ""}
           (or (= path "") (= path "index"))
           (ok-html (page-html site-data
                               (or (first (filter #(= "index" (:slug %)) pages)) (first pages))

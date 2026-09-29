@@ -53,7 +53,7 @@ lists every guide. The same pages are in [`resources/vis-docs/`](resources/vis-d
 Good places to start:
 
 - [Getting started](resources/vis-docs/index.md) — install Vis, connect the apps and try a first task.
-- [Managing sessions](resources/vis-docs/sessions.md) — find a saved session, fork a conversation and organize sessions into groups.
+- [Sessions](resources/vis-docs/sessions.md) — send follow-ups or cancel a task while Vis works, and find, fork, organize or export saved sessions.
 - [Keyboard shortcuts](resources/vis-docs/keyboard-shortcuts.md) — every key in the terminal, including the commands after **Ctrl+X**.
 - [Configuration](resources/vis-docs/configuration.md) — providers, models and settings.
 - [Extending Vis](resources/vis-docs/extending.md) — add your own tools and checks.

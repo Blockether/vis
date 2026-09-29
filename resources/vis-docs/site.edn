@@ -23,21 +23,13 @@
      :page "skills"
      :title "Skills"}
     {:blurb
-     "Send follow-up messages while Vis works, edit queued requests, cancel a task or quit the session."
-     :page "queue-and-cancel"
-     :title "Controlling a session"}
-    {:blurb
-     "Find a saved session, fork a conversation to try another approach and organize sessions into groups."
+     "Send follow-ups or cancel a task while Vis works, and find, fork, organize or export saved sessions."
      :page "sessions"
-     :title "Managing sessions"}
+     :title "Sessions"}
     {:blurb
      "Ask another session for help, get a second review or share findings without repeating research."
      :page "council"
      :title "Council"}
-    {:blurb
-     "Save a conversation as Markdown or a self-contained HTML page, and check it before sharing."
-     :page "exporting-sessions"
-     :title "Exporting sessions"}
     {:blurb
      "Try a change in an isolated working copy, review the diff and decide whether to approve it."
      :page "drafts"

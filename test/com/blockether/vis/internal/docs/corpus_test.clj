@@ -183,10 +183,10 @@ Whole skill body."}
                               ["worktree" "drafts"] ["iphone" "index"] ["android" "index"]
                               ["permissions" "jail"] ["log file" "logging"] ["crash" "logging"]
                               ["plugin" "extending"] ["custom tool" "extending"]
-                              ["transcript" "exporting-sessions"] ["upgrade" "distributions"]
+                              ["transcript" "sessions"] ["upgrade" "distributions"]
                               ["graalvm" "jvm-native-image"] ["password" "human-input"]
                               ["llm provider" "provider-extensions"] ["workflow" "skills"]
-                              ["stop" "queue-and-cancel"] ["team" "council"] ["embed" "python-sdk"]
+                              ["stop" "sessions"] ["team" "council"] ["embed" "python-sdk"]
                               ["remote" "gateway-service"] ["keybindings" "keyboard-shortcuts"]
                               ["new line" "keyboard-shortcuts"] ["fork" "sessions"]]]
           (expect (some #{page} (map :name (dc/search es words))) (str words " -> " page))))))

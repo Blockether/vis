@@ -15,10 +15,10 @@ To see the most common shortcuts while you work, press **Ctrl+X h** in Vis.
 - **You want to read an earlier part of a long session.** Use the keys in [Move
   through a session](#move-through-a-session) to scroll, jump and fold.
 - **You want to fork a session, go back to an earlier turn or move a session to a
-  group.** Use the keys under [Sessions](#sessions). [Managing sessions](sessions.md)
+  group.** Use the keys under [Sessions](#sessions). The [Sessions guide](sessions.md)
   explains each task.
 - **You want to know what cancelling or quitting does to your queued messages.** Read
-  [Controlling a session](queue-and-cancel.md) instead.
+  [Control a running session](sessions.md#control-a-running-session) instead.
 
 ## Send a message or start a new line
 
@@ -100,7 +100,7 @@ once it can act.
 | Esc or Ctrl+G | Cancel the running turn, close a dialog or clear your draft |
 | Ctrl+C | Clear your draft, cancel the running turn or quit Vis |
 
-[Controlling a session](queue-and-cancel.md) explains which of these happens when,
+[Control a running session](sessions.md#control-a-running-session) explains which of these happens when,
 and what happens to your queued messages.
 
 ## Move through a session
@@ -142,7 +142,6 @@ terminal's paste key.
 
 ## See also
 
-- [Controlling a session](queue-and-cancel.md) — what Enter, Esc and Ctrl+C do while Vis works, and what happens to queued messages.
-- [Managing sessions](sessions.md) — find, fork and organize sessions with the keys on this page.
+- [Sessions](sessions.md) — what Enter, Esc and Ctrl+C do while Vis works, and how to find, fork and organize sessions with the keys on this page.
 - [Getting started](index.md#in-the-terminal) — start Vis in your terminal and send a first task.
 - [Reporting a bug](reporting-bugs.md) — report a shortcut that does not work in your terminal, with details that let someone reproduce it.

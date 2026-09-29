@@ -145,7 +145,7 @@ used to replay a session. It contains conversation and tool data, is not a
 diagnostic log, and is not covered by log cleanup. Configuration, credentials and
 session databases also stay outside the log tree.
 
-Use a reviewed [session export](exporting-sessions.md) when a bug needs transcript
+Use a reviewed [session export](sessions.md#export-a-session) when a bug needs transcript
 context. Do not share raw event journals, databases or credential files.
 
 ## See also

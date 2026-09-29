@@ -8,7 +8,7 @@ iPad or Android device.
   <a href="#install">Install</a>
   <a href="#first-session">First session</a>
   <a href="#connecting-the-companion-app">Desktop and mobile</a>
-  <a href="sessions.md">Managing sessions</a>
+  <a href="sessions.md">Sessions</a>
   <a href="#learn-more">All guides</a>
 </nav>
 
@@ -356,7 +356,7 @@ Activities show actions and their results in the conversation. Vis also writes
 short notes as it works, such as its first step, the change it is about to make
 or what a check found. Use [desktop and mobile apps](#connecting-the-companion-app)
 to follow the same session from another device. You can send a follow-up or stop
-a task while it runs. See [Controlling a session](queue-and-cancel.md).
+a task while it runs. See [Control a running session](sessions.md#control-a-running-session).
 
 Vis combines the steps between two notes into one Activity. A turn then shows its notes with the
 work between them, and the answer comes last. Each Activity counts its steps, such as
@@ -374,7 +374,7 @@ completed work to make room for the next task. See
 [How Vis manages context](token-optimization.md).
 
 To find an earlier session, fork one to try another approach or file sessions into
-groups, see [Managing sessions](sessions.md).
+groups, see [Sessions](sessions.md).
 
 ## Updating vis
 
@@ -505,10 +505,8 @@ A value `<= 0` disables an eviction threshold.
 - [Configuration](configuration.md) — providers, models and project settings.
 - [Project instructions](context-and-prompts.md) — tell the agent how your codebase works.
 - [Skills](skills.md) — reusable task instructions.
-- [Controlling a session](queue-and-cancel.md) — send follow-ups, cancel a task and exit.
-- [Managing sessions](sessions.md) — find, fork and organize saved sessions.
+- [Sessions](sessions.md) — send follow-ups or cancel a task while Vis works, and find, fork, organize or export saved sessions.
 - [Drafts](drafts.md) — try a change in an isolated working copy and review it before approval.
-- [Exporting sessions](exporting-sessions.md) — save or share a session.
 - [Council](council.md) — ask another session for help or a second review.
 - [Reporting a bug](reporting-bugs.md) — report a problem without exposing private data.
 

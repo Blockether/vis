@@ -86,5 +86,5 @@ to the affected part.
 
 ## See also
 
-- [Exporting sessions](exporting-sessions.md) — create a transcript export.
+- [Sessions](sessions.md#export-a-session) — create a transcript export.
 - [Configuration](configuration.md) — identify relevant settings.
