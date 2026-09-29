@@ -157,6 +157,15 @@ def test_report_keeps_exceptions_out_of_reward_mean(tmp_path):
             "checks": {"passed": 1, "total": 2},
         }
     }
+    assert report["usage_totals"] == {
+        "model_attempts": 1,
+        "input_tokens": 100,
+        "cached_input_tokens": 20,
+        "output_tokens": 30,
+        "unparsed_output_tokens_estimate": 0,
+        "estimated_metered_api_cost_usd": 0.04,
+        "agent_hours": 9 / 3600,
+    }
     assert "private" not in json.dumps(report)
 
 

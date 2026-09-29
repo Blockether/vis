@@ -301,6 +301,33 @@ def task_outcome(trial: dict) -> str:
     return "failed_tests"
 
 
+def usage_totals(trials: list[dict]) -> dict:
+    """Sum recorded usage, unparsed-output estimates and agent time over model attempts."""
+    attempts = [trial for trial in trials if trial["model_attempt"]]
+
+    def total(values) -> float:
+        return sum(
+            value
+            for value in values
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        )
+
+    return {
+        "model_attempts": len(attempts),
+        "input_tokens": total(trial["tokens"]["input"] for trial in attempts),
+        "cached_input_tokens": total(trial["tokens"]["cached"] for trial in attempts),
+        "output_tokens": total(trial["tokens"]["output"] for trial in attempts),
+        "unparsed_output_tokens_estimate": total(
+            (trial["trace"] or {}).get("failed_call_output_tokens_estimate")
+            for trial in attempts
+        ),
+        "estimated_metered_api_cost_usd": total(
+            trial["estimated_metered_api_cost_usd"] for trial in attempts
+        ),
+        "agent_hours": total(trial["agent_seconds"] for trial in attempts) / 3600,
+    }
+
+
 def make_report(jobs_dir: Path, dataset_dir: Path) -> dict:
     root = jobs_dir.parent
     trials = [
@@ -370,6 +397,7 @@ def make_report(jobs_dir: Path, dataset_dir: Path) -> dict:
             "task_pass_rate": len(solved) / len(scored) if scored else None,
             "task_outcomes": dict(sorted(outcomes.items())),
             "unscored_model_tasks": sorted(model_tasks - set(scored)),
+            "usage_totals": usage_totals(trials),
             "repeated_final_errors": repeated_errors,
             "trials": trials,
         }
