@@ -112,6 +112,10 @@
    :section "Concepts"}
   {:pages
    [{:blurb
+     "Find the keys to send, start a new line, run commands and edit a message, and set up Shift+Enter in your terminal."
+     :page "keyboard-shortcuts"
+     :title "Keyboard shortcuts"}
+    {:blurb
      "Limit file access, environment variables and network connections for commands Vis runs."
      :page "jail"
      :title "Process jail and network policy"}

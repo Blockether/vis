@@ -1,0 +1,123 @@
+# Keyboard shortcuts
+
+Use these keyboard shortcuts, also called keybindings, in the Vis terminal app to send
+a message, start a new line, run commands, move through a session and edit what you
+type.
+
+To see the most common shortcuts while you work, press **Ctrl+X h** in Vis.
+
+## When to use
+
+- **Shift+Enter sends your message instead of starting a new line.** Your terminal
+  needs a setting, or you need another key. See [New lines in your
+  terminal](#new-lines-in-your-terminal).
+- **You want a command but do not know its key.** Press **Ctrl+X p** and type part of
+  its name, or look it up in [Run a command](#run-a-command).
+- **You want to read an earlier part of a long session.** Use the keys in [Move
+  through a session](#move-through-a-session) to scroll, jump and fold.
+- **You want to know what cancelling or quitting does to your queued messages.** Read
+  [Controlling a session](queue-and-cancel.md) instead.
+
+## Send a message or start a new line
+
+| Keys | What they do |
+|---|---|
+| Enter | Send the message, or queue it while Vis is working |
+| Shift+Enter or Alt+Enter | Start a new line |
+
+### New lines in your terminal
+
+Ghostty, kitty, iTerm2, WezTerm, Alacritty, foot, xterm, Konsole and Windows
+Terminal, also with WSL, report Shift+Enter without extra setup. In Windows
+Terminal, Alt+Enter switches to full screen, so use Shift+Enter there.
+
+Other terminals need a setting or another key. These are limits of the terminal,
+not something Vis can change:
+
+- **GNOME Terminal and other VTE-based terminals:** Shift+Enter sends the same code
+  as Enter, so use Alt+Enter.
+- **Terminal on macOS:** turn on **Use Option as Meta key** in **Settings** >
+  **Profiles** > **Keyboard**, then use Option+Enter.
+- **tmux:** add `set -g extended-keys on` to `~/.tmux.conf`.
+- **Windows Terminal over SSH:** if Vis runs on a computer that you connect to with
+  `ssh`, open **Settings**, select **Open JSON file** and add this entry to the
+  `actions` list:
+
+  ```json
+  { "command": { "action": "sendInput", "input": "\u001b[13;2u" }, "keys": "shift+enter" }
+  ```
+
+## Run a command
+
+Most commands use **Ctrl+X** and a letter: press **Ctrl+X**, then the letter. After
+**Ctrl+X**, Vis shows the most common choices.
+
+| Keys | What they do |
+|---|---|
+| Ctrl+X p | Open the command palette with every command; type to filter |
+| Ctrl+X h | Show or hide the keyboard shortcuts |
+| Ctrl+X n | Start a new session |
+| Ctrl+X s | Switch to another session |
+| Ctrl+X w | Open **Projects**, the list of saved sessions |
+| Ctrl+X o | Open **Providers** to add a provider and sign in |
+| Ctrl+X c | Choose a model from a searchable list |
+| Ctrl+X m | Switch to the next model |
+| Ctrl+X r | Change the reasoning effort |
+| Ctrl+X l | Change the answer length |
+| Ctrl+X f | Search in the session |
+| Ctrl+X a | Attach a file |
+| Ctrl+X v | Start or stop a voice recording |
+| Ctrl+X u | Show session metrics: context health, totals and cache |
+
+## Cancel or quit
+
+| Keys | What they do |
+|---|---|
+| Esc or Ctrl+G | Cancel the running turn, close a dialog or clear your draft |
+| Ctrl+C | Clear your draft, cancel the running turn or quit Vis |
+
+[Controlling a session](queue-and-cancel.md) explains which of these happens when,
+and what happens to your queued messages.
+
+## Move through a session
+
+| Keys | What they do |
+|---|---|
+| Alt+>, Ctrl+X j, Ctrl+L or Ctrl+End | Jump to the latest message |
+| Alt+< | Jump to the start of the session |
+| Ctrl+V or Page Down | Scroll down one screen |
+| Alt+V or Page Up | Scroll up one screen |
+| Ctrl+X Tab or Ctrl+X Shift+Tab | Fold or unfold every foldable block, such as thinking and tool calls |
+| Ctrl+X z | Label every fold, then press a label's letter to fold or unfold it |
+
+You can also click **↓ messages** when it appears to jump to the latest message.
+
+On macOS, Alt is the Option key. Many macOS terminals need a setting before Option
+works as Alt, such as **Use Option as Meta key** in Terminal.
+
+## Edit your message
+
+| Keys | What they do |
+|---|---|
+| Ctrl+A | Go to the start of the line |
+| Ctrl+E | Go to the end of the line |
+| Ctrl+B | Move back one character |
+| Ctrl+F | Move forward one character |
+| Ctrl+P | Go to the previous line |
+| Ctrl+N | Go to the next line |
+| Alt+← or Alt+→ | Move one word back or forward, where your terminal supports it |
+| ↑ or ↓ | Move the cursor up or down, or step through earlier messages |
+| Ctrl+T | Swap two characters next to the cursor |
+| Ctrl+K | Delete to the end of the line |
+| Ctrl+U | Delete to the start of the line |
+| Ctrl+W | Delete the word before the cursor |
+| Ctrl+D | Delete the character after the cursor |
+
+To copy and paste, use your terminal: select text to copy it, then paste with your
+terminal's paste key.
+
+## See also
+
+- [Controlling a session](queue-and-cancel.md) — what Enter, Esc and Ctrl+C do while Vis works, and what happens to queued messages.
+- [Getting started](index.md#in-the-terminal) — start Vis in your terminal and send a first task.
+- [Reporting a bug](reporting-bugs.md) — report a shortcut that does not work in your terminal, with details that let someone reproduce it.

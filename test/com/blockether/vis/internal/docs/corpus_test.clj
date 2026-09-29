@@ -187,7 +187,8 @@ Whole skill body."}
                               ["graalvm" "jvm-native-image"] ["password" "human-input"]
                               ["llm provider" "provider-extensions"] ["workflow" "skills"]
                               ["stop" "queue-and-cancel"] ["team" "council"] ["embed" "python-sdk"]
-                              ["remote" "gateway-service"]]]
+                              ["remote" "gateway-service"] ["keybindings" "keyboard-shortcuts"]
+                              ["new line" "keyboard-shortcuts"]]]
           (expect (some #{page} (map :name (dc/search es words))) (str words " -> " page))))))
 
 (defdescribe experimental-guide-discovery-test
