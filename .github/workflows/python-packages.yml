@@ -17,7 +17,59 @@ permissions:
   contents: read
 
 jobs:
+  # Hosted macOS legs are most of this workflow's runner time. A main push whose SDK
+  # inputs already passed every interpreter that UTC day keeps only the leg that lints,
+  # uploads the tested wheel and feeds the engine job; every other run tests them all.
+  interpreters:
+    name: Select interpreters
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      key: ${{ steps.inputs.outputs.key }}
+      exclude: ${{ steps.select.outputs.exclude }}
+      record: ${{ steps.select.outputs.record }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Hash the SDK inputs
+        id: inputs
+        run: |
+          set -euo pipefail
+          # Paths that the wheel build and its installed tests read.
+          tree="$(git ls-tree HEAD -- packages resources test/resources bin README.md VIS_VERSION \
+            .github/workflows/python-packages.yml | git hash-object --stdin)"
+          echo "key=python-sdk-verified-$(date -u +%F)-$tree" >> "$GITHUB_OUTPUT"
+      - name: Look up SDK inputs that passed every interpreter
+        id: verified
+        uses: actions/cache/restore@v6
+        with:
+          path: .python-sdk-verified
+          key: ${{ steps.inputs.outputs.key }}
+          lookup-only: true
+      - name: Select interpreters
+        id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          INPUT_REF: ${{ inputs.ref }}
+          VERIFIED: ${{ steps.verified.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          # Releases, publication, pull requests and manual runs test every interpreter.
+          exclude='[]'
+          if [[ "$EVENT" == push && "$REF" == refs/heads/main && -z "$INPUT_REF" && "$VERIFIED" == true ]]; then
+            exclude='[{"os":"macos-26"},{"python":"3.12"},{"python":"3.13"},{"python":"3.14"},{"python":"pypy3.11"}]'
+          fi
+          record=false
+          if [[ "$REF" == refs/heads/main && "$VERIFIED" != true ]]; then
+            record=true
+          fi
+          echo "exclude=$exclude" >> "$GITHUB_OUTPUT"
+          echo "record=$record" >> "$GITHUB_OUTPUT"
+
   distribution:
+    needs: interpreters
     name: ${{ matrix.os }} / ${{ matrix.python }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
@@ -26,6 +78,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-26]
         python: ['3.11', '3.12', '3.13', '3.14', 'pypy3.11']
+        exclude: ${{ fromJSON(needs.interpreters.outputs.exclude) }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -71,6 +124,26 @@ jobs:
           name: python-sdk-distributions
           path: dist/*
           if-no-files-found: error
+
+  # Release recovery requires every job of the release run to pass, so this job runs
+  # whenever the full matrix ran; only its steps depend on the missing marker.
+  record:
+    needs: [interpreters, distribution]
+    if: needs.interpreters.outputs.exclude == '[]'
+    name: Record verified SDK inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Write the verification marker
+        if: needs.interpreters.outputs.record == 'true'
+        env:
+          KEY: ${{ needs.interpreters.outputs.key }}
+        run: printf '%s\n' "$KEY" > .python-sdk-verified
+      - uses: actions/cache/save@v6
+        if: needs.interpreters.outputs.record == 'true'
+        with:
+          path: .python-sdk-verified
+          key: ${{ needs.interpreters.outputs.key }}
 
   engine:
     needs: distribution

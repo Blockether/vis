@@ -3628,7 +3628,7 @@
 
       (expect (contains? (get-in workflow ["on" "workflow_call" "inputs"]) "ref"))
       (doseq [job-id
-              ["distribution" "engine"]
+              ["interpreters" "distribution" "engine"]
 
               :let [steps
                     (get-in jobs [job-id "steps"])
@@ -3660,6 +3660,176 @@
         (expect (= [nil] (mapv #(get % "if") installed)))
         (expect (= ["3.11" "3.12" "3.13" "3.14" "pypy3.11"]
                    (get-in jobs ["distribution" "strategy" "matrix" "python"])))))))
+
+(defdescribe
+  python-interpreter-selection-test
+  ;; Hosted macOS legs were most of the Python SDK runner time, and every main push ran
+  ;; them even when no SDK input had changed since they last passed.
+  (it
+    "hashes only the paths that the Python SDK build and its installed tests read"
+    (let [script
+          (some #(when (= "inputs" (get % "id")) (get % "run"))
+                (get-in (yaml/load (slurp ".github/workflows/python-packages.yml"))
+                        ["jobs" "interpreters" "steps"]))
+
+          root
+          (.toFile (Files/createTempDirectory "vis-python-inputs-" (make-array FileAttribute 0)))
+
+          repo
+          (io/file root "repo")
+
+          outputs
+          (io/file root "outputs")
+
+          inputs
+          ["packages/vis-agent/src/blockether/vis/extension.py" "resources/vis-docs/index.md"
+           "test/resources/mcp/fake_mcp_server.py" "bin/stage-release-bundle" "README.md"
+           "VIS_VERSION" ".github/workflows/python-packages.yml"]
+
+          unrelated
+          ["src/com/blockether/vis/core.clj" "apps/vis-companion/src/App.tsx"
+           "test/com/blockether/vis/core_test.clj" ".github/workflows/ci.yml" "deps.edn"]
+
+          commit!
+          (fn [paths]
+            (doseq [path paths]
+              (io/make-parents (io/file repo path))
+              (spit (io/file repo path) (str path " " (System/nanoTime) "\n")))
+            (git! repo "add" "--all")
+            (git! repo
+                  "-c" "user.name=Vis Test"
+                  "-c" "user.email=vis@example.com"
+                  "commit" "--quiet"
+                  "-m" "change"))
+
+          tree
+          (fn []
+            (spit outputs "")
+            (let [{:keys [exit output]}
+                  (run-bash ["bash" "-c" (str "cd \"$TEST_REPO\"\n" script)]
+                            {"TEST_REPO" (.getAbsolutePath ^File repo)
+                             "GITHUB_OUTPUT" (.getAbsolutePath ^File outputs)})
+
+                  key
+                  (str/trim (slurp outputs))]
+
+              (expect (zero? (long exit)) output)
+              (expect (re-matches #"key=python-sdk-verified-\d{4}-\d{2}-\d{2}-[0-9a-f]{40,64}" key)
+                      key)
+              ;; The UTC day renews the key daily; the last part identifies the inputs.
+              (last (str/split key #"-"))))]
+
+      (try (.mkdirs repo)
+           (git! repo "init" "--quiet" "--initial-branch=main")
+           (commit! (concat inputs unrelated))
+           (let [initial (tree)]
+             (doseq [path unrelated]
+               (commit! [path])
+               (expect (= initial (tree)) path))
+             (reduce (fn [previous path]
+                       (commit! [path])
+                       (let [current (tree)]
+                         (expect (not= previous current) path)
+                         current))
+                     initial
+                     inputs))
+           (finally (delete-tree! root)))))
+  (it
+    "keeps one leg only for main pushes whose inputs already passed every interpreter"
+    (let [workflow
+          (yaml/load (slurp ".github/workflows/python-packages.yml"))
+
+          script
+          (some #(when (= "select" (get % "id")) (get % "run"))
+                (get-in workflow ["jobs" "interpreters" "steps"]))
+
+          matrix
+          (get-in workflow ["jobs" "distribution" "strategy" "matrix"])
+
+          legs
+          (fn [exclude]
+            (for [os
+                  (get matrix "os")
+
+                  python
+                  (get matrix "python")
+
+                  :let [leg
+                        {"os" os "python" python}]
+                  :when (not-any? #(= % (select-keys leg (keys %))) exclude)]
+
+              leg))
+
+          sha
+          (apply str (repeat 40 "a"))]
+
+      (expect (= 10 (count (legs []))))
+      (doseq [[overrides reduced? record?]
+              [[{} true false] [{"VERIFIED" "false"} false true]
+               ;; The cache service returned no answer.
+               [{"VERIFIED" ""} false true] [{"REF" "refs/tags/v1.2.3"} false false]
+               [{"REF" "refs/tags/v1.2.3" "VERIFIED" "false"} false false]
+               [{"EVENT" "workflow_run" "INPUT_REF" sha} false false]
+               [{"EVENT" "workflow_run" "INPUT_REF" sha "VERIFIED" "false"} false true]
+               [{"EVENT" "workflow_dispatch"} false false] [{"INPUT_REF" sha} false false]
+               [{"EVENT" "pull_request" "REF" "refs/pull/1/merge"} false false]]]
+        (let [dir (.toFile (Files/createTempDirectory "vis-python-select-"
+                                                      (make-array FileAttribute 0)))
+              outputs (io/file dir "outputs")]
+
+          (try (spit outputs "")
+               (let [{:keys [exit output]} (run-bash ["bash" "-c" script]
+                                                     (merge {"EVENT" "push"
+                                                             "REF" "refs/heads/main"
+                                                             "INPUT_REF" ""
+                                                             "VERIFIED" "true"
+                                                             "GITHUB_OUTPUT" (.getAbsolutePath
+                                                                               outputs)}
+                                                            overrides))
+                     selected
+                     (into {} (map #(vec (str/split % #"=" 2))) (str/split-lines (slurp outputs)))]
+
+                 (expect (zero? (long exit)) output)
+                 (expect (= (if reduced? [{"os" "ubuntu-latest" "python" "3.11"}] (legs []))
+                            (legs (yaml/load (get selected "exclude"))))
+                         (pr-str overrides))
+                 (expect (= (str record?) (get selected "record")) (pr-str overrides)))
+               (finally (delete-tree! dir)))))))
+  (it
+    "records inputs after every interpreter passes and runs in every full release run"
+    (let [jobs
+          (get (yaml/load (slurp ".github/workflows/python-packages.yml")) "jobs")
+
+          lookup
+          (some #(when (= "verified" (get % "id")) %) (get-in jobs ["interpreters" "steps"]))
+
+          record
+          (get jobs "record")
+
+          save
+          (some #(when (str/starts-with? (get % "uses" "") "actions/cache/save@") %)
+                (get record "steps"))
+
+          upload
+          (some #(when (str/starts-with? (get % "uses" "") "actions/upload-artifact@") %)
+                (get-in jobs ["distribution" "steps"]))]
+
+      (expect (= "interpreters" (get-in jobs ["distribution" "needs"])))
+      (expect (= "${{ fromJSON(needs.interpreters.outputs.exclude) }}"
+                 (get-in jobs ["distribution" "strategy" "matrix" "exclude"])))
+      ;; The engine job installs the wheel that the one remaining leg uploads.
+      (expect (= "matrix.os == 'ubuntu-latest' && matrix.python == '3.11'" (get upload "if")))
+      (expect (str/starts-with? (get lookup "uses" "") "actions/cache/restore@"))
+      (expect (= true (get-in lookup ["with" "lookup-only"])))
+      (expect (= "${{ steps.inputs.outputs.key }}" (get-in lookup ["with" "key"])))
+      ;; The cache version covers the path: a lookup finds only markers saved with it.
+      (expect (= (get-in lookup ["with" "path"]) (get-in save ["with" "path"])))
+      (expect (= "${{ needs.interpreters.outputs.key }}" (get-in save ["with" "key"])))
+      (expect (= ["interpreters" "distribution"] (get record "needs")))
+      ;; bin/verify-release-assets.py requires every job of the original release run to pass.
+      (expect (= "needs.interpreters.outputs.exclude == '[]'" (get record "if")))
+      (expect (= ["needs.interpreters.outputs.record == 'true'"]
+                 (distinct (map #(get % "if") (get record "steps"))))))))
 
 (defdescribe
   python-existing-publication-test
