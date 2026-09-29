@@ -34,31 +34,32 @@
     {:workspace-id (or (:workspace-id ctx) (:active-tab-id db))
      :session-id (or (:session-id ctx) (get-in db [:session :id]))}))
 
-(defn- voice-recording-failed-signal
+(defn- voice-recording-failed-data
   [throwable message]
   (let [data (ex-data throwable)]
-    {:level :error
-     :id ::voice-recording-failed
-     :data (cond-> {:error message :type (:type data)}
-             (:backend data)
-             (assoc :backend (:backend data))
+    (cond-> {:error message :type (:type data)}
+      (:backend data)
+      (assoc :backend (:backend data))
 
-             (seq (:attempts data))
-             (assoc :attempts (:attempts data)))}))
+      (:java-sound-error data)
+      (assoc :java-sound-error (:java-sound-error data))
+
+      (seq (:attempts data))
+      (assoc :attempts (:attempts data)))))
 
 (defn- log-voice-recording-failed!
   [throwable message]
-  (tel/log! (voice-recording-failed-signal throwable message) message))
-
-(defn- voice-asr-failed-signal
-  [audio-file throwable message]
-  {:level :error
-   :id ::voice-asr-failed
-   :data {:audio-file (str audio-file) :error message :type (:type (ex-data throwable))}})
+  (tel/log! {:level :error
+             :id ::voice-recording-failed
+             :data (voice-recording-failed-data throwable message)}
+            message))
 
 (defn- log-voice-asr-failed!
   [audio-file throwable message]
-  (tel/log! (voice-asr-failed-signal audio-file throwable message) message))
+  (tel/log! {:level :error
+             :id ::voice-asr-failed
+             :data {:audio-file (str audio-file) :error message :type (:type (ex-data throwable))}}
+            message))
 
 (defn- recording-failure-text
   "What the human is told when voice fails. An engine that named a REMEDIATION -

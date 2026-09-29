@@ -3,7 +3,8 @@
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.voice-input :as voice-input]
             [com.blockether.vis.tui.voice-recorder :as recorder]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]]
+            [taoensso.telemere :as tel]))
 
 (defn- await-event
   [events pred]
@@ -133,40 +134,75 @@
           (expect (some #(and (= :notify (:op %))
                               (str/includes? (str (:text %)) "session is ready"))
                         @events)))))
-  ;; Regression, issue #172: microphone initialization failures only reached a transient toast,
-  ;; leaving no persistent evidence that Java Sound could not see WSL2's audio server.
-  (it
-    "logs recorder initialization failures and preserves their remediation"
-    (let [events
-          (atom [])
+  ;; Regression, issues #172 and #293: a failed microphone must leave a useful
+  ;; notification and diagnostic instead of throwing from its own logger.
+  (it "logs recorder initialization failures and preserves their remediation"
+      (let [events (atom [])]
+        (reset-voice!)
+        (with-redefs [recorder/start! (fn []
+                                        (throw (ex-info "no input device"
+                                                        {:type :voice/no-recorder
+                                                         :backend :java-sound
+                                                         :remediation "Grant microphone access."})))
+                      vis/publish-channel-event! (fn [_ event]
+                                                   (swap! events conj event))]
 
-          logs
-          (atom [])]
-
-      (reset-voice!)
-      (with-redefs-fn {(ns-resolve 'com.blockether.vis.tui.voice-input 'log-voice-recording-failed!)
-                       (fn [throwable message]
-                         (swap! logs conj {:throwable throwable :message message}))}
-        (fn []
-          (with-redefs [recorder/start!
-                        (fn []
-                          (throw (ex-info "no input device"
-                                          {:type :voice/no-recorder
-                                           :backend :java-sound
-                                           :remediation "Grant microphone access."})))
-
-                        vis/publish-channel-event!
-                        (fn [_ event]
-                          (swap! events conj event))]
-
-            (voice-input/start-recording! {:session-id "session-1"})
+          (let [signal (tel/with-signal true
+                                        (voice-input/start-recording! {:session-id "session-1"}))]
             (expect (nil? (:recorder @voice-input/state)))
-            (expect (= :java-sound
-                       (-> @logs
-                           first
-                           :throwable
-                           ex-data
-                           :backend)))
-            (expect (str/includes? (:message (first @logs)) "Grant microphone access."))
-            (expect (some #(str/includes? (str (:text %)) "Grant microphone access.")
-                          @events))))))))
+            (expect (= :com.blockether.vis.tui.voice-input/voice-recording-failed (:id signal)))
+            (expect (= :error (:level signal)))
+            (expect (= :java-sound (get-in signal [:data :backend])))
+            (expect (str/includes? (get-in signal [:data :error]) "Grant microphone access."))
+            (expect (some #(and (= :notify (:op %))
+                                (str/includes? (str (:text %)) "Grant microphone access."))
+                          @events))))))
+  ;; Regression, issue #293: retain both failed capture backends in the log.
+  (it "keeps Java Sound and external failures in the recorder diagnostic"
+      (let [events
+            (atom [])
+
+            attempts
+            [{:backend :sox :error "no device"} {:backend :ffmpeg :error "permission denied"}]]
+
+        (reset-voice!)
+        (with-redefs [recorder/start!
+                      (fn []
+                        (throw (ex-info "No microphone capture backend could start"
+                                        {:type :voice/no-recorder
+                                         :backend :auto
+                                         :java-sound-error "no capture line"
+                                         :attempts attempts
+                                         :remediation "Allow microphone access."})))
+
+                      vis/publish-channel-event!
+                      (fn [_ event]
+                        (swap! events conj event))]
+
+          (let [signal (tel/with-signal true
+                                        (voice-input/start-recording! {:session-id "session-1"}))]
+            (expect (= "no capture line" (get-in signal [:data :java-sound-error])))
+            (expect (= attempts (get-in signal [:data :attempts])))
+            (expect (some #(and (= :notify (:op %))
+                                (str/includes? (str (:text %)) "Allow microphone access."))
+                          @events))))))
+  ;; Regression, issue #293: transcription errors used the same invalid log call.
+  (it "logs transcription failures with their audio context"
+      (let [audio-file
+            "/tmp/failed-voice.wav"
+
+            failure
+            (ex-info "gateway unavailable" {:type :voice/asr})
+
+            signal
+            (tel/with-signal true
+                             ((ns-resolve 'com.blockether.vis.tui.voice-input
+                                          'log-voice-asr-failed!)
+                               audio-file
+                               failure
+                               "gateway unavailable"))]
+
+        (expect (= :com.blockether.vis.tui.voice-input/voice-asr-failed (:id signal)))
+        (expect (= :error (:level signal)))
+        (expect (= audio-file (get-in signal [:data :audio-file])))
+        (expect (= :voice/asr (get-in signal [:data :type]))))))

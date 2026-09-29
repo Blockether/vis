@@ -1,10 +1,10 @@
 (ns com.blockether.vis.tui.voice-recorder
   "Push-to-talk WAV capture.
 
-   Java Sound is the primary backend. Linux falls back to the native PipeWire
-   (`pw-record`) and PulseAudio (`parec`) clients because WSL2 exposes its Windows
-   microphone through WSLg sockets without presenting an ALSA capture device to
-   OpenJDK. Every backend writes mono signed 16-bit PCM at 16 kHz."
+   Java Sound is the primary backend. Linux falls back to PipeWire (`pw-record`)
+   and PulseAudio (`parec`) for WSLg microphones; macOS falls back to SoX or
+   FFmpeg when Java Sound cannot open a capture line. Every backend writes mono
+   signed 16-bit PCM at 16 kHz."
   (:require [clojure.java.io :as io]
             [clojure.string :as str])
   (:import [java.io File]
@@ -47,11 +47,19 @@
   []
   (str/includes? (str/lower-case (or (System/getProperty "os.name") "")) "linux"))
 
+(defn- macos-host? [] (str/includes? (str/lower-case (or (System/getProperty "os.name") "")) "mac"))
+
 (defn- recorder-commands
   [^File file]
   (let [path (.getAbsolutePath file)]
-    [[:pipewire ["pw-record" "--format=s16" "--rate=16000" "--channels=1" path]]
-     [:pulse ["parec" "--file-format=wav" "--format=s16le" "--rate=16000" "--channels=1" path]]]))
+    (if (macos-host?)
+      [[:sox ["sox" "-q" "-d" "-r" "16000" "-c" "1" "-b" "16" "-e" "signed-integer" path]]
+       [:ffmpeg
+        ["ffmpeg" "-nostdin" "-f" "avfoundation" "-i" ":default" "-ar" "16000" "-ac" "1" "-c:a"
+         "pcm_s16le" "-f" "wav" path]]]
+      [[:pipewire ["pw-record" "--format=s16" "--rate=16000" "--channels=1" path]]
+       [:pulse
+        ["parec" "--file-format=wav" "--format=s16le" "--rate=16000" "--channels=1" path]]])))
 
 (defn- error-text
   [^File file]
@@ -102,16 +110,22 @@
         (if-let [recorder (:recorder result)]
           recorder
           (recur more (conj failures (:failure result)))))
-      (throw (ex-info "PipeWire/Pulse microphone capture is unavailable"
-                      {:type ::no-external-recorder
-                       :attempts failures
-                       :remediation
-                       (str "Install PipeWire tools (`pw-record`) or PulseAudio tools (`parec`), "
-                            "then verify that the WSLg audio server is reachable.")})))))
+      (throw (ex-info
+               (if (macos-host?)
+                 "SoX/FFmpeg microphone capture is unavailable"
+                 "PipeWire/Pulse microphone capture is unavailable")
+               {:type ::no-external-recorder
+                :attempts failures
+                :remediation
+                (if (macos-host?)
+                  (str "Install SoX (`sox`) or FFmpeg (`ffmpeg`), then allow "
+                       "microphone access in System Settings > Privacy & Security > Microphone.")
+                  (str "Install PipeWire tools (`pw-record`) or PulseAudio tools (`parec`), "
+                       "then verify that the WSLg audio server is reachable."))})))))
 
 (defn start!
   "Start recording microphone audio to a WAV file. Java Sound is preferred;
-   Linux automatically falls back to PipeWire, then PulseAudio. Returns a
+   Linux falls back to PipeWire/PulseAudio and macOS to SoX/FFmpeg. Returns a
    recorder map; stop with [[stop!]]."
   ([] (start! (default-output-file)))
   ([path]
@@ -119,7 +133,7 @@
      (try (start-java-sound! file)
           (catch InterruptedException t (.interrupt (Thread/currentThread)) (throw t))
           (catch Throwable java-sound-error
-            (if-not (linux-host?)
+            (if-not (or (linux-host?) (macos-host?))
               (throw java-sound-error)
               (try (start-external! file)
                    (catch InterruptedException t (.interrupt (Thread/currentThread)) (throw t))
@@ -159,7 +173,7 @@
     :java-sound
     (stop-java-sound! recorder)
 
-    (:pipewire :pulse)
+    (:pipewire :pulse :sox :ffmpeg)
     (stop-external! recorder)
 
     (throw (ex-info "Unknown microphone recorder backend" {:backend backend}))))
