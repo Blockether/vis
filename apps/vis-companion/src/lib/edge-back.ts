@@ -327,6 +327,16 @@ export function dismissTopLayer(): boolean {
 }
 
 /**
+ * Whether a layer stands over the application right now: one standing here, or a
+ * modal surface that takes the whole screen (`aria-modal`) without being one. A key
+ * the screen underneath would answer, such as Escape stopping the running turn,
+ * belongs to that layer while it is up.
+ */
+export function isLayerUp(doc: Document = document): boolean {
+  return layers.length > 0 || doc.querySelector('[aria-modal="true"]') !== null;
+}
+
+/**
  * Watch the pane for a swipe in from its leading edge, drag it with the finger,
  * and leave the session when the stroke completes. Answers the refs to PUT ON
  * THOSE PANES.

@@ -82,6 +82,7 @@ import { sheetDismissed } from '../lib/image-file';
 import { AttachImageContext } from '../lib/attach-image';
 import type { GatewayClient } from '../lib/gateway';
 import { holdKeyboardAcrossSheet, isEnterSendKeyboard, keepKeyboard } from '../lib/keyboard';
+import { isLayerUp } from '../lib/edge-back';
 import {
   GatewayError,
   mergeQueueBacklog,
@@ -4043,15 +4044,29 @@ export function SessionScreen({
     });
   }
 
+  // ESCAPE STOPS THE TURN ONLY WHEN NOTHING ABOVE THE SCREEN WANTS IT. Reported: Escape
+  // in the session search, opened while a turn ran, stopped the turn and left the dialog
+  // open. A dialog, a sheet or an opened artifact owns the key while it is up, and so
+  // does a control that already answered it, such as a picker or the composer's menus.
+  // The layer is read in the capture phase, as the key arrives, because a dialog's own
+  // listener can take the dialog down before this one runs.
   useEffect(() => {
     if (!running) return;
+    let forLayer: KeyboardEvent | null = null;
+    const onKeyArrives = (event: KeyboardEvent) => {
+      forLayer = event.key === 'Escape' && isLayerUp() ? event : null;
+    };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || event.defaultPrevented || event === forLayer) return;
       event.preventDefault();
       cancelRef.current();
     };
+    window.addEventListener('keydown', onKeyArrives, true);
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyArrives, true);
+      window.removeEventListener('keydown', onKeyDown);
+    };
   }, [running]);
 
   const slashText = prompt.trimStart();
