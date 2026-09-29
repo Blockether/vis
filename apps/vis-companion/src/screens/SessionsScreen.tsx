@@ -1310,6 +1310,51 @@ export function SessionsScreen({
       : null;
   }, [inScope, machines, scope]);
 
+  // ROWS SKIP LAYOUT OFF SCREEN ONLY AFTER ONE FULL LAYOUT, AND ONLY WHERE THE ENGINE
+  // DRAWS AHEAD (see `SessionRow`). Every row records its real height on its first layout,
+  // so `data-rows-settled` can turn on `content-visibility:auto` without a scroll restore
+  // measuring placeholders. Chromium keeps about a screen of rows drawn past this
+  // scroller's edges. WebKit draws only the rows inside it: on an iOS 18 simulator, fast
+  // flings then showed more frames with rows not yet drawn at the leading edge, for 5-10 ms
+  // saved on the way back. So the flag is tried on a row half a screen below the fold and
+  // comes off again when that row is still skipped. A list too short to hold such a row
+  // waits for more rows: another machine's sessions or an opened group. The flag is DOM
+  // state, so it renders nothing.
+  const isListShown = sessions !== null;
+  useEffect(() => {
+    const viewport = listRef.current;
+    if (!isListShown || !viewport) return;
+    let frame = 0;
+    const afterTwoFrames = (then: () => void) => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        frame = requestAnimationFrame(then);
+      });
+    };
+    const settle = () => {
+      const edge = viewport.getBoundingClientRect().bottom + viewport.clientHeight / 2;
+      const probe = Array.from(viewport.querySelectorAll<HTMLElement>('[data-session-row]')).find(
+        (row) => row.getBoundingClientRect().top >= edge,
+      );
+      if (!probe) return;
+      rowsAdded.disconnect();
+      viewport.setAttribute('data-rows-settled', '');
+      afterTwoFrames(() => {
+        if (!probe.firstElementChild?.checkVisibility?.({ contentVisibilityAuto: true })) {
+          viewport.removeAttribute('data-rows-settled');
+        }
+      });
+    };
+    const rowsAdded = new MutationObserver(() => afterTwoFrames(settle));
+    rowsAdded.observe(viewport, { childList: true, subtree: true });
+    afterTwoFrames(settle);
+    return () => {
+      rowsAdded.disconnect();
+      cancelAnimationFrame(frame);
+      viewport.removeAttribute('data-rows-settled');
+    };
+  }, [isListShown]);
+
   // Filtering happens INSIDE each machine: two checkouts of the same repo on two
   // machines are two projects, and a folder name never merges them.
   const filtered = useMemo(() => {

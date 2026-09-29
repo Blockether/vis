@@ -260,6 +260,25 @@ function carryRows(row: HTMLElement, event: DragEvent<HTMLElement>, ids: readonl
   window.setTimeout(() => picture.remove(), 0);
 }
 
+/**
+ * A ROW OUT OF SIGHT SKIPS ITS LAYOUT AND PAINT. Each row's swipe track is a scroller,
+ * and Chromium gave every one of them a compositor layer: with 124 rows it spent about
+ * 95 ms (CPU slowed 4x) sorting those layers in each frame where the list's structure
+ * changed, including the first frames back from a session. `content-visibility:auto`
+ * leaves only the rows near the screen in that work.
+ *
+ * The list turns it on (`data-rows-settled` on its scroller) only where the engine keeps
+ * rows drawn past the scroller's edges, and only after one full layout, so every row
+ * first remembers its real height (`contain-intrinsic-height: auto`) and a
+ * restored scroll position measures true offsets. The fixed heights, below the row's
+ * one-pixel separator, are the touch and mouse rows, stacked or on one line in a wide
+ * list; only a row never drawn uses them. A delete confirmation stays unskipped because
+ * its border reaches one pixel above the row. Drag pictures copy the row into the page
+ * body, outside the list, so they never skip.
+ */
+const OFFSCREEN_ROW_CLASS =
+  '[contain-intrinsic-height:auto_50px] mouse:[contain-intrinsic-height:auto_46px] @3xl:[contain-intrinsic-height:auto_48px] mouse:@3xl:[contain-intrinsic-height:auto_32px] in-data-rows-settled:[content-visibility:auto]';
+
 export const SessionRow = memo(function SessionRow({
   session,
   group,
@@ -301,7 +320,8 @@ export const SessionRow = memo(function SessionRow({
   seenAnswers?: number;
   /** Only project lists support Shift-click selection; other rows still open normally. */
   isSelected?: boolean;
-  onSelectionClick?: (event: MouseEvent<HTMLButtonElement>) => boolean;
+  /** Takes the row's id, so one handler serves every row and memoized rows keep it. */
+  onSelectionClick?: (id: string, event: MouseEvent<HTMLButtonElement>) => boolean;
   /** The current project's selected rows, in their displayed order. */
   dragIds?: readonly string[];
   /**
@@ -522,7 +542,7 @@ export const SessionRow = memo(function SessionRow({
             }
           : undefined
       }
-      className={`${isSelected ? 'bg-accent/15' : isOpen ? 'bg-standing' : ''} ${isCarried ? 'opacity-40' : ''} [&+&]:border-t ${needle ? '[&+&]:border-dialog-hint' : '[&+&]:border-edge'}`}
+      className={`${isSelected ? 'bg-accent/15' : isOpen ? 'bg-standing' : ''} ${isCarried ? 'opacity-40' : ''} [&+&]:border-t ${needle ? '[&+&]:border-dialog-hint' : '[&+&]:border-edge'} ${deletion ? '' : OFFSCREEN_ROW_CLASS}`}
     >
       {/* Rename is direct manipulation: the row stays put and only its title becomes ink
           with a caret. Metadata, status, and disclosure do not blink out around it. */}
@@ -614,7 +634,9 @@ export const SessionRow = memo(function SessionRow({
                 commands.read?.(conn, session);
                 void commands.open(conn, session.id);
               }}
-              onSelectionClick={onSelectionClick}
+              onSelectionClick={
+                onSelectionClick ? (event) => onSelectionClick(session.id, event) : undefined
+              }
             >
               {/* Narrow lists stack metadata under the title. The container, not the
                   viewport, selects the full-width table so desktop sidebars stay readable.

@@ -1350,6 +1350,17 @@ export const ProjectGroup = memo(function ProjectGroup({
     setSelection({ scope: selectionScope, ids: visibleIds.slice(Math.min(from, end), Math.max(from, end) + 1) });
     return true;
   };
+  // `SessionRow` is memoized, and a closure made per row per render re-rendered every row
+  // whenever this list rendered. Rows share one handler for the life of the list, which
+  // runs this render's selection through a ref.
+  const latestSelectionClick = useRef(onSelectionClick);
+  useLayoutEffect(() => {
+    latestSelectionClick.current = onSelectionClick;
+  });
+  const onRowSelectionClick = useCallback(
+    (id: string, event: MouseEvent<HTMLButtonElement>) => latestSelectionClick.current(id, event),
+    [],
+  );
   // Group names edit in their bands; the sheet holds only actions that need a choice.
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
   const [settingsTarget, setSettingsTarget] = useState<SettingsTarget | null>(null);
@@ -1549,7 +1560,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           isOpen={openRow !== null && openRow === sessionRowKey(conn, session.id)}
           seenAnswers={context.readFloors?.get(sessionRowKey(conn, session.id))}
           isSelected={selectedSet.has(session.id)}
-          onSelectionClick={(event) => onSelectionClick(session.id, event)}
+          onSelectionClick={onRowSelectionClick}
           dragIds={selectedSet.has(session.id) ? selectedIds : undefined}
           isDraggable={!isMoving && (session.group_id ? !isGroupRevealing : !isSessionRevealing)}
         />

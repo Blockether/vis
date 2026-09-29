@@ -1,9 +1,11 @@
 import {
   type ComponentProps,
   lazy,
+  memo,
   type ReactNode,
   Suspense,
   useCallback,
+  useDeferredValue,
   useEffect,
   useEffectEvent,
   useMemo,
@@ -233,17 +235,96 @@ export function sidebarRailClass(isUp: boolean): string {
 }
 
 /**
- * THE PHONE'S LIST WHILE A SESSION COVERS IT. `display: none` would discard the
- * list's styles, layout and scroll offset, and the way back would rebuild them for
- * every row before its first frame. Out of the flow with its contents skipped, the
- * list keeps all three for the way back.
+ * THE PHONE'S LIST WHILE ANOTHER SCREEN FILLS THE SHELL. `display: none` would
+ * discard the list's styles, layout and scroll offset, and the way back would
+ * rebuild them for every row before its first frame.
  *
- * The contents are skipped rather than made `invisible`: `visibility` is inherited,
- * so parking and returning would each restyle every row. The empty box waits behind
- * the page, where it takes no taps. An engine without `content-visibility` hides it.
+ * Under a session the list does not change at all: it keeps its place and its
+ * drawing, and the transcript's opaque pane lies over the shell's whole frame above
+ * it. Leaving takes the pane away and uncovers the list as it was, and the edge
+ * swipe drags the pane off exactly this. Moving the list out from under the pane
+ * instead made Chromium rebuild every row's compositor layers on the way back, and
+ * hiding it any other way costs a pass over every row in WebKit, each way:
+ * `content-visibility` drops and rebuilds its rendering, and the inherited
+ * `visibility` and `inert` restyle it. `aria-hidden` keeps it from screen readers.
+ *
+ * The connect and incompatible screens have no background of their own, so behind
+ * them the list's contents are skipped instead. An engine without
+ * `content-visibility` hides it.
  */
 const PARKED_LIST_CLASS =
   'absolute inset-0 -z-10 [content-visibility:hidden] not-supports-[content-visibility:hidden]:invisible';
+const PHONE_PANE_CLASS = 'absolute inset-0 bg-ink';
+const DESK_PANE_CLASS = 'h-full min-h-0 min-w-0 flex-1 bg-ink';
+
+const MemoSessionsScreen = memo(SessionsScreen);
+
+/**
+ * THE LIST'S OWN UPDATE WAITS FOR THE FRAME THAT SHOWS IT. Leaving a session flips
+ * `isVisible` and `openSession`, and the list re-renders every row on them. In the
+ * task that uncovers the list, that pass held back its first frame, and in the one
+ * that starts an edge swipe, the pane under the finger. The rows on screen are
+ * already right, so both props follow as a background render that yields to input,
+ * and every other render of the shell skips the list while its props stand still.
+ */
+function SessionsList(props: ComponentProps<typeof SessionsScreen>) {
+  const isVisible = useDeferredValue(props.isVisible);
+  const openSession = useDeferredValue(props.openSession);
+  return <MemoSessionsScreen {...props} isVisible={isVisible} openSession={openSession} />;
+}
+
+/**
+ * THE TRANSCRIPT YOU LEAVE GOES AFTER THE LIST IS BACK ON THE GLASS. Unmounting it
+ * tears down thousands of nodes with their effects and subscriptions, and in the
+ * task that uncovered the list that work held back the list's first frame. So on a
+ * phone, leaving for the list keeps the pane one painted frame longer: moved off to
+ * the right, where the edge swipe leaves it, hidden from screen readers, and showing
+ * the element it last rendered, so nothing in it renders again. The frame after the
+ * list is on screen takes it down. Anything else that closes the pane closes it at
+ * once.
+ */
+function SessionPane({
+  paneRef,
+  className,
+  isHeld,
+  children,
+}: {
+  paneRef: (element: HTMLElement | null) => void;
+  className: string;
+  /** Closing now uncovers the phone's list: hold the pane for that list's first frame. */
+  isHeld: boolean;
+  /** The open session's screen; nothing once no session is open. */
+  children: ReactNode;
+}) {
+  // The screen it last showed, kept the way React keeps a previous prop: the render
+  // that closes the pane is the one that still needs it.
+  const [held, setHeld] = useState<ReactNode>(null);
+  if (children && held !== children) setHeld(children);
+  if (!children && held && !isHeld) setHeld(null);
+  const isClosing = !children && !!held;
+  useEffect(() => {
+    if (!isClosing) return;
+    let timer = 0;
+    const frame = requestAnimationFrame(() => {
+      timer = window.setTimeout(() => setHeld(null));
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [isClosing]);
+  const shown = children || held;
+  if (!shown) return null;
+  return (
+    <div
+      ref={paneRef}
+      className={isClosing ? `${className} translate-x-full` : className}
+      aria-hidden={isClosing || undefined}
+    >
+      {shown}
+    </div>
+  );
+}
 
 export function App() {
   // Warm the split screens once the shell is up — off the critical path, so the
@@ -458,6 +539,9 @@ export function App() {
     const share = dropPendingShare();
     if (share?.files?.length) void discardSharedFiles(share.files);
   }, []);
+
+  // Stable, so a render of the shell that leaves the list alone skips it (`SessionsList`).
+  const openSearch = useCallback(() => setSearching(true), []);
 
   // Bumped by every accepted share. A counter, not a flag: two links dropped
   // back to back must both re-route, including the one that arrives while the
@@ -1266,13 +1350,16 @@ export function App() {
               !sessionsVisible
                 ? canSplit
                   ? sidebarRailClass(false)
-                  : PARKED_LIST_CLASS
+                  : shellView === 'session'
+                    ? 'h-full'
+                    : PARKED_LIST_CLASS
                 : isSplit
                   ? sidebarRailClass(true)
                   : 'h-full'
             }
+            aria-hidden={!sessionsVisible || undefined}
           >
-            <SessionsScreen
+            <SessionsList
               conns={conns}
               primary={primary}
               isVisible={sessionsVisible}
@@ -1292,7 +1379,7 @@ export function App() {
               // opens the same door the app bar's glass is, and the page it opens is
               // this screen with the query over it — so while it is already open,
               // the gesture has nothing left to open and stands down.
-              onSearch={searching ? null : () => setSearching(true)}
+              onSearch={searching ? null : openSearch}
             />
           </div>
         )}
@@ -1316,8 +1403,12 @@ export function App() {
         {canSplit && shellView === 'sessions' && (
           <EmptyPane sidebar={{ isShown: isSidebarShown, onToggle: toggleSidebar }} />
         )}
-        {shellView === 'session' && openTarget && client && subscriptions && (
-          <div ref={edgeBack.pane} className="h-full min-h-0 min-w-0 flex-1 bg-ink">
+        <SessionPane
+          paneRef={edgeBack.pane}
+          className={canSplit ? DESK_PANE_CLASS : PHONE_PANE_CLASS}
+          isHeld={!canSplit && shellView === 'sessions'}
+        >
+          {shellView === 'session' && openTarget && client && subscriptions && (
             <SessionScreen
               key={`${openTarget.conn.url}:${openTarget.sid}`}
               client={client}
@@ -1329,8 +1420,8 @@ export function App() {
               onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
               onManageProviders={openProviderSettings}
             />
-          </div>
-        )}
+          )}
+        </SessionPane>
       </main>
 
       {settingsDestination && (
