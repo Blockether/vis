@@ -400,6 +400,50 @@
           (expect (= [:openai] (mapv :id (providers/picker-fleet))))))
       (providers/invalidate-configured-providers!)))
 
+(defdescribe
+  picker-fleet-lists-authenticated-providers-in-canonical-order
+  (it "picker fleet lists authenticated providers by preset rank, not registry order"
+      ;; The registry keeps providers in a hash map, so pickers used to show authenticated
+      ;; providers in hash order, with GitHub Copilot between unrelated providers.
+      (let [registered
+            (mapv (fn [[id label rank]]
+                    (cond-> {:provider/id id
+                             :provider/label label
+                             :provider/detect-fn (constantly {:access-token "tok"})}
+                      rank
+                      (assoc :provider/policy {:preset-rank rank})))
+                  [[:opencode-go "OpenCode Go" nil] [:zai-coding-plan "Z.ai Coding Plan" 6]
+                   [:github-copilot "GitHub Copilot" 4] [:openrouter "OpenRouter" 9]
+                   [:anthropic-coding-plan "Anthropic Coding Plan" 2]
+                   [:openai-codex "OpenAI Codex" 3]])
+
+            by-id
+            (into {} (map (juxt :provider/id identity)) registered)]
+
+        (with-redefs [config/load-config
+                      (constantly {:providers [{:id :openrouter :models [{:name "router-x"}]}]})
+
+                      config/deleted-provider-ids
+                      (constantly #{})
+
+                      registry/registered-providers
+                      (constantly registered)
+
+                      registry/provider-by-id
+                      (fn [pid]
+                        (get by-id pid))
+
+                      catalog/template
+                      (fn [pid]
+                        {:id pid :default-models ["model-x"]})]
+
+          (providers/invalidate-configured-providers!)
+          (expect (= [:openrouter :anthropic-coding-plan :openai-codex :github-copilot
+                      :zai-coding-plan :opencode-go]
+                     (mapv :id (providers/picker-fleet)))
+                  "configured providers first, then authenticated ones by rank, unranked last")))
+      (providers/invalidate-configured-providers!)))
+
 (defdescribe github-copilot-is-one-preset-in-add-provider-picker
              (it "github copilot is one preset in add provider picker"
                  ;; Issues #47/#48 once asked the three GitHub Copilot tiers to sit next to each
@@ -1198,10 +1242,10 @@
           (expect (= :oauth (providers/auth-kind :acme-managed-oauth)))
           (expect (= :api-key (providers/auth-kind :acme-byo)))
           ;; NEITHER has a detect-fn: the managed one binds because it is managed.
-          (expect (= [:acme-managed :acme-managed-oauth]
+          (expect (= [:acme-managed-oauth :acme-managed]
                      (mapv :id (providers/authenticated-preset-providers)))
                   "managed providers bind themselves regardless of authentication kind")
-          (expect (= [:openai :acme-managed :acme-managed-oauth]
+          (expect (= [:openai :acme-managed-oauth :acme-managed]
                      (mapv :id (providers/picker-fleet)))
                   "so the model picker holds them with no Add Provider step")
           (expect (= [:acme-byo] (mapv :id (providers/available-presets)))

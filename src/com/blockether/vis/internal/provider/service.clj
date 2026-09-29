@@ -1021,7 +1021,8 @@
   "Registered providers that BIND THEMSELVES — the credential lives OUTSIDE the
    persisted fleet, so the provider is usable with no `Add provider` step at all.
    Shaped as minimal picker rows (`{:id … :models …}` carrying the preset's
-   default catalog models) and appended by [[picker-fleet]].
+   default catalog models) in [[catalog/preset-order]], not the registry's hash
+   order, and appended by [[picker-fleet]].
 
    Two ways in. A MANAGED provider ([[managed?]]) binds because its runtime
    issues the credential: there is nothing local to probe and nothing a human
@@ -1048,13 +1049,13 @@
 
                           (:api-style tmpl)
                           (assoc :api-style (:api-style tmpl))))))))
-          (registry/registered-providers))))
+          (sort-by (comp catalog/preset-order :provider/id) (registry/registered-providers)))))
 
 (defn picker-fleet
   "The provider fleet a model picker should render: the persisted
-   `configured-providers` first, then `authenticated-preset-providers`
+   `configured-providers` first, in config order, then `authenticated-preset-providers`
    (authenticated-but-unconfigured OAuth providers whose creds live outside
-   config) appended. This is what channel model pickers enumerate so
+   config) appended in canonical provider order. This is what channel model pickers enumerate so
    authenticated providers are selectable even before they're saved into the
    fleet.
 

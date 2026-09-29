@@ -57,6 +57,13 @@
   [pid]
   (:label (registered-metadata pid)))
 
+(defn preset-order
+  "Sort key for `pid` in the canonical provider order that the 'Add Provider'
+   picker and every provider list share: its `:preset-rank`, unranked last, then
+   its label."
+  [pid]
+  [(or (:preset-rank (policy pid)) Long/MAX_VALUE) (str (label pid))])
+
 (defn base-url
   "Base URL for a provider id: provider extension first, svar catalog last."
   [pid]
@@ -122,8 +129,7 @@
           (assoc :is-hidden true))))))
 
 (defn presets
-  "All known provider presets, sorted for the 'Add Provider' picker by each
-   provider's `:preset-rank`, unranked last, then by label."
+  "All known provider presets for the 'Add Provider' picker, in [[preset-order]]."
   []
   (let [ids (into #{}
                   (concat (keys svar/KNOWN_PROVIDERS)
@@ -139,8 +145,7 @@
          ;; the last named preset in the "Add Provider" picker — and the TUI has
          ;; no handling for them anyway.
          (remove #(str/blank? (:label %)))
-         (sort-by (fn [{:keys [id label]}]
-                    [(or (:preset-rank (policy id)) Long/MAX_VALUE) label]))
+         (sort-by (comp preset-order :id))
          vec)))
 
 (defn title-providers
