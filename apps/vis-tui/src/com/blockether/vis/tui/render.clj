@@ -7142,13 +7142,17 @@
         forms
         (if summarize-steps? (execution-groups forms) (mapv #(execution-group [%]) forms))
 
-        ;; A placed RUN row already represents this execution. Keep other produced
-        ;; files, but not a second list of recorded-run artifacts beneath that row.
-        ;; With no RUN section, the durable artifact remains reachable after reload.
+        ;; A matched recording supplies the clickable RUN card; only unattached
+        ;; recording rows are redundant when an execution already shows RUN.
+        ;; With no RUN section, every durable recording remains reachable.
         iteration-artifacts
         (cond->> (iteration-artifact-rows iteration-id attachments)
           (some #(seq (:runs %)) forms)
-          (remove attach/live-artifact?))
+          (remove (fn [artifact]
+                    (and (attach/live-artifact? artifact)
+                         (not (and (:view-id artifact)
+                                   (some #(= (:view-id artifact) (:view-id %))
+                                         (mapcat :runs forms))))))))
 
         ;; `:content-stream` is the LIVE prose accumulation streamed alongside
         ;; reasoning (dropped after parse). `:assistant-prose` is the SAME markdown
