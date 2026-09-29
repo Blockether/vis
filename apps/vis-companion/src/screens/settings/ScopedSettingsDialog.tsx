@@ -76,7 +76,7 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
   };
 
   return (
-    <Modal size="fit-roomy" onDismiss={onClose}>
+    <Modal size="fit-wide" onDismiss={onClose}>
       <DialogFrame title={`${scope[0].toUpperCase()}${scope.slice(1)} settings`} subtitle={label ?? data?.label ?? target_id} onClose={onClose}>
         <div className="min-h-0 overflow-y-auto">
           <div className="sticky top-0 z-10 border-b border-dialog-edge bg-panel-2 px-3 py-3 sm:px-4">
