@@ -3343,7 +3343,17 @@
              (let [rows (registry-toggle-rows)]
                (expect (some #(= "plans" (:toggle-id %)) rows))
                (expect (some #(and (= :section (:type %)) (= "Experimental" (:label %))) rows)))
-             (finally (reset! inventory original))))))
+             (finally (reset! inventory original)))))
+  (it "keeps the gateway's name for a group or project target"
+      (let [local (atom {:status :unloaded :groups [] :error nil})]
+        (binding [dlg/*settings-target* {:scope "group" :target-id "g1" :label "g1"}
+                  dlg/*local-settings-inventory* local]
+
+          (with-redefs [vis/gateway-settings (fn [_ target]
+                                               (expect (= "g1" (:target-id target)))
+                                               {"label" "Backend team" "groups" []})]
+            (dlg/load-settings-inventory!)))
+        (expect (= "Backend team" (:label @local))))))
 
 (defn- back-buffer-text
   "What the last paint asked the terminal to show, one line per screen row."

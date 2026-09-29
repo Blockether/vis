@@ -3111,9 +3111,12 @@
    that cannot answer keeps the catalog Settings last read — and, before the
    first answer, the process-registry projection — instead of a blank pane."
   []
-  (let [answer (try {:status :ok
-                     :groups (vec (get (vis/gateway-settings :tui *settings-target*) "groups"))
-                     :error nil}
+  (let [answer (try (let [response (vis/gateway-settings :tui *settings-target*)]
+                      {:status :ok
+                       :groups (vec (get response "groups"))
+                       ;; The gateway names a group or project; the caller only has its id.
+                       :label (get response "label")
+                       :error nil})
                     (catch Exception e {:status :error :error (ex-message e)}))]
     (if (= :ok (:status answer))
       (do (when-not *settings-target*
@@ -4323,7 +4326,8 @@
                                        (if *settings-target*
                                          (str (titleize-label (:scope *settings-target*))
                                               " settings: "
-                                              (or (:label *settings-target*)
+                                              (or (:label @(settings-inventory-atom))
+                                                  (:label *settings-target*)
                                                   (:target-id *settings-target*)))
                                          "Settings")
                                        (settings-content-width cols)
