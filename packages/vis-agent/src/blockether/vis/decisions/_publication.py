@@ -10,6 +10,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import BinaryIO
 
+from blockether.vis._contracts import definition
+
 from ._models import ARCHITECTURES
 
 _REQUIRED_LAYA = {
@@ -25,8 +27,8 @@ _REQUIRED_GLINER = {
     "tokenizer/tokenizer.json",
     "tokenizer/tokenizer_config.json",
 }
-_MAX_EXPANDED = 3_000_000_000
-_MAX_ARCHIVE = 2_400_000_000
+_MAX_EXPANDED = definition("gateway", "decision_expanded_bytes")["maximum"]
+_MAX_ARCHIVE = definition("gateway", "decision_archive_bytes")["maximum"]
 _CHUNK = 1024 * 1024
 
 
@@ -133,8 +135,12 @@ def package(bundle: Path, archive: Path) -> tuple[str, int]:
                 for chunk in iter(lambda: source.read(_CHUNK), b""):
                     target.write(chunk)
     size = archive.stat().st_size
-    if not 0 < size <= _MAX_ARCHIVE:
-        raise ValueError("Decision inference archive exceeds the gateway upload limit")
+    if size <= 0:
+        raise ValueError("Decision inference archive is empty")
+    if size > _MAX_ARCHIVE:
+        raise ValueError(
+            f"Decision archive is {size} bytes; maximum is {_MAX_ARCHIVE} bytes"
+        )
     return _sha256(archive), size
 
 

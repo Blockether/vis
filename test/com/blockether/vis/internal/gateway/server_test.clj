@@ -5280,6 +5280,47 @@
         (expect (= 1 (count @calls)))))))
 
 (defdescribe
+  decision-import-enforces-streamed-byte-limit
+  (it "enforces declared and actual sizes, cleans temporary files and releases the slot"
+      ;; #294: lowering the shared cap exercises streamed overflow without large fixtures.
+      (let [app
+            (rr/ring-handler ((rv 'router) "token" []))
+
+            root
+            (fs-temp-root)
+
+            calls
+            (atom 0)]
+
+        (try (with-redefs [decision-assets/models-root
+                           (constantly (.getPath root))
+
+                           decision-assets/max-inference-upload-bytes
+                           8
+
+                           decision-registry/register!
+                           (fn [_ sha _]
+                             (swap! calls inc)
+                             {"model_ref" (str "sha256-" sha) "installed" true})]
+
+               (doseq [[body declared status] [["12345678" "8" 201] ["123456789" "9" 413]
+                                               ["123456789" nil 413] ["123456789" "8" 413]
+                                               ["1234567" "8" 400] ["" "0" 400]
+                                               ["12345678" nil 201]]]
+                 (let [bytes (.getBytes ^String body "UTF-8")
+                       response (app {:request-method :post
+                                      :uri "/v1/decisions/models"
+                                      :headers (cond-> {"x-content-sha256" (util/sha256-hex bytes)}
+                                                 declared
+                                                 (assoc "content-length" declared))
+                                      :body (java.io.ByteArrayInputStream. bytes)})]
+
+                   (expect (= status (:status response)))
+                   (expect (empty? (.listFiles (io/file root "registered"))))))
+               (expect (= 2 @calls)))
+             (finally (.delete (io/file root "registered")) (.delete root))))))
+
+(defdescribe
   decision-alias-route-refuses-an-implicit-replacement
   (it "decision alias route refuses an implicit replacement"
       (let [app

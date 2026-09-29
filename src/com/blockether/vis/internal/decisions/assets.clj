@@ -3,6 +3,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.walk :as walk]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.speech.files :as files]
@@ -18,9 +19,9 @@
 
 (def ^:const models-dir-env "VIS_DECISION_MODELS_DIR")
 
-(def ^:const max-inference-upload-bytes 2400000000)
+(def max-inference-upload-bytes gateway-contract/max-decision-archive-bytes)
 
-(def ^:private max-expanded-bytes 3000000000)
+(def ^:private max-expanded-bytes gateway-contract/max-decision-expanded-bytes)
 
 (def gliner-architectures {"gliner2.5-base" "boundary" "gliner2.5-decide" "span"})
 

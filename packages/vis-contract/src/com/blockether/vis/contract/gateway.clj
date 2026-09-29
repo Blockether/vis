@@ -18,6 +18,14 @@
   "Oldest gateway protocol accepted by this client."
   (get-in @source ["$defs" "handshake" "properties" "min_gateway" "const"]))
 
+(def max-decision-archive-bytes
+  "Largest supported decision archive, in compressed bytes."
+  (get-in @source ["$defs" "decision_archive_bytes" "maximum"]))
+
+(def max-decision-expanded-bytes
+  "Largest supported decision archive after extraction, in bytes."
+  (get-in @source ["$defs" "decision_expanded_bytes" "maximum"]))
+
 (def client-lease
   "Remote lease lifetime and keepalive policy."
   (wire/->engine (get @source "x-vis-client-lease")))

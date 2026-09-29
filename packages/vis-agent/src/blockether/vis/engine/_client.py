@@ -34,6 +34,7 @@ _PROTOCOL = definition("gateway", "handshake")["properties"]["protocol"]["const"
 _MIN_GATEWAY = definition("gateway", "handshake")["properties"]["min_gateway"]["const"]
 _ROUTES = schema("gateway")["x-vis-routes"]
 _LEASE_POLICY = schema("gateway")["x-vis-client-lease"]
+_MAX_DECISION_ARCHIVE = definition("gateway", "decision_archive_bytes")["maximum"]
 _JOB_EVENTS = {
     branch["x-vis-direction"]: branch["const"]
     for branch in definition("gateway", "job_event_type")["oneOf"]
@@ -318,10 +319,15 @@ class ExecutionLayer(ABC):
                     character not in "0123456789abcdef" for character in upload_sha256
                 )
                 or type(upload_length) is not int
-                or not 0 < upload_length <= 1_600_000_000
+                or upload_length <= 0
             ):
                 raise ValueError(
                     "decision upload requires a bounded stream and SHA-256"
+                )
+            if upload_length > _MAX_DECISION_ARCHIVE:
+                raise ValueError(
+                    f"Decision archive is {upload_length} bytes; "
+                    f"maximum is {_MAX_DECISION_ARCHIVE} bytes"
                 )
         names = {s[1:] for s in route.split("/") if s.startswith(":")}
         if set(path or {}) != names:

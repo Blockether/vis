@@ -69,7 +69,7 @@ def train(checkpoint: Path, root: Path):
     return result
 
 
-def main(url: str, inference: str, checkpoint: str) -> None:
+def main(url: str, inference: str, checkpoint: str, model_id: str) -> None:
     with TemporaryDirectory(prefix="vis-native-decision-sdk-") as directory:
         source = (
             Path(inference)
@@ -78,7 +78,8 @@ def main(url: str, inference: str, checkpoint: str) -> None:
         )
         with GatewayClient(url, timeout=900) as gateway:
             decisions = Decisions(gateway)
-            assert decisions.list_models()[0]["installed"]
+            if model_id == "laya-typed-decisions":
+                assert decisions.list_models()[0]["installed"]
             invalid = b"not a decision archive"
             try:
                 gateway.post_decision_model(
@@ -92,9 +93,11 @@ def main(url: str, inference: str, checkpoint: str) -> None:
             else:
                 raise AssertionError("invalid model archive was accepted")
             milestone = -1
+            upload_bytes = 0
 
             def progress(sent: int, total: int) -> None:
-                nonlocal milestone
+                nonlocal milestone, upload_bytes
+                upload_bytes = total
                 current = sent // (128 * 1024 * 1024)
                 if current != milestone or sent == total:
                     milestone = current
@@ -103,8 +106,16 @@ def main(url: str, inference: str, checkpoint: str) -> None:
             published = decisions.upload_model(source, progress=progress, timeout=900)
             ref = published["model_ref"]
             assert decisions.get_model(ref)["installed"]
-            decisions.activate_model("sdk-native", ref)
-            assert decisions.get_alias("sdk-native")["model_ref"] == ref
+            alias = f"sdk-native-{model_id.replace('.', '-')}"
+            try:
+                decisions.get_alias(alias)
+            except GatewayError as error:
+                assert error.status == 404
+            else:
+                raise AssertionError("upload activated an alias")
+            if model_id == "gliner2.5-decide":
+                # #294: exercise the SDK with the real FP32 bundle above its old cap.
+                assert 1_600_000_000 < upload_bytes <= 2_400_000_000
             questions = {
                 "intent": {
                     "type": "choice",
@@ -118,21 +129,30 @@ def main(url: str, inference: str, checkpoint: str) -> None:
                 },
                 "policy": {"type": "noul", "instructions": "Is this refundable?"},
             }
+            immutable = decisions.infer(
+                model=ref, state="broken item refund", questions=questions
+            )
+            assert immutable["routing"]["model_ref"] == ref
+            decisions.activate_model(alias, ref)
+            assert decisions.get_alias(alias)["model_ref"] == ref
             answer = decisions.infer(
-                model="sdk-native", state="broken item refund", questions=questions
+                model=alias, state="broken item refund", questions=questions
             )
-            baseline = decisions.infer(
-                model="laya-typed-decisions",
-                state="broken item refund",
-                questions=questions,
-            )
+            assert answer["answers"] == immutable["answers"]
+            baseline = None
+            if model_id == "laya-typed-decisions":
+                baseline = decisions.infer(
+                    model=model_id, state="broken item refund", questions=questions
+                )["routing"]["model"]
             print(
                 "VIS_DECISION_RESULT="
                 + json.dumps(
                     {
                         "ref": ref,
                         "routing": answer["routing"]["model_ref"],
-                        "baseline": baseline["routing"]["model"],
+                        "model": model_id,
+                        "upload_bytes": upload_bytes,
+                        "baseline": baseline,
                         "trained": checkpoint != "-",
                         "choice": answer["answers"]["intent"]["choice"],
                         "score": answer["answers"]["priority"]["score"],

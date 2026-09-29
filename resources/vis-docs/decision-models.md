@@ -235,6 +235,12 @@ in code or logs. The gateway verifies the streamed, inference-only bundle and ru
 heads before registering an immutable `sha256-...` version. Upload never changes a
 running alias.
 
+The ZIP archive can contain up to 2,400,000,000 bytes. Its extracted files can contain
+up to 3,000,000,000 bytes in total. The SDK and gateway use the same limits.
+
+The gateway accepts one model upload at a time. Allow disk space for both the archive
+and its extracted files.
+
 ```python
 import os
 

@@ -5,10 +5,12 @@ import io
 import json
 import zipfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
-from blockether.vis.decisions import Decisions
-from blockether.vis.engine import GatewayClient, GatewayError
+from blockether.vis._contracts import definition
+from blockether.vis.decisions import Decisions, _publication
+from blockether.vis.engine import GatewayClient, GatewayError, _client
 from test_client import compatible, endpoint
 
 
@@ -280,3 +282,103 @@ def test_gliner_sdk_rejects_mismatched_architecture_before_upload(tmp_path, mode
             Decisions(gateway).upload_model(root)
     finally:
         gateway.close()
+
+
+@pytest.mark.parametrize(
+    "length",
+    [1, 1_600_000_000, 1_600_000_001, 1_612_357_019, 2_147_483_648, 2_400_000_000],
+)
+def test_upload_accepts_lengths_through_the_archive_limit(monkeypatch, length):
+    # #294: the pinned Decide ZIP fits the gateway cap, but exceeded the old SDK cap.
+    gateway = GatewayClient("http://127.0.0.1:1")
+    transport = MagicMock()
+    response = transport.return_value.__enter__.return_value
+    response.status = 201
+    response.headers = {}
+    response.read.return_value = b"{}"
+    monkeypatch.setattr(gateway, "_open", transport)
+    try:
+        with io.BytesIO(b"metadata-only probe") as stream:
+            assert (
+                gateway.post_decision_model(
+                    content=stream, sha256="a" * 64, length=length
+                )
+                == {}
+            )
+            transport.assert_called_once()
+            assert transport.call_args.kwargs["content"] is stream
+            assert transport.call_args.kwargs["upload_length"] == length
+            assert transport.call_args.kwargs["upload_sha256"] == "a" * 64
+            assert stream.tell() == 0
+    finally:
+        gateway.close()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"length": 0},
+        {"length": -1},
+        {"length": True},
+        {"length": 1.5},
+        {"length": "1"},
+        {"length": None},
+        {"sha256": None},
+        {"sha256": "a" * 63},
+        {"sha256": "A" * 64},
+        {"sha256": "g" * 64},
+        {"content": b"not a stream"},
+        {"content": object()},
+    ],
+)
+def test_upload_rejects_invalid_metadata_before_transport(monkeypatch, overrides):
+    gateway = GatewayClient("http://127.0.0.1:1")
+    transport = MagicMock()
+    monkeypatch.setattr(gateway, "_open", transport)
+    try:
+        with io.BytesIO(b"metadata-only probe") as stream:
+            options = {"content": stream, "sha256": "a" * 64, "length": 1}
+            with pytest.raises(ValueError):
+                gateway.post_decision_model(**(options | overrides))
+            transport.assert_not_called()
+            assert stream.tell() == 0
+    finally:
+        gateway.close()
+
+
+def test_upload_reports_actual_and_allowed_archive_sizes(monkeypatch):
+    gateway = GatewayClient("http://127.0.0.1:1")
+    transport = MagicMock()
+    monkeypatch.setattr(gateway, "_open", transport)
+    try:
+        with io.BytesIO(b"metadata-only probe") as stream:
+            with pytest.raises(ValueError, match=r"2400000001.*2400000000"):
+                gateway.post_decision_model(
+                    content=stream, sha256="a" * 64, length=2_400_000_001
+                )
+            transport.assert_not_called()
+            assert stream.tell() == 0
+    finally:
+        gateway.close()
+
+
+def test_package_reports_actual_and_allowed_archive_sizes(tmp_path, monkeypatch):
+    root = inference_bundle(tmp_path / "inference")
+    archive = tmp_path / "inference.zip"
+    monkeypatch.setattr(_publication, "_MAX_ARCHIVE", 1)
+    with pytest.raises(ValueError) as failure:
+        _publication.package(root, archive)
+    assert str(failure.value) == (
+        f"Decision archive is {archive.stat().st_size} bytes; maximum is 1 bytes"
+    )
+
+
+def test_publication_limits_come_from_the_gateway_contract():
+    archive = definition("gateway", "decision_archive_bytes")
+    expanded = definition("gateway", "decision_expanded_bytes")
+    assert archive == {"type": "integer", "minimum": 1, "maximum": 2_400_000_000}
+    assert expanded == {"type": "integer", "minimum": 1, "maximum": 3_000_000_000}
+    assert (
+        _client._MAX_DECISION_ARCHIVE == _publication._MAX_ARCHIVE == archive["maximum"]
+    )
+    assert _publication._MAX_EXPANDED == expanded["maximum"]

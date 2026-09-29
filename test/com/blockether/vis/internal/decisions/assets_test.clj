@@ -1,6 +1,8 @@
 (ns com.blockether.vis.internal.decisions.assets-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.document :as document]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.decisions.assets :as assets]
             [com.blockether.vis.internal.speech.files :as files]
@@ -49,6 +51,40 @@
                            :requires ["model.onnx" "tokenizer/tokenizer.json" "PROVENANCE.json"]}}})
 
 (defn- error-data [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
+
+;; #294: SDK packaging, transport and gateway extraction share canonical bounds.
+(defdescribe publication-limits-test
+             (it "derives compressed and expanded byte limits from the gateway schema"
+                 (let [schema (document/schema-document "gateway")]
+                   (expect (= 2400000000
+                              assets/max-inference-upload-bytes
+                              gateway-contract/max-decision-archive-bytes
+                              (get-in schema ["$defs" "decision_archive_bytes" "maximum"])))
+                   (expect (= 3000000000
+                              @#'assets/max-expanded-bytes
+                              gateway-contract/max-decision-expanded-bytes
+                              (get-in schema ["$defs" "decision_expanded_bytes" "maximum"])))))
+             (it "rejects excessive expanded bytes and cleans the partial installation"
+                 (let [^File archive
+                       (fixture! ["model.onnx" "tokenizer/tokenizer.json"])
+
+                       model
+                       (model-for archive)
+
+                       dir
+                       (io/file (System/getProperty "java.io.tmpdir")
+                                (str "vis-decision-expanded-limit-" (System/nanoTime)))]
+
+                   (try (with-redefs-fn {#'assets/max-expanded-bytes 8}
+                          #(expect (= :decisions/invalid-archive
+                                      (:type (error-data (fn []
+                                                           (assets/install! model
+                                                                            :inference
+                                                                            (str dir)
+                                                                            (str (.toURI
+                                                                                   archive)))))))))
+                        (expect (not (.exists dir)))
+                        (finally (files/delete-dir! dir) (.delete archive))))))
 
 (defdescribe
   catalog-test

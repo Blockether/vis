@@ -27,18 +27,18 @@
           (throw (ex-info "Isolated native decision gateway did not start" {})))))))
 
 (defn- sdk-flow!
-  [^File home ^File source port python ^Process gateway]
+  [^File home ^File source port python ^Process gateway model-id checkpoint]
   (let [^File script
         (io/file "test-native/com/blockether/vis/decision_sdk_smoke.py")
 
         ^File output
-        (io/file home "sdk.log")
+        (io/file home (str "sdk-" model-id ".log"))
 
         builder
         (doto (ProcessBuilder. ^java.util.List
                                (vec [python "-I" (.getAbsolutePath script)
                                      (str "http://127.0.0.1:" port) (.getCanonicalPath source)
-                                     (or (System/getProperty "vis.test.laya.training.dir") "-")]))
+                                     (or checkpoint "-") model-id]))
           (.directory home)
           (.redirectErrorStream true)
           (.redirectOutput output))
@@ -53,38 +53,45 @@
     (.remove env "VIS_GATEWAY_URL")
     (.remove env "VIS_GATEWAY_TOKEN")
     (let [process (.start builder)]
-      (try (let [finished? (.waitFor process 1200 java.util.concurrent.TimeUnit/SECONDS)]
-             (when-not finished? (#'binary/kill-tree! process))
-             (let [text (slurp output)
-                   succeeded? (and finished? (zero? (.exitValue process)))]
+      (try
+        (let [finished? (.waitFor process 1200 java.util.concurrent.TimeUnit/SECONDS)]
+          (when-not finished? (#'binary/kill-tree! process))
+          (let [text (slurp output)
+                succeeded? (and finished? (zero? (.exitValue process)))]
 
-               (expect finished? "Installed SDK did not finish against the native gateway")
-               (expect succeeded?
-                       (if succeeded?
-                         ""
-                         (str text
-                              "\nNative gateway alive: " (.isAlive gateway)
-                              "\nNative gateway log tail:\n" (->> (slurp (io/file home
-                                                                                  "gateway.log"))
-                                                                  str/split-lines
-                                                                  (take-last 25)
-                                                                  (str/join "\n")))))
-               (when succeeded?
-                 (let [line (some #(when (str/starts-with? % "VIS_DECISION_RESULT=")
-                                     (subs % (count "VIS_DECISION_RESULT=")))
-                                  (str/split-lines text))]
-                   (expect (some? line) text)
-                   (when line
-                     (let [result (json/read-json line)]
-                       (expect (= (get result "ref") (get result "routing")))
-                       (expect (= "laya-typed-decisions" (get result "baseline")))
-                       (expect (= (boolean (System/getProperty "vis.test.laya.training.dir"))
-                                  (get result "trained")))
-                       (expect (#{"refund" "repair"} (get result "choice")))
-                       (expect (number? (get result "score")))
-                       (expect (number? (get result "noul")))
-                       (expect (number? (get-in result ["action" "act_probability"])))))))))
-           (finally (when (.isAlive process) (#'binary/kill-tree! process)))))))
+            (expect finished? "Installed SDK did not finish against the native gateway")
+            (expect succeeded?
+                    (if succeeded?
+                      ""
+                      (str text
+                           "\nNative gateway alive: " (.isAlive gateway)
+                           "\nNative gateway log tail:\n" (->> (slurp (io/file home "gateway.log"))
+                                                               str/split-lines
+                                                               (take-last 25)
+                                                               (str/join "\n")))))
+            (when succeeded?
+              (let [line (some #(when (str/starts-with? % "VIS_DECISION_RESULT=")
+                                  (subs % (count "VIS_DECISION_RESULT=")))
+                               (str/split-lines text))]
+                (expect (some? line) text)
+                (when line
+                  (let [result (json/read-json line)]
+                    (println "Verified native SDK decision upload"
+                             (select-keys result ["model" "upload_bytes" "ref"]))
+                    (expect (= (get result "ref") (get result "routing")))
+                    (expect (= model-id (get result "model")))
+                    (expect (= (when (= "laya-typed-decisions" model-id) model-id)
+                               (get result "baseline")))
+                    (expect (= (boolean checkpoint) (get result "trained")))
+                    (when (= "gliner2.5-decide" model-id)
+                      (expect (< 1600000000
+                                 (get result "upload_bytes")
+                                 (inc assets/max-inference-upload-bytes))))
+                    (expect (#{"refund" "repair"} (get result "choice")))
+                    (expect (number? (get result "score")))
+                    (expect (number? (get result "noul")))
+                    (expect (number? (get-in result ["action" "act_probability"])))))))))
+        (finally (when (.isAlive process) (#'binary/kill-tree! process)))))))
 
 (defn- sha256-file
   [^File archive]
@@ -244,7 +251,26 @@
               (expect (= "cold" (get (first rows) "residency"))))
             (when-let [python (System/getProperty "vis.test.laya.sdk.python")]
               (expect source "An FP32 install is required for the installed SDK smoke test")
-              (when source (sdk-flow! home source port python @process)))
+              (when source
+                (sdk-flow! home
+                           source
+                           port
+                           python
+                           @process
+                           "laya-typed-decisions"
+                           (System/getProperty "vis.test.laya.training.dir"))))
+            ;; #294: use the Python SDK, not only the direct Clojure archive upload.
+            (doseq [name
+                    ["base" "decide"]
+
+                    :let [dir
+                          (System/getProperty (str "vis.test.gliner." name ".fp32.dir"))]
+                    :when dir]
+
+              (let [python (System/getProperty "vis.test.gliner.sdk.python")]
+                (expect (some? python) "GLiNER SDK verification requires a Python interpreter")
+                (when python
+                  (sdk-flow! home (io/file dir) port python @process (str "gliner2.5-" name) nil))))
             (let [response
                   (gateway-client/request!
                     :post

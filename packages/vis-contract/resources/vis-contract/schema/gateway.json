@@ -1527,6 +1527,16 @@
     "keepalive_route": "/v1/capabilities"
   },
   "$defs": {
+    "decision_archive_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2400000000
+    },
+    "decision_expanded_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3000000000
+    },
     "session_goal": {
       "type": "object",
       "additionalProperties": false,
