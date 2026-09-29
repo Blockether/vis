@@ -146,7 +146,7 @@ network requests or background work during registration.
 The packaged example connects the implementation to Vis with this entire entrypoint:
 
 ```python
-"""Vis entrypoint; business logic lives in vis_greeter, not this file."""
+"""Vis entrypoint. The business logic lives in vis_greeter, not in this file."""
 
 import blockether.vis.extension as vis
 from vis_greeter import Greeter

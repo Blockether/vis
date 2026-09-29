@@ -1,19 +1,22 @@
 """Injector — build the `blockether.vis.extension` module for ONE extension context.
 
-The module BODY is `packages/vis-agent/src/blockether/vis/extension.py`, the same file PyPI
-ships as `vis-agent`. `internal.python-extensions/bootstrap-python` slurps it off
-the classpath and prepends it here as `_vis_body`, so there is exactly one copy of
-the extension API in the repository and the sandbox runs the code an author can
-`pip install` and read.
+The module BODY is `packages/vis-agent/src/blockether/vis/extension.py`, the same file
+that PyPI ships as `vis-agent`. `internal.python-extensions/bootstrap-python` reads it
+from the classpath and prepends it here as `_vis_body`. So the repository holds exactly
+one copy of the extension API, and the sandbox runs the code that an author can `pip
+install` and read.
 
-This fragment does only what the package cannot do for itself: seed `_host` with
-the host callables the engine installed into this session, exec the body into a
-module dict of its own (so the extension file's globals stay clean), and register
-it in `sys.modules` so `import blockether.vis.extension as vis` works.
+This fragment does only what the package cannot do for itself:
 
-`_host` has one attribute per callable installed by the engine. The outside host
-implements the same interface in `blockether.vis._outside`; boundary tests compare
-the actual implementations, without a separate operation catalog.
+- It seeds `_host` with the host callables that the engine installed into this session.
+- It executes the body into a module dict of its own, so the globals of the extension
+  file stay clean.
+- It registers the module in `sys.modules`, so `import blockether.vis.extension as vis`
+  works.
+
+`_host` has one attribute per callable that the engine installed. The outside host
+implements the same interface in `blockether.vis._outside`. Boundary tests compare the
+actual implementations, without a separate operation catalog.
 """
 
 # ── The host's handle on this extension's Python callables ───────────────────

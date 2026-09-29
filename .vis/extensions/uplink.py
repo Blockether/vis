@@ -1,33 +1,33 @@
 """Uplink — one SSH door to a machine you administer.
 
-The flagship object-first extension: every operation returns a typed,
-frozen domain object (CommandResult, ServiceStatus, HealthCheck,
-HostInfo, TransferResult). Nothing hands the model a formatted string, a
-JSON blob or a shapeless dict to parse back into structure.
+The flagship object-first extension: every operation returns a typed, frozen
+domain object (CommandResult, ServiceStatus, HealthCheck, HostInfo,
+TransferResult). Nothing hands the model a formatted string, a JSON blob or
+a shapeless dict to parse back into structure.
 
-Configuration — three environment variables, declared through env=, so
-every `environment:` source works ({literal: ...}, {env: ...}, a keychain
-item, or a helper command whose trimmed stdout is the value):
+Configuration uses three environment variables, declared through env=. So
+every `environment:` source works: {literal: ...}, {env: ...}, a keychain
+item, or a helper command whose trimmed stdout is the value.
 
-    UPLINK_HOST      user@host; without a user part ssh picks its
-                            own default, which is rarely what you want
-    UPLINK_PORT      SSH port, defaults to 22
-    UPLINK_PASSWORD  optional; absent means key/agent auth only
+    UPLINK_HOST      user@host. Without a user part, ssh picks its own
+                     default, which is rarely what you want.
+    UPLINK_PORT      SSH port. The default is 22.
+    UPLINK_PASSWORD  Optional. Without it, only key or agent auth works.
 
-Environment wins over vis.state; `/uplink-host user@host [port]` persists
-the non-secret part to vis.state for ad-hoc use without a config file.
+The environment wins over vis.state. `/uplink-host user@host [port]` saves
+the non-secret part to vis.state, for ad-hoc use without a config file.
 
-Transport is the local ssh binary. A password is handed over through an
-SSH_ASKPASS helper (OpenSSH >= 8.4, SSH_ASKPASS_REQUIRE=force), so it
-never appears in an argv, a result object or a log line; the helper file
-is 0700 in the temp dir and prints a private environment variable back
-to ssh. Without a password the connection is BatchMode: key or agent
-only, nothing to hang on.
+The transport is the local ssh binary. A password goes to ssh through an
+SSH_ASKPASS helper (OpenSSH >= 8.4, SSH_ASKPASS_REQUIRE=force). So it never
+appears in an argv, a result object or a log line. The helper file is 0700
+in the temp dir, and it prints a private environment variable back to ssh.
+Without a password, the connection is BatchMode: key or agent only, nothing
+to hang on.
 
-Trust: this file runs in a trusted extension context and executes
-ARBITRARY commands as the configured remote user. Configure it only for
-a machine where that is what you want, and read the model's run() and
-put() calls as that user doing work on the server.
+Trust: this file runs in a trusted extension context. It executes ANY
+command as the configured remote user. Configure it only for a machine where
+that is what you want. Read the model's run() and put() calls as that user
+doing work on the server.
 """
 
 import contextlib
@@ -56,9 +56,9 @@ class CommandResult:
     """Outcome of one command executed on the remote server.
 
     `exit_code` is None exactly when the command was killed locally after
-    `timeout_s` — the remote side may still be running it. `stdout` and
+    `timeout_s`. The remote side may still be running it. `stdout` and
     `stderr` are decoded UTF-8 (replacement characters on garbage) and
-    capped at 256 KiB each; `is_truncated` says the cap cut something off.
+    capped at 256 KiB each. `is_truncated` says the cap cut something off.
     `duration_ms` measures the local wait for ssh, not the command's own
     runtime.
     """
@@ -113,9 +113,9 @@ class HealthCheck:
 class HostInfo:
     """Identity, uptime and memory facts about the remote machine.
 
-    Linux-shaped: uptime and memory come from /proc, so a non-Linux guest
+    Linux-shaped: uptime and memory come from /proc. So a non-Linux guest
     answers None for them instead of failing the whole call.
-    `uptime_seconds` is whole seconds since boot; the memory fields are
+    `uptime_seconds` is whole seconds since boot. The memory fields are
     whole megabytes (1 MiB units), total and currently available.
     """
 
@@ -464,12 +464,13 @@ def _download_activity(**kwargs):
 
 
 class Uplink:
-    """The administered server: run, inspect and move files over one ssh door.
+    """The administered server: run, inspect and move files over one ssh
+    door.
 
-    Every method is one round trip through the same transport, so one
-    configuration and one credential path serve everything. The
-    observation methods never change the machine; run() and put() do
-    exactly what their command says, as the configured remote user.
+    Every method is one round trip through the same transport. So one
+    configuration and one credential path serve everything. The observation
+    methods never change the machine. run() and put() do exactly what their
+    command says, as the configured remote user.
     """
 
     @vis.method(
@@ -482,9 +483,9 @@ class Uplink:
         """Execute one shell command on the remote server.
 
         The command runs through the remote login shell exactly as ssh
-        passes it. `timeout_s` bounds the LOCAL wait: on timeout the ssh
-        process is killed but the remote command may keep running, so
-        poll with run() again instead of assuming it stopped.
+        passes it. `timeout_s` bounds the LOCAL wait. On timeout, the ssh
+        process is killed, but the remote command may keep running. So poll
+        with run() again instead of assuming it stopped.
         """
         return _execute(command, timeout_s=timeout_s)
 
@@ -495,11 +496,11 @@ class Uplink:
         ),
     )
     def service(self, unit: str, timeout_s: int = 30) -> ServiceStatus:
-        """Read one systemd unit's state; no systemctl action is taken.
+        """Read one systemd unit's state, without a systemctl action.
 
-        Requires systemd on the remote machine; the unit name goes to
-        `systemctl show` as one argument, so suffixes follow systemd's
-        own defaulting (visgw -> visgw.service).
+        Requires systemd on the remote machine. The unit name goes to
+        `systemctl show` as one argument. So suffixes follow systemd's own
+        defaulting (visgw -> visgw.service).
         """
         command = (
             f"systemctl show {shlex.quote(unit)}"
@@ -538,10 +539,10 @@ class Uplink:
     ) -> HealthCheck:
         """One HTTP request to the remote machine's own loopback.
 
-        curl runs ON the server, so this reaches services bound to
-        127.0.0.1 that no outside check can see. `scheme` is "http" or
-        "https"; `path` should start with "/". Endpoints that need auth
-        headers belong in a run("curl ...") call, not here.
+        curl runs ON the server, so this reaches services bound to 127.0.0.1
+        that no outside check can see. `scheme` is "http" or "https". `path`
+        should start with "/". Endpoints that need auth headers belong in a
+        run("curl ...") call, not here.
         """
         url = f"{scheme}://127.0.0.1:{int(port)}{path}"
         command = (
@@ -576,8 +577,9 @@ class Uplink:
     def info(self, timeout_s: int = 30) -> HostInfo:
         """Collect identity, uptime and memory facts in one round trip.
 
-        Linux guests answer everything; the /proc-derived fields are None
-        elsewhere (a BSD guest, a router) rather than failing the call.
+        Linux guests answer everything. On other guests (a BSD guest, a
+        router), the /proc-derived fields are None rather than failing the
+        call.
         """
         command = (
             "printf 'hostname=%s\nkernel=%s\nuptime_s=%s\n"
@@ -619,11 +621,12 @@ class Uplink:
     def put(
         self, local_path: str, remote_path: str, timeout_s: int = 120
     ) -> TransferResult:
-        """Copy one local file to a remote path; remote parents created.
+        """Copy one local file to a remote path, creating remote parents.
 
         Streams regular files up to 16 GiB as stdin to a remote `cat`, so
         binary data stays out of memory, command lines and results. Failed
-        copies raise with remote stderr. Increase `timeout_s` for slow links.
+        copies raise with remote stderr. Increase `timeout_s` for slow
+        links.
         """
         source = os.path.expanduser(local_path)
         with open(source, "rb") as handle:
@@ -661,11 +664,11 @@ class Uplink:
     def get(
         self, remote_path: str, local_path: str, timeout_s: int = 120
     ) -> TransferResult:
-        """Copy one remote file to a local path; local parents created.
+        """Copy one remote file to a local path, creating local parents.
 
         Streams at most 16 GiB into a temporary file before replacing the
         target. Failures leave an existing target untouched. The bytes never
-        enter a result object; increase `timeout_s` for slow links.
+        enter a result object. Increase `timeout_s` for slow links.
         """
         endpoint = _endpoint()
         command = f"head -c {_MAX_TRANSFER_BYTES + 1} {shlex.quote(remote_path)}"

@@ -1,9 +1,9 @@
-"""Model-facing views of Vis results; mappings and JSON retain every original field.
+"""Model-facing views of Vis results. Mappings and JSON keep every original field.
 
 Only presentation lives here. The runtime still owns result identity, shell handles,
 paging and execution. Installation changes the session-local result class, never
-builtins.dict or a process-global runtime class. Unknown operations keep dict repr.
-Use the variable holding a result to inspect keys, or pass it to dict()/json.dumps().
+builtins.dict or a process-global runtime class. Unknown operations keep dict repr. Use
+the variable holding a result to inspect keys, or pass it to dict()/json.dumps().
 """
 
 from collections import Counter

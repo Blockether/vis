@@ -1,4 +1,4 @@
-"""Vis entrypoint; business logic lives in vis_greeter, not this file."""
+"""Vis entrypoint. The business logic lives in vis_greeter, not in this file."""
 
 import blockether.vis.extension as vis
 from vis_greeter import Greeter

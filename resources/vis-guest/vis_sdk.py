@@ -1,4 +1,4 @@
-"""Install the canonical extension SDK with an explicit host or no host access."""
+"""Install the one shared extension SDK with an explicit host or no host access."""
 
 import importlib
 import importlib.machinery

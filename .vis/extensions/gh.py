@@ -1,42 +1,57 @@
 """gh — watch GitHub Actions live, then give the model one deduplicated diagnostic.
 
-A CI run is the archetype a live view exists for: it takes time, a person wants to WATCH it, and
-the model needs the final jobs, steps, timing, and failed logs without repeating the artifact tree.
+A CI run takes time, and a person wants to WATCH it. The model needs the final jobs, steps, timing
+and failed logs, without a repeat of the artifact tree. This extension serves both.
 
-**Everything GitHub is the `gh` CLI through the sandbox shell verb.** No hand-built HTTPS, token
-read, copy, or model-visible credential: when `gh` is signed out, GitHub's browser device flow is
-mediated by private human input before any view opens.
+**All GitHub access is the `gh` CLI through the sandbox shell verb.** The extension builds no HTTPS
+requests, and it does not read, copy or show a credential to the model. When `gh` is signed out,
+private human input handles GitHub's browser device flow before any view opens.
 
-Six nodes answer distinct questions about a run: what the machine is doing RIGHT NOW (`run`), how far
-the steps have got (`progress`), the outcome counts and the wall clock (`score`), the jobs (`jobs`), the
-selected job's timeline (`steps`), and where to open it (`links`). A seventh, the log, is not declared: it
-is ADDED after `run` the moment a selected job has something to read and dropped again when it has not, so
-a phone shows a failure over the fold instead of a permanent line about a log GitHub has not published.
-Job rows are controls: all concurrently running jobs are selected by default; with none running, the last
-failed job (or simply the last job) is selected. A tap replaces that selection in shared live state, so the
-extension, terminal, and every Companion agree on the timeline and log below it. One mapping serves all
-nodes: every unfinished status is `running`, `success` is `ok`, `skipped` and `neutral` are `idle`, and
-every unsuccessful conclusion is `error`. Rows are upserted by the job's `databaseId`, so a job that
-changes state keeps its slot and the eye keeps its place, and only what CHANGED since the last poll
-crosses the wire.
+Six nodes answer different questions about a run:
 
-GitHub serves a log per JOB, not per run: the REST endpoint `actions/jobs/N/logs` returns 404 while
-that job is writing, then answers with the whole log the moment the job ends. The log pane of a
-running selection therefore says only that the log is still unpublished — the current step and its
-live elapsed time belong to the steps panel, and repeating them in the log would write a fresh copy
-of the same placeholder into the view's record on every tick. The raw log replaces that line the
-moment GitHub publishes it. Temporary CLI, network, malformed JSON, rate-limit, and provider failures
-retain the last good picture and retry visibly in the run status; three consecutive failures settle
-the view as failed instead of turning an outage or deleted run into an infinite watch. A missing job
-log is never cached as final. When newer work for the same workflow, branch and event replaces a
-run — the newer run starts, or the watched run is cancelled — the obsolete view closes with a link
-to its replacement and the watch continues in a new view of that run, so one watch answers for
-the work that still matters. A newer run queued behind the watched one does not take over, and a
-skipped run never does. Pull-request checks use this same view through the one public watcher; a
-check set with no checks settles neutral rather than waiting forever.
+- `run`: what the machine does RIGHT NOW.
+- `progress`: how far the steps have got.
+- `score`: the outcome counts and the wall clock.
+- `jobs`: the jobs.
+- `steps`: the timeline of the selected job.
+- `links`: where to open the run.
 
-The model's surface is one `gh` object — `login()`, `runs()`, `watch()` — and every answer is a
-typed frozen outcome (`Account`, `RunSummary`, `WatchOutcome`): jobs, steps and failed-log tails
+The log is a seventh node, but it is not declared. The extension ADDS it after `run` when a selected
+job has something to read, and removes it again when it has nothing. So a phone shows a failure near
+the top, not a permanent line about a log that GitHub has not published.
+
+Job rows are controls. By default, all jobs that run at the same time are selected. When no job
+runs, the last failed job is selected, or else the last job. A tap replaces that selection in shared
+live state. So the extension, the terminal and every Companion agree on the timeline and log below
+the jobs.
+
+One status mapping serves all nodes. Each unfinished status is `running`, `success` is `ok`,
+`skipped` and `neutral` are `idle`, and each unsuccessful conclusion is `error`. Rows are upserted
+by the job's `databaseId`. So a job that changes state keeps its slot, and the eye keeps its place.
+Only what CHANGED since the last poll crosses the wire.
+
+GitHub serves a log per JOB, not per run. The REST endpoint `actions/jobs/N/logs` returns 404 while
+that job writes, then answers with the whole log when the job ends. So the log pane of a running
+selection says only that the log is not published yet. The steps panel shows the current step and
+its live elapsed time. If the log pane repeated them, each tick would write a new copy of the same
+placeholder into the view's record. The raw log replaces that line when GitHub publishes it.
+
+Temporary CLI, network, malformed JSON, rate-limit and provider failures keep the last good picture.
+The run status shows each retry. After three failures in a row, the view settles as failed. So an
+outage or a deleted run cannot turn into an infinite watch. A missing job log is never cached as
+final.
+
+Newer work for the same workflow, branch and event can replace a run. This occurs when the newer run
+starts, or when the watched run is cancelled. Then the obsolete view closes with a link to its
+replacement, and the watch continues in a new view of that run. So one watch answers for the work
+that still matters. A newer run queued behind the watched one does not take over. A skipped run
+never takes over.
+
+Pull-request checks use this same view through the one public watcher. A check set with no checks
+settles neutral and does not wait forever.
+
+The model's surface is one `gh` object with `login()`, `runs()` and `watch()`. Every answer is a
+typed frozen outcome (`Account`, `RunSummary`, `WatchOutcome`). Jobs, steps and failed-log tails
 arrive as structure, and serialization happens at the host boundary only.
 """
 
@@ -100,9 +115,9 @@ class GhMissing(RuntimeError):
 class Account:
     """GitHub CLI authentication for one host.
 
-    `was_already_authenticated` is True when login() found a valid account and did
-    nothing; False when this call completed a device flow. The one-time code, the
-    token and gh's own status text never cross into the result.
+    `was_already_authenticated` is True when login() found a valid account and did nothing. It is
+    False when this call completed a device flow. The one-time code, the token and gh's own status
+    text never cross into the result.
     """
 
     hostname: str
@@ -114,10 +129,10 @@ class Account:
 class RunSummary:
     """One row of a repository's recent Actions runs, newest first.
 
-    `status` and `conclusion` are GitHub's own spellings (`in_progress`,
-    `completed`; `success`, `failure`, `cancelled`, ...); `conclusion` is empty
-    while the run is still going. `started_at` is the run's UTC creation
-    timestamp, empty when GitHub did not report one.
+    `status` and `conclusion` use GitHub's own spellings: `in_progress` or `completed` for `status`,
+    and `success`, `failure`, `cancelled` and so on for `conclusion`. `conclusion` is empty while
+    the run is still going. `started_at` is the run's UTC creation timestamp, empty when GitHub did
+    not report one.
     """
 
     run_id: int
@@ -176,20 +191,24 @@ class FailedLog:
 
 @dataclass(frozen=True)
 class WatchOutcome:
-    """What one finished watch answers: the run, every job, the damage.
+    """What one finished watch answers: the run, every job and the failures.
 
-    `ending` is one of `completed`; `job_failure` (a job failed while others still
-    run, so `status` stays in progress); `superseded` (a newer run of the same
-    workflow/branch/event took over but could not be opened — `error` says why, and
-    `replacement_run_id`, `replacement_url` and `replacement_title` name it);
-    `poll_failure` (gh stopped answering; `error` carries the first line); and
-    `interrupted` (the person watching stopped it; `is_stopped_by_human` says who,
-    `human_note` carries their words when they left any). A watch follows each newer
-    run that replaces the one it watches, so the outcome describes the last run it
-    reached and `superseded_run_ids` lists the runs it left, oldest first.
-    `status`/`conclusion` are the LAST poll's, so an interrupted watch describes the
-    run as it stood when the view closed. Pull-request checks answer the same shape
-    with `workflow` = "checks" and no numeric `run_id`.
+    `ending` tells why the watch ended:
+
+    - `completed`: the run finished.
+    - `job_failure`: a job failed while others still run, so `status` stays in progress.
+    - `superseded`: a newer run of the same workflow, branch and event took over, but the watch
+      could not open it. `error` says why. `replacement_run_id`, `replacement_url` and
+      `replacement_title` name the newer run.
+    - `poll_failure`: gh stopped answering. `error` carries the first line.
+    - `interrupted`: the person watching stopped it. `is_stopped_by_human` says who stopped it, and
+      `human_note` carries their words when they left any.
+
+    A watch follows each newer run that replaces the one it watches. So the outcome describes the
+    last run it reached, and `superseded_run_ids` lists the runs it left, oldest first. `status` and
+    `conclusion` come from the LAST poll. So an interrupted watch describes the run as it stood when
+    the view closed. Pull-request checks answer the same shape, with `workflow` = "checks" and no
+    numeric `run_id`.
     """
 
     run_id: int | None
@@ -555,9 +574,9 @@ def _timeline(selected, groups_by_id, is_over, now=None):
 def run_shape(payload, selected_ids=None, now=None):
     """Everything the nodes show, derived from one `gh run view --json` payload.
 
-    Pure: `selected_ids=None` applies the live default; explicit ids are the human's shared
+    Pure: `selected_ids=None` applies the live default. Explicit ids are the human's shared
     selection, pruned to jobs that still exist. The same payload and selection always answer the
-    same shape, which makes both the mapping and click behavior testable without a network.
+    same shape. This makes both the mapping and click behavior testable without a network.
     """
     jobs = [job for job in (payload.get("jobs") or []) if isinstance(job, dict)]
     tones = [tone_of(job.get("status"), job.get("conclusion")) for job in jobs]
@@ -694,10 +713,10 @@ def run_shape(payload, selected_ids=None, now=None):
 
 
 def declared_nodes(shape):
-    """The six nodes, declared once from the first poll and addressed by id ever after.
+    """The six nodes, declared once from the first poll and addressed by id after that.
 
-    The log is NOT among them: it is added after `run` when there is something to read
-    (`_show_selection_logs`), so an empty pane never takes the space above the jobs.
+    The log is NOT among them. `_show_selection_logs` adds it after `run` when there is something to
+    read. So an empty pane never takes the space above the jobs.
     """
     return [
         vis.status(
@@ -1005,7 +1024,7 @@ def _login(hostname="github.com") -> Account:
 
 
 def require_gh():
-    """Ensure the default GitHub CLI account exists, asking the human to sign in when needed."""
+    """Make sure the default GitHub CLI account exists, and ask the human to sign in when needed."""
     _login()
 
 
@@ -1113,12 +1132,13 @@ def _is_cancelled(payload):
 def newer_run(payload, repo=None):
     """The later run of this workflow/branch/event that replaced this run, or None.
 
-    Regression, session 32bcc713-cb98-44fb-bda6-ac77f18b7575: any later run ended the watch,
-    even one still queued behind the watched run, so the verdict of the run that was building
-    never arrived; a run already cancelled for newer work was reported as a plain cancellation.
-    A later run takes over once it is doing work: started, or finished with a verdict of its
-    own. One still waiting takes over only from a run being cancelled. Skipped and cancelled
-    runs never take over.
+    Regression, session 32bcc713-cb98-44fb-bda6-ac77f18b7575: any later run ended the watch, even
+    one still queued behind the watched run. So the verdict of the run that was building never
+    arrived. A run already cancelled for newer work was reported as a plain cancellation.
+
+    A later run takes over once it is doing work: started, or finished with a verdict of its own.
+    One still waiting takes over only from a run being cancelled. Skipped and cancelled runs never
+    take over.
     """
     workflow = str(payload.get("workflowName") or "")
     branch = str(payload.get("headBranch") or "")
@@ -1159,11 +1179,11 @@ def newer_run(payload, repo=None):
 def log_window(text, lines=LOG_TAIL_LINES):
     """The lines worth showing out of a job's whole log.
 
-    `gh` repeats the job and step name on every line — noise in a pane three columns wide — so
-    only the timestamped text is kept. And a failing job's LAST lines are the runner cleaning up
-    orphan processes, while the reason it failed is above them: when the log carries an
-    `##[error]` marker, the window ENDS at the last one, so the tail a person reads is what led
-    to the failure rather than what happened after it.
+    `gh` repeats the job and step name on every line. That is noise in a pane three columns wide, so
+    only the timestamped text is kept. A failing job's LAST lines are the runner that cleans up
+    orphan processes, and the reason it failed is above them. So when the log carries an `##[error]`
+    marker, the window ENDS at the last one. The tail a person reads is then what led to the
+    failure, not what happened after it.
     """
     written = [
         line.split("\t")[-1].rstrip() for line in text.splitlines() if line.strip()
@@ -1174,10 +1194,10 @@ def log_window(text, lines=LOG_TAIL_LINES):
 
 
 def repo_of(payload, repo=None):
-    """`owner/name` for the run — the flag when one was given, else read off the run's own URL.
+    """`owner/name` for the run: the flag when one was given, else read off the run's own URL.
 
-    The log endpoint is addressed by repository, and the payload already carries the one the run
-    belongs to, so a watch stays at one `gh` call per poll.
+    The log endpoint is addressed by repository, and the payload already carries the run's
+    repository. So a watch stays at one `gh` call per poll.
     """
     if repo:
         return str(repo)
@@ -1187,11 +1207,11 @@ def repo_of(payload, repo=None):
 
 
 def job_log(repo, job_id, lines=LOG_TAIL_LINES):
-    """The tail of ONE job's log the moment that job is over — nil while it is still writing.
+    """The tail of ONE job's log the moment that job is over, or None while it is still writing.
 
-    `gh run view --job N --log` answers "run … is still in progress" until the whole RUN
-    completes, which is why a job that failed early used to stay silent for as long as the rest of
-    the matrix took. The REST endpoint is per JOB: 404 while it runs, the whole log once it ends.
+    `gh run view --job N --log` answers "run … is still in progress" until the whole RUN completes.
+    So a job that failed early used to stay silent until the rest of the matrix finished. The REST
+    endpoint is per JOB: 404 while the job runs, the whole log once it ends.
     """
     if not repo or not job_id:
         return None
@@ -1551,13 +1571,14 @@ def watch(
 ):
     """Watch a CI run until it ends or a failed job needs attention.
 
-    Job selection is shared live state. Each tick reads it before deriving the next shape, so a
-    Companion tap changes the steps and logs the extension writes; absent a tap, all parallel
-    running jobs follow together, then the last failed (or last) job becomes the default.
+    Job selection is shared live state. Each tick reads it before it derives the next shape. So a
+    Companion tap changes the steps and logs the extension writes. Without a tap, all parallel
+    running jobs follow together. Then the last failed job, or else the last job, becomes the
+    default.
 
-    A terminal failed job stops the view even if other matrix legs are still running. Diagnostic
-    full-run watches can set `stop_on_failure=False`. A newer run, unavailable GitHub, or a human
-    Stop also ends this watch; none of them cancels the workflow.
+    A terminal failed job stops the view, even if other matrix legs are still running. Diagnostic
+    full-run watches can set `stop_on_failure=False`. A newer run, unavailable GitHub or a human
+    Stop also ends this watch. None of them cancels the workflow.
     """
     payload = poll()
     # The run facts answer the last poll whose picture reached the human: a poll that
@@ -1938,10 +1959,9 @@ def _watch_activity(*, phase, result, **_):
 class Gh:
     """GitHub through the `gh` CLI: sign in, list runs, watch one to its end.
 
-    One transport and one credential path serve everything — the GitHub CLI
-    through the sandbox shell verb, no hand-built HTTPS, no model-visible
-    token. `login` may open a private human-input dialog; `runs` and `watch`
-    only read.
+    One transport and one credential path serve everything. That path is the GitHub CLI through the
+    sandbox shell verb, with no hand-built HTTPS and no model-visible token. `login` can open a
+    private human-input dialog. `runs` and `watch` only read.
     """
 
     @vis.method(
@@ -1953,11 +1973,13 @@ class Gh:
     def login(self, hostname: str = "github.com") -> Account:
         """Authenticate GitHub CLI on one host through GitHub's browser device flow.
 
-        Returns immediately when already signed in. Otherwise GitHub shows a short-lived code in
-        a private HITL dialog; the human opens GitHub, authorizes the CLI, and confirms there.
-        The model receives only the typed outcome — never the code, token, account status output,
-        or process transcript. HTTPS Git credentials are configured as part of login. `hostname`
-        defaults to `github.com` and may name a GitHub Enterprise host.
+        Returns immediately when already signed in. Otherwise, GitHub shows a short-lived code in a
+        private human-input dialog. The human opens GitHub, authorizes the CLI and confirms there.
+        The model receives only the typed outcome. It never receives the code, the token, the
+        account status output or the process transcript. Login also configures HTTPS Git
+        credentials.
+
+        `hostname` defaults to `github.com` and can name a GitHub Enterprise host.
         """
         return _login(hostname)
 
@@ -1969,9 +1991,9 @@ class Gh:
     def runs(self, repo: str | None = None, limit: int = 10) -> tuple[RunSummary, ...]:
         """List recent Actions runs, newest first, without watching anything.
 
-        The answer to "which run is this" and "what ran lately": each `run_id` is what
-        `watch(run=...)` takes. `repo` is `owner/name` for another repository; `limit` is
-        capped at 50.
+        Use it to answer "which run is this" and "what ran lately". Each `run_id` is what
+        `watch(run=...)` takes. `repo` is `owner/name` for another repository. `limit` is capped at
+        50.
         """
         return run_list(repo, limit)
 
@@ -1985,24 +2007,31 @@ class Gh:
     ) -> WatchOutcome:
         """What is this CI activity doing, and how did it end? Watch one run or PR checks.
 
-        Opens a live view a person can watch (and stop), easing polls from three seconds to eight
-        after five minutes. Job rows are controls: all jobs running in parallel are selected
-        initially; tap one to replace the steps and output below with that job between CLI
-        requests. Stop remains responsive during requests and stops only the local watcher,
-        never the GitHub run. Each request has a deadline; timeouts are retried as failures.
-        The returned WatchOutcome carries run metadata, every job with id, outcome, start/end
-        times, nested steps, and one bounded log tail for each failed job — it never repeats
-        the artifact tree. `run` is a run id or
-        URL; without `run` or `pr`, the newest run on the current branch is selected. `pr` is a
-        pull-request number, branch, URL, or `"current"`; it watches that PR's aggregate checks
-        through the same view. `run` and `pr` are mutually exclusive. When a newer run of the same
-        workflow, branch and event replaces the watched one — it starts, or the watched run is
-        cancelled — the watch follows it in a new view and answers for the last run it reached;
-        `superseded_run_ids` lists the runs it left. A newer run still queued behind the watched
-        one does not take over. A failed job also stops the view promptly, even while other jobs
-        are running; the result retains the run’s in-progress status and the failed log. `repo`
-        is `owner/name` for another repository. Human Stop returns the last published run facts
-        and cached failed logs without fetching more after Stop.
+        Opens a live view a person can watch and stop. It polls every three seconds, and every eight
+        seconds after five minutes. Job rows are controls. At first, all jobs running in parallel
+        are selected. Tap one job to show its steps and output below. The change applies between CLI
+        requests.
+
+        Stop stays responsive during requests and stops only the local watcher, never the GitHub
+        run. Each request has a deadline, and timeouts are retried as failures.
+
+        The returned WatchOutcome carries the run metadata and every job. Each job has its id,
+        outcome, start and end times, and nested steps. Each failed job also has one bounded log
+        tail. The outcome never repeats the artifact tree.
+
+        `run` is a run id or URL. Without `run` or `pr`, the newest run on the current branch is
+        selected. `pr` is a pull-request number, branch, URL or `"current"`. It watches that PR's
+        aggregate checks through the same view. `run` and `pr` are mutually exclusive. `repo` is
+        `owner/name` for another repository.
+
+        A newer run of the same workflow, branch and event can replace the watched one. This occurs
+        when the newer run starts, or when the watched run is cancelled. Then the watch follows the
+        newer run in a new view and answers for the last run it reached. `superseded_run_ids` lists
+        the runs it left. A newer run still queued behind the watched one does not take over.
+
+        A failed job also stops the view promptly, even while other jobs are running. The result
+        keeps the run's in-progress status and the failed log. A human Stop returns the last
+        published run facts and cached failed logs. It fetches nothing more after Stop.
         """
         return _watch_run(run, repo, pr)
 
