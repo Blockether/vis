@@ -2235,17 +2235,15 @@ export function Modal({
   /**
    * `full` is the screen: a list, a browser, anything that wants every pixel.
    *
-   * `fit` is a QUESTION — "Delete this session?" is two lines and two verbs, and
-   * taking the whole phone for it makes a confirmation look like a destination.
-   * It rides up from the bottom edge like the full sheet does, but only as tall as
-   * what it holds, and on the desktop it is the same box without the fixed height.
+   * `fit` is a short task: a confirmation that should stop at its content.
+   * `fit-roomy` keeps that height but gives a one-column scoped settings dialog
+   * more width on a desktop. Both rise from the bottom edge on a phone.
    *
-   * `wide` is SETTINGS, and settings only: the one dialog that stands two columns
-   * beside each other (this device, and the machines) rather than asking one
-   * question. Same scrim, same physics, same desktop box — only the width differs.
-   * Below `sm:` the columns stack and, like `fit`, it stops at its content.
+   * `wide` is for the application's two-column settings (this device and the
+   * machines), not a short scoped task. Same scrim, same physics, same desktop
+   * box — only the width differs. Below `sm:` the columns stack and stop at content.
    */
-  size?: 'full' | 'fit' | 'wide';
+  size?: 'full' | 'fit' | 'fit-roomy' | 'wide';
   /**
    * WHAT THE DIALOG STANDS OVER. `app` is every dialog that belongs to the whole
    * application — settings, the machine fleet, a confirmation — and it covers the
@@ -2255,8 +2253,8 @@ export function Modal({
    * instead. On a desk that is a list and a transcript side by side, an opened run,
    * a parked question and the pick of the model THIS session runs on have no business
    * dimming the list beside them. A `full` or `wide` one takes every pixel of that pane —
-   * the pane is already the bound the desktop box exists to impose — while a `fit` one
-   * still stops at its content, centred in the pane it belongs to.
+   * the pane is already the bound the desktop box exists to impose — while `fit`
+   * and `fit-roomy` stop at their content, centred in the pane they belong to.
    */
   within?: 'app' | 'session';
   children: ReactNode;
@@ -2280,11 +2278,13 @@ export function Modal({
   // could have had. Reported: opening a live run should fill the session it belongs to.
   const fillsPane = within === 'session' && !stopsAtContent;
   const boxHeight = stopsAtContent
-    ? `max-h-[calc(100%-env(safe-area-inset-top))] ${size === 'fit' ? 'sm:h-auto' : DIALOG_DESKTOP_HEIGHT}`
+    ? `max-h-[calc(100%-env(safe-area-inset-top))] ${size === 'fit' || size === 'fit-roomy' ? 'sm:h-auto' : DIALOG_DESKTOP_HEIGHT}`
     : fillsPane
       ? 'sm:h-full'
       : DIALOG_DESKTOP_HEIGHT;
-  const desktopWidth = size === 'wide' ? 'sm:max-w-4xl mouse:max-w-6xl' : 'sm:max-w-xl';
+  const desktopWidth = size === 'wide'
+    ? 'sm:max-w-4xl mouse:max-w-6xl'
+    : size === 'fit-roomy' ? 'sm:max-w-2xl' : 'sm:max-w-xl';
   const boxWidth = fillsPane ? 'sm:max-w-none' : desktopWidth;
 
   return createPortal(
