@@ -245,6 +245,24 @@
 
         (expect (str/includes? text "loading more operations"))
         (expect (empty? (filter #(= :activity-page (get-in % [:meta :kind])) entries)))))
+  (it "stays quiet while a record already shown in full is read again"
+      (let [entries
+            (#'render/activity-detail-entries
+             {:node-id "activity"
+              :activity-rows []
+              :activity-expanded? (fn [key default]
+                                    (get {"#band" true} key default))
+              :activity-histories [{:id "history-1" :revision 2 :total 90 :after 0}]
+              :activity-fetch {"history-1"
+                               {:status :loading :after 32 :automatic? true :refresh? true}}}
+             72
+             "fixture")
+
+            text
+            (str/join "\n" (map :line entries))]
+
+        (expect (not (str/includes? text "loading more operations")))
+        (expect (empty? (filter #(= :activity-page (get-in % [:meta :kind])) entries)))))
   (it "keeps a failed window retryable at the cursor it tried"
       (let [entries
             (#'render/activity-detail-entries

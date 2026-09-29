@@ -6779,11 +6779,15 @@
                                  {:kind :activity-search :history-id id :query query}))]
 
                 (cond
-                  (= :loading (:status fetch)) [(band-rule (str (if (seq query)
-                                                                  "searching every operation"
-                                                                  "loading more operations")
-                                                                run)
-                                                           nil)]
+                  (= :loading (:status fetch))
+                  ;; A record already shown in full is re-read quietly: its rows stay
+                  ;; until the new read is complete, so there is nothing to announce.
+                  (if (and (:refresh? fetch) (nil? next-after) (zero? after))
+                    []
+                    [(band-rule
+                       (str (if (seq query) "searching every operation" "loading more operations")
+                            run)
+                       nil)])
                   ;; The record moved while this reader was paging it. Continuing
                   ;; from the old cursor would splice two different histories, so
                   ;; the only rule offered reads it again from the first operation.

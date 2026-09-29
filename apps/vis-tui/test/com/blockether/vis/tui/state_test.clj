@@ -6048,24 +6048,31 @@
         (reset! state/app-db (activity-paging-db))
         (state/dispatch [:load-activity-history])
         (state/dispatch [:load-activity-history])
-        (expect (= [["cid" "a1" 32 4 nil true]] @asked))
-        (expect (= {:status :loading :after 32 :automatic? true}
+        (expect (= [["cid" "a1" 32 nil nil true]] @asked))
+        (expect (= {:status :loading
+                    :after 32
+                    :automatic? true
+                    :read {:rows [{:id "r1"}] :after 0 :revision 4}}
                    (get-in (settled-activity) [:vis.channel-tui/fetch "a1"])))))
-  (it "accumulates automatic pages in every copy without discarding earlier operations"
-      (state/reg-fx :load-activity-page
-                    (fn [& _]))
-      (reset! state/app-db (activity-paging-db))
-      (state/dispatch [:load-activity-history])
-      (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 32 64 [{:id "r2"}])
-                       {:after 32 :revision 4 :automatic? true}])
-      (expect (= [{:id "r1"} {:id "r2"}] (:rows (settled-activity))))
-      (expect (= (settled-activity) (live-activity)))
-      (expect (= 0 (get-in (settled-activity) [:history :after])))
-      (state/dispatch [:load-activity-history])
-      (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 64 nil [{:id "r3"}])
-                       {:after 64 :revision 4 :automatic? true}])
-      (expect (= [{:id "r1"} {:id "r2"} {:id "r3"}] (:rows (settled-activity))))
-      (expect (nil? (get-in (settled-activity) [:history :next-after]))))
+  (it "reads every automatic page before showing the whole record in one step"
+      (let [asked (atom [])]
+        (state/reg-fx :load-activity-page
+                      (fn [& args]
+                        (swap! asked conj (vec args))))
+        (reset! state/app-db (activity-paging-db))
+        (state/dispatch [:load-activity-history])
+        (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 32 64 [{:id "r2"}])
+                         {:after 32 :automatic? true}])
+        (expect (= [{:id "r1"}] (:rows (settled-activity))))
+        (expect (= ["cid" "a1" 64 nil nil true] (last @asked)))
+        (state/dispatch [:load-activity-history])
+        (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 64 nil [{:id "r3"}])
+                         {:after 64 :automatic? true}])
+        (expect (= [{:id "r1"} {:id "r2"} {:id "r3"}] (:rows (settled-activity))))
+        (expect (= (settled-activity) (live-activity)))
+        (expect (= {:id "a1" :revision 4 :total 274 :after 0} (:history (settled-activity))))
+        (expect (nil? (:vis.channel-tui/fetch (settled-activity))))
+        (expect (= 2 (count @asked)))))
   (it "does not automatically page searches or retry failed requests"
       (let [asked (atom [])]
         (state/reg-fx :load-activity-page
@@ -6080,16 +6087,16 @@
           (swap! state/app-db dissoc :progress)
           (state/dispatch [:load-activity-history]))
         (expect (empty? @asked))))
-  (it "refuses an automatic continuation after a live snapshot changes revision"
+  (it "refuses an automatic page that does not move its read forward"
       (state/reg-fx :load-activity-page
                     (fn [& _]))
       (reset! state/app-db (activity-paging-db))
       (state/dispatch [:load-activity-history])
-      (swap! state/app-db assoc-in [:messages 0 :traces 0 :forms 0 :activity :history :revision] 5)
-      (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 32 64 [{:id "old"}])
-                       {:after 32 :revision 4 :automatic? true}])
+      (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 32 32 [{:id "again"}])
+                       {:after 32 :automatic? true}])
       (expect (= [{:id "r1"}] (:rows (settled-activity))))
-      (expect (= 5 (get-in (settled-activity) [:history :revision])))))
+      (expect (= {:status :stale :after 32}
+                 (get-in (settled-activity) [:vis.channel-tui/fetch "a1"])))))
 
 (defdescribe
   activity-automatic-retry-test
@@ -6177,7 +6184,7 @@
                                  (dissoc :progress)))
         (state/dispatch [:load-activity-history])
         (let [response [:activity-page-loaded "cid" "a1" (paged-activity 32 nil [next-group])
-                        {:after 32 :revision 4 :automatic? true}]]
+                        {:after 32 :automatic? true}]]
           (state/dispatch response)
           (state/dispatch response))
         (expect (= 1 (count (:rows (settled-activity)))))
@@ -6204,7 +6211,7 @@
         (state/dispatch [:load-activity-history])
         (when search? (state/dispatch [:activity-page "cid" "a1" 0 4 "patch"]))
         (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 32 nil [{:id "r2"}])
-                         {:after 32 :revision 4 :automatic? true}])
+                         {:after 32 :automatic? true}])
         (expect (= intent (:scroll @state/app-db)))))
   (it "still parks the viewport for an explicitly requested search page"
       (state/reg-fx :load-activity-page
@@ -6216,3 +6223,80 @@
       (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 0 nil [{:id "r2"}])
                        {:after 0 :revision 4 :query "patch"}])
       (expect (= (scroll/parked 42) (:scroll @state/app-db)))))
+
+(defn- live-read-db
+  "A running turn whose live Activity shows `activity`."
+  [activity]
+  (-> (activity-paging-db)
+      (dissoc :messages)
+      (assoc :loading? true
+             :progress {:iterations [{:forms [{:code "1" :activity activity}]}]})))
+
+(defn- live-frame
+  "A live progress frame carrying the record's first page at `revision`."
+  [revision rows]
+  [{:forms [{:code "1"
+             :activity (assoc-in (paged-activity 0 32 rows) [:history :revision] revision)}]}])
+
+(defdescribe
+  activity-live-read-test
+  (it "keeps a complete read on screen while live frames re-read the record quietly"
+      (let [asked (atom [])]
+        (state/reg-fx :load-activity-page
+                      (fn [& args]
+                        (swap! asked conj (vec args))))
+        (reset! state/app-db (live-read-db (paged-activity 0 nil [{:id "r1"} {:id "r2"}])))
+        (state/dispatch [:set-progress-iterations (live-frame 5 [{:id "r1"}])])
+        (expect (= [{:id "r1"} {:id "r2"}] (:rows (live-activity))))
+        (expect (= 4 (get-in (live-activity) [:history :revision])))
+        (state/dispatch [:load-activity-history])
+        (expect (= [["cid" "a1" 32 nil nil true]] @asked))
+        (expect (true? (get-in (live-activity) [:vis.channel-tui/fetch "a1" :refresh?])))
+        (state/dispatch [:set-progress-iterations (live-frame 6 [{:id "r1"}])])
+        (expect (= [{:id "r1"} {:id "r2"}] (:rows (live-activity))))
+        (expect (= :loading (get-in (live-activity) [:vis.channel-tui/fetch "a1" :status])))
+        (state/dispatch [:activity-page-loaded "cid" "a1"
+                         (paged-activity 32 nil [{:id "r2"} {:id "r3"}])
+                         {:after 32 :automatic? true}])
+        (expect (= [{:id "r1"} {:id "r2"} {:id "r3"}] (:rows (live-activity))))
+        (expect (= {:id "a1" :revision 5 :total 274 :after 0} (:history (live-activity))))
+        (expect (nil? (:vis.channel-tui/fetch (live-activity))))
+        ;; The frame that arrived during the read starts the next one.
+        (expect (= 6 (get-in (live-activity) [:vis.channel-tui/head :history :revision])))
+        (state/dispatch [:load-activity-history])
+        (expect (= [["cid" "a1" 32 nil nil true] ["cid" "a1" 32 nil nil true]] @asked))))
+  (it "keeps the first read of a record loading across live frames"
+      (let [asked (atom [])]
+        (state/reg-fx :load-activity-page
+                      (fn [& args]
+                        (swap! asked conj (vec args))))
+        (reset! state/app-db (live-read-db (paged-activity 0 32 [{:id "r1"}])))
+        (state/dispatch [:load-activity-history])
+        (state/dispatch [:set-progress-iterations (live-frame 5 [{:id "r1"}])])
+        (expect (= 5 (get-in (live-activity) [:history :revision])))
+        (expect (= {:status :loading
+                    :after 32
+                    :automatic? true
+                    :read {:rows [{:id "r1"}] :after 0 :revision 4}}
+                   (get-in (live-activity) [:vis.channel-tui/fetch "a1"])))
+        (state/dispatch [:load-activity-history])
+        (expect (= 1 (count @asked)))
+        (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 32 nil [{:id "r2"}])
+                         {:after 32 :automatic? true}])
+        (expect (= [{:id "r1"} {:id "r2"}] (:rows (live-activity))))
+        (expect (nil? (get-in (live-activity) [:history :next-after])))
+        (expect (= 5 (get-in (live-activity) [:vis.channel-tui/head :history :revision])))))
+  (it "keeps the complete read a turn showed live when its settled trace has the first page"
+      (let [live
+            [{:forms [{:code "1" :activity (paged-activity 0 nil [{:id "r1"} {:id "r2"}])}]}]
+
+            canonical
+            [{:forms [{:code "1"
+                       :activity (assoc (paged-activity 0 32 [{:id "r1"}]) :state "failed")}]}]
+
+            activity
+            (get-in (#'state/settled-trace canonical live) [0 :forms 0 :activity])]
+
+        (expect (= [{:id "r1"} {:id "r2"}] (:rows activity)))
+        (expect (= "failed" (:state activity)))
+        (expect (nil? (:vis.channel-tui/head activity))))))

@@ -1514,12 +1514,18 @@
                               (let [expanded? (true? (get m k false))]
                                 (if expanded? (dissoc m k) (assoc (or m {}) k true)))))))))
 
+(defn- activity-id
+  "The retained-history id of an Activity, as a string, or nil."
+  [activity]
+  (some-> activity
+          :history
+          :id
+          str))
+
 (defn- activity-history-id
   "The retained-history id of a form's Activity, as a string, or nil."
   [form]
-  (some-> form
-          :activity :history
-          :id str))
+  (activity-id (:activity form)))
 
 (defn- update-activity-history
   "Apply `f` to the Activity of every form that shows retained history `history-id`.
@@ -1557,6 +1563,49 @@
       (seq (:messages db))
       (update :messages #(mapv message-fn %)))))
 
+(defn- activity-copies
+  "Every Activity on screen: the live progress trace first, then the traces parked
+   on pending bubbles and settled in messages. One record can appear in several."
+  [db]
+  (let [traces (concat [(get-in db [:progress :iterations])]
+                       (mapcat (fn [message]
+                                 [(:traces message) (get-in message [:terminal-pending :trace])])
+                               (:messages db)))]
+    (keep :activity (mapcat :forms (mapcat identity traces)))))
+
+(defn- activity-revision
+  "The revision a history names, or -1 when it names none."
+  ^long [history]
+  (long (or (:revision history) -1)))
+
+(defn- complete-activity-history?
+  "Whether a history holds its record from the first operation to the last."
+  [history]
+  (and (nil? (:next-after history)) (zero? (long (or (:after history) 0)))))
+
+(defn- activity-operation-count
+  "The operations `rows` show, counting every member of a grouped row."
+  [rows]
+  (reduce + 0 (map #(if (seq (:children %)) (activity-operation-count (:children %)) 1) rows)))
+
+(defn- activity-head
+  "The newest first page known for an Activity: the live snapshot held back while
+   a longer read stays on screen, otherwise the rows on screen."
+  [activity]
+  (or (:vis.channel-tui/head activity) (select-keys activity [:rows :history])))
+
+(defn- activity-read
+  "The read a page request at `cursor` continues. A request where `head` stops
+   extends the head's rows; any other cursor starts an empty read there."
+  [head cursor]
+  (let [history (:history head)]
+    (if (and (pos? (long cursor))
+             (= cursor
+                (some-> (:next-after history)
+                        long)))
+      {:rows (vec (:rows head)) :after (long (or (:after history) 0)) :revision (:revision history)}
+      {:rows [] :after cursor})))
+
 (reg-event-fx :activity-page
               ;; The reader pressed the rule under an Activity band. NOTHING was lost when the
               ;; band was trimmed — the record still holds every operation — so ask it for the
@@ -1566,90 +1615,111 @@
               ;; `revision` is the revision the band is showing: the gateway refuses a window
               ;; from a record that has moved on, and refusing is right — two revisions spliced
               ;; together are a history that never existed. `query` keeps a search alive across
-              ;; the pages of its own result.
+              ;; the pages of its own result. An unfiltered press runs the automatic reader's
+              ;; read, continuing the newest head when the cursor is where that head stops.
               (fn [db [_ session-id history-id after revision query]]
                 (let [id
                       (str history-id)
 
                       cursor
-                      (long (or after 0))]
+                      (long (or after 0))
+
+                      head
+                      (some->> (activity-copies db)
+                               (filter #(= id (activity-id %)))
+                               first
+                               activity-head)
+
+                      fetch
+                      (if (seq query)
+                        {:status :loading :after cursor :query query}
+                        (cond-> {:status :loading
+                                 :after cursor
+                                 :automatic? true
+                                 :read (activity-read head cursor)}
+                          revision
+                          (assoc :revision revision)))]
 
                   (if (= (str session-id) (str (get-in db [:session :id])))
-                    {:db (update-activity-history db
-                                                  id
-                                                  #(assoc-in %
-                                                     [:vis.channel-tui/fetch id]
-                                                     (cond-> {:status :loading :after cursor}
-                                                       (seq query)
-                                                       (assoc :query query)
-
-                                                       (not (seq query))
-                                                       (assoc :automatic? true))))
+                    {:db
+                     (update-activity-history db id #(assoc-in % [:vis.channel-tui/fetch id] fetch))
                      :fx [(cond-> [:load-activity-page (str session-id) id cursor revision query]
                             (not (seq query))
                             (conj true))]}
                     {:db db}))))
 
+(defn- activity-walk
+  "The automatic read an Activity still needs, or nil when its newest head is
+   complete. A read that refreshes rows already shown in full is `:refresh?`."
+  [activity]
+  (let [head
+        (activity-head activity)
+
+        history
+        (:history head)
+
+        cursor
+        (if (pos? (long (or (:after history) 0))) 0 (long (or (:next-after history) 0)))]
+
+    (when (and (:id history) (not (complete-activity-history? history)))
+      (cond-> {:status :loading :after cursor :automatic? true :read (activity-read head cursor)}
+        (:vis.channel-tui/head activity)
+        (assoc :refresh? true)))))
+
 (reg-event-fx
   :load-activity-history
   ;; Transport pages bound a response, not the operations available in the TUI.
-  ;; Collect each history once even when live and restored traces both contain it.
+  ;; Collect each history once even when live and restored traces both contain it:
+  ;; the first copy, live before restored, decides. A record with a read in flight,
+  ;; a failure awaiting a press or a search is left to its reader. Reads are not
+  ;; pinned to a revision, so a running record never refuses its own next page.
   (fn [db _]
-    (let [traces
-          (concat [(get-in db [:progress :iterations])]
-                  (mapcat (fn [message]
-                            [(:traces message) (get-in message [:terminal-pending :trace])])
-                          (:messages db)))
-
-          activities
-          (keep :activity (mapcat :forms (mapcat identity traces)))
-
-          sid
+    (let [sid
           (some-> db
                   :session
                   :id
                   str)
 
-          requests
+          copies
+          (activity-copies db)
+
+          busy
+          (set (keep #(let [id (activity-id %)] (when (seq (get-in % [:vis.channel-tui/fetch id]))
+                                                  id))
+                     copies))
+
+          walks
           (when sid
-            (distinct (keep
-                        (fn [activity]
-                          (let [{:keys [id revision after next-after]}
-                                (:history activity)
+            (second (reduce (fn [[seen walks] activity]
+                              (let [id (activity-id activity)]
+                                (if (or (nil? id) (contains? seen id))
+                                  [seen walks]
+                                  [(conj seen id)
+                                   (if-let [walk (when-not (busy id) (activity-walk activity))]
+                                     (conj walks [id walk])
+                                     walks)])))
+                            [#{} []]
+                            copies)))]
 
-                                fetch
-                                (get-in activity [:vis.channel-tui/fetch (str id)])]
-
-                            (when (and id (or next-after (pos? (long (or after 0)))) (empty? fetch))
-                              [(str id) (if (pos? (long (or after 0))) 0 next-after) revision])))
-                        activities)))]
-
-      {:db (reduce (fn [db [id after _]]
-                     (update-activity-history db
-                                              id
-                                              #(assoc-in %
-                                                 [:vis.channel-tui/fetch id]
-                                                 {:status :loading :after after :automatic? true})))
+      {:db (reduce (fn [db [id walk]]
+                     (update-activity-history db id #(assoc-in % [:vis.channel-tui/fetch id] walk)))
                    db
-                   requests)
-       :fx (mapv (fn [[id after revision]]
-                   [:load-activity-page sid id after revision nil true])
-                 requests)})))
+                   walks)
+       :fx (mapv (fn [[id walk]]
+                   [:load-activity-page sid id (:after walk) nil nil true])
+                 walks)})))
 
 (defn- current-activity-request?
-  "Whether an automatic reply still belongs to the cursor and revision being read."
+  "Whether a reply still belongs to the read in flight. An explicit window always
+   does; an automatic page only while its cursor and pinned revision are the ones
+   being read."
   [activity id cursor revision automatic?]
-  (let [fetch
-        (get-in activity [:vis.channel-tui/fetch id])
-
-        history
-        (:history activity)]
-
+  (let [fetch (get-in activity [:vis.channel-tui/fetch id])]
     (or (not automatic?)
         (and (:automatic? fetch)
+             (= :loading (:status fetch))
              (= cursor (:after fetch))
-             (or (nil? revision) (= revision (:revision history)))
-             (or (zero? (long cursor)) (= cursor (:next-after history)))))))
+             (= revision (:revision fetch))))))
 
 (defn- merge-activity-rows
   "Join transport pages by receipt ID, including synthetic parents spanning pages."
@@ -1682,10 +1752,122 @@
                 (last parts))))
           (distinct (map :id rows)))))
 
-(reg-event-db
+(defn- retain-activity-read
+  "Carry the reader's state from `before` into `after`, a newer snapshot of the
+   same record. A live snapshot is only the record's first page, so it never
+   replaces a longer read on screen: that read stays until the next read of the
+   record is complete, and the snapshot is held as the head that read starts from.
+   A search still ends when its record moves on."
+  [before after]
+  (let [id
+        (activity-id after)
+
+        fetch
+        (get-in before [:vis.channel-tui/fetch id])
+
+        shown
+        (:history before)
+
+        hold?
+        (and (not (complete-activity-history? (:history after)))
+             (or (complete-activity-history? shown)
+                 (> (long (activity-operation-count (:rows before)))
+                    (long (activity-operation-count (:rows after))))))]
+
+    (if (seq (:query fetch))
+      after
+      (cond-> after
+        (seq fetch)
+        (assoc-in [:vis.channel-tui/fetch id] fetch)
+
+        hold?
+        (assoc :rows
+          (:rows before) :history
+          shown)
+
+        (and hold? (> (activity-revision (:history after)) (activity-revision shown)))
+        (assoc :vis.channel-tui/head (select-keys after [:rows :history]))))))
+
+(defn- retain-activity-reads
+  "Carry every Activity's reader state from trace `before` into `after`, a newer
+   trace of the same turn."
+  [before after]
+  (let [previous
+        (into {}
+              (keep #(some-> (activity-id %)
+                             (vector %)))
+              (keep :activity (mapcat :forms before)))
+
+        form-fn
+        (fn [form]
+          (if-let [old (get previous (activity-history-id form))]
+            (update form :activity #(retain-activity-read old %))
+            form))]
+
+    (mapv (fn [entry]
+            (if (seq (:forms entry)) (update entry :forms #(mapv form-fn %)) entry))
+          after)))
+
+(defn- commit-activity-read
+  "Show a finished read in one step. A newer head that arrived while it was read
+   stays held for the next read; a newer head that is complete is shown instead."
+  [activity id read history]
+  (let [shown
+        (-> history
+            (dissoc :next-after)
+            (assoc :after (long (or (:after read) 0))
+                   :revision (or (:revision read) (:revision history))))
+
+        head
+        (activity-head activity)
+
+        newer?
+        (> (activity-revision (:history head)) (activity-revision shown))
+
+        complete-head?
+        (and newer? (complete-activity-history? (:history head)))
+
+        fetch
+        (not-empty (dissoc (:vis.channel-tui/fetch activity) id))]
+
+    (cond-> (-> activity
+                (dissoc :vis.channel-tui/fetch :vis.channel-tui/head)
+                (merge (if complete-head? head {:rows (:rows read) :history shown})))
+      fetch
+      (assoc :vis.channel-tui/fetch fetch)
+
+      (and newer? (not complete-head?))
+      (assoc :vis.channel-tui/head head))))
+
+(defn- read-activity-page
+  "Fold an automatic page into the read in flight and show the read once its last
+   page has arrived. A page that does not continue the read marks it stale."
+  [activity id projection cursor revision requested?]
+  (let [fetch
+        (get-in activity [:vis.channel-tui/fetch id])
+
+        history
+        (:history projection)]
+
+    (cond (not (current-activity-request? activity id cursor revision true)) activity
+          (not requested?)
+          (assoc-in activity [:vis.channel-tui/fetch id] {:status :stale :after cursor})
+          :else (let [read (-> (or (:read fetch) {:rows [] :after cursor})
+                               (update :rows #(merge-activity-rows (vec %) (:rows projection)))
+                               (update :revision #(or % (:revision history))))]
+                  (if-let [next-after (:next-after history)]
+                    (assoc-in activity
+                      [:vis.channel-tui/fetch id]
+                      (assoc fetch
+                        :after (long next-after)
+                        :read read))
+                    (commit-activity-read activity id read history))))))
+
+(reg-event-fx
   :activity-page-loaded
-  ;; Explicit searches replace their window. Automatic unfiltered reads append
-  ;; to the same revision and cursor, retaining every earlier operation.
+  ;; Explicit searches replace their window. Automatic reads gather their pages off
+  ;; screen and show the finished read in one step: a record that keeps changing
+  ;; while it runs must never make its band flicker between partial reads.
   (fn [db [_ session-id history-id projection {:keys [after query revision automatic?]}]]
     (let [id
           (str history-id)
@@ -1696,56 +1878,52 @@
           history
           (:history projection)
 
+          next-after
+          (:next-after history)
+
           requested?
           (and (= id (str (:id history)))
                (= cursor (long (or (:after history) 0)))
-               (or (nil? revision) (= (long revision) (long (or (:revision history) -1)))))]
+               (or (nil? revision) (= (long revision) (long (or (:revision history) -1))))
+               ;; A page that does not move the cursor forward would never end the read.
+               (or (nil? next-after) (> (long next-after) cursor)))]
 
-      (cond (not= (str session-id) (str (get-in db [:session :id]))) db
-            requested?
-            (update-activity-history
-              (cond-> db
-                (not automatic?)
-                park-scroll-for-toggle)
-              id
-              (fn [activity]
-                (let [current?
-                      ;; A search can finish after a newer live END snapshot.
-                      ;; Its older window must never restore running rows.
-                      (and (>= (long (or (:revision history) -1))
-                               (long (get-in activity [:history :revision] -1)))
-                           (current-activity-request? activity id cursor revision automatic?))
-
-                      others
-                      (dissoc (:vis.channel-tui/fetch activity) id)
-
-                      fetch
-                      (cond-> others
-                        (seq query)
-                        (assoc id {:query query}))
-
-                      loaded
-                      (cond-> projection
-                        (and automatic? (pos? cursor))
-                        (assoc :rows
-                          (merge-activity-rows (:rows activity) (:rows projection)) :history
-                          (assoc history :after 0))
-
-                        (seq fetch)
-                        (assoc :vis.channel-tui/fetch fetch))]
-
-                  (if current? loaded activity))))
-            :else (update-activity-history
-                    db
-                    id
-                    (fn [activity]
-                      (if (current-activity-request? activity id cursor revision automatic?)
-                        (assoc-in activity
-                          [:vis.channel-tui/fetch id]
-                          (cond-> {:status :stale :after cursor}
-                            (seq query)
-                            (assoc :query query)))
-                        activity)))))))
+      (cond (not= (str session-id) (str (get-in db [:session :id]))) {:db db}
+            automatic?
+            (let [continued? (and requested?
+                                  next-after
+                                  (some #(and (= id (activity-id %))
+                                              (current-activity-request? % id cursor revision true))
+                                        (activity-copies db)))]
+              (cond-> {:db (update-activity-history
+                             db
+                             id
+                             #(read-activity-page % id projection cursor revision requested?))}
+                continued?
+                (assoc :fx
+                  [[:load-activity-page (str session-id) id (long next-after) revision nil true]])))
+            requested? {:db (update-activity-history
+                              (park-scroll-for-toggle db)
+                              id
+                              (fn [activity]
+                                (let [fetch (cond-> (dissoc (:vis.channel-tui/fetch activity) id)
+                                              (seq query)
+                                              (assoc id {:query query}))]
+                                  ;; A search can finish after a newer live END snapshot.
+                                  ;; Its older window must never restore running rows.
+                                  (if (>= (activity-revision history)
+                                          (activity-revision (:history activity)))
+                                    (cond-> projection
+                                      (seq fetch)
+                                      (assoc :vis.channel-tui/fetch fetch))
+                                    activity))))}
+            :else {:db (update-activity-history db
+                                                id
+                                                #(assoc-in %
+                                                   [:vis.channel-tui/fetch id]
+                                                   (cond-> {:status :stale :after cursor}
+                                                     (seq query)
+                                                     (assoc :query query))))}))))
 
 (reg-event-db
   :activity-page-failed
@@ -5934,15 +6112,19 @@
                    (:tab-locals db)))))
 
 (reg-event-db :set-progress-iterations
+              ;; Every frame restarts at the record's first page. What the reader
+              ;; already read stays, so an open Activity never shrinks or reflows.
               (fn [db [_ a b]]
                 (let [[workspace-id iterations] (if (keyword? a) [a b] [(current-tab-id db) a])]
-                  (update-tab
-                    db
-                    workspace-id
-                    (fn [workspace]
-                      (if-not (:loading? workspace)
-                        workspace
-                        (assoc-in workspace [:progress :iterations] (vec (or iterations [])))))))))
+                  (update-tab db
+                              workspace-id
+                              (fn [workspace]
+                                (if-not (:loading? workspace)
+                                  workspace
+                                  (update-in workspace
+                                             [:progress :iterations]
+                                             retain-activity-reads
+                                             (or iterations []))))))))
 
 (defn- settled-trace
   "The trace a settling bubble KEEPS: the canonical refetch, but only when it carries
@@ -5953,7 +6135,10 @@
    and a turn submitted from another channel has no persisted row under that id - the
    trace endpoint answers nothing, `[]` is truthy, and preferring it erased every
    iteration the human had just watched the instant the answer landed. Only a restart,
-   which reads the persisted transcript, brought them back."
+   which reads the persisted transcript, brought them back.
+
+   Activity reads finished on the live trace carry over too: the canonical trace
+   holds only each record's first page, and the band must not shrink back to it."
   [canonical live]
   (let [weigh
         (fn [trace]
@@ -5969,7 +6154,7 @@
     (if (and (pos? (long canonical-iterations))
              (>= (long canonical-iterations) (long live-iterations))
              (>= (long canonical-forms) (long live-forms)))
-      (not-empty (vec canonical))
+      (not-empty (retain-activity-reads live canonical))
       (not-empty (vec live)))))
 
 (reg-event-fx
