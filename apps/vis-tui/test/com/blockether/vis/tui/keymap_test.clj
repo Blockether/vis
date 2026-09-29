@@ -146,18 +146,34 @@
                            (filter (fn [g]
                                      (some #(= :show-palette (:id %)) (:items g)))
                                    (:groups (spec {}))))))))
+    (it "full-session and at-turn forks are distinct, shown only with turns"
+        (let [items (fn [db]
+                      (->> (spec db)
+                           :groups
+                           (filter #(= "Session" (:title %)))
+                           first
+                           :items))
+              by-id (fn [db id]
+                      (first (filter #(= id (:id %)) (items db))))
+              with-turns {:messages [{:role :user}]}]
+
+          (expect (nil? (by-id {} :fork-session)))
+          (expect (nil? (by-id {} :fork-at-turn)))
+          (expect (= {:key "y" :type :action :id :fork-session :label "fork session"}
+                     (by-id with-turns :fork-session)))
+          (expect (= {:key "t" :type :action :id :fork-at-turn :label "fork at turn"}
+                     (by-id with-turns :fork-at-turn)))
+          (expect (= "C-x y" (keymap/label-for :fork-session)))
+          (expect (= "C-x t" (keymap/label-for :fork-at-turn)))))
     (it "context-only verbs appear only where they can act"
         (let [ids (fn [db]
                     (set (map :id (mapcat :items (:groups (spec db))))))]
           (expect (not (contains? (ids {}) :close-tab)))
-          (expect (not (contains? (ids {}) :fork-at-turn)))
           (expect (not (contains? (ids {:tabs [{:id :a} {:id :b}]}) :close-tab)))
-          (expect (contains? (ids {:messages [{:role :user}]}) :fork-at-turn))
-          ;; palette-only verbs are never painted. The voice conversation MODE is
+          ;; Palette-only verbs are never painted. The voice conversation MODE is
           ;; one of them ON PURPOSE: a fifth verb in Tools re-packs the hydra and
           ;; costs six rows of transcript (see `band-top-row` in screen-test).
           (let [painted (ids {:tabs [{:id :a} {:id :b}] :messages [{:role :user}]})]
-            (expect (not (contains? painted :fork-session)))
             (expect (not (contains? painted :toggle-voice-conversation))))))
     (it "every verb declares a heading the hydra knows"
         (expect (every? (set keymap/prefix-groups) (map :group keymap/prefix-commands))))))

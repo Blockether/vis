@@ -116,7 +116,7 @@
    {:action :show-sessions :key \s :label "switch session" :group "Session"}
    {:action :session-metrics :key \u :label "session metrics" :group "Session"}
    ;; fork: `y` = the Y-shaped split of a branch; `t` = fork AT a chosen turn.
-   {:action :fork-session :key \y :label "fork session" :group "Session" :show-when :never}
+   {:action :fork-session :key \y :label "fork session" :group "Session" :show-when :has-turns}
    {:action :fork-at-turn :key \t :label "fork at turn" :group "Session" :show-when :has-turns}
    {:action :switch-project :key \w :label "project sidebar" :group "Session"}
    ;; A group is the folder a session is filed in, so `d` (Emacs' dired letter)
