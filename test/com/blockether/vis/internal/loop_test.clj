@@ -2882,6 +2882,8 @@
 
 (def ^:private bumped-max-tokens-extra-body (deref #'iteration/bumped-max-tokens-extra-body))
 
+(def ^:private max-tokens-retry (deref #'iteration/max-tokens-retry))
+
 (def ^:private llm-provider-error-context (deref #'iteration/llm-provider-error-context))
 
 (def ^:private iteration-error-feedback (deref #'iteration/iteration-error-feedback))
@@ -4752,73 +4754,120 @@
           (expect (= :cancelled (:status result)))
           (expect (zero? @title-requests)))))))
 
-(defdescribe max-tokens-exceeded-retry-test
-             (it "recognises :svar.llm/max-tokens-exceeded as retry-able"
-                 (let [e (ex-info "max_tokens hit"
-                                  {:type :svar.llm/max-tokens-exceeded
-                                   :output-tokens 2048
-                                   :reasoning-length 1900})]
-                   (expect (true? (max-tokens-exceeded-error? e)))))
-             (it "does not confuse other svar errors with the max-tokens variant"
-                 ;; `:svar.llm/empty-content` is the genuine \"model returned nothing useful\"
-                 ;; failure mode. It must NOT trigger the max-tokens-bump retry path — that
-                 ;; would burn provider tokens without any chance of fixing the underlying
-                 ;; problem (the model is confused, more budget will not help).
-                 (let [e (ex-info "blank" {:type :svar.llm/empty-content})]
-                   (expect (false? (max-tokens-exceeded-error? e))))
-                 (let [e (ex-info "http" {:type :svar.core/http-error :status 500})]
-                   (expect (false? (max-tokens-exceeded-error? e)))))
-             (it "doubles max_tokens from the reported `:output-tokens`"
-                 ;; Provider reports the exact number it cut off at — doubling that gives
-                 ;; the next attempt enough headroom in the common case (reasoning ate
-                 ;; roughly all of the budget).
-                 (expect (= {"max_tokens" 4096} (bumped-max-tokens-extra-body nil 2048)))
-                 (expect (= {"max_tokens" 16000} (bumped-max-tokens-extra-body nil 8000)))
-                 ;; Preserves caller-supplied extra-body keys so the bump does not drop
-                 ;; their overrides (e.g. "store" false for Codex).
-                 (expect (= {"store" false "max_tokens" 4096}
-                            (bumped-max-tokens-extra-body {"store" false} 2048))))
-             (it "falls back to 8192 when no previous max is known"
-                 ;; Defensive: the error carries no `:output-tokens` (older svar version,
-                 ;; or non-streaming path). Use a moderate-sized cap as fallback so we
-                 ;; don't accidentally explode the request body.
-                 (expect (= {"max_tokens" 16384} (bumped-max-tokens-extra-body nil nil)))))
-
-(defdescribe llm-provider-error-context-test
-             ;; Iteration-error-data shape (built by `format-exception`):
-             ;;   {:class "..."      — exception class name
-             ;;    :message "..."    — ex-message
-             ;;    :data {...}       — raw `(ex-data t)` from svar, untouched
-             ;;    :context {...}}   — vis loop ctx snapshot
-             ;; So predicate / context helpers consume `(:data iter-err)` for any
-             ;; svar-side ex-info keys, NOT top-level. Tests reflect that.
-             (it "surfaces dedicated copy + hint for :svar.llm/max-tokens-exceeded"
-                 (let [iter-err
+(defdescribe
+  max-tokens-exceeded-retry-test
+  (it "recognises :svar.llm/max-tokens-exceeded as retry-able"
+      (let [e (ex-info "max_tokens hit"
                        {:type :svar.llm/max-tokens-exceeded
-                        :data {:reasoning-length 1900 :output-tokens 2048}}
+                        :api-usage {:output-tokens 2048 :output-tokens-details {:reasoning 1900}}})]
+        (expect (true? (max-tokens-exceeded-error? e)))))
+  (it "does not confuse other svar errors with the max-tokens variant"
+      ;; `:svar.llm/empty-content` is the genuine \"model returned nothing useful\"
+      ;; failure mode. It must NOT trigger the max-tokens-bump retry path — that
+      ;; would burn provider tokens without any chance of fixing the underlying
+      ;; problem (the model is confused, more budget will not help).
+      (let [e (ex-info "blank" {:type :svar.llm/empty-content})]
+        (expect (false? (max-tokens-exceeded-error? e))))
+      (let [e (ex-info "http" {:type :svar.core/http-error :status 500})]
+        (expect (false? (max-tokens-exceeded-error? e)))))
+  (it "doubles max_tokens when the provider reports no output ceiling"
+      (expect (= {"max_tokens" 4096} (bumped-max-tokens-extra-body nil 2048 nil)))
+      (expect (= {"max_tokens" 16000} (bumped-max-tokens-extra-body nil 8000 nil)))
+      ;; Preserves caller-supplied extra-body keys so the bump does not drop
+      ;; their overrides (e.g. "store" false for Codex).
+      (expect (= {"store" false "max_tokens" 4096}
+                 (bumped-max-tokens-extra-body {"store" false} 2048 nil))))
+  (it "clamps the doubled budget to the provider's output ceiling"
+      (expect (= {"max_tokens" 131072} (bumped-max-tokens-extra-body nil 100000 131072)))
+      ;; A cap already at the ceiling cannot grow: the same call would stop at
+      ;; the same cap, so there is no retry to plan.
+      (expect (nil? (bumped-max-tokens-extra-body nil 131072 131072)))
+      (expect (nil? (bumped-max-tokens-extra-body {"store" false} 8192 8192))))
+  (it "retries above the cap the provider enforced, read from Svar's usage"
+      ;; Regression: GLM on z.ai spent its whole 32768-token budget on hidden
+      ;; reasoning. Vis read a top-level `:output-tokens` that Svar never sets,
+      ;; fell back to 8192 and retried at 16384, half the budget that had
+      ;; already failed. The cap now comes from `:api-usage` and doubles within
+      ;; the 131072-token ceiling z.ai accepts.
+      (let [e (ex-info "max_tokens hit"
+                       {:type :svar.llm/max-tokens-exceeded
+                        :api-usage {:output-tokens 32768
+                                    :output-tokens-details {:reasoning 32768}}})]
+        (expect (= {:prev-max 32768 :extra-body {"max_tokens" 65536} :reasoning-tokens 32768}
+                   (max-tokens-retry e nil {:output-ceiling 131072})))
+        (expect (= {"store" false "max_tokens" 65536}
+                   (:extra-body (max-tokens-retry e {"store" false} {:output-ceiling 131072}))))))
+  (it "falls back to the explicit max_tokens, then 8192, when usage is missing"
+      (let [e (ex-info "max_tokens hit" {:type :svar.llm/max-tokens-exceeded})]
+        (expect (= {:prev-max 20000 :extra-body {"max_tokens" 40000} :reasoning-tokens nil}
+                   (max-tokens-retry e {"max_tokens" 20000} {:output-ceiling 131072})))
+        (expect (= {"max_tokens" 16384} (:extra-body (max-tokens-retry e nil nil))))))
+  (it "plans no retry when the enforced cap already equals the output ceiling"
+      (let [e (ex-info "max_tokens hit"
+                       {:type :svar.llm/max-tokens-exceeded :api-usage {:output-tokens 131072}})]
+        (expect (nil? (max-tokens-retry e nil {:output-ceiling 131072}))))))
 
-                       ctx
-                       (llm-provider-error-context 3 iter-err)]
+(defdescribe
+  llm-provider-error-context-test
+  ;; Iteration-error-data shape (built by `format-exception`):
+  ;;   {:class "..."      — exception class name
+  ;;    :message "..."    — ex-message
+  ;;    :data {...}       — raw `(ex-data t)` from svar, untouched
+  ;;    :context {...}}   — vis loop ctx snapshot
+  ;; So predicate / context helpers consume `(:data iter-err)` for any
+  ;; svar-side ex-info keys, NOT top-level. Tests reflect that.
+  (it "surfaces dedicated copy + hint for :svar.llm/max-tokens-exceeded"
+      (let [iter-err
+            {:type :svar.llm/max-tokens-exceeded
+             :data {:api-usage {:output-tokens 2048 :output-tokens-details {:reasoning 1900}}}}
 
-                   (expect (= :llm-provider/max-tokens-exhausted (:type ctx)))
-                   (expect (= 1900 (:reasoning-length ctx)))
-                   (expect (= 2048 (:output-tokens ctx)))
-                   (expect (str/includes? (:message ctx) "max_tokens"))
-                   (expect (str/includes? (:message ctx) "hidden reasoning"))
-                   (expect (str/includes? (:hint ctx) "canonical"))
-                   (expect (not (str/includes? (:hint ctx) "v/strategy")))
-                   (expect (not (str/includes? (:hint ctx) ":start/:max-lines")))))
-             (it "keeps the legacy `:llm-provider/output-budget-exhausted` mapping"
-                 ;; Anthropic native `:svar.core/stream-incomplete + :reason
-                 ;; max_output_tokens` is detected through `:data` (nested), not
-                 ;; top-level — `format-exception` puts raw `ex-data` under `:data`.
-                 (let [iter-err
-                       {:data {:type :svar.core/stream-incomplete :reason "max_output_tokens"}}
+            ctx
+            (llm-provider-error-context 3 iter-err)]
 
-                       ctx
-                       (llm-provider-error-context 2 iter-err)]
+        (expect (= :llm-provider/max-tokens-exhausted (:type ctx)))
+        (expect (= 1900 (:reasoning-tokens ctx)))
+        (expect (= 2048 (:output-tokens ctx)))
+        (expect (str/includes? (:message ctx) "max_tokens"))
+        (expect (str/includes? (:message ctx) "hidden reasoning"))
+        (expect (str/includes? (:message ctx) "did not retry"))
+        (expect (str/includes? (:hint ctx) "canonical"))
+        (expect (not (str/includes? (:hint ctx) "v/strategy")))
+        (expect (not (str/includes? (:hint ctx) ":start/:max-lines")))))
+  (it "says the doubled retry already ran when it also hit the cap"
+      (let [ctx (llm-provider-error-context 3
+                                            {:type :svar.llm/max-tokens-exceeded
+                                             :data {:api-usage {:output-tokens 65536}
+                                                    :max-tokens-retries 1}})]
+        (expect (= 65536 (:output-tokens ctx)))
+        (expect (nil? (:reasoning-tokens ctx)))
+        (expect (str/includes? (:message ctx) "(65536 tokens consumed, ? went to"))
+        (expect (str/includes? (:message ctx) "already retried once"))
+        (expect (not (str/includes? (:message ctx) "did not retry")))))
+  (it "carries the loop's retry count from the exception to the message"
+      (let [e
+            (ex-info "max_tokens hit"
+                     {:type :svar.llm/max-tokens-exceeded
+                      :api-usage {:output-tokens 65536 :output-tokens-details {:reasoning 65000}}})
 
-                   (expect (= :llm-provider/output-budget-exhausted (:type ctx))))))
+            iter-err
+            (::loop-errors/iteration-error (loop-errors/handle-iteration-exception!
+                                             e
+                                             {:iteration 2 :messages [] :max-tokens-retries 1}))]
+
+        (expect (= 1 (get-in iter-err [:data :max-tokens-retries])))
+        (expect (str/includes? (:message (llm-provider-error-context 2 iter-err))
+                               "already retried once"))))
+  (it "keeps the legacy `:llm-provider/output-budget-exhausted` mapping"
+      ;; Anthropic native `:svar.core/stream-incomplete + :reason
+      ;; max_output_tokens` is detected through `:data` (nested), not
+      ;; top-level — `format-exception` puts raw `ex-data` under `:data`.
+      (let [iter-err
+            {:data {:type :svar.core/stream-incomplete :reason "max_output_tokens"}}
+
+            ctx
+            (llm-provider-error-context 2 iter-err)]
+
+        (expect (= :llm-provider/output-budget-exhausted (:type ctx))))))
 
 (defn- stub-iter
   "Build a synthetic trailer-iters entry for preserved-thinking tests.
@@ -7790,35 +7839,45 @@
              (expect (= [1 2] (mapv #(get-in % [:event :attempt]) retries))))
            (finally (stop!) (loop-env/dispose-environment! environment))))))
 
-(defdescribe reasoning-only-stream-boundary-test
-             (doseq [[label reasoning? data expected]
-                     [["observed reasoning" true {} :reasoning]
-                      ["unobserved reasoning" false {:reasoning-acc-len 10} :none]
-                      ["accumulated content" true {:content-acc-len 1} :content]
-                      ["partial content" true {:partial-content "partial code"} :content]
-                      ["tool calls" true {:tool-calls [{:name "python_execution"}]} :content]]]
-               (it label
-                   (let [error
-                         (with-redefs-fn
-                           {#'transcript/ask-code-with-session!
-                            (fn [_ _ opts]
-                              (when reasoning? ((:on-chunk opts) {:reasoning "thinking"}))
-                              (throw (ex-info "HTTP wrapper"
-                                              {}
-                                              (ex-info "Stream ended before terminal marker."
-                                                       (assoc data
-                                                         :type :svar.core/stream-truncated)))))}
-                           #(try (#'transcript/ask-code-with-first-output-timeout! {} {} {} 1000)
-                                 (catch Exception e e)))]
-                     (expect (= expected (:stream-output (ex-data error))))
-                     (expect (= (= :reasoning expected)
-                                (#'iteration/reasoning-only-stream-retryable? error 0)))
-                     (expect (false? (#'iteration/reasoning-only-stream-retryable? error 2))))))
-             (it "does not reinterpret cancellation, incomplete responses or watchdogs as EOF"
-                 (doseq [error-type [:svar.core/stream-cancelled :svar.core/stream-incomplete
-                                     :svar.core/stream-semantic-timeout]]
-                   (let [error (ex-info "Stopped" {:type error-type :stream-output :reasoning})]
-                     (expect (false? (#'iteration/reasoning-only-stream-retryable? error 0)))))))
+(defdescribe
+  reasoning-only-stream-boundary-test
+  ;; A stream that ends early and a streaming connection that drops mid-response
+  ;; (z.ai does this on long reasoning) take the same reasoning-only path.
+  (doseq [[cause-label cause]
+          [["truncated" {:type :svar.core/stream-truncated}]
+           ["dropped" {:type :svar.core/http-error :stream? true}]]
+
+          [label reasoning? data expected]
+          [["observed reasoning" true {} :reasoning]
+           ["unobserved reasoning" false {:reasoning-acc-len 10} :none]
+           ["accumulated content" true {:content-acc-len 1} :content]
+           ["streamed tool arguments" true {:tool-args-acc-len 12} :content]
+           ["partial content" true {:partial-content "partial code"} :content]
+           ["tool calls" true {:tool-calls [{:name "python_execution"}]} :content]]]
+
+    (it
+      (str cause-label " stream with " label)
+      (let [error (with-redefs-fn {#'transcript/ask-code-with-session!
+                                   (fn [_ _ opts]
+                                     (when reasoning? ((:on-chunk opts) {:reasoning "thinking"}))
+                                     (throw (ex-info "HTTP wrapper"
+                                                     {}
+                                                     (ex-info "Stream ended before terminal marker."
+                                                              (merge data cause)))))}
+                    #(try (#'transcript/ask-code-with-first-output-timeout! {} {} {} 1000)
+                          (catch Exception e e)))]
+        (expect (= expected (:stream-output (ex-data error))))
+        (expect (= (= :reasoning expected) (#'iteration/reasoning-only-stream-retryable? error 0)))
+        (expect (false? (#'iteration/reasoning-only-stream-retryable? error 2))))))
+  (it "does not reinterpret cancellation, incomplete responses or watchdogs as EOF"
+      (doseq [error-type [:svar.core/stream-cancelled :svar.core/stream-incomplete
+                          :svar.core/stream-semantic-timeout]]
+        (let [error (ex-info "Stopped" {:type error-type :stream-output :reasoning})]
+          (expect (false? (#'iteration/reasoning-only-stream-retryable? error 0))))))
+  (it "does not treat a failed request without a stream as a dropped stream"
+      (let [error (ex-info "Bad gateway"
+                           {:type :svar.core/http-error :status 502 :stream-output :reasoning})]
+        (expect (false? (#'iteration/reasoning-only-stream-retryable? error 0))))))
 
 (defdescribe
   reasoning-only-stream-no-replay-test
@@ -7855,9 +7914,10 @@
 (defdescribe
   reasoning-only-stream-recovery-test
   (doseq [[mode expected-status expected-calls expected-retries]
-          [[:recover :success 3 1] [:exhaust :error 4 2] [:connect :error 3 1] [:content :error 2 0]
-           [:tool-input :error 2 0] [:tool-call-preview :error 2 0] [:tool-calls :error 2 0]
-           [:stop :cancelled 2 0] [:stop-retry :cancelled 2 1]]]
+          [[:recover :success 3 1] [:dropped :success 3 1] [:exhaust :error 4 2]
+           [:connect :error 3 1] [:content :error 2 0] [:tool-input :error 2 0]
+           [:tool-call-preview :error 2 0] [:tool-calls :error 2 0] [:stop :cancelled 2 0]
+           [:stop-retry :cancelled 2 1]]]
     (it
       (name mode)
       (let
@@ -7886,7 +7946,7 @@
                          (= 1 call) {:stop-reason :tool-calls
                                      :tool-calls
                                      [{:id "once" :name "python_execution" :input {:code code}}]}
-                         (and (= :recover mode) (= 3 call))
+                         (and (#{:recover :dropped} mode) (= 3 call))
                          (do ((:on-chunk opts) {:reasoning "replacement reasoning"})
                              {:stop-reason :end :content "Recovered without repeating the tool."})
                          (and (= :connect mode) (= 3 call)) (throw (java.net.ConnectException.))
@@ -7906,13 +7966,20 @@
                                ((:on-chunk opts)
                                  {:content "" :tool-input "" :reasoning "later reasoning"}))
                              (when (= :stop mode) (reset! cancelled true))
-                             (throw (ex-info "Stream ended before terminal marker."
-                                             {:type :svar.core/stream-truncated
-                                              :reasoning-acc-len 21
-                                              :content-acc-len
-                                              (if (= :content mode) (count partial-code) 0)
-                                              :stream-finalization {:terminal? false
-                                                                    :last-event-type "ping"}}))))))}
+                             (throw (if (= :dropped mode)
+                                      ;; Svar's shape for a connection that drops mid-stream.
+                                      (ex-info "Stream connection error: closed"
+                                               {:type :svar.core/http-error
+                                                :stream? true
+                                                :reasoning-acc-len 21
+                                                :content-acc-len 0})
+                                      (ex-info "Stream ended before terminal marker."
+                                               {:type :svar.core/stream-truncated
+                                                :reasoning-acc-len 21
+                                                :content-acc-len
+                                                (if (= :content mode) (count partial-code) 0)
+                                                :stream-finalization
+                                                {:terminal? false :last-event-type "ping"}})))))))}
                   #(iteration/iteration-loop
                      environment
                      "stream recovery"
@@ -7934,8 +8001,10 @@
             (expect (= "1" (str/trim (:stdout (first forms)))))
             (doseq [retry retries]
               (expect (= 2 (:iteration retry)))
-              (expect (= :stream-truncated-reasoning (get-in retry [:event :reason]))))
-            (when (= :recover mode)
+              (expect (=
+                        (if (= :dropped mode) :stream-dropped-reasoning :stream-truncated-reasoning)
+                        (get-in retry [:event :reason]))))
+            (when (#{:recover :dropped} mode)
               (expect (= (second @requests) (nth @requests 2)))
               (expect (= ["interrupted reasoning" "replacement reasoning"]
                          (vec (keep :delta
@@ -12432,7 +12501,7 @@
                                   (cond (= :retry code)
                                         (throw (ex-info "Retry fixture"
                                                         {:type :svar.llm/max-tokens-exceeded
-                                                         :output-tokens 8192}))
+                                                         :api-usage {:output-tokens 8192}}))
                                         (= :error code) (throw (ex-info
                                                                  "Recoverable model-format fixture"
                                                                  {:type :fixture/format-error}))

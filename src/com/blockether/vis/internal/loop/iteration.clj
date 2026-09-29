@@ -80,9 +80,11 @@
 
 (defn- reasoning-only-stream-retryable?
   "Only the provider-call boundary can verify reasoning-only EOF before code eval.
-   Do not infer replay safety from missing content or from a stream error thrown later."
+   Do not infer replay safety from missing content or from a stream error thrown later.
+   A connection dropped after reasoning replays like a truncated stream: Svar refuses
+   both once output started, so this reasoning-only replay decision belongs to Vis."
   [^Throwable e attempt]
-  (and (perr/stream-truncated-error? e)
+  (and (or (perr/stream-truncated-error? e) (perr/stream-connection-error? e))
        (= :reasoning (:stream-output (ex-data e)))
        (< (long attempt) (long MAX_STREAM_RECOVERY_RETRIES))))
 
@@ -1373,20 +1375,44 @@
   [^Throwable e]
   (= :svar.llm/max-tokens-exceeded (:type (ex-data e))))
 
+(defn- max-tokens-usage
+  "Token counts of a `:svar.llm/max-tokens-exceeded` failure, from Svar's canonical
+   `:api-usage`. A capped call stops exactly at the cap the provider enforced, so
+   `:output-tokens` is the budget a retry has to exceed. `:reasoning-tokens` is nil
+   when the provider does not report its reasoning share."
+  [data]
+  (let [usage (:api-usage data)]
+    {:output-tokens (:output-tokens usage)
+     :reasoning-tokens (get-in usage [:output-tokens-details :reasoning])}))
+
 (defn- bumped-max-tokens-extra-body
-  "Build an `:extra-body` override that doubles the previous `max_tokens`.
-   `prev-max` comes from the error's `:output-tokens` (svar reports
-   exactly how many tokens the truncated call produced — that number
-   equals the cap the provider enforced). Falls back to 8192 × factor
-   for callers that lost the count along the way."
-  [prev-extra-body prev-max]
-  (let [base
-        (long (or prev-max 8192))
+  "Build an `:extra-body` override that doubles `prev-max`, bounded by the provider's
+   `output-ceiling` from Svar's `context-budget`. Nil when the ceiling leaves no room
+   above `prev-max`: the same call would stop at the same cap."
+  [prev-extra-body prev-max output-ceiling]
+  (let [doubled
+        (long (Math/ceil (* (double prev-max) (double MAX_TOKENS_RETRY_BUMP_FACTOR))))
 
         bumped
-        (long (Math/ceil (* (double base) (double MAX_TOKENS_RETRY_BUMP_FACTOR))))]
+        (if output-ceiling (min doubled (long output-ceiling)) doubled)]
 
-    (assoc prev-extra-body "max_tokens" bumped)))
+    (when (> bumped (long prev-max)) (assoc prev-extra-body "max_tokens" bumped))))
+
+(defn- max-tokens-retry
+  "Plan the retry of a `:svar.llm/max-tokens-exceeded` failure `e`: the enforced cap,
+   the bumped `:extra-body` and the reported reasoning share. The cap comes from the
+   failure's usage, else an explicit `max_tokens`, else 8192. Nil when
+   `request-budget`'s `:output-ceiling` leaves no room for a larger budget."
+  [^Throwable e extra-body request-budget]
+  (let [{:keys [output-tokens reasoning-tokens]}
+        (max-tokens-usage (ex-data e))
+
+        prev-max
+        (long (or output-tokens (get extra-body "max_tokens") 8192))]
+
+    (when-let [bumped
+               (bumped-max-tokens-extra-body extra-body prev-max (:output-ceiling request-budget))]
+      {:prev-max prev-max :extra-body bumped :reasoning-tokens reasoning-tokens})))
 
 (defn- max-tokens-exhausted?
   "True for `:svar.llm/max-tokens-exceeded` errors that survived all
@@ -1407,27 +1433,24 @@
      data
      (:data iteration-error-data)
 
-     reasoning-length
-     (some-> data
-             :reasoning-length
-             long)
+     {:keys [output-tokens reasoning-tokens]}
+     (max-tokens-usage data)
 
-     output-tokens
-     (some-> data
-             :output-tokens
-             long)
+     retried?
+     (pos? (long (or (:max-tokens-retries data) 0)))
 
      message
      (cond
        output-overflow?
        "Provider stopped the response as incomplete because output budget was exhausted (max_output_tokens)."
-       max-tokens-exhaust? (str "Provider truncated the response at max_tokens ("
-                                (or output-tokens "?")
-                                " tokens consumed, "
-                                (or reasoning-length "?")
-                                " went to hidden reasoning, 0 to visible content). "
-                                "Vis already retried once with a doubled budget; this iteration"
-                                " still hit the cap.")
+       max-tokens-exhaust?
+       (str
+         "Provider truncated the response at max_tokens (" (or output-tokens "?")
+         " tokens consumed, " (or reasoning-tokens "?")
+         " went to hidden reasoning, 0 to visible content). "
+         (if retried?
+           "Vis already retried once with a doubled budget; this iteration still hit the cap."
+           "The model's output ceiling leaves no room for a larger budget, so Vis did not retry."))
        :else (str "LLM call failed: " (:message iteration-error-data)))
 
      hint
@@ -1447,8 +1470,8 @@
              :message message
              :hint hint}
       max-tokens-exhaust?
-      (assoc :reasoning-length
-        reasoning-length :output-tokens
+      (assoc :reasoning-tokens
+        reasoning-tokens :output-tokens
         output-tokens)
 
       (and (not output-overflow?) (:type iteration-error-data))
@@ -2951,25 +2974,17 @@
                           (cond
                             ;; Max-tokens cap: model burnt the entire output
                             ;; budget on hidden reasoning before emitting a
-                            ;; tool call. Double the budget and try once more so the
-                            ;; turn doesn't fail when the same call would have
-                            ;; succeeded with a slightly larger ceiling. Reasoning-
-                            ;; heavy iterations hit this when the provider's
+                            ;; tool call. Double the enforced cap once, within the
+                            ;; provider's output ceiling; with no room left the same
+                            ;; call would stop at the same cap, so it fails now.
+                            ;; Reasoning-heavy iterations hit this when the provider's
                             ;; finish_reason: \"length\" leaves content-acc empty.
                             (and (max-tokens-exceeded-error? e)
                                  (< (long (:max-tokens retries))
-                                    (long MAX_MAX_TOKENS_EXCEEDED_RETRIES)))
-                            (let [data
-                                  (ex-data e)
-
-                                  prev-max
-                                  (or (:output-tokens data)
-                                      (get current-extra-body "max_tokens")
-                                      8192)
-
-                                  bumped
-                                  (bumped-max-tokens-extra-body current-extra-body prev-max)]
-
+                                    (long MAX_MAX_TOKENS_EXCEEDED_RETRIES))
+                                 (max-tokens-retry e current-extra-body @request-budget-atom))
+                            (let [{:keys [prev-max reasoning-tokens] bumped :extra-body}
+                                  (max-tokens-retry e current-extra-body @request-budget-atom)]
                               (tel/log! {:level :warn
                                          :id ::max-tokens-exceeded-retry
                                          :data {:iteration iteration
@@ -2977,9 +2992,9 @@
                                                 :max-retries MAX_MAX_TOKENS_EXCEEDED_RETRIES
                                                 :prev-max prev-max
                                                 :new-max (get bumped "max_tokens")
-                                                :reasoning-length (:reasoning-length data)}}
+                                                :reasoning-tokens reasoning-tokens}}
                                         (str "max_tokens exhausted on reasoning (~"
-                                             (or (:reasoning-length data) "?")
+                                             (or reasoning-tokens "?")
                                              " reasoning tokens); retry " (inc (long (:max-tokens
                                                                                        retries)))
                                              "/" MAX_MAX_TOKENS_EXCEEDED_RETRIES
@@ -3063,9 +3078,11 @@
                                     e
                                     {:provider (:provider resolved-model)
                                      :model (or (:name resolved-model) (:model resolved-model))
-                                     :reason (if (perr/stream-truncated-error? e)
-                                               :stream-truncated-reasoning
-                                               :stream-watchdog-pre-output)
+                                     :reason (cond (perr/stream-truncated-error? e)
+                                                   :stream-truncated-reasoning
+                                                   (perr/stream-connection-error? e)
+                                                   :stream-dropped-reasoning
+                                                   :else :stream-watchdog-pre-output)
                                      :attempt (inc (long (:stream retries)))
                                      :max-retries MAX_STREAM_RECOVERY_RETRIES
                                      :delay-ms delay-ms})]
@@ -3128,8 +3145,10 @@
                                    :messages @effective-messages-atom
                                    :routing @iteration-routing
                                    :reasoning-level reasoning-level
+                                   :max-tokens-retries (:max-tokens retries)
                                    :stream-recovery
                                    (let [stream-abort? (some #(or (perr/stream-truncated-error? %)
+                                                                  (perr/stream-connection-error? %)
                                                                   (perr/pre-output-stream-abort? %))
                                                              (loop-errors/bounded-cause-chain e))]
                                      (when (or (pos? (long (:stream retries))) stream-abort?)

@@ -278,7 +278,10 @@
                                        :last-user-preview (last-user-message-preview (:messages
                                                                                        ctx))}})
     (:stream-recovery ctx)
-    (assoc-in [:data :stream-recovery] (:stream-recovery ctx))))
+    (assoc-in [:data :stream-recovery] (:stream-recovery ctx))
+
+    (pos? (long (or (:max-tokens-retries ctx) 0)))
+    (assoc-in [:data :max-tokens-retries] (:max-tokens-retries ctx))))
 
 (defn handle-iteration-exception!
   "Error path for the main-loop try/catch around `run-iteration`.

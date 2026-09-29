@@ -370,6 +370,15 @@
   [err]
   (= :svar.core/stream-truncated (or (:type (:data err)) (:type err) (:type (ex-data err)))))
 
+(defn stream-connection-error?
+  "True when the provider's stream connection dropped mid-response: Svar's typed
+   `:svar.core/http-error` with `:stream? true`, thrown when reading the response
+   body fails (for example 'closed'). Svar replays it only before any output.
+   Uses Svar's typed outcome, never message text."
+  [err]
+  (let [data (or (:data err) (ex-data err) err)]
+    (and (map? data) (= :svar.core/http-error (:type data)) (true? (:stream? data)))))
+
 (defn pre-output-stream-abort?
   "True when one of svar's TYPED stream watchdogs fired: `ttft` (no response
    header), `idle` (no bytes) or `semantic` (no model progress) —

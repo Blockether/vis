@@ -241,6 +241,25 @@
                                  :data {:status 400
                                         :body "{\"error\":{\"message\":\"bad\"}}"}}))))))
 
+(defdescribe stream-connection-error-test
+             ;; A provider can drop a long reasoning stream mid-response. Svar reports that
+             ;; as a typed `:svar.core/http-error` with `:stream? true`.
+             (let [dropped {:type :svar.core/http-error :stream? true}]
+               (it "recognises a dropped stream in ex-data, an exception and iteration error data"
+                   (expect (true? (perr/stream-connection-error? dropped)))
+                   (expect (true? (perr/stream-connection-error?
+                                    (ex-info "Stream connection error: closed" dropped))))
+                   (expect (true? (perr/stream-connection-error?
+                                    {:message "Stream connection error: closed" :data dropped}))))
+               (it "ignores failed requests that never streamed and other stream outcomes"
+                   (expect (false? (perr/stream-connection-error? {:type :svar.core/http-error
+                                                                   :status 502})))
+                   (expect (false? (perr/stream-connection-error? (assoc dropped :stream? false))))
+                   (expect (false? (perr/stream-connection-error? {:type :svar.core/stream-truncated
+                                                                   :stream? true})))
+                   (expect (false? (perr/stream-connection-error? (ex-info "closed" {}))))
+                   (expect (false? (perr/stream-connection-error? nil))))))
+
 (defdescribe
   tool-schema-rejection-test
   (let

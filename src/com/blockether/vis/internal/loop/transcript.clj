@@ -2995,16 +2995,19 @@
                                 :first-output-timeout? true
                                 :semantic-timeout-ms timeout-ms}
                                e)))
-             (if-let [truncated (some #(when (perr/stream-truncated-error? %) %)
-                                      (loop-errors/bounded-cause-chain e))]
-               (let [data (ex-data truncated)
+             (if-let [dropped (some #(when (or (perr/stream-truncated-error? %)
+                                               (perr/stream-connection-error? %))
+                                       %)
+                                    (loop-errors/bounded-cause-chain e))]
+               (let [data (ex-data dropped)
                      output (if (or (pos? (long (or (:content-acc-len data) 0)))
+                                    (pos? (long (or (:tool-args-acc-len data) 0)))
                                     (seq (:partial-content data))
                                     (seq (:tool-calls data)))
                               :content
                               @stream-output)]
 
-                 (throw (ex-info (ex-message truncated) (assoc data :stream-output output) e)))
+                 (throw (ex-info (ex-message dropped) (assoc data :stream-output output) e)))
                (throw e)))))))
 
 (defn context-overflow-token-data
