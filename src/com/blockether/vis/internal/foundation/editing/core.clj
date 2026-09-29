@@ -444,14 +444,11 @@
                     (str p)))))
 
 (defn- workspace-dir?
-  "True when `f` lies INSIDE this session's workspace: under the primary cwd, or under
-   either side of a bound context-clone mapping — a draft clone IS the workspace,
-   mounted elsewhere.
+  "True when `f` lies inside the primary cwd or a real draft-clone mapping.
 
-   The RENDERED address cannot answer this, which is why the question is asked of the
-   FILE. `rel-path` deliberately renders a clone as its TRUNK absolute path, so the
-   workspace itself reads exactly like `/etc` does. Only a directory that is ours has a
-   warm index to ride and a `vis.yml` overlay to rebase."
+   Shared auxiliary filesystem roots are readable but do not own an index: a
+   depth-one `ls` of a mounted cache must not scan its whole tree. A draft clone
+   renders as its trunk address, so ownership must use the FILE, not `rel-path`."
   [^File f]
   (let [^java.nio.file.Path p
         (canonical-path f)
@@ -461,9 +458,11 @@
           (.startsWith p ^java.nio.file.Path (canonical-path x)))]
 
     (boolean (or (under? (workspace/cwd))
-                 (some (fn [{:keys [trunk clone]}]
-                         (or (under? clone) (under? trunk)))
-                       (workspace/filesystem-root-mappings))))))
+                 (some
+                   (fn [{:keys [trunk clone]}]
+                     (when (and trunk clone (not= (canonical-path trunk) (canonical-path clone)))
+                       (or (under? clone) (under? trunk))))
+                   (workspace/filesystem-root-mappings))))))
 
 (defn- nearest-existing-dir
   "Climb `f` to its nearest ancestor that EXISTS as a directory AND still lies

@@ -4884,6 +4884,20 @@
         (let [root (outside!)]
           (expect (contains? (names (list-dir root {:depth 1 :is_hidden true})) ".hidden"))
           (expect (not (contains? (names (list-dir root {:depth 1})) ".hidden")))))
+    (it "lists a shared auxiliary root without indexing its tree"
+        (let [root
+              (outside!)
+
+              path
+              (.getPath root)]
+
+          (binding [workspace/*filesystem-roots*
+                    [{:trunk path :clone path :draft :shared}
+                     {:trunk "/" :clone "/" :draft :shared :no-search? true}]]
+            (with-redefs [editing/fff-ls-target-items
+                          (fn [_ _ ^long _ _]
+                            (throw (ex-info "ls must not index a shared auxiliary root" {})))]
+              (expect (= #{"sub" "a.txt"} (names (first (ls-rows {"paths" [path] "depth" 1})))))))))
     ;; Regression: `ls` decided ownership from the RENDERED address, and `rel-path`
     ;; renders a context clone as its TRUNK absolute path — so the workspace itself,
     ;; mounted as a draft clone, read exactly like `/etc` and every listing inside it
