@@ -1947,7 +1947,7 @@ export const ProjectGroup = memo(function ProjectGroup({
             if (step.kind === 'root')
               return (
                 <>
-                  <MenuItem title="Project" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { setMenu(null); setSettingsTarget({ scope: 'project', target_id: root, label: project }); }} />
+                  <MenuItem title="Settings" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { setMenu(null); setSettingsTarget({ scope: 'project', target_id: root, label: project }); }} />
                   <MenuItem
                     title="New group"
                     icon={<ProjectsIcon className="size-3.5" />}
@@ -2106,7 +2106,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                     }}
                   />
                 )}
-                <MenuItem title="Group" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { setMenu(null); setSettingsTarget({ scope: 'group', target_id: band.id, label: band.name }); }} />
+                <MenuItem title="Settings" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { setMenu(null); setSettingsTarget({ scope: 'group', target_id: band.id, label: band.name }); }} />
                 <MenuItem
                   title="Rename group"
                   icon={<PencilIcon className="size-3.5" />}

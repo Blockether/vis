@@ -496,7 +496,7 @@ describe('ProjectGroup groups', () => {
     expect(screen.queryByRole('button', { name: /^New session/ })).toBeNull();
   });
 
-  it('opens project and group settings from cog-marked owner actions', async () => {
+  it('opens project and group settings from cog-marked Settings actions', async () => {
     const read = vi.fn(async (_signal: AbortSignal | undefined, owner: SettingsTarget) => ({
       scope: owner.scope,
       target_id: owner.target_id,
@@ -511,7 +511,7 @@ describe('ProjectGroup groups', () => {
       }),
     );
     await user.click(await screen.findByRole('button', { name: `Actions for groups in ${ROOT}` }));
-    const project = within(sheet(`Groups in ${ROOT}`)).getByRole('button', { name: 'Project' });
+    const project = within(sheet(`Groups in ${ROOT}`)).getByRole('button', { name: 'Settings' });
     expect(project.querySelector('svg.lucide-settings')).toBeInTheDocument();
     await user.click(project);
     expect(screen.getByRole('dialog', { name: 'Project settings' })).toBeInTheDocument();
@@ -520,7 +520,7 @@ describe('ProjectGroup groups', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Close Project settings' }));
     await user.click(screen.getByRole('button', { name: 'Actions for Wallet work' }));
-    const group = within(sheet(`Groups in ${ROOT}`)).getByRole('button', { name: 'Group' });
+    const group = within(sheet(`Groups in ${ROOT}`)).getByRole('button', { name: 'Settings' });
     expect(group.querySelector('svg.lucide-settings')).toBeInTheDocument();
     await user.click(group);
     expect(screen.getByRole('dialog', { name: 'Group settings' })).toBeInTheDocument();

@@ -51,7 +51,7 @@ describe('SessionHeader', () => {
     expect(back).toHaveBeenCalledOnce();
   });
 
-  it('offers session settings as a cog-marked Session action', () => {
+  it('offers session settings as a cog-marked Settings action', () => {
     const settings = vi.fn();
     render(
       <SessionHeader
@@ -62,7 +62,7 @@ describe('SessionHeader', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Session actions, 3 artifacts' }));
     const action = within(screen.getByRole('dialog', { name: 'Session actions' })).getByRole(
       'button',
-      { name: 'Session' },
+      { name: 'Settings' },
     );
     expect(action.querySelector('svg.lucide-settings')).toBeInTheDocument();
     fireEvent.click(action);

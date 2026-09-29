@@ -179,7 +179,7 @@ export function SessionHeader({
       {menu && (
         <Menu label="Session actions" at={menu} onDismiss={closeMenu}>
           {commands.settings && (
-            <MenuItem title="Session" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { closeMenu(); commands.settings?.(); }} />
+            <MenuItem title="Settings" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { closeMenu(); commands.settings?.(); }} />
           )}
           {model.artifacts.count > 0 && (
             <MenuItem
