@@ -1,14 +1,15 @@
 """Discovery for the sandbox: `apropos(pattern)` and `doc(target)`.
 
-The corpus belongs to the HOST. Every documentation page, every skill and every tool's
-contract lives there. The host reads the corpus on each call, so an edit made
-mid-session answers with its current text. Only THIS side knows what the session can
-actually reach. That is which globals are callable, which modules were published, what
-its own `def`s say, and the prose on a live object.
+The corpus belongs to the HOST. Every documentation page, every skill and every
+tool's contract lives there. The host reads the corpus on each call, so an edit
+made mid-session answers with its current text. Only THIS side knows what the
+session can actually reach. That is which globals are callable, which modules
+were published, what its own `def`s say, and the prose on a live object.
 
 So this side gathers the facts, and the host merges them. The host resolves
-authoritative pages first. Only a missing page or an undocumented module needs a second
-call with live prose. Known pages never trigger speculative Python imports.
+authoritative pages first. Only a missing page or an undocumented module needs a
+second call with live prose. Known pages never trigger speculative Python
+imports.
 """
 
 #: Names that are globals but not tools: the async runtime a block imports, and
@@ -89,9 +90,9 @@ def _item_repr(item):
 def install(namespace):
     """Bind `apropos` and `doc` into `namespace`, closing over it.
 
-    A module's own globals are not the session's globals, so the caller hands in the
-    namespace. The module does not look it up: one interpreter holds many sessions, and
-    each session answers for what IT can reach.
+    A module's own globals are not the session's globals, so the caller hands in
+    the namespace. The module does not look it up: one interpreter holds many
+    sessions, and each session answers for what IT can reach.
     """
 
     def apropos(pattern=""):

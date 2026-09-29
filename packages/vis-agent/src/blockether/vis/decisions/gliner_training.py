@@ -1,8 +1,8 @@
 """Explicit offline GLiNER2.5 checkpoints and two-head CPU training.
 
-Importing this module is lightweight. To construct a trainer, use a separately installed
-``vis-agent[decisions-gliner-training]`` environment. Laya's Transformers 5 environment
-is not compatible with GLiNER's version 4.
+Importing this module is lightweight. To construct a trainer, use a separately
+installed ``vis-agent[decisions-gliner-training]`` environment. Laya's
+Transformers 5 environment is not compatible with GLiNER's version 4.
 """
 
 from __future__ import annotations

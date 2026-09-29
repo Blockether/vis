@@ -40,8 +40,8 @@ class _ViewRecord:
 class InputView(_ViewRecord):
     """An open input form, including field schemas and engine-owned timeout metadata.
 
-    This describes the form, not a person's answers. Public close events do not include
-    submitted values. Those values belong to the waiting extension.
+    This describes the form, not a person's answers. Public close events do not
+    include submitted values. Those values belong to the waiting extension.
     """
 
     _definition = "input_view"
@@ -117,8 +117,8 @@ class LiveResult(_ViewRecord):
     """A live interface's final outcome and the optional view document kept after close.
 
     Check `is_completed` and `reason`. Do not assume that every close succeeds.
-    `is_from_human` tells a person's close from a programmatic one. `view`, `summary`,
-    `error` and attachment metadata can be absent.
+    `is_from_human` tells a person's close from a programmatic one. `view`,
+    `summary`, `error` and attachment metadata can be absent.
     """
 
     _definition = "live_close"
@@ -138,7 +138,8 @@ class LiveResult(_ViewRecord):
         """Validate a close receipt and decode its optional `ViewSnapshot`.
 
         Raises:
-            ValueError: The receipt or its view document does not match the View schema.
+            ValueError: The receipt or its view document does not match the View
+                schema.
         """
         validate("view", cls._definition, value)
         picture = (
