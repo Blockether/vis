@@ -6,7 +6,6 @@
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.loop.environment :as loop-env]
-            [com.blockether.vis.internal.loop.iteration :as iteration]
             [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as ps]
@@ -191,9 +190,9 @@
                         (finally (loop-env/dispose-environment! env))))))
 
 (defdescribe
-  session-route-change-is-visible-to-a-retry-test
+  session-route-change-is-visible-to-output-budget-recovery-test
   (it
-    "session route change is visible to a retry"
+    "session route change is visible to the output-budget recovery request"
     (let [shared
           (router)
 
@@ -203,31 +202,28 @@
           calls
           (atom [])]
 
-      (try (with-redefs [iteration/MAX_MAX_TOKENS_EXCEEDED_RETRIES
-                         2
-
-                         loop-router/get-router
+      (try (with-redefs [loop-router/get-router
                          (constantly shared)
 
                          svar/ask-code!
                          (fn [request-router opts]
-                           (swap! calls conj
-                             (or (get-in opts [:routing :model])
-                                 (get-in request-router [:providers 0 :root])))
-                           (if (< (count @calls) 3)
+                           (swap! calls conj (requested-model request-router opts))
+                           (if (= 1 (count @calls))
                              (do (smodel/set-model! (:db-info env)
                                                     (:session-id env)
                                                     "fixture"
-                                                    (if (= 1 (count @calls)) "large" "small")
+                                                    "large"
                                                     :agent-routing)
+                                 ;; Svar already spent its own larger-budget re-send.
                                  (throw (ex-info "Reasoning exhausted the output budget"
                                                  {:type :svar.llm/max-tokens-exceeded
-                                                  :output-tokens 32})))
-                             {:stop-reason :end :content "Retried result"}))]
+                                                  :output-tokens 32
+                                                  :output-budget-resends 1})))
+                             {:stop-reason :end :content "Recovered result"}))]
 
              (smodel/set-model! (:db-info env) (:session-id env) "fixture" "small" :agent-routing)
-             (turn/run-turn! env "Observe routing at every model request boundary" {}))
-           (expect (= ["small" "large" "small"] @calls))
+             (turn/run-turn! env "Observe routing at the output-budget recovery request" {}))
+           (expect (= ["small" "large"] @calls))
            (expect (= "small" (get-in shared [:providers 0 :root])))
            (finally (loop-env/dispose-environment! env))))))
 
@@ -265,7 +261,7 @@
             (turn/turn! env [(svar/user "Start on the newly picked route")] {}))
           (expect (= ["small" "small" "large"] @calls))
           (finally (loop-env/dispose-environment! env)))))
-  (it "keeps a retry on the running turn's route"
+  (it "keeps the output-budget recovery request on the running turn's route"
       (let [shared
             (router)
 
@@ -276,10 +272,7 @@
             (atom [])]
 
         (try
-          (with-redefs [iteration/MAX_MAX_TOKENS_EXCEEDED_RETRIES
-                        1
-
-                        loop-router/get-router
+          (with-redefs [loop-router/get-router
                         (constantly shared)
 
                         svar/ask-code!
@@ -293,7 +286,7 @@
                                                :output-tokens 32})))
                             {:stop-reason :end :content "Turn result"}))]
 
-            (turn/turn! env [(svar/user "Retry on the route this turn started with")] {})
+            (turn/turn! env [(svar/user "Recover on the route this turn started with")] {})
             (turn/turn! env [(svar/user "Start on the newly picked route")] {}))
           (expect (= ["small" "small" "large"] @calls))
           (finally (loop-env/dispose-environment! env)))))

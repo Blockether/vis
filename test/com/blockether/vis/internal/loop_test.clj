@@ -2866,8 +2866,6 @@
 
 (def ^:private target-supports-vision? (deref #'transcript/target-supports-vision?))
 
-(def ^:private max-tokens-exceeded-error? (deref #'iteration/max-tokens-exceeded-error?))
-
 (def ^:private next-retry-counters (deref #'iteration/next-retry-counters))
 
 (def ^:private emergency-fold-projection (deref #'iteration/emergency-fold-projection))
@@ -2879,10 +2877,6 @@
 (def ^:private overflow-fold-budget (deref #'iteration/overflow-fold-budget))
 
 (def ^:private provider-output-chunk? (deref #'iteration/provider-output-chunk?))
-
-(def ^:private bumped-max-tokens-extra-body (deref #'iteration/bumped-max-tokens-extra-body))
-
-(def ^:private max-tokens-retry (deref #'iteration/max-tokens-retry))
 
 (def ^:private llm-provider-error-context (deref #'iteration/llm-provider-error-context))
 
@@ -4755,122 +4749,10 @@
           (expect (zero? @title-requests)))))))
 
 (defdescribe
-  responses-output-budget-retry-test
-  ;; Issue #296: Responses reports the same budget exhaustion through a different error.
-  (let [data
-        {:type :svar.core/stream-incomplete
-         :reason "max_output_tokens"
-         :max-output-tokens 32768
-         :content-acc-len 0
-         :api-usage {:output-tokens 32768 :output-tokens-details {:reasoning 32000}}}
-
-        error
-        (ex-info "Output budget exhausted" data)]
-
-    (doseq [failure [error (ex-info "HTTP wrapper" {} error)]]
-      (it "recognizes direct and wrapped Responses output exhaustion"
-          (expect (true? (max-tokens-exceeded-error? failure)))
-          (expect
-            (= {:prev-max 32768 :extra-body {"max_output_tokens" 65536} :reasoning-tokens 32000}
-               (max-tokens-retry failure nil {:output-ceiling 131072})))))
-    (it "replaces the Responses wire key instead of adding a shadowed max_tokens"
-        (expect (= {"max_output_tokens" 65536 "store" false}
-                   (:extra-body (max-tokens-retry error
-                                                  {"max_output_tokens" 32768 "store" false}
-                                                  {:output-ceiling 131072})))))
-    (it "uses the actual request cap when the incomplete response omits usage"
-        (expect (= 32768
-                   (:prev-max (max-tokens-retry (ex-info "Capped" (dissoc data :api-usage))
-                                                nil
-                                                {:output-reserve 8192 :output-ceiling 131072})))))
-    (it "does not retry an endpoint that did not accept an output-budget control"
-        (expect (nil? (max-tokens-retry (ex-info "Server cap" (dissoc data :max-output-tokens))
-                                        nil
-                                        {:output-ceiling 131072}))))
-    (doseq [partial [{:content-acc-len 1} {:tool-args-acc-len 1} {:tool-call-count 1}
-                     {:stream-output :content}]]
-      (it "does not transparently replay partial content or tool calls"
-          (expect (false? (max-tokens-exceeded-error? (ex-info "Partial" (merge data partial)))))))
-    (it "does not treat a content filter as output exhaustion"
-        (expect (false? (max-tokens-exceeded-error?
-                          (ex-info "Filtered" (assoc data :reason "content_filter"))))))))
-
-(defdescribe
-  max-tokens-exceeded-retry-test
-  (it "recognises :svar.llm/max-tokens-exceeded as retry-able"
-      (let [e (ex-info "max_tokens hit"
-                       {:type :svar.llm/max-tokens-exceeded
-                        :api-usage {:output-tokens 2048 :output-tokens-details {:reasoning 1900}}})]
-        (expect (true? (max-tokens-exceeded-error? e)))))
-  (it "does not confuse other svar errors with the max-tokens variant"
-      ;; `:svar.llm/empty-content` is the genuine \"model returned nothing useful\"
-      ;; failure mode. It must NOT trigger the max-tokens-bump retry path — that
-      ;; would burn provider tokens without any chance of fixing the underlying
-      ;; problem (the model is confused, more budget will not help).
-      (let [e (ex-info "blank" {:type :svar.llm/empty-content})]
-        (expect (false? (max-tokens-exceeded-error? e))))
-      (let [e (ex-info "http" {:type :svar.core/http-error :status 500})]
-        (expect (false? (max-tokens-exceeded-error? e)))))
-  (it "doubles max_tokens when the provider reports no output ceiling"
-      (expect (= {"max_tokens" 4096} (bumped-max-tokens-extra-body nil 2048 nil)))
-      (expect (= {"max_tokens" 16000} (bumped-max-tokens-extra-body nil 8000 nil)))
-      ;; Preserves caller-supplied extra-body keys so the bump does not drop
-      ;; their overrides (e.g. "store" false for Codex).
-      (expect (= {"store" false "max_tokens" 4096}
-                 (bumped-max-tokens-extra-body {"store" false} 2048 nil))))
-  (it "clamps the doubled budget to the provider's output ceiling"
-      (expect (= {"max_tokens" 131072} (bumped-max-tokens-extra-body nil 100000 131072)))
-      ;; A cap already at the ceiling cannot grow: the same call would stop at
-      ;; the same cap, so there is no retry to plan.
-      (expect (nil? (bumped-max-tokens-extra-body nil 131072 131072)))
-      (expect (nil? (bumped-max-tokens-extra-body {"store" false} 8192 8192))))
-  (it "retries above the cap the provider enforced, read from Svar's usage"
-      ;; Regression: GLM on z.ai spent its whole 32768-token budget on hidden
-      ;; reasoning. Vis read a top-level `:output-tokens` that Svar never sets,
-      ;; fell back to 8192 and retried at 16384, half the budget that had
-      ;; already failed. The cap now comes from `:api-usage` and doubles within
-      ;; the 131072-token ceiling z.ai accepts.
-      (let [e (ex-info "max_tokens hit"
-                       {:type :svar.llm/max-tokens-exceeded
-                        :api-usage {:output-tokens 32768
-                                    :output-tokens-details {:reasoning 32768}}})]
-        (expect (= {:prev-max 32768 :extra-body {"max_tokens" 65536} :reasoning-tokens 32768}
-                   (max-tokens-retry e nil {:output-ceiling 131072})))
-        (expect (= {"store" false "max_tokens" 65536}
-                   (:extra-body (max-tokens-retry e {"store" false} {:output-ceiling 131072}))))))
-  (it "falls back to the explicit max_tokens, then 8192, when usage is missing"
-      (let [e (ex-info "max_tokens hit" {:type :svar.llm/max-tokens-exceeded})]
-        (expect (= {:prev-max 20000 :extra-body {"max_tokens" 40000} :reasoning-tokens nil}
-                   (max-tokens-retry e {"max_tokens" 20000} {:output-ceiling 131072})))
-        (expect (= {"max_tokens" 16384} (:extra-body (max-tokens-retry e nil nil))))))
-  (it "plans no retry when the enforced cap already equals the output ceiling"
-      (let [e (ex-info "max_tokens hit"
-                       {:type :svar.llm/max-tokens-exceeded :api-usage {:output-tokens 131072}})]
-        (expect (nil? (max-tokens-retry e nil {:output-ceiling 131072})))))
-  (it "reads the retry ceiling from Svar's budget for the routed model"
-      ;; Crosses the Svar boundary: GLM's 32768 default cap sits below the 131072
-      ;; max_tokens z.ai accepts, which Svar reports as `:output-ceiling`.
-      (let [budget
-            (svar/context-budget (svar/make-router [{:id :zai-coding-plan
-                                                     :api-key "test"
-                                                     :models [{:name "glm-5.3-flash"}]}])
-                                 {})
-
-            capped
-            (fn [n]
-              (ex-info "max_tokens hit"
-                       {:type :svar.llm/max-tokens-exceeded :api-usage {:output-tokens n}}))]
-
-        (expect (= 131072 (:output-ceiling budget)))
-        (expect (= {"max_tokens" 65536} (:extra-body (max-tokens-retry (capped 32768) nil budget))))
-        (expect (= {"max_tokens" 131072}
-                   (:extra-body (max-tokens-retry (capped 100000) nil budget))))
-        (expect (nil? (max-tokens-retry (capped 131072) nil budget))))))
-
-(defdescribe
   responses-output-budget-loop-test
-  ;; Issue #296: a bounded budget bump, then one compact recovery, never an endless turn.
-  (doseq [mode [:raise :ceiling :exhaust :partial :cancel]]
+  ;; Issue #296: Svar owns the larger-budget re-send. Vis answers its canonical
+  ;; failure with one compact recovery, never an endless turn.
+  (doseq [mode [:recover :exhaust :cancel]]
     (it
       (name mode)
       (let [cancelled (atom false)
@@ -4881,50 +4763,44 @@
                                                     {:parent-session-id (:session-id environment)
                                                      :user-request "finish compactly"})
             requests (atom [])
-            cap-data {:type :svar.core/stream-incomplete
-                      :reason "max_output_tokens"
-                      :max-output-tokens 32768
-                      :content-acc-len (if (= :partial mode) 12 0)
-                      :api-usage {:output-tokens 32768}}]
+            cap-data {:type :svar.llm/max-tokens-exceeded
+                      :max-output-tokens 65536
+                      :output-ceiling 65536
+                      :output-budget-resends 1
+                      :api-usage {:output-tokens 65536 :output-tokens-details {:reasoning 65536}}}]
 
-        (try
-          (let [result
-                (with-redefs [loop-router/resolved-context-budget
-                              (fn [& _]
-                                {:max-input-tokens 100000
-                                 :output-reserve 32768
-                                 :output-ceiling (if (#{:ceiling :exhaust} mode) 32768 65536)})
-                              svar/ask-code!
-                              (fn [_ opts]
-                                (let [call (count (swap! requests conj
-                                                    (select-keys opts [:messages :extra-body])))]
-                                  (if (or (= 1 call) (and (= :exhaust mode) (< call 4)))
-                                    (do (when (= :cancel mode) (reset! cancelled true))
-                                        (throw (ex-info "Output budget exhausted" cap-data)))
-                                    {:stop-reason :end :content "Finished compactly."})))]
+        (try (let [result
+                   (with-redefs [svar/ask-code!
+                                 (fn [_ opts]
+                                   (let [call (count (swap! requests conj
+                                                       (select-keys opts [:messages :extra-body])))]
+                                     (if (or (= 1 call) (= :exhaust mode))
+                                       (do (when (= :cancel mode) (reset! cancelled true))
+                                           (throw (ex-info "Output budget exhausted" cap-data)))
+                                       {:stop-reason :end :content "Finished compactly."})))]
+                     (iteration/iteration-loop environment
+                                               "finish compactly"
+                                               {:session-turn-id tid :cancel-atom cancelled}))]
+               (expect (= (case mode
+                            :cancel
+                            :cancelled
 
-                  (iteration/iteration-loop environment
-                                            "finish compactly"
-                                            {:session-turn-id tid :cancel-atom cancelled}))]
-            (expect (= (case mode
-                         :cancel
-                         :cancelled
+                            :exhaust
+                            :error
 
-                         :exhaust
-                         :error
-
-                         :success)
-                       (or (:status result) :success)))
-            (expect (= (if (= :cancel mode) 1 2) (count @requests)))
-            (when (= :raise mode)
-              (expect (= 65536 (get-in @requests [1 :extra-body "max_output_tokens"])))
-              (expect (= (:messages (first @requests)) (:messages (second @requests)))))
-            (when (#{:ceiling :partial} mode)
-              (expect (some #(str/includes? (pr-str (:content %)) "Use a compact path now")
-                            (:messages (second @requests)))))
-            (when (= :exhaust mode)
-              (expect (str/includes? (pr-str (:answer result)) "output budget"))))
-          (finally (loop-env/dispose-environment! environment)))))))
+                            :success)
+                          (or (:status result) :success)))
+               (expect (= (if (= :cancel mode) 1 2) (count @requests)))
+               ;; Vis never re-sends the failed request with a budget of its own.
+               (expect (apply = (map :extra-body @requests)))
+               (when (= :recover mode)
+                 (expect (some #(str/includes? (pr-str (:content %)) "Use a compact path now")
+                               (:messages (second @requests))))
+                 (expect (some #(str/includes? (pr-str (:content %)) "Svar already re-sent")
+                               (:messages (second @requests)))))
+               (when (= :exhaust mode)
+                 (expect (str/includes? (pr-str (:answer result)) "output budget"))))
+             (finally (loop-env/dispose-environment! environment)))))))
 
 (defdescribe
   responses-output-budget-svar-boundary-test
@@ -4993,62 +4869,58 @@
   ;; Iteration-error-data shape (built by `format-exception`):
   ;;   {:class "..."      — exception class name
   ;;    :message "..."    — ex-message
+  ;;    :type ...         — svar's `:type`, copied from ex-data
   ;;    :data {...}       — raw `(ex-data t)` from svar, untouched
   ;;    :context {...}}   — vis loop ctx snapshot
   ;; So predicate / context helpers consume `(:data iter-err)` for any
   ;; svar-side ex-info keys, NOT top-level. Tests reflect that.
-  (it "surfaces dedicated copy + hint for :svar.llm/max-tokens-exceeded"
-      (let [iter-err
-            {:type :svar.llm/max-tokens-exceeded
-             :data {:api-usage {:output-tokens 2048 :output-tokens-details {:reasoning 1900}}}}
-
-            ctx
-            (llm-provider-error-context 3 iter-err)]
-
-        (expect (= :llm-provider/max-tokens-exhausted (:type ctx)))
-        (expect (= 1900 (:reasoning-tokens ctx)))
-        (expect (= 2048 (:output-tokens ctx)))
-        (expect (str/includes? (:message ctx) "max_tokens"))
-        (expect (str/includes? (:message ctx) "hidden reasoning"))
-        (expect (str/includes? (:message ctx) "did not retry"))
-        (expect (str/includes? (:hint ctx) "canonical"))
-        (expect (not (str/includes? (:hint ctx) "v/strategy")))
-        (expect (not (str/includes? (:hint ctx) ":start/:max-lines")))))
-  (it "says the doubled retry already ran when it also hit the cap"
+  (it "surfaces output-budget copy, usage and hint for :svar.llm/max-tokens-exceeded"
       (let [ctx (llm-provider-error-context 3
                                             {:type :svar.llm/max-tokens-exceeded
-                                             :data {:api-usage {:output-tokens 65536}
-                                                    :max-tokens-retries 1}})]
+                                             :data {:type :svar.llm/max-tokens-exceeded
+                                                    :api-usage {:output-tokens 2048
+                                                                :output-tokens-details {:reasoning
+                                                                                        1900}}}})]
+        (expect (= :llm-provider/output-budget-exhausted (:type ctx)))
+        (expect (= 1900 (:reasoning-tokens ctx)))
+        (expect (= 2048 (:output-tokens ctx)))
+        (expect (str/includes? (:message ctx)
+                               "(2048 output tokens, 1900 of them hidden reasoning)"))
+        (expect (not (str/includes? (:message ctx) "re-sent")))
+        (expect (str/includes? (:hint ctx) "Use a compact path now"))
+        (expect (not (contains? ctx :source-type)))))
+  (it "says Svar already re-sent the request with a larger budget"
+      (let [ctx (llm-provider-error-context 3
+                                            {:type :svar.llm/max-tokens-exceeded
+                                             :data {:type :svar.llm/max-tokens-exceeded
+                                                    :api-usage {:output-tokens 65536}
+                                                    :output-budget-resends 1}})]
         (expect (= 65536 (:output-tokens ctx)))
         (expect (nil? (:reasoning-tokens ctx)))
-        (expect (str/includes? (:message ctx) "(65536 tokens consumed, ? went to"))
-        (expect (str/includes? (:message ctx) "already retried once"))
-        (expect (not (str/includes? (:message ctx) "did not retry")))))
-  (it "carries the loop's retry count from the exception to the message"
+        (expect (str/includes? (:message ctx) "(65536 output tokens, ? of them hidden reasoning)"))
+        (expect (str/includes? (:message ctx) "Svar already re-sent"))))
+  (it "carries Svar's re-send count from the exception to the message"
       (let [e
             (ex-info "max_tokens hit"
                      {:type :svar.llm/max-tokens-exceeded
+                      :output-budget-resends 1
                       :api-usage {:output-tokens 65536 :output-tokens-details {:reasoning 65000}}})
 
             iter-err
-            (::loop-errors/iteration-error (loop-errors/handle-iteration-exception!
-                                             e
-                                             {:iteration 2 :messages [] :max-tokens-retries 1}))]
+            (::loop-errors/iteration-error
+              (loop-errors/handle-iteration-exception! e {:iteration 2 :messages []}))]
 
-        (expect (= 1 (get-in iter-err [:data :max-tokens-retries])))
+        (expect (= 1 (get-in iter-err [:data :output-budget-resends])))
         (expect (str/includes? (:message (llm-provider-error-context 2 iter-err))
-                               "already retried once"))))
-  (it "keeps the legacy `:llm-provider/output-budget-exhausted` mapping"
-      ;; Anthropic native `:svar.core/stream-incomplete + :reason
-      ;; max_output_tokens` is detected through `:data` (nested), not
-      ;; top-level — `format-exception` puts raw `ex-data` under `:data`.
-      (let [iter-err
-            {:data {:type :svar.core/stream-incomplete :reason "max_output_tokens"}}
-
-            ctx
-            (llm-provider-error-context 2 iter-err)]
-
-        (expect (= :llm-provider/output-budget-exhausted (:type ctx))))))
+                               "Svar already re-sent"))))
+  (it "treats other incomplete streams as ordinary provider failures"
+      (let [ctx (llm-provider-error-context 2
+                                            {:type :svar.core/stream-incomplete
+                                             :message "Stream incomplete"
+                                             :data {:type :svar.core/stream-incomplete
+                                                    :reason "content_filter"}})]
+        (expect (= :llm-provider/call-failed (:type ctx)))
+        (expect (= :svar.core/stream-incomplete (:source-type ctx))))))
 
 (defn- stub-iter
   "Build a synthetic trailer-iters entry for preserved-thinking tests.
@@ -7417,9 +7289,9 @@
         (expect (= 1000 (backoff 0)))
         (expect (= 3000 (backoff 1)))
         (expect (= 3000 (backoff 7)))
-        (expect (= {:auth 0 :stream 1 :max-tokens 1}
+        (expect (= {:auth 0 :stream 1}
                    (next-counters :com.blockether.vis.internal.loop.iteration/retry-stream-recovery
-                                  {:auth 0 :stream 0 :max-tokens 1}))))
+                                  {:auth 0 :stream 0}))))
     (it "still fails the turn once the pre-output budget is spent"
         (expect (true? (:com.blockether.vis.internal.loop.errors/fatal-iteration-error
                          (loop-errors/handle-iteration-exception!
@@ -7437,15 +7309,11 @@
         @#'iteration/request-with-retries
 
         attempt
-        {:retries {:auth 1 :stream 1 :max-tokens 0} :extra-body {"max_tokens" 100} :env ::env}]
+        {:retries {:auth 1 :stream 1} :extra-body {"max_tokens" 100} :env ::env}]
 
     (it "ends on a real result"
         (expect (nil? (next-attempt attempt {:answer "done"})))
         (expect (nil? (next-attempt attempt :unrelated-keyword))))
-    (it "sends a max-token bump as the next request body"
-        (expect
-          (= {:retries {:auth 1 :stream 1 :max-tokens 1} :extra-body {"max_tokens" 200} :env ::env}
-             (next-attempt attempt {::iteration/retry-max-tokens {"max_tokens" 200}}))))
     (it "installs an auth fallback route without spending the auth budget"
         (expect (= (assoc attempt :routing {:provider :anthropic})
                    (next-attempt attempt
@@ -7474,8 +7342,7 @@
 
             results
             [{::iteration/retry-auth-fallback {:provider :anthropic}}
-             {::iteration/retry-max-tokens {"max_tokens" 200}} ::iteration/retry-auth-refresh
-             {:answer "done"}]
+             ::iteration/retry-context-overflow ::iteration/retry-auth-refresh {:answer "done"}]
 
             send!
             (fn [attempt]
@@ -7484,26 +7351,25 @@
                 {:result (nth results n) :env [:env n]}))]
 
         (expect (= {:answer "done"}
-                   (request-with-retries send!
-                                         {:retries {:auth 0 :stream 0 :max-tokens 0}
-                                          :extra-body {"max_tokens" 100}
-                                          :env :env}
-                                         routing)))
+                   (request-with-retries
+                     send!
+                     {:retries {:auth 0 :stream 0} :extra-body {"max_tokens" 100} :env :env}
+                     routing)))
         (expect
-          (= [{:retries {:auth 0 :stream 0 :max-tokens 0}
+          (= [{:retries {:auth 0 :stream 0}
                :extra-body {"max_tokens" 100}
                :env :env
                :routing {:provider :openai}}
-              {:retries {:auth 0 :stream 0 :max-tokens 0}
+              {:retries {:auth 0 :stream 0}
                :extra-body {"max_tokens" 100}
                :env [:env 0]
                :routing {:provider :anthropic}}
-              {:retries {:auth 0 :stream 0 :max-tokens 1}
-               :extra-body {"max_tokens" 200}
+              {:retries {:auth 0 :stream 0}
+               :extra-body {"max_tokens" 100}
                :env [:env 1]
                :routing {:provider :anthropic}}
-              {:retries {:auth 1 :stream 0 :max-tokens 1}
-               :extra-body {"max_tokens" 200}
+              {:retries {:auth 1 :stream 0}
+               :extra-body {"max_tokens" 100}
                :env [:env 2]
                :routing {:provider :anthropic}}]
              @sent))))))
@@ -7932,18 +7798,14 @@
             @#'iteration/next-retry-counters
 
             fresh
-            {:auth 0 :stream 0 :max-tokens 0}
+            {:auth 0 :stream 0}
 
             refreshed
             (next-counters ::iteration/retry-auth-refresh fresh)]
 
-        (expect (= {:auth 1 :stream 0 :max-tokens 0} refreshed))
-        (expect (= {:auth 1 :stream 1 :max-tokens 0}
-                   (next-counters ::iteration/retry-stream-recovery refreshed)))
-        (expect (= {:auth 2 :stream 0 :max-tokens 0}
-                   (next-counters ::iteration/retry-auth-backoff refreshed)))
-        (expect (= {:auth 0 :stream 0 :max-tokens 1}
-                   (next-counters {::iteration/retry-max-tokens {"max_tokens" 16384}} fresh)))
+        (expect (= {:auth 1 :stream 0} refreshed))
+        (expect (= {:auth 1 :stream 1} (next-counters ::iteration/retry-stream-recovery refreshed)))
+        (expect (= {:auth 2 :stream 0} (next-counters ::iteration/retry-auth-backoff refreshed)))
         (expect (nil? (next-counters {:answer "done"} fresh)))))
   (it
     "keeps both stream recoveries after a forced auth refresh"
@@ -8410,7 +8272,7 @@
             @#'iteration/next-retry-counters
 
             base
-            {:auth 2 :stream 1 :max-tokens 1}]
+            {:auth 2 :stream 1}]
 
         (expect (= base (next-counters {::iteration/retry-auth-fallback {}} base))))))
 
@@ -10422,9 +10284,8 @@
         (expect (= 20000 (get-in @ctx-atom ["engine_utilization" "last_request_tokens"])))
         (expect (= 10000 (get-in @ctx-atom ["engine_utilization" "model_input_limit"])))))
     (it "has an independent retry budget"
-        (expect (= {:auth 2 :stream 1 :max-tokens 1}
-                   (next-retry-counters ::iteration/retry-context-overflow
-                                        {:auth 2 :stream 1 :max-tokens 1}))))))
+        (expect (= {:auth 2 :stream 1}
+                   (next-retry-counters ::iteration/retry-context-overflow {:auth 2 :stream 1}))))))
 
 (defn- overflow-loop-scenario
   "Exercise overflow handling, Python execution and the following provider request."
@@ -11148,11 +11009,15 @@
 ;; one materially changed, compact recovery iteration.
 (defdescribe
   output-budget-exhaustion-recovery-test
+  ;; Svar raises this after its own larger-budget re-send; Codex strips the budget
+  ;; control, so the failure carries no `:max-output-tokens`.
   (let [cap-data
-        {:type :svar.core/stream-incomplete
+        {:type :svar.llm/max-tokens-exceeded
          :stream? true
          :reason "max_output_tokens"
          :provider :openai-codex
+         :max-output-tokens nil
+         :output-budget-resends 0
          :content-acc-len 0
          :reasoning-acc-len 128}
 
@@ -11170,7 +11035,7 @@
 
             (expect (contains? result ::loop-errors/iteration-error))
             (expect (not (::loop-errors/fatal-iteration-error result)))
-            (expect (= :svar.core/stream-incomplete (get-in iteration-error [:data :type])))
+            (expect (= :svar.llm/max-tokens-exceeded (get-in iteration-error [:data :type])))
             (expect (= "max_output_tokens" (get-in iteration-error [:data :reason])))
             (expect (str/includes? feedback ":llm-provider/output-budget-exhausted"))
             (expect (str/includes? feedback "Use a compact path now"))
@@ -12674,15 +12539,17 @@
                           db
                           {:parent-session-id (:session-id environment) :user-request request})]
 
-                (with-redefs [svar/ask-code!
+                (with-redefs [iteration/STREAM_RECOVERY_RETRY_DELAYS_MS [0 0]
+                              svar/ask-code!
                               (fn [_ opts]
                                 (swap! requests conj
                                   {:sid (str (:session-id environment)) :messages (:messages opts)})
                                 (let [code (get codes (swap! idx inc))]
                                   (cond (= :retry code)
+                                        ;; A watchdog abort before any output is a
+                                        ;; transparent, same-iteration Vis retry.
                                         (throw (ex-info "Retry fixture"
-                                                        {:type :svar.llm/max-tokens-exceeded
-                                                         :api-usage {:output-tokens 8192}}))
+                                                        {:type :svar.core/stream-ttft-timeout}))
                                         (= :error code) (throw (ex-info
                                                                  "Recoverable model-format fixture"
                                                                  {:type :fixture/format-error}))
@@ -12697,6 +12564,7 @@
                                                :content "done"
                                                :tool-calls []
                                                :tokens {}})))]
+
                   (let [result
                         (iteration/iteration-loop environment request {:session-turn-id tid})]
                     (reset! loop-result

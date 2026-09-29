@@ -95,29 +95,28 @@
              (min (long attempt) (dec (count STREAM_RECOVERY_RETRY_DELAYS_MS))))))
 
 (def ^:private RETRY_BUDGET_KINDS
-  "The per-iteration budget each Vis-owned retry sentinel spends. Auth, stream and
-   max-token recovery count separately, so one kind of retry never spends another
-   kind's budget. Auth fallback and context-overflow recovery own their bounds."
+  "The per-iteration budget each Vis-owned retry sentinel spends. Auth and stream
+   recovery count separately, so one kind of retry never spends another kind's
+   budget. Auth fallback and context-overflow recovery own their bounds."
   {::retry-auth-refresh :auth
    ::retry-auth-backoff :auth
    ::retry-stream-recovery :stream
-   ::retry-max-tokens :max-tokens
    ::retry-auth-fallback nil
    ::retry-context-overflow nil})
 
 (defn- retry-sentinel
-  "The retry sentinel `result` carries, or nil for a real result. Map sentinels
-   also carry the retry's input: the bumped extra body or the fallback routing."
+  "The retry sentinel `result` carries, or nil for a real result. A map sentinel
+   also carries the retry's input: the fallback routing."
   [result]
   (cond (keyword? result) (when (contains? RETRY_BUDGET_KINDS result) result)
-        (map? result) (some #(when (contains? result %) %)
-                            [::retry-max-tokens ::retry-auth-fallback])))
+        (map? result) (when (contains? result ::retry-auth-fallback) ::retry-auth-fallback)))
 
 (defn- next-retry-counters
-  "Pure counter-threading for Vis-owned context, max-token, auth and stream recovery.
-   Svar owns other transport retries. Vis additionally recovers pre-output watchdogs
-   and verified reasoning-only EOF before code eval. `counters` holds one count per
-   budget kind in [[RETRY_BUDGET_KINDS]]. Returns nil for a real result."
+  "Pure counter-threading for Vis-owned context, auth and stream recovery. Svar owns
+   other transport retries, including the larger-budget re-send after output
+   exhaustion. Vis additionally recovers pre-output watchdogs and verified
+   reasoning-only EOF before code eval. `counters` holds one count per budget kind in
+   [[RETRY_BUDGET_KINDS]]. Returns nil for a real result."
   [result counters]
   (when-let [sentinel (retry-sentinel result)]
     (if-let [kind (get RETRY_BUDGET_KINDS sentinel)]
@@ -128,18 +127,14 @@
   "The request attempt that follows `result`, or nil when `result` is real. An
    attempt carries the per-kind `:retries` counters, the request `:extra-body` and
    the `:env` it ran with. The following attempt spends the sentinel's budget and
-   takes its input: a max-token bump replaces `:extra-body`, an auth fallback adds
-   the `:routing` to install, and an auth or stream backoff adds the `:backoff-ms`
-   to wait first. An auth refresh re-sends unchanged because the router hydrates
-   refreshed credentials before dispatch; a context-overflow retry re-sends with the
-   projection its recovery installed."
+   takes its input: an auth fallback adds the `:routing` to install, and an auth or
+   stream backoff adds the `:backoff-ms` to wait first. An auth refresh re-sends
+   unchanged because the router hydrates refreshed credentials before dispatch; a
+   context-overflow retry re-sends with the projection its recovery installed."
   [{:keys [retries] :as attempt} result]
   (when-let [retries* (next-retry-counters result retries)]
     (let [following (assoc attempt :retries retries*)]
       (case (retry-sentinel result)
-        ::retry-max-tokens
-        (assoc following :extra-body (::retry-max-tokens result))
-
         ::retry-auth-fallback
         (assoc following :routing (::retry-auth-fallback result))
 
@@ -1335,8 +1330,6 @@
 
 ;; Multi-iteration turn engine helpers
 
-(defn- stream-output-overflow? [err] (loop-errors/output-budget-exhausted-data? (:data err)))
-
 (def ^:private MAX_AUTH_REFRESH_RETRIES
   "Max transparent auth-401 retries per iteration. Attempt 0 forces ONE OAuth
    refresh-token exchange (the stored access token was invalidated server-side,
@@ -1346,168 +1339,54 @@
    SAME token (no re-mint) to let it settle, per [[auth-propagation-backoff-ms]]."
   4)
 
-(def ^:private MAX_MAX_TOKENS_EXCEEDED_RETRIES
-  "Max transparent retries for `:svar.llm/max-tokens-exceeded` per
-   iteration. Each retry bumps `:extra-body {\"max_tokens\" N}` by
-   `MAX_TOKENS_RETRY_BUMP_FACTOR` so a reasoning-heavy iteration that
-   burnt the auto-budget on hidden thinking gets another shot with
-   headroom. 1 retry = 2 total attempts; subsequent bumps would either
-   exceed the provider's output ceiling or pay 2-4× for the same
-   reasoning content, so we cap retries here and let the next iteration
-   redistribute the work instead."
-  1)
-
-(def ^:private MAX_TOKENS_RETRY_BUMP_FACTOR
-  "Multiplier applied to the previous `max_tokens` on a max-tokens
-   retry. 2.0 doubles the budget, which empirically covers the
-   reasoning-heavy iterations (observed with Copilot
-   Claude burning the full 2048 auto-budget on hidden reasoning before
-   ever emitting a tool call) without overshooting the provider's
-   output-cap on subsequent calls."
-  2.0)
-
-(defn- max-tokens-error-data
-  "Find the canonical output-cap evidence, including HTTP-wrapped Responses failures."
-  [^Throwable e]
-  (some (fn [cause]
-          (let [data (ex-data cause)]
-            (when (or (= :svar.llm/max-tokens-exceeded (:type data))
-                      (loop-errors/output-budget-exhausted-data? data))
-              data)))
-        (loop-errors/bounded-cause-chain e)))
-
-(defn- max-tokens-exceeded-error?
-  "True for output exhaustion before visible content or tool output. Partial output
-   is never replayed transparently, even when only reasoning was observed live."
-  [^Throwable e]
-  (let [data (max-tokens-error-data e)]
-    (boolean (and data
-                  (not= :content (:stream-output (ex-data e)))
-                  (not= :content (:stream-output data))
-                  (not (seq (:partial-content data)))
-                  (not (seq (:tool-calls data)))
-                  (every? #(zero? (long (or (get data %) 0)))
-                          [:content-acc-len :tool-args-acc-len :tool-call-count])))))
-
-(defn- max-tokens-usage
-  "Token counts of an output-budget failure from Svar's canonical `:api-usage`.
-   `:reasoning-tokens` is nil when the provider does not report its reasoning share."
-  [data]
-  (let [usage (:api-usage data)]
-    {:output-tokens (:output-tokens usage)
-     :reasoning-tokens (get-in usage [:output-tokens-details :reasoning])}))
-
-(defn- bumped-max-tokens-extra-body
-  "Build an `:extra-body` override that doubles `prev-max`, bounded by the provider's
-   `output-ceiling` from Svar's `context-budget`. Nil when the ceiling leaves no room
-   above `prev-max`: the same call would stop at the same cap."
-  [prev-extra-body prev-max output-ceiling]
-  (let [doubled
-        (long (Math/ceil (* (double prev-max) (double MAX_TOKENS_RETRY_BUMP_FACTOR))))
-
-        bumped
-        (if output-ceiling (min doubled (long output-ceiling)) doubled)]
-
-    (when (> bumped (long prev-max)) (assoc prev-extra-body "max_tokens" bumped))))
-
-(defn- max-tokens-retry
-  "Plan one larger-budget request, bounded by the provider's output ceiling.
-   Responses must have sent an adjustable wire budget; Codex strips that control.
-   Use the actual cap and usage, not an estimate that can shrink the failed budget."
-  [^Throwable e extra-body request-budget]
-  (let [data
-        (max-tokens-error-data e)
-
-        responses?
-        (loop-errors/output-budget-exhausted-data? data)
-
-        {:keys [output-tokens reasoning-tokens]}
-        (max-tokens-usage data)
-
-        requested
-        (or (:max-output-tokens data)
-            (get extra-body "max_output_tokens")
-            (get extra-body "max_tokens")
-            (:output-reserve request-budget)
-            output-tokens
-            8192)
-
-        prev-max
-        (long (max (or output-tokens 0) requested))]
-
-    (when (and data (or (not responses?) (pos? (long (or (:max-output-tokens data) 0)))))
-      (when-let [bumped (bumped-max-tokens-extra-body extra-body
-                                                      prev-max
-                                                      (:output-ceiling request-budget))]
-        {:prev-max prev-max
-         :extra-body (if responses?
-                       (-> bumped
-                           (dissoc "max_tokens")
-                           (assoc "max_output_tokens" (get bumped "max_tokens")))
-                       bumped)
-         :reasoning-tokens reasoning-tokens}))))
-
-(defn- max-tokens-exhausted?
-  "True for `:svar.llm/max-tokens-exceeded` errors that survived all
-   per-iteration retries. See svar's `ask-code!*` blank-content guard
-   for the underlying detection."
+(defn- output-budget-exhausted?
+  "True when the iteration failed on Svar's canonical output-budget signal. Svar
+   raises it after its own larger-budget re-send, so only a smaller next iteration
+   can recover."
   [iteration-error-data]
-  (= :svar.llm/max-tokens-exceeded (:type iteration-error-data)))
+  (loop-errors/output-budget-exhausted-data? (:data iteration-error-data)))
 
 (defn- llm-provider-error-context
   [iteration iteration-error-data]
   (let
-    [output-overflow?
-     (stream-output-overflow? iteration-error-data)
-
-     max-tokens-exhaust?
-     (max-tokens-exhausted? iteration-error-data)
+    [output-budget?
+     (output-budget-exhausted? iteration-error-data)
 
      data
      (:data iteration-error-data)
 
-     {:keys [output-tokens reasoning-tokens]}
-     (max-tokens-usage data)
+     output-tokens
+     (get-in data [:api-usage :output-tokens])
 
-     retried?
-     (pos? (long (or (:max-tokens-retries data) 0)))
+     reasoning-tokens
+     (get-in data [:api-usage :output-tokens-details :reasoning])
 
      message
-     (cond
-       output-overflow?
-       "Provider stopped the response as incomplete because output budget was exhausted (max_output_tokens)."
-       max-tokens-exhaust?
-       (str
-         "Provider truncated the response at max_tokens (" (or output-tokens "?")
-         " tokens consumed, " (or reasoning-tokens "?")
-         " went to hidden reasoning, 0 to visible content). "
-         (if retried?
-           "Vis already retried once with a doubled budget; this iteration still hit the cap."
-           "The model's output ceiling leaves no room for a larger budget, so Vis did not retry."))
-       :else (str "LLM call failed: " (:message iteration-error-data)))
+     (if output-budget?
+       (str "Provider stopped the response at its output budget (" (or output-tokens "?")
+            " output tokens, " (or reasoning-tokens "?")
+            " of them hidden reasoning)."
+            (when (pos? (long (or (:output-budget-resends data) 0)))
+              " Svar already re-sent the request once with a larger budget."))
+       (str "LLM call failed: " (:message iteration-error-data)))
 
      hint
-     (cond
-       output-overflow?
+     (if output-budget?
        "Do not continue the broad strategy. Use a compact path now: one small probe if essential, otherwise stop, report the exact impediment, and ask for confirmation before more changes. Avoid dumping large maps, file contents, diffs, or repeated diagnostics."
-       max-tokens-exhaust?
-       "Shorten next iteration. Keep tool procedure canonical and compact. Drop unrelated defs and FINISH with a plain-prose answer early if the previous iteration already has enough evidence. Heavy reasoning models on Copilot/Codex cap output independently of context size."
-       :else
        "Adjust your approach or finish with a plain-prose answer using only observed evidence.")]
 
     (cond-> {:phase :llm-provider/generate
-             :type (cond output-overflow? :llm-provider/output-budget-exhausted
-                         max-tokens-exhaust? :llm-provider/max-tokens-exhausted
-                         :else :llm-provider/call-failed)
+             :type
+             (if output-budget? :llm-provider/output-budget-exhausted :llm-provider/call-failed)
              :iteration (inc (long iteration))
              :message message
              :hint hint}
-      max-tokens-exhaust?
-      (assoc :reasoning-tokens
-        reasoning-tokens :output-tokens
-        output-tokens)
+      output-budget?
+      (assoc :output-tokens
+        output-tokens :reasoning-tokens
+        reasoning-tokens)
 
-      (and (not output-overflow?) (:type iteration-error-data))
+      (and (not output-budget?) (:type iteration-error-data))
       (assoc :source-type (:type iteration-error-data)))))
 
 (defn- iteration-error-feedback
@@ -1517,7 +1396,7 @@
          (:iteration llm-provider-error)
          "]\n"
          ";; llm-provider-error =\n" (pr-str llm-provider-error)
-         "\n" (when (stream-output-overflow? iteration-error-data)
+         "\n" (when (output-budget-exhausted? iteration-error-data)
                 (str "Original request: " user-request)))))
 
 ;; Iteration loop
@@ -2864,8 +2743,8 @@
         iteration-result
         ;; Per-iteration request attempts. `next-attempt` spends each
         ;; recovery kind's own budget (see RETRY_BUDGET_KINDS), so no policy
-        ;; spends another's, and carries the max-token bump, fallback route
-        ;; and backoff into the following attempt.
+        ;; spends another's, and carries the fallback route and backoff into
+        ;; the following attempt.
         (with-council-execution
           environment
           council-active
@@ -3010,39 +2889,6 @@
                            :extra-body current-extra-body})
                         (catch Exception e
                           (cond
-                            ;; Retry once with a larger wire budget, before visible output
-                            ;; or code execution. Responses and Chat report different
-                            ;; errors for the same exhaustion; neither permits an
-                            ;; unchanged replay or a budget above the provider ceiling.
-                            (and (not (and cancel-atom @cancel-atom))
-                                 (not @provider-replay-unsafe?)
-                                 (max-tokens-exceeded-error? e)
-                                 (< (long (:max-tokens retries))
-                                    (long MAX_MAX_TOKENS_EXCEEDED_RETRIES))
-                                 (max-tokens-retry e current-extra-body @request-budget-atom))
-                            (let [{:keys [prev-max reasoning-tokens] bumped :extra-body}
-                                  (max-tokens-retry e current-extra-body @request-budget-atom)
-
-                                  new-max
-                                  (or (get bumped "max_output_tokens") (get bumped "max_tokens"))]
-
-                              (tel/log! {:level :warn
-                                         :id ::max-tokens-exceeded-retry
-                                         :data {:iteration iteration
-                                                :attempt (inc (long (:max-tokens retries)))
-                                                :max-retries MAX_MAX_TOKENS_EXCEEDED_RETRIES
-                                                :prev-max prev-max
-                                                :new-max new-max
-                                                :reasoning-tokens reasoning-tokens}}
-                                        (str "max_tokens exhausted on reasoning (~"
-                                             (or reasoning-tokens "?")
-                                             " reasoning tokens); retry " (inc (long (:max-tokens
-                                                                                       retries)))
-                                             "/" MAX_MAX_TOKENS_EXCEEDED_RETRIES
-                                             " with output budget=" new-max))
-                              ;; Spend the max-token budget so a second cap-hit
-                              ;; cannot loop forever.
-                              {::retry-max-tokens bumped})
                             ;; Post-refresh auth 401: the token we
                             ;; JUST force-refreshed 401'd AGAIN. Almost
                             ;; always OAuth PROPAGATION LAG at the
@@ -3186,7 +3032,6 @@
                                    :messages @effective-messages-atom
                                    :routing @iteration-routing
                                    :reasoning-level reasoning-level
-                                   :max-tokens-retries (:max-tokens retries)
                                    :stream-recovery
                                    (let [stream-abort? (some #(or (perr/stream-truncated-error? %)
                                                                   (perr/stream-connection-error? %)
@@ -3205,9 +3050,7 @@
                                                         :else :provider-failed)}))}))))))]
 
                   {:result result :env env}))
-              {:retries {:auth 0 :stream 0 :max-tokens 0}
-               :extra-body iteration-extra-body
-               :env environment}
+              {:retries {:auth 0 :stream 0} :extra-body iteration-extra-body :env environment}
               iteration-routing)))]
 
     (assoc state
@@ -3251,12 +3094,9 @@
                               (accounting/turn-cost @accounting-atom turn-pricing))]
 
             result))
-      (let [output-recovery-exhausted? (and (or (stream-output-overflow? iteration-error-data)
-                                                (max-tokens-exhausted? iteration-error-data))
-                                            (contains? #{:llm-provider/output-budget-exhausted
-                                                         :llm-provider/max-tokens-exhausted}
-                                                       (get-in loop-state
-                                                               [:llm-provider :error :type])))
+      (let [output-recovery-exhausted? (and (output-budget-exhausted? iteration-error-data)
+                                            (= :llm-provider/output-budget-exhausted
+                                               (get-in loop-state [:llm-provider :error :type])))
             fatal? (or (::loop-errors/fatal-iteration-error iteration-result)
                        output-recovery-exhausted?)
             llm-provider-error (llm-provider-error-context iteration iteration-error-data)

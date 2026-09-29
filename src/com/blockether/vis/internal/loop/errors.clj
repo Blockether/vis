@@ -134,11 +134,11 @@
   (contains? INFRASTRUCTURE_ERROR_TYPES (:type ex-data-map)))
 
 (defn output-budget-exhausted-data?
-  "The exact provider signal that an unchanged request cannot recover from, but a
-   smaller NEXT Vis iteration can. Svar owns same-request retry safety; Vis owns
-   changing strategy after the signal crosses that boundary."
+  "Svar's canonical output-budget failure for every wire. Svar owns the same-request
+   re-send with a larger budget; after the failure crosses that boundary, only a
+   smaller NEXT Vis iteration can recover."
   [data]
-  (and (= :svar.core/stream-incomplete (:type data)) (= "max_output_tokens" (str (:reason data)))))
+  (= :svar.llm/max-tokens-exceeded (:type data)))
 
 (defn- output-budget-exhausted-cause
   [^Throwable e]
@@ -278,10 +278,7 @@
                                        :last-user-preview (last-user-message-preview (:messages
                                                                                        ctx))}})
     (:stream-recovery ctx)
-    (assoc-in [:data :stream-recovery] (:stream-recovery ctx))
-
-    (pos? (long (or (:max-tokens-retries ctx) 0)))
-    (assoc-in [:data :max-tokens-retries] (:max-tokens-retries ctx))))
+    (assoc-in [:data :stream-recovery] (:stream-recovery ctx))))
 
 (defn handle-iteration-exception!
   "Error path for the main-loop try/catch around `run-iteration`.
@@ -297,10 +294,10 @@
         hopeless-overflow?
         (hopeless-context-overflow? ex-data-map)
 
-        ;; Svar refuses an unchanged replay for this deterministic cap. Preserve
-        ;; the typed inner cause across wrappers and let the OUTER Vis loop ask for
-        ;; a materially smaller strategy instead of terminalizing it as a generic
-        ;; provider failure.
+        ;; Svar owns the one bounded re-send with a larger budget, so an unchanged
+        ;; request cannot recover here. Keep the typed inner cause across wrappers and
+        ;; let the OUTER Vis loop ask for a materially smaller strategy instead of
+        ;; terminalizing it as a generic provider failure.
         output-budget-exhaustion
         (output-budget-exhausted-cause e)
 
