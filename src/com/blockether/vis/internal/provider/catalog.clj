@@ -187,6 +187,22 @@
   [provider-id model-id]
   (boolean (svar/provider-model-visible? provider-id model-id)))
 
+(defn model-allowlist
+  "Model ids declared by a managed provider's preset, or nil for other providers.
+   An empty or missing managed declaration allows no models. Neither discovery
+   nor saved configuration can widen the extension's declaration."
+  [provider-id]
+  (let [provider (registry/provider-by-id provider-id)]
+    (when (:provider/is-managed provider)
+      (into #{}
+            (keep (fn [model]
+                    (some-> (cond (string? model) model
+                                  (map? model) (:name model))
+                            str
+                            str/trim
+                            not-empty)))
+            (get-in provider [:provider/preset :default-models])))))
+
 (defn model-metadata
   "Metadata for one model as `provider-id` serves it - capabilities, pricing and
    context limits - without building a router. `model` is a map with at least

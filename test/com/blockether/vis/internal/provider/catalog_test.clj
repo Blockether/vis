@@ -71,6 +71,28 @@
                      (expect (nil? (catalog/template :unknown)))))))
 
 (defdescribe
+  model-allowlists-are-managed-declarations
+  (it "normalizes string and mapped declarations without using catalog defaults"
+      (with-redefs [registry/provider-by-id {:managed-fixture {:provider/is-managed true
+                                                               :provider/preset
+                                                               {:default-models
+                                                                [" corp-large " {:name "corp-small"}
+                                                                 "corp-large" ""]}}}]
+        (expect (= #{"corp-large" "corp-small"} (catalog/model-allowlist :managed-fixture)))))
+  (it "returns an empty allowlist for a missing or empty managed declaration"
+      (doseq [preset [nil {} {:default-models []}]]
+        (with-redefs [registry/provider-by-id {:openai {:provider/is-managed true
+                                                        :provider/preset preset}}]
+          (expect (= #{} (catalog/model-allowlist :openai))))))
+  (it "leaves discovery unrestricted for ordinary and unregistered providers"
+      (doseq [managed? [nil false]]
+        (with-redefs [registry/provider-by-id {:ordinary-fixture
+                                               {:provider/is-managed managed?
+                                                :provider/preset {:default-models ["corp-large"]}}}]
+          (expect (nil? (catalog/model-allowlist :ordinary-fixture)))
+          (expect (nil? (catalog/model-allowlist :unknown)))))))
+
+(defdescribe
   presets-list-labeled-visible-providers-in-picker-order
   (it "presets list labeled visible providers in picker order"
       (with-catalog

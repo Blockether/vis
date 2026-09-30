@@ -652,6 +652,113 @@
                                                                   true)))
                              "stealth, preview and outdated defaults stay out of the picker")))))
 
+;; Regression: managed extensions declare a closed model list. A broader live
+;; catalog, caller defaults or an older saved catalog must not widen that list.
+(defdescribe
+  managed-provider-model-catalog-is-closed
+  (it "lists only declared models even when show all is requested"
+      (let [provider {:id :managed-fixture
+                      :models [{:name "corp-large"} {:name "cached-extra"}]
+                      :default-models ["default-extra"]}]
+        (with-redefs [registry/provider-by-id
+                      {:managed-fixture {:provider/is-managed true
+                                         :provider/preset {:default-models ["corp-large"
+                                                                            {:name "corp-small"}]}}}
+                      providers/fetch-models (constantly ["corp-large" "corp-small" "live-extra"
+                                                          "live-extra-2026-09-29"])]
+
+          (doseq [show-all? [false true]]
+            (expect (= {:models ["corp-large" "corp-small"] :hidden-count 0}
+                       (providers/model-options provider
+                                                (providers/default-model-names provider)
+                                                show-all?)))))))
+  (it "does not treat an empty or missing declaration as unrestricted"
+      (doseq [defaults [nil []]]
+        (with-redefs [registry/provider-by-id {:managed-fixture {:provider/is-managed true
+                                                                 :provider/preset {:default-models
+                                                                                   defaults}}}
+                      providers/fetch-models (constantly ["live-extra"])]
+
+          (expect (= {:models [] :hidden-count 0}
+                     (providers/model-options {:id :managed-fixture
+                                               :models [{:name "cached-extra"}]}
+                                              ["default-extra"]
+                                              true))))))
+  (it "keeps declared models available when live discovery fails"
+      (with-redefs [registry/provider-by-id
+                    {:managed-fixture {:provider/is-managed true
+                                       :provider/preset {:default-models ["corp-large"]}}}
+
+                    providers/fetch-models
+                    (constantly nil)]
+
+        (expect (= {:models ["corp-large"] :hidden-count 0}
+                   (providers/model-options {:id :managed-fixture})))))
+  (it "refreshes declared metadata without learning undeclared models"
+      (let [entry
+            {:id :managed-fixture
+             :api-key "test"
+             :base-url "https://gateway.example.com/v1"
+             :models [{:name "corp-large" :input-limit 50000}]}
+
+            written
+            (atom nil)]
+
+        (with-redefs [registry/provider-by-id
+                      {:managed-fixture {:provider/is-managed true
+                                         :provider/preset {:default-models ["corp-large"
+                                                                            {:name "corp-small"}]}}}
+
+                      providers/configured-providers
+                      (constantly [entry])
+
+                      svar/models!
+                      (constantly [{:id "corp-large" :input-limit 70000} "corp-small" "live-extra"])
+
+                      providers/update-config-provider!
+                      (fn [_ f _]
+                        (reset! written (f entry)))]
+
+          (expect (= ["corp-large" "corp-small"]
+                     (mapv :name (:models (providers/fetch-model-catalog entry)))))
+          (expect (= ["corp-small"] (providers/refresh-models! :managed-fixture :test)))
+          (expect (= [{:name "corp-large" :input-limit 50000} {:name "corp-small"}]
+                     (:models @written)))
+          (expect (= ["corp-large" "corp-small"]
+                     (mapv :name (get-in @written [:model-metadata :models]))))
+          (expect (= 70000 (get-in @written [:model-metadata :models 0 :input-limit]))))))
+  (it "drops undeclared saved models and snapshot entries during refresh"
+      (let [entry
+            {:id :managed-fixture
+             :models [{:name "corp-large" :input-limit 50000} {:name "cached-extra"}]
+             :model-metadata {:identity "test-account"
+                              :models [{:name "corp-large" :context 100000}
+                                       {:name "cached-extra" :context 200000}]}}
+
+            written
+            (atom nil)]
+
+        (with-redefs [registry/provider-by-id
+                      {:managed-fixture {:provider/is-managed true
+                                         :provider/preset {:default-models ["corp-large"]}}}
+
+                      providers/configured-providers
+                      (constantly [entry])
+
+                      providers/fetch-model-catalog
+                      (constantly {:identity "test-account"
+                                   :models [{:name "corp-large" :input-limit 70000}
+                                            {:name "live-extra"}]})
+
+                      providers/update-config-provider!
+                      (fn [_ f _]
+                        (reset! written (f entry)))]
+
+          (expect (= [] (providers/refresh-models! :managed-fixture :test)))
+          (expect (= [{:name "corp-large" :input-limit 50000}] (:models @written)))
+          (expect (= [{:name "corp-large" :context 100000 :input-limit 70000}]
+                     (get-in @written [:model-metadata :models])))))))
+
 ;; Regression: a fleet stayed frozen at the build that added it. `:default-models`
 ;; is a hardcoded vendor list, adding a provider persisted exactly that list, and
 ;; every `/v1/router` row reads `:models` from CONFIG — so a model the vendor

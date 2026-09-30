@@ -100,38 +100,44 @@
 
 (defn fetch-model-catalog
   "Fetch normalized live models and their credential-safe account/endpoint identity.
-   Missing fields stay missing. No raw provider response or credential is persisted."
+   Managed providers learn metadata only for their declared models. Missing fields
+   stay missing. No raw provider response or credential is persisted."
   [provider]
-  (try (let [provider-id
-             (:id provider)
+  (try
+    (let [provider-id
+          (:id provider)
 
-             probe
-             (cond-> provider
-               (empty? (:models provider))
-               (assoc :models [{:name "probe"}]))
+          allowed?
+          (or (catalog/model-allowlist provider-id) (constantly true))
 
-             svar-provider
-             (config/->svar-provider probe)
+          probe
+          (cond-> provider
+            (empty? (:models provider))
+            (assoc :models [{:name "probe"}]))
 
-             router
-             (svar/make-router [svar-provider] (config/router-opts (config/current-config)))
+          svar-provider
+          (config/->svar-provider probe)
 
-             models
-             (->> (svar/models! router)
-                  (keep (fn [m]
-                          (let [id (if (string? m) m (or (:id m) (:name m)))]
-                            (when (and (string? id)
-                                       (chat-model? id)
-                                       (catalog/model-visible? provider-id id))
-                              (config/->svar-model (assoc (if (map? m) m {}) :name id))))))
-                  (reduce (fn [acc m]
-                            (assoc acc (:name m) m))
-                          (sorted-map))
-                  vals
-                  vec)]
+          router
+          (svar/make-router [svar-provider] (config/router-opts (config/current-config)))
 
-         (when (seq models) {:identity (svar/model-catalog-identity svar-provider) :models models}))
-       (catch Exception _ nil)))
+          models
+          (->> (svar/models! router)
+               (keep (fn [m]
+                       (let [id (if (string? m) m (or (:id m) (:name m)))]
+                         (when (and (string? id)
+                                    (allowed? id)
+                                    (chat-model? id)
+                                    (catalog/model-visible? provider-id id))
+                           (config/->svar-model (assoc (if (map? m) m {}) :name id))))))
+               (reduce (fn [acc m]
+                         (assoc acc (:name m) m))
+                       (sorted-map))
+               vals
+               vec)]
+
+      (when (seq models) {:identity (svar/model-catalog-identity svar-provider) :models models}))
+    (catch Exception _ nil)))
 
 (defn fetch-models
   "List visible chat model ids from the live catalog, or nil on failure."
@@ -156,11 +162,17 @@
 (defn default-model-names
   "Union of model names already on the provider map plus the preset /
    provider `:default-models`, deduped. `model-options` ranks them in svar's
-   canonical model order."
+   canonical model order. Managed providers keep only their declared model ids."
   [provider]
-  (let [template (catalog/template (:id provider))]
+  (let [template
+        (catalog/template (:id provider))
+
+        allowed?
+        (or (catalog/model-allowlist (:id provider)) (constantly true))]
+
     (->> (concat (:models provider) (:default-models template) (:default-models provider))
          (keep config/model-name)
+         (filter allowed?)
          distinct
          vec)))
 
@@ -179,7 +191,8 @@
    (`svar/sort-models`), env default pinned first. Configured, live-fetched and
    preset ids are deduped; ids the order does not rank keep configured order,
    then alphabetical order. When `show-all?` is false, dated snapshot variants
-   (gpt-4o-2024-08-06) are hidden.
+   (gpt-4o-2024-08-06) are hidden. Managed providers never show models outside
+   their extension's declaration, including when `show-all?` is true.
 
    Returns `{:models [id ...] :hidden-count n}` - channels render
    their own 'show all' affordance from `:hidden-count`."
@@ -187,6 +200,9 @@
   ([provider default-models show-all?]
    (let [provider-id
          (:id provider)
+
+         allowed?
+         (or (catalog/model-allowlist provider-id) (constantly true))
 
          configured
          (configured-model-names provider)
@@ -201,12 +217,13 @@
          (filterv #(catalog/model-visible? provider-id %) (or default-models []))
 
          all-ids
-         (svar/sort-models provider-id
-                           (into configured
-                                 (->> (concat fetched defaults)
-                                      distinct
-                                      (remove configured?)
-                                      sort)))
+         (filterv allowed?
+           (svar/sort-models provider-id
+                             (into configured
+                                   (->> (concat fetched defaults)
+                                        distinct
+                                        (remove configured?)
+                                        sort))))
 
          pinned
          (pin-default all-ids)
@@ -1516,36 +1533,42 @@
   "Refresh existing model metadata and append new live ids, preserving explicit config
    and order, except that saved models svar leaves out of this provider's model lists
    are dropped (`svar/provider-model-visible?`: stealth models, previews and outdated
-   versions). The learned snapshot is account/endpoint-scoped and stored separately.
+   versions). Managed providers cannot add undeclared models. The learned snapshot
+   is account/endpoint-scoped and stored separately.
    Partial replies retain last good fields for that identity; failure changes nothing.
    Returns appended names, [] for metadata-only/no change, nil for a failed probe."
   ([provider-id] (refresh-models! provider-id nil))
   ([provider-id source]
    (when-let [provider (some #(when (= provider-id (:id %)) %) (configured-providers))]
      (when-let [catalog (fetch-model-catalog provider)]
-       (let [preset (into {}
+       (let [allowed? (or (catalog/model-allowlist provider-id) (constantly true))
+             catalog (update catalog :models #(filterv (comp allowed? :name) %))
+             preset (into {}
                           (map (juxt :name identity))
                           (default-model-configs (catalog/template provider-id)))
              live (vec (distinct (map :name (:models catalog))))
              unknown (fn [entry]
                        (let [known (into #{} (keep config/model-name) (:models entry))]
                          (filterv (complement known) live)))
-             merge-catalog
-             (fn [entry]
-               (let [prior (:model-metadata entry)
-                     old (when (= (:identity prior) (:identity catalog)) (:models prior))
-                     models (reduce (fn [acc m]
-                                      (update acc (:name m) merge m))
-                                    (into (sorted-map) (map (juxt :name identity)) old)
-                                    (:models catalog))]
+             merge-catalog (fn [entry]
+                             (let [prior (:model-metadata entry)
+                                   old (when (= (:identity prior) (:identity catalog))
+                                         (filterv (comp allowed? :name) (:models prior)))
+                                   models
+                                   (reduce (fn [acc m]
+                                             (update acc (:name m) merge m))
+                                           (into (sorted-map) (map (juxt :name identity)) old)
+                                           (:models catalog))]
 
-                 (assoc catalog :models (vec (vals models)))))
+                               (assoc catalog :models (vec (vals models)))))
              update-entry (fn [entry]
                             (-> entry
                                 (assoc :model-metadata (merge-catalog entry))
                                 (update :models
-                                        #(into (filterv (comp (partial catalog/model-visible?
-                                                                       provider-id)
+                                        #(into (filterv (comp (every-pred allowed?
+                                                                          (partial
+                                                                            catalog/model-visible?
+                                                                            provider-id))
                                                               config/model-name)
                                                  %)
                                                (map (fn [id]

@@ -1395,11 +1395,14 @@
 (defn- apply-provider-metadata
   "Attach catalog metadata and the provider's complete preset model catalog in
    svar's canonical model order (`svar/sort-models`), so the first model, pickers and
-   fallbacks agree. Persisted model maps win by name so custom metadata survives, while
-   an old narrowed list can no longer hide models supplied by the provider preset."
+   fallbacks agree. Persisted model maps win by name so custom metadata survives.
+   Managed providers keep only models declared by their extension's preset."
   [provider]
   (let [template
         (catalog/template (:id provider))
+
+        allowlist
+        (catalog/model-allowlist (:id provider))
 
         models
         (->> (concat (:models provider) (:default-models template))
@@ -1408,7 +1411,8 @@
                                                    str
                                                    str/trim
                                                    not-empty)]
-                         (if (contains? seen model-name)
+                         (if (or (contains? seen model-name)
+                                 (and (some? allowlist) (not (contains? allowlist model-name))))
                            acc
                            {:seen (conj seen model-name)
                             :models (conj models
@@ -1427,7 +1431,7 @@
       (and (nil? (:api-style provider)) (provider-api-style provider template))
       (assoc :api-style (provider-api-style provider template))
 
-      (seq models)
+      (or (seq models) (some? allowlist))
       (assoc :models models))))
 
 (defn- apply-config-metadata [config] (update config :providers #(mapv apply-provider-metadata %)))

@@ -42,6 +42,47 @@
                       (finally (config/invalidate-config-cache!)))))
 
 (defdescribe
+  managed-provider-models-follow-the-extension-declaration
+  (it "removes undeclared saved models only for managed providers"
+      (config/invalidate-config-cache!)
+      (try (doseq [managed? [true false]]
+             (with-redefs [registry/provider-by-id
+                           {:managed-fixture
+                            {:provider/is-managed managed?
+                             :provider/preset
+                             {:default-models ["corp-large" {:name "corp-small" :context 100000}]}}}
+                           config/load-config-raw
+                           (constantly {"providers" [{"id" "managed-fixture"
+                                                      "api_key" "test"
+                                                      "models" [{"name" "corp-large"
+                                                                 "input_limit" 50000}
+                                                                {"name" "cached-extra"}]}]})]
+
+               (let [models (:models (first (:providers (config/load-config))))
+                     by-name (into {} (map (juxt :name identity)) models)]
+
+                 (expect (= (if managed?
+                              #{"corp-large" "corp-small"}
+                              #{"corp-large" "cached-extra" "corp-small"})
+                            (set (map :name models))))
+                 (expect (= 50000 (get-in by-name ["corp-large" :input-limit])))
+                 (expect (= 100000 (get-in by-name ["corp-small" :context]))))))
+           (finally (config/invalidate-config-cache!))))
+  (it "clears stale models when the managed declaration is empty or absent"
+      (config/invalidate-config-cache!)
+      (try (doseq [defaults [nil []]]
+             (with-redefs [registry/provider-by-id {:managed-fixture {:provider/is-managed true
+                                                                      :provider/preset
+                                                                      {:default-models defaults}}}
+                           config/load-config-raw
+                           (constantly {"providers" [{"id" "managed-fixture"
+                                                      "api_key" "test"
+                                                      "models" [{"name" "cached-extra"}]}]})]
+
+               (expect (= [] (:models (first (:providers (config/load-config))))))))
+           (finally (config/invalidate-config-cache!)))))
+
+(defdescribe
   provider-preset-transport-test
   (it
     "uses preset transport defaults after credentials and explicit configuration"
