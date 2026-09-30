@@ -2,6 +2,39 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.29 (7021) — 2026-09-30
+<!-- commit: 2ba8a103751ea7c137ec589d5613e7c88b4295cb -->
+
+- Let WebKit presses move sessions between groups
+- Record companion build 6862
+- Shorten the session fork label
+- Let Escape close a dialog without stopping the turn
+- Search sessions in a dialog that opens on recents
+- Keep live and recent sessions in order
+- Move the settings lock note padding off text
+- Lock settings when a more specific scope decides
+- Match scoped settings width to app settings
+- Widen scoped settings and restore borders
+- Start the transcript read before the click lands
+- Suppress redundant run attachments
+- Move scoped Settings near the menu bottom
+- Hide the default inheritance caption
+- Label scoped menu actions Settings
+- Name scoped settings actions by owner
+- Skip off-screen session rows and hold the closing pane
+- Keep new sessions in project counts across wakes
+- Speed up going back to the session list
+- Add project, group and session settings overrides
+- Add the opt-in memory overlay and fix session leaks
+- Place interrupted beside code
+- Settle stale Activity and abbreviate counts on phones
+- Keep the group form beside its heading
+- Label active work without stale reasoning
+- Keep OTP digit boxes square
+- Count only scrolls under the press as reader drags
+- Keep following after Stop cancels a turn
+- Tighten mobile execution spacing
+
 ## 0.2.29 (6862) — 2026-09-27
 <!-- commit: df5654226c971aae12ae599d0b04eb304e301cad -->
 
