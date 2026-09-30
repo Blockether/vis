@@ -28,6 +28,12 @@
                  :description "Allow filesystem reads."} {:type :section :label "Response"}
                 {:type :toggle :key :thinking :label "Show reasoning"}])))
 
+(def ^:private long-settings-rows
+  (vec (mapcat (fn [i]
+                 [{:type :section :label (str "Category " i)}
+                  {:type :toggle :key (keyword (str "setting-" i)) :label (str "Setting " i)}])
+               (range 24))))
+
 (defn- capture-settings
   "Capture the production settings loop with a deterministic catalog and no gateway."
   [rows keys &
@@ -48,16 +54,16 @@
 
 (defdescribe
   compact-settings-test
-  (describe "selected category"
-            (it "shows only the focused category, not the rest of the catalog"
+  (describe "full catalog"
+            (it "keeps other sections visible when an extension section is focused"
                 (let [frame (cap/frame-text (capture-settings settings-rows
                                                               [:esc]
                                                               :callbacks
                                                               {:focus-section
                                                                "Extension engines"}))]
                   (expect (every? #(str/includes? frame %) engine-names))
-                  (expect (not (str/includes? frame "Read filesystem")))
-                  (expect (not (str/includes? frame "Show reasoning"))))))
+                  (expect (str/includes? frame "Read filesystem"))
+                  (expect (str/includes? frame "Show reasoning")))))
   (describe
     "compact rows"
     (it "uses one painted line per setting and keeps prose out of the list"
@@ -77,34 +83,69 @@
 
 (defdescribe
   compact-settings-navigation-test
-  (it "changes category with Tab and Shift+Tab, including without a sidebar"
+  (it "does not switch or hide sections with Tab or Shift+Tab"
       (doseq [cols
               [40 100]
 
-              [key expected]
-              [[:tab :read-files] [:reverse-tab :thinking]]]
+              key
+              [:tab :reverse-tab]]
+
+        (let [capture (capture-settings settings-rows
+                                        [key :enter :down :esc]
+                                        :cols cols
+                                        :values {:read-files false :thinking false}
+                                        :callbacks {:focus-section "Paths and access"})]
+          (expect (= {:read-files true :thinking false} (:ret capture)))
+          (expect (str/includes? (cap/frame-text capture) "Show reasoning")))))
+  (it "moves across section boundaries with the arrow keys"
+      (doseq [cols
+              [40 100]
+
+              [section key expected]
+              [["Paths and access" :down :thinking] ["Response" :up :read-files]]]
 
         (let [capture (capture-settings settings-rows
                                         [key :enter :esc]
                                         :cols cols
                                         :values {:read-files false :thinking false}
-                                        :callbacks {:focus-section "Extension engines"})]
+                                        :callbacks {:focus-section section})]
           (expect (= (assoc {:read-files false :thinking false} expected true) (:ret capture))))))
-  (it "wraps category navigation without showing another category's settings"
-      (let [frame (cap/frame-text (capture-settings settings-rows [:tab :tab :tab :esc]))]
-        (expect (every? #(str/includes? frame %) engine-names))
-        (expect (not (str/includes? frame "Read filesystem")))))
-  (it "keeps arrow and page movement inside the selected category"
-      (let [capture (capture-settings settings-rows
-                                      [:down :page-down :up :enter :esc]
-                                      :values {:read-files false :thinking false}
-                                      :callbacks {:focus-section "Paths and access"})]
-        (expect (= {:read-files true :thinking false} (:ret capture)))))
-  (it "shows an empty category's explanation instead of activating an unrelated setting"
+  (it "moves across section boundaries with the mouse wheel"
+      (doseq [[section wheel expected] [["Paths and access" MouseActionType/SCROLL_DOWN :thinking]
+                                        ["Response" MouseActionType/SCROLL_UP :read-files]]]
+        (let [capture (capture-settings settings-rows
+                                        [(MouseAction. wheel 0 (TerminalPosition. 10 10)) :enter
+                                         :esc]
+                                        :values {:read-files false :thinking false}
+                                        :callbacks {:focus-section section})]
+          (expect (= (assoc {:read-files false :thinking false} expected true) (:ret capture))))))
+  (it "pages through the full catalog in either direction without a category switch"
+      (doseq [cols
+              [40 100]
+
+              [section key initial]
+              [["Category 0" :page-down :setting-0] ["Category 23" :page-up :setting-23]]]
+
+        (let [capture (capture-settings long-settings-rows
+                                        [key :enter :esc]
+                                        :cols cols
+                                        :callbacks {:focus-section section})]
+          (expect (= 1 (count (:ret capture))))
+          (expect (not (contains? (:ret capture) initial))))))
+  (it "jumps to the first and last settings with Home and End"
+      (doseq [[key expected] [[:home :setting-0] [:end :setting-23]]]
+        (let [capture (capture-settings long-settings-rows
+                                        [key :enter :esc]
+                                        :callbacks
+                                        {:focus-section "Category 12"})]
+          (expect (= {expected true} (:ret capture))))))
+  (it "shows an empty section's explanation instead of activating an unrelated setting"
       (let [rows
-            (into settings-rows
-                  [{:type :section :label "MCP Servers"}
-                   {:type :info :label "No MCP servers" :description "Add a server to start."}])
+            (vec (concat
+                   (subvec settings-rows 0 5)
+                   [{:type :section :label "MCP Servers"}
+                    {:type :info :label "No MCP servers" :description "Add a server to start."}]
+                   (subvec settings-rows 5)))
 
             capture
             (capture-settings rows [:enter :f1 :esc] :callbacks {:focus-section "MCP Servers"})
@@ -115,58 +156,55 @@
         (expect (= {} (:ret capture)))
         (expect (str/includes? frame "No MCP servers"))
         (expect (str/includes? frame "Add a server to start."))))
-  (it "refocuses the requested category when the initial inventory arrives"
+  (it "refocuses the requested section when the initial inventory arrives without hiding others"
       (let [rows
-            (atom (subvec settings-rows 5))
+            (atom (subvec settings-rows 0 5))
 
             capture
             (capture-settings #(deref rows)
-                              [:esc]
+                              [:enter :esc]
+                              :values {:read-files false :thinking false}
                               :load! #(reset! rows settings-rows)
-                              :callbacks {:focus-section "Extension engines"})
+                              :callbacks {:focus-section "Paths and access"})
 
             frame
             (cap/frame-text capture)]
 
+        (expect (= {:read-files true :thinking false} (:ret capture)))
         (expect (every? #(str/includes? frame %) engine-names))
-        (expect (not (str/includes? frame "Read filesystem")))))
-  (it
-    "keeps the active category visible and maps clicks after the sidebar scrolls"
-    (let [rows
-          (vec
-            (mapcat (fn [i]
-                      [{:type :section :label (str "Category " i)}
-                       {:type :toggle :key (keyword (str "setting-" i)) :label (str "Setting " i)}])
-                    (range 24)))
+        (expect (str/includes? frame "Read filesystem"))))
+  (it "keeps the active section visible and maps scroll-jump clicks after the sidebar scrolls"
+      (let [callbacks
+            {:focus-section "Category 23"}
 
-          callbacks
-          {:focus-section "Category 23"}
+            frame
+            (cap/frame-text
+              (capture-settings long-settings-rows [:esc] :cols 120 :callbacks callbacks))
 
-          frame
-          (cap/frame-text (capture-settings rows [:esc] :cols 120 :callbacks callbacks))
+            lines
+            (str/split-lines frame)
 
-          lines
-          (str/split-lines frame)
+            y
+            (first (keep-indexed (fn [i line]
+                                   (when (re-find #"^\s*│ Category 22\s" line) i))
+                                 lines))
 
-          y
-          (first (keep-indexed (fn [i line]
-                                 (when (str/includes? line "Category 22") i))
-                               lines))
+            x
+            (.indexOf ^String (nth lines y) "Category 22")
 
-          x
-          (.indexOf ^String (nth lines y) "Category 22")
+            capture
+            (capture-settings long-settings-rows
+                              [(MouseAction. MouseActionType/CLICK_DOWN 0 (TerminalPosition. x y))
+                               (MouseAction. MouseActionType/CLICK_RELEASE
+                                             0
+                                             (TerminalPosition. x y)) :enter :esc]
+                              :cols 120
+                              :callbacks callbacks)]
 
-          capture
-          (capture-settings rows
-                            [(MouseAction. MouseActionType/CLICK_DOWN 0 (TerminalPosition. x y))
-                             (MouseAction. MouseActionType/CLICK_RELEASE 0 (TerminalPosition. x y))
-                             :enter :esc]
-                            :cols 120
-                            :callbacks callbacks)]
-
-      (expect (= 2 (count (re-seq #"Category 23" frame))))
-      (expect (= {:setting-22 true} (:ret capture)))
-      (expect (str/includes? (cap/frame-text capture) "Setting 22")))))
+        (expect (= 2 (count (re-seq #"Category 23" frame))))
+        (expect (= {:setting-22 true} (:ret capture)))
+        (expect (str/includes? (cap/frame-text capture) "Setting 22"))
+        (expect (str/includes? (cap/frame-text capture) "Setting 23")))))
 
 (defdescribe compact-settings-search-test
              (it "searches hidden descriptions across all categories and edits the matching setting"

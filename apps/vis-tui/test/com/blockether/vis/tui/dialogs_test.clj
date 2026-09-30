@@ -2184,8 +2184,8 @@
             inventory
             (var-get #'dlg/mcp-inventory)
 
-            category-view
-            (var-get #'dlg/settings-category-view)
+            initial-index
+            (var-get #'dlg/settings-initial-index)
 
             original
             @inventory]
@@ -2194,12 +2194,13 @@
                                 :error nil
                                 :servers [{"name" "fs" "enabled" true "is_managed" true}]})
              (with-redefs [vis/get-router (constantly nil)]
-               (let [view (category-view (settings-rows) "" "MCP Servers")
-                     rows (:rows view)]
+               (let [rows (settings-rows)
+                     index (initial-index rows "MCP Servers")]
 
-                 (expect (= "MCP Servers" (:category view)))
-                 (expect (= "fs" (:label (second rows))))
-                 (expect (= [:section :mcp :action] (mapv :type rows)))))
+                 (expect (= "MCP Servers" (:label (nth rows (dec index)))))
+                 (expect (= "fs" (:label (nth rows index))))
+                 (expect (= :action (:type (nth rows (inc index)))))
+                 (expect (< 3 (count rows)))))
              (finally (reset! inventory original)))))
   (it
     "Enter on an MCP row runs that server's verbs as a transient band, not a toggle"
@@ -2373,8 +2374,8 @@
             inventory
             (var-get #'dlg/provider-inventory)
 
-            category-view
-            (var-get #'dlg/settings-category-view)
+            initial-index
+            (var-get #'dlg/settings-initial-index)
 
             original
             @inventory]
@@ -2384,12 +2385,13 @@
                                 :providers
                                 [{:provider {:id :anthropic :models []} :auth :on :default? true}]})
              (with-redefs [vis/get-router (constantly nil)]
-               (let [view (category-view (settings-rows) "" "Providers")
-                     rows (:rows view)]
+               (let [rows (settings-rows)
+                     index (initial-index rows "Providers")]
 
-                 (expect (= "Providers" (:category view)))
-                 (expect (= :anthropic (:id (:provider (second rows)))))
-                 (expect (= [:section :provider :action] (mapv :type rows)))))
+                 (expect (= "Providers" (:label (nth rows (dec index)))))
+                 (expect (= :anthropic (:id (:provider (nth rows index)))))
+                 (expect (= :action (:type (nth rows (inc index)))))
+                 (expect (< 3 (count rows)))))
              (finally (reset! inventory original)))))
   (it
     "the fleet is config first, then authenticated presets, each with the gateway's verdict"

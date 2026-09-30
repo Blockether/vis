@@ -3802,6 +3802,20 @@
                            rows))
       0))
 
+(defn- settings-initial-index
+  "Focus a section's first setting, or its header when the section is empty."
+  [rows section]
+  (if-let [start (first (keep-indexed
+                          (fn [i row]
+                            (when (and (= :section (:type row)) (= section (:label row))) i))
+                          rows))]
+    (let [end (or (first (filter #(= :section (:type (nth rows %)))
+                                 (range (inc (long start)) (count rows))))
+                  (count rows))]
+      (or (first (filter #(settings-selectable? (nth rows %)) (range (inc (long start)) end)))
+          start))
+    (first-selectable-index rows)))
+
 (defn- move-settings-selection
   [rows ^long selected ^long delta]
   (let [n (count rows)]
@@ -4202,8 +4216,8 @@
                            rows))))))
 
 (defn- settings-toc
-  "Categories in catalog order, with their bounds, setting counts and active state."
-  [rows category]
+  "Sections in catalog order, with their bounds, setting counts and active state."
+  [rows selected]
   (let [rows
         (vec rows)
 
@@ -4221,44 +4235,9 @@
                :count (count (filter settings-selectable? (subvec rows start end)))
                :start start
                :end end
-               :active? (= category label)}))
+               :active? (<= start selected (dec end))}))
           (range)
           starts)))
-
-(defn- settings-category-view
-  "Search the whole catalog, then show only the active matching category."
-  [all-rows query category]
-  (let [filtered
-        (filter-settings-rows all-rows query)
-
-        toc
-        (settings-toc filtered category)
-
-        active
-        (or (first (filter :active? toc)) (first toc))
-
-        category
-        (:label active)]
-
-    {:category category
-     :toc (mapv #(assoc % :active? (= category (:label %))) toc)
-     :rows (cond active (vec (concat (subvec filtered 0 (:start (first toc)))
-                                     (subvec filtered (:start active) (:end active))))
-                 (seq filtered) filtered
-                 (not (str/blank? query))
-                 [{:type :info :label "No matching settings" :description "Try another search."}]
-                 :else filtered)}))
-
-(defn- move-settings-category
-  [toc category direction]
-  (when (seq toc)
-    (let [labels
-          (mapv :label toc)
-
-          index
-          (max 0 (.indexOf ^java.util.List labels category))]
-
-      (nth labels (mod (+ index (long direction)) (count labels))))))
 
 (defn- settings-details-lines
   [row values]
@@ -4403,7 +4382,7 @@
      :pane-width (if split? (- inner-w rail-w 1) inner-w)}))
 
 (defn- settings-pointer-target
-  "Map a primary pointer press to a painted setting or category."
+  "Map a primary pointer press to a painted setting or section scroll target."
   [key rows entries scroll {:keys [split? left rail-w pane-left pane-width list-top visible-h toc]}]
   (or (when split?
         (when-let [offset (mouse-row-offset key
@@ -4411,7 +4390,7 @@
                                             list-top
                                             rail-w
                                             (min (count toc) (long visible-h)))]
-          {:kind :toc :category (:label (nth toc offset))}))
+          {:kind :toc :row-idx (settings-initial-index rows (:label (nth toc offset)))}))
       (when-let [offset (mouse-row-offset key (inc (long pane-left)) list-top pane-width visible-h)]
         (let [entry-idx (+ (long scroll) (long offset))]
           (when-let [{:keys [row-idx]} (get entries entry-idx)]
@@ -4420,11 +4399,12 @@
 (defn settings-dialog!
   "Show the settings dialog.
 
-   Show only the selected category, with a sidebar when space permits. Each
-   setting uses one line with its current value. Tab / Shift+Tab change category;
-   arrows and paging stay within it. Enter or a primary pointer click changes a
-   setting. F1 opens its description, source and inherited-value action. Search
-   matches the whole catalog, including descriptions hidden from the list.
+   Show the full catalog as one scrollable list, with a section sidebar when space
+   permits. Each setting uses one line with its current value. Arrows, the mouse
+   wheel and paging cross section boundaries. Sidebar clicks scroll to a section.
+   Enter or a primary pointer click changes a setting. F1 opens its description,
+   source and inherited-value action. Search matches the whole catalog, including
+   descriptions hidden from the list.
 
    `settings` is the persisted TUI settings map (see
    `state/default-settings`). `callbacks` also carries `:focus-section` (a
@@ -4462,11 +4442,8 @@
            inventories-pending
            (volatile! true)
 
-           category
-           (atom (:focus-section callbacks))
-
            selected
-           (atom 0)
+           (atom (settings-initial-index (settings-rows) (:focus-section callbacks)))
 
            toc-scroll
            (atom 0)
@@ -4495,20 +4472,28 @@
        ((fn paint-settings! [paint-only?]
           (loop []
 
-            (let [all-rows
-                  (settings-rows)
+            (let [filtered
+                  (filter-settings-rows (settings-rows) @query)
 
-                  {rows :rows toc :toc active-category :category}
-                  (settings-category-view all-rows @query @category)
+                  rows
+                  (if (and (empty? filtered) (not (str/blank? @query)))
+                    [{:type :info :label "No matching settings" :description "Try another search."}]
+                    filtered)
 
                   _
-                  (when (not= active-category @category)
-                    (reset! category active-category)
-                    (reset! selected (first-selectable-index rows))
-                    (reset! scroll 0))
+                  (swap! selected
+                    (fn [current]
+                      (let [index (p/clamp current 0 (max 0 (dec (count rows))))]
+                        (if (and (seq rows)
+                                 (let [row (nth rows index)]
+                                   (or (settings-selectable? row)
+                                       (and (= :section (:type row))
+                                            (= index (settings-initial-index rows (:label row)))))))
+                          index
+                          (first-selectable-index rows)))))
 
-                  n
-                  (count rows)
+                  toc
+                  (settings-toc rows @selected)
 
                   size
                   (modal-size! screen)
@@ -4592,12 +4577,6 @@
 
                   visible-toc
                   (subvec toc @toc-scroll (min (count toc) (+ (long @toc-scroll) visible-h)))
-
-                  _
-                  (swap! selected #(let [index (p/clamp % 0 (max 0 (dec n)))]
-                                     (if (and (pos? n) (settings-selectable? (nth rows index)))
-                                       index
-                                       (first-selectable-index rows))))
 
                   option-indent
                   (long (settings-option-indent))
@@ -4852,8 +4831,8 @@
                               hint-row
                               inner-w
                               (if (< inner-w 50)
-                                [["Tab" "category"] ["F1" "details"] ["Esc" "clear/close"]]
-                                [["↑/↓" "move"] ["Tab" "category"] ["Enter" "change"]
+                                [["↑/↓" "scroll"] ["F1" "details"] ["Esc" "clear/close"]]
+                                [["↑/↓" "scroll"] ["PgUp/PgDn" "scroll"] ["Enter" "change"]
                                  ["F1" "details"] ["Esc" "clear/close"]]))
               (when-not paint-only?
                 (.setCursorPosition screen search-cursor)
@@ -4862,11 +4841,11 @@
                 (if @inventories-pending
                   ;; The frame is ON the terminal now — only then pay for the gateway,
                   ;; and repaint into the dialog the user is already looking at.
-                  ;; Reload the focused category after the first inventory answer.
+                  ;; Refocus the requested section after the first inventory answer.
                   (do (vreset! inventories-pending false)
                       (load-inventories!)
-                      (reset! category (:focus-section callbacks))
-                      (reset! selected 0)
+                      (reset! selected (settings-initial-index (settings-rows)
+                                                               (:focus-section callbacks)))
                       (reset! scroll 0)
                       (recur))
                   (let [key
@@ -4875,12 +4854,6 @@
                         selected-row
                         (let [row (get rows @selected)]
                           (when (settings-selectable? row) row))
-
-                        change-category!
-                        (fn [direction]
-                          (reset! category (move-settings-category toc @category direction))
-                          (reset! selected 0)
-                          (reset! scroll 0))
 
                         activate-row!
                         (fn [row]
@@ -4965,12 +4938,9 @@
                                   (let [pressed @pointer-down-target]
                                     (vreset! pointer-down-target nil)
                                     (when (and pressed (= pressed pointer-target))
-                                      (if (= :toc (:kind pressed))
-                                        (do (reset! category (:category pressed))
-                                            (reset! selected 0)
-                                            (reset! scroll 0))
-                                        (let [row-idx (:row-idx pressed)]
-                                          (reset! selected row-idx)
+                                      (let [row-idx (:row-idx pressed)]
+                                        (reset! selected row-idx)
+                                        (when (= :setting (:kind pressed))
                                           (activate-row! (nth rows row-idx)))))
                                     (recur))
                                   :else (do (when (= action MouseActionType/DRAG)
@@ -4983,8 +4953,6 @@
                           (if (str/blank? @query)
                             @values
                             (do (reset! query "") (reset! selected 0) (reset! scroll 0) (recur)))
-                          KeyType/Tab (do (change-category! 1) (recur))
-                          KeyType/ReverseTab (do (change-category! -1) (recur))
                           KeyType/F1
                           (do (when selected-row
                                 (let [restore!
@@ -5013,6 +4981,14 @@
                                            (recur))
                           KeyType/PageDown
                           (do (swap! selected #(settings-page-selection rows entries % visible-h 1))
+                              (recur))
+                          KeyType/Home (do (reset! selected (first-selectable-index rows)) (recur))
+                          KeyType/End
+                          (do (reset! selected (or (last (keep-indexed
+                                                           (fn [i row]
+                                                             (when (settings-selectable? row) i))
+                                                           rows))
+                                                   0))
                               (recur))
                           ;; Backspace edits the live search query.
                           KeyType/Backspace (do (when (seq @query)
