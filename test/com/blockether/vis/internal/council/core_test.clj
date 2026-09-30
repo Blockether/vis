@@ -435,6 +435,47 @@
           (expect (= 3 (count (:entries (page w {})))))))))
 
 (defdescribe
+  title-validation-guidance-test
+  (it "explains how to retry a continuation without a title"
+      (with-council
+        (let [w
+              (world)
+
+              root
+              (publish w {:kind "coordination" :content "Root" :title "Shared work"})
+
+              failure
+              (try (publish w
+                            {:kind "coordination"
+                             :content "Update"
+                             :thread_id (:thread_id root)
+                             :title "Update"})
+                   (catch clojure.lang.ExceptionInfo e
+                     {:error (:error (ex-data e)) :message (ex-message e)}))]
+
+          (expect (= :invalid-request (:error failure)))
+          (expect (str/includes? (:message failure) "omit title"))
+          (expect (str/includes? (:message failure) "thread_id"))
+          (expect (= [root] (:entries (page w {}))))
+          (let [update
+                (publish w {:kind "coordination" :content "Update" :thread_id (:thread_id root)})]
+            (expect (= (:thread_id root) (:thread_id update)))
+            (expect (not (contains? update :title)))
+            (expect (= [root update] (:entries (page w {}))))))))
+  (it "distinguishes title shape errors from continuation errors"
+      (with-council (let [w (world)]
+                      (doseq [title ["two\nlines" "two\tcolumns"]]
+                        (let [failure
+                              (try (publish w {:kind "coordination" :content "Root" :title title})
+                                   (catch clojure.lang.ExceptionInfo e
+                                     {:error (:error (ex-data e)) :message (ex-message e)}))]
+                          (expect (= :invalid-request (:error failure)))
+                          (expect (str/includes? (:message failure) "single line"))
+                          (expect (str/includes? (:message failure) "tabs"))
+                          (expect (not (str/includes? (:message failure) "thread_id")))))
+                      (expect (empty? (:entries (page w {}))))))))
+
+(defdescribe
   idempotency-test
   (it
     "idempotency"

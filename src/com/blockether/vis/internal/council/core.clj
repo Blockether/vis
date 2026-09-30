@@ -310,8 +310,11 @@
         _
         (when title
           (text! title title-bytes)
-          (when (or thread (re-find #"[\r\n\t]" title))
-            (fail! :invalid-request "title is a single line, only for a new thread")))
+          (when thread
+            (fail! :invalid-request
+                   "title is only valid for a new thread; omit title when using thread_id"))
+          (when (re-find #"[\r\n\t]" title)
+            (fail! :invalid-request "title must be a single line without tabs")))
 
         selector
         (cond reply-to [(:author_session_id request)]
@@ -698,6 +701,7 @@
       "- Before repeating substantial research another session may already hold, reuse its saved context: `list_sessions(search=...)`, `council.members()`, then titles/snippets and relevant threads. Use `read_session(session_id)` on that other session for the missing evidence; the current session's conversation is already visible. Choose the smallest useful knowledgeable set in the same group, whatever its age. A focused question gives goal, unresolved decision, paths/revision, checked evidence and how the answer changes your next action; request existing findings, rejected alternatives, symbols, verification and uncertainties. Reuse does not guarantee provider prompt-cache hits or lower cost.\n"
       "- ID domains: `entry_id` is a positive store-local integer; `thread_id` is the root entry_id; `after` is an exclusive integer cursor (initially 0). `session_id`/`group_id` are opaque strings. Use returned IDs. Omitted group_id uses `session['council']['default_group_id']`; membership comes from `council.members()`, not search.\n"
       "- Every publication requires `kind`: `complain` = broken behavior or concrete improvement (including extensions/system prompts); `coordination` = ownership/questions/dependencies; `informational` = facts/results/decisions. Each message carries its own kind. When Improve is enabled, complaints also enter its internal register, separate from any external tracker; acting on them takes its own authorization. Choose the ping deliberately: one session, 'all', or none.\n"
+      "- Omit `title` with `thread_id` or `reply_to`.\n"
       "- For complain include goal, environment/version/configuration, preconditions, sanitized reproduction steps/input, expected vs actual, diagnostics, frequency/attempts, impact and workaround. Separate observation from hypothesis; mark unknown/not attempted. Improvements describe the current limitation and the desired behavior. Evidence names affected session_id and turn/iteration/form (tN/iM/fK), plus known tool_call_id or source_ref state/iteration IDs for retries/forks. Host source_ref identifies this publication; the incident lives in the source session, inspected with `await read_session(session_id)`. Redact secrets/private data; reproduction stays within safe, authorized operations.\n"
       (when (toggles/enabled? "improve")
         "- FAILED python_execution already creates kind=\"complain\", source=\"autocomplain\": session/turn/state identities, turn/iteration/form, failure/timeout, available duration and source-session lookup. This works without a group or with Council disabled; it carries no ping/wake and no raw code/stdout/error text. Reproduction starts as not attempted, not confirmed. Build on it: add reproduction/analysis as an informational continuation in its thread when a group is available.\n")

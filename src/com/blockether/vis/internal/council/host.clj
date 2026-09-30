@@ -58,6 +58,9 @@
    Improve is enabled, complaints enter the persistent improve register. `kind` never selects
    recipients. Choose individual pings, all, or none.
 
+   `title` is optional and only valid for a new thread. To continue a thread, pass `thread_id`
+   and omit `title`. To answer a request, pass `reply_to` and omit `title`.
+
    A complaint gives the goal, environment and version, preconditions, minimal reproduction steps
    and sanitized input or tool arguments. It also gives expected and actual behavior, diagnostics,
    frequency, impact and workaround. Keep evidence apart from hypotheses, and mark a missing fact

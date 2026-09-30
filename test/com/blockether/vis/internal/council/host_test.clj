@@ -169,6 +169,17 @@
         (expect (str/includes? prompt "reads the ping inside its turn only with reply_required"))
         (expect (str/includes? tool-doc "no-ping continuation"))))))
 
+(defdescribe
+  title-usage-guidance-test
+  (it "documents title restrictions in the published tool contract and prompt"
+      (with-redefs [toggles/enabled? (constantly true)]
+        (let [tool-doc (str/replace (extension/symbol-doc-text (second host/symbols)) #"\s+" " ")]
+          (expect (str/includes? tool-doc "`title` is optional and only valid for a new thread"))
+          (expect (str/includes? tool-doc "pass `thread_id` and omit `title`"))
+          (expect (str/includes? tool-doc "pass `reply_to` and omit `title`"))
+          (expect (str/includes? (council/prompt {})
+                                 "Omit `title` with `thread_id` or `reply_to`."))))))
+
 (defdescribe asynchronous-work-guidance-test
              (it "asynchronous work guidance"
                  (with-redefs [toggles/enabled? (constantly true)]
