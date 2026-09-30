@@ -5098,6 +5098,31 @@
           :id
           str))
 
+(defn- pick-session-model!
+  "Open the model picker in the live session pane and apply its choice."
+  [screen]
+  (when-not (:dialog-open? @state/app-db)
+    (let [sid
+          (current-session-id)
+
+          current
+          (when sid
+            (or (:session-model-pref @state/app-db)
+                (try (vis/gateway-session-model-cached sid) (catch Throwable _ nil))))
+
+          column-offset
+          (fn [cols rows]
+            (let [db @state/app-db]
+              (if (project-sidebar-locked? db cols)
+                0
+                (or (:chat-left (projects/geometry db cols rows)) 0))))]
+
+      (when-let [choice (with-dialog-lock
+                          #(dlg/model-picker! screen current {:column-offset column-offset}))]
+        (if (:reset? choice)
+          (state/dispatch [:set-model nil nil])
+          (state/dispatch [:set-model (:provider choice) (:model choice)]))))))
+
 (defn- export-dialog-md
   "Markdown dialog document for the bare `/export` viewer, fetched from the
    GATEWAY's canonical `transcript->md :dialog` renderer — the SAME output every
@@ -7509,19 +7534,8 @@
                  ;; configured model (active one marked) plus a "* router
                  ;; default" reset. The choice flows through [:set-model …],
                  ;; the SAME per-session pref the C-x m cycle writes.
-                 show-model-picker!
-                 (fn show-model-picker! []
-                   (when-not (:dialog-open? @state/app-db)
-                     (let [sid (current-session-id)
-                           current (when sid
-                                     (or (:session-model-pref @state/app-db)
-                                         (try (vis/gateway-session-model-cached sid)
-                                              (catch Throwable _ nil))))]
-
-                       (when-let [choice (with-dialog-lock #(dlg/model-picker! screen current))]
-                         (if (:reset? choice)
-                           (state/dispatch [:set-model nil nil])
-                           (state/dispatch [:set-model (:provider choice) (:model choice)]))))))
+                 show-model-picker! (fn []
+                                      (pick-session-model! screen))
                  rearm-startup! (fn []
                                   ;; A provider may have appeared since the last attempt, so reload the
                                   ;; config the worker reads before arming the same deferred startup.

@@ -15,6 +15,7 @@
             [taoensso.telemere :as tel])
   (:import
     [com.googlecode.lanterna Symbols TerminalPosition TerminalRectangle TerminalSize TextCharacter]
+    [com.googlecode.lanterna.graphics TextGraphics]
     [com.googlecode.lanterna.gui2 Direction HitRegionMap ScrollBar ScrollBar$DragResult]
     [com.googlecode.lanterna.input InputCoalescer KeyStroke KeyType MouseAction MouseActionType]
     [com.googlecode.lanterna.screen TerminalScreen]
@@ -847,7 +848,7 @@
         (.get ^ThreadLocal modal-close-regions)
 
         bounds
-        (TerminalRectangle. (int x0) (int title-row) (int (inc (- x1 x0))) 1)
+        (TerminalRectangle. (int (frame/screen-column x0)) (int title-row) (int (inc (- x1 x0))) 1)
 
         hovered?
         (= modal-close-target (.hovered regions))]
@@ -1782,7 +1783,7 @@
    (navigation / filtering / select) are plain functions of immutable state, so
    they can be exercised in tests WITHOUT a terminal. Only `:paint` touches the
    screen. `items`/opts match `list-dialog!`."
-  [title items {:keys [filter? placeholder enter-label height]}]
+  [title items {:keys [filter? placeholder enter-label height column-offset]}]
   (let [items
         (vec items)
 
@@ -1795,7 +1796,13 @@
     {:init {:query "" :selected 0 :scroll 0}
      :measure
      (fn [{:keys [query]} cols rows]
-       (let [filtered
+       (let [offset
+             (p/clamp (if column-offset (column-offset cols rows) 0) 0 (max 0 (dec (long cols))))
+
+             cols
+             (- (long cols) (long offset))
+
+             filtered
              (if filter? (filter-select-items items query) items)
 
              total
@@ -1836,7 +1843,8 @@
              list-h
              (max 1 (- (long content-h) (long head-rows) 1))]
 
-         {:cols cols
+         {:column-offset offset
+          :cols cols
           :rows rows
           :title title
           :filtered filtered
@@ -1858,51 +1866,64 @@
                       :selected selected
                       :scroll (visible-window-start selected (:scroll state) list-h total))))
      :paint
-     (fn [g {:keys [selected scroll query]}
+     (fn [^TextGraphics graphics {:keys [selected scroll query]}
           {:keys [cols rows title filtered total footer content-w content-h-req bounds content-top
-                  content-h hint-row list-top list-h filter? placeholder]}]
-       (let [{:keys [left right inner-w]} bounds]
-         (draw-dialog-chrome! g cols rows title content-w content-h-req)
-         (p/set-colors! g t/dialog-fg t/dialog-bg)
-         (p/fill-rect! g (inc (long left)) content-top inner-w content-h)
-         (let [cursor (when filter?
-                        (draw-text-input-field! g
-                                                left
-                                                content-top
-                                                inner-w
-                                                query
-                                                (count query)
-                                                placeholder))]
-           (when filter?
-             (p/set-colors! g t/dialog-border t/dialog-bg)
-             (p/draw-separator! g left right (inc (long content-top))))
-           (dotimes [i (min (long list-h) (long total))]
-             (let [idx (+ (long scroll) (long i))
-                   row (+ (long list-top) (long i))]
+                  content-h hint-row list-top list-h filter? placeholder column-offset]}]
+       (binding [frame/*column-offset* column-offset]
+         (let [g (if (pos? (long column-offset))
+                   (frame/view-graphics (.newTextGraphics graphics
+                                                          (TerminalPosition. (int column-offset) 0)
+                                                          (TerminalSize. (int cols) (int rows)))
+                                        cols
+                                        rows)
+                   graphics)
+               {:keys [left right inner-w]} bounds]
 
-               (when (< (long idx) (long total))
-                 (let [item (nth filtered idx)]
-                   (draw-list-item! g
-                                    left
-                                    row
-                                    (if (> (long total) (long list-h)) (dec (long inner-w)) inner-w)
-                                    (= idx selected)
-                                    (:label item)
-                                    (:hint item))))))
-           (when (> (long total) (long list-h))
-             (ScrollBar/draw g
-                             Direction/VERTICAL
-                             (TerminalPosition. (int (+ (long left) (long inner-w))) (int list-top))
-                             (int list-h)
-                             (int total)
-                             (int list-h)
-                             (when (some? scroll) (Integer/valueOf (int scroll)))
-                             t/dialog-border
-                             t/dialog-bg
-                             t/dialog-hint-key
-                             t/dialog-bg))
-           (draw-hint-bar! g left hint-row inner-w footer)
-           cursor)))
+           (draw-dialog-chrome! g cols rows title content-w content-h-req)
+           (p/set-colors! g t/dialog-fg t/dialog-bg)
+           (p/fill-rect! g (inc (long left)) content-top inner-w content-h)
+           (let [cursor (when filter?
+                          (draw-text-input-field! g
+                                                  left
+                                                  content-top
+                                                  inner-w
+                                                  query
+                                                  (count query)
+                                                  placeholder))]
+             (when filter?
+               (p/set-colors! g t/dialog-border t/dialog-bg)
+               (p/draw-separator! g left right (inc (long content-top))))
+             (dotimes [i (min (long list-h) (long total))]
+               (let [idx (+ (long scroll) (long i))
+                     row (+ (long list-top) (long i))]
+
+                 (when (< (long idx) (long total))
+                   (let [item (nth filtered idx)]
+                     (draw-list-item!
+                       g
+                       left
+                       row
+                       (if (> (long total) (long list-h)) (dec (long inner-w)) inner-w)
+                       (= idx selected)
+                       (:label item)
+                       (:hint item))))))
+             (when (> (long total) (long list-h))
+               (ScrollBar/draw g
+                               Direction/VERTICAL
+                               (TerminalPosition. (int (+ (long left) (long inner-w)))
+                                                  (int list-top))
+                               (int list-h)
+                               (int total)
+                               (int list-h)
+                               (when (some? scroll) (Integer/valueOf (int scroll)))
+                               t/dialog-border
+                               t/dialog-bg
+                               t/dialog-hint-key
+                               t/dialog-bg))
+             (draw-hint-bar! g left hint-row inner-w footer)
+             (when cursor
+               (TerminalPosition. (int (frame/screen-column (.getColumn ^TerminalPosition cursor)))
+                                  (.getRow ^TerminalPosition cursor)))))))
      :on-key
      (fn [{:keys [selected query] :as state} key {:keys [total filtered list-h]}]
        (let [clampf #(p/clamp % 0 (max 0 (dec (long total))))]
@@ -1943,7 +1964,9 @@
      :placeholder  query placeholder shown while the filter is empty
      :enter-label  hint-bar verb for Enter (default \"select\")
      :height       `:content` sizes the box to the item count (+ the query
-                   field), capped; nil uses the shared (tall) footprint."
+                    field), capped; nil uses the shared (tall) footprint.
+     :column-offset (fn [cols rows] -> left) scopes the dialog to columns from
+                    `left` to the terminal edge. Recomputed for each paint."
   [^TerminalScreen screen title items opts]
   (run-modal! screen (select-modal-component title items opts)))
 
@@ -6938,54 +6961,57 @@
    model preference (`{:provider <str|kw> :model <str>}`) or nil; it marks
    the active row exactly like the web picker. Returns the chosen item map
    — `{:reset? true}` for the router-default row, else `{:provider <str>
-   :model <str>}` — or nil on Esc."
-  [^TerminalScreen screen current]
-  (let [providers
-        (try
-          (vis/picker-fleet)
-          (catch Throwable t (tel/log! :warn ["dialogs: picker-fleet failed" (ex-message t)]) nil))
+   :model <str>}` — or nil on Esc. Optional `opts` passes the pane's
+   `:column-offset` resolver to `list-dialog!`. Without it, the picker is global."
+  ([screen current] (model-picker! screen current {}))
+  ([^TerminalScreen screen current opts]
+   (let [providers
+         (try
+           (vis/picker-fleet)
+           (catch Throwable t (tel/log! :warn ["dialogs: picker-fleet failed" (ex-message t)]) nil))
 
-        cur-provider
-        (some-> (:provider current)
-                name)
+         cur-provider
+         (some-> (:provider current)
+                 name)
 
-        cur-model
-        (:model current)
+         cur-model
+         (:model current)
 
-        model-rows
-        (for [p
-              providers
+         model-rows
+         (for [p
+               providers
 
-              :let [pid
-                    (name (:id p))
+               :let [pid
+                     (name (:id p))
 
-                    plabel
-                    (vis/display-label (:id p))]
-              m
-              (:models p)
+                     plabel
+                     (vis/display-label (:id p))]
+               m
+               (:models p)
 
-              :let [nm
-                    (vis/model-name m)]
-              :when nm]
+               :let [nm
+                     (vis/model-name m)]
+               :when nm]
 
-          {:label (str plabel " / " nm)
-           :hint (when (and (= nm cur-model) (= pid cur-provider)) "● current")
-           :provider pid
-           :model nm})
+           {:label (str plabel " / " nm)
+            :hint (when (and (= nm cur-model) (= pid cur-provider)) "● current")
+            :provider pid
+            :model nm})
 
-        items
-        (vec (cons {:label "* router default"
-                    :hint (when (and (nil? cur-provider) (nil? cur-model)) "● current")
-                    :reset? true}
-                   model-rows))]
+         items
+         (vec (cons {:label "* router default"
+                     :hint (when (and (nil? cur-provider) (nil? cur-model)) "● current")
+                     :reset? true}
+                    model-rows))]
 
-    (list-dialog! screen
-                  "Session model"
-                  items
-                  {:filter? true
-                   :placeholder "Type to filter models…"
-                   :enter-label "choose"
-                   :height :content})))
+     (list-dialog! screen
+                   "Session model"
+                   items
+                   (assoc opts
+                     :filter? true
+                     :placeholder "Type to filter models…"
+                     :enter-label "choose"
+                     :height :content)))))
 
 (defn text-viewer-dialog!
   "Show a scrollable read-only text viewer dialog.
