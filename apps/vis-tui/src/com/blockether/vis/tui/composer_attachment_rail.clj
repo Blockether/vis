@@ -62,26 +62,19 @@
 (defn draw!
   "Paint a themed staging surface and bounded inspect/remove targets.
 
-   Images keep the same number as their input reference. The panel fits its widest
-   label and remove action, bounded by the terminal. Focus never hides the remove
-   action, and all row content stays inside the border even at tiny widths."
+   Images keep the same number as their input reference. The panel spans the full
+   input width. Focus never hides the remove action, and all row content stays
+   inside the border even at tiny widths."
   [^TextGraphics g attachments top cols {:keys [focused? focused-index]}]
   (when (seq attachments)
-    (let [cols
-          (max 1 (long cols))
+    (let [left
+          0
 
-          left
-          (if (> cols 4) 1 0)
+          width
+          (max 1 (long cols))
 
           remove-label
           " [remove] "
-
-          label-w
-          (reduce max 0 (map #(p/display-width (attachment-label %)) attachments))
-
-          width
-          ;; Two border cells and two cells for the focus marker.
-          (max 1 (min (- cols (* 2 left)) (+ 4 label-w (p/display-width remove-label))))
 
           bordered?
           (>= width 4)

@@ -57,15 +57,16 @@
                    (expect (= 3 (count (filter #(= :attachment-inspect (:kind %)) regions)))))))
 
 (defdescribe compact-attachment-spacing
-             ;; #249: a staged PNG must not reserve a yellow shadow row or a terminal-wide panel.
-             (it "fits one image, its metadata and remove action without bottom or right padding"
+             ;; #249: a staged PNG must not reserve a yellow shadow row.
+             ;; Regression, user report: the list must span the input, not hug its contents.
+             (it "uses the full input width for one image without a shadow row"
                  (let [image
                        (assoc (first attachments)
                          :width 956
                          :height 118
                          :size 16384)
 
-                       {:keys [capture]}
+                       {:keys [capture regions]}
                        (paint-rail 100 false [image])
 
                        frame
@@ -74,18 +75,19 @@
                        paper
                        (:bg (get-in frame [0 0]))
 
-                       expected-row
-                       (str " │  " (rail/attachment-label image) " [remove] │")
+                       row
+                       (nth (str/split-lines (cap/frame-text capture)) 2)
 
-                       right
-                       (p/display-width expected-row)]
+                       remove-bounds
+                       (:bounds (first (filter #(= :attachment-remove (:kind %)) regions)))]
 
                    (expect (nil? (:error capture)))
                    (expect (= 3 (rail/rail-height [image]) (:ret capture)))
-                   (expect (= expected-row (nth (str/split-lines (cap/frame-text capture)) 2)))
-                   (expect (every? #(= paper (:bg %)) (nth frame 4)))
-                   (expect (every? #(= paper (:bg %))
-                                   (mapcat #(drop right (nth frame %)) [1 2 3])))))
+                   (expect (= 100 (p/display-width row)))
+                   (expect (str/starts-with? row (str "│  " (rail/attachment-label image))))
+                   (expect (str/ends-with? row " [remove] │"))
+                   (expect (= 99 (+ (:col remove-bounds) (:width remove-bounds))))
+                   (expect (every? #(= paper (:bg %)) (nth frame 4)))))
              (it "reserves and paints nothing without attachments"
                  (let [{:keys [capture regions]} (paint-rail 100 false [])]
                    (expect (nil? (:error capture)))
