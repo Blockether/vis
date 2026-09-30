@@ -8,6 +8,8 @@ export type ArtifactShareOptions = {
   title?: string;
   dialogTitle?: string;
   noun?: string;
+  /** Keep a successful native hand-off readable until the OS clears its cache. */
+  retainCacheFile?: boolean;
 };
 
 /** A filename safe to place below the app's cache directory, extension preserved. */
@@ -34,9 +36,21 @@ export function artifactShareVerb(name?: string, mediaType?: string): 'Share' | 
   return canShareArtifactFiles(name, mediaType) ? 'Share' : 'Save';
 }
 
+/** Save the original file without a share sheet, including on the web. */
+export function downloadArtifact(blob: Blob, name: string, noun = 'Artifact'): string {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = sharedFilename(name);
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  return `${noun} downloaded.`;
+}
+
 /**
- * Hand one artifact's original bytes to the OS. Native platforms stage a private,
- * short-lived cache file because a share sheet accepts a URI rather than a Blob.
+ * Hand one artifact's original bytes to the OS. Native platforms stage a private
+ * cache file because a share sheet accepts a URI rather than a Blob. External
+ * readers can retain that file after the sheet returns.
  */
 export async function shareArtifact(
   blob: Blob,
@@ -49,6 +63,7 @@ export async function shareArtifact(
   const dialogTitle = options.dialogTitle ?? 'Share artifact';
   const noun = options.noun ?? 'Artifact';
   let nativePath: string | null = null;
+  let nativeShared = false;
 
   try {
     if (Capacitor.isNativePlatform()) {
@@ -65,6 +80,7 @@ export async function shareArtifact(
         directory: Directory.Cache,
       });
       await Share.share({ title, files: [uri], dialogTitle });
+      nativeShared = true;
       return `${noun} shared.`;
     }
 
@@ -76,18 +92,12 @@ export async function shareArtifact(
       return `${noun} shared.`;
     }
 
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    link.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
-    return `${noun} downloaded.`;
+    return downloadArtifact(blob, filename, noun);
   } catch (cause) {
     if (sheetDismissed(cause)) return '';
     throw cause;
   } finally {
-    if (nativePath) {
+    if (nativePath && !(nativeShared && options.retainCacheFile)) {
       void Filesystem.deleteFile({
         path: nativePath,
         directory: Directory.Cache,

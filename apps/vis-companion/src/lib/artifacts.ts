@@ -45,6 +45,8 @@ const TEXT_MEDIA = new Set([
 const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mdown', 'mkd']);
 const TEXT_EXTENSIONS = new Set([...MARKDOWN_EXTENSIONS, 'txt', 'text', 'log']);
 
+export const XLSX_MEDIA = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
 function baseMedia(mime: string | undefined): string {
   return (mime ?? '').split(';')[0].trim().toLowerCase();
 }
@@ -53,6 +55,11 @@ function extensionOf(filename: string | undefined): string {
   const name = (filename ?? '').trim().toLowerCase();
   const dot = name.lastIndexOf('.');
   return dot > 0 ? name.slice(dot + 1) : '';
+}
+
+/** Workbooks leave the app as files, never as an iframe or a text table. */
+export function isXlsxMedia(mime: string | undefined, filename?: string): boolean {
+  return baseMedia(mime) === XLSX_MEDIA || extensionOf(filename) === 'xlsx';
 }
 
 /** Markdown: rendered as prose, not shown as source. */
@@ -81,6 +88,7 @@ export function isTextMedia(mime: string | undefined, filename?: string): boolea
 }
 
 export function isDocMedia(mime: string | undefined, filename?: string): boolean {
+  if (isXlsxMedia(mime, filename)) return false;
   return (
     isDiffMedia(mime) ||
     FRAME_MEDIA.has(baseMedia(mime)) ||
@@ -131,6 +139,7 @@ export function attachmentIsAudio(attachment: IterationAttachment): boolean {
 // `audience: "user"`, so its bytes never reach the model and the app owes the
 // human a reader for them instead of one more line in the recorded-files row.
 export function attachmentIsDoc(attachment: IterationAttachment): boolean {
+  if (isXlsxMedia(attachment.media_type, attachment.filename)) return false;
   return (
     isDocMedia(attachment.media_type, attachment.filename) ||
     attachment.kind === 'doc' ||
@@ -189,6 +198,7 @@ export function attachmentBytes(bytes?: number): string {
 export type ArtifactKind = 'image' | 'video' | 'audio' | 'doc' | 'file';
 
 export function artifactKind(attachment: IterationAttachment): ArtifactKind {
+  if (isXlsxMedia(attachment.media_type, attachment.filename)) return 'file';
   if (attachmentIsImage(attachment)) return 'image';
   if (attachmentIsVideo(attachment)) return 'video';
   if (attachmentIsAudio(attachment)) return 'audio';
@@ -204,6 +214,7 @@ export function artifactKind(attachment: IterationAttachment): ArtifactKind {
  * at all.
  */
 export function artifactMedia(attachment: Partial<IterationAttachment>): string {
+  if (isXlsxMedia(attachment.media_type, attachment.filename)) return 'XLSX';
   const extension = (attachment.filename ?? '').split('.').pop() ?? '';
   if (extension && /^[a-z0-9]{1,5}$/i.test(extension)) return extension.toUpperCase();
   const subtype = (attachment.media_type ?? '').split(';')[0].split('/').pop()?.split('+').pop();

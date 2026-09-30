@@ -35,6 +35,7 @@ import {
   isPdfMedia,
   isTableMedia,
   isTextMedia,
+  isXlsxMedia,
   pageBySize,
   SHEET_PAGE,
   type SessionArtifact,
@@ -44,6 +45,7 @@ import { ArtifactLinkContext } from '../lib/artifact-links';
 import { editedFilename } from '../lib/image-file';
 import type { GatewayClient } from '../lib/gateway';
 import { artifactShareVerb, shareArtifact } from '../lib/artifact-share';
+import { openSpreadsheet, spreadsheetOpenVerb } from '../lib/artifact-open';
 import { useBackLayer } from '../lib/edge-back';
 import { DataTable, parseCsv } from './DataTable';
 import { DocFrame } from './DocArtifact';
@@ -53,7 +55,7 @@ import { DiffArtifact } from './DiffArtifact';
 import { ClipVideo, MediaRecording, RecordingPlayer } from './Media';
 import { PdfAnnotator } from './PdfArtifact';
 import { readArtifactText } from './TextArtifact';
-import { AlertIcon, DotsIcon, DownloadIcon, MicIcon, PlayIcon, ShareIcon } from './icons';
+import { AlertIcon, ArrowOutIcon, DotsIcon, DownloadIcon, MicIcon, PlayIcon, ShareIcon } from './icons';
 import { BandButton, Chip, DialogHeader, IconButton, ListRow, LoadMore, overlayLayer } from './ui';
 
 /**
@@ -723,7 +725,12 @@ function DetailOverlay({
   // Honest about the platform — a share sheet where there is one, a download where
   // there is not — so the mark follows the verb, and the verb stays on the cell as
   // the name it answers to instead of a second title in a band that has one.
-  const shareVerb = share ? artifactShareVerb(share.name, share.mediaType) : 'Share';
+  const workbook = share && isXlsxMedia(share.mediaType, share.name);
+  const shareVerb = workbook
+    ? spreadsheetOpenVerb()
+    : share
+      ? artifactShareVerb(share.name, share.mediaType)
+      : 'Share';
   const shareAction = share ? (
     <BandButton
       label={shareState === 'sharing' ? `${shareVerb}…` : shareVerb}
@@ -731,13 +738,22 @@ function DetailOverlay({
       onClick={() => {
         setShareState('sharing');
         setShareStatus('');
-        void shareArtifact(share.blob, share.name, share.mediaType)
+        const handoff = workbook ? openSpreadsheet : shareArtifact;
+        void handoff(share.blob, share.name, share.mediaType)
           .then(setShareStatus)
-          .catch(() => setShareStatus('Could not share artifact.'))
+          .catch(() =>
+            setShareStatus(workbook ? 'Could not open workbook. Try again.' : 'Could not share artifact.'),
+          )
           .finally(() => setShareState('idle'));
       }}
     >
-      {shareVerb === 'Share' ? <ShareIcon /> : <DownloadIcon />}
+      {shareVerb === 'Share' ? (
+        <ShareIcon />
+      ) : shareVerb === 'Open in app' ? (
+        <ArrowOutIcon />
+      ) : (
+        <DownloadIcon />
+      )}
     </BandButton>
   ) : null;
   return (
@@ -888,6 +904,18 @@ function ArtifactDetail({
   }
 
   const share = { blob, name: artifact.name, mediaType: artifact.mediaType };
+
+  if (isXlsxMedia(artifact.mediaType, artifact.name)) {
+    return (
+      <DetailOverlay name={artifact.name} share={share} onClose={onClose}>
+        <p className="font-mono text-meta text-dialog-hint">
+          {spreadsheetOpenVerb() === 'Download'
+            ? 'Download this workbook, then open it in Excel, Numbers, or another spreadsheet app.'
+            : 'Open this workbook in Excel, Numbers, or another spreadsheet app. If none is available, save the file and install a spreadsheet app.'}
+        </p>
+      </DetailOverlay>
+    );
+  }
 
   // An arbitrary file may have no safe in-app reader, but its original bytes are
   // still useful. The detail states that honestly and gives the band one real verb.

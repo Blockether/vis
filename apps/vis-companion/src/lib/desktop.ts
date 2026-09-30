@@ -5,10 +5,10 @@ type HostInvoke = (command: string, payload?: Record<string, unknown>) => Promis
 type DesktopHost = Window & { __TAURI__?: { core?: { invoke?: HostInvoke } } };
 
 /**
- * Pake grants the page a command channel: `shell:allow-open` for the system browser and the
- * notification plugin for system alerts, and they are the only routes from this window to the
- * machine around it. Its presence is also how the bundle recognizes that it is running as the
- * desktop app: the browser build and the tests never see it.
+ * Pake grants the page a command channel for the system browser, notifications and
+ * workbook file hand-off. The packaged host saves original XLSX bytes before asking
+ * the OS to open them. Its presence also identifies the desktop app: a browser
+ * never sees this channel.
  */
 export function desktopInvoke(): HostInvoke | undefined {
   if (typeof window === 'undefined') return;

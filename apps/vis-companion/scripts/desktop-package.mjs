@@ -91,17 +91,19 @@ export function pakeArgs({ distDir, version, target, icon = ICON, dev = false })
   ];
 }
 
-/** Install a private Pake template: Pake regenerates .pake from this file on every build. */
-export function prepareWindowsSigning({ npmCli, toolsDir, env }) {
-  for (const name of ['ENDPOINT', 'ACCOUNT', 'PROFILE', 'PUBLISHER']) {
-    if (!env[`WINDOWS_SIGNING_${name}`]?.trim()) {
-      throw new Error(`Missing required signing configuration: WINDOWS_SIGNING_${name}`);
+/** Install a private Pake template with Vis's native file-opening command. */
+export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = false }) {
+  if (windowsSigning) {
+    for (const name of ['ENDPOINT', 'ACCOUNT', 'PROFILE', 'PUBLISHER']) {
+      if (!env[`WINDOWS_SIGNING_${name}`]?.trim()) {
+        throw new Error(`Missing required signing configuration: WINDOWS_SIGNING_${name}`);
+      }
     }
   }
   const install = spawnSync(
-    process.execPath,
+    npmCli ? process.execPath : 'npm',
     [
-      npmCli,
+      ...(npmCli ? [npmCli] : []),
       'install',
       '--prefix',
       toolsDir,
@@ -112,21 +114,44 @@ export function prepareWindowsSigning({ npmCli, toolsDir, env }) {
     { stdio: 'inherit', env },
   );
   if (install.error) throw install.error;
-  if (install.status !== 0) throw new Error('Failed to install Windows signing build tools');
+  if (install.status !== 0) throw new Error('Failed to install desktop build tools');
   const pakeDir = join(toolsDir, 'node_modules', 'pake-cli');
+  const sourceDir = join(pakeDir, 'src-tauri', 'src');
+  const libPath = join(sourceDir, 'lib.rs');
+  let lib = readFileSync(libPath, 'utf8');
+  const module = 'mod util;';
+  const handler = '.invoke_handler(tauri::generate_handler![';
+  if (!lib.includes(module) || !lib.includes(handler)) {
+    throw new Error('Pake native command registration changed');
+  }
+  if (!lib.includes('mod artifact;')) {
+    lib = lib.replace(module, `${module}\nmod artifact;\nuse artifact::open_xlsx;`);
+    lib = lib.replace(handler, `${handler}\n            open_xlsx,`);
+  }
+  writeFileSync(libPath, lib);
+  writeFileSync(
+    join(sourceDir, 'artifact.rs'),
+    readFileSync(new URL('../native/desktop/artifact.rs', import.meta.url), 'utf8'),
+  );
   const configPath = join(pakeDir, 'src-tauri', 'tauri.windows.conf.json');
   const config = JSON.parse(readFileSync(configPath, 'utf8'));
-  config.bundle.windows.signCommand = {
-    cmd: 'pwsh',
-    args: [
-      '-NoProfile',
-      '-NonInteractive',
-      '-File',
-      join(appDir, 'scripts', 'windows-sign.ps1'),
-      '%1',
-    ],
-  };
-  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  if (windowsSigning) {
+    config.bundle.windows.signCommand = {
+      cmd: 'pwsh',
+      args: [
+        '-NoProfile',
+        '-NonInteractive',
+        '-File',
+        join(appDir, 'scripts', 'windows-sign.ps1'),
+        '%1',
+      ],
+    };
+    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  } else if (config.bundle.windows.signCommand) {
+    // The same tools directory can have served a previous signed release.
+    delete config.bundle.windows.signCommand;
+    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  }
   return join(pakeDir, 'dist', 'cli.js');
 }
 
@@ -173,10 +198,12 @@ export function packageDesktop({
       delete env[name];
     }
   }
-  const windowsPake =
-    platform === 'win32' && !dev
-      ? prepareWindowsSigning({ npmCli, toolsDir: join(appDir, 'build', 'desktop-tools'), env })
-      : null;
+  const pakeCli = prepareDesktopHost({
+    npmCli,
+    toolsDir: join(appDir, 'build', 'desktop-tools'),
+    env,
+    windowsSigning: platform === 'win32' && !dev,
+  });
   mkdirSync(outDir, { recursive: true });
   const written = [];
   for (const target of targets) {
@@ -186,13 +213,7 @@ export function packageDesktop({
     const produced = join(outDir, `${bundleName}.${target.ext}`);
     rmSync(produced, { force: true });
     log(`▸ pake ${args.join(' ')}`);
-    const command = platform === 'win32' ? process.execPath : 'npx';
-    const commandArgs = windowsPake
-      ? [windowsPake, ...args]
-      : platform === 'win32'
-        ? [npmCli, 'exec', '--yes', `--package=pake-cli@${PAKE_VERSION}`, '--', 'pake', ...args]
-        : ['-y', `pake-cli@${PAKE_VERSION}`, ...args];
-    const run = spawnSync(command, commandArgs, {
+    const run = spawnSync(process.execPath, [pakeCli, ...args], {
       cwd: outDir,
       stdio: 'inherit',
       env,

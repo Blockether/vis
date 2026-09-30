@@ -7,7 +7,7 @@ import {
   assetName,
   pakeArgs,
   packageDesktop,
-  prepareWindowsSigning,
+  prepareDesktopHost,
 } from './desktop-package.mjs';
 import { syncPackageVersion } from './version.mjs';
 
@@ -22,6 +22,9 @@ vi.mock('node:fs', async (importOriginal) => {
     rmSync: vi.fn(),
     writeFileSync: vi.fn(),
     readFileSync: vi.fn((...args) => {
+      if (String(args[0]).endsWith('lib.rs')) {
+        return 'mod util;\nfn run() { builder.invoke_handler(tauri::generate_handler![download_file,]); }\n';
+      }
       if (String(args[0]).endsWith('tauri.windows.conf.json')) {
         return JSON.stringify({
           bundle: { targets: ['msi'], windows: { wix: { language: ['en-US'] } } },
@@ -102,6 +105,46 @@ describe('desktop package', () => {
       '--targets',
       'deb',
     ]);
+  });
+
+  it('registers the workbook command in every private desktop template', () => {
+    vi.clearAllMocks();
+    const cli = prepareDesktopHost({ npmCli: '/npm-cli.js', toolsDir: '/tools', env: process.env });
+    expect(cli).toBe(join('/tools', 'node_modules', 'pake-cli', 'dist', 'cli.js'));
+    const [libPath, lib] = writeFileSync.mock.calls.find(([path]) => String(path).endsWith('lib.rs'));
+    expect(libPath).toBe(join('/tools', 'node_modules', 'pake-cli', 'src-tauri', 'src', 'lib.rs'));
+    expect(lib).toContain('mod artifact;\nuse artifact::open_xlsx;');
+    expect(lib).toContain('.invoke_handler(tauri::generate_handler![\n            open_xlsx,');
+    const [, command] = writeFileSync.mock.calls.find(([path]) =>
+      String(path).endsWith('artifact.rs'),
+    );
+    expect(command).toContain('pub async fn open_xlsx(');
+    expect(command).toContain('stage_workbook(&downloads, &filename, &data)');
+    expect(command).toContain('.open_path(');
+    expect(
+      writeFileSync.mock.calls.some(([path]) => String(path).endsWith('tauri.windows.conf.json')),
+    ).toBe(false);
+  });
+
+  it('clears release signing before a later unsigned development build', () => {
+    vi.clearAllMocks();
+    const read = readFileSync.getMockImplementation();
+    readFileSync.mockImplementation((...args) => {
+      if (String(args[0]).endsWith('tauri.windows.conf.json')) {
+        return JSON.stringify({ bundle: { windows: { signCommand: { cmd: 'pwsh' } } } });
+      }
+      return read(...args);
+    });
+    try {
+      prepareDesktopHost({ npmCli: '/npm-cli.js', toolsDir: '/tools', env: process.env });
+      const configWrite = writeFileSync.mock.calls.find(([path]) =>
+        String(path).endsWith('tauri.windows.conf.json'),
+      );
+      expect(configWrite).toBeDefined();
+      expect(JSON.parse(configWrite[1]).bundle.windows.signCommand).toBeUndefined();
+    } finally {
+      readFileSync.mockImplementation(read);
+    }
   });
 });
 
@@ -230,7 +273,7 @@ describe('desktop release platforms', () => {
     existsSync.mockReturnValue(true);
   });
 
-  it('uses an absolute reusable Cargo target outside the disposable npx installation', () => {
+  it('uses an absolute reusable Cargo target outside the build tool installation', () => {
     vi.stubEnv('CARGO_TARGET_DIR', '');
     packageDesktop({ platform: 'linux', arch: 'x64', log: vi.fn() });
     for (const [, , options] of spawnSync.mock.calls) {
@@ -260,9 +303,9 @@ describe('desktop release platforms', () => {
       'vis.deb',
       'vis.AppImage',
     ]);
-    expect(spawnSync).toHaveBeenCalledTimes(2);
-    for (const [command, args] of spawnSync.mock.calls) {
-      expect(command).toBe('npx');
+    expect(spawnSync).toHaveBeenCalledTimes(3);
+    for (const [command, args] of spawnSync.mock.calls.slice(1)) {
+      expect(command).toBe(process.execPath);
       expect(args).not.toContain('--multi-arch');
     }
   });
@@ -273,8 +316,8 @@ describe('desktop release platforms', () => {
       'vis-companion-1.0.0-macos-universal.dmg',
     ]);
     expect(renameSync.mock.calls.map(([source]) => basename(source))).toEqual(['Vis.dmg']);
-    expect(spawnSync).toHaveBeenCalledTimes(1);
-    expect(spawnSync.mock.calls[0][1]).toContain('--multi-arch');
+    expect(spawnSync).toHaveBeenCalledTimes(2);
+    expect(spawnSync.mock.calls[1][1]).toContain('--multi-arch');
   });
 
   it('installs isolated signing tools and packages Windows without invoking a command shell', () => {
@@ -293,7 +336,9 @@ describe('desktop release platforms', () => {
     expect(args[1]).toBe(join('/app', 'dist'));
     expect(args[args.indexOf('--targets') + 1]).toBe('x64');
     expect(options.shell).toBeUndefined();
-    const [configPath, content] = writeFileSync.mock.calls[0];
+    const [configPath, content] = writeFileSync.mock.calls.find(([path]) =>
+      String(path).endsWith('tauri.windows.conf.json'),
+    );
     expect(configPath).toMatch(/tauri.windows.conf.json$/);
     const config = JSON.parse(content);
     expect(config.bundle.targets).toEqual(['msi']);
@@ -319,11 +364,11 @@ describe('desktop release platforms', () => {
     expect(renameSync).not.toHaveBeenCalled();
   });
 
-  it('stops before packaging when signing tool installation fails', () => {
+  it('stops before packaging when desktop tool installation fails', () => {
     spawnSync.mockReturnValueOnce({ status: 1 });
     expect(() =>
-      prepareWindowsSigning({ npmCli: 'npm', toolsDir: '/tools', env: process.env }),
-    ).toThrow(/install Windows/);
+      prepareDesktopHost({ npmCli: 'npm', toolsDir: '/tools', env: process.env }),
+    ).toThrow(/install desktop/);
     expect(writeFileSync).not.toHaveBeenCalled();
   });
 
@@ -417,9 +462,9 @@ describe('desktop development builds', () => {
     expect(assets).toEqual([
       join('/app', 'build', 'desktop-dev', `vis-companion-1.0.0-${asset}.${ext}`),
     ]);
-    expect(spawnSync).toHaveBeenCalledTimes(1);
-    const [command, args, options] = spawnSync.mock.calls[0];
-    expect(command).toBe(platform === 'win32' ? process.execPath : 'npx');
+    expect(spawnSync).toHaveBeenCalledTimes(2);
+    const [command, args, options] = spawnSync.mock.calls[1];
+    expect(command).toBe(process.execPath);
     expect(args).not.toContain('--multi-arch');
     expect(args).toContain(
       platform === 'darwin' ? 'dmg' : platform === 'win32' ? 'x64' : 'appimage',
@@ -447,7 +492,7 @@ describe('desktop development builds', () => {
       for (const name of credentials) expect(env?.[name], name).toBeUndefined();
       expect(env.PATH).toBe(process.env.PATH);
       packageDesktop({ platform: 'darwin', arch: 'arm64', log: vi.fn() });
-      const releaseEnv = spawnSync.mock.calls[1][2].env;
+      const releaseEnv = spawnSync.mock.calls[2][2].env;
       for (const name of credentials) {
         expect(releaseEnv[name], name).toBe('test-only');
         expect(process.env[name], name).toBe('test-only');
@@ -460,7 +505,7 @@ describe('desktop development builds', () => {
   it.each(['linux', 'win32'])(
     'does not install a stale %s artifact when compilation fails',
     (platform) => {
-      spawnSync.mockReturnValueOnce({ status: 1 });
+      spawnSync.mockReturnValueOnce({ status: 0 }).mockReturnValueOnce({ status: 1 });
       expect(() => packageDesktop({ platform, arch: 'x64', dev: true, log: vi.fn() })).toThrow(
         /failed/,
       );
