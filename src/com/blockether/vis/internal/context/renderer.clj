@@ -11,8 +11,8 @@
 ;; Knobs
 
 ;; Context rendering is intentionally narrow: stable session identity,
-;; workspace/env/access/routing/symbols, and utilization. Tool outputs are
-;; rendered as append-only `r["tN/iN/fN"] = …` assignments by the loop, not here.
+;; workspace/env/access/routing/symbols, and utilization. Tool outputs return to
+;; the model as provider tool results, which the loop renders, not here.
 
 ;; The single value printer
 ;;

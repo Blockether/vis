@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.loop-memory-test
-  (:require [com.blockether.svar.core :as svar]
+  (:require [clojure.string :as str]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.iteration :as iteration]
             [com.blockether.vis.internal.loop.transcript :as transcript]
@@ -110,11 +111,14 @@
 (defdescribe
   metadata-first-seed-test
   (it
-    "loads only visible incomplete bodies, no completed or folded bytes"
+    "reads bodies, artifacts and turn rows only for the entries a fold leaves visible"
     (let [body-reads
           (atom [])
 
           artifact-reads
+          (atom [])
+
+          turn-reads
           (atom [])
 
           turns
@@ -148,6 +152,15 @@
                       (reset! artifact-reads (vec ids))
                       {"c" [{:id "image" :media-type "image/png" :size 9}]})
 
+                    db/db-list-session-attachments-meta
+                    (fn [& _]
+                      [])
+
+                    db/db-read-session-turn
+                    (fn [_ _ id]
+                      (swap! turn-reads conj id)
+                      {:id id :status :error :user-request "question" :content []})
+
                     db/db-list-session-turns-iterations
                     (fn [& _]
                       (throw (ex-info "raw scan" {})))
@@ -161,46 +174,52 @@
                       (throw (ex-info "eager hydration" {})))]
 
         (let [entries
-              (#'iteration/seed-trailer-iters
-               {:session-id "s" :db-info :fixture}
-               "current"
-               summaries)
+              (transcript/prior-turn-trailer {:session-id "s" :db-info :fixture}
+                                             "current"
+                                             3
+                                             summaries)
 
               visible
-              (second (last entries))
+              (remove (comp :collapsed? second) entries)
 
               context
               (atom {})]
 
           (expect (= ["c"] @body-reads @artifact-reads))
-          (expect (= [{:scope "t2/i2/f1" :stdout "kept"}] (:forms-vec visible)))
-          (expect (false? (:preserved-thinking/replay? visible)))
-          (expect (= 2 (count (filter (comp :collapsed? second) entries))))
+          (expect (= ["error"] @turn-reads))
+          ;; Turn 1 and t2/i1 fold into one gist; turn 2 keeps its request and closing.
+          (expect (= ["t2/request" "c" "t2/closing"] (mapv first visible)))
+          (expect (= [{:scope "t2/i2/f1" :stdout "kept"}] (:forms-vec (second (second visible)))))
+          (expect (every? (comp false? :preserved-thinking/replay? second) entries))
+          (expect (= 4 (count (filter (comp :collapsed? second) entries))))
           (#'transcript/stamp-iter-universe! context entries entries)
           (expect (= ["t1/i1" "t2/i1" "t2/i2"] (get @context "engine_iter_universe")))
           (expect (zero? (get-in @context ["engine_iter_weights" "t1/i1"])))))))
-  (it "does not read bodies from completed turns and supports sessions without persistence"
-      (with-redefs [db/db-list-session-turns-meta
-                    (fn [& _]
-                      [{:id "done" :position 1 :status :done}])
+  (it "answers nothing without a session and replays a completed turn in order"
+      (let [reads (atom [])]
+        (with-redefs [db/db-list-session-turns-meta (fn [& _]
+                                                      [{:id "done" :position 1 :status :done}])
+                      db/db-list-session-turns-iterations-meta
+                      (fn [& _]
+                        {"done" [{:id "a" :position 1 :status :done}]})
+                      db/db-list-iterations (fn [_ ids]
+                                              (swap! reads conj (vec ids))
+                                              {})
+                      db/db-list-iterations-attachments-meta (fn [& _]
+                                                               {})
+                      db/db-list-session-attachments-meta (fn [& _]
+                                                            [])
+                      db/db-read-session-turn (fn [_ _ id]
+                                                {:id id
+                                                 :status :done
+                                                 :user-request "question"
+                                                 :content [(content/prose "answer")]})]
 
-                    db/db-list-session-turns-iterations-meta
-                    (fn [& _]
-                      {"done" [{:id "a" :position 1 :status :done}]})
-
-                    db/db-list-iterations
-                    (fn [_ ids]
-                      (expect (empty? ids))
-                      {})
-
-                    db/db-list-iterations-attachments-meta
-                    (fn [& _]
-                      {})]
-
-        (expect (nil? (#'iteration/seed-trailer-iters {} nil [])))
-        (expect (= "t1/i1"
-                   (get-in (#'iteration/seed-trailer-iters {:session-id "s"} nil [])
-                           [0 1 :iteration-scope]))))))
+          (expect (nil? (transcript/prior-turn-trailer {} nil nil [])))
+          (expect (= ["t1/request" "a" "t1/closing"]
+                     (mapv first (transcript/prior-turn-trailer {:session-id "s"} nil nil []))))
+          ;; No row is a local-command candidate, so only the replayed step body is read.
+          (expect (= [["a"]] (filterv seq @reads)))))))
 
 (defdescribe
   metadata-first-image-budget-test
@@ -336,9 +355,9 @@
         (finally (loop-env/dispose-environment! env))))))
 
 (defdescribe
-  metadata-first-recap-test
+  metadata-first-boundary-test
   (it
-    "selects unfolded Q/A before reading content, without completed iteration bodies"
+    "reads turn rows only for unfolded turns and closes a cancelled turn with a notice"
     (let [reads
           (atom [])
 
@@ -355,11 +374,8 @@
            "visible" [{:id "b" :position 1 :status :done}]
            "unfinished" [{:id "c" :position 1 :status :done}]}
 
-          env
-          {:session-id "session"
-           :db-info :fixture
-           :ctx-atom (atom {"session_summaries"
-                            [{"through" "t1" "at_turn" 4 "issued_turn" 4 "gist" "settled"}]})}]
+          summaries
+          [{"through" "t1" "at_turn" 4 "issued_turn" 4 "gist" "settled"}]]
 
       (with-redefs [db/db-list-session-turns-meta
                     (fn [& _]
@@ -387,24 +403,39 @@
                     (fn [& _]
                       {})
 
+                    db/db-list-session-attachments-meta
+                    (fn [& _]
+                      [])
+
                     db/db-read-session-turn
                     (fn [_ _ id]
                       (swap! reads conj id)
                       (expect (not= "folded" id))
                       (assoc (first (filter #(= id (:id %)) turns))
                         :user-request "question"
-                        :content [(content/prose "answer")]))]
+                        :content (if (= "visible" id) [(content/prose "answer")] [])))]
 
-        (let [result (#'transcript/previous-turn-context env "current")]
+        (let [entries
+              (transcript/prior-turn-trailer {:session-id "session" :db-info :fixture}
+                                             "current"
+                                             4
+                                             summaries)
+
+              visible
+              (into {} (remove (comp :collapsed? second)) entries)]
+
           (expect (= ["visible" "unfinished"] @reads))
-          ;; ONLY the cancelled turn's iterations: an answered turn's recap still
-          ;; costs nothing but its stored-iteration line.
-          (expect (= ["c"] @body-reads))
-          (expect (= [2 3] (mapv :turn result)))
-          (expect (= [{:scope "t2/i1" :src "t2/i1 (stored iteration)"}] (:results (first result))))
+          (expect (= ["b" "c"] @body-reads))
+          (expect (= ["t2/request" "b" "t2/closing" "t3/request" "c" "t3/closing"]
+                     (mapv first (remove (comp :collapsed? second) entries))))
+          (expect (str/includes? (:content (first (:turn/messages (get visible "t2/request"))))
+                                 "question"))
+          (expect (= [{:role "assistant" :content "answer"}]
+                     (:turn/messages (get visible "t2/closing"))))
           (expect (= [{:scope "t3/i1" :src "grep({\"query\": [\"cancel\"]})"}]
-                     (:results (second result))))
-          (expect (true? (:cancelled? (second result)))))))))
+                     (:forms-vec (get visible "c"))))
+          (expect (str/includes? (:content (first (:turn/messages (get visible "t3/closing"))))
+                                 "<turn_cancelled>")))))))
 
 (defdescribe
   local-command-metadata-test
@@ -432,14 +463,27 @@
 
                     db/db-list-iterations
                     (fn [_ ids]
-                      (swap! reads into ids)
-                      (expect (every? #{"local"} ids))
-                      (if (seq ids) {"local" {:forms [{:tag :user-slash :src "/help"}]}} {}))
+                      (swap! reads conj (vec ids))
+                      (if (some #{"local"} ids)
+                        {"local" {:forms [{:tag :user-slash :src "/help"}]}}
+                        {}))
 
                     db/db-list-iterations-attachments-meta
                     (fn [& _]
-                      {})]
+                      {})
 
-        (let [entries (#'iteration/seed-trailer-iters {:session-id "s"} nil [])]
-          (expect (= ["local"] @reads))
-          (expect (= ["t2/i1"] (mapv (comp :iteration-scope second) entries))))))))
+                    db/db-list-session-attachments-meta
+                    (fn [& _]
+                      [])
+
+                    db/db-read-session-turn
+                    (fn [_ _ id]
+                      {:id id
+                       :status :done
+                       :user-request "question"
+                       :content [(content/prose "answer")]})]
+
+        (let [entries (transcript/prior-turn-trailer {:session-id "s"} nil nil [])]
+          (expect (= [["local"] ["remote"]] @reads))
+          (expect (= ["t2/request" "remote" "t2/closing"] (mapv first entries)))
+          (expect (= ["t2/i1"] (keep (comp :iteration-scope second) entries))))))))

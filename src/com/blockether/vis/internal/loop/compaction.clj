@@ -100,7 +100,7 @@
     whole turn, \"t2/i1-i56\" a range, \"-t2/i56\"/\"t2/i5-\" an open one, commas
     to union several — disjoint RANGES included (a list of key strings works
      too). Anything that is not a step key, or that resolves to neither settled
-     steps nor a turn recap, is refused BY NAME with the grammar. The gist is
+     steps nor a settled turn, is refused BY NAME with the grammar. The gist is
      OPTIONAL: pass it to KEEP a one-line takeaway; OMIT it
     to discard the step with no summary line. Recorded intents are string-keyed
     because they persist inside the ctx blob; `ctx-engine/expand-through` owns
@@ -220,9 +220,9 @@
                   scopes
                   (set/difference (into #{} (mapcat #(get % "scopes")) expanded) already-scopes)
 
-                  ;; Whole-turn intent also removes the turn's Q/A recap from the
-                  ;; prior-turn context. Apply the same delta rule: a wider re-fold
-                  ;; must not recharge a recap an earlier whole-turn fold removed.
+                  ;; Whole-turn intent also removes the turn's request and answer
+                  ;; messages. Apply the same delta rule: a wider re-fold must not
+                  ;; recharge a turn an earlier whole-turn fold already removed.
                   already-turns
                   (into #{} (mapcat #(get % "turns")) existing)
 
@@ -238,50 +238,6 @@
                     (estimate ctx (folded-context ctx base))
                     (when (or (map? weights) (map? (get ctx "engine_turn_weights")))
                       (+ (long (reduce + 0 (keep #(get weights %) scopes))) (long qa-toks))))
-
-                  ;; A fold can legitimately cover scopes that already left the wire:
-                  ;; iterations of a turn that COMPLETED normally replay no results at
-                  ;; all (`off-wire-seed?` above), so only that turn's Q/A recap still
-                  ;; resides — and ONLY a whole-turn token (`tN`) charges and removes a
-                  ;; recap. Folding those `tN/iM` ids is an honest no-op, but a card
-                  ;; listing 44 folded scopes beside a small `saved ~` reads as broken
-                  ;; accounting (issue #88). So name the weightless share and point at
-                  ;; the shape that WOULD reclaim it. A scope MISSING from `weights`
-                  ;; is merely unsent (never priced yet), not off-wire.
-                  off-wire
-                  (if (map? weights)
-                    (filterv #(and (contains? scopes %)
-                                   (contains? weights %)
-                                   (zero? (long (get weights %))))
-                      (or universe []))
-                    [])
-
-                  recap-turns
-                  (let [tw
-                        (get ctx "engine_turn_weights")
-
-                        folded?
-                        (into already-turns new-turns)]
-
-                    (into []
-                          (comp (keep #(some-> (second (re-matches #"t(\d+)/i\d+" %))
-                                               parse-long))
-                                (distinct)
-                                (remove folded?)
-                                (filter #(pos? (long (get tw % 0)))))
-                          off-wire))
-
-                  ;; Only advise when a whole-turn fold really would reclaim something:
-                  ;; recap-less or already-whole-turn-folded scopes need no nudge.
-                  off-wire-note
-                  (when (and (nil? (get ctx "engine_fold_estimator")) (seq recap-turns))
-                    (str " · "
-                         (count off-wire)
-                         "/"
-                         (count scopes)
-                         " scopes already off-wire — fold "
-                         (str/join ", " (map #(str "t" %) recap-turns))
-                         " to drop their recaps"))
 
                   removed
                   (cond (nil? toks) (when util " · removal estimate unavailable")
@@ -307,8 +263,7 @@
                        (when (pos? budget) (str " · operating budget " (fmt-tok budget)))
                        (when (pos? limit) (str " · model limit " (fmt-tok limit))))]
 
-              {:note (str removed measured off-wire-note)
-               :reclaimed-tokens (max 0 (long (or toks 0)))})
+              {:note (str removed measured) :reclaimed-tokens (max 0 (long (or toks 0)))})
             (catch Throwable _ {:note " · removal estimate unavailable" :reclaimed-tokens 0})))]
 
     {'fold-session
@@ -378,8 +333,8 @@
              ;; wire never held (a mistyped range, a turn that does not exist yet).
              ;; Refuse it by name instead of recording a silent no-op fold. Whole-turn
              ;; intent (`turns`) at or before the live turn stays legal even with no
-             ;; iteration on this trailer — it also removes that turn's Q/A recap,
-             ;; which resides outside the iteration universe.
+             ;; iteration on this trailer — it also removes an earlier turn's request
+             ;; and answer messages, which sit outside the iteration universe.
              (let [named (get resolved "scopes")
                    settled-turns (filter (fn [tn]
                                            (<= (long tn) (long turn)))
@@ -399,18 +354,15 @@
                              str
                              str/trim
                              not-empty)
-                   ;; Stamp the ISSUING turn so `previous-turn-context` never lets
-                   ;; a whole-turn fold recorded DURING turn N erase turn N's own
-                   ;; Q/A recap next request (the answer is produced after the fold;
+                   ;; Stamp the ISSUING turn so `apply-summaries` never lets a
+                   ;; whole-turn fold recorded DURING turn N remove turn N's own
+                   ;; request and answer (the answer is produced after the fold;
                    ;; the gist can't summarize it). `turn` is always non-nil here —
                    ;; the guard above throws when it can't prove the current turn.
-                   base (cond-> (assoc base "issued_turn" turn)
-                          g
-                          (assoc "gist" g))
-                   {:keys [note reclaimed-tokens]} (priced base)
-                   intent (cond-> base
-                            (not (str/blank? note))
-                            (assoc "note" note))]
+                   intent (cond-> (assoc base "issued_turn" turn)
+                            g
+                            (assoc "gist" g))
+                   {:keys [note reclaimed-tokens]} (priced intent)]
 
                (record! intent)
                (when (and session-rebase-atom (pos? (long reclaimed-tokens)))

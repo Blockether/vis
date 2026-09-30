@@ -127,16 +127,6 @@
           ctx)))
 
 ;; Iter-scope parsing + comparator
-(defn compact-src
-  "One-line, length-capped form source for the `you ran:` scope index
-   rendered in the cross-turn `<conversation-so-far>` resume block."
-  [src]
-  (let [s (-> (or src "")
-              str
-              str/trim
-              (str/replace #"\s+" " "))]
-    (if (> (count s) 90) (str (subs s 0 90) "…") s)))
-
 (defn finalize-turn
   "Finalize a turn: the loop ships `:answer` to the channel and the engine
    returns ctx unchanged so the turn can settle."
@@ -404,7 +394,7 @@
   "Resolve every fold SELECTOR on each summary against `universe` (the caller's
    own live iteration scopes) into a concrete `\"scopes\"` set, so ONE intent
    expands consistently wherever summaries are read (apply-summaries: the
-   trailer; resume / prior-turn: that turn's forms; folds-view: the ledger).
+   trailer, prior turns included; folds-view: the ledger).
    Selector keys (all optional, their results UNIONED):
      `\"scopes\"`  explicit ids — a `tN/iN` is kept verbatim; a bare `tN` EXPANDS
                  to every iteration of that turn present in `universe`.
@@ -421,8 +411,8 @@
    a bare `tN` token, or a RANGE selector whose resolved window covers every
    universe iteration of that turn. An ENUMERATED `tN/iN` list never yields
    whole-turn intent — even when it happens to name every iteration — so a
-   fine-grained fold can never silently erase a turn's Q/A recap downstream
-   (`previous-turn-context` keys Q/A removal off `turns`, not scope cover).
+   fine-grained fold can never silently erase a turn's request and answer
+   (`apply-summaries` collapses turn boundaries off `turns`, not scope cover).
    Optional `turns` names persisted turns, including turns with no indexed iterations.
    A range selects an iteration-less turn only when it spans that entire turn;
    an iteration cursor inside the turn is not evidence of whole-turn coverage.
@@ -549,9 +539,9 @@
    dropped summary is present in the one that supersedes it (the superset wins;
    for equal sets the later/newer wins), and the dropped summary's explicit
    whole-turn intent (`\"turns\"`) is MERGED into a surviving coverer so a
-   fold-of-fold can never resurrect an already-folded turn's Q/A recap.
-   Recap-only turns also count as coverage, so their gists can be superseded
-   without dropping unrelated recaps. Order-stable. Expects resolved scopes.
+   fold-of-fold can never resurrect an already-folded turn's request and answer.
+   Whole turns also count as coverage, so their gists can be superseded without
+   dropping unrelated turns. Order-stable. Expects resolved scopes.
    Pure."
   [summaries]
   (let [v
@@ -628,9 +618,11 @@
      - full turns covering the WHOLE universe            → `[\"t*\"]`
      - a partially-present turn stays explicit, its iteration numbers themselves
        run-compressed: `\"tN/iM\"` (singleton) or `\"tN/iA-iC\"` (run).
+   Optional `whole-turns` names turns covered as a whole, including turns with
+   no iteration on the wire; each renders as a FULL turn.
    Tokens are ordered by (turn, iter). Scopes/universe entries that don't parse
    are ignored. Pure — same inputs → same output."
-  [scopes universe]
+  [scopes universe & [whole-turns]]
   (let [by-turn
         (fn [ss]
           (reduce (fn [m sc]
@@ -646,13 +638,17 @@
         sel
         (by-turn scopes)
 
+        whole
+        (into #{} (map long) whole-turns)
+
         full?
         (fn [t]
-          (let [u (get uni t)]
-            (and (seq u) (every? (get sel t #{}) u))))
+          (or (contains? whole t)
+              (let [u (get uni t)]
+                (and (seq u) (every? (get sel t #{}) u)))))
 
         sel-turns
-        (sort (keys sel))
+        (sort (distinct (concat (keys sel) whole)))
 
         full-turns
         (filterv full? sel-turns)
@@ -710,11 +706,12 @@
    `join-scopes`): same-turn iter-runs merge (`t3/i3-i4,i7-i8`), whole turns
    collapse to `tN/*` / `tA-tB/*` / `t*`. `universe` (the live wire scopes, or
    nil) drives the whole-turn collapse; nil/empty keeps every turn explicit.
-   nil for an empty/unparseable seq. Pure. Shared by the ledger AND the
-   transcript fold breadcrumb so a collapsed region reads identically wherever
-   it surfaces — one anchor vocabulary, not two."
-  [scopes universe]
-  (join-scopes (compress-scopes (filter scope-key scopes) (or universe []))))
+   `whole-turns` names turns folded as a whole, which render as `tN/*` runs even
+   without an iteration on the wire. nil for an empty/unparseable seq. Pure.
+   Shared by the ledger AND the transcript fold breadcrumb so a collapsed region
+   reads identically wherever it surfaces — one anchor vocabulary, not two."
+  [scopes universe & [whole-turns]]
+  (join-scopes (compress-scopes (filter scope-key scopes) (or universe []) whole-turns)))
 
 (defn- fmt-toks
   "Compact token count for fold hints and diagnostic budgets: `1000+` →

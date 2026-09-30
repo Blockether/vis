@@ -94,6 +94,9 @@ errors reject the batch. Use `Path.read_text()` for data you will not edit.
 Commas join disjoint ranges. You cannot fold the live step. Without `gist`, the steps leave active
 context and no summary replaces them. History is still saved. There is no inline undo.
 
+A turn key, or a range that covers a whole turn, also removes the request and answer of that turn.
+This applies only to turns before the current turn.
+
 `session["utilization"]` reports these values:
 
 - `latest_measured_input_tokens` is the latest request **input** that the provider measured,

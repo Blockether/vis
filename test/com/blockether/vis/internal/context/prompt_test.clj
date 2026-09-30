@@ -129,12 +129,10 @@
           (expect (= :unavailable (:token-count-source health)))
           (expect (empty? (:breakdown health)))
           (expect (nil? (:estimated-input-tokens health))))))
-  (it "names foldable prior-turn recaps separately from user requests"
+  (it "labels a prior turn's request like the current one"
       (let [messages
-            (prompt/assemble-initial-messages
-              {:previous-turn-context
-               [{:turn 1 :user-request "prior dense input" :interrupted? true}]
-               :initial-user-content "current input"})
+            (into (:request (prompt/prior-turn-messages {:turn 1 :request "prior dense input"}))
+                  (prompt/assemble-initial-messages {:initial-user-content "current input"}))
 
             health
             (prompt/request-health {} messages [] "gpt-4")
@@ -142,8 +140,9 @@
             labels
             (set (map :label (:breakdown health)))]
 
-        (expect (contains? labels "Turn t1 recap (fold t1)"))
+        (expect (= 2 (count messages)))
         (expect (contains? labels "User requests"))
+        (expect (not-any? #(str/includes? (str %) "recap") labels))
         (expect (= :svar-estimate (:token-count-source health)))
         (expect (= "gpt-4" (:token-count-model health)))
         (expect (= (svar/count-messages "gpt-4" messages)
@@ -1242,13 +1241,12 @@
   "Image attachments turn the initial user message multimodal."
   (it "keeps text-only messages as a plain content string"
       (let [msgs
-            (prompt/assemble-initial-messages {:stable-prompt-messages [{:role "system"
-                                                                         :content "sys"}]
-                                               :initial-user-content "hello"})
+            (prompt/assemble-initial-messages {:initial-user-content "hello"})
 
             user
             (last msgs)]
 
+        (expect (= 1 (count msgs)))
         (expect (= "user" (:role user)))
         (expect (string? (:content user)))
         (expect (str/includes? (:content user) "CURRENT-USER-MESSAGE"))
@@ -1256,8 +1254,7 @@
   (it "rides svar image blocks ahead of the text block and lists a manifest"
       (let [msgs
             (prompt/assemble-initial-messages
-              {:stable-prompt-messages []
-               :initial-user-content "what is on /tmp/shot.png?"
+              {:initial-user-content "what is on /tmp/shot.png?"
                :user-images [{:path "/tmp/shot.png"
                               :media-type "image/png"
                               :base64 tiny-png-b64
@@ -1325,8 +1322,7 @@
                                                  (repeat 24 0))))
 
             msgs
-            (prompt/assemble-initial-messages {:stable-prompt-messages []
-                                               :initial-user-content "look"
+            (prompt/assemble-initial-messages {:initial-user-content "look"
                                                :user-images [{:path "/tmp/dot.png"
                                                               :media-type "image/png"
                                                               :base64 corrupt
@@ -1342,8 +1338,7 @@
         (expect (str/includes? (:content user) "could not be decoded"))))
   (it "omits image blocks for a text-only model and demotes them to the manifest"
       (let [msgs
-            (prompt/assemble-initial-messages {:stable-prompt-messages []
-                                               :initial-user-content "what is on /tmp/shot.png?"
+            (prompt/assemble-initial-messages {:initial-user-content "what is on /tmp/shot.png?"
                                                :vision? false
                                                :user-images [{:path "/tmp/shot.png"
                                                               :media-type "image/png"
@@ -1365,12 +1360,10 @@
         (expect (str/includes? (:content user) "no vision"))))
   (it "omits the manifest when there is no user content at all"
       (let [msgs (prompt/assemble-initial-messages
-                   {:stable-prompt-messages [{:role "system" :content "sys"}]
-                    :user-images
+                   {:user-images
                     [{:path "p" :media-type "image/png" :base64 "eA==" :size 1 :size-label "1B"}]})]
         ;; no user message without initial-user-content — images can't ride alone
-        (expect (= 1 (count msgs)))
-        (expect (= "system" (:role (first msgs)))))))
+        (expect (= [] msgs)))))
 
 (defdescribe
   attached-images-descriptions-test
@@ -1379,8 +1372,7 @@
    that thinks it saw the image will testify about detail no one described."
   (let [assemble (fn [descriptions]
                    (:content (last (prompt/assemble-initial-messages
-                                     {:stable-prompt-messages []
-                                      :initial-user-content "what is on /tmp/shot.png?"
+                                     {:initial-user-content "what is on /tmp/shot.png?"
                                       :vision? false
                                       :user-images [{:path "/tmp/shot.png"
                                                      :media-type "image/png"
@@ -1410,8 +1402,7 @@
           (expect (str/includes? content "PIL"))))
     (it "carries both directives when only some images were described"
         (let [content (:content (last (prompt/assemble-initial-messages
-                                        {:stable-prompt-messages []
-                                         :initial-user-content "look"
+                                        {:initial-user-content "look"
                                          :vision? false
                                          :user-images [{:path "/tmp/a.png"
                                                         :media-type "image/png"
@@ -1430,8 +1421,7 @@
           (expect (str/includes? content "PIL"))))
     (it "never lets a description displace pixels a SIGHTED model can read"
         (let [msgs (prompt/assemble-initial-messages
-                     {:stable-prompt-messages []
-                      :initial-user-content "look"
+                     {:initial-user-content "look"
                       :user-images [{:path "/tmp/shot.png"
                                      :media-type "image/png"
                                      :base64 tiny-png-b64
@@ -1445,94 +1435,66 @@
           (expect (not (str/includes? (pr-str blocks) "a red pixel")))))))
 
 (defdescribe
-  resume-message-cache-stability-test
-  (it "appends each completed turn as its own stable message"
-      (let [entry
-            (fn [n]
-              {:turn n :user-request (str "q" n) :answer (str "a" n) :results []})
-
-            assemble
-            (fn [prior current turn]
-              (prompt/assemble-initial-messages {:stable-prompt-messages [{:role "system"
-                                                                           :content "stable"}]
-                                                 :previous-turn-context prior
-                                                 :turn-context (str "session[\"turn\"] = " turn)
-                                                 :initial-user-content current}))
-
-            t3
-            (assemble [(entry 1) (entry 2)] "q3" 3)
-
-            t4
-            (assemble [(entry 1) (entry 2) (entry 3)] "q4" 4)]
-
-        (expect (= (vec (butlast t3)) (subvec t4 0 (dec (count t3)))))
-        (expect (str/includes? (:content (last t4)) ";; -- TURN-SYSTEM-CONTEXT --"))
-        (expect (str/includes? (:content (last t4)) "session[\"turn\"] = 4"))))
-  (it "renders one checkpoint message without covered Q/A"
-      (let [messages
-            (prompt/assemble-initial-messages
-              {:previous-turn-context [{:checkpoint? true :turns [1 2] :gist "durable state"}]
-               :turn-context "session[\"turn\"] = 3"
-               :initial-user-content "continue"})
-
-            prior
-            (:content (first messages))]
-
-        (expect (= 2 (count messages)))
-        (expect (str/includes? prior "folded turns 1, 2"))
-        (expect (str/includes? prior "durable state"))
-        (expect (not (str/includes? prior "user asked:")))))
-  (it "renders cancelled work as settled history with a model-visible abort marker"
-      (let [block (prompt/previous-turn-context-block [{:turn 1
-                                                        :user-request "inspect and fix"
-                                                        :cancelled? true
-                                                        :results [{:scope "t1/i1/f1"
-                                                                   :src "cat(src)"}]}])]
-        (expect (str/includes? block "cat(src)"))
-        (expect (str/includes? block "<turn_cancelled>"))
-        (expect (str/includes? block "persisted results remain valid; do not repeat settled work"))
-        (expect (not (str/includes? block "INTERRUPTED before it finished")))))
+  prior-turn-messages-test
+  (it "sends a prior turn's request in the shape its own turn sent it"
+      (expect (= (mapv :content
+                       (prompt/assemble-initial-messages {:turn-context "session[\"turn\"] = 3"
+                                                          :initial-user-content "q3"}))
+                 (mapv :content (:request (prompt/prior-turn-messages {:turn 3 :request "q3"}))))))
+  (it "keeps the turn marker when the request is blank"
+      (let [[message :as request] (:request (prompt/prior-turn-messages {:turn 2 :request "  "}))]
+        (expect (= 1 (count request)))
+        (expect (str/includes? (:content message) "session[\"turn\"] = 2"))
+        (expect (not (str/includes? (:content message) "CURRENT-USER-MESSAGE")))))
+  (it "closes a finished turn with its answer, or with nothing when it has none"
+      (expect (= [{:role "assistant" :content "a1"}]
+                 (:closing (prompt/prior-turn-messages {:turn 1 :request "q1" :answer " a1 "}))))
+      (expect (= [] (:closing (prompt/prior-turn-messages {:turn 1 :request "q1"})))))
+  (it "lets a real answer replace any partial answer and notice"
+      (expect
+        (= [{:role "assistant" :content "done"}]
+           (:closing
+             (prompt/prior-turn-messages
+               {:turn 1 :request "q1" :answer "done" :partial-answer "half" :interrupted? true})))))
+  (it "closes cancelled work with a model-visible abort marker"
+      (let [[notice :as closing] (:closing (prompt/prior-turn-messages {:turn 1
+                                                                        :request "inspect and fix"
+                                                                        :cancelled? true}))]
+        (expect (= 1 (count closing)))
+        (expect (= "user" (:role notice)))
+        (expect (str/includes? (:content notice) "<turn_cancelled>"))
+        (expect (str/includes? (:content notice)
+                               "persisted results remain valid; do not repeat settled work"))
+        (expect (not (str/includes? (:content notice) "INTERRUPTED before it finished")))))
   ;; Reported from the app: cancelling a turn also dropped the prose the model
   ;; had already sent, so the next turn resumed as if it had said nothing.
   (it "keeps the partial answer a cancelled turn had already produced"
-      (let [block (prompt/previous-turn-context-block
-                    [{:turn 1
-                      :user-request "inspect and fix"
-                      :cancelled? true
-                      :partial-answer "I patched ChatContent.tsx and was checking the TUI"
-                      :results [{:scope "t1/i1" :src "patch(\"ChatContent.tsx\", edits)"}]}])]
-        (expect (str/includes? block "you answered so far"))
-        (expect (str/includes? block "I patched ChatContent.tsx and was checking the TUI"))
-        (expect (str/includes? block "<turn_cancelled>"))))
-  (it "tells an interrupted turn its answer is partial, not absent"
-      (let [block (prompt/previous-turn-context-block [{:turn 1
-                                                        :user-request "inspect and fix"
-                                                        :interrupted? true
-                                                        :partial-answer
-                                                        "found the cause in loop.clj"
-                                                        :results []}])]
-        (expect (str/includes? block "found the cause in loop.clj"))
-        (expect (str/includes? block "the answer above is only what you had said by then"))
-        (expect (not (str/includes? block "you produced NO answer")))))
-  ;; A live-view record rendered as a blank line, so the next turn could not see
-  ;; that it existed. The note about left-out lines must be visible too.
-  (it "renders live-view records and omitted-line notes of a prior turn"
-      (let [block (prompt/previous-turn-context-block
-                    [{:turn 1
-                      :user-request "watch the run"
-                      :answer "CI passed"
-                      :results [{:scope "t1/i2"
-                                 :omitted? true
-                                 :note "18 earlier lines are not listed (t1/i2 to t1/i19)"}
-                                {:scope "t1/i20"
-                                 :live-record
-                                 "Live-view record filed: run.live.ndjson (attachment id a1)."}
-                                {:scope "t1/i21" :src "watch()"}]}])]
-        (expect (str/includes? block
-                               "  (omitted) 18 earlier lines are not listed (t1/i2 to t1/i19)\n"))
-        (expect (str/includes? block
-                               "  Live-view record filed: run.live.ndjson (attachment id a1).\n"))
-        (expect (not (re-find #"(?m)^ +$" block))))))
+      (let [[said notice] (:closing (prompt/prior-turn-messages
+                                      {:turn 1
+                                       :request "inspect and fix"
+                                       :cancelled? true
+                                       :partial-answer
+                                       "I patched ChatContent.tsx and was checking the TUI"}))]
+        (expect (= {:role "assistant" :content "I patched ChatContent.tsx and was checking the TUI"}
+                   said))
+        (expect (str/includes? (:content notice) "<turn_cancelled>"))))
+  (it "tells an interrupted turn whether its answer is partial or absent"
+      (let [partial
+            (:closing (prompt/prior-turn-messages {:turn 1
+                                                   :request "inspect and fix"
+                                                   :interrupted? true
+                                                   :partial-answer "found the cause in loop.clj"}))
+
+            absent
+            (:closing (prompt/prior-turn-messages
+                        {:turn 1 :request "inspect and fix" :interrupted? true}))]
+
+        (expect (= "found the cause in loop.clj" (:content (first partial))))
+        (expect (str/includes? (:content (second partial))
+                               "the answer above is only what you had said by then"))
+        (expect (not (str/includes? (:content (second partial)) "you produced NO answer")))
+        (expect (= 1 (count absent)))
+        (expect (str/includes? (:content (first absent)) "you produced NO answer")))))
 
 (defdescribe core-prompt-routes-text-edits-to-patch-test
              ;; The verbs exist only if the prompt spends them. Before this, the core

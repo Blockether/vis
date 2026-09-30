@@ -116,37 +116,39 @@
 
                 request
                 (future (prompt/assemble-initial-messages
-                          {:stable-prompt-messages []
-                           :initial-user-content "Summarize this"
+                          {:initial-user-content "Summarize this"
                            :vision? false
                            :user-images (#'iteration/transcribe-turn-attachments
                                          staged
                                          {:hooks {:on-chunk #(deliver chunk %)}})}))]
 
-            (try (expect (= 201 (:status uploaded)))
-                 (expect (= 202 (:status accepted)))
-                 (expect (= true (deref entered 5000 ::timeout)))
-                 (expect (= at/PENDING (:transcription-status (first staged))))
-                 (expect (= :attachment-transcription (:phase (deref chunk 5000 {}))))
-                 (expect (not (realized? request)))
-                 (deliver hold true)
-                 (expect (str/includes? (str (deref request 5000 ::timeout)) words))
-                 (expect (nil? (deref stored 5000 ::timeout)))
-                 (expect (= 1 @calls))
-                 (persistence/db-update-session-turn!
-                   db
-                   tid
-                   {:status :done :content [{:id "summary" :type "prose" :markdown "Summary"}]})
-                 ;; Drop the worker cache: the database, not process memory, must own it.
-                 (at/clear-cache!)
-                 (expect (= words
-                            (get-in (first (state/transcript sid))
-                                    ["attachments" 0 "transcription"])))
-                 (expect (str/includes?
-                           (prompt/previous-turn-context-block
-                             (#'transcript/previous-turn-context {:db-info db :session-id sid} nil))
-                           words))
-                 (finally (deliver hold true) (future-cancel request) (future-cancel stored)))))
+            (try
+              (expect (= 201 (:status uploaded)))
+              (expect (= 202 (:status accepted)))
+              (expect (= true (deref entered 5000 ::timeout)))
+              (expect (= at/PENDING (:transcription-status (first staged))))
+              (expect (= :attachment-transcription (:phase (deref chunk 5000 {}))))
+              (expect (not (realized? request)))
+              (deliver hold true)
+              (expect (str/includes? (str (deref request 5000 ::timeout)) words))
+              (expect (nil? (deref stored 5000 ::timeout)))
+              (expect (= 1 @calls))
+              (persistence/db-update-session-turn!
+                db
+                tid
+                {:status :done :content [{:id "summary" :type "prose" :markdown "Summary"}]})
+              ;; Drop the worker cache: the database, not process memory, must own it.
+              (at/clear-cache!)
+              (expect (= words
+                         (get-in (first (state/transcript sid)) ["attachments" 0 "transcription"])))
+              ;; A later turn reads the recording's words from this turn's request.
+              (expect
+                (str/includes?
+                  (pr-str
+                    (keep (comp :turn/messages second)
+                          (transcript/prior-turn-trailer {:db-info db :session-id sid} nil nil [])))
+                  words))
+              (finally (deliver hold true) (future-cancel request) (future-cancel stored)))))
         (finally (deliver hold true) (at/clear-cache!)))))
   (it
     "persists a late cached result when the recording is reopened"

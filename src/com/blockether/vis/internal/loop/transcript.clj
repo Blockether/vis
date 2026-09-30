@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.loop.transcript
   "Prompt and transcript assembly for provider requests.
 
-   Rebuilds prior-turn context, freezes iteration results into append-only
+   Replays prior turns as conversation, freezes iteration results into append-only
    messages, replays images and preserved reasoning, exposes the single
    `python_execution` tool, places prompt-cache breakpoints, tracks cache reuse,
    and sends an assembled request through the session's LLM client."
@@ -165,129 +165,6 @@
     (let [parts (str/split scope #"/")]
       (when (>= (count parts) 2) (str (nth parts 0) "/" (nth parts 1))))))
 
-(defn- prior-turn-scope-index
-  "Lean per-form scope index for ONE prior turn's `forms`, reshaped by the model's
-   fold summaries — the cross-process RESUME view. Folds are recorded at
-   ITERATION granularity (`tN/iN`) but forms carry FORM scopes (`tN/iN/fN`), so
-   each form scope is normalized via `iter-of-scope` before matching.
-
-   Each fold collapses to ONE breadcrumb, not one per form or covered iteration.
-   Dedup keys on breadcrumb content: a fold with a gist becomes
-   `{:scope tN/iN :gist g}`; a gist-less fold becomes
-   `{:scope tN/iN :dropped? true :note why}`. `:scope` is the first covered
-   iteration. Every uncovered form keeps its `{:scope tN/iN/fN :src …}` line.
-   An open-start (`-tN/iK`) range is resolved against this turn's iterations.
-   Pure."
-  [forms summaries]
-  (let [universe
-        (distinct (keep #(iter-of-scope (:scope %)) forms))
-
-        sums
-        (ctx-engine/supersede-summaries (ctx-engine/expand-through (or summaries []) universe))
-
-        ;; Summary intents are string-keyed because they persist in the ctx blob.
-        ;; A canonical gist-less fold is a drop; there is no second flag.
-        drop-of
-        (into {}
-              (mapcat (fn [s]
-                        (when (nil? (get s "gist"))
-                          (map (fn [sc]
-                                 [sc (get s "note")])
-                               (get s "scopes"))))
-                      sums))
-
-        gist-of
-        (into {}
-              (mapcat (fn [s]
-                        (when-let [gist (get s "gist")]
-                          (map (fn [sc]
-                                 [sc gist])
-                               (get s "scopes"))))
-                      sums))]
-
-    (first
-      (reduce (fn [[acc seen] f]
-                (let [sc
-                      (:scope f)
-
-                      isc
-                      (iter-of-scope sc)]
-
-                  (cond (and isc (contains? drop-of isc)) ; dropped → ONE audit line per reason
-                        (let [note
-                              (get drop-of isc)
-
-                              k
-                              [:dropped note]]
-
-                          (if (contains? seen k)
-                            [acc seen]
-                            [(conj acc
-                                   (cond-> {:scope isc :dropped? true}
-                                     note
-                                     (assoc :note note))) (conj seen k)]))
-                        (and isc (contains? gist-of isc)) ; folded → ONE line per distinct gist
-                        (let [gist
-                              (get gist-of isc)
-
-                              k
-                              [:gist gist]]
-
-                          (if (contains? seen k)
-                            [acc seen]
-                            [(conj acc {:scope isc :gist gist}) (conj seen k)]))
-                        (:live-record f) [(conj acc {:scope sc :live-record (:live-record f)}) seen]
-                        (and sc (or (some? (:stdout f)) (some? (:error f)) (some? (:activity f))))
-                        [(conj acc {:scope sc :src (ctx-engine/compact-src (:src f))}) seen]
-                        :else [acc seen])))
-              [[] #{}]
-              forms))))
-
-(def ^:private prior-turn-source-lines
-  "How many `you ran:` source lines one prior turn keeps in the resume recap."
-  40)
-
-(defn- newest-lines
-  "Keep the NEWEST source lines of ONE prior turn's scope index.
-
-   The recap is how the next turn continues its own work, so the oldest source
-   lines give way first: keeping the first 40 hid the latest work of a turn that
-   stopped on a provider error after hundreds of iterations. Fold breadcrumbs and
-   live-view records always stay because they carry settled state. One
-   `:omitted?` entry stands where the left-out lines were and names their range."
-  [results]
-  (let [sources
-        (filterv :src results)
-
-        omit
-        (- (count sources) (long prior-turn-source-lines))]
-
-    (if (pos? omit)
-      (let [from
-            (:scope (first sources))
-
-            to
-            (:scope (nth sources (dec omit)))
-
-            note
-            {:scope from
-             :omitted? true
-             :note (str omit
-                        (if (= 1 omit) " earlier line is" " earlier lines are")
-                        " not listed (" (if (= from to) from (str from " to " to))
-                        ")" (when (toggles/enabled? "introspection")
-                              "; recover via `await read_session()`"))}]
-
-        (first (reduce (fn [[out seen] r]
-                         (cond (not (:src r)) [(conj out r) seen]
-                               (< seen omit) [(cond-> out
-                                                (zero? seen)
-                                                (conj note)) (inc seen)]
-                               :else [(conj out r) seen]))
-                       [[] 0]
-                       results)))
-      (vec results))))
-
 (defn user-slash-iteration?
   "True for a synthetic slash-command iteration. These rows stay in local
    transcript/audit history but must never enter a later provider request."
@@ -348,239 +225,6 @@
                            (keep (fn [[id rows]]
                                    (when (some #(contains? local-ids (str (:id %))) rows) id)))
                            iterations)}))
-
-(defn previous-turn-context
-  "Prior provider-visible turns as an append-only RESUME sequence, compacted by
-   the persisted fold ledger. Q/A removal keys off EXPLICIT whole-turn intent
-   only (`\"turns\"` stamped by expand-through: a bare `tN` or a range selector
-   spanning the turn) — an enumerated iteration fold that happens to name every
-   iteration keeps the turn's Q/A recap with folded result lines. A turn covered
-   with explicit intent loses its complete Q/A + result recap here; the trailer
-   (`apply-summaries`) owns the ONE durable checkpoint anchored at its folded
-   iterations. A covered turn with NO done iterations has no trailer anchor, so
-   it materializes a minimal `:checkpoint?` entry here instead of vanishing —
-   nothing leaves the wire without a visible tombstone. Broader/newer summaries
-   are resolved first (supersede merges whole-turn intent), so a fold-of-fold
-   cannot leave older Q/A or breadcrumbs beside the checkpoint.
-
-   Synthetic slash turns remain local-only. Oldest→newest; current/running turns
-   are excluded. Cancelled/error/interrupted turns remain even without an answer
-   so settled work and the unfinished boundary survive; nil when no
-   provider-visible representation remains."
-  [environment current-turn-id & [model]]
-  (try
-    (when-let [session-id (:session-id environment)]
-      (let [d (:db-info environment)
-            summaries (some-> (:ctx-atom environment)
-                              deref
-                              (get "session_summaries"))
-            turns (remove #(or (= (str (:id %)) (str current-turn-id)) (= :running (:status %)))
-                    (persistance/db-list-session-turns-meta d session-id))
-            history (provider-history-metadata d (map :id turns))
-            iterations-by-turn (:iterations history)
-            turns (remove #(contains? (:local-turn-ids history) (str (:id %))) turns)
-            turn-attachments (filter #(nil? (:iteration-id %))
-                                     (persistance/db-list-session-attachments-meta d session-id))
-            recordings-by-turn (group-by (comp str :turn-soul-id)
-                                         (filter #(and (attachments/audio-media-type? (:media-type
-                                                                                        %))
-                                                       (not (str/blank? (:transcription %))))
-                                                 turn-attachments))
-            ;; Everything else the human attached to a PRIOR turn (screenshots,
-            ;; documents). Naming the id in the recap is what lets the next turn
-            ;; open it directly instead of re-listing the session's attachments.
-            files-by-turn (group-by (comp str :turn-soul-id)
-                                    (remove #(attachments/audio-media-type? (:media-type %))
-                                      turn-attachments))
-            turn-metadata
-            (mapv (fn [turn]
-                    (let [iterations (filter #(= :done (:status %))
-                                             (get iterations-by-turn (str (:id turn))))]
-                      (assoc turn
-                        :turn (:position turn)
-                        :iterations iterations
-                        :iter-scopes (mapv #(str "t" (:position turn) "/i" (:position %))
-                                           iterations))))
-                  turns)
-            resolved (ctx-engine/supersede-summaries (ctx-engine/expand-through
-                                                       (or summaries [])
-                                                       (mapcat :iter-scopes turn-metadata)
-                                                       (map :turn turn-metadata)))
-            covering-summary (fn [{:keys [turn]}]
-                               (last (filter #(and (contains? (set (get % "turns")) turn)
-                                                   (integer? (get % "issued_turn"))
-                                                   (> (long (get % "issued_turn")) (long turn)))
-                                             resolved)))
-            folded-scopes (into #{} (mapcat #(get % "scopes")) resolved)
-            ;; Iteration bodies of UNFINISHED turns only, in ONE query. A cancelled
-            ;; turn used to reach the next request as `tN/iM (stored iteration)`:
-            ;; its outputs replayed, the code that produced them did not, so the
-            ;; agent re-discovered the repository instead of continuing its own
-            ;; work. An answered turn keeps the cheap placeholder — its recap
-            ;; already carries the answer that settled it.
-            unfinished-bodies (persistance/db-list-iterations
-                                d
-                                (for [{:keys [status iterations iter-scopes] :as metadata}
-                                      turn-metadata
-                                      :when (and (terminal-incomplete-turn-status? status)
-                                                 (not (covering-summary metadata)))
-                                      [iteration scope] (map vector iterations iter-scopes)
-                                      :when (not (contains? folded-scopes scope))]
-
-                                  (:id iteration)))
-            turn-data
-            (into
-              []
-              (keep
-                (fn [{:keys [iterations iter-scopes] :as metadata}]
-                  ;; Covered Q/A and all iteration bodies stay on disk. The existing
-                  ;; fold materializer below decides whether the trailer owns the gist.
-                  (if (covering-summary metadata)
-                    (dissoc metadata :iterations)
-                    (let [turn (persistance/db-read-session-turn d session-id (:id metadata))
-                          unfinished? (terminal-incomplete-turn-status? (:status turn))
-                          ;; An unfinished turn still holds the sticky best-answer it
-                          ;; produced before the cancel. That is not a final answer, so it
-                          ;; rides beside the cancellation boundary as the partial one
-                          ;; instead of being dropped.
-                          answer-md (answer-markdown (:content turn))
-                          answer (when-not unfinished? answer-md)
-                          ;; An ERROR turn files the failure itself as its content. That
-                          ;; is not prose the model offered the user, so it never counts
-                          ;; as a partial answer.
-                          partial-answer (when (and unfinished?
-                                                    (not-any? #(= "error" (get % "type"))
-                                                              (:content turn)))
-                                           (not-empty (str/trim (str answer-md))))
-                          visible-ids (keep (fn [[iteration scope]]
-                                              (when-not (contains? folded-scopes scope)
-                                                (:id iteration)))
-                                            (map vector iterations iter-scopes))
-                          artifacts (persistance/db-list-iterations-attachments-meta d visible-ids)
-                          ;; What the iteration actually RAN, one line per form. A slash
-                          ;; iteration stays local-only and an unread body keeps the bare
-                          ;; stored-iteration location.
-                          iteration-sources
-                          (fn [iteration scope]
-                            (let [body (get unfinished-bodies (str (:id iteration)))]
-                              (or (when-not (user-slash-iteration? body)
-                                    (seq (keep #(not-empty (str/trim (str (:src %))))
-                                               (:forms body))))
-                                  [(str scope " (stored iteration)")])))
-                          forms (into []
-                                      (mapcat (fn [[iteration scope]]
-                                                (concat
-                                                  (for [src (iteration-sources iteration scope)]
-                                                    {:scope scope :stdout "" :src src})
-                                                  (for [att (get artifacts (str (:id iteration)))
-                                                        :when (model-live-record? att)]
-
-                                                    {:scope scope
-                                                     :live-record (live-record-context-line
-                                                                    att)}))))
-                                      (map vector iterations iter-scopes))]
-
-                      (when (or unfinished? (not (str/blank? answer)))
-                        (cond-> {:turn (:turn metadata)
-                                 :user-request
-                                 (str (:user-request turn)
-                                      (apply str
-                                        (for [recording (get recordings-by-turn (str (:id turn)))]
-                                          (str "\n\nAttached recording: " (:filename recording)
-                                               " (attachment id: " (:id recording)
-                                               ")" (prompt/recording-transcript (:transcription
-                                                                                  recording)
-                                                                                nil))))
-                                      (apply str
-                                        (for [att (get files-by-turn (str (:id turn)))]
-                                          (str "\n\nAttached file: "
-                                               (:filename att)
-                                               " (attachment id: "
-                                               (:id att)
-                                               ")"))))
-                                 :answer answer
-                                 :interrupted? (interrupted-turn-status? (:status turn))
-                                 :cancelled? (= :cancelled (:status turn))
-                                 :forms forms
-                                 :iter-scopes iter-scopes}
-                          partial-answer
-                          (assoc :partial-answer partial-answer)))))))
-              turn-metadata)
-            ;; Blockether/vis#174: user requests can be dense code, not prose.
-            ;; Price the rendered recap in the same tokenizer units as iteration weights.
-            _ (when-let [ca (:ctx-atom environment)]
-                (try (let [model (or model "unknown")
-                           priming (svar/count-messages model [])]
-
-                       (swap! ca assoc
-                         "engine_turn_weights"
-                         (into {}
-                               (map (fn [{:keys [turn] :as entry}]
-                                      [turn
-                                       (- (svar/count-messages model
-                                                               [{:role "user"
-                                                                 :content
-                                                                 (prompt/previous-turn-context-block
-                                                                   [entry])}])
-                                          priming)]))
-                               turn-data)))
-                     (catch Exception _ nil)))]
-
-        (some->>
-          (reduce
-            (fn [out
-                 {:keys [turn user-request answer partial-answer interrupted? cancelled? forms
-                         iter-scopes]
-                  :as td}]
-              (if-let [summary (covering-summary td)]
-                (if (seq iter-scopes)
-                  ;; The trailer's apply-summaries path owns the ONE durable
-                  ;; breadcrumb (anchored at this turn's folded iterations).
-                  ;; Removing the complete Q/A representation here avoids
-                  ;; echoing that checkpoint in a second wire location.
-                  out
-                  ;; No done iterations → no trailer anchor exists anywhere.
-                  ;; Materialize the checkpoint HERE so the fold never
-                  ;; erases a turn without a visible tombstone. Consecutive
-                  ;; turns covered by the SAME summary share one entry.
-                  (let [prev (peek out)]
-                    (if (and (:checkpoint? prev) (identical? (:summary prev) summary))
-                      (conj (pop out) (update prev :turns conj turn))
-                      (conj out
-                            {:checkpoint? true
-                             :summary summary
-                             :turns [turn]
-                             :gist (or (some-> (get summary "gist")
-                                               str
-                                               str/trim
-                                               not-empty)
-                                       (str "(dropped — raw turn data remains in session storage"
-                                            (when (toggles/enabled? "introspection")
-                                              "; recover via `await read_session()`")
-                                            ")"))}))))
-                (conj out
-                      (cond-> {:turn turn
-                               :user-request user-request
-                               :answer answer
-                               :interrupted? interrupted?
-                               :results (newest-lines (prior-turn-scope-index forms resolved))}
-                        partial-answer
-                        (assoc :partial-answer partial-answer)
-
-                        cancelled?
-                        (assoc :cancelled? true)))))
-            []
-            turn-data)
-          not-empty
-          (mapv #(dissoc % :summary)))))
-    (catch Throwable t
-      (tel/log! {:level :warn
-                 :id ::previous-turn-context-failed
-                 :data {:session-id (:session-id environment)
-                        :session-turn-id current-turn-id
-                        :error (ex-message t)}}
-                "Could not load previous turn context; continuing without Q/A carry")
-      nil)))
 
 (defn previous-request-usage
   "Return the latest persisted provider request before `current-turn-id`.
@@ -1170,7 +814,7 @@
 
 (defn- compatible-preserved-thinking-trailer-iters
   "Keep only explicitly replayable iterations whose provider-native thinking is
-   compatible with the next provider call. Cross-turn seeds opt out; fresh
+   compatible with the next provider call. Prior-turn steps opt out; fresh
    live-turn iterations opt in. Missing ownership is never replay consent."
   [trailer-iters target]
   (let [{target-provider :provider target-model :model} target]
@@ -1189,95 +833,322 @@
   [rec]
   (or (:iteration-scope rec) (some iter-of-scope (keep :scope (:forms-vec rec)))))
 
+(def ^:private collapsed-provenance-keys
+  "What a collapsed trailer entry keeps: where it came from, never what it said.
+   Re-compaction needs the turn keys, and an exact prior-request prefix needs the
+   replay flag to keep hiding the entry."
+  [:preserved-thinking/replay? :turn/boundary :turn/position :turn/current?])
+
 (defn apply-summaries
   "Compact `trailer-iters` using `fold_session` intents, releasing covered payloads at
    iteration granularity. A summary carries concrete `scopes`, an optional
    `gist`, and its owning `at_turn`; a gist-less intent is a drop. Range intents
-   are resolved by `expand-through` against the trailer's iteration scopes.
+   are resolved by `expand-through` against the trailer's iteration scopes and
+   the turns its boundary entries name.
 
    Every covered iteration collapses: its output and assistant/tool-result pair
-   leave memory as well as the wire. The earliest covered iteration receives one synthetic form
-   containing the gist or a dropped marker. Pure and deterministic; persisted
-   iteration records are untouched. Real compaction, not presentation."
+   leave memory as well as the wire. Explicit whole-turn intent (`turns`) also
+   collapses that turn's request and closing entries, but only for turns before
+   the intent's owner: a turn's own request and answer survive a fold issued
+   during it. The earliest covered entry receives one synthetic form containing
+   the gist or a dropped marker. Pure and deterministic; persisted iteration
+   records are untouched. Real compaction, not presentation."
   [trailer-iters summaries]
   (if (empty? summaries)
     (vec trailer-iters)
     (let [iter-scope-of
           iteration-record-scope
 
-          ;; Resolve ranges against this trailer, then keep only scopes owned by
-          ;; the intent's canonical at_turn. A turn may fold its own settled work
-          ;; and every prior turn, never a future turn; unstamped intents own nothing.
+          boundary-turn
+          (fn [rec]
+            (when (:turn/boundary rec) (:turn/position rec)))
+
+          ;; Resolve ranges against this trailer, then keep only what the intent's
+          ;; canonical at_turn owns. A turn may fold its own settled work and every
+          ;; prior turn, never a future turn; unstamped intents own nothing. Whole
+          ;; turns are owned strictly before at_turn.
           scope-turn
           (fn [scope]
             (or (first (ctx-engine/scope-key scope)) (ctx-engine/turn-key scope)))
 
           summaries
-          (->> (ctx-engine/expand-through summaries (keep iter-scope-of (map second trailer-iters)))
-               (keep (fn [summary]
-                       (let [owner
-                             (get summary "at_turn")
+          (->> (ctx-engine/expand-through summaries
+                                          (keep (comp iter-scope-of second) trailer-iters)
+                                          (distinct (keep (comp boundary-turn second)
+                                                          trailer-iters)))
+               (keep
+                 (fn [summary]
+                   (let [owner
+                         (get summary "at_turn")
 
-                             scopes
-                             (when (integer? owner)
-                               (into #{}
-                                     (filter (fn [scope]
-                                               (when-let [turn (scope-turn scope)]
-                                                 (<= (long turn) (long owner)))))
-                                     (get summary "scopes")))]
+                         scopes
+                         (when (integer? owner)
+                           (into #{}
+                                 (filter (fn [scope]
+                                           (when-let [turn (scope-turn scope)]
+                                             (<= (long turn) (long owner)))))
+                                 (get summary "scopes")))
 
-                         (when (seq scopes) (assoc summary "scopes" scopes)))))
+                         turns
+                         (when (integer? owner)
+                           (into #{} (filter #(< (long %) (long owner))) (get summary "turns")))]
+
+                     (when (or (seq scopes) (seq turns))
+                       (assoc summary
+                         "scopes" scopes
+                         "turns" turns)))))
                (ctx-engine/supersede-summaries))
+
+          covered?
+          (fn [scopes turns rec]
+            (if-let [turn (boundary-turn rec)]
+              (contains? turns turn)
+              (contains? scopes (iter-scope-of rec))))
 
           summarized
           (into #{} (mapcat #(get % "scopes")) summaries)
 
-          ; set of "tN/iN"
-          ;; summary → earliest trailer index whose iteration scope it names
+          folded-turns
+          (into #{} (mapcat #(get % "turns")) summaries)
+
+          ;; summary → earliest trailer index it covers
           anchors
-          (reduce
-            (fn [m s]
-              (if-let [idx (some (fn [[i [_ rec]]]
-                                   (when (contains? (set (get s "scopes")) (iter-scope-of rec)) i))
-                                 (map-indexed vector trailer-iters))]
-                (update m
-                        idx
-                        (fnil conj [])
-                        {:gist (get s "gist")
-                         :drop? (nil? (get s "gist"))
-                         :summary-iters (vec (sort (get s "scopes")))
-                         :note (get s "note")})
-                m))
-            {}
-            summaries)]
+          (reduce (fn [m s]
+                    (let [scopes
+                          (set (get s "scopes"))
+
+                          turns
+                          (set (get s "turns"))]
+
+                      (if-let [idx (some (fn [[i [_ rec]]]
+                                           (when (covered? scopes turns rec) i))
+                                         (map-indexed vector trailer-iters))]
+                        (update m
+                                idx
+                                (fnil conj [])
+                                {:gist (get s "gist")
+                                 :drop? (nil? (get s "gist"))
+                                 :summary-iters (vec (sort scopes))
+                                 :summary-turns (vec (sort turns))})
+                        m)))
+                  {}
+                  summaries)]
 
       (vec
-        (map-indexed
-          (fn [i [pos rec]]
-            (let [collapsed?
-                  (contains? summarized (iter-scope-of rec))
+        (map-indexed (fn [i [pos rec]]
+                       (let [collapsed?
+                             (covered? summarized folded-turns rec)
 
-                  gists
-                  (get anchors i)
+                             gists
+                             (get anchors i)
 
-                  gist-forms
-                  (when gists
-                    (mapv (fn [g]
-                            {:scope :summary
-                             :summary? true
-                             :summary-gist (:gist g)
-                             :summary-drop? (:drop? g)
-                             :summary-iters (:summary-iters g)
-                             :summary-note (:note g)})
-                          gists))]
+                             gist-forms
+                             (when gists
+                               (mapv (fn [g]
+                                       {:scope :summary
+                                        :summary? true
+                                        :summary-gist (:gist g)
+                                        :summary-drop? (:drop? g)
+                                        :summary-iters (:summary-iters g)
+                                        :summary-turns (:summary-turns g)})
+                                     gists))]
 
-              [pos
-               (cond-> (if collapsed?
-                         {:iteration-scope (iter-scope-of rec) :collapsed? true :forms-vec []}
-                         rec)
-                 gist-forms
-                 (assoc :forms-vec (vec gist-forms)))]))
-          trailer-iters)))))
+                         [pos
+                          (cond-> (if collapsed?
+                                    (cond-> (assoc (select-keys rec collapsed-provenance-keys)
+                                              :collapsed? true
+                                              :forms-vec [])
+                                      (iter-scope-of rec)
+                                      (assoc :iteration-scope (iter-scope-of rec)))
+                                    rec)
+                            gist-forms
+                            (assoc :forms-vec gist-forms))]))
+                     trailer-iters)))))
+
+(defn- turn-boundary-messages
+  "Request and closing messages of prior turns, keyed by turn id. `turns` is a
+   seq of `[turn-id position]` pairs.
+
+   The request names every file the human attached to that turn by attachment
+   id, so a later turn can open it directly instead of listing the session's
+   attachments. A recording also carries its transcript. An unfinished turn
+   closes with what the model had said by then and an explicit notice."
+  [db session-id turns]
+  (when (seq turns)
+    (let [attached (group-by (comp str :turn-soul-id)
+                             (filter #(nil? (:iteration-id %))
+                                     (persistance/db-list-session-attachments-meta db session-id)))]
+      (into {}
+            (map
+              (fn [[turn-id position]]
+                (let [turn (persistance/db-read-session-turn db session-id turn-id)
+                      status (:status turn)
+                      unfinished? (terminal-incomplete-turn-status? status)
+                      answer (answer-markdown (:content turn))
+                      {recordings true files false}
+                      (group-by #(boolean (attachments/audio-media-type? (:media-type %)))
+                                (get attached (str turn-id)))]
+
+                  [(str turn-id)
+                   (prompt/prior-turn-messages
+                     {:turn position
+                      :request (str (:user-request turn)
+                                    (apply str
+                                      (for [recording recordings
+                                            :when (not (str/blank? (:transcription recording)))]
+
+                                        (str "\n\nAttached recording: " (:filename recording)
+                                             " (attachment id: " (:id recording)
+                                             ")" (prompt/recording-transcript (:transcription
+                                                                                recording)
+                                                                              nil))))
+                                    (apply str
+                                      (for [file files]
+                                        (str "\n\nAttached file: "
+                                             (:filename file)
+                                             " (attachment id: "
+                                             (:id file)
+                                             ")"))))
+                      :answer (when-not unfinished? answer)
+                      ;; An ERROR turn files the failure itself as its content. That is
+                      ;; not prose the model offered the user, so it never counts as a
+                      ;; partial answer.
+                      :partial-answer
+                      (when (and unfinished? (not-any? #(= "error" (get % "type")) (:content turn)))
+                        answer)
+                      :interrupted? (interrupted-turn-status? status)
+                      :cancelled? (= :cancelled status)})])))
+            turns))))
+
+(defn- replay-tool-call-id
+  "Wire-safe tool-call id for call `k` of the stored iteration `scope`. A stored id
+   belongs to the provider that served the call; a replay may go to another one."
+  [scope k]
+  (str "vis_" (str/replace (str scope) "/" "_") "_" k))
+
+(defn- settled-step
+  "One stored iteration of a prior turn as a trailer entry. Its python calls are
+   restated as one assistant message: the model's prose, then one `tool_use` per
+   call. Forms and live-view records are re-keyed to the same calls, so each
+   `tool_result` answers its `tool_use`. A form of another tool keeps its output
+   without a call. A slash iteration or an unread body replays nothing."
+  [rec body attachments]
+  (let [forms
+        (if (or (nil? body) (user-slash-iteration? body)) [] (vec (:forms body)))
+
+        call-ids
+        (into []
+              (comp (filter #(contains? #{nil "python_execution"}
+                                        (some-> (:vis/tool-name %)
+                                                name)))
+                    (keep :svar/tool-call-id)
+                    (distinct))
+              forms)
+
+        id-of
+        (zipmap call-ids (map #(replay-tool-call-id (:iteration-scope rec) %) (range)))
+
+        calls
+        (mapv (fn [id]
+                {:id (id-of id)
+                 :name "python_execution"
+                 :input {"code" (str/join "\n\n"
+                                          (keep #(when (= id (:svar/tool-call-id %))
+                                                   (not-empty
+                                                     (str (or (:src %) (:source %) (:code %)))))
+                                                forms))}})
+              call-ids)
+
+        rekey
+        (fn [m k]
+          (if-let [id (id-of (get m k))]
+            (assoc m k id)
+            (dissoc m k)))
+
+        prose
+        (some-> (:assistant-prose body)
+                str
+                str/trim
+                not-empty)]
+
+    (cond-> (assoc rec
+              :forms-vec (mapv #(rekey % :svar/tool-call-id) forms)
+              :attachments (mapv #(rekey % :tool-call-id) attachments))
+      (seq calls)
+      (assoc :tool-calls
+        calls :assistant-message
+        {:role "assistant"
+         :content
+         (into (if prose [{:type "text" :text prose}] []) (map #(assoc % :type "tool_use")) calls)})
+
+      (:council-input body)
+      (assoc :council-input (:council-input body)))))
+
+(defn prior-turn-trailer
+  "The conversation before the current turn as trailer entries, oldest first:
+   for each prior turn its request, its settled steps and its closing answer.
+
+   Fold summaries apply before any iteration body, artifact or turn row is read,
+   so a collapsed entry costs no read. Synthetic slash turns stay local-only;
+   the current turn, running turns and later turns are excluded. Nothing here
+   replays provider-native reasoning (`:preserved-thinking/replay? false`)."
+  [environment current-turn-id turn-position summaries]
+  (when-let [session-id (:session-id environment)]
+    (let [db (:db-info environment)
+          turns (remove #(or (= (str (:id %)) (str current-turn-id))
+                             (= :running (:status %))
+                             (and turn-position (<= (long turn-position) (long (:position %)))))
+                  (persistance/db-list-session-turns-meta db session-id))
+          history (provider-history-metadata db (map :id turns))
+          turns (remove #(contains? (:local-turn-ids history) (str (:id %))) turns)
+          boundary (fn [turn edge]
+                     [(str "t" (:position turn) "/" (name edge))
+                      {:turn/boundary edge
+                       :turn/position (:position turn)
+                       :turn/id (:id turn)
+                       :preserved-thinking/replay? false}])
+          step (fn [turn iteration]
+                 [(str (:id iteration))
+                  {:iteration-id (:id iteration)
+                   :iteration-scope (str "t" (:position turn) "/i" (:position iteration))
+                   :llm-provider (:provider iteration)
+                   :llm-model (:model iteration)
+                   :preserved-thinking/replay? false}])
+          compacted (apply-summaries (into []
+                                           (mapcat (fn [turn]
+                                                     (concat
+                                                       [(boundary turn :request)]
+                                                       (for [iteration (get (:iterations history)
+                                                                            (str (:id turn)))
+                                                             :when (= :done (:status iteration))]
+
+                                                         (step turn iteration))
+                                                       [(boundary turn :closing)])))
+                                           turns)
+                                     summaries)
+          visible (into [] (comp (map second) (remove :collapsed?)) compacted)
+          step-ids (keep :iteration-id visible)
+          bodies (persistance/db-list-iterations db step-ids)
+          artifacts (persistance/db-list-iterations-attachments-meta db step-ids)
+          messages (turn-boundary-messages db
+                                           session-id
+                                           (distinct (keep #(when (:turn/boundary %)
+                                                              [(:turn/id %) (:turn/position %)])
+                                                           visible)))]
+
+      (mapv (fn [[pos rec :as entry]]
+              (cond (:collapsed? rec) entry
+                    (:turn/boundary rec)
+                    [pos
+                     (assoc rec
+                       :turn/messages
+                       (get-in messages [(str (:turn/id rec)) (:turn/boundary rec)] []))]
+                    :else [pos
+                           (settled-step rec
+                                         (get bodies (str (:iteration-id rec)))
+                                         (mapv #(assoc % ::attachment-db db)
+                                               (get artifacts (str (:iteration-id rec)))))]))
+            compacted))))
 
 (defn- error->display
   "LLM-legible rendering of a form `:error` for the model wire. The human
@@ -1380,19 +1251,17 @@
                     (:blocks iter-record)))
 
         ;; Synthetic forms injected by apply-summaries render first as one Python
-        ;; comment naming the replaced scopes. A gist-less fold uses the dropped
-        ;; label; a fold with a gist carries its takeaway:
+        ;; comment naming the replaced scopes; whole folded turns read `tN/*`. A
+        ;; gist-less fold uses the dropped label; a fold with a gist carries its
+        ;; takeaway:
         ;;   # ⋯ folded t1/i1-i2 · <gist>
-        ;;   # ⋯ dropped t1/i3 · <note>
+        ;;   # ⋯ dropped t1/*
         summary-lines
         (keep (fn [f]
                 (when (:summary? f)
                   (let [at
-                        (or (ctx-engine/pretty-scopes (:summary-iters f) nil)
+                        (or (ctx-engine/pretty-scopes (:summary-iters f) nil (:summary-turns f))
                             (str/join "," (:summary-iters f)))
-
-                        note
-                        (:summary-note f)
 
                         g
                         (:summary-gist f)]
@@ -1400,7 +1269,6 @@
                     (str "# ⋯ "
                          (if (:summary-drop? f) "dropped " "folded ")
                          at
-                         note
                          (when g (str " · " g))))))
               forms)
 
@@ -1423,8 +1291,8 @@
                 :else (stdout-wire f)))
 
         ;; Output alone is unattributable once the assistant message that carried
-        ;; the code is gone (a cancelled turn's cross-turn seed, a dropped
-        ;; thinking replay). `:echo-source?` puts each form's own source back in
+        ;; the code is gone (a step that errored before that message landed, a
+        ;; dropped thinking replay). `:echo-source?` puts each form's own source back in
         ;; front of its output, so the next request continues the work instead of
         ;; re-running it to find out what it already did.
         form-line
@@ -1804,13 +1672,11 @@
    (or nothing but thinking), its results degrade to a PLAIN TEXT user
    message (a tool_result with no answering tool_use is a wire error).
 
-   Cross-turn seeds (`:preserved-thinking/replay? false`) from completed turns
-   stay fully excluded when the canonical recap carries their outcome. An exact
-   prior-request prefix excludes them one layer earlier as well; otherwise the
-   carried request and the seeded trailer would duplicate the same turn. Seeds
-   from terminal incomplete turns replay only their settled results as plain text
-   (never opaque thinking or orphaned tool_result blocks), preserving
-   cancellation/error continuity without duplicating successful-turn evidence.
+   Prior turns ride in the same trailer. Each turn's request and closing
+   boundaries carry its user and answer messages, and its settled steps
+   (`:preserved-thinking/replay? false`) replay their python calls and results
+   without provider-native thinking. An exact prior-request prefix hides them
+   one layer earlier, because that prefix already carries them.
 
    Compatible entries route through `preserved-thinking-replay-messages`
    so the oversized-chain telemetry stays.
@@ -1894,29 +1760,15 @@
 
              (cond
                ;; Collapse wins over provenance: a `fold_session` that covered
-               ;; this iteration removes its whole assistant +
-               ;; tool_result pair AND its generated image. The figure's vision
-               ;; visibility TRACKS its iteration's textual visibility (one
-               ;; invariant), so a folded step keeps only its one-line gist
-               ;; (plain text) — real compaction, bytes and all. Checked BEFORE
-               ;; the cross-turn seed branch so a folded seed also drops its
-               ;; image; otherwise a prior-turn figure would be byte-immune to
-               ;; compaction and re-billed to the vision model every turn.
+               ;; this entry removes its whole assistant + tool_result pair, its
+               ;; generated image, or its request and answer messages. The
+               ;; figure's vision visibility TRACKS its iteration's textual
+               ;; visibility (one invariant), so a folded step keeps only its
+               ;; one-line gist (plain text) — real compaction, bytes and all.
                (:collapsed? iter-rec) (if results [results] [])
-               ;; Cross-turn seed (NOT collapsed): never replay opaque thinking.
-               ;; A terminal incomplete turn has no reliable answer summary, so
-               ;; preserve its settled outputs as ordinary text; removing
-               ;; :tool-calls prevents orphaned tool_result blocks. Successful
-               ;; turns already carry their outcome in the prior-turn recap and
-               ;; continue to emit only any previously-unwired image artifacts.
-               (false? (:preserved-thinking/replay? iter-rec))
-               (if (terminal-incomplete-turn-status? (:cross-turn/turn-status iter-rec))
-                 (if-let [textual (iteration-results-message (-> iter-rec
-                                                                 (dissoc :tool-calls)
-                                                                 (assoc :echo-source? true)))]
-                   (+img [textual])
-                   (vec img))
-                 (vec img))
+               ;; A turn boundary is the conversation itself: the user message
+               ;; that opened a prior turn, or the answer that closed it.
+               (:turn/boundary iter-rec) (vec (:turn/messages iter-rec))
                ;; A failed tool has a message instead of another copy of its
                ;; model-authored code; retain any successful output as text.
                failed? (if results (+img [results]) (vec img))
@@ -1999,10 +1851,18 @@
                [pos (messages-wire-tokens model msgs)]))
         (conversation-suffix-groups wire-iters replay-target)))
 
+(defn- estimated-boundary-tokens
+  "Tokenizer-backed fallback for a turn boundary before its model is resolved."
+  ^long [rec]
+  (long (svar/count-tokens "unknown"
+                           (str/join "\n" (map (comp str :content) (:turn/messages rec))))))
+
 (defn stamp-iter-universe!
   "Record the raw iteration universe while pricing only `wire-iters` — the current
-   provider-visible projection. A resolved model tokenizes each iteration's rendered
-   messages; without one, weights degrade to `estimated-iteration-tokens`."
+   provider-visible projection. A resolved model tokenizes each entry's rendered
+   messages; without one, weights degrade to tokenizer estimates. A prior turn's
+   request and closing messages price as its `engine_turn_weights` entry, so a
+   whole-turn fold knows what it removes beyond the turn's steps."
   ([ctx-atom trailer-iters] (stamp-iter-universe! ctx-atom trailer-iters nil nil))
   ([ctx-atom trailer-iters wire-iters] (stamp-iter-universe! ctx-atom trailer-iters wire-iters nil))
   ([ctx-atom trailer-iters wire-iters pricing]
@@ -2017,13 +1877,6 @@
                        (distinct))
                  trailer-iters)
 
-           ;; Price the visible projection: already-folded and completed off-wire seeds weigh zero;
-           ;; incomplete seeds retain weight because their settled results replay.
-           off-wire-seed?
-           (fn [rec]
-             (and (false? (:preserved-thinking/replay? rec))
-                  (not (terminal-incomplete-turn-status? (:cross-turn/turn-status rec)))))
-
            visible
            (or wire-iters trailer-iters)
 
@@ -2033,24 +1886,43 @@
            measured
            (when model (measured-iteration-tokens model (:replay-target pricing) visible))
 
-           ;; What a fold of this iteration REMOVES from the wire. An already-collapsed
+           ;; What a fold of this entry REMOVES from the wire. An already-collapsed
            ;; record has nothing left to remove — the render would still price its gist
            ;; line — so it prices ZERO rather than recharging what an earlier fold freed.
-           weights
-           (persistent! (reduce (fn [m [[_ raw-rec] [pos wire-rec]]]
-                                  (if-let [sc (scope-of raw-rec)]
-                                    (let [toks (cond (or (:collapsed? wire-rec)
-                                                         (off-wire-seed? raw-rec)
-                                                         (off-wire-seed? wire-rec))
-                                                     0
-                                                     measured (long (get measured pos 0))
-                                                     :else (estimated-iteration-tokens wire-rec))]
-                                      (assoc! m sc (+ (long (get m sc 0)) toks)))
-                                    m))
-                                (transient {})
-                                (map vector trailer-iters visible)))]
+           weigh
+           (fn [pos wire-rec estimate]
+             (cond (:collapsed? wire-rec) 0
+                   measured (long (get measured pos 0))
+                   :else (long (estimate wire-rec))))
 
-       (swap! ctx-atom assoc "engine_iter_universe" uni "engine_iter_weights" weights)))))
+           [weights turn-weights]
+           (reduce (fn [[weights turn-weights] [[_ raw-rec] [pos wire-rec]]]
+                     (let [sc
+                           (scope-of raw-rec)
+
+                           turn
+                           (when (and (:turn/boundary raw-rec) (not (:turn/current? raw-rec)))
+                             (:turn/position raw-rec))]
+
+                       (cond sc [(assoc! weights
+                                         sc
+                                         (+ (long (get weights sc 0))
+                                            (long (weigh pos wire-rec estimated-iteration-tokens))))
+                                 turn-weights]
+                             turn [weights
+                                   (assoc! turn-weights
+                                           turn
+                                           (+ (long (get turn-weights turn 0))
+                                              (long
+                                                (weigh pos wire-rec estimated-boundary-tokens))))]
+                             :else [weights turn-weights])))
+                   [(transient {}) (transient {})]
+                   (map vector trailer-iters visible))]
+
+       (swap! ctx-atom assoc
+         "engine_iter_universe" uni
+         "engine_iter_weights" (persistent! weights)
+         "engine_turn_weights" (persistent! turn-weights))))))
 
 ;; ── The model-facing surface: ONE tool ───────────────────────────────────────
 ;; `python_execution` is the only call the provider ever sees. Every capability is
@@ -2491,8 +2363,8 @@
 (def ^:private PROMPT_CACHE_REUSE_FRESH_MS
   "How long a same-route prefix is expected to remain resident in the provider
    cache on the DEFAULT 5-minute tier. It gates exact cross-turn restoration and
-   labels continuity samples; a stale request falls back to the compact canonical
-   recap instead of replaying a large cold prefix."
+   labels continuity samples; a stale request falls back to the canonical
+   conversation instead of replaying a large cold prefix."
   300000)
 
 (def ^:private EXTENDED_PROMPT_CACHE_REUSE_FRESH_MS
@@ -2817,7 +2689,7 @@
    A hit preserves the complete final request byte-for-byte, then appends the
    accepted assistant answer and this turn's user message. Same route, adjacent
    turn, fresh cache residency, unchanged fold ledger, and an identical stable
-   system prefix are all required; canonical recap assembly owns every miss."
+   system prefix are all required; the canonical conversation owns every miss."
   [state provider model prompt-cache-context turn-position summaries stable-messages turn-messages]
   (when (and state provider (some? model) (integer? turn-position))
     (let [entry
@@ -2862,11 +2734,12 @@
   (reset! base-atom (prompt-message-base @base-atom summaries canonical-messages-fn)))
 
 (defn conversation-trailer-for-base
-  "Hide cross-turn seeds already present in an exact carried request prefix."
+  "Hide what an exact carried request prefix already holds: every prior turn's
+   request, steps and answer, and the current turn's own request."
   [trailer-iters resumed?]
   (if resumed?
     (filterv (fn [[_ iter-rec]]
-               (not (false? (:preserved-thinking/replay? iter-rec))))
+               (not (or (false? (:preserved-thinking/replay? iter-rec)) (:turn/boundary iter-rec))))
       (or trailer-iters []))
     (vec (or trailer-iters []))))
 
@@ -2886,9 +2759,8 @@
   (fn [before after]
     (let [project (fn [ctx]
                     (let [summaries (get ctx "session_summaries")
-                          base (prompt-message-base @message-base-atom
-                                                    summaries
-                                                    #(canonical-messages-fn ctx))]
+                          base
+                          (prompt-message-base @message-base-atom summaries canonical-messages-fn)]
 
                       (conversation-messages
                         base

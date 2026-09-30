@@ -453,8 +453,7 @@
                      #(vd/describe-attachments (mixed-fleet) "what is on the screen?" [att]))
 
           msgs
-          (prompt/assemble-initial-messages {:stable-prompt-messages []
-                                             :initial-user-content "what is on /tmp/shot.png?"
+          (prompt/assemble-initial-messages {:initial-user-content "what is on /tmp/shot.png?"
                                              :vision? false
                                              :user-images [att]
                                              :image-descriptions result})
@@ -479,8 +478,7 @@
                      #(vd/describe-attachments (blind-fleet) "what is on the screen?" [att]))
 
           user
-          (last (prompt/assemble-initial-messages {:stable-prompt-messages []
-                                                   :initial-user-content "look"
+          (last (prompt/assemble-initial-messages {:initial-user-content "look"
                                                    :vision? false
                                                    :user-images [att]
                                                    :image-descriptions result}))]

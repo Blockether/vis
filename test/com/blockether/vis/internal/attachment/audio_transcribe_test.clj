@@ -67,8 +67,7 @@
   "The user message `attachments` produce on a NON-vision wire — the manifest the
    model actually reads."
   [attachments]
-  (:content (last (prompt/assemble-initial-messages {:stable-prompt-messages []
-                                                     :initial-user-content "listen to this"
+  (:content (last (prompt/assemble-initial-messages {:initial-user-content "listen to this"
                                                      :vision? false
                                                      :user-images attachments}))))
 

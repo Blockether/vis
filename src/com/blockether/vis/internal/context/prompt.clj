@@ -48,76 +48,60 @@
 
 ;; Initial messages
 
-(defn previous-turn-context-block
-  "Render prior-turn RESUME entries. Normal entries retain their stable turn
-   number and Q/A/result index. Cancelled turns retain settled work plus an
-   explicit model-visible cancellation boundary. A `:checkpoint?` entry is the
-   sole materialized replacement for all complete turns covered by one broader
-   fold."
-  [turns]
-  (when (seq turns)
-    (let
-      [render-turn
-       (fn [i
-            {:keys [turn user-request answer partial-answer interrupted? cancelled? results
-                    checkpoint? turns gist]}]
-         (if checkpoint?
-           (str "# ⋯ folded turn" (when (< 1 (count turns)) "s")
-                " " (str/join ", " turns)
-                "\n" gist)
-           (let [req (some-> user-request
-                             str
-                             str/trim
-                             not-empty)
-                 ans (some-> answer
-                             str
-                             str/trim
-                             not-empty)
-                 ;; What the model had already said when the turn was cut short. It
-                 ;; is not an answer — it is the last thing it told the user before
-                 ;; the cancel, and without it the next turn starts from nothing.
-                 part (some-> partial-answer
-                              str
-                              str/trim
-                              not-empty)
-                 turn-no (or turn (inc (long i)))]
+(defn prior-turn-messages
+  "Provider messages that open and close one prior turn of the conversation.
 
-             (when (or req ans part (seq results))
-               (str
-                 "# ── turn "
-                 turn-no
-                 " ──\n"
-                 (when req (str "user asked:\n" req "\n"))
-                 (when (seq results)
-                   (str "you ran:\n"
-                        (str/join "\n"
-                                  (map (fn [r]
-                                         (str "  "
-                                              (cond (:gist r) (str "(folded) " (:gist r))
-                                                    (:dropped? r) (str "(dropped)"
-                                                                       (when (:note r)
-                                                                         (str " " (:note r))))
-                                                    (:omitted? r) (str "(omitted) " (:note r))
-                                                    (:live-record r) (:live-record r)
-                                                    :else (:src r))))
-                                       results))
-                        "\n"))
-                 (when ans (str "you answered:\n" ans))
-                 (when part
-                   (str "you answered so far (partial — this turn ended before you finished):\n"
-                        part
-                        "\n"))
-                 (cond
-                   (and cancelled? (not ans))
-                   (str
-                     "<turn_cancelled>The user cancelled this turn. Completed tool calls and their "
-                     "persisted results remain valid; do not repeat settled work. The unfinished edge "
-                     "was aborted. Follow the latest user request.</turn_cancelled>")
-                   (and interrupted? (not ans))
-                   (if part
-                     "⚠ this turn was INTERRUPTED before it finished — the answer above is only what you had said by then. The work above is unfinished; continue it."
-                     "⚠ this turn was INTERRUPTED before it finished — you produced NO answer. The work above is unfinished; continue it.")))))))]
-      (prompt-block "conversation-so-far" (str/join "\n\n" (keep-indexed render-turn turns))))))
+   `:request` is the user message that opened turn `turn`: the turn marker and
+   the user's request, in the shape the current turn is sent in. `:closing` is
+   the turn's answer as an assistant message. An unfinished turn closes with
+   what the model had said by then plus an explicit cancellation or
+   interruption notice. A finished turn without an answer closes with nothing."
+  [{:keys [turn request answer partial-answer interrupted? cancelled?]}]
+  (let
+    [trimmed
+     (fn [s]
+       (some-> s
+               str
+               str/trim
+               not-empty))
+
+     request-block
+     (some->> (trimmed request)
+              (prompt-block "current-user-message"))
+
+     answer
+     (trimmed answer)
+
+     ;; What the model had already said when the turn was cut short. It is not
+     ;; an answer; without it the next turn starts from nothing.
+     partial-answer
+     (when-not answer (trimmed partial-answer))
+
+     notice
+     (when-not answer
+       (cond
+         cancelled?
+         (str "<turn_cancelled>The user cancelled this turn. Completed tool calls and their "
+              "persisted results remain valid; do not repeat settled work. The unfinished edge "
+              "was aborted. Follow the latest user request.</turn_cancelled>")
+         interrupted?
+         (if partial-answer
+           "⚠ this turn was INTERRUPTED before it finished — the answer above is only what you had said by then. The work above is unfinished; continue it."
+           "⚠ this turn was INTERRUPTED before it finished — you produced NO answer. The work above is unfinished; continue it.")))]
+
+    {:request [(with-meta {:role "user"
+                           :content (str/join "\n\n"
+                                              (keep identity
+                                                    [(prompt-block "turn-system-context"
+                                                                   (str "session[\"turn\"] = "
+                                                                        turn)) request-block]))}
+                 {::parts (when request-block [{:label "User requests" :content request-block}])})]
+     :closing (cond-> []
+                (or answer partial-answer)
+                (conj {:role "assistant" :content (or answer partial-answer)})
+
+                notice
+                (conj {:role "user" :content notice}))}))
 
 (def ^:private manifest-transcript-chars
   "How much of ONE recording's transcript the manifest QUOTES.
@@ -252,34 +236,19 @@
                                  skipped))))))))
 
 (defn assemble-initial-messages
-  "Initial provider messages for one turn.
+  "The user message that opens the current turn.
 
-   Prior RESUME entries are emitted as one stable user message per turn (or
-   materialized fold checkpoint), so adding a turn appends a message instead of
-   rewriting one monolithic conversation recap. `:turn-context` is the current
-   append-only turn/utilization assignment block and rides immediately before
-   the current user request.
+   `:turn-context` is the current append-only turn/utilization assignment block
+   and rides immediately before the current user request. Prior turns are not
+   assembled here: the conversation trailer carries each one as its own request,
+   step and answer messages.
 
    `:image-descriptions` carries the vision fallback's `{label {:text … :model …}}`
    for images this turn's target cannot see. Pure input: deciding whether that
    report is worth paying for belongs to the caller, never to message assembly."
-  [{:keys [stable-prompt-messages initial-user-content previous-turn-context turn-context
-           user-images skipped-images vision? image-descriptions]
+  [{:keys [initial-user-content turn-context user-images skipped-images vision? image-descriptions]
     :or {vision? true}}]
-  (let [prior-messages
-        (into []
-              (keep (fn [entry]
-                      (when-let [block (previous-turn-context-block [entry])]
-                        (with-meta {:role "user" :content block}
-                          {::parts
-                           [{:label
-                             (if (:checkpoint? entry)
-                               "Fold checkpoints"
-                               (str "Turn t" (:turn entry) " recap (fold t" (:turn entry) ")"))
-                             :content block}]}))))
-              previous-turn-context)
-
-        turn-block
+  (let [turn-block
         (prompt-block "turn-system-context" turn-context)
 
         user-block
@@ -308,16 +277,14 @@
         text
         (str/join "\n\n" (keep identity [turn-block user-block images-block]))]
 
-    (vec (concat (or stable-prompt-messages [])
-                 prior-messages
-                 (when (or turn-block user-block)
-                   [(with-meta (if (seq attached-images)
-                                 (apply svar/user
-                                   text
-                                   (map #(svar/image (:base64 %) (:media-type %)) attached-images))
-                                 {:role "user" :content text})
-                      {::parts (when user-block
-                                 [{:label "User requests" :content user-block}])})])))))
+    (if (or turn-block user-block)
+      [(with-meta (if (seq attached-images)
+                    (apply svar/user
+                      text
+                      (map #(svar/image (:base64 %) (:media-type %)) attached-images))
+                    {:role "user" :content text})
+         {::parts (when user-block [{:label "User requests" :content user-block}])})]
+      [])))
 
 (def ^:private CORE_SYSTEM_PROMPT
   "Cross-tool contract for an autonomous agent. `python_execution` is the only

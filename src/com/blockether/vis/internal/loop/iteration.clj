@@ -1245,12 +1245,12 @@
 ;; Iteration loop
 
 (def ^:private FRESH_ITER_CARRY
-  ;; `:trailer-iters` is a vec of `[iteration-position {:thinking :blocks}]`
-  ;; pairs (oldest-first). NOTHING trims this by token budget: neither the
-  ;; seed (cross-turn carry) nor the renderer. `max-context-tokens` only
-  ;; feeds the advisory context-pressure hint. The sole token-driven
-  ;; reduction is reactive — `context-overflow-recovery` after the provider
-  ;; refuses the request.
+  ;; `:trailer-iters` is a vec of `[key record]` pairs, oldest first: the earlier
+  ;; turns' requests, settled steps and answers, this turn's request, then its live
+  ;; iterations. NOTHING trims this by token budget: neither `prior-turn-trailer` nor
+  ;; the renderer. `max-context-tokens` only feeds the advisory context-pressure
+  ;; hint. The sole token-driven reduction is reactive — `context-overflow-recovery`
+  ;; after the provider refuses the request.
   {:trailer-iters []})
 
 (def ^:private balanced-reasoning :balanced)
@@ -1690,56 +1690,6 @@
                                        (get-in state [:council :publications]))))
            (finally (ctx-loop/swap-turn-state! environment detach))))))
 
-(defn- seed-trailer-iters
-  "Select scopes before reading prior-turn bodies; keep artifacts as disk metadata."
-  [environment session-turn-id summaries]
-  (when-let [session-id (:session-id environment)]
-    (let [db (:db-info environment)
-          turns (remove #(= (str (:id %)) (str session-turn-id))
-                  (persistance/db-list-session-turns-meta db session-id))
-          history (transcript/provider-history-metadata db (map :id turns))
-          metadata (:iterations history)
-          turns (remove #(contains? (:local-turn-ids history) (str (:id %))) turns)
-          entries (into []
-                        (mapcat (fn [turn]
-                                  (for [it (get metadata (str (:id turn)))
-                                        :when (= :done (:status it))]
-
-                                    [(str (:id it))
-                                     {:iteration-id (:id it)
-                                      :iteration-scope (str "t" (:position turn)
-                                                            "/i" (:position it))
-                                      :llm-provider (:provider it)
-                                      :llm-model (:model it)
-                                      :cross-turn/turn-status (:status turn)
-                                      :preserved-thinking/replay? false}])))
-                        turns)
-          compacted (transcript/apply-summaries entries summaries)
-          visible (remove (comp :collapsed? second) compacted)
-          incomplete-ids (keep (fn [[_ rec]]
-                                 (when (transcript/terminal-incomplete-turn-status?
-                                         (:cross-turn/turn-status rec))
-                                   (:iteration-id rec)))
-                               visible)
-          bodies (persistance/db-list-iterations db incomplete-ids)
-          artifacts (persistance/db-list-iterations-attachments-meta
-                      db
-                      (map (comp :iteration-id second) visible))]
-
-      (mapv (fn [[pos rec]]
-              (if (:collapsed? rec)
-                [pos rec]
-                (let [body (get bodies (str (:iteration-id rec)))
-                      slash? (transcript/user-slash-iteration? body)]
-
-                  [pos
-                   (cond-> (assoc rec
-                             :attachments (mapv #(assoc % ::transcript/attachment-db db)
-                                                (get artifacts (str (:iteration-id rec)))))
-                     (and body (not slash?))
-                     (assoc :forms-vec (:forms body)))])))
-            compacted))))
-
 (defn- store-trace!
   "Append one exact trace entry to the turn-local disk journal; retain only its offset."
   [^java.io.RandomAccessFile journal entry]
@@ -2069,9 +2019,8 @@
                                                 (:attached user-attachments)
                                                 (:provider initial-resolved-model)))
 
-        ;; The current turn is assembled separately so an immediate same-route
-        ;; follow-up can append it to the exact prior request. Canonical assembly
-        ;; remains the fallback and is re-run after any semantic fold changes.
+        ;; This turn's request opens its part of the trailer. An exact carried
+        ;; prefix appends the same messages after the prior request instead.
         current-turn-messages
         (prompt/assemble-initial-messages {:initial-user-content user-request
                                            :turn-context turn-context
@@ -2080,19 +2029,11 @@
                                            :vision? initial-target-vision?
                                            :image-descriptions initial-image-descriptions})
 
+        ;; The canonical base is the stable system prefix alone: the trailer
+        ;; carries the conversation, earlier turns included.
         canonical-messages
-        (fn canonical-messages ([] (canonical-messages environment))
-          ([context-environment] (prompt/assemble-initial-messages
-                                   {:stable-prompt-messages stable-prompt-messages
-                                    :initial-user-content user-request
-                                    :turn-context turn-context
-                                    :user-images (:attached user-attachments)
-                                    :skipped-images (:skipped user-attachments)
-                                    :vision? initial-target-vision?
-                                    :image-descriptions initial-image-descriptions
-                                    :previous-turn-context (transcript/previous-turn-context
-                                                             context-environment session-turn-id
-                                                             (:name initial-resolved-model))})))
+        (fn []
+          (vec stable-prompt-messages))
 
         summaries-at-turn-start
         (transcript/current-session-summaries environment)
@@ -2191,6 +2132,7 @@
      :cancel-atom cancel-atom
      :canonical-messages canonical-messages
      :compact-trailer compact-trailer
+     :current-turn-messages current-turn-messages
      :emergency-summaries-atom emergency-summaries-atom
      :emit-hook! emit-hook!
      :environment environment
@@ -2217,10 +2159,10 @@
      :user-request user-request}))
 
 (defn- start-turn!
-  "Publishes the turn-start state and answers the first loop state, seeded with the
-   trailer iterations carried over from earlier turns."
-  [{:keys [environment initial-messages session-turn-id summaries-at-turn-start turn-position
-           user-request]}]
+  "Publishes the turn-start state and answers the first loop state. Its trailer holds
+   the earlier turns' conversation, then this turn's own request."
+  [{:keys [current-turn-messages environment initial-messages session-turn-id
+           summaries-at-turn-start turn-position user-request]}]
   ;; Turn-start state.
   ;;
   ;; The Python `context` dict is bound separately from tool bindings. The
@@ -2241,20 +2183,33 @@
                             ;; FORCING plan-gate: distinct files mutated THIS turn (reset each turn).
                             ;; The 2nd distinct file without an approved plan arms the gate.
                             :files-mutated #{})
-  ;; Archive hot symbols only after a successful answer. Seed the trailer from prior turns,
-  ;; but never replay their provider-native reasoning into a new user turn.
-  (let [seeded-trailer-iters
-        (try (seed-trailer-iters environment session-turn-id summaries-at-turn-start)
+  ;; Archive hot symbols only after a successful answer. Earlier turns enter as their
+  ;; requests, settled steps and answers, never with provider-native reasoning.
+  (let [position
+        (or turn-position 1)
+
+        prior-turns
+        (try (transcript/prior-turn-trailer environment
+                                            session-turn-id
+                                            position
+                                            summaries-at-turn-start)
              (catch Throwable t
                (tel/log!
                  {:level :warn
-                  :id ::cross-turn-trailer-seed-failed
+                  :id ::prior-turn-trailer-failed
                   :data {:error (ex-message t)}
-                  :msg "Cross-turn carry seed failed; first iteration starts with an empty tape"})
+                  :msg
+                  "Earlier turns could not be loaded; the first request carries only this turn"})
                nil))]
+
     (merge {:iteration 0 :messages initial-messages :trace []}
            FRESH_ITER_CARRY
-           (when (seq seeded-trailer-iters) {:trailer-iters seeded-trailer-iters}))))
+           {:trailer-iters (conj (vec prior-turns)
+                                 [(str "t" position "/request")
+                                  {:turn/boundary :request
+                                   :turn/position position
+                                   :turn/current? true
+                                   :turn/messages (vec current-turn-messages)}])})))
 
 (defn- halted-turn
   "The final result when the turn stops before its next iteration: cancelled, halted
@@ -2428,7 +2383,8 @@
 
         ;; An exact carried request already contains every completed prior
         ;; turn. Keep only live-turn growth until a fold changes the ledger;
-        ;; that one semantic rewrite switches the base to canonical recap.
+        ;; that one semantic rewrite switches to the canonical base, whose
+        ;; trailer carries the whole conversation again.
         visible-trailer-iters
         (transcript/conversation-trailer-for-base summarized-trailer-iters (:resumed? message-base))
 
@@ -2647,7 +2603,8 @@
                         {:context-recovery-attempt (:attempts @context-recovery-state)
                          :prompt-base (if (:resumed? attempt-base) :resumed :canonical)
                          :base-message-count (count (:messages attempt-base))
-                         :trailer-iteration-count (count visible-attempt-trailer)})
+                         :trailer-iteration-count (count (remove (comp :turn/boundary second)
+                                                           visible-attempt-trailer))})
 
                       _fold-estimator
                       (when-let [ca (:ctx-atom attempt-env)]
@@ -2655,8 +2612,7 @@
                           "engine_fold_estimator"
                           (transcript/request-fold-estimator
                             {:message-base-atom message-base-atom
-                             :canonical-messages-fn #(canonical-messages (assoc environment
-                                                                           :ctx-atom (atom %)))
+                             :canonical-messages-fn canonical-messages
                              :trailer-iters trailer-iters
                              :emergency-summaries-atom emergency-summaries-atom
                              :replay-target (transcript/replay-context resolved-model)
@@ -3308,8 +3264,8 @@
                                   ;; svar's canonical replay handle for this
                                   ;; iteration. Re-emitted only within this
                                   ;; live user turn via
-                                  ;; `append-preserved-thinking-replay`; cross-turn
-                                  ;; seeds opt out with
+                                  ;; `append-preserved-thinking-replay`; prior-turn
+                                  ;; steps opt out with
                                   ;; `:preserved-thinking/replay? false`.
                                   :assistant-message (:assistant-message iteration-result)
                                   ;; Tool calls for this iteration — iteration-results-message
