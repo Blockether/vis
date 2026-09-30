@@ -237,9 +237,13 @@ unfinished task, it answers without resuming unrelated work.
 
 ### Threads and notifications
 
-Omitting `thread_id` starts a thread. Passing it adds a message. Threads are flat,
-not nested reply trees. A `title` is allowed only on the first message. Without
-one, Council uses the first nonempty line of the content.
+Omitting `thread_id` and `reply_to` starts a thread. Passing either adds a message
+to an existing thread. Threads are flat, not nested reply trees.
+
+A `title` is optional for a new thread. Without one, Council uses the first
+nonempty line of the content. With `thread_id` or `reply_to`, Council ignores `title`.
+Validation and idempotency checks use the request without this field. The existing
+thread title stays unchanged.
 
 | Call | Returns |
 | --- | --- |
@@ -332,7 +336,7 @@ Session and group IDs come from discovery or session metadata, not invented valu
 | Item | Limit |
 | --- | --- |
 | Message content | 64 KiB |
-| Title or idempotency key | 256 UTF-8 bytes |
+| New thread title or idempotency key | 256 UTF-8 bytes |
 | Recipients | 256 |
 | Read page | 50 entries or 256 KiB of JSON |
 | Notification preview | 1 KiB per entry, and up to 20 previews or 8 KiB per delivery |

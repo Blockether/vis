@@ -424,45 +424,87 @@
           (expect (false? (:has_more next-page)))
           (doseq [opts [{:thread_id (:entry_id reply)} {:thread_id 999999}]]
             (expect (rejected? :invalid-thread #(page w opts))))
-          (doseq [opts [{:parent_id (:entry_id root)}
-                        {:thread_id (:entry_id root) :title "API contract"}]]
-            (expect (rejected? :invalid-request
-                               #(publish w
-                                         (assoc opts
-                                           :kind "coordination"
-                                           :content "Wrong")))))
+          (expect (rejected?
+                    :invalid-request
+                    #(publish w
+                              {:parent_id (:entry_id root) :kind "coordination" :content "Wrong"})))
           (expect (= gid (:group_id root)))
           (expect (= 3 (count (:entries (page w {})))))))))
 
 (defdescribe
-  title-validation-guidance-test
-  (it "explains how to retry a continuation without a title"
+  title-publication-test
+  (it "ignores continuation titles before validation and idempotency checks"
       (with-council
-        (let [w
+        (let [{:keys [db actor] :as w}
               (world)
 
               root
               (publish w {:kind "coordination" :content "Root" :title "Shared work"})
 
-              failure
-              (try (publish w
-                            {:kind "coordination"
-                             :content "Update"
-                             :thread_id (:thread_id root)
-                             :title "Update"})
-                   (catch clojure.lang.ExceptionInfo e
-                     {:error (:error (ex-data e)) :message (ex-message e)}))]
+              opts
+              {:kind "informational"
+               :content "Update"
+               :thread_id (:thread_id root)
+               :idempotency_key "update"}
 
-          (expect (= :invalid-request (:error failure)))
-          (expect (str/includes? (:message failure) "omit title"))
-          (expect (str/includes? (:message failure) "thread_id"))
-          (expect (= [root] (:entries (page w {}))))
-          (let [update
-                (publish w {:kind "coordination" :content "Update" :thread_id (:thread_id root)})]
-            (expect (= (:thread_id root) (:thread_id update)))
-            (expect (not (contains? update :title)))
-            (expect (= [root update] (:entries (page w {}))))))))
-  (it "distinguishes title shape errors from continuation errors"
+              update
+              (publish w (assoc opts :title "Unused heading"))]
+
+          (doseq [title [nil "" "Replacement" "two\nlines" "two\tcolumns" 123
+                         (apply str (repeat 129 "é"))]]
+            (expect (= update (publish w (assoc opts :title title)))))
+          (expect (= update (publish w opts)))
+          (expect (= (:thread_id root) (:thread_id update)))
+          (expect (not (contains? update :title)))
+          (expect (= "Shared work"
+                     (:title
+                       (council 'get-entry db (:session-id actor) {:entry_id (:entry_id root)}))))
+          (expect (= [root update] (:entries (page w {})))))))
+  (it
+    "ignores explicit reply titles without changing delivery or creating duplicate replies"
+    (with-council
+      (let [{:keys [db ids fleet] :as w}
+            (world)
+
+            [a b]
+            ids
+
+            request
+            (publish w
+                     {:kind "coordination"
+                      :content "What did you find?"
+                      :title "Shared work"
+                      :ping [b]
+                      :reply_required true})
+
+            receiver
+            (assoc w
+              :actor
+              {:session-id b :activation-id (get-in @fleet [b :activation-id]) :source "host"})
+
+            opts
+            {:kind "informational"
+             :content "Done"
+             :reply_to (:entry_id request)
+             :idempotency_key "reply"}
+
+            reply
+            (publish receiver (assoc opts :title "Unused reply heading"))]
+
+        (doseq [title [nil "" "Replacement" "two\nlines" {"ignored" true}]]
+          (expect (= reply (publish receiver (assoc opts :title title)))))
+        (expect (= reply (publish receiver opts)))
+        (expect (= (:thread_id request) (:thread_id reply)))
+        (expect (= (:entry_id request) (:reply_to reply)))
+        (expect (= [a] (:ping reply)))
+        (expect (not (contains? reply :title)))
+        (let [stored (council 'get-entry db a {:entry_id (:entry_id request)})]
+          (expect (= "Shared work" (:title stored)))
+          (expect (= "replied" (get-in stored [:replies 0 :state])))
+          (expect (= (:entry_id reply) (get-in stored [:replies 0 :reply_entry_id]))))
+        (expect (= [(:entry_id request) (:entry_id reply)]
+                   (mapv :entry_id (:entries (page w {}))))))))
+  (it "validates title shape for new threads"
       (with-council (let [w (world)]
                       (doseq [title ["two\nlines" "two\tcolumns"]]
                         (let [failure

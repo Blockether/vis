@@ -122,6 +122,66 @@
                 (expect (= 2 (count (:entries (council/read-entries db sid {})))))
                 (expect (some #(= ::host/publication-execution-ended (:id %)) signals)))))))))
 
+(defdescribe
+  continuation-title-host-test
+  (it
+    "ignores titles passed through Python host options and returns one stored continuation"
+    (foundation/register!)
+    (let [db
+          (h/store)
+
+          sid
+          (str (h/store-session! db {:channel :api}))
+
+          gid
+          (str (:id (ps/db-create-project! db {:name "Council host"})))
+
+          activation
+          (str (random-uuid))
+
+          env
+          {:session-id sid
+           :db-info db
+           :ctx-atom (atom {})
+           :turn-state-atom (atom {:turn-position 1
+                                   :iteration 1
+                                   :form-idx 0
+                                   :council {:activation-id activation
+                                             :iteration-key ["turn" 1]
+                                             :publications []}})}]
+
+      (ps/db-set-session-project! db sid gid)
+      (with-redefs [toggles/enabled?
+                    (constantly true)
+
+                    council/runtime
+                    (constantly
+                      {sid
+                       {:activation-id activation :group-id gid :state "running" :title "Host"}})
+
+                    extension/publish-activity!
+                    (constantly nil)]
+
+        (let [root
+              (:result (host/publish env "Root" {"kind" "coordination" "title" "Shared work"}))
+
+              opts
+              {"kind" "informational" "thread_id" (root "thread_id") "idempotency_key" "update"}
+
+              update
+              (:result (host/publish env "Update" (assoc opts "title" "Unused heading")))
+
+              replay
+              (:result (host/publish env "Update" (assoc opts "title" nil)))]
+
+          (expect (= update replay (:result (host/publish env "Update" opts))))
+          (expect (document/valid-json? "council" "entry" update))
+          (expect (= (root "thread_id") (update "thread_id")))
+          (expect (not (contains? update "title")))
+          (expect (= "Shared work"
+                     (:title (council/get-entry db sid {:entry_id (root "entry_id")}))))
+          (expect (= 2 (count (:entries (council/read-entries db sid {}))))))))))
+
 (defdescribe disabled-host-metadata-test
              (it "disabled host metadata"
                  (with-redefs [toggles/enabled? (constantly false)]
@@ -171,14 +231,21 @@
 
 (defdescribe
   title-usage-guidance-test
-  (it "documents title restrictions in the published tool contract and prompt"
+  (it "documents ignored continuation titles in the tool contract, prompt and manual"
       (with-redefs [toggles/enabled? (constantly true)]
-        (let [tool-doc (str/replace (extension/symbol-doc-text (second host/symbols)) #"\s+" " ")]
-          (expect (str/includes? tool-doc "`title` is optional and only valid for a new thread"))
-          (expect (str/includes? tool-doc "pass `thread_id` and omit `title`"))
-          (expect (str/includes? tool-doc "pass `reply_to` and omit `title`"))
-          (expect (str/includes? (council/prompt {})
-                                 "Omit `title` with `thread_id` or `reply_to`."))))))
+        (doseq [text [(extension/symbol-doc-text (second host/symbols))
+                      (slurp (io/resource "vis-docs/council.md"))]
+                :let [normalized (str/replace text #"\s+" " ")]]
+
+          (expect (str/includes? normalized "`title` is optional for a new thread"))
+          (expect (str/includes? normalized
+                                 "With `thread_id` or `reply_to`, Council ignores `title`."))
+          (expect (str/includes?
+                    normalized
+                    "Validation and idempotency checks use the request without this field."))
+          (expect (str/includes? normalized "The existing thread title stays unchanged.")))
+        (expect (str/includes? (council/prompt {})
+                               "`title` is ignored with `thread_id` or `reply_to`.")))))
 
 (defdescribe asynchronous-work-guidance-test
              (it "asynchronous work guidance"
