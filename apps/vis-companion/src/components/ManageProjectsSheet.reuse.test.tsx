@@ -461,6 +461,15 @@ describe('the projects mark opens the inventory', () => {
     expect(screen.getByRole('button', { name: 'New project' })).not.toHaveClass('border-l');
   });
 
+  // Regression, user report: the plus was too close to Projects because the title's
+  // normal right padding was removed when a title action was present.
+  it('leaves room between Projects and the plus', () => {
+    sheet();
+    const title = screen.getByText('Projects');
+    expect(title).toHaveClass('px-3');
+    expect(title).not.toHaveClass('pr-0');
+  });
+
   it('places creation beside Projects and shows each project on one line', async () => {
     sheet();
     const create = screen.getByRole('button', { name: 'New project' });

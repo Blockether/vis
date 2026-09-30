@@ -221,7 +221,7 @@ export function MenuHeading({
     <header className={`flex min-h-12 shrink-0 items-stretch mouse:min-h-9 ${skin}`}>
       {titleCells ? (
         <div className="flex min-w-0 flex-1 items-stretch">
-          <p className={`${BAND} min-w-0 self-center truncate pr-0`}>{children}</p>
+          <p className={`${BAND} min-w-0 self-center truncate`}>{children}</p>
           {titleCells}
         </div>
       ) : (
