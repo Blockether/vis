@@ -126,14 +126,29 @@
                      (expect (= (assoc config :enriched? true) (#'main/router-for-run config true)))
                      (expect (= :shared (#'main/router-for-run config false))))))
              (it "reads a newly created gateway session id from canonical wire data"
-                 (let [submitted (atom nil)]
-                   (with-redefs [gateway-state/create-session! (fn [_]
-                                                                 {"id" "wire-session"})
-                                 gateway-state/submit-turn-sync! (fn [sid _]
-                                                                   (reset! submitted sid)
-                                                                   {"content" []})]
+                 (let [submitted
+                       (atom nil)
 
-                     (expect (= "wire-session" (:session-id (main/run! {} "hi" {:persist? true}))))
+                       config
+                       {:providers [{:id :lmstudio :models [{:name "meta/muse-glimmer"}]}]}]
+
+                   (with-redefs [config/load-config
+                                 (constantly nil)
+
+                                 loop-router/rebuild-router!
+                                 (constantly nil)
+
+                                 gateway-state/create-session!
+                                 (fn [_]
+                                   {"id" "wire-session"})
+
+                                 gateway-state/submit-turn-sync!
+                                 (fn [sid _]
+                                   (reset! submitted sid)
+                                   {"content" []})]
+
+                     (expect (= "wire-session"
+                                (:session-id (main/run! {} "hi" {:config config :persist? true}))))
                      (expect (= "wire-session" @submitted))))))
 
 (defdescribe
