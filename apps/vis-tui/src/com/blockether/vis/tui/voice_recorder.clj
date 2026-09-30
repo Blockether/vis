@@ -49,17 +49,48 @@
 
 (defn- macos-host? [] (str/includes? (str/lower-case (or (System/getProperty "os.name") "")) "mac"))
 
+(defn- command-directories
+  []
+  (concat (remove str/blank?
+            (str/split (or (System/getenv "PATH") "")
+                       (re-pattern (java.util.regex.Pattern/quote File/pathSeparator))))
+          (when (macos-host?) ["/opt/homebrew/bin" "/usr/local/bin"])))
+
+(defn- executable-path
+  [command]
+  (let [file
+        (io/file command)
+
+        candidates
+        (if (.isAbsolute file) [file] (map #(io/file % command) (command-directories)))]
+
+    (some (fn [^File candidate]
+            (when (and (.isFile candidate) (.canExecute candidate)) (.getAbsolutePath candidate)))
+          candidates)))
+
+(defn- recorder-programs
+  []
+  (if (macos-host?)
+    [[:sox ["sox" "-q" "-d" "-r" "16000" "-c" "1" "-b" "16" "-e" "signed-integer"]]
+     [:ffmpeg
+      ["ffmpeg" "-nostdin" "-f" "avfoundation" "-i" ":default" "-ar" "16000" "-ac" "1" "-c:a"
+       "pcm_s16le" "-f" "wav"]]]
+    [[:pipewire ["pw-record" "--format=s16" "--rate=16000" "--channels=1"]]
+     [:pulse ["parec" "--file-format=wav" "--format=s16le" "--rate=16000" "--channels=1"]]]))
+
 (defn- recorder-commands
   [^File file]
-  (let [path (.getAbsolutePath file)]
-    (if (macos-host?)
-      [[:sox ["sox" "-q" "-d" "-r" "16000" "-c" "1" "-b" "16" "-e" "signed-integer" path]]
-       [:ffmpeg
-        ["ffmpeg" "-nostdin" "-f" "avfoundation" "-i" ":default" "-ar" "16000" "-ac" "1" "-c:a"
-         "pcm_s16le" "-f" "wav" path]]]
-      [[:pipewire ["pw-record" "--format=s16" "--rate=16000" "--channels=1" path]]
-       [:pulse
-        ["parec" "--file-format=wav" "--format=s16le" "--rate=16000" "--channels=1" path]]])))
+  (mapv (fn [[backend argv]]
+          [backend (conj argv (.getAbsolutePath file))])
+        (recorder-programs)))
+
+(defn external-backends
+  "List external capture backends and their executable paths, or nil when absent.
+   Checks PATH and the standard macOS Homebrew locations without opening a microphone."
+  []
+  (mapv (fn [[backend [command]]]
+          {:backend backend :command command :path (executable-path command)})
+        (recorder-programs)))
 
 (defn- error-text
   [^File file]
@@ -69,30 +100,72 @@
 
 (defn- start-command!
   [^File file [backend argv]]
-  (io/delete-file file true)
-  (let [stderr-file
-        (doto (File/createTempFile "vis-speech-recorder-" ".log") (.deleteOnExit))
+  (let [command
+        (first argv)
 
-        builder
-        (ProcessBuilder. ^"[Ljava.lang.String;" (into-array String argv))]
+        executable
+        (or (executable-path command)
+            (throw (ex-info (str "Capture program not found: " command)
+                            {:backend backend :command command :reason :missing-executable})))
 
-    (.redirectInput builder ProcessBuilder$Redirect/PIPE)
-    (.redirectOutput builder ProcessBuilder$Redirect/DISCARD)
-    (.redirectError builder (ProcessBuilder$Redirect/to stderr-file))
-    (try (let [process ^Process (.start builder)]
-           (try (Thread/sleep (long external-startup-ms))
-                (if (.isAlive process)
-                  {:backend backend
-                   :command (first argv)
-                   :file file
-                   :process process
-                   :stderr-file stderr-file}
-                  (throw (ex-info
-                           (or (error-text stderr-file)
-                               (str (first argv) " exited before recording started"))
-                           {:backend backend :command (first argv) :exit (.exitValue process)})))
-                (catch Throwable t (when (.isAlive process) (.destroyForcibly process)) (throw t))))
-         (catch Throwable t (io/delete-file stderr-file true) (throw t)))))
+        argv
+        (assoc argv 0 executable)]
+
+    (io/delete-file file true)
+    (let [stderr-file
+          (doto (File/createTempFile "vis-speech-recorder-" ".log") (.deleteOnExit))
+
+          builder
+          (ProcessBuilder. ^"[Ljava.lang.String;" (into-array String argv))]
+
+      (.redirectInput builder ProcessBuilder$Redirect/PIPE)
+      (.redirectOutput builder ProcessBuilder$Redirect/DISCARD)
+      (.redirectError builder (ProcessBuilder$Redirect/to stderr-file))
+      (try (let [process ^Process (.start builder)]
+             (try
+               (Thread/sleep (long external-startup-ms))
+               (if (.isAlive process)
+                 {:backend backend
+                  :command (first argv)
+                  :file file
+                  :process process
+                  :stderr-file stderr-file}
+                 (throw (ex-info
+                          (or (error-text stderr-file)
+                              (str (first argv) " exited before recording started"))
+                          {:backend backend :command (first argv) :exit (.exitValue process)})))
+               (catch Throwable t (when (.isAlive process) (.destroyForcibly process)) (throw t))))
+           (catch Throwable t (io/delete-file stderr-file true) (throw t))))))
+
+(defn- external-failure-data
+  [failures]
+  (let
+    [reason
+     (cond (every? #(= :missing-executable (:reason %)) failures) :missing-executable
+           (some #(= :permission-denied (:reason %)) failures) :permission-denied
+           :else :capture-failed)
+
+     remediation
+     (if (macos-host?)
+       (case reason
+         :missing-executable
+         (str "SoX/FFmpeg were not found in PATH or the standard Homebrew locations. "
+              "Install a recorder with `brew install sox` or `brew install ffmpeg`, then retry.")
+
+         :permission-denied
+         (str "A capture backend reported a permission error. Allow microphone access for "
+              "your terminal or Vis in System Settings > Privacy & Security > Microphone, "
+              "then retry.")
+
+         (str "A capture backend is installed but could not record. Check the microphone in "
+              "System Settings > Sound > Input. If access was blocked, allow it in "
+              "System Settings > Privacy & Security > Microphone. "
+              "Run `vis-agent tui --check-audio` for backend paths."))
+       (if (= :missing-executable reason)
+         (str "Install PipeWire tools (`pw-record`) or PulseAudio tools (`parec`), " "then retry.")
+         "Check microphone access and verify that the PipeWire/Pulse audio server is reachable."))]
+
+    {:type ::no-external-recorder :reason reason :attempts failures :remediation remediation}))
 
 (defn- start-external!
   [^File file]
@@ -103,25 +176,31 @@
          []]
 
     (if candidate
-      (let [result (try {:recorder (start-command! file candidate)}
-                        (catch InterruptedException t (.interrupt (Thread/currentThread)) (throw t))
-                        (catch Throwable t
-                          {:failure {:backend backend :error (or (ex-message t) (str t))}}))]
+      (let
+        [result
+         (try
+           {:recorder (start-command! file candidate)}
+           (catch InterruptedException t (.interrupt (Thread/currentThread)) (throw t))
+           (catch Throwable t
+             (let
+               [message (or (ex-message t) (str t))
+                reason
+                (or
+                  (:reason (ex-data t))
+                  (when
+                    (re-find
+                      #"(?i)(permission denied|not permitted|not authorized|access denied|microphone denied)"
+                      message)
+                    :permission-denied)
+                  :capture-failed)]
+
+               {:failure (merge (select-keys (ex-data t) [:command :exit])
+                                {:backend backend :reason reason :error message})})))]
         (if-let [recorder (:recorder result)]
           recorder
           (recur more (conj failures (:failure result)))))
-      (throw (ex-info
-               (if (macos-host?)
-                 "SoX/FFmpeg microphone capture is unavailable"
-                 "PipeWire/Pulse microphone capture is unavailable")
-               {:type ::no-external-recorder
-                :attempts failures
-                :remediation
-                (if (macos-host?)
-                  (str "Install SoX (`sox`) or FFmpeg (`ffmpeg`), then allow "
-                       "microphone access in System Settings > Privacy & Security > Microphone.")
-                  (str "Install PipeWire tools (`pw-record`) or PulseAudio tools (`parec`), "
-                       "then verify that the WSLg audio server is reachable."))})))))
+      (throw (ex-info "No external microphone capture backend could start"
+                      (external-failure-data failures))))))
 
 (defn start!
   "Start recording microphone audio to a WAV file. Java Sound is preferred;
@@ -141,6 +220,7 @@
                      (throw (ex-info "No microphone capture backend could start"
                                      {:type ::no-recorder
                                       :backend :auto
+                                      :reason (:reason (ex-data external-error))
                                       :java-sound-error (or (ex-message java-sound-error)
                                                             (str java-sound-error))
                                       :attempts (:attempts (ex-data external-error))

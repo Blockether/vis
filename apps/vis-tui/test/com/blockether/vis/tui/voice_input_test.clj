@@ -157,7 +157,7 @@
             (expect (some #(and (= :notify (:op %))
                                 (str/includes? (str (:text %)) "Grant microphone access."))
                           @events))))))
-  ;; Regression, issue #293: retain both failed capture backends in the log.
+  ;; Regression, issues #293 and #298: retain capture failures and their classified cause.
   (it "keeps Java Sound and external failures in the recorder diagnostic"
       (let [events
             (atom [])
@@ -171,6 +171,7 @@
                         (throw (ex-info "No microphone capture backend could start"
                                         {:type :voice/no-recorder
                                          :backend :auto
+                                         :reason :permission-denied
                                          :java-sound-error "no capture line"
                                          :attempts attempts
                                          :remediation "Allow microphone access."})))
@@ -183,6 +184,7 @@
                                         (voice-input/start-recording! {:session-id "session-1"}))]
             (expect (= "no capture line" (get-in signal [:data :java-sound-error])))
             (expect (= attempts (get-in signal [:data :attempts])))
+            (expect (= :permission-denied (get-in signal [:data :reason])))
             (expect (some #(and (= :notify (:op %))
                                 (str/includes? (str (:text %)) "Allow microphone access."))
                           @events))))))

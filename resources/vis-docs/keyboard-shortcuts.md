@@ -17,6 +17,7 @@ To see the most common shortcuts while you work, press **Ctrl+X h** in Vis.
 - **You want to fork a session, go back to an earlier turn or move a session to a
   group.** Use the keys under [Sessions](#sessions). The [Sessions guide](sessions.md)
   explains each task.
+- **You want to dictate a message, or voice recording fails.** See [Use voice input](#use-voice-input).
 - **You want to know what cancelling or quitting does to your queued messages.** Read
   [Control a running session](sessions.md#control-a-running-session) instead.
 
@@ -92,6 +93,39 @@ once it can act.
 | Ctrl+X i | Review your attached files and the files this session produced |
 | Ctrl+X v | Start or stop a voice recording |
 | Ctrl+X b | Turn voice conversation on or off: Vis reads each answer aloud and sends each recording once it is transcribed |
+
+## Use voice input
+
+Connect a microphone before you start the TUI. On macOS, allow microphone access for your terminal
+or Vis when macOS asks.
+
+Press **Ctrl+X v** to start recording. Press it again to transcribe the recording into your message.
+
+Vis first tries Java Sound. If Java Sound cannot capture, macOS can use SoX or FFmpeg.
+Vis checks PATH and both standard Homebrew locations: `/opt/homebrew/bin` and `/usr/local/bin`.
+
+If neither recorder is installed, install one:
+
+```bash
+brew install sox
+```
+
+Use `brew install ffmpeg` if you prefer FFmpeg. Vis does not install these programs automatically.
+
+On Linux, the fallback recorders are `pw-record` and `parec`.
+WSL2 also requires a reachable WSLg audio server.
+
+To check discovered audio devices and recorder paths, run:
+
+```bash
+vis-agent tui --check-audio
+```
+
+The check lists devices and executable paths. It does not test microphone permissions or capture audio.
+
+If a recorder is installed but capture fails, check **System Settings > Sound > Input** on macOS.
+If macOS reports denied access, allow it under **Privacy & Security > Microphone**.
+Restart the TUI after connecting or selecting a different microphone.
 
 ## Cancel or quit
 

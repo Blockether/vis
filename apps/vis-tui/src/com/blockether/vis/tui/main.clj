@@ -15,7 +15,8 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
-            [com.blockether.vis.tui.screen :as screen])
+            [com.blockether.vis.tui.screen :as screen]
+            [com.blockether.vis.tui.voice-recorder :as recorder])
   (:import [java.util ServiceLoader]
            [javax.sound.sampled AudioFormat AudioSystem DataLine$Info SourceDataLine TargetDataLine]
            [javax.sound.sampled.spi MixerProvider])
@@ -33,7 +34,7 @@
    "  --session-id ID        open one existing session"
    "  --resume, -r           pick a session to resume"
    "  --continue, -c         reopen the most recent session"
-   "  --check-audio          compare Java Sound devices without opening a microphone"
+   "  --check-audio          check audio devices and recorder paths without opening a microphone"
    "  --version, -V          print the version" "  --help, -h             print this help"])
 
 (defn- version
@@ -73,7 +74,11 @@
                       (count (iterator-seq (.iterator (ServiceLoader/load MixerProvider))))))
     (print-line! (str "mixers=" (alength (AudioSystem/getMixerInfo))))
     (print-line! (str "target-line=" (line-status TargetDataLine format)))
-    (print-line! (str "source-line=" (line-status SourceDataLine format)))))
+    (print-line! (str "source-line=" (line-status SourceDataLine format)))
+    (when (or (str/includes? (str/lower-case (System/getProperty "os.name")) "mac")
+              (str/includes? (str/lower-case (System/getProperty "os.name")) "linux"))
+      (doseq [{:keys [backend path]} (recorder/external-backends)]
+        (print-line! (str (name backend) "=" (or path "unavailable")))))))
 
 (defn- missing-value? [v] (or (nil? v) (str/starts-with? v "--")))
 

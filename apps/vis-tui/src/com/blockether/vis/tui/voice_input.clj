@@ -41,6 +41,9 @@
       (:backend data)
       (assoc :backend (:backend data))
 
+      (:reason data)
+      (assoc :reason (:reason data))
+
       (:java-sound-error data)
       (assoc :java-sound-error (:java-sound-error data))
 
