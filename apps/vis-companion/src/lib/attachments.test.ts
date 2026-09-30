@@ -47,6 +47,28 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
+// Regression #299: selecting files must also work without the secure-context UUID API.
+describe('attachments over non-secure HTTP', () => {
+  it('assigns distinct UUIDs when randomUUID is unavailable', async () => {
+    vi.stubGlobal('crypto', {
+      getRandomValues: globalThis.crypto.getRandomValues.bind(globalThis.crypto),
+    });
+    const result = await attachmentsFromFiles([
+      new File(['# First\n'], 'first.md', { type: 'text/markdown' }),
+      new File(['# Second\n'], 'second.md', { type: 'text/markdown' }),
+    ]);
+
+    expect(result.rejected).toEqual([]);
+    expect(result.attachments).toHaveLength(2);
+    for (const attachment of result.attachments) {
+      expect(attachment.id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+    }
+    expect(result.attachments[0].id).not.toBe(result.attachments[1].id);
+  });
+});
+
 describe('the FILES door', () => {
   it('opens the document browser, not the gallery sheet', async () => {
     filePicker.pickFiles.mockResolvedValue({

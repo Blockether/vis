@@ -23,6 +23,7 @@ import {
   hydrateDraftMessages,
 } from './draft-messages';
 import { approxBytes, registerMemoryOwner, registerMemorySource, type MemoryCell } from './perf';
+import { randomUuid } from './uuid';
 import type {
   ArchiveView,
   AuthFlow,
@@ -2807,7 +2808,7 @@ export class GatewayClient {
     if (pending) return pending;
     let idempotencyKey: string;
     try {
-      idempotencyKey = localStorage.getItem(key) || crypto.randomUUID();
+      idempotencyKey = localStorage.getItem(key) || randomUuid();
       localStorage.setItem(key, idempotencyKey);
     } catch {
       throw new Error('Cannot safely save a reset attempt on this device. No reset was requested.');
@@ -4600,7 +4601,7 @@ export class GatewayClient {
       turnFeatures?: Record<string, boolean>;
     } = {},
   ): Promise<SubmittedTurn> {
-    const clientId = `companion:${crypto.randomUUID()}`;
+    const clientId = `companion:${randomUuid()}`;
     this.submissionKeys.set(sid, clientId);
     const attachments = await Promise.all(
       (options.attachments ?? []).map(async (attachment) => {

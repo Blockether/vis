@@ -2,6 +2,7 @@ import { FilePicker, type PickedFile } from '@capawesome/capacitor-file-picker';
 import { Capacitor } from '@capacitor/core';
 import { blobAsDataUrl } from './image-file';
 import type { GatewayAttachment } from './types';
+import { randomUuid } from './uuid';
 
 export interface PendingAttachment extends GatewayAttachment {
   id: string;
@@ -252,7 +253,7 @@ async function collectAttachments(
       continue;
     }
     attachments.push({
-      id: crypto.randomUUID(),
+      id: randomUuid(),
       filename: result.value.filename,
       media_type: result.value.mediaType,
       base64: result.value.dataUrl,

@@ -1114,6 +1114,35 @@ describe('GatewayClient turn cancellation', () => {
     expect(cancelBody.idempotency_key).toBe(submitBody.idempotency_key);
   });
 
+  // Regression #299: non-loopback HTTP has getRandomValues but no randomUUID.
+  it('submits and cancels turns over non-secure HTTP', async () => {
+    vi.stubGlobal('crypto', {
+      getRandomValues: globalThis.crypto.getRandomValues.bind(globalThis.crypto),
+    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(new Response(JSON.stringify({ turn_id: 'turn-1' }))),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    await client.submitTurn('session-1', 'hello');
+    await client.cancelCurrentTurn('session-1');
+    await client.submitTurn('session-1', 'another message');
+
+    const first = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    const cancel = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    const second = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+    expect(first.idempotency_key).toMatch(
+      /^companion:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(first.request).toBe('hello');
+    expect(cancel.idempotency_key).toBe(first.idempotency_key);
+    expect(second.idempotency_key).not.toBe(first.idempotency_key);
+  });
+
   it('captures per-turn submission options', async () => {
     const fetchMock = vi
       .fn()

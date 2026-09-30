@@ -10,6 +10,35 @@ afterEach(() => {
   localStorage.clear();
 });
 
+// Regression #299: reset attempts need cryptographic IDs on non-loopback HTTP too.
+it('retains a reset attempt across retries over non-secure HTTP', async () => {
+  vi.stubGlobal('crypto', {
+    getRandomValues: globalThis.crypto.getRandomValues.bind(globalThis.crypto),
+  });
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ outcome: 'unknown' })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ outcome: 'already_redeemed' })));
+  vi.stubGlobal('fetch', fetch);
+  const first = new GatewayClient(conn('http-reset'));
+  await expect(first.consumeProviderResetCredit('openai-codex', 'account')).rejects.toThrow(
+    /confirm/i,
+  );
+  const retry = new GatewayClient(conn('http-reset'));
+  expect(retry.hasPendingProviderReset('openai-codex', 'account')).toBe(true);
+  await expect(retry.consumeProviderResetCredit('openai-codex', 'account')).resolves.toBe(
+    'already_redeemed',
+  );
+
+  const firstBody = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body));
+  const retryBody = JSON.parse(String(fetch.mock.calls[1]?.[1]?.body));
+  expect(firstBody.idempotency_key).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  );
+  expect(retryBody).toEqual(firstBody);
+  expect(retry.hasPendingProviderReset('openai-codex', 'account')).toBe(false);
+});
+
 it('retains one account-scoped attempt across an unknown response and a new client', async () => {
   const bodies: unknown[] = [];
   const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
