@@ -798,13 +798,45 @@ vis_beta_tag() {
   printf '%s\n' "$tag"
 }
 
+# Published release tags identify versions; immutable beta tags identify commits.
+# Only a complete installation with matching source can skip bundle acquisition.
+native_install_current() {
+  local native_dir="$1" tag="$2" track="$3" web_dl="$4" tui_library="$5"
+  local version commit build_track metadata installed_tag changes
+  [[ -x "$native_dir/vis-agent" && -x "$native_dir/vis-agent-native" \
+     && -s "$native_dir/vis-agent-native.build" && -x "$native_dir/vis-tui" \
+     && -s "$native_dir/$tui_library" && -d "$native_dir/vis-agent-python/python" ]] || return 1
+  compgen -G "$native_dir/vis-agent-python/libvispython.*" >/dev/null || return 1
+  if [[ -n "$web_dl" ]]; then
+    [[ -f "$native_dir/vis-web/index.html" ]] || return 1
+  else
+    [[ ! -e "$native_dir/vis-web" ]] || return 1
+  fi
+  read -r version commit build_track metadata < "$native_dir/vis-agent-native.build" || return 1
+  [[ -n "$version" && "$commit" =~ ^[0-9a-f]{40}$ \
+     && "$build_track" == "$track" && -n "$metadata" ]] || return 1
+  case "$track" in
+    release) installed_tag="v$version" ;;
+    beta) installed_tag="beta-$commit" ;;
+    *) return 1 ;;
+  esac
+  [[ "$tag" == "$installed_tag" ]] || return 1
+  if [[ -e "$managed_src" ]]; then
+    [[ "$(read_state "$managed_ref_file")" == "$commit" ]] || return 1
+    [[ "$(git -C "$managed_src" rev-parse --verify HEAD 2>/dev/null)" == "$commit" ]] || return 1
+    changes="$(git -C "$managed_src" status --porcelain --untracked-files=all)" || return 1
+    [[ -z "$changes" ]] || return 1
+  fi
+  return 0
+}
+
 # Releases replace the launcher and its native runtime together.
 update_native() {
-  local target="${1:-latest}" track="${2:-release}"
+  local target="${1:-latest}" track="${2:-release}" keep_gateway="${3:-0}"
   require_cmd curl "the native runtime"
   require_cmd tar "the native runtime"
   local asset api dl json archive unpack native_dir tui_asset tui_dl tui_archive tui_unpack web_dl web_archive web_unpack
-  local native_version native_commit _native_metadata
+  local native_version native_commit _native_metadata release_tag tui_library
   asset="$(vis_platform_asset)"
   # A named beta build is installed as named; only an unpinned beta resolves the
   # published selection.
@@ -838,14 +870,35 @@ update_native() {
   # Where the private runtime belongs: beside an installed launcher, or in Vis
   # state when the launcher is a tracked checkout file we must never overwrite.
   if (( launcher_is_git_owned )); then
-    mkdir -p "$vis_install_dir"
     native_dir="$vis_install_dir"
+  else
+    native_dir="$bin_dir"
+  fi
+  case "$(uname -s)" in
+    Darwin) tui_library=libjsound.dylib ;;
+    Linux) tui_library=libjsound.so ;;
+    *) die "update: unsupported terminal client platform: $(uname -s)" ;;
+  esac
+  release_tag="${dl%/*}"
+  release_tag="${release_tag##*/}"
+  if native_install_current "$native_dir" "$release_tag" "$track" "$web_dl" "$tui_library"; then
+    # Switching from source still releases the old JVM gateway before selecting native.
+    if (( ! keep_gateway )) && [[ "$(runtime_effective)" != native ]]; then
+      release_stale_gateway
+    fi
+    read -r native_version native_commit _native_metadata < "$native_dir/vis-agent-native.build"
+    say "already up to date: native $native_version revision $native_commit ($track)"
+    return 0
+  fi
+  if (( launcher_is_git_owned )); then
+    mkdir -p "$native_dir"
   else
     [[ -w "$bin_dir" && -w "$launcher_path" ]] || \
       die "update: cannot replace the installation in $bin_dir (permission denied)" \
           "Re-run with the permissions used for that directory."
-    native_dir="$bin_dir"
   fi
+  # Use the old executable only when an installation actually needs replacing.
+  (( keep_gateway )) || release_stale_gateway
 
   archive="$(mktemp "${TMPDIR:-/tmp}/vis-agent-bundle.XXXXXX.tar.gz")"
   unpack="$(mktemp -d "${TMPDIR:-/tmp}/vis-agent-unpack.XXXXXX")"
@@ -871,11 +924,6 @@ update_native() {
     die "update: the release bundle is missing its Python runtime"
   fi
   [[ -x "$tui_unpack/vis-tui" ]] || die "update: the release bundle is missing its terminal client"
-  case "$(uname -s)" in
-    Darwin) tui_library=libjsound.dylib ;;
-    Linux) tui_library=libjsound.so ;;
-    *) die "update: unsupported terminal client platform: $(uname -s)" ;;
-  esac
   [[ -s "$tui_unpack/$tui_library" ]] || die "update: the release bundle is missing its Java Sound library"
   [[ -z "$web_dl" || -f "$web_unpack/vis-web/index.html" ]] || die "update: the release web app bundle is missing its index.html"
   read -r native_version native_commit _native_metadata < "$unpack/vis-agent-native.build" || \
@@ -1038,19 +1086,17 @@ vis_do_update() {
   esac
   mkdir -p "$vis_install_dir"
 
-  # Use the OLD selection and executable to talk to its own gateway protocol.
   if (( keep_gateway )); then
     say "leaving the gateway alone (--keep-gateway)"
-  else
-    release_stale_gateway
   fi
   case "$track" in
     dev)
+      (( keep_gateway )) || release_stale_gateway
       update_source
       sync_wrapper_from_source "$managed_src"
       ;;
     release|beta)
-      update_native "${target:-latest}" "$track"
+      update_native "${target:-latest}" "$track" "$keep_gateway"
       ;;
   esac
   printf '%s\n' "$track" > "$vis_track_file.tmp"

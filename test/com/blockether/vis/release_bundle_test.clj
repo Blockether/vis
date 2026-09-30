@@ -24,6 +24,9 @@
         env
         (.environment pb)]
 
+    ;; The launching Vis process can export its own web app path.
+    ;; Each fixture selects its installation unless it explicitly supplies an override.
+    (.remove env "VIS_WEB_DIR")
     (.redirectErrorStream pb true)
     (doseq [[k v] env-extra]
       (.put env (str k) (str v)))
@@ -272,10 +275,14 @@
                    ".vis/install/desktop/beta/linux-x64"
                    ".vis/install/desktop/linux-x64"))
 
+        beta-commit
+        (or build-commit (apply str (repeat 40 "a")))
+
         env
         {"HOME" (.getAbsolutePath home)
          "VIS_HOME" (.getAbsolutePath (io/file home ".vis"))
          "VIS_INSTALL_DIR" (.getAbsolutePath bin)
+         "TMPDIR" (.getAbsolutePath root)
          "PATH" (str (.getAbsolutePath tools) ":" (.getAbsolutePath bin) ":" (System/getenv "PATH"))
          "VIS_TEST_URLS" (.getAbsolutePath urls)
          "VIS_TEST_ARCHIVE" (.getAbsolutePath archive)
@@ -345,7 +352,7 @@
           (when (= track "beta")
             (str
               "  */releases/download/installer/native-beta) printf '%s\n' 'beta-"
-              (apply str (repeat 40 "a"))
+              beta-commit
               "' ;;\n"
               ;; GitHub returned an older published beta first on the real installer path.
               "  *'releases?per_page=100&page=1') printf '%s' '[{\"assets\":[{\"browser_download_url\":\"https://github.com/example/vis/releases/download/beta-"
@@ -353,13 +360,18 @@
               "/vis-agent-linux-x64.tar.gz\"}]}]' ;;\n"
               "  *'releases?per_page=100&page=2'|*/releases/tags/beta-*) printf '%s' '"
               "{\"assets\":[{\"browser_download_url\":\"https://github.com/example/vis/releases/download/beta-"
-              (apply str (repeat 40 "a"))
+              beta-commit
               "/vis-agent-linux-x64.tar.gz\"},"
               "{\"browser_download_url\":\"https://github.com/example/vis/releases/download/beta-"
-              (apply str (repeat 40 "a"))
+              beta-commit
               "/vis-companion-9.9.9-linux-x64.AppImage\"},"
+              (when web?
+                (str
+                  "{\"browser_download_url\":\"https://github.com/example/vis/releases/download/beta-"
+                  beta-commit
+                  "/vis-web.tar.gz\"},"))
               "{\"browser_download_url\":\"https://github.com/example/vis/releases/download/beta-"
-              (apply str (repeat 40 "a"))
+              beta-commit
               "/vis-tui-linux-x64.tar.gz\"}]}' ;;\n"))
           "  */releases/latest|*/releases/tags/v9.9.9) printf '%s' '"
           "{\"assets\":[{\"browser_download_url\":\"https://github.com/example/vis/releases/download/v9.9.9/vis-agent-linux-x64.tar.gz\"},"
@@ -1314,6 +1326,159 @@
                (expect (str/includes? output "qemu-user") output)
                (expect (not= 0 exit) output))
              (finally (delete-tree! mac))))))
+
+(defn- rerun-native-update
+  [{:keys [launcher env]} args]
+  (let [urls (io/file (get env "VIS_TEST_URLS"))]
+    (spit urls "")
+    (assoc (run-bash (into ["bash" (.getAbsolutePath ^File launcher) "update"] args) env)
+      :urls (slurp urls))))
+
+;; Updating an unchanged release must not download or replace its native bundles.
+(defdescribe
+  native-update-current-test
+  (it "leaves the current release and beta installed without downloading or stopping the gateway"
+      (doseq [track ["release" "beta"]]
+        (with-native-install-fixture
+          {:track track :build-commit (apply str (repeat 40 "a")) :web? true}
+          (fn [{:keys [exit output env bin] :as fixture}]
+            (expect (zero? exit) output)
+            (let [target (if (= track "beta") (str "beta-" (apply str (repeat 40 "a"))) "v9.9.9")
+                  stamp (io/file bin "vis-agent-native.build")
+                  installed-stamp (slurp stamp)]
+
+              (doseq [pin [nil target]]
+                (let [{:keys [exit output urls]} (rerun-native-update fixture
+                                                                      (cond-> ["--track" track]
+                                                                        pin
+                                                                        (conj pin)))]
+                  (expect (zero? exit) output)
+                  (expect (str/includes? output "already up to date") output)
+                  (expect (str/includes? urls "/releases/") urls)
+                  (expect (not (str/includes? urls ".tar.gz")) urls)
+                  (expect (not (str/includes? output "downloading")) output)
+                  (expect (not (str/includes? output "new-runtime")) output)
+                  (expect (= installed-stamp (slurp stamp)))
+                  (expect (= (str track "\n")
+                             (slurp (io/file (get env "VIS_HOME") "install" "track")))))))))))
+  (it "recognizes a current native bundle stored beside a tracked checkout"
+      (with-native-install-fixture
+        {:build-commit (apply str (repeat 40 "a"))
+         :prepare! (fn [env _]
+                     (spit (io/file (get env "HOME") "deps.edn") "{}\n"))}
+        (fn [{:keys [exit output launcher env bin] :as fixture}]
+          (expect (zero? exit) output)
+          (let [wrapper
+                (slurp launcher)
+
+                native-dir
+                (io/file (get env "VIS_HOME") "install")
+
+                {:keys [exit output urls]}
+                (rerun-native-update fixture [])]
+
+            (expect (zero? exit) output)
+            (expect (str/includes? output "already up to date") output)
+            (expect (not (str/includes? urls ".tar.gz")) urls)
+            (expect (not (str/includes? output "new-runtime")) output)
+            (expect (.exists (io/file native-dir "vis-agent-native.build")))
+            (expect (not (.exists (io/file bin "vis-agent-native"))))
+            (expect (= wrapper (slurp launcher)))))))
+  (it "repairs missing native components even when the selected release is unchanged"
+      (doseq [component ["vis-agent-native" "vis-agent-native.build" "vis-tui" "libjsound.so"
+                         "vis-agent-python/python" "vis-agent-python/libvispython.so"
+                         "vis-web/index.html"]]
+        (with-native-install-fixture
+          {:build-commit (apply str (repeat 40 "a")) :web? true}
+          (fn [{:keys [exit output bin] :as fixture}]
+            (expect (zero? exit) output)
+            (delete-tree! (io/file bin component))
+            (let [{:keys [exit output urls]} (rerun-native-update fixture ["--keep-gateway"])]
+              (expect (zero? exit) output)
+              (expect (str/includes? urls ".tar.gz") urls)
+              (expect (not (str/includes? output "already up to date")) output)
+              (expect (.exists (io/file bin component))))))))
+  (it "installs a changed release version, beta commit or build track"
+      (doseq [[track stamp] [["release" (str "9.9.8 " (apply str (repeat 40 "a")) " release now\n")]
+                             ["beta" (str "9.9.9 " (apply str (repeat 40 "b")) " beta now\n")]
+                             ["release" (str "9.9.9 " (apply str (repeat 40 "a")) " beta now\n")]]]
+        (with-native-install-fixture
+          {:track track :build-commit (apply str (repeat 40 "a"))}
+          (fn [{:keys [exit output bin] :as fixture}]
+            (expect (zero? exit) output)
+            (let [build (io/file bin "vis-agent-native.build")
+                  expected (slurp build)]
+
+              (spit build stamp)
+              (let [{:keys [exit output urls]}
+                    (rerun-native-update fixture ["--track" track "--keep-gateway"])]
+                (expect (zero? exit) output)
+                (expect (str/includes? urls ".tar.gz") urls)
+                (expect (not (str/includes? output "already up to date")) output)
+                (expect (= expected (slurp build)))))))))
+  (it "does not treat malformed build stamps as current"
+      (doseq [stamp ["" "9.9.9 abc123 release now\n"
+                     (str "9.9.9 " (apply str (repeat 40 "a")) " release\n")]]
+        (with-native-install-fixture
+          {:build-commit (apply str (repeat 40 "a"))}
+          (fn [{:keys [exit output bin] :as fixture}]
+            (expect (zero? exit) output)
+            (spit (io/file bin "vis-agent-native.build") stamp)
+            (let [{:keys [exit output urls]} (rerun-native-update fixture ["--keep-gateway"])]
+              (expect (zero? exit) output)
+              (expect (str/includes? urls ".tar.gz") urls)
+              (expect (not (str/includes? output "already up to date")) output))))))
+  (it "leaves matching managed source in place without fetching it again"
+      (doseq [track ["release" "beta"]]
+        (with-native-source-fixture
+          {:track track}
+          (fn [{:keys [exit output src selected] :as fixture}]
+            (expect (zero? exit) output)
+            (let [{:keys [exit output urls]}
+                  (rerun-native-update fixture ["--track" track "--keep-gateway"])]
+              (expect (zero? exit) output)
+              (expect (str/includes? output "already up to date") output)
+              (expect (not (str/includes? urls ".tar.gz")) urls)
+              (expect (not (str/includes? output "fetching")) output)
+              (expect (= selected (git! src "rev-parse" "HEAD"))))))))
+  (it "does not bypass managed source synchronization or local change protection"
+      ;; #195: matching native does not permit source to drift or discard local work.
+      (doseq [change [:pin :commit :dirty]]
+        (with-native-source-fixture
+          {}
+          (fn [{:keys [exit output env src old selected] :as fixture}]
+            (expect (zero? exit) output)
+            (case change
+              :pin
+              (spit (io/file (get env "VIS_HOME") "install" "ref") (str old "\n"))
+
+              :commit
+              (git! src "checkout" "--quiet" "--detach" old)
+
+              :dirty
+              (spit (io/file src "VIS_VERSION") "local work\n"))
+            (let [{:keys [exit output]} (rerun-native-update fixture ["--keep-gateway"])]
+              (expect (not (str/includes? output "already up to date")) output)
+              (if (= change :dirty)
+                (do (expect (not (zero? exit)) output)
+                    (expect (str/includes? output "local changes") output)
+                    (expect (= "local work\n" (slurp (io/file src "VIS_VERSION")))))
+                (do (expect (zero? exit) output)
+                    (expect (= selected (git! src "rev-parse" "HEAD")))
+                    (expect (= (str selected "\n")
+                               (slurp (io/file (get env "VIS_HOME") "install" "ref")))))))))))
+  (it "still refreshes an older desktop app when the native runtime is already current"
+      (with-native-install-fixture
+        {:build-commit (apply str (repeat 40 "a")) :desktop "9.8.0"}
+        (fn [{:keys [exit output desktop] :as fixture}]
+          (expect (zero? exit) output)
+          (spit (io/file desktop "current") "9.8.0\n")
+          (let [{:keys [exit output urls]} (rerun-native-update fixture [])]
+            (expect (zero? exit) output)
+            (expect (str/includes? output "already up to date") output)
+            (expect (not (str/includes? urls ".tar.gz")) urls)
+            (expect (str/includes? output "updated the desktop app: 9.8.0 → 9.9.9") output)
+            (expect (= "9.9.9\n" (slurp (io/file desktop "current")))))))))
 
 ;; Update defaults are independent of the last installed track.
 (defdescribe
