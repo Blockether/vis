@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, within } from 'storybook/test';
-import type { GatewayClient } from '../../lib/gateway';
+import type { ComponentProps } from 'react';
 import type { SettingsResponse, SettingsTarget } from '../../lib/types';
 import { ScopedSettingsDialog } from './ScopedSettingsDialog';
 
@@ -20,13 +20,13 @@ const settings: SettingsResponse = {
     ] },
   ],
 };
-function fixtureClient(catalog: SettingsResponse): GatewayClient {
+function fixtureClient(catalog: SettingsResponse): ComponentProps<typeof ScopedSettingsDialog>['client'] {
   return {
     cachedSettings: () => catalog,
     settings: async () => catalog,
     cachedMcpServers: () => [],
     mcpServers: async () => [],
-  } as unknown as GatewayClient;
+  } as unknown as ComponentProps<typeof ScopedSettingsDialog>['client'];
 }
 
 const client = fixtureClient(settings);

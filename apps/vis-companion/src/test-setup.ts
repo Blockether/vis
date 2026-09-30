@@ -14,6 +14,7 @@
 // a refactor that changed nothing a user can see. Use `render` + a role/label
 // query + `userEvent`; keep a source scan only for a rule about the source
 // itself (an import that must not exist, a call site that must be used).
+import type { AxeResults } from 'axe-core';
 import { afterEach } from 'vitest';
 
 import './test-storage';
@@ -58,6 +59,26 @@ if (typeof document !== 'undefined') {
 
   await import('@testing-library/jest-dom/vitest');
   const { cleanup, configure } = await import('@testing-library/react');
+  // The addon reports failures but does not always throw under vmForks.
+  // Consume its existing scan so a failed accessibility report fails the test.
+  afterEach(({ task }) => {
+    const reports = (task.meta as {
+      reports?: {
+        type: string;
+        status: string;
+        result: AxeResults | { error: unknown };
+      }[];
+    }).reports ?? [];
+    const failures = reports.filter((report) => report.type === 'a11y' && report.status === 'failed');
+    if (failures.length === 0) return;
+    const details = failures.map(({ result }) => {
+      if ('error' in result) return `Accessibility scanner error: ${String(result.error)}`;
+      return result.violations.map(({ id, help, nodes }) =>
+        `${id}: ${help}\n${nodes.map((node) => `${node.target.join(', ')}\n${node.failureSummary ?? ''}`).join('\n')}`,
+      ).join('\n');
+    });
+    throw new Error(`Accessibility checks failed:\n${details.join('\n')}`);
+  });
   afterEach(cleanup);
   // A whole screen on a busy machine can take longer than Testing Library's
   // one-second default to settle, so every `findBy*` and `waitFor` waits five

@@ -8,8 +8,6 @@ import { setTimeout as sleep } from 'node:timers/promises';
 // takes what the other runs leave and waits while they leave too little.
 
 const LEASE = /^(\d+)-(\d+)\.lease$/;
-// No single run takes this long; an older lease belongs to a run that is gone.
-const STALE_MS = 30 * 60_000;
 
 export interface LeaseOptions {
   dir?: string;
@@ -17,7 +15,7 @@ export interface LeaseOptions {
   /** The fewest workers worth starting with; below it the run waits for more. */
   minimum?: number;
   pollMs?: number;
-  /** After this long the run starts with whatever is free, at least one worker. */
+  /** After this long, accept fewer than the minimum; still wait if no worker is free. */
   maxWaitMs?: number;
   pid?: number;
   onWait?: (held: number, budget: number) => void;
@@ -46,7 +44,7 @@ function heldByOthers(dir: string, pid: number): number {
     const file = path.join(dir, name);
     const stat = statSync(file, { throwIfNoEntry: false });
     if (!stat) continue;
-    if (!alive(Number(lease[1])) || Date.now() - stat.mtimeMs > STALE_MS) {
+    if (!alive(Number(lease[1]))) {
       rmSync(file, { force: true });
       continue;
     }
@@ -93,8 +91,8 @@ export async function leaseWorkers({
     const { workers, held } = await locked(dir, () => {
       const held = heldByOthers(dir, pid);
       const free = budget - held;
-      if (free < Math.min(minimum, budget) && Date.now() < deadline) return { workers: 0, held };
-      const workers = Math.max(1, free);
+      if (free < 1 || (free < Math.min(minimum, budget) && Date.now() < deadline)) return { workers: 0, held };
+      const workers = free;
       writeFileSync(path.join(dir, `${pid}-${workers}.lease`), '');
       return { workers, held };
     });

@@ -933,6 +933,7 @@ export function McpServersPanel({ client, target }: { client: GatewayClient; tar
   return (
     <SettingsPanel
       title="MCP servers"
+      headingLevel={isScoped ? 3 : 4}
       action={
         showForm ? null : (
           <IconButton

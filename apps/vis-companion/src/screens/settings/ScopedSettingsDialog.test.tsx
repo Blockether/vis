@@ -140,7 +140,8 @@ it.each(['session', 'group', 'project'] as const)(
     vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
     render(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
 
-    const panel = (title: string) => screen.getByRole('heading', { name: title }).closest('section');
+    expect(screen.getByRole('heading', { name: `${scope[0].toUpperCase()}${scope.slice(1)} settings`, level: 2 })).toBeInTheDocument();
+    const panel = (title: string) => screen.getByRole('heading', { name: title, level: 3 }).closest('section');
     const sections = panel('Agent')?.parentElement;
     expect(sections).toHaveClass('divide-y', 'divide-dialog-edge');
     expect(Array.from(sections?.children ?? [])).toEqual([

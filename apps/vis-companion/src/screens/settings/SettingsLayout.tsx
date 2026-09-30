@@ -131,12 +131,15 @@ export function SettingsColumn({
 
 export function SettingsPanel({
   title,
+  headingLevel = 4,
   meta,
   action,
   disclosure,
   children,
 }: {
   title: string;
+  /** Heading level beneath the surrounding dialog or settings column. */
+  headingLevel?: 3 | 4;
   meta?: ReactNode;
   /** One icon action or switch; the header owns its alignment and trailing space. */
   action?: ReactNode;
@@ -145,14 +148,14 @@ export function SettingsPanel({
   children: ReactNode;
 }) {
   const TitleContainer = disclosure ? 'span' : 'div';
-  const TitleHeading = disclosure ? 'span' : 'h4';
+  const TitleHeading = disclosure ? 'span' : headingLevel === 3 ? 'h3' : 'h4';
   const titleBlock = (
     <TitleContainer className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
       <Text
         as={TitleHeading}
         variant="section"
         role="heading"
-        aria-level={4}
+        aria-level={headingLevel}
         className="min-w-0 flex-auto truncate"
       >
         {title}

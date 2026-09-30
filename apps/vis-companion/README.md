@@ -104,6 +104,10 @@ fitting, a scroll position, a Mermaid diagram) has `tags: ['!test']` and a
 comment that says why. The story tests skip it; Storybook still shows it, and
 the contrast audit still checks it.
 
+Stories run axe once. A failed accessibility report fails Vitest, including
+scanner errors. Reports marked `todo` remain warnings. Disabled checks do
+not run. Browser checks still cover layout and colour.
+
 ### How the suite runs
 
 The suite runs as three Vitest projects, and none of them starts a browser:
@@ -132,7 +136,10 @@ less than the machine's CPU count. Several checkouts or drafts that test at the
 same time therefore do not compete for the same cores. Each run records the
 workers it takes in the system temporary directory and starts once at least
 half of the budget is free. While it waits, it prints
-`Waiting for test workers`; after ten minutes it starts with whatever is free.
+`Waiting for test workers`. After ten minutes, it can start below half of
+the budget. It still waits until at least one worker is free. Waiting longer
+never increases the worker budget. A lease remains reserved while its
+process is alive. Leases from ended processes are removed.
 Interactive watch mode keeps Vitest's own worker count. To choose the count
 yourself, pass `--maxWorkers` or set `VITEST_MAX_WORKERS`; the run then
 neither waits nor counts against the budget.

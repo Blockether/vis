@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -43,10 +43,45 @@ describe('leaseWorkers', () => {
     expect(existsSync(path.join(dir, `${pid}-8.lease`))).toBe(false);
   });
 
-  it('starts with one worker when the wait runs out', async () => {
-    writeFileSync(path.join(dir, `${process.ppid}-8.lease`), '');
+  it('uses a free worker after the preferred minimum wait expires', async () => {
+    writeFileSync(path.join(dir, `${process.ppid}-7.lease`), '');
     const lease = await leaseWorkers({ dir, budget: 8, pollMs: 10, maxWaitMs: 30 });
     expect(lease.workers).toBe(1);
+    lease.release();
+  });
+
+  it.each([2, 3])('keeps waiting after the deadline when %i workers fill a budget of two', async (held) => {
+    const other = path.join(dir, `${process.ppid}-${held}.lease`);
+    writeFileSync(other, '');
+    const waits = [];
+    let admitted = false;
+    const pending = leaseWorkers({ dir, budget: 2, pollMs: 10, maxWaitMs: 0, onWait: (...seen) => waits.push(seen) })
+      .then((lease) => { admitted = true; return lease; });
+    try {
+      await expect.poll(() => waits).toEqual([[held, 2]]);
+      expect(admitted).toBe(false);
+      expect(leases()).toEqual([`${process.ppid}-${held}.lease`]);
+    } finally {
+      rmSync(other, { force: true });
+      (await pending).release();
+    }
+  });
+
+  it('keeps an old lease while its owner is alive', async () => {
+    const other = path.join(dir, `${process.ppid}-2.lease`);
+    writeFileSync(other, '');
+    const old = new Date(Date.now() - 31 * 60_000);
+    utimesSync(other, old, old);
+    const waits = [];
+    const pending = leaseWorkers({ dir, budget: 2, pollMs: 10, maxWaitMs: 0, onWait: (...seen) => waits.push(seen) });
+    try {
+      await expect.poll(() => waits).toEqual([[2, 2]]);
+      expect(existsSync(other)).toBe(true);
+      expect(leases()).toEqual([`${process.ppid}-2.lease`]);
+    } finally {
+      rmSync(other, { force: true });
+      (await pending).release();
+    }
   });
 });
 

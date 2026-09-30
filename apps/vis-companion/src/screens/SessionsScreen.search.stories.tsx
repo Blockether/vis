@@ -102,6 +102,7 @@ async function boxes(canvasElement: HTMLElement) {
   const pane = await dialog.findByRole('region', { name: 'Matching messages' });
   await within(pane).findByText('thinking');
   const list = dialog.getByRole('region', { name: 'Matching sessions' });
+  await expect(within(list).getByRole('region', { name: 'tower search results' })).toBeVisible();
   return { pane: pane.getBoundingClientRect(), list: list.getBoundingClientRect() };
 }
 

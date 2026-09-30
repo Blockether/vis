@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CloseIcon, SearchIcon } from '../../components/icons';
+import { SearchIcon } from '../../components/icons';
 import type { GatewayClient } from '../../lib/gateway';
 import type { SettingsResponse, SettingsTarget, Toggle } from '../../lib/types';
-import { Banner, Button, DialogFrame, IconButton, Input, Modal, Text } from '../../components/ui';
+import { Banner, Button, CloseButton, DialogFrame, Input, Modal, Text } from '../../components/ui';
 import { McpServersPanel, SettingRow } from './MachineSettings';
 import { SettingsPanel } from './SettingsLayout';
 
@@ -85,9 +85,7 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
               type="search"
               icon={<SearchIcon className="size-4" />}
               action={search && (
-                <IconButton label="Clear settings search" variant="quiet" onClick={clearSearch}>
-                  <CloseIcon className="size-3.5" />
-                </IconButton>
+                <CloseButton label="Clear settings search" onClick={clearSearch} />
               )}
               aria-label="Search settings"
               placeholder="Search settings"
@@ -123,7 +121,7 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
           )}
           {(groups.length > 0 || !needle) && (
             <div className="divide-y divide-dialog-edge">
-              {groups.map((group) => <SettingsPanel key={group.id} title={group.title}>
+              {groups.map((group) => <SettingsPanel key={group.id} title={group.title} headingLevel={3}>
                 <div className="divide-y divide-dialog-edge">{group.toggles.map((toggle) => <SettingRow key={toggle.id} toggle={toggle} busy={pending !== null}
                   onToggle={() => void save(toggle, 'toggle')} onPick={(value) => save(toggle, 'value', value)} onInherit={() => void save(toggle, 'inherit')} />)}</div>
               </SettingsPanel>)}

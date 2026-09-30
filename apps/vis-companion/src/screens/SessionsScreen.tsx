@@ -1918,6 +1918,7 @@ export function SessionsScreen({
       </div>
     ) : (
       <MachineSections
+        isSearch
         sections={foundSections}
         context={foundContext}
         creation={projectCreation}
@@ -2153,11 +2154,13 @@ type MachineSection = {
  * The session list and the search dialog both stand their rows on it.
  */
 function MachineSections({
+  isSearch = false,
   sections,
   context,
   creation,
   note,
 }: {
+  isSearch?: boolean;
   sections: MachineSection[];
   context: SessionRowsContext;
   creation: ProjectCreation;
@@ -2169,7 +2172,7 @@ function MachineSections({
       {sections.map(({ machine, groups, reading }, sectionIndex) => {
         const key = machineKey(machine.conn);
         return (
-          <section key={key} aria-label={`${machineLabel(machine.conn)} projects`}>
+          <section key={key} aria-label={`${machineLabel(machine.conn)} ${isSearch ? 'search results' : 'projects'}`}>
             {/* Every machine keeps its own named panel and landmark, even when it
               is the only one in the fleet: the landmark is a NAME, not ink. */}
             {/* Reported (paraphrased: bin that rail on the left): a machine's
