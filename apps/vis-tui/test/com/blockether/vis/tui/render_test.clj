@@ -631,6 +631,49 @@
             (expect (str/includes? (:line entry) "presenter.clj")))))))
 
 (defdescribe
+  activity-leaf-disclosure-test
+  (let [row
+        {:id "search-1"
+         :sequence 0
+         :operation "grep"
+         :state "succeeded"
+         :summary "source files"
+         :presentation {:headline "Searched"
+                        :summary "7 hits · 1 file"
+                        :content [{:type "text" :text "SEARCH_EVIDENCE_BODY"}]}}
+
+        entries
+        (fn [opened]
+          (#'render/activity-detail-entries
+           {:node-id "activity"
+            :activity-rows [row]
+            :activity-expanded? (fn [key default]
+                                  (get opened key default))}
+           80
+           "s1"))
+
+        text
+        (fn [opened]
+          (str/join "\n" (map :line (entries opened))))]
+
+    (it "shows a search summary without opening its evidence when the band is opened"
+        (let [shown
+              (entries {"#band" true})
+
+              head
+              (first (filter #(= :activity-row (get-in % [:meta :kind])) shown))]
+
+          (expect (str/includes? (:line head) "Searched"))
+          (expect (str/includes? (:line head) "7 hits · 1 file"))
+          (expect (true? (get-in head [:meta :collapsed?])))
+          (expect (not (str/includes? (text {"#band" true}) "SEARCH_EVIDENCE_BODY")))))
+    (it "keeps an explicit evidence choice independent of the outer band"
+        (expect (str/includes? (text {"#band" true "search-1" true}) "SEARCH_EVIDENCE_BODY"))
+        (expect (not (str/includes? (text {"#band" false "search-1" true}) "SEARCH_EVIDENCE_BODY")))
+        (expect (not (str/includes? (text {"#band" true "search-1" false})
+                                    "SEARCH_EVIDENCE_BODY"))))))
+
+(defdescribe
   joined-activity-band-test
   (let [rows
         (mapv (fn [i operation]
@@ -9855,6 +9898,7 @@ print(paths)"
               :activity-rows rows
               :activity-expanded? (fn [key default]
                                     (cond (= key "#band") true
+                                          (some #(= key (:id %)) rows) true
                                           (and expanded? (str/includes? key ":section:")) true
                                           :else default))}
              (- width 4)

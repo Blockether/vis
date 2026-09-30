@@ -1119,10 +1119,16 @@
                                    :success? true
                                    :activity {:state "succeeded"
                                               :counts {:succeeded 1}
-                                              :rows [{:id "read-1"
-                                                      :operation "Read files"
+                                              :rows [{:id "search-1"
+                                                      :operation "grep"
                                                       :summary "ACTIVITY_BODY"
-                                                      :state "succeeded"}]}}]}]}]
+                                                      :state "succeeded"
+                                                      :presentation
+                                                      {:headline "Searched"
+                                                       :summary "7 hits · 1 file"
+                                                       :content [{:type "text"
+                                                                  :text
+                                                                  "SEARCH_EVIDENCE_BODY"}]}}]}}]}]}]
               :scroll scroll/follow
               :detail-expansions {}
               :loading? false
@@ -1191,6 +1197,18 @@
                     (swap! state/app-db assoc-in [:settings :mouse-selection-copy] selection-copy?)
                     (state/dispatch [:bump-render-version])
                     (expect (true? (await-pred #(true? (:collapsed? (region ":code"))) 2000)))
+                    (click! "ACTIVITY" ":#band")
+                    (expect (true? (:collapsed? (region ":search-1"))))
+                    (expect (not (some #(str/includes? % "SEARCH_EVIDENCE_BODY")
+                                       (term/grid terminal))))
+                    (click! "Searched" ":search-1")
+                    (expect (some #(str/includes? % "SEARCH_EVIDENCE_BODY") (term/grid terminal)))
+                    (click! "ACTIVITY" ":#band")
+                    (click! "ACTIVITY" ":#band")
+                    (expect (false? (:collapsed? (region ":search-1"))))
+                    (expect (some #(str/includes? % "SEARCH_EVIDENCE_BODY") (term/grid terminal)))
+                    (click! "Searched" ":search-1")
+                    (click! "ACTIVITY" ":#band")
                     (click! "CODE" ":code")
                     (dotimes [_ 2]
                       (click! "RESULT" ":result"))

@@ -6507,7 +6507,11 @@
                                                        (and openable?
                                                             (expanded?
                                                               id
+                                                              ;; Completed leaf results require a separate disclosure.
+                                                              ;; Groups, progress and failures retain their visible context.
                                                               (and (zero? (long depth))
+                                                                   (or (seq children)
+                                                                       (#{:running :failed} state))
                                                                    (not= "ls" (:operation row))
                                                                    (not (:activity-list? row)))))
 
