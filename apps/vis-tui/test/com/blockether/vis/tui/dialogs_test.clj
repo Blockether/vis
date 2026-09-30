@@ -375,8 +375,7 @@
 
 ;; 1:1 session<->workspace: one unified row per session, NOT a
 ;; duplicated session row + workspace row with a contradictory :kind.
-;; The session you are currently in is the FOCUSED row: flagged, pinned
-;; to the top, marked "● focused".
+;; The current session stays flagged, but keeps its place in the recency list.
 (defdescribe
   navigator-row-model-test
   (let [sessions [{"id" "empty" "title" nil "turn_count" 0 "created_at" 0 "modified_at" 7200000}
@@ -389,17 +388,15 @@
           (expect (= 2 (count rows)))
           (expect (every? #(not (contains? % :kind)) rows))
           (expect (= [{:action :switch :id "s1"} {:action :switch :id "s2"}] (mapv :target rows)))))
-    (it "empty untitled shells hidden by default; focused session pinned to top"
+    (it "hides empty untitled shells without changing recency order"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               rows (all-rows {:active-session-id "s1" :sessions sessions})
               all-visible
               (all-rows {:active-session-id "s1" :sessions sessions :show-empty-untitled? true})]
 
           (expect (= ["s1" "s2"] (mapv (comp str :id :target) rows)))
-          ;; Focused (s1) pinned first; the rest keep recency order below,
-          ;; so all-visible is [s1 empty s2], not [empty s1 s2].
-          (expect (= ["s1" "empty" "s2"] (mapv (comp str :id :target) all-visible)))))
-    (it "focused session is flagged + pinned, marked '● focused'"
+          (expect (= ["empty" "s1" "s2"] (mapv (comp str :id :target) all-visible)))))
+    (it "flags the current session without inventing a focused status"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               rows (all-rows {:active-session-id "s1" :sessions sessions})
               r1 (first rows)]
@@ -407,13 +404,13 @@
           (expect (= "Untitled session" (:title r1)))
           (expect (= "s1" (:session r1)))
           (expect (:focused? r1))
-          (expect (= "● focused" (:status r1)))))
-    (it "non-active session is not focused and shows its turn count"
+          (expect (= "idle" (:status r1)))))
+    (it "shows an inactive session as idle instead of showing a turn count"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               rows (all-rows {:active-session-id "s1" :sessions sessions})]
 
           (expect (not (:focused? (second rows))))
-          (expect (= "5 turns" (:status (second rows))))))
+          (expect (= "idle" (:status (second rows))))))
     (it "compact MM-dd HH:mm timestamps (UTC)"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               rows (all-rows {:active-session-id "s1" :sessions sessions})
@@ -432,8 +429,8 @@
 
           (expect (= 1 (count vis)))
           (expect (:transcript-match? (first vis)))
-          (expect (= "in chat" (:status (first vis))))))
-    (it "body matches label the status by side and carry the You/Vis snippet"
+          (expect (= "idle" (:status (first vis))))))
+    (it "body matches keep session status and carry the You/Vis snippets"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               visible-rows (var-get #'dlg/navigator-visible-rows)
               preview-entries (var-get #'dlg/navigator-preview-entries)
@@ -446,14 +443,14 @@
               tag (fn [k]
                     (first (visible-rows rows "zzz-no-title-match" (mk k))))]
 
-          ;; user-request hit → `in request`, only a You preview side.
-          (expect (= "in request" (:status (tag :request))))
+          ;; A request hit supplies only a You preview, not a replacement session status.
+          (expect (= "idle" (:status (tag :request))))
           (expect (= ["You"] (mapv :label (preview-entries (:transcript-match (tag :request))))))
-          ;; assistant-reply hit → `in reply`, only a Vis preview side.
-          (expect (= "in reply" (:status (tag :reply))))
+          ;; An assistant reply supplies only a Vis preview.
+          (expect (= "idle" (:status (tag :reply))))
           (expect (= ["Vis"] (mapv :label (preview-entries (:transcript-match (tag :reply))))))
-          ;; both sides → `in chat`, You then Vis.
-          (expect (= "in chat" (:status (tag :both))))
+          ;; Both sides preserve their author labels.
+          (expect (= "idle" (:status (tag :both))))
           (expect (= ["You" "Vis"] (mapv :label (preview-entries (:transcript-match (tag :both))))))
           ;; the match carries the session title so the preview leads with it,
           ;; before the You/Vis snippet — title first, then transcript.
@@ -471,45 +468,38 @@
           (expect (= ["newest reply" "older ask" "oldest reply"] (mapv :text (preview-entries m))))
           ;; A hit-less match (older gateway) still renders the legacy pair.
           (expect (= ["You" "Vis"] (mapv :label (preview-entries (dissoc m :hits)))))))
-    (it
-      "a live query paints the GATEWAY's rank: name, ask, reply, thinking"
-      (let [all-rows (var-get #'dlg/navigator-all-rows)
-            visible-rows (var-get #'dlg/navigator-visible-rows)
-            ;; Listed newest-first by the gateway: the thinking-only session leads.
-            rows
-            (all-rows
-              {:active-session-id "none"
-               :sessions
-               [{"id" "muse" "title" "Muse hit" "turn_count" 4 "created_at" 0 "modified_at" 4}
-                {"id" "reply" "title" "Reply hit" "turn_count" 3 "created_at" 0 "modified_at" 3}
-                {"id" "ask" "title" "Ask hit" "turn_count" 2 "created_at" 0 "modified_at" 2}
-                {"id" "named"
-                 "title" "Needle in the name"
-                 "turn_count" 1
-                 "created_at" 0
-                 "modified_at" 1}]})
-            ;; The bands are the SERVER's (`:rank`): 0 title, 1 request, 2 reply,
-            ;; 3 thinking. The picker sorts by them and invents nothing.
-            matches {"muse" {:rank 3 :kind :thinking :reply-snippet "…needle…"}
-                     "reply" {:rank 2 :kind :reply :reply-snippet "…needle…"}
-                     "ask" {:rank 1 :kind :request :request-snippet "…needle…"}
-                     "named" {:rank 0 :kind :title}}
-            vis (visible-rows rows "needle" matches)
-            ;; Same rows, gateway ranks turned around: the picker follows the
-            ;; server even when its OWN title cell matched the query.
-            flipped (visible-rows rows
-                                  "needle"
-                                  (assoc matches
-                                    "named" {:rank 3 :kind :title}
-                                    "muse" {:rank 0 :kind :thinking :reply-snippet "…needle…"}))]
+    (it "a live query keeps recency order regardless of where its matches occur"
+        (let [all-rows (var-get #'dlg/navigator-all-rows)
+              visible-rows (var-get #'dlg/navigator-visible-rows)
+              ;; Listed newest-first by the gateway: the thinking-only session leads.
+              rows
+              (all-rows
+                {:active-session-id "none"
+                 :sessions
+                 [{"id" "muse" "title" "Muse hit" "turn_count" 4 "created_at" 0 "modified_at" 4}
+                  {"id" "reply" "title" "Reply hit" "turn_count" 3 "created_at" 0 "modified_at" 3}
+                  {"id" "ask" "title" "Ask hit" "turn_count" 2 "created_at" 0 "modified_at" 2}
+                  {"id" "named"
+                   "title" "Needle in the name"
+                   "turn_count" 1
+                   "created_at" 0
+                   "modified_at" 1}]})
+              ;; Rank describes the match location, never the order of sessions.
+              matches {"muse" {:rank 3 :kind :thinking :reply-snippet "…needle…"}
+                       "reply" {:rank 2 :kind :reply :reply-snippet "…needle…"}
+                       "ask" {:rank 1 :kind :request :request-snippet "…needle…"}
+                       "named" {:rank 0 :kind :title}}
+              vis (visible-rows rows "needle" matches)
+              ;; Changing the match ranks must not move the rows.
+              flipped (visible-rows rows
+                                    "needle"
+                                    (assoc matches
+                                      "named" {:rank 3 :kind :title}
+                                      "muse" {:rank 0 :kind :thinking :reply-snippet "…needle…"}))]
 
-        ;; The name a human typed beats anything said in the chat; what the user
-        ;; asked beats what the assistant answered; the assistant's reasoning
-        ;; aside comes last. Recency decides only between equals.
-        (expect (= ["named" "ask" "reply" "muse"] (mapv (comp str :id :target) vis)))
-        (expect (= ["muse" "ask" "reply" "named"] (mapv (comp str :id :target) flipped)))
-        (expect (= "in thinking"
-                   (:status (first (filter #(= "muse" (str (:id (:target %)))) vis)))))))
+          (expect (= ["muse" "reply" "ask" "named"] (mapv (comp str :id :target) vis)))
+          (expect (= ["muse" "reply" "ask" "named"] (mapv (comp str :id :target) flipped)))
+          (expect (= "idle" (:status (first (filter #(= "muse" (str (:id (:target %)))) vis)))))))
     (it "every matching row carries its own matches for the message pane"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               visible-rows (var-get #'dlg/navigator-visible-rows)
@@ -527,37 +517,24 @@
 
           (expect (= (count rows) (count vis)))
           (expect (every? #(= 1 (count (preview-entries (:transcript-match %)))) vis))))
-    (it "the list budgets painted LINES and never scrolls past the end"
+    (it "the list budgets one line per session and never scrolls past the end"
         (let [heights (var-get #'dlg/navigator-block-heights)
               blocks (var-get #'dlg/navigator-visible-blocks)
               scroll-start (var-get #'dlg/navigator-scroll-start)
               hit (fn [n]
                     {:transcript-match {:hits (vec (repeat n {:side :reply :snippet "x"}))}})
               vis [(hit 3) (hit 0) (hit 2)]
-              hs (heights vis)
-              shape (fn [plan]
-                      (mapv :spacer? plan))]
+              hs (heights vis)]
 
-          ;; Two content lines + one spacer per session. Matching messages paint in
-          ;; their own pane, so they never add list lines.
-          (expect (= [3 3 3] hs))
-          ;; The content base always survives; only a viewport filled exactly by
-          ;; the base omits the spacer.
-          (expect (= [false] (shape (blocks vis 0 2))))
-          (expect (= [true] (shape (blocks vis 0 3))))
-          (expect (= [true false] (shape (blocks vis 0 5))))
-          (expect (= [true true] (shape (blocks vis 0 6))))
-          ;; A project heading keeps one top-margin row with its first session.
-          (let [grouped [(assoc (hit 0) :group-start? true)]]
-            (expect (empty? (blocks grouped 0 3)))
-            (expect (= [false] (shape (blocks grouped 0 4))))
-            (expect (= [true] (shape (blocks grouped 0 5)))))
-          ;; scroll advances only as far as the selected row needs
-          (expect (= 1 (scroll-start hs 2 0 4)))
-          (expect (= 2 (scroll-start hs 2 2 4)))
+          (expect (= [1 1 1] hs))
+          (expect (= [0 1] (mapv :idx (blocks vis 0 2))))
+          (expect (= [0 1 2] (mapv :idx (blocks vis 0 3))))
+          (expect (= [1 2] (mapv :idx (blocks vis 1 99))))
+          (expect (= 1 (scroll-start hs 2 0 2)))
+          (expect (= 2 (scroll-start hs 2 0 1)))
           (expect (= 0 (scroll-start hs 0 0 99)))))
     (it
-      "keeps selection plain while sessions retain one row of breathing room"
+      "keeps selection plain while fitting every session on one line"
       (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)
             draw-session (var-get #'dlg/draw-navigator-session!)
             entry {:focused? false
@@ -565,31 +542,20 @@
                    :title "First session"
                    :session "abc1234"
                    :modified "now"}
-            x 4
-            row 6
-            width 32]
+            line (fn [row]
+                   (apply str
+                     (for [column (range 80)]
+                       (.getCharacterString (.getBackCharacter screen (int column) (int row))))))]
 
         (try (let [g (.newTextGraphics screen)]
-               (draw-session g x row width entry true)
-               (draw-session g x (+ row 3) width entry false)
-               (let [selected-title-bg (.getBackgroundColor
-                                         (.getBackCharacter screen (int (+ x 2)) (int row)))
-                     selected-meta-bg (.getBackgroundColor
-                                        (.getBackCharacter screen (int (+ x 2)) (int (inc row))))
-                     inactive-bg (.getBackgroundColor
-                                   (.getBackCharacter screen (int (+ x 2)) (int (+ row 3))))
-                     spacer-glyph (.getCharacterString
-                                    (.getBackCharacter screen (int x) (int (+ row 2))))
-                     metadata (apply str
-                                (for [column (range 80)]
-                                  (.getCharacterString
-                                    (.getBackCharacter screen (int column) (int (inc row))))))]
-
-                 (expect (= selected-title-bg selected-meta-bg inactive-bg))
-                 (expect (= " " spacer-glyph))
-                 ;; A removed workspace-mode column must not survive as an empty separator.
-                 (expect (str/includes? metadata "abc1234  ·  now"))
-                 (expect (not (str/includes? metadata "·    ·")))))
+               (draw-session g 4 6 32 entry true)
+               (draw-session g 4 7 32 entry false)
+               (expect (= (.getBackgroundColor (.getBackCharacter screen 6 6))
+                          (.getBackgroundColor (.getBackCharacter screen 6 7))))
+               (expect (str/includes? (line 6) "now / idle / First session"))
+               (expect (str/includes? (line 7) "now / idle / First session"))
+               (expect (not (str/includes? (line 6) "abc1234")))
+               (expect (str/blank? (line 8))))
              (finally (.stopScreen screen)))))
     (it "highlight segments mark each query word where a word starts, ignoring case and accents"
         (let [segs (var-get #'dlg/navigator-highlight-segments)]
@@ -605,33 +571,16 @@
           (expect (= [["Order a " false] ["café" true] [" au lait" false]]
                      (segs "Order a café au lait" "cafe")))
           (expect (= [["no needle here" false]] (segs "no needle here" "")))))
-    (it "a query splits the picker: list beside the messages, or above them when narrow"
-        (let [layout (var-get #'dlg/navigator-pane-layout)
-              wide {:left 2 :right 117 :inner-w 114}
-              narrow {:left 2 :right 77 :inner-w 74}]
-
-          ;; No query: the list keeps the whole body.
-          (expect
-            (= {:mode :single :body-x 4 :body-w 110 :scrollbar-col 115 :body-top 7 :list-budget 18}
-               (layout wide 5 20 false 0)))
-          ;; Wide: list, its scrollbar, the border, then the messages up to one blank
-          ;; column before the dialog's right border.
-          (let [{:keys [mode body-x body-w scrollbar-col divider preview-x preview-w preview-top
-                        preview-h]}
-                (layout wide 5 20 true 0)]
-            (expect (= :side mode))
-            (expect (< (+ body-x body-w) scrollbar-col divider preview-x))
-            (expect (= 116 (+ preview-x preview-w)))
-            (expect (= [7 18] [preview-top preview-h])))
-          ;; Narrow: the messages sit under the list, below a border row. A long list
-          ;; keeps three fifths of the body; a short one only the lines it paints.
-          (let [{:keys [mode body-top list-budget divider preview-top preview-h]}
-                (layout narrow 5 20 true 99)]
-            (expect (= :stacked mode))
-            (expect (= (+ body-top list-budget) divider))
-            (expect (= (inc divider) preview-top))
-            (expect (= [10 7] [list-budget preview-h])))
-          (expect (= [5 12] ((juxt :list-budget :preview-h) (layout narrow 5 20 true 5))))))
+    (it "keeps the session list beside the preview at every terminal width"
+        (let [layout (var-get #'dlg/navigator-pane-layout)]
+          (doseq [bounds [{:left 2 :right 117 :inner-w 114} {:left 2 :right 77 :inner-w 74}]]
+            (let [{:keys [mode body-x body-w scrollbar-col divider preview-x preview-w preview-top
+                          preview-h list-budget]}
+                  (layout bounds 5 20)]
+              (expect (= :side mode))
+              (expect (< (+ body-x body-w) scrollbar-col divider preview-x))
+              (expect (= (dec (:right bounds)) (+ preview-x preview-w)))
+              (expect (= [7 18 18] [preview-top preview-h list-budget]))))))
     (it "the message pane lists each match: author and time over the snippet, query marked"
         (let [lines (var-get #'dlg/navigator-preview-lines)
               entry {:title "Search redesign"
@@ -679,14 +628,14 @@
                  (expect (= t/dialog-bg (.getBackgroundColor (cell 2))))
                  (expect (= t/dialog-bg (.getBackgroundColor (cell 11)))))
                (finally (.stopScreen screen)))))
-    (it "visible rows are project-grouped instead of table-shaped"
+    (it "visible rows stay flat instead of adding project headings"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               visible-rows (var-get #'dlg/navigator-visible-rows)
               rows (all-rows {:active-session-id "s1" :sessions sessions})
               visible (visible-rows rows "" {})]
 
-          (expect (= 1 (count (filter :group-start? visible))))
-          (expect (= [2 2] (mapv :group-count visible)))
+          (expect (not-any? :group-start? visible))
+          (expect (not-any? :group-count visible))
           (expect (= 1 (count (visible-rows rows "second" #{}))))
           (expect (= 2 (count visible)))))
     (it "transcript lookup never blocks the typing thread"
@@ -1433,12 +1382,11 @@
                    (expect (= "(no message)" (:label (nth rows 2)))))))
 
 ;; Regression, issue #session-list-work-dir: project names used to split one working directory into separate groups.
-;; Navigator hierarchy: the working directory comes first, regardless of project name.
-;; A project name is metadata, not a second place to put the same directory.
+;; Project and group metadata do not break one recency-ordered session list.
 (defdescribe
   navigator-work-dir-grouping-test
   (it
-    "keeps the focused work dir first and every work dir contiguous"
+    "keeps recency order across work directories and project names"
     (let [all-rows
           (var-get #'dlg/navigator-all-rows)
 
@@ -1475,9 +1423,8 @@
           rows
           (all-rows {:active-session-id "s1" :sessions sessions})]
 
-      ;; Focused work dir A is first and remains one coherent group, followed by B.
-      (expect (= ["s1" "s3" "s2" "s4"] (mapv (comp str :id :target) rows)))))
-  (it "sessions without a work-dir share one group and keep recency order"
+      (expect (= ["s1" "s2" "s3" "s4"] (mapv (comp str :id :target) rows)))))
+  (it "sessions without a work-dir also keep recency order"
       (let [all-rows
             (var-get #'dlg/navigator-all-rows)
 
@@ -1527,15 +1474,15 @@
         groups
         {"grp-release" {"id" "grp-release" "name" "Release" "color" "blue"}}]
 
-    (it "files every group ahead of the sessions that are in none of them"
+    (it "keeps group metadata without lifting filed sessions above newer ones"
         (let [all-rows
               (var-get #'dlg/navigator-all-rows)
 
               rows
               (all-rows {:active-session-id "none" :sessions sessions :groups groups})]
 
-          (expect (= ["filed-1" "filed-2" "loose-1" "loose-2"] (mapv (comp str :id :target) rows)))
-          (expect (= ["Release" "Release" nil nil] (mapv :session-group rows)))))
+          (expect (= ["loose-1" "filed-1" "loose-2" "filed-2"] (mapv (comp str :id :target) rows)))
+          (expect (= [nil "Release" nil "Release"] (mapv :session-group rows)))))
     ;; Reported in this Vis session (paraphrased: recolouring a group repainted some of
     ;; its rows and left the others alone). The COLOUR IS THE GROUP'S: a row names its
     ;; group by id, so what the group wears now is what every one of its rows wears.
@@ -1549,43 +1496,23 @@
               rows
               (all-rows {:active-session-id "none" :sessions sessions :groups recoloured})]
 
-          (expect (= ["Releases" "Releases" nil nil] (mapv :session-group rows)))
-          (expect (= ["amber" "amber" nil nil] (mapv :session-group-color rows)))))
-    (it "heads each set with its own word and its own count"
-        (let [all-rows
-              (var-get #'dlg/navigator-all-rows)
-
-              visible-rows
-              (var-get #'dlg/navigator-visible-rows)
-
-              band-label
-              (var-get #'dlg/navigator-band-label)
-
-              visible
-              (visible-rows (all-rows {:active-session-id "none" :sessions sessions :groups groups})
-                            ""
-                            {})]
-
-          (expect (= ["~/proj  ·  Groups  ·  2 sessions" "~/proj  ·  Sessions  ·  2 sessions"]
-                     (mapv band-label (filter :group-start? visible))))))
-    (it "a query still finds a session its group took out of the list"
-        (let [all-rows
-              (var-get #'dlg/navigator-all-rows)
-
-              visible-rows
-              (var-get #'dlg/navigator-visible-rows)
-
-              band-label
-              (var-get #'dlg/navigator-band-label)
-
-              visible
-              (visible-rows (all-rows {:active-session-id "none" :sessions sessions :groups groups})
-                            "filed one"
-                            {})]
-
+          (expect (= [nil "Releases" nil "Releases"] (mapv :session-group rows)))
+          (expect (= [nil "amber" nil "amber"] (mapv :session-group-color rows)))))
+    (it "does not add a heading or a count between compact session rows"
+        (let [visible (#'dlg/navigator-visible-rows
+                       (#'dlg/navigator-all-rows {:sessions sessions :groups groups})
+                       ""
+                       {})]
+          (expect (not-any? :group-start? visible))
+          (expect (not-any? :group-count visible))
+          (expect (= [1 1 1 1] (#'dlg/navigator-block-heights visible)))))
+    (it "a query still finds a filed session in the same flat list"
+        (let [visible (#'dlg/navigator-visible-rows
+                       (#'dlg/navigator-all-rows {:sessions sessions :groups groups})
+                       "filed one"
+                       {})]
           (expect (= ["filed-1"] (mapv (comp str :id :target) visible)))
-          (expect (= ["~/proj  ·  Groups  ·  1 session"]
-                     (mapv band-label (filter :group-start? visible))))))))
+          (expect (= "Release" (:session-group (first visible))))))))
 
 ;; Regression, this Vis session (paraphrased: "why do we download every session just to
 ;; open the picker"): C-g read the whole fleet, because the dialog was handed the list
@@ -1769,49 +1696,56 @@
       (expect (true? painted?))
       (expect (nil? (:error (deref task 5000 {:error ::blocked})))))))
 
-(defdescribe navigator-message-pane-test
-             (it
-               "a query splits the picker: sessions left of a border, their matching messages right"
-               (let [{:keys [lines capture]}
-                     (capture-message-pane {:cols 120 :rows 32})
+(defdescribe
+  navigator-message-pane-test
+  (it "a query splits the picker: sessions left of a border, their matching messages right"
+      (let [{:keys [lines capture]}
+            (capture-message-pane {:cols 120 :rows 32})
 
-                     [_ border-col]
-                     (column-of lines "┬")
+            [_ border-col]
+            (column-of lines "┬")
 
-                     [ask-row ask-col]
-                     (column-of lines "split the search popup")
+            [ask-row ask-col]
+            (column-of lines "split the search popup")
 
-                     title-cols
-                     (keep #(str/index-of % "Beta notes") lines)]
+            ;; Both titles can share a terminal row in the compact list.
+            title-cols
+            (mapcat (fn [line]
+                      (keep #(str/index-of line "Beta notes" %) [0 (inc (long border-col))]))
+                    lines)]
 
-                 (expect (nil? (:error capture)))
-                 ;; The border runs from the query separator down to the footer separator.
-                 (expect (some? (column-of lines "┴")))
-                 (expect (= "│" (subs (nth lines ask-row) border-col (inc (long border-col)))))
-                 ;; The session stays in the list, left of the border. Its title heads the
-                 ;; messages on the right, each message under its author and time.
-                 (expect (some #(< (long %) (long border-col)) title-cols))
-                 (expect (some #(> (long %) (long border-col)) title-cols))
-                 (expect (< (long border-col) (long ask-col)))
-                 (expect (some? (column-of lines "You  01-01 00:00")))
-                 (expect (some? (column-of lines "Vis  01-01 00:01")))
-                 (expect (some? (column-of lines "the popup lists the matching messages")))))
-             (it "a narrow picker stacks the messages under the list"
-                 (let [{:keys [lines capture]}
-                       (capture-message-pane {:cols 80 :rows 32})
+        (expect (nil? (:error capture)))
+        ;; The border runs from the query separator down to the footer separator.
+        (expect (some? (column-of lines "┴")))
+        (expect (= "│" (subs (nth lines ask-row) border-col (inc (long border-col)))))
+        ;; The session stays in the list, left of the border. Its title heads the
+        ;; messages on the right, each message under its author and time.
+        (expect (some #(< (long %) (long border-col)) title-cols))
+        (expect (some #(> (long %) (long border-col)) title-cols))
+        (expect (< (long border-col) (long ask-col)))
+        (expect (some? (column-of lines "You  01-01 00:00")))
+        (expect (some? (column-of lines "Vis  01-01 00:01")))
+        (expect (some? (column-of lines "the popup lists the matching messages")))))
+  (it "a narrow picker keeps the messages beside the list"
+      (let [{:keys [lines capture]}
+            (capture-message-pane {:cols 80 :rows 32})
 
-                       [title-row title-col]
-                       (column-of lines "Beta notes")
+            [_ border-col]
+            (column-of lines "┬")
 
-                       [ask-row ask-col]
-                       (column-of lines "split the search popup")]
+            [title-row title-col]
+            (column-of lines "Beta notes")
 
-                   (expect (nil? (:error capture)))
-                   (expect (nil? (column-of lines "┬")))
-                   (expect (< (long title-row) (long ask-row)))
-                   (expect (<= (long ask-col) (long title-col)))
-                   ;; A short list leaves the rest of the body to the messages.
-                   (expect (some? (column-of lines "the popup lists the matching messages"))))))
+            [ask-row ask-col]
+            (column-of lines "split the search popup")]
+
+        (expect (nil? (:error capture)))
+        (expect (some? border-col))
+        (expect (< (long title-row) (long ask-row)))
+        (expect (< (long title-col) (long border-col) (long ask-col)))
+        ;; The narrower message pane wraps the reply without hiding it.
+        (expect (some? (column-of lines "the popup lists")))
+        (expect (some? (column-of lines "messages…"))))))
 
 (defdescribe
   navigator-page-responsiveness-test
@@ -2816,14 +2750,14 @@
                        {"id" "s-live" "title" "Deploy" "turn_count" 3 "live" true}]
 
                    (expect (= "● live" (:status (row nil live))))
-                   (expect (= "● focused · live" (:status (row "s-live" live)))))))
+                   (expect (= "● live" (:status (row "s-live" live)))))))
 
 ;; The star is the GATEWAY's mark (`session_soul.favorite_rank`), and this terminal
 ;; painted none of it: a session starred on the phone stood here unmarked, sunk
 ;; among cold rows, with no way to star one from the keyboard at all.
 (defdescribe
   navigator-favorite-test
-  "The session list wears the human's star and leads each band with it."
+  "Stars remain actionable without changing recency or adding row fields."
   (it "carries the gateway's rank onto the row"
       (let [row
             (fn [session]
@@ -2835,17 +2769,14 @@
         (expect (true? (:favorite? starred)))
         (expect (= 3 (:favorite-rank starred)))
         (expect (not (:favorite? (row {"id" "s-plain" "title" "Deploy"}))))))
-  (it "leads a band with the starred rows, oldest star first"
-      (let [group-rows
-            (var-get #'dlg/group-rows-by-dir)
-
-            rows
-            [{:id "plain" :dir "/w" :position 0}
-             {:id "late-star" :dir "/w" :position 1 :favorite-rank 5}
-             {:id "early-star" :dir "/w" :position 2 :favorite-rank 1}]]
-
-        (expect (= ["early-star" "late-star" "plain"] (mapv :id (group-rows rows))))))
-  (it "paints a single-cell favorite mark on the starred row alone"
+  (it "keeps recency rather than ordering by the age of a star"
+      (let [rows (#'dlg/navigator-all-rows
+                  {:sessions
+                   [{"id" "plain" "title" "Plain" "modified_at" 3}
+                    {"id" "late-star" "title" "Late" "modified_at" 2 "favorite_rank" 5}
+                    {"id" "early-star" "title" "Early" "modified_at" 1 "favorite_rank" 1}]})]
+        (expect (= ["plain" "late-star" "early-star"] (mapv (comp :id :target) rows)))))
+  (it "keeps the same three fields on starred and unstarred rows"
       (let [{:keys [^TerminalScreen screen]}
             (term/virtual-screen)
 
@@ -2871,9 +2802,9 @@
                                :favorite-rank 1)
                              false)
                (draw-session g 0 4 40 entry false)
-               (expect (str/includes? (line 0) "* Deploy"))
-               (expect (str/includes? (line 0) "Deploy"))
-               (expect (not (str/includes? (line 4) "* Deploy"))))
+               (expect (str/includes? (line 0) "now / idle / Deploy"))
+               (expect (str/includes? (line 4) "now / idle / Deploy"))
+               (expect (not (str/includes? (line 0) "*"))))
              (finally (.stopScreen screen))))))
 
 (defdescribe model-picker-portable-marker-test
@@ -2915,11 +2846,11 @@
                                   "title" "Deploy"
                                   "is_awaiting_input" true
                                   "awaiting_input_count" 2}))))))
-  (it "leaves an unparked row's status exactly as it was"
+  (it "shows idle status on quiet rows, including the current session"
       (let [row (fn [active session]
                   ((var-get #'dlg/navigator-session-row) active {} session))]
-        (expect (= "3 turns" (:status (row nil {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))
-        (expect (= "● focused"
+        (expect (= "idle" (:status (row nil {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))
+        (expect (= "idle"
                    (:status (row "s-quiet" {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))
         (expect (not (:awaiting-input? (row nil {"id" "s-quiet" "title" "Deploy"})))))))
 
@@ -2945,8 +2876,8 @@
                                   "is_unread" true
                                   "unread_answers" 2}))))
         (expect (true? (:unread? (row {"id" "s-new" "title" "Deploy" "unread_answers" 1}))))
-        ;; A read row is its turn count again, exactly as before.
-        (expect (= "3 turns" (:status (row {"id" "s-read" "title" "Deploy" "turn_count" 3}))))))
+        ;; A read session shows its state, not its turn count.
+        (expect (= "idle" (:status (row {"id" "s-read" "title" "Deploy" "turn_count" 3}))))))
   (it
     "says a run STOPPED instead of letting it read as idle"
     (let [row
@@ -2965,7 +2896,7 @@
         (expect (true? (:stopped? (row failed)))))
       ;; Bounded by the read mark, exactly as the app bounds it: an interrupted
       ;; run the reader has already seen is an ordinary idle session.
-      (expect (= "3 turns" (:status (row (dissoc cut "unread_answers")))))
+      (expect (= "idle" (:status (row (dissoc cut "unread_answers")))))
       ;; Whatever the last turn did, a session running right now is live.
       (expect (= "● live" (:status (row (assoc cut "live" true))))))))
 

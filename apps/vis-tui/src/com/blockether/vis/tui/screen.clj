@@ -5470,24 +5470,18 @@
   60)
 
 (defn- tui-session-page
-  "One WINDOW of the picker's list: its rows, enriched for the navigator, and the cursor
-   naming the page after them (`nil` when the walk is over). The gateway owns the order,
-   so the page is painted as it arrives.
-
-   The GROUPS come aside (`:grouped :aside`): a session a human filed leaves the window
-   and arrives complete beside it, so the navigator's group bands are whole from the first
-   read instead of filling in as the reader pages deeper into the fleet."
+  "One recency window, enriched for the navigator, and the cursor for its next
+   page. The gateway orders blank searches by content time across projects,
+   groups and stars, so the picker keeps that same order between pages."
   [opts]
-  (let [page (vis/gateway-list-sessions-page (assoc opts :grouped :aside))]
-    {:sessions (mapv enrich-session-row
-                     (latest-modified-first (map session-summary
-                                                 (concat (:grouped page) (:sessions page)))))
+  (let [page (vis/gateway-search-sessions "" opts)]
+    {:sessions (mapv (comp enrich-session-row session-summary) (:sessions page))
      :next-cursor (:next-cursor page)}))
 
 (defn- picker-first-page
-  "The window the picker opens on, holding the session in use. The navigator stands that
-   session on its first row, so the cursor starts where the reader is. Newer sessions can
-   push it out of the window; then its own row is read by id and joins the page."
+  "The recency window the picker opens on, including the session in use. If
+   newer sessions pushed it out of that window, read its own row by id so the
+   dialog can select it without moving it ahead of newer sessions."
   [active-id]
   (let [page
         (tui-session-page {:limit picker-page-size})
@@ -5499,8 +5493,13 @@
     (if (or (str/blank? active) (some #(= active (str (get % "id"))) (:sessions page)))
       page
       ;; The page stands without it: the row places the cursor, it does not make the list.
-      (let [own (try (:sessions (tui-session-page {:ids [active]})) (catch Exception _ []))]
-        (update page :sessions #(into (vec own) %))))))
+      (let [own (try (some-> (vis/gateway-soul active)
+                             session-summary
+                             enrich-session-row)
+                     (catch Exception _ nil))]
+        (cond-> page
+          own
+          (update :sessions conj own))))))
 
 (defn- fleet-group-index
   "Every session GROUP this machine holds, keyed by group id. A session row names its

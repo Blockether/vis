@@ -5537,12 +5537,10 @@
     (if (= day "-") "-" (str (subs day 5) " " (format-session-time v)))))
 
 (defn- navigator-session-row
-  "Normalize one session for the full-width navigator list. The working directory
-   owns the hierarchy; project names stay metadata and never split a directory.
-
-   `groups` indexes the machine's session GROUPS by id. A row names its group by
-   id and nothing else - the name and the palette token are the group's own - so
-   a filed row is banded and inked from this index, never from a copy."
+  "Normalize a compact session row. Project metadata remains searchable and
+   group metadata supplies the date's ink; neither changes the recency order.
+   `groups` indexes the machine's session groups by id, so a filed row uses
+   the group's current name and palette token rather than a copied value."
   [active-session-id groups session]
   (let [id
         (get session "id")
@@ -5601,10 +5599,7 @@
      :session-group-id gid
      :session-group (not-empty (str (get group "name")))
      :session-group-color (not-empty (str (get group "color")))
-     :position (get session "project_position")
-     ;; The human's STAR, as the gateway keeps it (`session_soul.favorite_rank`,
-     ;; nil = unstarred). A rank, never a display value: rows only compare it, so
-     ;; the starred band paints in the same order here as in the app.
+     ;; Keep the gateway's star for Ctrl+S without changing recency or row fields.
      :favorite-rank (get session "favorite_rank")
      :favorite? (some? (get session "favorite_rank"))
      :dir work-dir
@@ -5612,78 +5607,43 @@
      :status (cond awaiting-input? (if (> awaiting-count 1)
                                      (str "! input needed ×" awaiting-count)
                                      "! input needed")
-                   (and active? live?) "● focused · live"
                    live? "● live"
                    stopped? "⨯ stopped"
-                   active? "● focused"
                    (pos? unread) (if (> unread 1) (str unread " NEW") "NEW")
-                   :else (str (long (or (get session "turn_count") 0)) " turns"))
+                   :else "idle")
      :created (navigator-stamp (get session "created_at"))
      :modified (navigator-stamp (or (get session "modified_at") (get session "created_at")))
      :target {:action :switch :id id}}))
 
-(defn- group-rows-by-dir
-  "Keep each working directory contiguous, and paint TWO SETS inside it: the session
-   GROUPS a human filed, each contiguous under its own header, and under them the sessions
-   that are in none of them. A filed session is never in that loose set - the app paints
-   the same two sets (`screens/sessions/SessionProjectGroups`) - and a query still finds
-   it, because the filter reads every row wherever it stands.
-
-   The focused directory comes first, the focused session's group leads the groups and the
-   session leads its group; persisted order remains intact for every other row."
-  [rows]
-  (let [order
-        (distinct (map :dir rows))
-
-        by-dir
-        (group-by :dir rows)]
-
-    (vec
-      (mapcat (fn [dir]
-                (let [dir-rows
-                      (get by-dir dir)
-
-                      ;; The groups in the order this directory met them, and the loose
-                      ;; sessions (`nil`) after every one of them rather than among them.
-                      group-order
-                      (->> (concat (map :session-group-id (filter :focused? dir-rows))
-                                   (map :session-group-id dir-rows))
-                           (remove nil?)
-                           distinct)]
-
-                  (mapcat (fn [group]
-                            (let [group-rows (filter #(= group (:session-group-id %)) dir-rows)]
-                              (concat (filter :focused? group-rows)
-                                      ;; A star is the one piece of ordering a human typed in
-                                      ;; themselves, so it leads its band, oldest star first.
-                                      (sort-by (juxt #(if (:favorite-rank %) 0 1)
-                                                     #(long (or (:favorite-rank %) 0))
-                                                     #(long (or (:position %) Long/MAX_VALUE)))
-                                               (remove :focused? group-rows)))))
-                          (concat group-order [nil]))))
-              order))))
+(defn- navigator-selected-index
+  "Keep the selected session when recency, pages or search results move its row.
+   On opening, `selection` names the current session. Later it holds the previous
+   visible rows, so keyboard movement is resolved before the next list changes."
+  [rows selected selection]
+  (let [id (if-let [previous (:rows selection)]
+             (:id (:target (nth previous (long selected) nil)))
+             (:id selection))]
+    (or (when id
+          (some (fn [[idx row]]
+                  (when (= (str id) (str (:id (:target row)))) idx))
+                (map-indexed vector rows)))
+        (p/clamp selected 0 (max 0 (dec (count rows)))))))
 
 (defn- navigator-all-rows
-  "Build the project-grouped session list. Empty untitled shells stay hidden by
-   default, but the focused session always survives and its project is first.
-   `:groups` indexes the session groups by id: the ONE place a band's name and
-   colour come from."
+  "Build one newest-first list across projects, groups and stars. Empty untitled
+   shells stay hidden by default, but the current session always survives."
   [{:keys [sessions active-session-id show-empty-untitled? groups]}]
-  (let [focused-id
-        (some-> active-session-id
-                str)
-
-        focused?
-        #(= (str (get % "id")) focused-id)
-
-        kept
-        (remove #(and (not show-empty-untitled?) (empty-untitled-session? %) (not (focused? %)))
-          sessions)
-
-        focused-first
-        (concat (filter focused? kept) (remove focused? kept))]
-
-    (group-rows-by-dir (mapv #(navigator-session-row active-session-id groups %) focused-first))))
+  (->> sessions
+       (remove #(and (not show-empty-untitled?)
+                     (empty-untitled-session? %)
+                     (not= (str (get % "id"))
+                           (some-> active-session-id
+                                   str))))
+       (sort-by (juxt
+                  #(or (date->millis (get % "modified_at")) (date->millis (get % "created_at")) 0)
+                  #(str (get % "id")))
+                #(compare %2 %1))
+       (mapv #(navigator-session-row active-session-id groups %))))
 
 (def ^:private navigator-page-slack
   "How near the end of the rows it holds the reader may come before the picker asks the
@@ -5745,89 +5705,25 @@
         (some #(str/includes? (str/lower-case (str (get row % ""))) needle)
               [:title :session :dir :work-dir :status]))))
 
-(def ^:private navigator-local-only-rank
-  "Band of a row only the local list could match: project path, work dir,
-   status, or unsent composer text."
-  100)
-
-(defn- navigator-search-rank
-  "Where a matched row sits under a live query, best first — the GATEWAY decided.
-
-   Session search is ranked ONCE, on the server (`db-search-session-matches`), and
-   every surface paints that one order: `:rank` is 0 for a hit in the session's own
-   TITLE, 1 for the words the USER typed, 2 for the assistant's ANSWER, 3 for its
-   THINKING. The picker adds only the two facts a server cannot know — the row the
-   keyboard is already on keeps the top of its project, and a row only local
-   metadata matched sits last (`navigator-local-only-rank`). With no query every
-   row is level, so the list keeps the order it was built in."
-  [row query match]
-  (cond (str/blank? (str query)) 0
-        (:focused? row) -1
-        (some? (:rank match)) (long (:rank match))
-        :else navigator-local-only-rank))
-
 (defn- navigator-visible-rows
-  "Union instant local metadata matches with the gateway's async transcript
-   matches, order them inside each project by the RANK the gateway sent
-   (`navigator-search-rank`), then tag the first visible row of each project so
-   rendering can emit one group header."
+  "Union local metadata and gateway transcript matches without changing recency
+   or replacing a session's status with the location of a search hit."
   [rows query transcript-ids]
-  (let [q
-        (str/trim (or query ""))
+  (let [q (str/trim (or query ""))]
+    (into []
+          (keep (fn [row]
+                  (let [local-hit? (navigator-row-matches? row query)
+                        match (get transcript-ids (str (:id (:target row))))
+                        body-hit? (some? match)]
 
-        matched
-        (keep
-          (fn [row]
-            (let [local-hit?
-                  (navigator-row-matches? row query)
+                    (when (or local-hit? body-hit?)
+                      (cond-> row
+                        (and body-hit? (not local-hit?) (seq q))
+                        (assoc :transcript-match? true)
 
-                  match
-                  (get transcript-ids (str (:id (:target row))))
-
-                  body-hit?
-                  (some? match)
-
-                  hits
-                  (when (and body-hit? (map? match) (seq q)) (assoc match :title (:title row)))
-
-                  rank
-                  (navigator-search-rank row query match)]
-
-              (cond (and body-hit? (not local-hit?) (seq q) (not (:focused? row)))
-                    (assoc row
-                      :transcript-match? true
-                      :transcript-match hits
-                      :search-rank rank
-                      :status (case (:kind match)
-                                :request
-                                "in request"
-
-                                :reply
-                                "in reply"
-
-                                :thinking
-                                "in thinking"
-
-                                "in chat"))
-                    (or local-hit? body-hit?) (cond-> (assoc row :search-rank rank)
-                                                hits
-                                                (assoc :transcript-match hits))
-                    :else nil)))
-          rows)]
-
-    (vec (mapcat (fn [group]
-                   (let [group
-                         (vec (sort-by :search-rank (vec group)))
-
-                         n
-                         (count group)]
-
-                     (map-indexed (fn [idx row]
-                                    (assoc row
-                                      :group-start? (zero? (long idx))
-                                      :group-count n))
-                                  group)))
-                 (partition-by (juxt :dir :session-group-id) matched)))))
+                        (and body-hit? (map? match) (seq q))
+                        (assoc :transcript-match (assoc match :title (:title row))))))))
+          rows)))
 
 (defn- navigator-fold
   "Fold `s` the way the gateway's `unicode61` index compares words: lower case and
@@ -5942,13 +5838,9 @@
           (conj {:label "Vis" :role :ai :side :reply :text (:reply-snippet match)}))))))
 
 (defn- navigator-block-heights
-  "Painted line count per session: optional project heading and top margin,
-   title row, compact metadata row, then one blank line. The matching messages
-   of the selected row paint in their own pane (`navigator-preview-lines`)."
+  "One terminal line per session. Messages paint only in the right pane."
   [visible-rows]
-  (mapv (fn [entry]
-          (if (:group-start? entry) 5 3))
-        visible-rows))
+  (vec (repeat (count visible-rows) 1)))
 
 (defn- navigator-scroll-start
   "First visible row index: the smallest scroll that still fits the selected
@@ -5989,59 +5881,27 @@
                    s))))))
 
 (defn- navigator-visible-blocks
-  "Paint plan from `start`, clipped by terminal lines. Every emitted session
-   keeps its hierarchy/title/metadata base; the blank spacer is omitted only
-   when that base exactly fills the viewport."
+  "Paint one compact session per terminal row, clipped to the list's budget."
   [visible-rows start budget]
-  (let [n
-        (count visible-rows)
+  (let [start
+        (long (max 0 (long start)))
 
-        budget
-        (long budget)]
+        end
+        (min (count visible-rows) (+ start (max 0 (long budget))))]
 
-    (loop [i
-           (long (max 0 (long start)))
-
-           used
-           0
-
-           acc
-           []]
-
-      (if (or (>= i n) (>= (long used) budget))
-        acc
-        (let [entry
-              (nth visible-rows i)
-
-              base
-              (+ 2 (if (:group-start? entry) 2 0))]
-
-          (if (> (+ (long used) base) budget)
-            acc
-            (let [spacer? (< (+ (long used) base) budget)]
-              (recur (inc i)
-                     (+ (long used) base (if spacer? 1 0))
-                     (conj acc {:idx i :entry entry :spacer? spacer?})))))))))
+    (mapv (fn [idx]
+            {:idx idx :entry (nth visible-rows idx)})
+          (range start end))))
 
 (def ^:private navigator-min-height
   "Box height the picker asks for at least, so a search has room for the
    matching messages even when there are only a few sessions."
   24)
 
-(def ^:private navigator-side-min-width
-  "Narrowest dialog interior that keeps the message pane BESIDE the list. A
-   narrower dialog stacks the pane under the list."
-  84)
-
 (defn- navigator-pane-layout
-  "Geometry of the picker body under the query row. Without a query the list
-   fills the body (`:single`). With a query a border splits it: the list on the
-   left and the matching messages of the selected row on the right (`:side`), or
-   the messages under the list when the dialog is narrow (`:stacked`). A stacked
-   list takes only the `list-lines` its rows paint, up to three fifths of the body,
-   and the messages take the rest. `:divider` is the border's column (`:side`) or
-   row (`:stacked`)."
-  [{:keys [left right inner-w]} content-top content-h searching? list-lines]
+  "Always split the body below the query into a session list on the left and
+   a message preview on the right, including narrow terminals and blank queries."
+  [{:keys [left right inner-w]} content-top content-h]
   (let [left
         (long left)
 
@@ -6051,60 +5911,29 @@
         inner-w
         (long inner-w)
 
-        body-x
-        (+ left 2)
-
         body-top
         (+ (long content-top) 2)
 
         avail
-        (max 2 (- (long content-h) 2))
+        (max 1 (- (long content-h) 2))
 
-        body-w
-        (max 1 (- inner-w 4))
+        list-inner
+        (long (p/clamp (quot (* 60 inner-w) 100) 4 (max 4 (- inner-w 4))))
 
-        single
-        {:mode :single
-         :body-x body-x
-         :body-w body-w
-         :scrollbar-col (+ body-x body-w 1)
-         :body-top body-top
-         :list-budget avail}]
+        divider
+        (+ left 1 list-inner)]
 
-    (cond (not searching?) single
-          (>= inner-w (long navigator-side-min-width))
-          (let [list-inner
-                (long (p/clamp (quot (* 45 inner-w) 100) 34 72))
-
-                divider
-                (+ left 1 list-inner)]
-
-            (assoc single
-              :mode :side
-              :body-w (max 1 (- list-inner 4))
-              :scrollbar-col (- divider 2)
-              :divider divider
-              :preview-x (+ divider 2)
-              :preview-w (max 1 (- right divider 3))
-              :preview-top body-top
-              :preview-h avail))
-          :else (let [pane-min
-                      (max 4 (quot (* 2 avail) 5))
-
-                      list-budget
-                      (max 2 (min (long list-lines) (- avail 1 pane-min)))
-
-                      divider
-                      (+ body-top list-budget)]
-
-                  (assoc single
-                    :mode :stacked
-                    :list-budget list-budget
-                    :divider divider
-                    :preview-x body-x
-                    :preview-w (max 1 (- right left 3))
-                    :preview-top (inc divider)
-                    :preview-h (max 0 (- avail 1 list-budget)))))))
+    {:mode :side
+     :body-x (+ left 2)
+     :body-w (max 1 (- list-inner 4))
+     :scrollbar-col (- divider 2)
+     :body-top body-top
+     :list-budget avail
+     :divider divider
+     :preview-x (+ divider 2)
+     :preview-w (max 1 (- right divider 3))
+     :preview-top body-top
+     :preview-h avail}))
 
 (defn- navigator-preview-lines
   "Paint plan of the message pane for the selected `entry`, at most `height`
@@ -6171,6 +6000,8 @@
                                          (conj (more later)))
                                        :else (conj acc (more (count groups)))))
                                acc))
+              (str/blank? (str query)) (conj head
+                                             {:kind :note :text "Type to find matching messages."})
               pending? (conj head {:kind :note :text "Searching messages…"})
               (= :title (:kind match))
               (conj head {:kind :note :text "The title matches. No message matches."})
@@ -6178,86 +6009,55 @@
 
     (vec (take height lines))))
 
-(defn- navigator-band-label
-  "The header over one BAND of rows: where they live, WHICH SET of that project they are -
-   the groups a human filed, or the sessions in none of them - and how many rows stand
-   under it. The two words name the list's own division (`group-rows-by-dir`), the same
-   one the app prints over its bands."
-  [{:keys [dir work-dir group-count session-group-id]}]
-  (let [count-label
-        (str group-count " " (if (= 1 group-count) "session" "sessions"))
-
-        root-label
-        (when (and (seq work-dir) (not= dir work-dir)) work-dir)
-
-        set-label
-        (if (seq session-group-id) "Groups" "Sessions")]
-
-    (str dir (when root-label (str "  ·  " root-label)) "  ·  " set-label "  ·  " count-label)))
-
-(defn- draw-navigator-group!
-  [g x row width {:keys [session-group session-group-color] :as entry}]
-  (let [label (navigator-band-label entry)]
-    (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-    (p/styled g [p/BOLD] (p/put-str! g x row (p/ellipsize label (max 1 (long width)))))
-    ;; A session group nests under its project directory: the same header row,
-    ;; in the group's own ink, so the reader sees which group the rows below
-    ;; belong to.
-    (when (seq session-group)
-      (let [used (min (long width) (long (p/display-width label)))
-            group-label (str "  ◆ " session-group)
-            room (max 0 (- (long width) used))]
-
-        (when (pos? room)
-          (p/set-colors! g (t/group-ink session-group-color) t/dialog-bg)
-          (p/styled g
-                    [p/BOLD]
-                    (p/put-str! g (+ (long x) used) row (p/ellipsize group-label room))))))))
-
 (defn- draw-navigator-session!
   [g x row width entry selected?]
   (let [focused?
         (:focused? entry)
 
-        status
-        (str (:status entry))
+        status-color
+        (cond (:awaiting-input? entry) t/warning-fg
+              (:stopped? entry) t/cancelled-fg
+              (or focused? (:unread? entry)) t/dialog-hint-key
+              :else t/dialog-hint)
 
-        status-w
-        (p/display-width status)
+        title-color
+        (cond (:awaiting-input? entry) t/warning-fg
+              focused? t/dialog-hint-key
+              :else t/dialog-fg)
 
-        content-x
-        (+ (long x) 2)
+        date-color
+        (if (:session-group-color entry)
+          (t/group-ink (:session-group-color entry))
+          t/dialog-hint-key)
 
-        title-w
-        (max 1 (- (long width) 2 status-w 2))
-
-        title
-        (p/ellipsize (str (when (:favorite? entry) "* ") (:title entry)) title-w)
-
-        status-x
-        (+ (long x) (max 2 (- (long width) status-w)))
-
-        metadata
-        (str (:session entry) "  ·  " (:modified entry))]
+        fields
+        [[(str (:modified entry)) date-color true] [" / " t/dialog-hint false]
+         [(str (:status entry)) status-color false] [" / " t/dialog-hint false]
+         [(str (:title entry)) title-color (or selected? focused?)]]]
 
     (p/draw-selection-marker! g x row selected? t/dialog-hint-key)
-    (p/set-colors! g
-                   (cond (:awaiting-input? entry) t/warning-fg
-                         focused? t/dialog-hint-key
-                         :else t/dialog-fg)
-                   t/dialog-bg)
-    (if (or selected? focused?)
-      (p/styled g [p/BOLD] (p/put-str! g content-x row title))
-      (p/put-str! g content-x row title))
-    (p/set-colors! g
-                   (cond (:awaiting-input? entry) t/warning-fg
-                         (:stopped? entry) t/cancelled-fg
-                         (or focused? (:unread? entry)) t/dialog-hint-key
-                         :else t/dialog-hint)
-                   t/dialog-bg)
-    (p/put-str! g status-x row status)
-    (p/set-colors! g t/dialog-hint t/dialog-bg)
-    (p/put-str! g content-x (inc (long row)) (p/ellipsize metadata (max 1 (- (long width) 2))))))
+    (loop [fields
+           fields
+
+           cx
+           (+ (long x) 2)
+
+           remaining
+           (max 0 (- (long width) 2))]
+
+      (when (and (seq fields) (pos? remaining))
+        (let [[text color bold?]
+              (first fields)
+
+              text
+              (if (next fields) (p/truncate-cols text remaining) (p/ellipsize text remaining))
+
+              used
+              (long (p/display-width text))]
+
+          (p/set-colors! g color t/dialog-bg)
+          (if bold? (p/styled g [p/BOLD] (p/put-str! g cx row text)) (p/put-str! g cx row text))
+          (recur (rest fields) (+ cx used) (- remaining used)))))))
 
 (defn- draw-navigator-segments!
   "Paint `navigator-highlight-segments` from `x`, clipped to `width` columns. A
@@ -6351,6 +6151,10 @@
           selected
           (atom 0)
 
+          selection
+          (atom {:id (some-> (:active-session-id opts)
+                             str)})
+
           scroll
           (atom 0)
 
@@ -6362,14 +6166,12 @@
 
           ;; The rows the picker HOLDS. It opens on ONE gateway window and grows from
           ;; there: a page as the reader nears the end (`page-in!`), and the rows a
-          ;; server-ranked search named that this window does not have.
+          ;; server search named that this window does not have.
           loaded-sessions
           (atom (vec (:sessions opts)))
 
-          ;; THE GROUPS THEMSELVES, read once when the picker opens and off this
-          ;; thread. A filed row names its group by ID; the name it bands under and
-          ;; the ink it wears are the GROUP's, looked up here and never read off the
-          ;; row. A read that fails simply leaves those rows unbanded.
+          ;; Read current group metadata once, off this thread, for each date's ink.
+          ;; A failed read leaves dates in the default accent color.
           groups-index
           (atom (or (:groups opts) {}))
 
@@ -6447,6 +6249,9 @@
          (reset-list! [search?]
            (reset! selected 0)
            (reset! scroll 0)
+           (reset! selection (when (str/blank? @query)
+                               {:id (some-> (:active-session-id opts)
+                                            str)}))
            (when search? (start-search!)))
          (start-page! [load!]
            (reset! page-error nil)
@@ -6540,12 +6345,8 @@
                   block-heights
                   (navigator-block-heights visible-rows)
 
-                  {:keys [mode divider preview-x preview-top preview-w preview-h] :as panes}
-                  (navigator-pane-layout bounds
-                                         content-top
-                                         content-h
-                                         (not (str/blank? @query))
-                                         (reduce + 0 block-heights))
+                  {:keys [divider preview-x preview-top preview-w preview-h] :as panes}
+                  (navigator-pane-layout bounds content-top content-h)
 
                   body-x
                   (long (:body-x panes))
@@ -6563,7 +6364,10 @@
                   (long (:list-budget panes))
 
                   _
-                  (swap! selected #(p/clamp % 0 (max 0 (dec total))))
+                  (reset! selected (navigator-selected-index visible-rows @selected @selection))
+
+                  _
+                  (when (seq visible-rows) (reset! selection {:rows visible-rows}))
 
                   _
                   (page-in! total)
@@ -6609,31 +6413,20 @@
                   (loop [remaining blocks
                          row body-top]
 
-                    (when-let [{:keys [idx entry spacer?]} (first remaining)]
-                      (let [row (long row)
-                            row (if (:group-start? entry)
-                                  (do (draw-navigator-group! g body-x row body-w entry) (+ row 2))
-                                  row)]
-
-                        (when (< row (+ body-top list-budget))
-                          (draw-navigator-session! g body-x row body-w entry (= idx @selected)))
-                        (recur (rest remaining) (+ row 2 (if spacer? 1 0)))))))
-                ;; A query splits the body: the list keeps its side of the border and
-                ;; the selected row's matching messages fill the other.
-                (when divider
-                  (if (= :side mode)
-                    (draw-navigator-divider! g divider content-top content-h)
-                    (do (p/set-colors! g t/dialog-border t/dialog-bg)
-                        (p/draw-separator! g left right divider)))
-                  (draw-navigator-preview!
-                    g
-                    preview-x
-                    preview-top
-                    preview-w
-                    (navigator-preview-lines
-                      (when (pos? total) (nth visible-rows @selected))
-                      (or @transcript-query @query)
-                      {:width preview-w :height preview-h :pending? (some? @search-task)})))
+                    (when-let [{:keys [idx entry]} (first remaining)]
+                      (draw-navigator-session! g body-x row body-w entry (= idx @selected))
+                      (recur (rest remaining) (inc (long row))))))
+                ;; The list and the selected session's messages always stay side by side.
+                (draw-navigator-divider! g divider content-top content-h)
+                (draw-navigator-preview!
+                  g
+                  preview-x
+                  preview-top
+                  preview-w
+                  (navigator-preview-lines
+                    (when (pos? total) (nth visible-rows @selected))
+                    (or @transcript-query @query)
+                    {:width preview-w :height preview-h :pending? (some? @search-task)}))
                 (when (> total page-rows)
                   (ScrollBar/draw g
                                   Direction/VERTICAL

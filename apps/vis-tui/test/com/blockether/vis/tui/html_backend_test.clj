@@ -988,26 +988,26 @@
                         (expect (.contains (.renderHtml view) "help ("))
                         (finally (.close view))))))
 
-(defdescribe all-terminal-surfaces-enter-through-the-grid-test
-             (it "all terminal surfaces enter through the grid"
-                 (let [source-root
-                       (-> (io/resource "com/blockether/vis/tui/frame.clj")
-                           .toURI
-                           io/file
-                           .getParentFile)
+(defdescribe
+  all-terminal-surfaces-enter-through-the-grid-test
+  (it "all terminal surfaces enter through the grid"
+      (let [source-root
+            (-> (io/resource "com/blockether/vis/tui/frame.clj")
+                .toURI
+                io/file
+                .getParentFile)
 
-                       calls-by-file
-                       (into (sorted-map)
-                             (keep (fn [file]
-                                     (when (and (.isFile file) (.endsWith (.getName file) ".clj"))
-                                       (let [calls (count (re-seq #"\.newTextGraphics"
-                                                                  (slurp file)))]
-                                         (when (pos? calls) [(.getName file) calls])))))
-                             (file-seq source-root))]
+            calls-by-file
+            (into (sorted-map)
+                  (keep (fn [file]
+                          (when (and (.isFile file) (.endsWith (.getName file) ".clj"))
+                            (let [calls (count (re-seq #"\.newTextGraphics" (slurp file)))]
+                              (when (pos? calls) [(.getName file) calls])))))
+                  (file-seq source-root))]
 
-                   ;; `render` and `screen` only create child clips from grid-owned graphics.
-                   ;; Every terminal-screen root and section clip is centralized in `frame`.
-                   (expect (= {"frame.clj" 5 "render.clj" 1 "screen.clj" 1} calls-by-file)))))
+        ;; Dialogs, render and screen create only child clips from grid-owned graphics.
+        ;; Every terminal-screen root and section clip is centralized in frame.
+        (expect (= {"dialogs.clj" 1 "frame.clj" 5 "render.clj" 1 "screen.clj" 1} calls-by-file)))))
 
 (defdescribe full-screen-surfaces-use-one-lanterna-grid-test
              (it "full screen surfaces use one lanterna grid"
