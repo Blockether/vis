@@ -1068,21 +1068,48 @@
 
    run-modal! owns everything the old dialogs copy-pasted: terminal sizing, the
    `TextGraphics`, wheel/close/Esc normalization (via `read-modal-key!`), the
-   cursor + DELTA refresh, and the recur loop. A key handler returns the next
-   state to continue, or `{::done v}` to close the modal with value `v` (nil on
-   Esc/close). Because `:measure`/`:reconcile`/`:on-key` are pure functions of
-   data, a dialog's geometry and key logic can be unit-tested with no live
-   terminal at all — the React-like win."
+   cursor, refresh, and the recur loop. Before each paint, it restores the host
+   background so a smaller dialog leaves no old border or shadow. A terminal
+   resize replaces that snapshot with the cleared, resized buffer.
+
+   A key handler returns the next state to continue, or `{::done v}` to close
+   the modal with value `v` (nil on Esc/close). Because `:measure`, `:reconcile`,
+   and `:on-key` are pure functions of data, a dialog's geometry and key logic
+   can be unit-tested with no live terminal."
   [^TerminalScreen screen
    {:keys [init measure reconcile paint on-key read-key] :or {read-key read-modal-key!}}]
-  (loop [state (if (fn? init) (init) init)]
-    (let [size (modal-size! screen)
-          cols (.getColumns size)
-          rows (.getRows size)
-          geom (measure state cols rows)
-          state (if reconcile (reconcile state geom) state)
-          g (frame/surface-graphics screen cols rows)
-          cursor (paint g state geom)]
+  (loop [state
+         (if (fn? init) (init) init)
+
+         background-size
+         nil
+
+         restore-background!
+         nil]
+
+    (let [size
+          (modal-size! screen)
+
+          restore-background!
+          (if (= size background-size) restore-background! (frame-restorer screen))
+
+          cols
+          (.getColumns size)
+
+          rows
+          (.getRows size)
+
+          geom
+          (measure state cols rows)
+
+          state
+          (if reconcile (reconcile state geom) state)
+
+          g
+          (frame/surface-graphics screen cols rows)
+
+          cursor
+          (do (restore-background!) (paint g state geom))]
 
       ;; nil cursor HIDES the hardware cursor (no parked top-left blink — the
       ;; same fix applied to every band dialog); a text field returns its cell.
@@ -1090,9 +1117,11 @@
       (frame/refresh! screen)
       (let [key (read-key screen)]
         (if (nil? key)
-          (recur state)
+          (recur state size restore-background!)
           (let [r (on-key state key geom)]
-            (if (and (map? r) (contains? r ::done)) (::done r) (recur r))))))))
+            (if (and (map? r) (contains? r ::done))
+              (::done r)
+              (recur r size restore-background!))))))))
 
 (defn- metric-count [n] (if (number? n) (str (long n)) "—"))
 

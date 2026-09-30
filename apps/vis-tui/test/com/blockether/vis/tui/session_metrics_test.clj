@@ -9,9 +9,11 @@
             [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as theme]
-            [lazytest.core :refer [defdescribe expect it]])
-  (:import [com.googlecode.lanterna.input KeyStroke MouseAction MouseActionType]
-           [com.googlecode.lanterna TerminalPosition]))
+            [lazytest.core :refer [defdescribe describe expect it]])
+  (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
+           [com.googlecode.lanterna.input KeyStroke MouseAction MouseActionType]
+           [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal
+            VirtualTerminalListener]))
 
 (def measured-usage
   "Deterministic Companion-shaped data for production terminal/HTML review."
@@ -411,6 +413,80 @@
             (expect (seq content) text)
             (expect (= #{(boolean (or label (= :heading tone)))} (set (map :bold content)))
                     (str cols " columns: " text))))))))
+
+(defdescribe
+  metrics-dialog-background-test
+  (describe
+    "Dialog background"
+    (it "restores chat cells and styles after details expand and collapse"
+        (doseq [keys [[\b \b :esc] [\f \f :esc] [\b \f \b \f :esc] [\b \f \f \b :esc]
+                      [\b \b \b \b :esc]]]
+          (let [capture (cap/capture!
+                          {:cols 140
+                           :rows 60
+                           :keys keys
+                           :paint! (fn [{:keys [screen g]}]
+                                     (p/set-colors! g theme/dialog-hint theme/terminal-bg)
+                                     (p/fill-rect! g 0 0 140 60)
+                                     (p/styled g
+                                               [p/BOLD]
+                                               (p/put-str! g 6 4 "Chat above the compact dialog")
+                                               (p/put-str! g 6 50 "Chat below the compact dialog"))
+                                     (dlg/run-modal! screen (review-component)))})
+                frames (:frames capture)
+                restored? (= (first frames) (last frames))]
+
+            (expect (nil? (:error capture)))
+            (expect (= (count keys) (count frames)))
+            (expect (not= (first frames) (second frames)))
+            (expect restored?
+                    (str keys " must restore the original frame, including its styles")))))
+    (it
+      "discards the old background when the terminal grows and shrinks"
+      (let [capture
+            (cap/capture!
+              {:cols 140
+               :rows 60
+               :keys [\b \b :esc]
+               :paint! (fn [{:keys [screen g ^DefaultVirtualTerminal terminal]}]
+                         (p/set-bg! g theme/terminal-bg)
+                         (p/fill-rect! g 0 0 140 60)
+                         (p/put-str! g 6 4 "Background from before the resize")
+                         (let [flushes (atom 0)]
+                           (.addVirtualTerminalListener
+                             terminal
+                             (reify
+                               VirtualTerminalListener
+                                 (onFlush [_]
+                                   (case (swap! flushes inc)
+                                     1
+                                     (.setTerminalSize terminal (TerminalSize. 160 66))
+
+                                     2
+                                     (.setTerminalSize terminal (TerminalSize. 140 60))
+
+                                     nil))
+                                 (onBell [_])
+                                 (onClose [_])
+                                 (onResized [_ _terminal _size])))
+                           (dlg/run-modal! screen (review-component))))})
+
+            reference
+            (cap/capture! {:cols 140
+                           :rows 60
+                           :keys [:esc]
+                           :paint! (fn [{:keys [screen g]}]
+                                     (p/set-bg! g theme/terminal-bg)
+                                     (p/fill-rect! g 0 0 140 60)
+                                     (dlg/run-modal! screen (review-component)))})
+
+            restored?
+            (= (last (:frames reference)) (last (:frames capture)))]
+
+        (expect (nil? (:error capture)))
+        (expect (nil? (:error reference)))
+        (expect (= 3 (count (:frames capture))))
+        (expect restored? "The resized frame must not restore cells from the old background")))))
 
 (defdescribe
   production-terminal-grid
