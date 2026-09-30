@@ -52,9 +52,6 @@
                         "VIS_DECISION_TRAINING_PYTHON"
                         binary
 
-                        "VIS_DECISION_GLINER_TRAINING_PYTHON"
-                        binary
-
                         "VIS_DECISION_TRAINING_DATA_ROOT"
                         (.getPath data)
 
@@ -336,8 +333,7 @@
           (let [read-env config/extension-env-value]
             (with-redefs [config/extension-env-value
                           (fn [name]
-                            (when-not (= "VIS_DECISION_GLINER_TRAINING_PYTHON" name)
-                              (read-env name)))]
+                            (when-not (= "VIS_DECISION_TRAINING_PYTHON" name) (read-env name)))]
               (expect (= :decisions/training-unavailable
                          (:type (ex-data (try (jobs/create! (assoc request
                                                               "model_id" "gliner2.5-base"))

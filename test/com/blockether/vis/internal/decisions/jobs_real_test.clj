@@ -29,10 +29,10 @@
   installed-sdk-worker-trains-registers-and-resumes-offline
   (it
     "installed sdk worker trains registers and resumes offline"
-    ;; Full gate: -Dvis.test.laya.training.dir and -Dvis.test.laya.training.python
-    ;; point at the verified release checkpoint and an offline SDK+training environment.
+    ;; Full gate: -Dvis.test.laya.training.dir and -Dvis.test.decisions.training.python
+    ;; point at the verified release checkpoint and the unified offline environment.
     (when-let [checkpoint (System/getProperty "vis.test.laya.training.dir")]
-      (let [python (System/getProperty "vis.test.laya.training.python")
+      (let [python (System/getProperty "vis.test.decisions.training.python")
             root (io/file (System/getProperty "java.io.tmpdir")
                           (str "decision-real-training-" (random-uuid)))
             data (io/file root "approved-data")
@@ -96,16 +96,17 @@
 (defdescribe
   installed-gliner-worker-trains-registers-and-resumes-both-families-offline
   (it "installed gliner worker trains registers and resumes both families offline"
-      ;; Full gate: -Dvis.test.gliner.training.python and at least one
-      ;; -Dvis.test.gliner.training.{base,small,multi,decide,multi-decide}.dir.
+      ;; Full gate: -Dvis.test.decisions.training.python and at least one
+      ;; -Dvis.test.gliner.training.{base,small,multi,decide,multi-decide,decide-1b}.dir.
       ;; The directories hold verified full checkpoints, not encoder-only ONNX bundles.
-      (when-let [python (System/getProperty "vis.test.gliner.training.python")]
-        (doseq [[model-id property] [["gliner2.5-base" "vis.test.gliner.training.base.dir"]
-                                     ["gliner2.5-small" "vis.test.gliner.training.small.dir"]
-                                     ["gliner2.5-multi" "vis.test.gliner.training.multi.dir"]
-                                     ["gliner2.5-decide" "vis.test.gliner.training.decide.dir"]
-                                     ["gliner2.5-multi-decide"
-                                      "vis.test.gliner.training.multi-decide.dir"]]
+      (when-let [python (System/getProperty "vis.test.decisions.training.python")]
+        (doseq [[model-id property]
+                [["gliner2.5-base" "vis.test.gliner.training.base.dir"]
+                 ["gliner2.5-small" "vis.test.gliner.training.small.dir"]
+                 ["gliner2.5-multi" "vis.test.gliner.training.multi.dir"]
+                 ["gliner2.5-decide" "vis.test.gliner.training.decide.dir"]
+                 ["gliner2.5-multi-decide" "vis.test.gliner.training.multi-decide.dir"]
+                 ["gliner2.5-decide-1b" "vis.test.gliner.training.decide-1b.dir"]]
                 :let [checkpoint (System/getProperty property)]
                 :when checkpoint]
 
@@ -151,7 +152,7 @@
                                                   (original-installed? artifact dir)))
                             config/extension-env-value (fn [name]
                                                          (case name
-                                                           "VIS_DECISION_GLINER_TRAINING_PYTHON"
+                                                           "VIS_DECISION_TRAINING_PYTHON"
                                                            python
 
                                                            "VIS_DECISION_TRAINING_DATA_ROOT"

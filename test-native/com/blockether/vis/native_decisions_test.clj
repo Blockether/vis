@@ -87,6 +87,10 @@
                       (expect (< 1600000000
                                  (get result "upload_bytes")
                                  (inc assets/max-inference-upload-bytes))))
+                    (when (= "gliner2.5-decide-1b" model-id)
+                      (expect (< Integer/MAX_VALUE
+                                 (get result "upload_bytes")
+                                 (inc assets/max-inference-upload-bytes))))
                     (expect (#{"refund" "repair"} (get result "choice")))
                     (expect (number? (get result "score")))
                     (expect (number? (get result "noul")))
@@ -249,7 +253,7 @@
               (expect (= 200 (:status catalog)))
               (expect (= (boolean source) (get (first rows) "installed")))
               (expect (= "cold" (get (first rows) "residency"))))
-            (when-let [python (System/getProperty "vis.test.laya.sdk.python")]
+            (when-let [python (System/getProperty "vis.test.decisions.sdk.python")]
               (expect source "An FP32 install is required for the installed SDK smoke test")
               (when source
                 (sdk-flow! home
@@ -261,13 +265,13 @@
                            (System/getProperty "vis.test.laya.training.dir"))))
             ;; #294: use the Python SDK, not only the direct Clojure archive upload.
             (doseq [name
-                    ["base" "decide"]
+                    ["base" "decide" "decide-1b"]
 
                     :let [dir
                           (System/getProperty (str "vis.test.gliner." name ".fp32.dir"))]
                     :when dir]
 
-              (let [python (System/getProperty "vis.test.gliner.sdk.python")]
+              (let [python (System/getProperty "vis.test.decisions.sdk.python")]
                 (expect (some? python) "GLiNER SDK verification requires a Python interpreter")
                 (when python
                   (sdk-flow! home (io/file dir) port python @process (str "gliner2.5-" name) nil))))
@@ -299,7 +303,7 @@
                 (expect (= 409 (:status response))
                         "Missing models must not download or fall back")))
             (doseq [name
-                    ["base" "decide"]
+                    ["base" "decide" "decide-1b"]
 
                     :let [archive
                           (System/getProperty (str "vis.test.gliner." name ".fp32.archive"))]

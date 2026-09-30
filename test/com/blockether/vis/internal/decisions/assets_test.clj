@@ -121,17 +121,16 @@
 
 (defdescribe
   catalog-test
-  (it "pins the baseline, FP32, complete training checkpoint and both CPU wheelhouses"
+  (it "pins only the baseline FP32 bundle and complete training checkpoint"
       (let [model
             (assets/entry "laya-typed-decisions")
 
             artifacts
-            (concat (map #(assets/artifact model %) [:inference :training])
-                    (map #(assets/artifact model :wheels %) ["macos-arm64" "linux-x86_64"]))]
+            (map #(assets/artifact model %) [:inference :training])]
 
         (expect (= "Apache-2.0" (:license model)))
         (expect (= 40 (count (:revision model))))
-        (expect (= 4 (count artifacts)))
+        (expect (= 2 (count artifacts)))
         (doseq [artifact artifacts]
           (expect (re-matches #"[0-9a-f]{64}" (:sha256 artifact)))
           (expect (pos? (:bytes artifact)))
@@ -161,16 +160,14 @@
                              "gliner2.5-decide-1b" "688cd7ba8917a0855ad3ce929cba5a9998932e79"
                              "gliner2.5-multi-decide" "a35a0cd3b7a0f00f2effc576f454cd48fa98aa5f"}]
         (let [model (assets/entry id)
-              artifacts (concat (map #(assets/artifact model %) [:inference :training])
-                                (map #(assets/artifact model :wheels %)
-                                     ["macos-arm64" "linux-x86_64"]))]
+              artifacts (map #(assets/artifact model %) [:inference :training])]
 
           (expect (= revision (:revision model)))
           (expect (= "Apache-2.0" (:license model)))
           (expect (str/ends-with? (:source-url model) revision))
           (expect (= (assets/inference-required id) (:requires (assets/artifact model :inference))))
           (expect (some #{"model.safetensors"} (:requires (assets/artifact model :training))))
-          (expect (= 4 (count artifacts)))
+          (expect (= 2 (count artifacts)))
           (doseq [artifact artifacts]
             (expect (re-matches #"[0-9a-f]{64}" (:sha256 artifact)))
             (expect (pos? (:bytes artifact)))
@@ -186,8 +183,7 @@
               (assets/manifest)
 
               artifact
-              (concat (map #(assets/artifact model %) [:inference :training])
-                      (vals (get-in model [:artifacts :wheels])))]
+              (map #(assets/artifact model %) [:inference :training])]
 
         (if-let [parts (seq (:parts artifact))]
           (do (expect (nil? (:url artifact)))
@@ -196,8 +192,13 @@
                 (expect (re-matches #"[0-9a-f]{64}" (:sha256 part)))
                 (expect (< 0 (:bytes part) 2147483648))))
           (expect (< (:bytes artifact) 2147483648)))))
-  (it "selects only a declared local training platform"
-      (expect (contains? #{"macos-arm64" "linux-x86_64"} (assets/platform)))))
+  (it "includes model weights only, not dependency archives"
+      (doseq [model (assets/manifest)]
+        (expect (= #{:inference :training} (set (keys (:artifacts model))))))
+      (expect (= :decisions/unknown-artifact
+                 (:type (ex-data (try (assets/artifact (assets/entry "laya-typed-decisions")
+                                                       :wheels)
+                                      (catch clojure.lang.ExceptionInfo error error))))))))
 
 (defdescribe
   installation-test

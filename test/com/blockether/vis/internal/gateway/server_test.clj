@@ -5164,8 +5164,8 @@
   decision-sdk-uploads-and-infers-against-a-token-gated-jetty
   (it
     "decision sdk uploads and infers against a token gated jetty"
-    ;; Full gate: the published SDK wheel and FP32 release install run in a real client process.
-    (when-let [python (System/getProperty "vis.test.laya.sdk.python")]
+    ;; Full gate: the unified decision environment and FP32 install run in a real client process.
+    (when-let [python (System/getProperty "vis.test.decisions.sdk.python")]
       (let
         [dir (System/getProperty "vis.test.laya.fp32.dir")
          train-dir (System/getProperty "vis.test.laya.training.dir")
@@ -5175,12 +5175,12 @@
          (str/join
            "\n"
            ["import json, sys, tempfile" "from pathlib import Path"
-            "from blockether.vis.decisions import Decisions"
+            "from blockether.vis_decisions import Decisions"
             "from blockether.vis.engine import GatewayClient"
             "url, token, directory, checkpoint = sys.argv[1:]"
             "with tempfile.TemporaryDirectory(prefix=\"vis-sdk-decision-\") as temporary:"
             "    source = directory" "    if checkpoint != \"-\":"
-            "        from blockether.vis.decisions.training import ModernBertTrainer, TrainingBundle"
+            "        from blockether.vis_decisions import Trainer, TrainingBundle"
             "        root = Path(temporary)"
             "        row = {\"state\": \"Please refund my damaged purchase.\","
             "               \"question\": {\"type\": \"choice\", \"instructions\": \"Choose intent\","
@@ -5198,8 +5198,8 @@
             "                                                       \"train_encoder\": False, \"max_steps\": 1}))"
             "        (root / \"policy.json\").write_text(json.dumps({\"min_decision_accuracy\": 0.0,"
             "                                                       \"min_action_accuracy\": 0.0}))"
-            "        with ModernBertTrainer(TrainingBundle.open(checkpoint)) as trainer:"
-            "            source = trainer.finetune(train_data=root / \"train.jsonl\","
+            "        with Trainer(TrainingBundle.open(checkpoint)) as trainer:"
+            "            source = trainer.train(train_data=root / \"train.jsonl\", "
             "                eval_data=root / \"eval.jsonl\", training_config=root / \"config.json\","
             "                validation_policy=root / \"policy.json\", output_dir=root / \"result\")"
             "        assert source.checkpoint_dir.is_dir()"

@@ -1,6 +1,6 @@
 # Decision models
 
-Vis can answer typed `choice`, `score` and `noul` questions with the Laya ModernBERT decision model.
+Vis answers typed `choice`, `score` and `noul` questions with Laya and GLiNER decision models.
 This classifier runs on your gateway from a downloaded ONNX bundle. Each answer also includes a
 score that compares action with escalation. The published baseline is a starting point, **not** a
 policy for actions on your behalf. Collect representative labels for your use case and evaluate both
@@ -38,11 +38,10 @@ SDK](python-sdk.md) instead.
 
 ## Download the baseline
 
-The `assets-pack` release keeps the existing voice assets. It adds pinned FP32 inference bundles,
-complete checkpoints and offline training dependencies for Laya and five GLiNER2.5 decision models.
-You download them explicitly: starting a gateway never downloads weights. You call decision models
-from Python through the [`vis-agent` SDK](python-sdk.md). Its lightweight client works without
-PyTorch, and the training extras are optional.
+The `assets-pack` release contains pinned FP32 inference bundles and complete checkpoints.
+It also keeps the existing voice assets. Starting a gateway never downloads weights.
+The [vis-decisions extension](https://github.com/Blockether/vis-decisions) supplies the Python client and training runtime.
+Both model families use one environment with Transformers 5.
 
 Install Vis, then download the pinned inference bundle on the machine running your
 gateway:
@@ -52,22 +51,17 @@ vis-agent decisions models status
 vis-agent decisions models download --model laya-typed-decisions
 ```
 
-The status command prints the model revision and shows whether the FP32 bundle is installed. Before
-installation, the download verifies the archive and its file inventory. To train on that machine,
-also download the checkpoint and the CPython 3.12 wheelhouse for your platform:
+The status command prints the model revision and installation state. Downloads verify the archive and its file inventory.
+For training, also download the complete checkpoint:
 
 ```bash
 vis-agent decisions models download --model laya-typed-decisions --training
 ```
 
-The command prints the three installation directories and an offline `install.sh` command for a
-**new** Python environment. The wheelhouse supports macOS arm64 and Linux x86-64 with CPython 3.12.
-It contains the training dependencies, not the SDK wheel. So get the matching `vis-agent` SDK wheel
-while you are online.
-
-Run the printed installer and install that SDK wheel into the environment. Then disconnect the
-environment from the network if needed. Allow several gigabytes of disk space for the checkpoint,
-the FP32 bundle, the training environment and exported versions. Review model licenses and
+The command prints the inference and training directories. It does not download Python dependencies.
+Install the vis-decisions runtime while you have network access.
+Its pinned environment supports both Laya and GLiNER, so you do not need separate environments.
+Allow several gigabytes for checkpoints, FP32 bundles, dependencies and exported versions. Review model licenses and
 provenance in
 [`THIRD_PARTY_MODELS.md`](https://github.com/Blockether/vis/blob/main/THIRD_PARTY_MODELS.md).
 
@@ -78,9 +72,9 @@ request.
 
 ## Ask from Python
 
-Decision models are available only through the `vis-agent` Python SDK. Install it in the Python
-environment that calls the gateway. For example, use your app or the project interpreter that the
-`py` extension REPL uses. `python_execution` blocks do not include a decisions client.
+Call gateway inference with `Decisions` from the vis-decisions package.
+Install it in your application environment or the project interpreter used by the `py` extension.
+The vis-decisions extension also provides local training tools in `python_execution`.
 
 Configure `VIS_GATEWAY_URL` and `VIS_GATEWAY_TOKEN` as the [Python SDK gateway
 guide](python-sdk.md#connect-to-a-gateway-and-run-a-task) describes. Do not put the token in code or
@@ -89,7 +83,7 @@ logs. When the gateway machine has the inference bundle, you can ask typed quest
 ```python
 import os
 
-from blockether.vis.decisions import Decisions
+from blockether.vis_decisions import Decisions
 from blockether.vis.engine import GatewayClient
 
 with GatewayClient(os.environ["VIS_GATEWAY_URL"], token=os.environ["VIS_GATEWAY_TOKEN"]) as gateway:
@@ -110,9 +104,8 @@ with GatewayClient(os.environ["VIS_GATEWAY_URL"], token=os.environ["VIS_GATEWAY_
 These calls do not download a model or install a dependency. An uninstalled model
 raises `blockether.vis.engine.GatewayError` with `status == 409`. Download the model
 explicitly with the CLI above. The baseline `act_probability` in an answer is a
-diagnostic score, not authorization to act. Only install `[decisions-training]` when you
-need local training or export. Neither installation downloads model weights
-automatically.
+diagnostic score, not authorization to act. Installing vis-decisions does not download model weights.
+Training and inference use the same package, but only explicit calls load weights.
 
 ### Handle long inputs
 
@@ -144,12 +137,25 @@ Late state context can therefore be omitted. Keep important context early when y
 
 ## Train locally with the Python SDK
 
-Install `vis-agent[decisions-training]` with a supported Python 3.12 environment (or use
-the verified offline wheelhouse and SDK wheel). `TrainingBundle.open` reads the complete
-checkpoint printed by the CLI.
-`TrainingBundle.fetch(model_ref="laya-typed-decisions@<revision>", cache_dir="...")` is
-a separate, explicit catalog-pinned download when you have network access. Neither
-`open` nor `finetune` fetches weights.
+Install the [vis-decisions runtime](https://github.com/Blockether/vis-decisions#development) with Python 3.12.
+`TrainingBundle.open` reads the verified checkpoint printed by the CLI.
+`TrainingBundle.fetch("laya-typed-decisions@<revision>", "cache")` is an explicit, pinned download.
+Neither `open` nor `train` fetches weights.
+
+To use training tools in Vis, add this [extension declaration](extension-packages.md#declare-packages-in-configuration):
+
+```yaml
+extensions:
+  vis-decisions:
+    source: https://github.com/Blockether/vis-decisions
+    version: "0.1.0"
+```
+
+Then open a session in that project. For example, ask:
+
+> Train this checkpoint with train.jsonl, eval.jsonl, config.json and policy.json. Save a new version without activating it.
+
+Vis uses the extension tools to verify the checkpoint, train and report the validation results.
 
 Make separate training and evaluation JSONL files. Every line needs `state`, one Laya
 `question`, an integer `target` option index and `action` (`0` for act, `1` for
@@ -175,11 +181,11 @@ Choose thresholds from your own evaluation, not the example values. Then train, 
 FP32 and reopen the graph for validation in one call:
 
 ```python
-from blockether.vis.decisions.training import ModernBertTrainer, TrainingBundle
+from blockether.vis_decisions import Trainer, TrainingBundle
 
 base = TrainingBundle.open("/path/printed/by/download/training")
-with ModernBertTrainer(base) as trainer:
-    result = trainer.finetune(
+with Trainer(base) as trainer:
+    result = trainer.train(
         train_data="train.jsonl",
         eval_data="eval.jsonl",
         training_config="config.json",
@@ -196,10 +202,9 @@ separate `inference_bundle` contains the ONNX FP32 model files, tokenizer, confi
 provenance. It does not contain private training rows or checkpoint weights.
 
 To export an existing checkpoint without training, call
-`trainer.prepare_fp32(eval_data=..., validation_policy=..., output_dir=...)`. If export or a quality
+`trainer.prepare(eval_data=..., validation_policy=..., output_dir=...)`. If export or a quality
 check fails, you get no deployable result. A checkpoint that was saved can stay for diagnosis.
-Training and export use a lot of local CPU, RAM and disk. Clients that only run inference do not
-need the extra.
+Training and export use a lot of local CPU, RAM and disk. Lightweight clients do not load the training runtime.
 
 ### Choose and train a GLiNER2.5 model
 
@@ -238,8 +243,7 @@ vis-agent decisions models download --model gliner2.5-base
 vis-agent decisions models download --model gliner2.5-multi
 ```
 
-For training, explicitly download the same model's complete checkpoint and the
-shared, platform-specific GLiNER training wheelhouse:
+For training, explicitly download the same model's complete checkpoint:
 
 ```bash
 vis-agent decisions models download --model gliner2.5-base --training
@@ -247,20 +251,13 @@ vis-agent decisions models download --model gliner2.5-base --training
 vis-agent decisions models download --model gliner2.5-multi --training
 ```
 
-Each command prints the installed paths and an offline `install.sh` command for a **new** Python
-3.12 environment. The GLiNER wheelhouse supports macOS 14+ arm64 or Linux x86-64 with glibc 2.28+
-and CPU-only PyTorch. Allow several gigabytes for checkpoints, exported versions and the training
-environment. The wheelhouse contains pinned dependencies, not the SDK wheel. Neither installation
-downloads weights.
+Each command prints the installed inference and checkpoint paths. Decide-1B archives use ordered parts below the release asset limit.
+The downloader joins and verifies those parts automatically. No weight precision is reduced.
 
-Keep GLiNER in a **separate environment** from Laya, because its Transformers 4 requirements
-conflict with Laya's Transformers 5. Install the matching `vis-agent` SDK wheel there before you go
-offline. Or, while you are online, install `vis-agent[decisions-gliner-training]`.
-
-Use `GlinerTrainingBundle.open` on the printed `training` directory. When you
-have network access, `GlinerTrainingBundle.fetch` can explicitly download a
-catalog-pinned `model_ref` (`<model>@<revision>`) into a `cache_dir`. Neither
-`open` nor the trainer fetches a model.
+Use the same vis-decisions environment as Laya. Allow several gigabytes for checkpoints, exports and dependencies.
+`TrainingBundle.open` selects the family from verified provenance.
+`TrainingBundle.fetch("<model>@<revision>", "cache")` downloads a pinned checkpoint when you explicitly request it.
+Neither `open` nor the trainer fetches weights.
 
 The JSONL rows and separate held-out data have the same `state`, `question`, `target` and `action`
 fields as the Laya example above. Keep training and held-out inputs separate. GLiNER uses its own
@@ -268,11 +265,11 @@ configuration, for example `{"epochs":1,"max_steps":100,"encoder_lr":0.00001,"ta
 both minimum accuracies in `policy.json` from your use case, not from a baseline model. Then run:
 
 ```python
-from blockether.vis.decisions.gliner_training import GlinerTrainer, GlinerTrainingBundle
+from blockether.vis_decisions import Trainer, TrainingBundle
 
-base = GlinerTrainingBundle.open("/path/to/gliner-training")
-with GlinerTrainer(base) as trainer:
-    result = trainer.finetune(
+base = TrainingBundle.open("/path/to/gliner-training")
+with Trainer(base) as trainer:
+    result = trainer.train(
         train_data="train.jsonl",
         eval_data="eval.jsonl",
         training_config="gliner-config.json",
@@ -289,9 +286,9 @@ that, you get an event at the first step, about once per percent of the steps an
 step. `epoch` counts passes over your training rows, so `0.5` is half a pass. Then the
 `checkpoint_saved`, `exporting` and `validated` events follow.
 
-You can reopen `result.checkpoint_dir` with `GlinerTrainingBundle.open` in a new process. Then you
+You can reopen `result.checkpoint_dir` with `TrainingBundle.open` in a new process. Then you
 can [train it again](#resume-or-continue-training) or export it without network access. To
-export without training, call `trainer.prepare_fp32` on a complete checkpoint with `eval_data`,
+export without training, call `trainer.prepare` on a complete checkpoint with `eval_data`,
 `validation_policy` and a new `output_dir`. Use `Decisions.upload_model(result)` and the same
 version, alias and inference calls below.
 
@@ -315,7 +312,7 @@ A GLiNER configuration can be:
 {"epochs":3,"batch_size":8,"encoder_lr":0.00001,"task_lr":0.0005,"checkpoint_steps":500}
 ```
 
-With this setting, `finetune` saves a partial checkpoint every 500 steps. Each save replaces
+With this setting, `train` saves a partial checkpoint every 500 steps. Each save replaces
 `output_dir/checkpoint` and sends a `checkpoint_saved` event. It also writes
 `output_dir/training_report.json` with the saved `steps`, the planned `max_steps` and a
 `status`. One run can plan at most 100,000 steps.
@@ -325,8 +322,8 @@ that checkpoint and train it again with the same rows and settings:
 
 ```python
 stopped = TrainingBundle.open("my-new-version/checkpoint")
-with ModernBertTrainer(stopped) as trainer:
-    result = trainer.finetune(
+with Trainer(stopped) as trainer:
+    result = trainer.train(
         train_data="train.jsonl",
         eval_data="eval.jsonl",
         training_config="config.json",
@@ -336,8 +333,7 @@ with ModernBertTrainer(stopped) as trainer:
     )
 ```
 
-For GLiNER, open the checkpoint with `GlinerTrainingBundle.open`. Then train it with
-`GlinerTrainer` in the same way.
+Use the same `TrainingBundle` and `Trainer` calls for either family.
 
 The first event shows the saved step. Training then uses only the examples that the stopped run
 did not train, in the same order. The optimizer state starts again. GLiNER also starts its
@@ -368,7 +364,7 @@ and its extracted files.
 ```python
 import os
 
-from blockether.vis.decisions import Decisions
+from blockether.vis_decisions import Decisions
 from blockether.vis.engine import GatewayClient
 
 with GatewayClient(os.environ["VIS_GATEWAY_URL"], token=os.environ["VIS_GATEWAY_TOKEN"]) as gateway:
@@ -400,14 +396,10 @@ files as model assets.
 
 ## Train on the gateway instead
 
-Set `VIS_DECISION_TRAINING_PYTHON` to a Python 3.12 executable with the SDK and
-`vis-agent[decisions-training]` for Laya. For a GLiNER2.5 model, use a
-**separate** environment with `vis-agent[decisions-gliner-training]` and set
-`VIS_DECISION_GLINER_TRAINING_PYTHON` to its executable. The two training extras
-pin incompatible Transformers versions. The gateway never substitutes one
-interpreter or model family for the other. Set `VIS_DECISION_TRAINING_DATA_ROOT`
-to a directory of approved JSONL/JSON files on the gateway. Download the pinned
-checkpoint for the selected model explicitly with `--training` before starting.
+Set `VIS_DECISION_TRAINING_PYTHON` to the Python 3.12 executable in your prepared vis-decisions environment.
+Both model families use this interpreter. The gateway never downloads training dependencies.
+Set `VIS_DECISION_TRAINING_DATA_ROOT` to a directory of approved JSONL/JSON files on the gateway.
+Before starting, download the selected model's pinned checkpoint with `--training`.
 
 The API accepts **filenames in that directory**, not laptop paths or raw uploads.
 Each dataset is limited to 16 MiB. Configuration and policy files to 16 KiB.

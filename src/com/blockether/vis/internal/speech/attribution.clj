@@ -125,11 +125,8 @@
 
 (defn- decision-section
   [entry]
-  (let [artifacts (concat [[:inference (get-in entry [:artifacts :inference])]
-                           [:training (get-in entry [:artifacts :training])]]
-                          (for [platform ["macos-arm64" "linux-x86_64"]]
-                            [(str "wheels " platform)
-                             (get-in entry [:artifacts :wheels (keyword platform)])]))]
+  (let [artifacts [[:inference (get-in entry [:artifacts :inference])]
+                   [:training (get-in entry [:artifacts :training])]]]
     (str/join
       "\n"
       (concat
@@ -170,10 +167,8 @@
                  ", SHA-256 `"
                  (:sha256 artifact)
                  "`)")))
-        ["- The two optional CPython 3.12 wheelhouses contain pinned dependency wheels,"
-         "  their SHA-256, upstream URLs and licenses in `PROVENANCE.json`; license texts"
-         "  are in each wheel or in `licenses/`. Linux uses CPU-only PyTorch."
-         "- Training assets and wheels are installed only when explicitly requested."
+        ["- Training checkpoints are installed only when explicitly requested."
+         "- The vis-decisions extension supplies training dependencies."
          "- Model scores do not authorize autonomous actions; evaluate both decision"
          "  heads on held-out examples before relying on them."]))))
 

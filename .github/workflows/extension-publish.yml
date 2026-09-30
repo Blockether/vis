@@ -98,6 +98,7 @@ jobs:
           Blockether/vis-lang-interface -
           Blockether/vis-lang-python -
           Blockether/vis-lang-clojure extension
+          Blockether/vis-decisions -
           FIRST_PARTY
           fi
           cat "$RUNNER_TEMP/targets"

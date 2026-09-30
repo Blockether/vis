@@ -29,32 +29,6 @@
         ],
         "sha256": "2788bf3c2e99eb66a1a3e9338a3cbcdb20ae4316a493dbb8815ca9dec4c9e387",
         "url": "https://github.com/Blockether/vis/releases/download/assets-pack/laya-typed-decisions-training.zip"
-      },
-      "wheels": {
-        "linux-x86_64": {
-          "bytes": 277936860,
-          "file": "laya-training-wheels-cp312-linux-x86_64.zip",
-          "requires": [
-            "install.sh",
-            "requirements.txt",
-            "PROVENANCE.json",
-            "wheels/torch-2.10.0+cpu-cp312-cp312-manylinux_2_28_x86_64.whl"
-          ],
-          "sha256": "8a9170a7016ed4c4dc54ff6fc739a413895fc6bd8c3e11903da9e62431a4b4f4",
-          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/laya-training-wheels-cp312-linux-x86_64.zip"
-        },
-        "macos-arm64": {
-          "bytes": 154075318,
-          "file": "laya-training-wheels-cp312-macos-arm64.zip",
-          "requires": [
-            "install.sh",
-            "requirements.txt",
-            "PROVENANCE.json",
-            "wheels/torch-2.10.0-2-cp312-none-macosx_11_0_arm64.whl"
-          ],
-          "sha256": "f15b01566434557b0d2ffbbaa84b4ae3bf97052550663c4af4ff5fd8b9c489da",
-          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/laya-training-wheels-cp312-macos-arm64.zip"
-        }
       }
     },
     "attribution": "Laya typed decisions by ConvAI Innovations, Apache-2.0. Full ModernBERT encoder and both decision heads; FP32 ONNX export by Vis. Baseline act/escalate decisions are not approved for autonomous actions.",
@@ -94,36 +68,6 @@
         ],
         "sha256": "162cf2e5bba6553e6857a2b5b95dd478a6468581d777e94ebc966de98de057b9",
         "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-base-training.zip"
-      },
-      "wheels": {
-        "linux-x86_64": {
-          "bytes": 281138690,
-          "file": "gliner2.5-training-wheels-cp312-linux-x86_64.zip",
-          "requires": [
-            "install.sh",
-            "requirements.txt",
-            "PROVENANCE.json",
-            "licenses/flatbuffers-LICENSE.txt",
-            "licenses/tokenizers-LICENSE.txt",
-            "wheels/torch-2.14.0+cpu-cp312-cp312-manylinux_2_28_x86_64.whl"
-          ],
-          "sha256": "e93486971f0538a287873286a1ea94ea01b394ce2c8c345fbe1eb004416d32cf",
-          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-linux-x86_64.zip"
-        },
-        "macos-arm64": {
-          "bytes": 198416301,
-          "file": "gliner2.5-training-wheels-cp312-macos-arm64.zip",
-          "requires": [
-            "install.sh",
-            "requirements.txt",
-            "PROVENANCE.json",
-            "licenses/flatbuffers-LICENSE.txt",
-            "licenses/tokenizers-LICENSE.txt",
-            "wheels/torch-2.14.0-cp312-cp312-macosx_14_0_arm64.whl"
-          ],
-          "sha256": "32cb29a9982cef7067beba9154ca035f9b27d7e5e458600fbd9b1ec4ee6e5112",
-          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-macos-arm64.zip"
-        }
       }
     },
     "attribution": "GLiNER2.5 base by Fastino, Apache-2.0. Full boundary-head checkpoint and FP32 ONNX export by Vis. Classification and act/escalate only, not entity/JSON extraction; not approved for autonomous actions.",
@@ -163,36 +107,6 @@
         ],
         "sha256": "e4d9b44afbba8ef91214b53f2675923bf769f49193c39d0fbeb113f0a0a717be",
         "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-small-training.zip"
-      },
-      "wheels": {
-        "linux-x86_64": {
-          "bytes": 281138690,
-          "file": "gliner2.5-training-wheels-cp312-linux-x86_64.zip",
-          "requires": [
-            "install.sh",
-            "requirements.txt",
-            "PROVENANCE.json",
-            "licenses/flatbuffers-LICENSE.txt",
-            "licenses/tokenizers-LICENSE.txt",
-            "wheels/torch-2.14.0+cpu-cp312-cp312-manylinux_2_28_x86_64.whl"
-          ],
-          "sha256": "e93486971f0538a287873286a1ea94ea01b394ce2c8c345fbe1eb004416d32cf",
-          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-linux-x86_64.zip"
-        },
-        "macos-arm64": {
-          "bytes": 198416301,
-          "file": "gliner2.5-training-wheels-cp312-macos-arm64.zip",
-          "requires": [
-            "install.sh",
-            "requirements.txt",
-            "PROVENANCE.json",
-            "licenses/flatbuffers-LICENSE.txt",
-            "licenses/tokenizers-LICENSE.txt",
-            "wheels/torch-2.14.0-cp312-cp312-macosx_14_0_arm64.whl"
-          ],
-          "sha256": "32cb29a9982cef7067beba9154ca035f9b27d7e5e458600fbd9b1ec4ee6e5112",
-          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-macos-arm64.zip"
-        }
       }
     },
     "attribution": "GLiNER2.5 small by Fastino, Apache-2.0. Full boundary-head checkpoint and FP32 ONNX export by Vis. Classification and act/escalate only, not entity/JSON extraction; not approved for autonomous actions.",
@@ -232,36 +146,6 @@
         ],
         "sha256": "206644eeb9b1ba76ca9588a077410bf678c484b8e949bb91e691e3ae04c59d29",
         "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-multi-training.zip"
-      },
-      "wheels": {
-        "linux-x86_64": {
-          "bytes": 281138690,
-          "file": "gliner2.5-training-wheels-cp312-linux-x86_64.zip",
-          "requires": [
-            "install.sh",
-            "requirements.txt",
-            "PROVENANCE.json",
-            "licenses/flatbuffers-LICENSE.txt",
-            "licenses/tokenizers-LICENSE.txt",
-            "wheels/torch-2.14.0+cpu-cp312-cp312-manylinux_2_28_x86_64.whl"
-          ],
-          "sha256": "e93486971f0538a287873286a1ea94ea01b394ce2c8c345fbe1eb004416d32cf",
-          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-linux-x86_64.zip"
-        },
-        "macos-arm64": {
-          "bytes": 198416301,
-          "file": "gliner2.5-training-wheels-cp312-macos-arm64.zip",
-          "requires": [
-            "install.sh",
-            "requirements.txt",
-            "PROVENANCE.json",
-            "licenses/flatbuffers-LICENSE.txt",
-            "licenses/tokenizers-LICENSE.txt",
-            "wheels/torch-2.14.0-cp312-cp312-macosx_14_0_arm64.whl"
-          ],
-          "sha256": "32cb29a9982cef7067beba9154ca035f9b27d7e5e458600fbd9b1ec4ee6e5112",
-          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-macos-arm64.zip"
-        }
       }
     },
     "attribution": "GLiNER2.5 multi by Fastino, Apache-2.0. Multilingual full boundary-head checkpoint and FP32 ONNX export by Vis. Classification and act/escalate only, not entity/JSON extraction; not approved for autonomous actions.",
@@ -301,36 +185,6 @@
         ],
         "sha256": "9efeb355eab7b386c74f13f1206504909d831283b538fda8fd25a2592cc49c2e",
         "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-training.zip"
-      },
-      "wheels": {
-        "linux-x86_64": {
-          "bytes": 281138690,
-          "file": "gliner2.5-training-wheels-cp312-linux-x86_64.zip",
-          "requires": [
-            "install.sh",
-            "requirements.txt",
-            "PROVENANCE.json",
-            "licenses/flatbuffers-LICENSE.txt",
-            "licenses/tokenizers-LICENSE.txt",
-            "wheels/torch-2.14.0+cpu-cp312-cp312-manylinux_2_28_x86_64.whl"
-          ],
-          "sha256": "e93486971f0538a287873286a1ea94ea01b394ce2c8c345fbe1eb004416d32cf",
-          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-linux-x86_64.zip"
-        },
-        "macos-arm64": {
-          "bytes": 198416301,
-          "file": "gliner2.5-training-wheels-cp312-macos-arm64.zip",
-          "requires": [
-            "install.sh",
-            "requirements.txt",
-            "PROVENANCE.json",
-            "licenses/flatbuffers-LICENSE.txt",
-            "licenses/tokenizers-LICENSE.txt",
-            "wheels/torch-2.14.0-cp312-cp312-macosx_14_0_arm64.whl"
-          ],
-          "sha256": "32cb29a9982cef7067beba9154ca035f9b27d7e5e458600fbd9b1ec4ee6e5112",
-          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-macos-arm64.zip"
-        }
       }
     },
     "attribution": "GLiNER2.5 Decide by Fastino, Apache-2.0. Full span-head checkpoint and FP32 ONNX export by Vis. Classification and act/escalate only, not entity/JSON extraction; not approved for autonomous actions.",
@@ -408,36 +262,6 @@
           "LICENSE.txt"
         ],
         "sha256": "f91c5fd97651b861f50d4770089e911950901f2bf707818a3ae44a88a4c62583"
-      },
-      "wheels": {
-        "linux-x86_64": {
-          "bytes": 281138690,
-          "file": "gliner2.5-training-wheels-cp312-linux-x86_64.zip",
-          "requires": [
-            "install.sh",
-            "requirements.txt",
-            "PROVENANCE.json",
-            "licenses/flatbuffers-LICENSE.txt",
-            "licenses/tokenizers-LICENSE.txt",
-            "wheels/torch-2.14.0+cpu-cp312-cp312-manylinux_2_28_x86_64.whl"
-          ],
-          "sha256": "e93486971f0538a287873286a1ea94ea01b394ce2c8c345fbe1eb004416d32cf",
-          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-linux-x86_64.zip"
-        },
-        "macos-arm64": {
-          "bytes": 198416301,
-          "file": "gliner2.5-training-wheels-cp312-macos-arm64.zip",
-          "requires": [
-            "install.sh",
-            "requirements.txt",
-            "PROVENANCE.json",
-            "licenses/flatbuffers-LICENSE.txt",
-            "licenses/tokenizers-LICENSE.txt",
-            "wheels/torch-2.14.0-cp312-cp312-macosx_14_0_arm64.whl"
-          ],
-          "sha256": "32cb29a9982cef7067beba9154ca035f9b27d7e5e458600fbd9b1ec4ee6e5112",
-          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-macos-arm64.zip"
-        }
       }
     },
     "attribution": "GLiNER2.5 Decide 1B by Fastino, Apache-2.0. Full span-head checkpoint with encoder and tokenizer settings adapted for Transformers 4.57.6, and FP32 ONNX export by Vis. Classification and act/escalate only, not entity/JSON extraction; not approved for autonomous actions.",
@@ -477,36 +301,6 @@
         ],
         "sha256": "c2e5e0eaf9e141d6325dadf39f9f53b7c0ee7249ce1f3b394f97489f5c635c13",
         "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-multi-decide-training.zip"
-      },
-      "wheels": {
-        "linux-x86_64": {
-          "bytes": 281138690,
-          "file": "gliner2.5-training-wheels-cp312-linux-x86_64.zip",
-          "requires": [
-            "install.sh",
-            "requirements.txt",
-            "PROVENANCE.json",
-            "licenses/flatbuffers-LICENSE.txt",
-            "licenses/tokenizers-LICENSE.txt",
-            "wheels/torch-2.14.0+cpu-cp312-cp312-manylinux_2_28_x86_64.whl"
-          ],
-          "sha256": "e93486971f0538a287873286a1ea94ea01b394ce2c8c345fbe1eb004416d32cf",
-          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-linux-x86_64.zip"
-        },
-        "macos-arm64": {
-          "bytes": 198416301,
-          "file": "gliner2.5-training-wheels-cp312-macos-arm64.zip",
-          "requires": [
-            "install.sh",
-            "requirements.txt",
-            "PROVENANCE.json",
-            "licenses/flatbuffers-LICENSE.txt",
-            "licenses/tokenizers-LICENSE.txt",
-            "wheels/torch-2.14.0-cp312-cp312-macosx_14_0_arm64.whl"
-          ],
-          "sha256": "32cb29a9982cef7067beba9154ca035f9b27d7e5e458600fbd9b1ec4ee6e5112",
-          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-macos-arm64.zip"
-        }
       }
     },
     "attribution": "GLiNER2.5 multi-Decide by Fastino, Apache-2.0. Multilingual full boundary-head checkpoint and FP32 ONNX export by Vis. Classification and act/escalate only, not entity/JSON extraction; not approved for autonomous actions.",

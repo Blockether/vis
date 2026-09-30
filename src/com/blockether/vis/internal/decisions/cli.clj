@@ -19,10 +19,7 @@
 
     (doseq [[kind dir] installed]
       (cli-out! (str (name kind) ": " dir)))
-    (when training?
-      (cli-out! (str "To install CPython 3.12 training dependencies offline, run: sh "
-                     (get installed :wheels)
-                     "/install.sh NEW_ENV_DIRECTORY")))))
+    (when training? (cli-out! "Training runtime: https://github.com/Blockether/vis-decisions"))))
 
 (defn- status-command
   [_parsed _residual]
@@ -45,7 +42,7 @@
      :cmd/usage "vis-agent decisions models <download|status>"
      :cmd/subcommands
      [{:cmd/name "download"
-       :cmd/doc "Download the FP32 model, and optionally its offline training resources."
+       :cmd/doc "Download the FP32 model, and optionally its complete training checkpoint."
        :cmd/usage "vis-agent decisions models download --model NAME [--training]"
        :cmd/args [{:name "model"
                    :kind :flag
@@ -55,7 +52,7 @@
                   {:name "training"
                    :kind :flag
                    :type :boolean
-                   :doc "Also download the checkpoint and local CPython 3.12 wheelhouse."}]
+                   :doc "Also download the complete training checkpoint, not Python dependencies."}]
        :cmd/run-fn #'download-command}
       {:cmd/name "status"
        :cmd/doc "List pinned models and their installed FP32 bundles."

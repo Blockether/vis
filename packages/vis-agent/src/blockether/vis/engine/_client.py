@@ -2539,6 +2539,27 @@ class ExecutionLayer(ABC):
         return f"{prefix}/{kind}/jobs/{_segment(job_id)}/events"
 
 
+class _UploadStream:
+    """Bound a chunked upload to its declared length without buffering the body."""
+
+    def __init__(self, source: BinaryIO, length: int):
+        self._source = source
+        self._remaining = length
+
+    def read(self, size: int = 8192) -> bytes:
+        if size == 0:
+            return b""
+        if self._remaining == 0:
+            if self._source.read(1):
+                raise ValueError("decision upload stream length does not match")
+            return b""
+        chunk = self._source.read(min(size if size > 0 else 8192, self._remaining))
+        if not chunk or len(chunk) > self._remaining:
+            raise ValueError("decision upload stream length does not match")
+        self._remaining -= len(chunk)
+        return chunk
+
+
 class GatewayClient(ExecutionLayer):
     """Use an existing Vis gateway through an explicit HTTP(S) origin.
 
@@ -2634,7 +2655,8 @@ class GatewayClient(ExecutionLayer):
             headers["Content-Type"] = "application/json"
         if upload_sha256 is not None:
             headers["Content-Type"] = "application/zip"
-            headers["Content-Length"] = str(upload_length)
+            headers["Transfer-Encoding"] = "chunked"
+            content = _UploadStream(content, upload_length)
             headers["X-Content-SHA256"] = upload_sha256
         url = self._url + route + ("?" + urlencode(query) if query else "")
         try:

@@ -6732,3 +6732,25 @@ vis.register_extension(vis.Extension(
           (binding [toggles/*overrides* {"python_scoped_feature" true}]
             (let [answer (read-value)]
               (expect (true? (:result answer)) (pr-str answer)))))))))
+
+(defdescribe
+  bundled-sdk-coexists-with-installed-blockether-package-test
+  (it
+    "keeps dotted SDK imports working after refreshing an installed sibling package"
+    (with-shared-packages
+      (fn [packages]
+        (let [module (io/file packages "blockether/decision_fixture/__init__.py")]
+          (.mkdirs (.getParentFile module))
+          (spit module
+                "def identity():\n    \"Read the installed identity.\"\n    return 'coexists'\n")
+          (with-fresh-loaded
+            {"decision_fixture.py"
+             (str "import blockether.vis.extension as vis\n"
+                  "from blockether.decision_fixture import identity\n"
+                  "vis.register_extension(vis.Extension(name='decision-fixture', alias='fixture', "
+                  "description='Installed sibling package', symbols=[vis.Symbol(identity, "
+                  "activity=vis.Activity(label='Read identity', show_start=False))]))\n")}
+            (fn [loaded _]
+              (expect (= 1 (:loaded loaded)) (pr-str (pyx/load-failures)))
+              (expect (= "coexists"
+                         (:result ((symbol-fn (registered "decision-fixture") 'identity))))))))))))

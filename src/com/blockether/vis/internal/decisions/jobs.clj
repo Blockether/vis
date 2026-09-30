@@ -96,11 +96,9 @@
        (catch Exception _ default)))
 
 (defn- settings
-  [model-id]
+  []
   (let [python
-        (config/extension-env-value (if (= model-id "laya-typed-decisions")
-                                      "VIS_DECISION_TRAINING_PYTHON"
-                                      "VIS_DECISION_GLINER_TRAINING_PYTHON"))
+        (config/extension-env-value "VIS_DECISION_TRAINING_PYTHON")
 
         root
         (config/extension-env-value "VIS_DECISION_TRAINING_DATA_ROOT")]
@@ -202,7 +200,7 @@
         builder
         (ProcessBuilder.
           ^"[Ljava.lang.String;"
-          (into-array String [python "-I" "-m" "blockether.vis.decisions._worker" (.getPath spec)]))
+          (into-array String [python "-I" "-m" "blockether.vis_decisions._worker" (.getPath spec)]))
 
         environment
         (.environment builder)]
@@ -355,7 +353,7 @@
         (get request "model_id" "laya-typed-decisions")
 
         settings
-        (settings model-id)
+        (settings)
 
         files
         (into {}

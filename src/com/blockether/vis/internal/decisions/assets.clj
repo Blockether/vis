@@ -57,20 +57,6 @@
       (throw (ex-info (str "Unknown decision model: " id)
                       {:type :decisions/unknown-model :model id}))))
 
-(defn platform
-  "The platform whose CPython 3.12 wheelhouse can be installed locally."
-  []
-  (let [os
-        (System/getProperty "os.name")
-
-        arch
-        (System/getProperty "os.arch")]
-
-    (cond (and (str/includes? os "Mac") (contains? #{"aarch64" "arm64"} arch)) "macos-arm64"
-          (and (str/includes? os "Linux") (contains? #{"amd64" "x86_64"} arch)) "linux-x86_64"
-          :else (throw (ex-info (str "No decision training wheelhouse for " os " / " arch)
-                                {:type :decisions/unsupported-platform :os os :arch arch})))))
-
 (defn models-root
   "The persistent store, resolved at runtime rather than native-image build time."
   []
@@ -78,26 +64,16 @@
       (str (System/getProperty "user.home") "/.vis/models/decisions")))
 
 (defn artifact
-  "An inference, training or platform-specific wheelhouse from one manifest entry."
-  ([model kind] (artifact model kind (when (= kind :wheels) (platform))))
-  ([model kind target-platform]
-   (or (if (= kind :wheels)
-         (get-in model [:artifacts :wheels (keyword target-platform)])
-         (get-in model [:artifacts kind]))
-       (throw (ex-info (str "No " (name kind) " asset for " (:id model))
-                       {:type :decisions/unknown-artifact
-                        :model (:id model)
-                        :kind kind
-                        :platform target-platform})))))
+  "An inference or training archive from one manifest entry."
+  [model kind]
+  (or (get-in model [:artifacts kind])
+      (throw (ex-info (str "No " (name kind) " asset for " (:id model))
+                      {:type :decisions/unknown-artifact :model (:id model) :kind kind}))))
 
 (defn install-dir
   "Stable location of an immutable revision and artifact kind."
-  ([model kind] (install-dir model kind (when (= kind :wheels) (platform))))
-  ([model kind target-platform]
-   (str (io/file (models-root)
-                 (:id model)
-                 (:revision model)
-                 (if (= kind :wheels) (str "wheels-" target-platform) (name kind))))))
+  [model kind]
+  (str (io/file (models-root) (:id model) (:revision model) (name kind))))
 
 (defn- safe-file
   ^File [^File dir name]
@@ -126,12 +102,7 @@
         (wire/parse-json (slurp (io/file dir "PROVENANCE.json")))
 
         listed
-        (if (= "training-dependencies" (get provenance "kind"))
-          (into {}
-                (map (fn [wheel]
-                       [(str "wheels/" (get wheel "wheel")) wheel]))
-                (get provenance "wheels"))
-          (get provenance "files"))]
+        (get provenance "files")]
 
     (when-not (seq listed)
       (throw (ex-info "Decision bundle has no file inventory" {:type :decisions/no-inventory})))
@@ -260,9 +231,8 @@
             (let [provenance (verified-files! staging asset)]
               (when (or (not= (:revision model) (get provenance "revision"))
                         (not= (:id model) (get provenance "model")))
-                (when-not (= kind :wheels)
-                  (throw (ex-info "Decision archive model identity does not match"
-                                  {:type :decisions/archive-identity})))))
+                (throw (ex-info "Decision archive model identity does not match"
+                                {:type :decisions/archive-identity}))))
             (spit (io/file staging ".vis-verified") (str (:sha256 asset) "\n"))
             (.mkdirs (.getParentFile target))
             (when (and (.exists target) (not (.renameTo target backup)))
@@ -277,13 +247,13 @@
             (finally (.delete archive) (when (.exists staging) (files/delete-dir! staging))))))))
 
 (defn download-model!
-  "Install FP32 only, or FP32 plus the complete checkpoint and local wheelhouse."
+  "Install FP32 only, or FP32 plus the complete training checkpoint."
   [id training?]
   (let [model
         (entry id)
 
         kinds
-        (if training? [:inference :training :wheels] [:inference])]
+        (if training? [:inference :training] [:inference])]
 
     (into {}
           (map (fn [kind]

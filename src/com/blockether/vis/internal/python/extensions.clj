@@ -905,7 +905,6 @@
              {:ext {:ext/name label} :env (or bound-env {:workspace/root (workspace/cwd-root)})}
              (python-host/conveying
                ctx
-               (exec-in! ctx bootstrap-python)
                (exec-in!
                  ctx
                  (str "import sys as __vis_pathsys__\n"
@@ -939,6 +938,7 @@
                       "    if (__vis_file__.startswith(__vis_frozen_home__)\n"
                       "            and not __vis_file__.startswith(__vis_ext_dir__)):\n"
                       "        del __vis_pathsys__.modules[__vis_name__]\n"))
+               (exec-in! ctx bootstrap-python)
                (exec-in! ctx (postponed-annotations-python source)))))
          {:context ctx :registration (unseal ctx (run-in ctx "__vis_registration__()"))}
          (catch Throwable t (discard-context! ctx) (throw t)))))

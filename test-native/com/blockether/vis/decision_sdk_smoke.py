@@ -9,12 +9,12 @@ from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from blockether.vis.decisions import Decisions
+from blockether.vis._contracts import definition
 from blockether.vis.engine import GatewayClient, GatewayError
+from blockether.vis_decisions import Decisions, Trainer, TrainingBundle
 
 
 def train(checkpoint: Path, root: Path):
-    from blockether.vis.decisions.training import ModernBertTrainer, TrainingBundle
 
     row = {
         "state": "Please refund my damaged purchase.",
@@ -57,8 +57,8 @@ def train(checkpoint: Path, root: Path):
     (root / "policy.json").write_text(
         json.dumps({"min_decision_accuracy": 0.0, "min_action_accuracy": 0.0})
     )
-    with ModernBertTrainer(TrainingBundle.open(checkpoint)) as trainer:
-        result = trainer.finetune(
+    with Trainer(TrainingBundle.open(checkpoint)) as trainer:
+        result = trainer.train(
             train_data=root / "train.jsonl",
             eval_data=root / "eval.jsonl",
             training_config=root / "config.json",
@@ -116,6 +116,12 @@ def main(url: str, inference: str, checkpoint: str, model_id: str) -> None:
             if model_id == "gliner2.5-decide":
                 # #294: exercise the SDK with the real FP32 bundle above its old cap.
                 assert 1_600_000_000 < upload_bytes <= 2_400_000_000
+            if model_id == "gliner2.5-decide-1b":
+                assert (
+                    2**31
+                    <= upload_bytes
+                    <= definition("gateway", "decision_archive_bytes")["maximum"]
+                )
             questions = {
                 "intent": {
                     "type": "choice",
