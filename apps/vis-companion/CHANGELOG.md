@@ -2,6 +2,17 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.29 (7045) — 2026-09-30
+<!-- commit: 071454e08d51b5f8f132869881c7a329c6ae0722 -->
+
+- Support UUIDs on non-secure HTTP #299
+- Open XLSX files in spreadsheet apps
+- Show provider usage for goal turns
+- Enforce accessibility and worker budgets
+- Add space before the Projects plus button
+- Keep list headers under an open session
+- Record companion build 7021
+
 ## 0.2.29 (7021) — 2026-09-30
 <!-- commit: 2ba8a103751ea7c137ec589d5613e7c88b4295cb -->
 
