@@ -3,6 +3,7 @@
             [lazytest.core :refer [defdescribe expect it]]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.dialogs :as dlg]
+            [com.blockether.vis.tui.frame :as frame]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.table :as table]
             [com.blockether.vis.tui.terminals :as term]
@@ -3701,31 +3702,41 @@
              ;; explicit DELTA refresh, which skips the full repaint Lanterna asks for after
              ;; a resize, so only the cells that differed from the stale front buffer were
              ;; rewritten.
-             (it "repaints every cell after a terminal resize inside a modal"
-                 (let [terminal
-                       (DefaultVirtualTerminal. (TerminalSize. 100 30))
+             (it
+               "repaints every cell after a terminal resize inside a modal"
+               (let [terminal
+                     (DefaultVirtualTerminal. (TerminalSize. 100 30))
 
-                       ^TerminalScreen screen
-                       (doto (TerminalScreen. terminal) (.startScreen))
+                     ^TerminalScreen screen
+                     (doto (TerminalScreen. terminal) (.startScreen))
 
-                       flushes
-                       (atom 0)]
+                     flushes
+                     (atom 0)
 
-                   ;; Driven by the terminal's own flushes: resize after the dialog's first
-                   ;; frame, close it after the frame that answers the resize.
-                   (.addVirtualTerminalListener
-                     terminal
-                     (reify
-                       VirtualTerminalListener
-                         (onFlush [_]
-                           (let [n (swap! flushes inc)]
-                             (cond (= 1 n) (.setTerminalSize terminal (TerminalSize. 70 20))
-                                   (= 2 n) (.addInput terminal (KeyStroke. KeyType/Escape)))))
-                         (onBell [_])
-                         (onClose [_])
-                         (onResized [_ _terminal _size])))
-                   (try (dlg/list-dialog! screen "Resize" ["alpha" "beta" "gamma"] {})
-                        (expect (= 2 @flushes))
-                        (expect (= (TerminalSize. 70 20) (.getTerminalSize screen)))
-                        (expect (= (back-buffer-text screen) (terminal-text terminal)))
-                        (finally (.stopScreen screen))))))
+                     painted-frames-match?
+                     (atom [])]
+
+                 ;; Driven by the terminal's own flushes: resize after the dialog's first
+                 ;; frame, close it after the frame that answers the resize.
+                 (.addVirtualTerminalListener
+                   terminal
+                   (reify
+                     VirtualTerminalListener
+                       (onFlush [_]
+                         (swap! painted-frames-match? conj
+                           (= (back-buffer-text screen) (terminal-text terminal)))
+                         (let [n (swap! flushes inc)]
+                           (cond (= 1 n) (.setTerminalSize terminal (TerminalSize. 70 20))
+                                 (= 2 n) (.addInput terminal (KeyStroke. KeyType/Escape)))))
+                       (onBell [_])
+                       (onClose [_])
+                       (onResized [_ _terminal _size])))
+                 (try (dlg/list-dialog! screen "Resize" ["alpha" "beta" "gamma"] {})
+                      (expect (= 2 @flushes))
+                      (expect (= (TerminalSize. 70 20) (.getTerminalSize screen)))
+                      (expect (= [true true] @painted-frames-match?))
+                      ;; The modal restores its back buffer without flushing.
+                      ;; The host owns the next visible frame after it closes.
+                      (frame/refresh! screen)
+                      (expect (= (back-buffer-text screen) (terminal-text terminal)))
+                      (finally (.stopScreen screen))))))
