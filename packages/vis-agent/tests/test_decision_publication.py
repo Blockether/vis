@@ -181,6 +181,7 @@ GLINER_ARCHITECTURES = {
     "gliner2.5-small": "boundary",
     "gliner2.5-multi": "boundary",
     "gliner2.5-decide": "span",
+    "gliner2.5-decide-1b": "span",
     "gliner2.5-multi-decide": "boundary",
 }
 
@@ -296,7 +297,15 @@ def test_gliner_sdk_rejects_mismatched_architecture_before_upload(tmp_path, mode
 
 @pytest.mark.parametrize(
     "length",
-    [1, 1_600_000_000, 1_600_000_001, 1_612_357_019, 2_147_483_648, 2_400_000_000],
+    [
+        1,
+        1_600_000_000,
+        1_600_000_001,
+        1_612_357_019,
+        2_147_483_648,
+        2_400_000_000,
+        6_000_000_000,
+    ],
 )
 def test_upload_accepts_lengths_through_the_archive_limit(monkeypatch, length):
     # #294: the pinned Decide ZIP fits the gateway cap, but exceeded the old SDK cap.
@@ -362,9 +371,9 @@ def test_upload_reports_actual_and_allowed_archive_sizes(monkeypatch):
     monkeypatch.setattr(gateway, "_open", transport)
     try:
         with io.BytesIO(b"metadata-only probe") as stream:
-            with pytest.raises(ValueError, match=r"2400000001.*2400000000"):
+            with pytest.raises(ValueError, match=r"6000000001.*6000000000"):
                 gateway.post_decision_model(
-                    content=stream, sha256="a" * 64, length=2_400_000_001
+                    content=stream, sha256="a" * 64, length=6_000_000_001
                 )
             transport.assert_not_called()
             assert stream.tell() == 0
@@ -386,8 +395,8 @@ def test_package_reports_actual_and_allowed_archive_sizes(tmp_path, monkeypatch)
 def test_publication_limits_come_from_the_gateway_contract():
     archive = definition("gateway", "decision_archive_bytes")
     expanded = definition("gateway", "decision_expanded_bytes")
-    assert archive == {"type": "integer", "minimum": 1, "maximum": 2_400_000_000}
-    assert expanded == {"type": "integer", "minimum": 1, "maximum": 3_000_000_000}
+    assert archive == {"type": "integer", "minimum": 1, "maximum": 6_000_000_000}
+    assert expanded == {"type": "integer", "minimum": 1, "maximum": 6_000_000_000}
     assert (
         _client._MAX_DECISION_ARCHIVE == _publication._MAX_ARCHIVE == archive["maximum"]
     )

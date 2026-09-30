@@ -91,6 +91,7 @@ def test_remote_training_validates_local_filenames_and_preserves_gateway_failure
         "gliner2.5-small",
         "gliner2.5-multi",
         "gliner2.5-decide",
+        "gliner2.5-decide-1b",
         "gliner2.5-multi-decide",
     ],
 )

@@ -15,7 +15,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import urlopen
 
-from ._models import ARCHITECTURES
+from blockether.vis._contracts import definition
+
+from ._models import ARCHITECTURES, ENCODERS, pinned_settings
 from ._trainer import TrainingResult
 from .training import (
     TrainingBundle,
@@ -34,7 +36,8 @@ _REQUIRED = {
     "tokenizer_config.json",
 }
 _OPTIONAL = {"special_tokens_map.json"}
-_MAX_EXPANDED_BYTES = 3_000_000_000
+_MAX_EXPANDED_BYTES = definition("gateway", "decision_expanded_bytes")["maximum"]
+_SETTINGS = ("encoder_config/config.json", "tokenizer_config.json")
 
 
 @dataclass(frozen=True)
@@ -131,15 +134,23 @@ class GlinerTrainingBundle(TrainingBundle):
             ):
                 raise ValueError(f"GLiNER checkpoint checksum failed: {name}")
         config = json.loads((root / "config.json").read_text(encoding="utf-8"))
-        encoder = json.loads(
-            (root / "encoder_config/config.json").read_text(encoding="utf-8")
-        )
+        settings = {
+            name: json.loads((root / name).read_text(encoding="utf-8"))
+            for name in _SETTINGS
+        }
         if (
             config.get("architecture") != ARCHITECTURES[model_id]
-            or encoder.get("model_type") != "deberta-v2"
+            or settings["encoder_config/config.json"].get("model_type")
+            != ENCODERS[model_id]
         ):
             raise ValueError(
                 "GLiNER checkpoint config has an incompatible architecture"
+            )
+        if any(
+            pinned_settings(name, value) != value for name, value in settings.items()
+        ):
+            raise ValueError(
+                "GLiNER checkpoint settings need GlinerTrainingBundle.from_local"
             )
         return cls(root)
 
@@ -209,6 +220,17 @@ class GlinerTrainingBundle(TrainingBundle):
                 copied = staging / name
                 copied.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(original, copied)
+                if name in _SETTINGS:
+                    value = json.loads(copied.read_text(encoding="utf-8"))
+                    pinned = pinned_settings(name, value)
+                    if pinned != value:
+                        copied.write_text(
+                            json.dumps(
+                                pinned, indent=2, sort_keys=True, ensure_ascii=False
+                            )
+                            + "\n",
+                            encoding="utf-8",
+                        )
             shutil.copyfile(license_file, staging / "LICENSE.txt")
             files = _inventory(staging)
             metadata = {

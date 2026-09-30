@@ -117,6 +117,65 @@ def test_fetch_is_pinned_streamed_verified_atomic_and_cached(tmp_path, monkeypat
     assert "torch" not in sys.modules
 
 
+def test_fetch_joins_parts_in_order_and_verifies_each_part(tmp_path, monkeypatch):
+    import blockether.vis.decisions.training as training
+
+    source = checkpoint(tmp_path / "source")
+    data = archive_bytes(source)
+    middle = len(data) // 2
+    release = "https://github.com/Blockether/vis/releases/download/assets-pack/"
+    pieces = {"training.zip.001": data[:middle], "training.zip.002": data[middle:]}
+    parts = [
+        {
+            "file": name,
+            "url": release + name,
+            "bytes": len(piece),
+            "sha256": hashlib.sha256(piece).hexdigest(),
+        }
+        for name, piece in pieces.items()
+    ]
+    entry = {
+        "id": "laya-typed-decisions",
+        "revision": "pinned",
+        "artifacts": {
+            "training": {
+                "file": "training.zip",
+                "bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "requires": ["model.safetensors", "PROVENANCE.json", "LICENSE.txt"],
+                "parts": parts,
+            }
+        },
+    }
+    monkeypatch.setattr(training, "_manifest", lambda: [entry])
+    calls = []
+
+    def open_url(url, *, timeout):
+        calls.append(url)
+        return io.BytesIO(pieces[url.removeprefix(release)])
+
+    monkeypatch.setattr(training, "urlopen", open_url)
+    bundle = TrainingBundle.fetch(
+        model_ref="laya-typed-decisions@pinned", cache_dir=tmp_path / "cache"
+    )
+    assert calls == [part["url"] for part in parts]
+    assert (bundle.path / "model.safetensors").read_bytes() == b"placeholder weights"
+
+    parts[0]["bytes"] -= 1
+    with pytest.raises(ValueError, match="size"):
+        TrainingBundle.fetch(
+            model_ref="laya-typed-decisions@pinned", cache_dir=tmp_path / "short"
+        )
+    parts[0]["bytes"] += 1
+    parts[1]["sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="checksum"):
+        TrainingBundle.fetch(
+            model_ref="laya-typed-decisions@pinned", cache_dir=tmp_path / "corrupt"
+        )
+    for cache in ("short", "corrupt"):
+        assert not (tmp_path / cache / "laya-typed-decisions/pinned/training").exists()
+
+
 def test_fetch_rejects_corrupt_archive_and_unsafe_paths(tmp_path, monkeypatch):
     import blockether.vis.decisions.training as training
 

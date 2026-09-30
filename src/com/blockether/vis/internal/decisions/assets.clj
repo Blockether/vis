@@ -28,6 +28,7 @@
    "gliner2.5-small" "boundary"
    "gliner2.5-multi" "boundary"
    "gliner2.5-decide" "span"
+   "gliner2.5-decide-1b" "span"
    "gliner2.5-multi-decide" "boundary"})
 
 (defn inference-required
@@ -199,9 +200,37 @@
               (str/trim (slurp (io/file root ".vis-verified")))))
          (every? #(.isFile (safe-file root %)) (:requires artifact)))))
 
+(defn- download-parts!
+  "Join an archive from parts that each fit one release asset. Check every part and the
+   whole archive; keep at most one downloaded part on disk."
+  [parts ^File archive expected-sha]
+  (let [^MessageDigest digest
+        (util/sha256-digest)
+
+        buffer
+        (byte-array 1048576)]
+
+    (with-open [out (FileOutputStream. archive)]
+      (doseq [part parts]
+        (let [^File piece (File/createTempFile "vis-decision-part-" ".zip")]
+          (try (files/download! (:url part) (str piece) {:sha256 (:sha256 part)})
+               (when-not (= (.length piece) (long (:bytes part)))
+                 (throw (ex-info "Decision archive part size does not match the manifest"
+                                 {:type :decisions/archive-size :file (:file part)})))
+               (with-open [in (FileInputStream. piece)]
+                 (loop []
+
+                   (let [n (.read in buffer)]
+                     (when (pos? n) (.update digest buffer 0 n) (.write out buffer 0 n) (recur)))))
+               (finally (.delete piece))))))
+    (when-not (= expected-sha (util/bytes->hex (.digest digest)))
+      (throw (ex-info "Decision archive checksum does not match the manifest"
+                      {:type :decisions/archive-checksum})))))
+
 (defn install!
   "Download and verify an archive before atomically replacing an incomplete install.
-   The optional destination and URL make the exact same path testable without network."
+   The optional destination and URL make the exact same path testable without network;
+   an archive in parts downloads each part from its own manifest URL."
   ([model kind] (install! model kind (install-dir model kind) nil))
   ([model kind dir url]
    (let [asset
@@ -221,7 +250,9 @@
 
      (if (installed? asset dir)
        (do (.delete archive) dir)
-       (try (files/download! (or url (:url asset)) (str archive) {:sha256 (:sha256 asset)})
+       (try (if-let [parts (seq (:parts asset))]
+              (download-parts! parts archive (:sha256 asset))
+              (files/download! (or url (:url asset)) (str archive) {:sha256 (:sha256 asset)}))
             (when-not (= (.length archive) (long (:bytes asset)))
               (throw (ex-info "Decision archive size does not match the manifest"
                               {:type :decisions/archive-size})))

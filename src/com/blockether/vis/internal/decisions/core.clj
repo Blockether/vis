@@ -286,6 +286,14 @@
       :ids ids
       :markers markers)))
 
+(def ^:private ^:const max-gliner-input-tokens
+  "Longest GLiNER question. Its attention memory grows with the square of its length."
+  2048)
+
+(def ^:private ^:const max-attention-cells
+  "Padded attention cells in one GLiNER run: one longest question, or 16 of 512 tokens."
+  (* 2048 2048))
+
 (defn- gliner-sequence-item
   "Preserve upstream structural label positions, including labels containing marker text."
   [^HuggingFaceTokenizer tokenizer config state item]
@@ -493,7 +501,7 @@
                               (answer item (vec (aget logits i)) (vec (aget actions i)) config)])
                            items))))))
 
-(defn- run-gliner-batch
+(defn- run-gliner-chunk
   [^OrtEnvironment environment ^OrtSession session items special]
   (let [batch (tensor-batch items (get special "[PAD]"))]
     (with-open [^OnnxTensor ids (tensor environment (:input_ids batch))
@@ -527,6 +535,29 @@
                        (map (fn [[id value]]
                               [id (:logits value)])
                             rows))}))))
+
+(defn- run-gliner-batch
+  "Run questions in order, in groups that keep padded attention within one longest question."
+  [environment session items special]
+  (let [groups
+        (reduce (fn [groups item]
+                  (let [group
+                        (conj (peek groups) item)
+
+                        width
+                        (long (apply max (map (comp count :ids) group)))]
+
+                    (if (and (next group)
+                             (> (* (count group) width width) (long max-attention-cells)))
+                      (conj groups [item])
+                      (conj (pop groups) group))))
+                [[]]
+                items)
+
+        results
+        (mapv #(run-gliner-chunk environment session % special) groups)]
+
+    {:answers (into {} (map :answers) results) :logits (into {} (map :logits) results)}))
 
 (def ^:private session-threads 4)
 
@@ -595,7 +626,7 @@
                       (get provenance "architecture")
                       (get config "architecture"))
                    (integer? limit)
-                   (<= 128 (long limit) 2048))
+                   (<= 128 (long limit)))
       (throw (ex-info "GLiNER decision bundle is not a compatible FP32 export"
                       {:type :decisions/invalid-bundle :model (:id model)})))
     (let [special
@@ -620,7 +651,7 @@
                 :session session
                 :tokenizer tokenizer
                 :special special
-                :config {"max_position_embeddings" limit}
+                :config {"max_position_embeddings" (min (long limit) max-gliner-input-tokens)}
                 :close (fn []
                          (try (.close session) (finally (.close tokenizer))))}))
            (catch Throwable e (.close tokenizer) (throw e))))))
@@ -632,6 +663,11 @@
         :else (throw (ex-info "Unsupported decision inference family"
                               {:type :decisions/invalid-bundle :model (:id model)}))))
 
+(defn- weight-bytes
+  "Bytes of the ONNX graph and external weights that one session loads."
+  [^File dir]
+  (+ (.length (io/file dir "model.onnx")) (.length (io/file dir "model.onnx.data"))))
+
 (defn validate-runtime!
   "Exercise both classifier heads and the tokenizer before publishing an immutable bundle."
   [model ^File dir]
@@ -639,6 +675,7 @@
     (try
       (cache/with-resident!
         key
+        (weight-bytes dir)
         #(open-model! model dir)
         (fn [{:keys [family environment session tokenizer special config]}]
           (let [gliner? (= family :gliner)
@@ -744,6 +781,7 @@
            "usage" {"input_tokens" 0 "output_tokens" 0}}
           (cache/with-resident!
             (model-key model artifact dir)
+            (weight-bytes dir)
             #(open-model! model dir)
             (fn [{:keys [family environment session tokenizer special config]}]
               (let [gliner? (= family :gliner)

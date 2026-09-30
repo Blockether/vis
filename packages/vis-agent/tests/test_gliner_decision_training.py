@@ -11,6 +11,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 from blockether.vis.decisions import gliner_training
+from blockether.vis.decisions._models import ENCODERS, pinned_settings
 from blockether.vis.decisions.gliner_training import GlinerTrainingBundle
 
 MODELS = {
@@ -18,6 +19,7 @@ MODELS = {
     "gliner2.5-small": "boundary",
     "gliner2.5-multi": "boundary",
     "gliner2.5-decide": "span",
+    "gliner2.5-decide-1b": "span",
     "gliner2.5-multi-decide": "boundary",
 }
 
@@ -29,6 +31,7 @@ MODELS = {
         ("gliner2.5-small", "7132dc4561c3f94563c6147e75ffa8ef34c4964a"),
         ("gliner2.5-multi", "2ca71aafb3446d9014e1c55c7ff51c9bc7209c47"),
         ("gliner2.5-decide", "bbe10ff77ebb238777c17d3a8ac9260e30929057"),
+        ("gliner2.5-decide-1b", "688cd7ba8917a0855ad3ce929cba5a9998932e79"),
         ("gliner2.5-multi-decide", "a35a0cd3b7a0f00f2effc576f454cd48fa98aa5f"),
     ],
 )
@@ -48,17 +51,24 @@ def test_catalog_pins_complete_gliner_downloads(model_id, revision):
     ):
         assert artifact["bytes"] > 0
         assert len(artifact["sha256"]) == 64
-        assert artifact["url"] == (
-            "https://github.com/Blockether/vis/releases/download/assets-pack/"
-            + artifact["file"]
-        )
+        for download in artifact.get("parts", [artifact]):
+            assert download["url"] == (
+                "https://github.com/Blockether/vis/releases/download/assets-pack/"
+                + download["file"]
+            )
+        if "parts" in artifact:
+            assert "url" not in artifact
+            assert sum(part["bytes"] for part in artifact["parts"]) == artifact["bytes"]
+            assert all(part["bytes"] < 2**31 for part in artifact["parts"])
 
 
 def source_checkpoint(path: Path, model_id: str) -> Path:
     path.mkdir(parents=True)
     files = {
         "config.json": json.dumps({"architecture": MODELS[model_id]}).encode(),
-        "encoder_config/config.json": b'{"model_type": "deberta-v2"}',
+        "encoder_config/config.json": json.dumps(
+            {"model_type": ENCODERS[model_id]}
+        ).encode(),
         "model.safetensors": b"placeholder full weights",
         "tokenizer.json": b"{}",
         "tokenizer_config.json": b"{}",
@@ -102,6 +112,90 @@ def test_local_checkpoint_is_inventoried_offline_and_fails_closed(tmp_path, mode
     (destination / "model.safetensors").write_bytes(b"changed")
     with pytest.raises(ValueError, match="checksum"):
         GlinerTrainingBundle.open(destination)
+
+
+# GLiNER2.5 Decide 1B was saved by Transformers 5. The pinned 4.57.6 ignores these forms and
+# would silently use a local RoPE theta of 10000 and fail to load the tokenizer class.
+V5_ENCODER = {
+    "model_type": "modernbert",
+    "rope_parameters": {
+        "full_attention": {"rope_theta": 160000.0, "rope_type": "default"},
+        "sliding_attention": {"rope_theta": 160000.0, "rope_type": "default"},
+    },
+}
+V5_TOKENIZER = {
+    "tokenizer_class": "TokenizersBackend",
+    "extra_special_tokens": ["[E]", "[R]"],
+}
+
+
+def test_transformers_5_settings_translate_for_the_pinned_version():
+    encoder = pinned_settings("encoder_config/config.json", V5_ENCODER)
+    assert encoder == V5_ENCODER | {
+        "global_rope_theta": 160000.0,
+        "local_rope_theta": 160000.0,
+    }
+    assert pinned_settings("encoder_config/config.json", encoder) == encoder
+    tokenizer = pinned_settings("tokenizer_config.json", V5_TOKENIZER)
+    assert tokenizer == {
+        "tokenizer_class": "PreTrainedTokenizerFast",
+        "additional_special_tokens": ["[E]", "[R]"],
+    }
+    assert pinned_settings("tokenizer_config.json", tokenizer) == tokenizer
+    deberta = {"model_type": "deberta-v2", "max_position_embeddings": 512}
+    assert pinned_settings("encoder_config/config.json", deberta) == deberta
+    with pytest.raises(ValueError, match="conflict"):
+        pinned_settings(
+            "encoder_config/config.json", V5_ENCODER | {"local_rope_theta": 10000.0}
+        )
+    scaled = {
+        layer: {"rope_theta": 160000.0, "rope_type": "yarn"}
+        for layer in V5_ENCODER["rope_parameters"]
+    }
+    with pytest.raises(ValueError, match="RoPE"):
+        pinned_settings(
+            "encoder_config/config.json", V5_ENCODER | {"rope_parameters": scaled}
+        )
+    with pytest.raises(ValueError, match="special tokens"):
+        pinned_settings(
+            "tokenizer_config.json",
+            V5_TOKENIZER | {"additional_special_tokens": ["[P]"]},
+        )
+
+
+def test_local_transformers_5_checkpoint_is_translated_and_untranslated_copies_fail(
+    tmp_path,
+):
+    source = source_checkpoint(tmp_path / "source", "gliner2.5-decide-1b")
+    (source / "encoder_config/config.json").write_text(json.dumps(V5_ENCODER))
+    (source / "tokenizer_config.json").write_text(json.dumps(V5_TOKENIZER))
+    license_file = tmp_path / "LICENSE.txt"
+    license_file.write_text("Apache-2.0")
+    bundle = GlinerTrainingBundle.from_local(
+        source,
+        tmp_path / "checked",
+        model_id="gliner2.5-decide-1b",
+        revision="a" * 40,
+        license_file=license_file,
+    )
+    encoder = json.loads((bundle.path / "encoder_config/config.json").read_text())
+    tokenizer = json.loads((bundle.path / "tokenizer_config.json").read_text())
+    assert encoder["local_rope_theta"] == encoder["global_rope_theta"] == 160000.0
+    assert tokenizer["tokenizer_class"] == "PreTrainedTokenizerFast"
+    assert json.loads((source / "encoder_config/config.json").read_text()) == V5_ENCODER
+    assert GlinerTrainingBundle.open(bundle.path).model_id == "gliner2.5-decide-1b"
+
+    # An inventoried copy of the original settings must not load with the wrong RoPE theta.
+    content = json.dumps(V5_ENCODER).encode()
+    (bundle.path / "encoder_config/config.json").write_bytes(content)
+    provenance = json.loads((bundle.path / "PROVENANCE.json").read_text())
+    provenance["files"]["encoder_config/config.json"] = {
+        "bytes": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+    }
+    (bundle.path / "PROVENANCE.json").write_text(json.dumps(provenance))
+    with pytest.raises(ValueError, match="from_local"):
+        GlinerTrainingBundle.open(bundle.path)
 
 
 def test_fetch_streams_only_pinned_training_artifact_and_reuses_verified_cache(
@@ -543,11 +637,14 @@ def test_training_extra_is_explicit_and_separate_from_light_client():
 class FakeModel:
     """Its weights are a digest of every batch that the checkpoint has trained."""
 
-    def __init__(self, checkpoint: Path, model_id: str, batches: list, loss: float):
+    def __init__(
+        self, checkpoint: Path, model_id: str, batches: list, loss: float, hooks: list
+    ):
         self.weights = (checkpoint / "model.safetensors").read_bytes()
         self.model_id = model_id
         self.batches = batches
         self.loss = loss
+        self.hooks = hooks
 
     def fit(self, batch: list) -> float:
         texts = [example.text for example in batch]
@@ -556,6 +653,18 @@ class FakeModel:
             self.weights + json.dumps(texts).encode()
         ).digest()
         return self.loss
+
+
+class FakeHook:
+    """A gradient hook: autograd keeps its trainer alive until it is removed."""
+
+    def __init__(self, hooks: list, trainer) -> None:
+        self.hooks = hooks
+        self.trainer = trainer
+        hooks.append(self)
+
+    def remove(self) -> None:
+        self.hooks.remove(self)
 
 
 class FakeDataset:
@@ -600,6 +709,7 @@ class FakeExtractorTrainer:
         self.output_dir = Path(config.output_dir)
         self.global_step = 0
         self.history = []
+        self._finite_grad_hook_handles = [FakeHook(model.hooks, self)]
 
     def _create_dataloader(self, dataset, batch_size, shuffle=True, is_training=True):
         return FakeLoader(dataset, batch_size=batch_size, collate_fn=list)
@@ -646,7 +756,9 @@ def install_fake_gliner2(monkeypatch) -> None:
         monkeypatch.setitem(sys.modules, module.__name__, module)
 
 
-def fake_trainer(checkpoint, batches: list, *, prepare=None, loss: float = 0.5):
+def fake_trainer(
+    checkpoint, batches: list, *, prepare=None, loss: float = 0.5, hooks=None
+):
     """A GlinerTrainer whose export writes placeholder inference files."""
     from blockether.vis.decisions._gliner_trainer import GlinerTrainer
 
@@ -659,8 +771,11 @@ def fake_trainer(checkpoint, batches: list, *, prepare=None, loss: float = 0.5):
     trainer._closed = False
     trainer.checkpoint = checkpoint
     trainer.model = None
+    hooks = [] if hooks is None else hooks
     trainer._exporter = SimpleNamespace(
-        load_checkpoint=lambda path, model_id: FakeModel(path, model_id, batches, loss)
+        load_checkpoint=lambda path, model_id: FakeModel(
+            path, model_id, batches, loss, hooks
+        )
     )
     trainer._prepare = prepare or exported
     return trainer
@@ -813,6 +928,30 @@ def test_gliner_training_reports_steps_and_resumes_a_partial_checkpoint(
     assert continued["revision"] == final["revision"]
     assert continued["parent_revision"] == partial["revision"]
     assert not list(tmp_path.glob(".gliner-train-*"))
+
+
+def test_gliner_training_removes_its_gradient_hooks(tmp_path, monkeypatch):
+    """A stopped or finished run releases its weights, so a resume holds one copy."""
+    install_fake_gliner2(monkeypatch)
+    inputs = training_inputs(
+        tmp_path, ["Refund order 1"], max_steps=2, checkpoint_steps=1
+    )
+    hooks, registered = [], []
+    stop = stop_at_checkpoint([])
+
+    def progress(event: dict) -> None:
+        registered.append(len(hooks))
+        stop(event)
+
+    with pytest.raises(RuntimeError, match="stopped"):
+        fake_trainer(base_checkpoint(tmp_path), [], hooks=hooks).finetune(
+            **inputs, output_dir=tmp_path / "stopped", progress=progress
+        )
+    assert registered[-1] == 1 and hooks == []
+    fake_trainer(
+        GlinerTrainingBundle.open(tmp_path / "stopped/checkpoint"), [], hooks=hooks
+    ).finetune(**inputs, output_dir=tmp_path / "resumed")
+    assert hooks == []
 
 
 def test_gliner_training_continues_a_checkpoint_on_new_data_from_step_zero(

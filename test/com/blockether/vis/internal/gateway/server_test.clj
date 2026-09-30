@@ -5514,12 +5514,14 @@
 
             _
             (decision-cache/with-resident! :stop-idle
+                                           0
                                            (fn []
                                              {:close #(swap! closed conj :idle)})
                                            identity)
 
             active
             (future (decision-cache/with-resident! :stop-active
+                                                   0
                                                    (fn []
                                                      {:close #(swap! closed conj :active)})
                                                    (fn [_]

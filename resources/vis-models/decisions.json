@@ -342,6 +342,113 @@
   {
     "artifacts": {
       "inference": {
+        "bytes": 4142645738,
+        "file": "gliner2.5-decide-1b-fp32.zip",
+        "parts": [
+          {
+            "bytes": 2000000000,
+            "file": "gliner2.5-decide-1b-fp32.zip.001",
+            "sha256": "90d420854ae10b802084b8e212164f16cc7dd2849b3ce3c8ffe56a4e3c78be12",
+            "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-1b-fp32.zip.001"
+          },
+          {
+            "bytes": 2000000000,
+            "file": "gliner2.5-decide-1b-fp32.zip.002",
+            "sha256": "0392d2747bd2187b2e16768a804c9566e168824b4157b3c59dc356d2ed0bd6f7",
+            "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-1b-fp32.zip.002"
+          },
+          {
+            "bytes": 142645738,
+            "file": "gliner2.5-decide-1b-fp32.zip.003",
+            "sha256": "b73fc746af5b61af92f992a30f40dcea5d01fcbe977f87dc36e24e2bf5b71da4",
+            "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-1b-fp32.zip.003"
+          }
+        ],
+        "requires": [
+          "model.onnx",
+          "config.json",
+          "encoder_config/config.json",
+          "tokenizer/tokenizer.json",
+          "tokenizer/tokenizer_config.json",
+          "PROVENANCE.json",
+          "LICENSE.txt"
+        ],
+        "sha256": "4f0c4233b5a769f6b1aa186152eb6abe38a8c69876baffd0f6daedef2848c0eb"
+      },
+      "training": {
+        "bytes": 4413546277,
+        "file": "gliner2.5-decide-1b-training.zip",
+        "parts": [
+          {
+            "bytes": 2000000000,
+            "file": "gliner2.5-decide-1b-training.zip.001",
+            "sha256": "f4871aecf22da2085b24e40a228216d7fc26650745753422e374a515bdb2919a",
+            "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-1b-training.zip.001"
+          },
+          {
+            "bytes": 2000000000,
+            "file": "gliner2.5-decide-1b-training.zip.002",
+            "sha256": "e52663bdcd5801659a395b3a901c58e9d016d7590e30f09344136240c04cd4cb",
+            "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-1b-training.zip.002"
+          },
+          {
+            "bytes": 413546277,
+            "file": "gliner2.5-decide-1b-training.zip.003",
+            "sha256": "713d44f86693c3c663a425d0a2633a1af691db114a33d457346ef0413d9dc10c",
+            "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-1b-training.zip.003"
+          }
+        ],
+        "requires": [
+          "model.safetensors",
+          "config.json",
+          "encoder_config/config.json",
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "PROVENANCE.json",
+          "LICENSE.txt"
+        ],
+        "sha256": "f91c5fd97651b861f50d4770089e911950901f2bf707818a3ae44a88a4c62583"
+      },
+      "wheels": {
+        "linux-x86_64": {
+          "bytes": 281138690,
+          "file": "gliner2.5-training-wheels-cp312-linux-x86_64.zip",
+          "requires": [
+            "install.sh",
+            "requirements.txt",
+            "PROVENANCE.json",
+            "licenses/flatbuffers-LICENSE.txt",
+            "licenses/tokenizers-LICENSE.txt",
+            "wheels/torch-2.14.0+cpu-cp312-cp312-manylinux_2_28_x86_64.whl"
+          ],
+          "sha256": "e93486971f0538a287873286a1ea94ea01b394ce2c8c345fbe1eb004416d32cf",
+          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-linux-x86_64.zip"
+        },
+        "macos-arm64": {
+          "bytes": 198416301,
+          "file": "gliner2.5-training-wheels-cp312-macos-arm64.zip",
+          "requires": [
+            "install.sh",
+            "requirements.txt",
+            "PROVENANCE.json",
+            "licenses/flatbuffers-LICENSE.txt",
+            "licenses/tokenizers-LICENSE.txt",
+            "wheels/torch-2.14.0-cp312-cp312-macosx_14_0_arm64.whl"
+          ],
+          "sha256": "32cb29a9982cef7067beba9154ca035f9b27d7e5e458600fbd9b1ec4ee6e5112",
+          "url": "https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-macos-arm64.zip"
+        }
+      }
+    },
+    "attribution": "GLiNER2.5 Decide 1B by Fastino, Apache-2.0. Full span-head checkpoint with encoder and tokenizer settings adapted for Transformers 4.57.6, and FP32 ONNX export by Vis. Classification and act/escalate only, not entity/JSON extraction; not approved for autonomous actions.",
+    "id": "gliner2.5-decide-1b",
+    "license": "Apache-2.0",
+    "revision": "688cd7ba8917a0855ad3ce929cba5a9998932e79",
+    "source-url": "https://huggingface.co/fastino/GLiNER2.5-Decide-1B/tree/688cd7ba8917a0855ad3ce929cba5a9998932e79"
+  },
+  {
+    "artifacts": {
+      "inference": {
         "bytes": 1131843309,
         "file": "gliner2.5-multi-decide-fp32.zip",
         "requires": [

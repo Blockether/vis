@@ -20,7 +20,7 @@ import onnxruntime as ort
 import torch
 from gliner2 import AutoExtractor
 
-from ._models import ARCHITECTURES
+from ._models import ARCHITECTURES, pinned_settings
 from .training import _inventory, _sha256
 
 INPUT_NAMES = ("input_ids", "attention_mask", "label_indices")
@@ -84,6 +84,12 @@ def load_checkpoint(source: str | Path, *, model_id: str):
     architecture = ARCHITECTURES[model_id]
     if config.get("architecture") != architecture:
         raise ValueError(f"{model_id} requires the {architecture} architecture")
+    for name in ("encoder_config/config.json", "tokenizer_config.json"):
+        value = json.loads((root / name).read_text(encoding="utf-8"))
+        if pinned_settings(name, value) != value:
+            raise ValueError(
+                "Translate Transformers 5 settings with GlinerTrainingBundle.from_local"
+            )
     model = (
         AutoExtractor.from_pretrained(
             str(root),
@@ -140,28 +146,46 @@ def make_batch(model, text: str, tasks: Mapping[str, list[str]]):
 
 
 def export_graph(model, output: str | Path) -> Path:
-    """Export a dynamic FP32 graph of the encoder and classification head."""
+    """Export a dynamic FP32 graph of the encoder and classification head.
+
+    A graph above the 2 GB protobuf limit keeps its weights in one
+    ``model.onnx.data`` file, not in one file for each tensor.
+    """
     graph = DecisionGraph(model).eval()
     arguments = make_batch(model, *PROBES[0])
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    with torch.no_grad():
-        torch.onnx.export(
-            graph,
-            arguments,
-            str(output),
-            input_names=list(INPUT_NAMES),
-            output_names=["logits"],
-            dynamic_axes={
-                "input_ids": {0: "batch", 1: "sequence"},
-                "attention_mask": {0: "batch", 1: "sequence"},
-                "label_indices": {0: "batch", 1: "labels"},
-                "logits": {0: "batch", 1: "labels"},
-            },
-            opset_version=17,
-            dynamo=False,
-            external_data=True,
-        )
+    with tempfile.TemporaryDirectory(
+        prefix=".gliner-graph-", dir=output.parent
+    ) as temporary:
+        exported = Path(temporary) / output.name
+        with torch.no_grad():
+            torch.onnx.export(
+                graph,
+                arguments,
+                str(exported),
+                input_names=list(INPUT_NAMES),
+                output_names=["logits"],
+                dynamic_axes={
+                    "input_ids": {0: "batch", 1: "sequence"},
+                    "attention_mask": {0: "batch", 1: "sequence"},
+                    "label_indices": {0: "batch", 1: "labels"},
+                    "logits": {0: "batch", 1: "labels"},
+                },
+                opset_version=17,
+                dynamo=False,
+                external_data=True,
+            )
+        if [item.name for item in Path(temporary).iterdir()] == [exported.name]:
+            exported.replace(output)
+        else:
+            onnx.save_model(
+                onnx.load(str(exported)),
+                str(output),
+                save_as_external_data=True,
+                all_tensors_to_one_file=True,
+                location=f"{output.name}.data",
+            )
     onnx.checker.check_model(str(output))
     return output
 

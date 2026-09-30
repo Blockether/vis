@@ -181,6 +181,7 @@
                                               (catch clojure.lang.ExceptionInfo e e))))))
               (expect (= :decisions/capacity-exceeded
                          (:type (ex-data (try (cache/with-resident! :other
+                                                                    0
                                                                     (fn []
                                                                       {:close (fn [])})
                                                                     identity)
@@ -190,6 +191,7 @@
               (expect (= "cancelled" (get (await-status id "cancelled") "status")))
               (expect (= :ok
                          (cache/with-resident! :other
+                                               0
                                                (fn []
                                                  {:close (fn [])})
                                                (constantly :ok)))))))))))
@@ -226,6 +228,7 @@
                        (expect (= terminal (get (await-status @id terminal) "status"))))
                      (expect (= :ok
                                 (cache/with-resident! :after-terminal
+                                                      0
                                                       (fn []
                                                         {:close (fn [])})
                                                       (constantly :ok))))

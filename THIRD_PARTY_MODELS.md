@@ -22,6 +22,7 @@ This file is generated from `resources/vis-models/manifest.edn` and
 | `gliner2.5-small` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
 | `gliner2.5-multi` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
 | `gliner2.5-decide` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
+| `gliner2.5-decide-1b` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
 | `gliner2.5-multi-decide` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
 
 ## `parakeet-tdt-0.6b-v3-int8`
@@ -233,6 +234,33 @@ GLiNER2.5 Decide by Fastino, Apache-2.0. Full span-head checkpoint and FP32 ONNX
 - Downloaded from the shared Vis assets-pack release (verified by SHA-256):
   - inference: <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-fp32.zip> (1754 MB, SHA-256 `36a64cde0ed30e0e26ce7d6a7a320f1c7de3b572d947c3077ef4e58c25518af2`)
   - training: <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-training.zip> (1799 MB, SHA-256 `9efeb355eab7b386c74f13f1206504909d831283b538fda8fd25a2592cc49c2e`)
+  - wheels macos-arm64: <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-macos-arm64.zip> (198 MB, SHA-256 `32cb29a9982cef7067beba9154ca035f9b27d7e5e458600fbd9b1ec4ee6e5112`)
+  - wheels linux-x86_64: <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-linux-x86_64.zip> (281 MB, SHA-256 `e93486971f0538a287873286a1ea94ea01b394ce2c8c345fbe1eb004416d32cf`)
+- The two optional CPython 3.12 wheelhouses contain pinned dependency wheels,
+  their SHA-256, upstream URLs and licenses in `PROVENANCE.json`; license texts
+  are in each wheel or in `licenses/`. Linux uses CPU-only PyTorch.
+- Training assets and wheels are installed only when explicitly requested.
+- Model scores do not authorize autonomous actions; evaluate both decision
+  heads on held-out examples before relying on them.
+
+## `gliner2.5-decide-1b`
+
+Decision model - Apache-2.0 - commercial use permitted - hosted by Vis.
+
+GLiNER2.5 Decide 1B by Fastino, Apache-2.0. Full span-head checkpoint with encoder and tokenizer settings adapted for Transformers 4.57.6, and FP32 ONNX export by Vis. Classification and act/escalate only, not entity/JSON extraction; not approved for autonomous actions.
+
+- Upstream: <https://huggingface.co/fastino/GLiNER2.5-Decide-1B/tree/688cd7ba8917a0855ad3ce929cba5a9998932e79>
+- Pinned revision: `688cd7ba8917a0855ad3ce929cba5a9998932e79`
+- Installs into: `~/.vis/models/decisions/gliner2.5-decide-1b/688cd7ba8917a0855ad3ce929cba5a9998932e79/`
+- Downloaded from the shared Vis assets-pack release (verified by SHA-256):
+  - inference: 3 parts, joined in order (4143 MB, SHA-256 `4f0c4233b5a769f6b1aa186152eb6abe38a8c69876baffd0f6daedef2848c0eb`)
+    - <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-1b-fp32.zip.001> (2000 MB, SHA-256 `90d420854ae10b802084b8e212164f16cc7dd2849b3ce3c8ffe56a4e3c78be12`)
+    - <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-1b-fp32.zip.002> (2000 MB, SHA-256 `0392d2747bd2187b2e16768a804c9566e168824b4157b3c59dc356d2ed0bd6f7`)
+    - <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-1b-fp32.zip.003> (143 MB, SHA-256 `b73fc746af5b61af92f992a30f40dcea5d01fcbe977f87dc36e24e2bf5b71da4`)
+  - training: 3 parts, joined in order (4414 MB, SHA-256 `f91c5fd97651b861f50d4770089e911950901f2bf707818a3ae44a88a4c62583`)
+    - <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-1b-training.zip.001> (2000 MB, SHA-256 `f4871aecf22da2085b24e40a228216d7fc26650745753422e374a515bdb2919a`)
+    - <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-1b-training.zip.002> (2000 MB, SHA-256 `e52663bdcd5801659a395b3a901c58e9d016d7590e30f09344136240c04cd4cb`)
+    - <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-decide-1b-training.zip.003> (414 MB, SHA-256 `713d44f86693c3c663a425d0a2633a1af691db114a33d457346ef0413d9dc10c`)
   - wheels macos-arm64: <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-macos-arm64.zip> (198 MB, SHA-256 `32cb29a9982cef7067beba9154ca035f9b27d7e5e458600fbd9b1ec4ee6e5112`)
   - wheels linux-x86_64: <https://github.com/Blockether/vis/releases/download/assets-pack/gliner2.5-training-wheels-cp312-linux-x86_64.zip> (281 MB, SHA-256 `e93486971f0538a287873286a1ea94ea01b394ce2c8c345fbe1eb004416d32cf`)
 - The two optional CPython 3.12 wheelhouses contain pinned dependency wheels,

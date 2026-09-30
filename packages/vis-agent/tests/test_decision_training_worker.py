@@ -114,6 +114,7 @@ def test_worker_failure_leaves_no_success_descriptor(tmp_path, monkeypatch):
         "gliner2.5-small",
         "gliner2.5-multi",
         "gliner2.5-decide",
+        "gliner2.5-decide-1b",
         "gliner2.5-multi-decide",
     ],
 )

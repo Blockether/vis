@@ -21,6 +21,9 @@ heads. Then decide when a human must review a result before you rely on it.
   [GLiNER2.5 model](#choose-and-train-a-gliner2-5-model).
 - **Your gateway has little memory or CPU.** Choose the small
   [GLiNER2.5 model](#choose-and-train-a-gliner2-5-model).
+- **The smaller models do not classify your English requests well enough.** If your
+  computers have enough memory, evaluate the larger
+  [GLiNER2.5 Decide 1B model](#choose-and-train-a-gliner2-5-model).
 - **The baseline does not fit your data.** [Train with your own
   labels](#train-locally-with-the-python-sdk), then [publish a verified version and
   select it](#publish-explicitly-and-select-a-version).
@@ -114,7 +117,9 @@ automatically.
 ### Handle long inputs
 
 GLiNER models use `max_position_embeddings` from the installed bundle's
-`encoder_config/config.json` as their token limit. Each question has a separate budget.
+`encoder_config/config.json` as their token limit. The limit is at most 2,048 tokens, even if the
+encoder accepts more. This keeps the memory for one question predictable. Each question has a
+separate budget.
 The state, question type, instructions, criterion text, action labels and structural tokens
 share that budget. Object and list states use their JSON representation.
 
@@ -206,12 +211,24 @@ text and the memory of your gateway:
 | `gliner2.5-small` | English | Small multi-task model | 293 MB | 263 MB |
 | `gliner2.5-base` | English | Default multi-task model | 749 MB | 694 MB |
 | `gliner2.5-decide` | English | Classification model | 1.75 GB | 1.80 GB |
+| `gliner2.5-decide-1b` | English | Large classification model | 4.14 GB | 4.41 GB |
 | `gliner2.5-multi` | Many languages | Multilingual multi-task model | 1.13 GB | 960 MB |
 | `gliner2.5-multi-decide` | Many languages | Multilingual classification model | 1.13 GB | 998 MB |
 
 Fastino trained the Decide models for classification. The multi-task models can also extract
 entities, but Vis uses every model only for decisions. The small model needs the least memory and
 CPU. Evaluate your candidates on your own held-out labels before you choose one.
+
+`gliner2.5-decide-1b` is much larger than the other models. Check these resources before you
+choose it:
+
+- While the model is loaded, the gateway reserves about 6 GB of memory. The default
+  `VIS_DECISION_MEMORY_BUDGET_MB` of 8,192 MB is sufficient for this model alone.
+- Local training with a batch size of 2 used a peak of 23 GB of RAM. Larger batches need more.
+- The FP32 export used a peak of 10 GB of RAM.
+- Allow at least 25 GB of free disk for the checkpoint, a trained version and its upload archive.
+- Each question can use up to 2,048 tokens.
+- Each archive downloads in three parts. Vis checks each part and the joined archive.
 
 Download the pinned FP32 bundle for the model you want to use on the gateway:
 
@@ -342,8 +359,8 @@ in code or logs. The gateway verifies the streamed, inference-only bundle and ru
 heads before registering an immutable `sha256-...` version. Upload never changes a
 running alias.
 
-The ZIP archive can contain up to 2,400,000,000 bytes. Its extracted files can contain
-up to 3,000,000,000 bytes in total. The SDK and gateway use the same limits.
+The ZIP archive can contain up to 6,000,000,000 bytes. Its extracted files can contain
+up to 6,000,000,000 bytes in total. The SDK and gateway use the same limits.
 
 The gateway accepts one model upload at a time. Allow disk space for both the archive
 and its extracted files.

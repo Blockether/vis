@@ -320,5 +320,7 @@
                      (doseq [artifact (concat [(get-in model [:artifacts :inference])
                                                (get-in model [:artifacts :training])]
                                               (vals (get-in model [:artifacts :wheels])))]
-                       (expect (str/includes? rendered (:url artifact)))
-                       (expect (str/includes? rendered (:sha256 artifact))))))))
+                       (expect (str/includes? rendered (:sha256 artifact)))
+                       (doseq [part (or (seq (:parts artifact)) [artifact])]
+                         (expect (str/includes? rendered (:url part)))
+                         (expect (str/includes? rendered (:sha256 part)))))))))

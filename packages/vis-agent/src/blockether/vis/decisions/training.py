@@ -18,9 +18,11 @@ from importlib.resources import files
 from pathlib import Path, PurePosixPath
 from urllib.request import urlopen
 
+from blockether.vis._contracts import definition
+
 from ._trainer import ModernBertTrainer, TrainingResult
 
-_MAX_EXPANDED_BYTES = 3_000_000_000
+_MAX_EXPANDED_BYTES = definition("gateway", "decision_expanded_bytes")["maximum"]
 _MAX_ARCHIVE_ENTRIES = 1024
 _CHUNK = 1024 * 1024
 _REQUIRED = {
@@ -199,18 +201,29 @@ class TrainingBundle:
             archive_path = workspace / artifact["file"]
             size = 0
             digest = hashlib.sha256()
-            with (
-                cls._open_url(artifact["url"]) as response,
-                archive_path.open("wb") as output,
-            ):
-                for chunk in iter(lambda: response.read(_CHUNK), b""):
-                    size += len(chunk)
-                    if size > artifact["bytes"]:
+            # An archive over the 2 GiB release limit is published as ordered parts.
+            with archive_path.open("wb") as output:
+                for part in artifact.get("parts", [artifact]):
+                    part_size = 0
+                    part_digest = hashlib.sha256()
+                    with cls._open_url(part["url"]) as response:
+                        while chunk := response.read(_CHUNK):
+                            part_size += len(chunk)
+                            size += len(chunk)
+                            if part_size > part["bytes"] or size > artifact["bytes"]:
+                                raise ValueError(
+                                    "Training archive size exceeds the pinned catalog"
+                                )
+                            part_digest.update(chunk)
+                            digest.update(chunk)
+                            output.write(chunk)
+                    if (
+                        part_size != part["bytes"]
+                        or part_digest.hexdigest() != part["sha256"]
+                    ):
                         raise ValueError(
-                            "Training archive size exceeds the pinned catalog"
+                            "Training archive size or checksum disagrees with the pinned catalog"
                         )
-                    digest.update(chunk)
-                    output.write(chunk)
             if size != artifact["bytes"] or digest.hexdigest() != artifact["sha256"]:
                 raise ValueError(
                     "Training archive size or checksum disagrees with the pinned catalog"

@@ -39,6 +39,16 @@
   (throw (ex-info "Decision model capacity is temporarily exhausted"
                   {:type :decisions/capacity-exceeded})))
 
+(defn- over-budget!
+  [reserved budget-mb]
+  (throw (ex-info (str "Decision model needs "
+                       reserved
+                       " MB of memory; "
+                       "VIS_DECISION_MEMORY_BUDGET_MB allows "
+                       budget-mb
+                       " MB")
+                  {:type :decisions/capacity-exceeded :required-mb reserved :budget-mb budget-mb})))
+
 (defn- unavailable [] (ex-info "Decision model cache is stopping" {:type :decisions/unavailable}))
 
 (defn- unavailable! [] (throw (unavailable)))
@@ -53,8 +63,14 @@
   [key]
   (locking lock (or (:status (get @entries key)) :cold)))
 
+(defn- reservation-mb
+  "Reserve the configured minimum, or 1.5 times the session weights when that is larger.
+   A 2048-token GLiNER2.5 Decide 1B run measured a peak of 1.34 times its weights."
+  [reserve-mb weight-bytes]
+  (max (long reserve-mb) (long (Math/ceil (/ (* 1.5 (double weight-bytes)) 1048576.0)))))
+
 (defn- allocate!
-  [key {:keys [max-models budget-mb reserve-mb max-loads max-infer max-waiters]}]
+  [key weight-bytes {:keys [max-models budget-mb reserve-mb max-loads max-infer max-waiters]}]
   (when @stopping? (unavailable!))
   (when @training? (busy!))
   (let [all
@@ -83,14 +99,15 @@
                          (update :users inc)
                          (assoc :used (System/nanoTime))))
                   {:value (:value entry)}))))
-      (let [idle (sort-by (comp :used second)
+      (let [reserved (reservation-mb reserve-mb weight-bytes)
+            idle (sort-by (comp :used second)
                           (for [[k v] @entries
                                 :when (and (= :ready (:status v)) (zero? (:users v)))]
 
                             [k v]))
             required (fn [remaining]
                        (or (>= (count remaining) max-models)
-                           (> (+ reserve-mb (reduce + (map :reserved-mb (vals remaining))))
+                           (> (+ reserved (reduce + (map :reserved-mb (vals remaining))))
                               budget-mb)))
             [remaining evicted]
             (loop [remaining @entries
@@ -102,17 +119,17 @@
                   (recur (dissoc remaining victim) (conj evicted entry) (rest candidates)))
                 [remaining evicted]))]
 
-        (if (or (>= loading max-loads) (>= active max-infer) (required remaining))
-          (busy!)
-          (let [ready (promise)]
-            (reset! entries (assoc remaining
-                              key {:status :loading
-                                   :users 1
-                                   :waiters 0
-                                   :ready ready
-                                   :reserved-mb reserve-mb
-                                   :used (System/nanoTime)}))
-            {:load ready :evicted evicted}))))))
+        (cond (> reserved (long budget-mb)) (over-budget! reserved budget-mb)
+              (or (>= loading max-loads) (>= active max-infer) (required remaining)) (busy!)
+              :else (let [ready (promise)]
+                      (reset! entries (assoc remaining
+                                        key {:status :loading
+                                             :users 1
+                                             :waiters 0
+                                             :ready ready
+                                             :reserved-mb reserved
+                                             :used (System/nanoTime)}))
+                      {:load ready :evicted evicted}))))))
 
 (defn- release!
   [key]
@@ -127,13 +144,14 @@
 
 (defn with-resident!
   "Use one immutable version. Cold requests share one load; idle LRU closes before a
-   new load. All waits and reservations are bounded; no active native session closes."
-  [key loader operation]
+   new load. `weight-bytes` sizes its memory reservation. All waits and reservations
+   are bounded; no active native session closes."
+  [key weight-bytes loader operation]
   (let [limits
         (limits)
 
         selection
-        (locking lock (allocate! key limits))]
+        (locking lock (allocate! key weight-bytes limits))]
 
     (if-let [loaded (:load selection)]
       (try (doseq [entry (:evicted selection)]
@@ -164,7 +182,7 @@
                (when (= ::timeout outcome) (busy!))
                (when-let [error (:error outcome)]
                  (throw error))
-               (with-resident! key loader operation))
+               (with-resident! key weight-bytes loader operation))
              (finally (locking lock
                         (when (= :loading (:status (get @entries key)))
                           (swap! entries update-in [key :waiters] dec)))))

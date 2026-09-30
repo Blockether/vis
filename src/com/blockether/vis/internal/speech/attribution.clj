@@ -139,16 +139,37 @@
          (str "- Pinned revision: `" (:revision entry) "`")
          (str "- Installs into: `~/.vis/models/decisions/" (:id entry) "/" (:revision entry) "/`")
          "- Downloaded from the shared Vis assets-pack release (verified by SHA-256):"]
-        (for [[kind artifact] artifacts]
-          (str "  - "
-               (if (keyword? kind) (name kind) kind)
-               ": <"
-               (:url artifact)
-               "> ("
-               (megabytes (:bytes artifact))
-               ", SHA-256 `"
-               (:sha256 artifact)
-               "`)"))
+        (for [[kind artifact] artifacts
+              :let [label (if (keyword? kind) (name kind) kind)]]
+
+          (if-let [parts (seq (:parts artifact))]
+            (str/join "\n"
+                      (cons (str "  - "
+                                 label
+                                 ": "
+                                 (count parts)
+                                 " parts, joined in order ("
+                                 (megabytes (:bytes artifact))
+                                 ", SHA-256 `"
+                                 (:sha256 artifact)
+                                 "`)")
+                            (for [part parts]
+                              (str "    - <"
+                                   (:url part)
+                                   "> ("
+                                   (megabytes (:bytes part))
+                                   ", SHA-256 `"
+                                   (:sha256 part)
+                                   "`)"))))
+            (str "  - "
+                 label
+                 ": <"
+                 (:url artifact)
+                 "> ("
+                 (megabytes (:bytes artifact))
+                 ", SHA-256 `"
+                 (:sha256 artifact)
+                 "`)")))
         ["- The two optional CPython 3.12 wheelhouses contain pinned dependency wheels,"
          "  their SHA-256, upstream URLs and licenses in `PROVENANCE.json`; license texts"
          "  are in each wheel or in `licenses/`. Linux uses CPU-only PyTorch."

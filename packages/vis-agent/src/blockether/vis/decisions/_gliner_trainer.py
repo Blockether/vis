@@ -230,6 +230,17 @@ def _extractor(
                     self, metrics if isinstance(metrics, dict) else metrics.to_dict()
                 )
 
+        def train(self, *args: Any, **kwargs: Any) -> Any:
+            # gliner2 never removes its per-parameter gradient hooks. Each hook
+            # captures the trainer through autograd state that gc cannot see, so
+            # the weights, gradients and optimizer state would stay resident.
+            try:
+                return super().train(*args, **kwargs)
+            finally:
+                for handle in self._finite_grad_hook_handles:
+                    handle.remove()
+                self._finite_grad_hook_handles = []
+
     return Extractor
 
 
