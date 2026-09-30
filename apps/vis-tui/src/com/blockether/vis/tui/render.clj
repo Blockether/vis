@@ -1748,6 +1748,13 @@
                        (map? cost) (pos-num cost "total_cost")
                        :else false)))))
 
+(defn- assistant-meta?
+  "Keep recorded provider usage, including model runs started by slash commands.
+   Local commands and empty cancellations have no meaningful model attribution."
+  [{:keys [role slash? status] :as message}]
+  (and (not= role :user)
+       (or (assistant-usage? message) (and (not slash?) (not= status :cancelled)))))
+
 (defn- register-toggle-region!
   "Publish disclosure header targets for both pointer and jump navigation.
    Live receipts register only their button, never the whole row."
@@ -1890,7 +1897,7 @@
      click region for an off-screen row (they don’t).
      Callers that paint outside `draw-messages-area!` (tests, REPL
      exploration) can pass `0 / 0` to disable click registration."
-  [^TextGraphics g {:keys [role text timestamp status slash?] :as message} start-row left max-w &
+  [^TextGraphics g {:keys [role text timestamp status] :as message} start-row left max-w &
    [{:keys [viewport-top viewport-h agent-name]
      :or {viewport-top 0 viewport-h 0 agent-name "Vis"}}]]
   (let [user?
@@ -2038,11 +2045,9 @@
         time-str
         (vis/format-date timestamp)
 
-        ;; Usage metadata belongs only to assistant model turns; commands and empty
-        ;; cancellations have no meaningful model attribution.
+        ;; Goal runs carry a slash marker but still have real provider usage.
         meta-str
-        (when (and (not user?) (not slash?) (or (not cancelled?) (assistant-usage? message)))
-          (vis/meta-summary-line message))
+        (when (assistant-meta? message) (vis/meta-summary-line message))
 
         ;; Show fallback routing on a separate muted line.
         fallback-note
@@ -3480,10 +3485,7 @@
         (= :cancelled status)
 
         meta-str
-        (when (and (not= role :user)
-                   (not (:slash? message))
-                   (or (not cancelled?) (assistant-usage? message)))
-          (vis/meta-summary-line message))
+        (when (assistant-meta? message) (vis/meta-summary-line message))
 
         fallback-note
         (when (and meta-str (not= role :user) (not cancelled?)) (vis/meta-fallback-note message))
@@ -3505,12 +3507,12 @@
    appends a cheap spinner row. Metadata that can add/remove the
    assistant footer is part of the key; otherwise a no-usage render can
    stale-cache the shorter height before usage arrives."
-  [{:keys [text role prewrapped-lines turn-separator? iteration-count duration-ms tokens cost status
-           llm-selected llm-actual llm-fallback? llm-routing-trace]
+  [{:keys [text role slash? prewrapped-lines turn-separator? iteration-count duration-ms tokens cost
+           status llm-selected llm-actual llm-fallback? llm-routing-trace]
     :as message} max-w]
   (cached* [::bh (System/identityHashCode text) (System/identityHashCode prewrapped-lines) role
-            (boolean turn-separator?) iteration-count duration-ms tokens cost status llm-selected
-            llm-actual llm-fallback? llm-routing-trace (long max-w)]
+            (boolean slash?) (boolean turn-separator?) iteration-count duration-ms tokens cost
+            status llm-selected llm-actual llm-fallback? llm-routing-trace (long max-w)]
            #(bubble-height* message max-w)))
 
 ;;; ── Progress timeline formatting ───────────────────────────────────────────

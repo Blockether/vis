@@ -3820,8 +3820,9 @@ export const AssistantMessage = memo(function AssistantMessage({
   // `provider/model` (the gateway stamps it from the last completed iteration's
   // routing) — a finished-looking meta line under a turn that is still working.
   const inFlight = streaming || IN_FLIGHT_STATUSES.has(String(turn.status ?? ''));
+  // /goal starts a model turn. Keep its recorded usage despite the command prefix.
   const meta =
-    !inFlight && !commandTurn(turn) && (!cancelled || assistantUsage(turn))
+    !inFlight && (assistantUsage(turn) || (!commandTurn(turn) && !cancelled))
       ? turnMetaSummary(turn)
       : null;
   const fallbackNote = meta && !cancelled ? turnFallbackNote(turn) : null;
