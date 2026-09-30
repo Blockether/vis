@@ -164,7 +164,7 @@
                      (expect (nil? (:error capture)))
                      (expect (= "Ada" saved))
                      (expect (= [["agent_name" "Ada"]] requests))
-                     (expect (str/includes? (cap/frame-text capture) "Agent name: Ada"))))))
+                     (expect (re-find #"Agent name\s+Ada" (cap/frame-text capture)))))))
 
 (defdescribe settings-cancel-and-save-failure-preserve-the-name
              (it "settings cancel and save failure preserve the name"

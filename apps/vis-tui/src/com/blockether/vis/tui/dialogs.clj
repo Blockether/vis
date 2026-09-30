@@ -3144,44 +3144,34 @@
               (or groups []))))))
 
 (defn- catalog-toggle-rows
-  "Settings rows projected from the gateway's OWN catalog: the same groups, in
-   the same order, carrying the same labels, values and experimental marks the
-   companion app draws from `GET /v1/settings`. Each row carries its type and
-   value because the DAEMON, not this process, owns them.
-
-   The agent name keeps its dedicated global row; other text rows use the shared editor."
+  "Project the gateway catalog without repeating metadata or reset actions in the list."
   [groups]
   (vec
     (mapcat (fn [group]
               (let [rows (filterv #(not= "agent_name" (get % "id")) (get group "toggles"))]
                 (when (seq rows)
                   (cons {:type :section :label (str (get group "title"))}
-                        (mapcat (fn [row]
-                                  (let [enum? (= "enum" (get row "type"))
-                                        text? (= "string" (get row "type"))
-                                        id (get row "id")
-                                        setting {:key (keyword (str "toggle::" id))
-                                                 :type (if text? :text-setting :registry-toggle)
-                                                 :toggle-id id
-                                                 :toggle-type (if enum? :enum :boolean)
-                                                 :toggle-value (if (or enum? text?)
-                                                                 (get row "value")
-                                                                 (boolean (get row "enabled")))
-                                                 :choices (vec (get row "choices"))
-                                                 :experimental? (boolean (get row
-                                                                              "is_experimental"))
-                                                 :label (str (get row "label"))
-                                                 :description (str (get row "description")
-                                                                   (when (get row "source")
-                                                                     (str " · Source: "
-                                                                          (get row "source"))))}]
+                        (mapv (fn [row]
+                                (let [enum? (= "enum" (get row "type"))
+                                      text? (= "string" (get row "type"))
+                                      id (get row "id")]
 
-                                    (cond-> [setting]
-                                      (get row "is_override")
-                                      (conj {:type :inherit
-                                             :toggle-id id
-                                             :label (str "Use inherited: " (get row "label"))}))))
-                                rows)))))
+                                  {:key (keyword (str "toggle::" id))
+                                   :type (if text? :text-setting :registry-toggle)
+                                   :toggle-id id
+                                   :toggle-type (cond text? :string
+                                                      enum? :enum
+                                                      :else :boolean)
+                                   :toggle-value (if (or enum? text?)
+                                                   (get row "value")
+                                                   (boolean (get row "enabled")))
+                                   :choices (vec (get row "choices"))
+                                   :experimental? (boolean (get row "is_experimental"))
+                                   :source (get row "source")
+                                   :is-override? (boolean (get row "is_override"))
+                                   :label (str (get row "label"))
+                                   :description (str (get row "description"))}))
+                              rows)))))
             (or groups []))))
 
 (defn- override-note
@@ -3206,11 +3196,9 @@
   (let [notes (into {}
                     (keep #(when-let [note (override-note %)] [(get % "id") note]))
                     (mapcat #(get % "toggles") groups))]
-    (mapv (fn [{:keys [toggle-id description] :as row}]
+    (mapv (fn [{:keys [toggle-id] :as row}]
             (if-let [note (get notes toggle-id)]
-              (cond-> (assoc row :locked note)
-                description
-                (assoc :description (str description " · Locked: " note)))
+              (assoc row :locked note)
               row))
           rows)))
 
@@ -3567,41 +3555,50 @@
                  (or (mcp-settings-rows) [])))))
 
 (defn- settings-option-label
-  [{:keys [key label type choices toggle-id toggle-type toggle-value experimental? locked]} values]
+  [{:keys [label type toggle-id experimental? locked is-override?]} _values]
+  (if (contains? #{:registry-toggle :text-setting} type)
+    (let [spec (vis/toggle-spec toggle-id)]
+      (str label
+           (when is-override? "  [Override]")
+           (when (if (some? experimental?) experimental? (:experimental? spec)) "  [Experimental]")
+           (when locked "  [Locked]")))
+    label))
+
+(defn- settings-option-value
+  "The current value or short service status, separate from the setting's label."
+  [{:keys [key type choices toggle-id toggle-type toggle-value set-key item-id inline-description
+           description]} values]
   (case type
     :agent-name
-    (str label ": " (or (get @agent-name-setting "value") "unavailable — Enter to retry"))
+    (or (get @agent-name-setting "value") "Unavailable")
 
     :choice
-    (str label ": " (clojure.core/name (or (get values key) (first choices))))
+    (name (or (get values key) (first choices)))
 
-    ;; Boolean state is carried by the leading ●/○ glyph (see settings-row-mark),
-    ;; so the label stays clean — no redundant "(on)/(off)/(shown/hidden)" text.
-    :set-toggle
-    label
+    :text-setting
+    (str toggle-value)
 
-    ;; A catalog row carries the daemon's type, value and experimental mark; a
-    ;; row projected from the process registry looks all three up locally.
     :registry-toggle
     (let [spec
           (vis/toggle-spec toggle-id)
 
-          kind
-          (or toggle-type (:type spec))
-
           current
           (if (some? toggle-value) toggle-value (vis/toggle-value toggle-id))]
 
-      (str (if (= :enum kind)
-             (str label
-                  ": "
-                  (some-> current
-                          clojure.core/name))
-             label)
-           (when (if (some? experimental?) experimental? (:experimental? spec)) "  [Experimental]")
-           (when locked "  [Locked]")))
+      (if (= :enum (or toggle-type (:type spec)))
+        (let [text (or (some-> current
+                               name)
+                       "")]
+          (get {"auto" "Auto" "on" "On" "off" "Off"} text text))
+        (if current "On" "Off")))
 
-    label))
+    :toggle
+    (if (get values key false) "On" "Off")
+
+    :set-toggle
+    (if (contains? (get values set-key #{}) item-id) "Off" "On")
+
+    (when inline-description (str description))))
 
 (defn- settings-row-mark
   "Leading status glyph + its color for a settings row. Provider rows use
@@ -3765,7 +3762,8 @@
 
 (defn- settings-selectable?
   [{:keys [type]}]
-  (contains? #{:toggle :choice :action :agent-name :set-toggle :registry-toggle :mcp :provider}
+  (contains? #{:toggle :choice :action :agent-name :text-setting :set-toggle :registry-toggle :mcp
+               :provider}
              type))
 
 (defn- first-selectable-index
@@ -3775,31 +3773,17 @@
                            rows))
       0))
 
-(defn- settings-initial-index
-  "Where the cursor starts. `section` (a section label such as `MCP Servers`)
-   opens Settings already parked on that section, so a palette entry can point
-   straight at its rows instead of opening a dialog of its own."
-  [rows section]
-  (let [head (when (seq (str section))
-               (first (keep-indexed (fn [i {:keys [type label]}]
-                                      (when (and (= :section type) (= (str label) (str section)))
-                                        i))
-                                    rows)))]
-    (or (when head
-          (first (keep-indexed (fn [i row]
-                                 (when (and (> (long i) (long head)) (settings-selectable? row)) i))
-                               rows)))
-        (first-selectable-index rows))))
-
 (defn- move-settings-selection
   [rows ^long selected ^long delta]
   (let [n (count rows)]
-    (loop [idx (p/clamp (+ selected delta) 0 (max 0 (dec n)))]
-      (cond (= idx selected) idx
-            (settings-selectable? (nth rows idx)) idx
-            (and (neg? delta) (zero? idx)) selected
-            (and (pos? delta) (= idx (dec n))) selected
-            :else (recur (p/clamp (+ idx delta) 0 (max 0 (dec n))))))))
+    (if (zero? n)
+      0
+      (loop [idx (p/clamp (+ selected delta) 0 (dec n))]
+        (cond (= idx selected) idx
+              (settings-selectable? (nth rows idx)) idx
+              (and (neg? delta) (zero? idx)) selected
+              (and (pos? delta) (= idx (dec n))) selected
+              :else (recur (p/clamp (+ idx delta) 0 (dec n))))))))
 
 (defn- settings-page-selection
   "Move by painted settings lines, skipping headings and wrapped descriptions."
@@ -4098,50 +4082,41 @@
     (if (str/blank? s) [] (vec (remove str/blank? (render/wrap-text s w))))))
 
 (defn- settings-render-entries
-  "Flatten logical settings rows into paint rows. Descriptions wrap under
-   their owning option instead of stealing a fixed inline column and
-   collapsing to `...` on narrow dialogs / long extension labels — except
-   rows that ask for `:inline-description` (a short STATE, not prose), which
-   keep it on the option line and emit no wrap rows at all.
-
-   An `:info` row is prose ABOUT its section (empty state, gateway error), so
-   its label and description are separate wrapped blocks — a bold head line
-   plus a dim body — never one run-on sentence."
+  "One line per setting. Only section guidance, empty states and errors wrap."
   [rows desc-w]
-  (let [desc-w (max 1 (long desc-w))]
-    (vec
-      (mapcat (fn [idx {:keys [type label description inline-description]}]
-                (case type
-                  :section
-                  [{:row-idx idx :part :section}]
-
-                  :subsection
-                  [{:row-idx idx :part :subsection}]
-
-                  :info
-                  (into (mapv (fn [line]
-                                {:row-idx idx :part :info-line :text line :head? true})
-                              (or (seq (settings-wrap-lines label desc-w)) [""]))
+  (vec
+    (mapcat (fn [idx {:keys [type label description]}]
+              (case type
+                :section
+                (into [{:row-idx idx :part :section}]
+                      (when (= "Extension engines" label)
                         (mapv (fn [line]
                                 {:row-idx idx :part :info-line :text line})
-                              (settings-wrap-lines description desc-w)))
+                              (settings-wrap-lines
+                                "Auto — when applicable. On — always active. Off — tools disabled."
+                                desc-w))))
 
-                  (if inline-description
-                    [{:row-idx idx :part :option}]
-                    (let [desc-lines (settings-wrap-lines description desc-w)]
-                      (into [{:row-idx idx :part :option}]
-                            (mapv (fn [line]
-                                    {:row-idx idx :part :option-desc :text line})
-                                  desc-lines))))))
-              (range)
-              rows))))
+                :subsection
+                [{:row-idx idx :part :subsection}]
+
+                :info
+                (into (mapv (fn [line]
+                              {:row-idx idx :part :info-line :text line :head? true})
+                            (or (seq (settings-wrap-lines label desc-w)) [""]))
+                      (mapv (fn [line]
+                              {:row-idx idx :part :info-line :text line})
+                            (settings-wrap-lines description desc-w)))
+
+                [{:row-idx idx :part :option}]))
+            (range)
+            rows)))
 
 (defn- settings-header-row? [{:keys [type]}] (contains? #{:section :subsection} type))
 
 (defn- settings-row-search-text
   "Lowercased haystack for a row's search match: its label + description."
-  [{:keys [label description]}]
-  (str/lower-case (str label " " description)))
+  [{:keys [label description source]}]
+  (str/lower-case (str label " " description " " source)))
 
 (defn- filter-settings-rows
   "Live-filter settings `rows` by `query` (case-insensitive substring over
@@ -4198,33 +4173,183 @@
                            rows))))))
 
 (defn- settings-toc
-  "Table-of-contents entries for the VS Code-style left sidebar: one per
-   top-level `:section`, each with the count of selectable rows beneath it
-   and whether it owns the currently-selected row. `rows` is the (already
-   filtered) flat settings list; `selected` is the selected row index."
-  [rows selected]
+  "Categories in catalog order, with their bounds, setting counts and active state."
+  [rows category]
   (let [rows
         (vec rows)
 
-        n
-        (count rows)
+        starts
+        (filterv #(= :section (:type (nth rows %))) (range (count rows)))]
 
-        sec-idxs
-        (filterv #(= :section (:type (nth rows %))) (range n))]
+    (mapv (fn [k start]
+            (let [end
+                  (or (get starts (inc (long k))) (count rows))
 
-    (vec (map-indexed (fn [k start]
-                        (let [end
-                              (long (or (get sec-idxs (inc (long k))) n))
+                  label
+                  (:label (nth rows start))]
 
-                              cnt
-                              (count (filter settings-selectable? (subvec rows start end)))]
+              {:label label
+               :count (count (filter settings-selectable? (subvec rows start end)))
+               :start start
+               :end end
+               :active? (= category label)}))
+          (range)
+          starts)))
 
-                          {:label (:label (nth rows start))
-                           :count cnt
-                           :start start
-                           :active? (and (>= (long selected) (long start))
-                                         (< (long selected) end))}))
-                      sec-idxs))))
+(defn- settings-category-view
+  "Search the whole catalog, then show only the active matching category."
+  [all-rows query category]
+  (let [filtered
+        (filter-settings-rows all-rows query)
+
+        toc
+        (settings-toc filtered category)
+
+        active
+        (or (first (filter :active? toc)) (first toc))
+
+        category
+        (:label active)]
+
+    {:category category
+     :toc (mapv #(assoc % :active? (= category (:label %))) toc)
+     :rows (cond active (vec (concat (subvec filtered 0 (:start (first toc)))
+                                     (subvec filtered (:start active) (:end active))))
+                 (seq filtered) filtered
+                 (not (str/blank? query))
+                 [{:type :info :label "No matching settings" :description "Try another search."}]
+                 :else filtered)}))
+
+(defn- move-settings-category
+  [toc category direction]
+  (when (seq toc)
+    (let [labels
+          (mapv :label toc)
+
+          index
+          (max 0 (.indexOf ^java.util.List labels category))]
+
+      (nth labels (mod (+ index (long direction)) (count labels))))))
+
+(defn- settings-details-lines
+  [row values]
+  (vec (concat (when-some [value (settings-option-value row values)]
+                 [(str "Value: " value)])
+               [(str "Source: "
+                     (or (:source row)
+                         (when (= :agent-name (:type row)) "gateway")
+                         (when (:toggle-id row) "unavailable")
+                         "this terminal")) "" (:description row)]
+               (when (:is-override? row) ["" "This scope overrides the inherited value."])
+               (when-let [note (:locked row)]
+                 ["" note]))))
+
+(defn- settings-details-dialog!
+  "Show full metadata on demand. Return :change, :inherit, or nil without saving."
+  [screen row values]
+  (let [lines
+        (settings-details-lines row values)
+
+        title
+        (str (:label row) " · Details")
+
+        editable?
+        (not (:locked row))
+
+        inherit?
+        (and editable? (:is-override? row))
+
+        footer
+        (cond-> [["↑/↓" "scroll"]]
+          editable?
+          (conj ["Enter" "change"])
+
+          inherit?
+          (conj ["i" "inherit"])
+
+          true
+          (conj ["Esc" "back"]))]
+
+    (run-modal!
+      screen
+      {:init {:scroll 0}
+       :measure (fn [_ cols rows]
+                  (let [content-w
+                        (footer-content-width cols footer 52)
+
+                        text-w
+                        (max 1 (- (long (:inner-w (dialog-bounds cols rows content-w 8))) 3))
+
+                        wrapped
+                        (vec (mapcat #(if (str/blank? %) [""] (render/wrap-text % text-w)) lines))
+
+                        content-h-req
+                        (max 8 (count wrapped))
+
+                        bounds
+                        (dialog-bounds cols rows content-w content-h-req)
+
+                        layout
+                        (dialog-layout bounds)]
+
+                    (merge {:cols cols
+                            :rows rows
+                            :content-w content-w
+                            :content-h-req content-h-req
+                            :bounds bounds
+                            :lines wrapped
+                            :text-w text-w}
+                           layout)))
+       :reconcile
+       (fn [state {:keys [lines content-h]}]
+         (update state :scroll #(p/clamp % 0 (max 0 (- (count lines) (long content-h))))))
+       :paint (fn [g {:keys [scroll]}
+                   {:keys [cols rows content-w content-h-req bounds lines text-w content-top
+                           content-h hint-row]}]
+                (let [{:keys [left inner-w]} bounds]
+                  (draw-dialog-chrome! g cols rows title content-w content-h-req)
+                  (p/set-colors! g t/dialog-fg t/dialog-bg)
+                  (doseq [[i line] (map-indexed vector (take content-h (drop scroll lines)))]
+                    (p/put-str! g
+                                (+ (long left) 2)
+                                (+ (long content-top) (long i))
+                                (ellipsize line text-w)))
+                  (ScrollBar/draw g
+                                  Direction/VERTICAL
+                                  (TerminalPosition. (int (+ (long left) (long inner-w)))
+                                                     (int content-top))
+                                  (int content-h)
+                                  (int (count lines))
+                                  (int content-h)
+                                  (Integer/valueOf (int scroll))
+                                  t/dialog-border
+                                  t/dialog-bg
+                                  t/dialog-hint-key
+                                  t/dialog-bg)
+                  (draw-hint-bar! g left hint-row inner-w footer))
+                nil)
+       :on-key (fn [state key {:keys [lines content-h]}]
+                 (let [max-scroll
+                       (max 0 (- (count lines) (long content-h)))
+
+                       move
+                       (fn [delta]
+                         (update state :scroll #(p/clamp (+ (long %) (long delta)) 0 max-scroll)))]
+
+                   (if-let [step (ScrollBar/wheelStep ^KeyStroke key)]
+                     (move step)
+                     (condp = (key-type key)
+                       KeyType/Escape {::done nil}
+                       KeyType/Enter (if editable? {::done :change} state)
+                       KeyType/ArrowUp (move -1)
+                       KeyType/ArrowDown (move 1)
+                       KeyType/PageUp (move (- (long content-h)))
+                       KeyType/PageDown (move content-h)
+                       KeyType/Home (assoc state :scroll 0)
+                       KeyType/End (assoc state :scroll max-scroll)
+                       KeyType/Character
+                       (if (and inherit? (= \i (key-character key))) {::done :inherit} state)
+                       state))))})))
 
 (defn- settings-pane-geometry
   "Use a TOC rail only when its 14 columns, divider, and a useful 17-column
@@ -4241,7 +4366,7 @@
         (>= inner-w (+ 14 1 17))
 
         rail-w
-        (if split? (p/clamp (quot inner-w 4) 14 22) 0)]
+        (if split? (p/clamp (quot inner-w 3) 14 22) 0)]
 
     {:split? split?
      :rail-w rail-w
@@ -4249,21 +4374,15 @@
      :pane-width (if split? (- inner-w rail-w 1) inner-w)}))
 
 (defn- settings-pointer-target
-  "Map a primary pointer press to the logical setting or TOC section painted
-   under it. Wrapped description lines belong to their option row; scrollbar
-   cells are excluded from the settings pane."
-  [key rows entries scroll
-   {:keys [split? left rail-w pane-left pane-width list-top visible-h selected]}]
+  "Map a primary pointer press to a painted setting or category."
+  [key rows entries scroll {:keys [split? left rail-w pane-left pane-width list-top visible-h toc]}]
   (or (when split?
-        (let [toc (settings-toc rows selected)]
-          (when-let [offset (mouse-row-offset key
-                                              (inc (long left))
-                                              list-top
-                                              rail-w
-                                              (min (count toc) (long visible-h)))]
-            (let [{:keys [label count]} (nth toc offset)]
-              (when (pos? (long count))
-                {:kind :toc :row-idx (settings-initial-index rows label)})))))
+        (when-let [offset (mouse-row-offset key
+                                            (inc (long left))
+                                            list-top
+                                            rail-w
+                                            (min (count toc) (long visible-h)))]
+          {:kind :toc :category (:label (nth toc offset))}))
       (when-let [offset (mouse-row-offset key (inc (long pane-left)) list-top pane-width visible-h)]
         (let [entry-idx (+ (long scroll) (long offset))]
           (when-let [{:keys [row-idx]} (get entries entry-idx)]
@@ -4272,14 +4391,11 @@
 (defn settings-dialog!
   "Show the settings dialog.
 
-   ONE flat, grouped, scrollable list (mirrors the web settings modal). When
-   space permits, a left Table-of-Contents rail lists sections and highlights
-   the one owning the selection while the right pane shows settings. At narrow
-   widths the rail collapses and the settings list owns the full dialog width.
-   Toggle rows render a leading status glyph; choice rows cycle their value
-   with Enter or a primary pointer click; action rows invoke a callback. Clicking
-   the wide rail parks the cursor on that section's first selectable row. Arrow
-   keys still move through the settings pane and the rail tracks them.
+   Show only the selected category, with a sidebar when space permits. Each
+   setting uses one line with its current value. Tab / Shift+Tab change category;
+   arrows and paging stay within it. Enter or a primary pointer click changes a
+   setting. F1 opens its description, source and inherited-value action. Search
+   matches the whole catalog, including descriptions hidden from the list.
 
    `settings` is the persisted TUI settings map (see
    `state/default-settings`). `callbacks` also carries `:focus-section` (a
@@ -4317,8 +4433,14 @@
            inventories-pending
            (volatile! true)
 
+           category
+           (atom (:focus-section callbacks))
+
            selected
-           (atom (settings-initial-index (settings-rows) (:focus-section callbacks)))
+           (atom 0)
+
+           toc-scroll
+           (atom 0)
 
            scroll
            (atom 0)
@@ -4335,8 +4457,7 @@
            query
            (atom "")
 
-           ;; Mark gutter = a single status glyph (●/○/◆/▸) + 1-col gap; wrapped
-           ;; option descriptions indent to this so they sit under the label.
+           ;; One status glyph and a gap precede each compact setting label.
            check-w
            2]
 
@@ -4348,8 +4469,14 @@
             (let [all-rows
                   (settings-rows)
 
-                  rows
-                  (filter-settings-rows all-rows @query)
+                  {rows :rows toc :toc active-category :category}
+                  (settings-category-view all-rows @query @category)
+
+                  _
+                  (when (not= active-category @category)
+                    (reset! category active-category)
+                    (reset! selected (first-selectable-index rows))
+                    (reset! scroll 0))
 
                   n
                   (count rows)
@@ -4393,7 +4520,9 @@
                   ;; Settings collapses to one pane; forcing the 14-column rail was
                   ;; what let content cross the dialog's right border.
                   {:keys [split? rail-w pane-left pane-width]}
-                  (settings-pane-geometry left inner-w)
+                  (if (seq toc)
+                    (settings-pane-geometry left inner-w)
+                    {:split? false :rail-w 0 :pane-left left :pane-width inner-w})
 
                   rail-w
                   (long rail-w)
@@ -4423,7 +4552,23 @@
                   (max 1 (- content-h 2))
 
                   _
-                  (swap! selected #(p/clamp % 0 (max 0 (dec n))))
+                  (swap! toc-scroll #(visible-window-start (or (first (keep-indexed
+                                                                        (fn [i entry]
+                                                                          (when (:active? entry) i))
+                                                                        toc))
+                                                               0)
+                                                           %
+                                                           visible-h
+                                                           (count toc)))
+
+                  visible-toc
+                  (subvec toc @toc-scroll (min (count toc) (+ (long @toc-scroll) visible-h)))
+
+                  _
+                  (swap! selected #(let [index (p/clamp % 0 (max 0 (dec n)))]
+                                     (if (and (pos? n) (settings-selectable? (nth rows index)))
+                                       index
+                                       (first-selectable-index rows))))
 
                   option-indent
                   (long (settings-option-indent))
@@ -4438,6 +4583,9 @@
 
                   labels
                   (mapv #(settings-option-label % @values) rows)
+
+                  option-values
+                  (mapv #(settings-option-value % @values) rows)
 
                   base-paint-w
                   linner
@@ -4466,18 +4614,14 @@
                   desc-w
                   (max 1 (- option-w check-w))
 
-                  ;; Rows carrying an inline description (MCP / provider status) share
-                  ;; ONE column, so those states line up as a table instead of ragging
-                  ;; after names of different length.
-                  inline-desc-x
-                  (+ option-x
-                     p/STATUS_WIDTH
-                     2
-                     (long (reduce max
-                                   0
-                                   (keep (fn [[row lbl]]
-                                           (when (:inline-description row) (count lbl)))
-                                         (map vector rows labels)))))
+                  ;; Keep short labels readable without dropping meaningful service status.
+                  value-w
+                  (min (max 0
+                            (- option-w
+                               p/STATUS_WIDTH
+                               2
+                               (min 16 (long (reduce max 0 (map p/display-width labels))))))
+                       (long (reduce max 0 (map #(p/display-width (str %)) option-values))))
 
                   entries
                   (settings-render-entries rows desc-w)
@@ -4490,21 +4634,10 @@
                                   (when (= row-idx @selected) entry-idx))
                                 entries)
 
-                  ;; Option line of the selected row (first non-description entry).
                   selected-visual
-                  (long (or (first (keep-indexed (fn [entry-idx {:keys [row-idx part]}]
-                                                   (when (and (= row-idx @selected)
-                                                              (not= part :option-desc))
-                                                     entry-idx))
-                                                 entries))
-                            0))
+                  (long (or (first sel-entry-idxs) 0))
 
-                  ;; Last paint row owned by the selected option, INCLUDING its
-                  ;; wrapped description rows. The scroll window must be able to
-                  ;; reach this so the trailing desc lines (and, for the bottom-most
-                  ;; option, the true content end) come into view — otherwise scroll
-                  ;; caps short of `visual-n - visible-h` and the scrollbar thumb
-                  ;; never reaches the bottom (selectable rows < paint rows).
+                  ;; Section guidance can wrap; selectable rows remain single-line.
                   selected-visual-end
                   (long (or (last sel-entry-idxs) selected-visual))
 
@@ -4571,7 +4704,7 @@
 
                   (if (< entry-idx visual-n)
                     (let [{:keys [row-idx part text head?]} (nth entries entry-idx)
-                          {:keys [label tone description inline-description]} (nth rows row-idx)
+                          {:keys [label tone]} (nth rows row-idx)
                           option-label (nth labels row-idx)
                           selected? (= row-idx @selected)
                           [mark mark-color] (settings-row-mark (nth rows row-idx) @values)]
@@ -4582,7 +4715,12 @@
                             (p/fill-rect! g (inc lleft) row-y paint-w 1)
                             (p/put-str! g (+ lleft 2) row-y (settings-section-text label paint-w))
                             (p/set-fg! g t/dialog-hint-key)
-                            (p/styled g [p/BOLD] (p/put-str! g (+ lleft 5) row-y label)))
+                            (p/styled g
+                                      [p/BOLD]
+                                      (p/put-str! g
+                                                  (+ lleft 5)
+                                                  row-y
+                                                  (ellipsize label (max 0 (- paint-w 4))))))
 
                         :subsection
                         (do (p/set-colors! g t/dialog-hint-key t/dialog-bg)
@@ -4611,53 +4749,45 @@
                                         (p/put-str! g desc-x row-y (ellipsize text desc-w)))
                               (p/put-str! g desc-x row-y (ellipsize text desc-w))))
 
-                        :option-desc
-                        (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+                        ;; Selection stays beside the label; the value owns the right column.
+                        (do (p/set-colors! g t/dialog-fg t/dialog-bg)
                             (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                            (p/put-str! g desc-x row-y (ellipsize text desc-w)))
+                            ;; Cursor glyph sits immediately LEFT of the row body, so
+                            ;; a selected row reads as one unit instead of an orphan
+                            ;; bullet parked against the pane divider.
+                            (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                            (p/draw-selection-marker! g
+                                                      (- option-x p/SELECTION_WIDTH)
+                                                      row-y
+                                                      selected?)
+                            ;; Leading status glyph (●/○/◆/▸) via the shared component,
+                            ;; which returns the col to start the label at.
+                            (let [label-x
+                                  (p/status-mark! g option-x row-y mark mark-color t/dialog-bg)
+                                  value (nth option-values row-idx)
+                                  label-w
+                                  (max 1
+                                       (- option-w
+                                          p/STATUS_WIDTH
+                                          (if (and (some? value) (pos? value-w)) (+ value-w 2) 0)))
+                                  lbl (ellipsize option-label label-w)]
 
-                        ;; Selection visual: leading `> ` cursor glyph and
-                        ;; BOLD label text. Descriptions wrap beneath the
-                        ;; option on dim rows, so long labels no longer force
-                        ;; descriptions into an ellipsis-only column.
-                        (do
-                          (p/set-colors! g t/dialog-fg t/dialog-bg)
-                          (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                          ;; Cursor glyph sits immediately LEFT of the row body, so
-                          ;; a selected row reads as one unit instead of an orphan
-                          ;; bullet parked against the pane divider.
-                          (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                          (p/draw-selection-marker! g
-                                                    (- option-x p/SELECTION_WIDTH)
-                                                    row-y
-                                                    selected?)
-                          ;; Leading status glyph (●/○/◆/▸) via the shared component,
-                          ;; which returns the col to start the label at.
-                          (let [label-x
-                                (p/status-mark! g option-x row-y mark mark-color t/dialog-bg)
-                                lbl (ellipsize option-label (max 1 (- option-w p/STATUS_WIDTH)))]
+                              (p/set-colors! g t/dialog-fg t/dialog-bg)
+                              (if selected?
+                                (p/styled g [p/BOLD] (p/put-str! g label-x row-y lbl))
+                                (p/put-str! g label-x row-y lbl))
+                              (when (and (some? value) (pos? value-w))
+                                (let [text (ellipsize value value-w)
+                                      dx (- (+ lleft paint-w) (p/display-width text))]
 
-                            (p/set-colors! g t/dialog-fg t/dialog-bg)
-                            (if selected?
-                              (p/styled g [p/BOLD] (p/put-str! g label-x row-y lbl))
-                              (p/put-str! g label-x row-y lbl))
-                            ;; A short STATE (an MCP server / provider status) rides
-                            ;; the option line in one shared column instead of
-                            ;; costing a whole wrapped row per entry.
-                            (when (and inline-description (seq (str description)))
-                              (let [dx (max (+ (long label-x) (long (count lbl)) 2)
-                                            (long inline-desc-x))
-                                    avail (- (+ lleft paint-w) dx)]
-
-                                (when (pos? avail)
-                                  (p/set-colors! g t/dialog-hint t/dialog-bg)
-                                  (p/put-str! g dx row-y (ellipsize (str description) avail)))))))))
+                                  (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                                  (p/put-str! g dx row-y text)))))))
                     (do (p/set-colors! g t/dialog-fg t/dialog-bg)
                         (p/fill-rect! g (inc lleft) row-y paint-w 1)))))
               ;; Wide-only Table-of-Contents rail. Painted AFTER the settings pane so
               ;; its divider cannot be overwritten by a pane fill.
               (when split?
-                (let [toc (settings-toc rows @selected)]
+                (let [toc visible-toc]
                   (p/set-colors! g t/dialog-border t/dialog-bg)
                   (doseq [ry (range list-top (+ content-top content-h))]
                     (p/put-str! g lleft ry "│"))
@@ -4692,8 +4822,10 @@
                               left
                               hint-row
                               inner-w
-                              [["type" "search"] ["↑/↓" "move"] ["Enter" "change"]
-                               ["Esc" "clear/close"]])
+                              (if (< inner-w 50)
+                                [["Tab" "category"] ["F1" "details"] ["Esc" "clear/close"]]
+                                [["↑/↓" "move"] ["Tab" "category"] ["Enter" "change"]
+                                 ["F1" "details"] ["Esc" "clear/close"]]))
               (when-not paint-only?
                 (.setCursorPosition screen search-cursor)
                 (frame/refresh! screen))
@@ -4701,18 +4833,25 @@
                 (if @inventories-pending
                   ;; The frame is ON the terminal now — only then pay for the gateway,
                   ;; and repaint into the dialog the user is already looking at.
-                  ;; `focus-section` is re-parked because the rows the read added sit
-                  ;; under its own section header.
+                  ;; Reload the focused category after the first inventory answer.
                   (do (vreset! inventories-pending false)
                       (load-inventories!)
-                      (reset! selected (settings-initial-index (settings-rows)
-                                                               (:focus-section callbacks)))
+                      (reset! category (:focus-section callbacks))
+                      (reset! selected 0)
+                      (reset! scroll 0)
                       (recur))
                   (let [key
                         (read-modal-key! screen)
 
                         selected-row
-                        (when (pos? n) (nth rows (p/clamp @selected 0 (dec n))))
+                        (let [row (get rows @selected)]
+                          (when (settings-selectable? row) row))
+
+                        change-category!
+                        (fn [direction]
+                          (reset! category (move-settings-category toc @category direction))
+                          (reset! selected 0)
+                          (reset! scroll 0))
 
                         activate-row!
                         (fn [row]
@@ -4770,7 +4909,7 @@
                                                                          :pane-width paint-w
                                                                          :list-top list-top
                                                                          :visible-h visible-h
-                                                                         :selected @selected})
+                                                                         :toc visible-toc})
                                 scrollbar-interaction? (or was-dragging?
                                                            (and drag (not (.release drag))))]
 
@@ -4797,11 +4936,12 @@
                                   (let [pressed @pointer-down-target]
                                     (vreset! pointer-down-target nil)
                                     (when (and pressed (= pressed pointer-target))
-                                      (let [row-idx (:row-idx pressed)]
-                                        (reset! selected row-idx)
-                                        ;; A TOC click navigates; a setting click performs the
-                                        ;; same operation as Enter on that logical row.
-                                        (when (= :setting (:kind pressed))
+                                      (if (= :toc (:kind pressed))
+                                        (do (reset! category (:category pressed))
+                                            (reset! selected 0)
+                                            (reset! scroll 0))
+                                        (let [row-idx (:row-idx pressed)]
+                                          (reset! selected row-idx)
                                           (activate-row! (nth rows row-idx)))))
                                     (recur))
                                   :else (do (when (= action MouseActionType/DRAG)
@@ -4810,12 +4950,30 @@
                         :else
                         (condp = (key-type key)
                           ;; Esc clears an active search first, then closes on the next press.
-                          KeyType/Escape (if (str/blank? @query)
-                                           @values
-                                           (do (reset! query "")
-                                               (reset! selected (first-selectable-index all-rows))
-                                               (reset! scroll 0)
-                                               (recur)))
+                          KeyType/Escape
+                          (if (str/blank? @query)
+                            @values
+                            (do (reset! query "") (reset! selected 0) (reset! scroll 0) (recur)))
+                          KeyType/Tab (do (change-category! 1) (recur))
+                          KeyType/ReverseTab (do (change-category! -1) (recur))
+                          KeyType/F1
+                          (do (when selected-row
+                                (let [restore!
+                                      (frame-restorer screen)
+
+                                      action
+                                      (settings-details-dialog! screen selected-row @values)]
+
+                                  (restore!)
+                                  (case action
+                                    :change
+                                    (activate-row! selected-row)
+
+                                    :inherit
+                                    (activate-row! (assoc selected-row :type :inherit))
+
+                                    nil)))
+                              (recur))
                           KeyType/ArrowUp (do (swap! selected #(move-settings-selection rows % -1))
                                               (recur))
                           KeyType/ArrowDown (do (swap! selected #(move-settings-selection rows % 1))
@@ -4830,9 +4988,7 @@
                           ;; Backspace edits the live search query.
                           KeyType/Backspace (do (when (seq @query)
                                                   (swap! query #(subs % 0 (dec (count %))))
-                                                  (reset! selected (first-selectable-index
-                                                                     (filter-settings-rows all-rows
-                                                                                           @query)))
+                                                  (reset! selected 0)
                                                   (reset! scroll 0))
                                                 (recur))
                           ;; Any printable character types into the search query (VS Code feel);
@@ -4840,11 +4996,7 @@
                           KeyType/Character
                           (let [c (key-character key)]
                             (if (and c (>= (int c) 32))
-                              (do (swap! query str c)
-                                  (reset! selected (first-selectable-index
-                                                     (filter-settings-rows all-rows @query)))
-                                  (reset! scroll 0)
-                                  (recur))
+                              (do (swap! query str c) (reset! selected 0) (reset! scroll 0) (recur))
                               (recur)))
                           KeyType/Enter (do (when selected-row (activate-row! selected-row))
                                             (recur))

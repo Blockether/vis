@@ -927,7 +927,7 @@
                                        ["auto" [:enter :down :down :down :enter :esc] "off"]]]
         (let [{:keys [requests frames value]} (exercise-backend-picker keys {:value initial})]
           (expect (= expected value))
-          (expect (some #(str/includes? % initial) frames))
+          (expect (some #(str/includes? (str/lower-case %) initial) frames))
           (expect (= (if (= initial expected)
                        []
                        [["/v1/settings"
@@ -991,40 +991,35 @@
   ;; leaking raw ids" case was retired — the toggles registry now
   ;; REQUIRES a :label (register-toggle! rejects label-less specs), so the
   ;; id-derived fallback-label path no longer exists.
-  (it
-    "registry enum rows submit an explicit value and adopt the daemon response"
-    (let [apply-settings-option
-          (var-get #'dlg/apply-settings-option)
+  (it "registry enum rows submit an explicit value and adopt the daemon response"
+      (let [apply-settings-option
+            (var-get #'dlg/apply-settings-option)
 
-          settings-option-label
-          (var-get #'dlg/settings-option-label)
+            settings-option-value
+            (var-get #'dlg/settings-option-value)
 
-          id
-          "dialogs_test_registry_enum"
+            id
+            "dialogs_test_registry_enum"
 
-          called
-          (atom [])]
+            called
+            (atom [])]
 
-      (toggles/register-toggle!
-        {:id id :label "Enum Test" :type :enum :choices [:low :medium :high] :default :low})
-      (try
-        (expect (= "Enum Test: low"
-                   (settings-option-label {:type :registry-toggle :toggle-id id :label "Enum Test"}
-                                          {})))
-        (with-redefs [vis/gateway-set-setting-value!
-                      (fn [toggle-id value _target]
-                        (swap! called conj [toggle-id value])
-                        {"id" toggle-id "type" "enum" "value" "high"})]
-          (let [out (apply-settings-option {:something "else"}
-                                           {:type :registry-toggle :toggle-id id :value "medium"})]
-            (expect (= {:something "else"} out))
-            (expect (= [[id "medium"]] @called))
-            (expect (= "high" (vis/toggle-value id)))
-            (expect (= "Enum Test: high"
-                       (settings-option-label
-                         {:type :registry-toggle :toggle-id id :label "Enum Test"}
-                         {})))))
-        (finally (toggles/reset-to-default! id)))))
+        (toggles/register-toggle!
+          {:id id :label "Enum Test" :type :enum :choices [:low :medium :high] :default :low})
+        (try (expect (= "low" (settings-option-value {:type :registry-toggle :toggle-id id} {})))
+             (with-redefs [vis/gateway-set-setting-value!
+                           (fn [toggle-id value _target]
+                             (swap! called conj [toggle-id value])
+                             {"id" toggle-id "type" "enum" "value" "high"})]
+               (let [out (apply-settings-option
+                           {:something "else"}
+                           {:type :registry-toggle :toggle-id id :value "medium"})]
+                 (expect (= {:something "else"} out))
+                 (expect (= [[id "medium"]] @called))
+                 (expect (= "high" (vis/toggle-value id)))
+                 (expect (= "high"
+                            (settings-option-value {:type :registry-toggle :toggle-id id} {})))))
+             (finally (toggles/reset-to-default! id)))))
   (it "choice rows cycle quick -> balanced -> deep -> quick"
       (let [apply-settings-option (var-get #'dlg/apply-settings-option)]
         (expect (= {:reasoning-level :balanced}
@@ -1039,28 +1034,21 @@
                    (apply-settings-option
                      {:verbosity :medium}
                      {:key :verbosity :type :choice :choices [:low :medium :high]})))))
-  (it "choice labels surface the live value"
-      (let [settings-option-label (var-get #'dlg/settings-option-label)]
-        (expect (= "Reasoning effort: deep"
-                   (settings-option-label {:key :reasoning-level
-                                           :type :choice
-                                           :choices [:quick :balanced :deep]
-                                           :label "Reasoning effort"}
-                                          {:reasoning-level :deep})))
-        (expect
-          (= "Verbosity: high"
-             (settings-option-label
-               {:key :verbosity :type :choice :choices [:low :medium :high] :label "Verbosity"}
-               {:verbosity :high})))))
-  (it "choice labels do not crash when row also carries a nil name field"
-      (let [settings-option-label (var-get #'dlg/settings-option-label)]
-        (expect (= "Reasoning effort: quick"
-                   (settings-option-label {:key :reasoning-level
-                                           :type :choice
-                                           :choices [:quick :balanced :deep]
-                                           :label "Reasoning effort"
-                                           :name nil}
-                                          {})))))
+  (it "choice values surface the live value separately from the label"
+      (let [settings-option-value (var-get #'dlg/settings-option-value)]
+        (expect (= "deep"
+                   (settings-option-value
+                     {:key :reasoning-level :type :choice :choices [:quick :balanced :deep]}
+                     {:reasoning-level :deep})))
+        (expect (= "high"
+                   (settings-option-value
+                     {:key :verbosity :type :choice :choices [:low :medium :high]}
+                     {:verbosity :high})))))
+  (it "choice values do not crash when the row also carries a nil name field"
+      (expect (= "quick"
+                 (#'dlg/settings-option-value
+                  {:key :reasoning-level :type :choice :choices [:quick :balanced :deep] :name nil}
+                  {}))))
   (it "settings row activation notifies on-change without redrawing behind the modal"
       (let [activate-settings-row!
             (var-get #'dlg/activate-settings-row!)
@@ -1085,7 +1073,7 @@
         (expect (= {:show-timestamps true} @changed))
         (expect (= [[:change {:show-timestamps true}]] @calls))))
   (it
-    "settings descriptions wrap into paint rows instead of truncating inline"
+    "settings descriptions remain available without adding painted option lines"
     (let
       [settings-render-entries
        (var-get #'dlg/settings-render-entries)
@@ -1101,9 +1089,8 @@
        entries
        (settings-render-entries rows 16)]
 
-      (expect (< 2 (count entries)))
-      (expect (some #(= :option-desc (:part %)) entries))
-      (expect (every? #(not (str/includes? (str (:text %)) "...")) entries))))
+      (expect (= [{:row-idx 0 :part :section} {:row-idx 1 :part :option}] entries))
+      (expect (seq (:description (second rows))))))
   (it "an info row is a head line + its own body; an inline state never wraps"
       (let [settings-render-entries
             (var-get #'dlg/settings-render-entries)
@@ -1167,7 +1154,7 @@
                                   (.putString (.newTextGraphics screen) 0 0 "Chat repaint"))})))))
         ;; The third input is read after the change, while the band still owns input.
         (expect (str/includes? (nth @frames 2) "Settings"))
-        (expect (str/includes? (nth @frames 2) "Theme setting: vis-dark"))
+        (expect (re-find #"Theme setting\s+vis-dark" (nth @frames 2)))
         (expect (not (str/includes? (nth @frames 2) "Apply theme")))
         (finally (.stopScreen screen)))))
   (it "theme choices share a grid row when wide and stack when narrow"
@@ -1268,8 +1255,8 @@
       (let [settings-rows
             (var-get #'dlg/settings-rows)
 
-            settings-option-label
-            (var-get #'dlg/settings-option-label)]
+            settings-option-value
+            (var-get #'dlg/settings-option-value)]
 
         (try (shared-theme/register-themes! {"THEME_NAME" {"PADDING" "0px"}})
              (with-redefs [vis/get-router (constantly nil)]
@@ -1278,8 +1265,7 @@
                              :solarized-dark :solarized-light :tokyonight-day :tokyonight-moon
                              :tokyonight-night :tokyonight-storm]
                             (:choices row)))
-                 (expect (= "Theme: THEME_NAME"
-                            (settings-option-label row {:theme-name :THEME_NAME})))))
+                 (expect (= "THEME_NAME" (settings-option-value row {:theme-name :THEME_NAME})))))
              (finally (shared-theme/reset-themes!)))))
   (it "active Z.ai hides reasoning effort"
       (let [settings-rows (var-get #'dlg/settings-rows)]
@@ -2198,8 +2184,8 @@
             inventory
             (var-get #'dlg/mcp-inventory)
 
-            initial-index
-            (var-get #'dlg/settings-initial-index)
+            category-view
+            (var-get #'dlg/settings-category-view)
 
             original
             @inventory]
@@ -2208,17 +2194,12 @@
                                 :error nil
                                 :servers [{"name" "fs" "enabled" true "is_managed" true}]})
              (with-redefs [vis/get-router (constantly nil)]
-               (let [rows (settings-rows)
-                     row (first (filter #(= :mcp (:type %)) rows))]
+               (let [view (category-view (settings-rows) "" "MCP Servers")
+                     rows (:rows view)]
 
-                 (expect (some #{"MCP Servers"}
-                               (->> rows
-                                    (filter #(= :section (:type %)))
-                                    (mapv :label))))
-                 (expect (= "fs" (:label row)))
-                 ;; the palette's MCP entry parks the cursor on the section's first row
-                 (expect (= "fs" (:label (nth rows (initial-index rows "MCP Servers")))))
-                 (expect (not= (initial-index rows "MCP Servers") (initial-index rows nil)))))
+                 (expect (= "MCP Servers" (:category view)))
+                 (expect (= "fs" (:label (second rows))))
+                 (expect (= [:section :mcp :action] (mapv :type rows)))))
              (finally (reset! inventory original)))))
   (it
     "Enter on an MCP row runs that server's verbs as a transient band, not a toggle"
@@ -2392,8 +2373,8 @@
             inventory
             (var-get #'dlg/provider-inventory)
 
-            initial-index
-            (var-get #'dlg/settings-initial-index)
+            category-view
+            (var-get #'dlg/settings-category-view)
 
             original
             @inventory]
@@ -2403,17 +2384,12 @@
                                 :providers
                                 [{:provider {:id :anthropic :models []} :auth :on :default? true}]})
              (with-redefs [vis/get-router (constantly nil)]
-               (let [rows (settings-rows)
-                     row (first (filter #(= :provider (:type %)) rows))]
+               (let [view (category-view (settings-rows) "" "Providers")
+                     rows (:rows view)]
 
-                 (expect (some #{"Providers"}
-                               (->> rows
-                                    (filter #(= :section (:type %)))
-                                    (mapv :label))))
-                 (expect (= :anthropic (:id (:provider row))))
-                 ;; the palette's Providers entry parks the cursor on the first row
-                 (expect (= (:label row) (:label (nth rows (initial-index rows "Providers")))))
-                 (expect (not= (initial-index rows "Providers") (initial-index rows nil)))))
+                 (expect (= "Providers" (:category view)))
+                 (expect (= :anthropic (:id (:provider (second rows)))))
+                 (expect (= [:section :provider :action] (mapv :type rows)))))
              (finally (reset! inventory original)))))
   (it
     "the fleet is config first, then authenticated presets, each with the gateway's verdict"
@@ -3061,12 +3037,8 @@
           (term/virtual-screen)
 
           rows
-          (vec (concat [{:type :section :label "Terminal UI"}]
-                       (for [i (range 24)]
-                         {:type :toggle :key (keyword (str "option-" i)) :label (str "Option " i)})
-                       [{:type :toggle :key :show-thinking :label "Show thinking"}
-                        {:type :section :label "Providers"}
-                        {:type :provider :label "OpenAI" :auth :off :provider {:id :openai}}]))
+          [{:type :section :label "Responses"}
+           {:type :toggle :key :show-thinking :label "Show thinking"}]
 
           await-key
           @#'dlg/await-modal-key!
@@ -3085,7 +3057,7 @@
                               (fn [s]
                                 (when (= 2 (swap! reads inc))
                                   ;; The next gesture arrives after the zero-delta batch, then
-                                  ;; Enter toggles the setting immediately above Providers.
+                                  ;; Enter toggles the first setting in this category.
                                   (.addInput terminal
                                              (MouseAction. MouseActionType/SCROLL_UP
                                                            0
@@ -3093,7 +3065,7 @@
                                   (.addInput terminal (KeyStroke. KeyType/Enter))
                                   (.addInput terminal (KeyStroke. KeyType/Escape)))
                                 (await-key s))}
-               #(dlg/settings-dialog! screen {:show-thinking false} {:focus-section "Providers"}))))
+               #(dlg/settings-dialog! screen {:show-thinking false} {:focus-section "Responses"}))))
         (expect (= 3 @reads))
         (finally (.stopScreen screen))))))
 
@@ -3128,7 +3100,7 @@
         (expect (some #(true? (get later (keyword (str "option-" %)))) (range 2 50)))
         (expect (not (true? (:option-0 later))))
         (expect (= true (:option-0 back)))))
-  (it "counts wrapped description lines as part of a settings page"
+  (it "pages over compact options without counting hidden descriptions"
       (let [rows
             [{:type :section :label "General"}
              {:type :toggle
@@ -3147,7 +3119,7 @@
             down
             (page! rows entries 1 4 1)]
 
-        (expect (= 2 down))
+        (expect (= 3 down))
         (expect (= 1 (page! rows entries down 4 -1))))))
 
 ;; Regression (user report): pressing a scrollbar scrolled nothing. Settings painted
@@ -3210,8 +3182,13 @@
 
       ;; Settings reads its gateway inventories once its first frame is up; this
       ;; test is about the scrollbar, so it never pays for that round trip.
-      (with-redefs-fn {#'dlg/load-inventories! (fn []
-                                                 nil)}
+      (with-redefs-fn {#'dlg/load-inventories! (constantly nil)
+                       #'dlg/settings-rows (constantly (vec (cons
+                                                              {:type :section :label "Responses"}
+                                                              (for [i (range 50)]
+                                                                {:type :toggle
+                                                                 :key (keyword (str "option-" i))
+                                                                 :label (str "Option " i)}))))}
         (fn []
           (try (.addInput terminal (KeyStroke. KeyType/Escape))
                (open!)
@@ -3431,7 +3408,7 @@
                    (doseq [inner-w (range 1 401)]
                      (let [{:keys [split? rail-w pane-left pane-width]} (geometry left inner-w)]
                        (expect (= (>= inner-w 32) split?))
-                       (expect (= (if split? (p/clamp (quot inner-w 4) 14 22) 0) rail-w))
+                       (expect (= (if split? (p/clamp (quot inner-w 3) 14 22) 0) rail-w))
                        (expect (<= left pane-left))
                        (expect (pos? pane-width))
                        (expect (<= (+ pane-left pane-width) (+ left inner-w))))))))
@@ -3518,7 +3495,8 @@
              (let [drafts (second rows)]
                (expect (= "draft_backend" (:toggle-id drafts)))
                (expect (= ["auto" "worktree" "rift" "off"] (:choices drafts)))
-               (expect (= "Draft backend: off  [Experimental]" (settings-option-label drafts {})))
+               (expect (= "Draft backend  [Experimental]" (settings-option-label drafts {})))
+               (expect (= "Off" (#'dlg/settings-option-value drafts {})))
                (expect (= p/MARK_VALUE (first (settings-row-mark drafts {})))))
              (let [plans (nth rows 2)]
                (expect (= "Plan before coding  [Experimental]" (settings-option-label plans {})))
@@ -3554,8 +3532,9 @@
            (with-redefs [vis/gateway-set-setting-value! (fn [id value _target]
                                                           {"id" id "type" "enum" "value" value})]
              (apply-settings-option {} (assoc (second (registry-toggle-rows)) :value "worktree")))
-           (expect (= "Draft backend: worktree  [Experimental]"
+           (expect (= "Draft backend  [Experimental]"
                       (settings-option-label (second (registry-toggle-rows)) {})))
+           (expect (= "worktree" (#'dlg/settings-option-value (second (registry-toggle-rows)) {})))
            ;; A daemon-only toggle never leaks into the process registry.
            (expect (nil? (toggles/toggle-spec "draft_backend")))
            (finally (reset! inventory original)))))
@@ -3658,15 +3637,21 @@
                                             "label" "Plan before coding"
                                             "type" "boolean"
                                             "enabled" true}]}]})
-             (let [[_ shell inherit reasoning plans] (registry-toggle-rows)]
+             (let [[_ shell reasoning plans]
+                   (registry-toggle-rows)
+
+                   inherit
+                   (assoc shell :type :inherit)]
+
                (expect (= shell-note (:locked shell)))
-               (expect (str/ends-with? (:description shell) (str " · Locked: " shell-note)))
-               (expect (= "Shell commands  [Locked]" (settings-option-label shell {})))
+               (expect (true? (:is-override? shell)))
+               (expect (= "Shell commands  [Override]  [Locked]" (settings-option-label shell {})))
                (expect (= [:inherit shell-note] [(:type inherit) (:locked inherit)]))
                (expect
                  (= "Group settings set this to low for this session. Change it in Group settings."
                     (:locked reasoning)))
-               (expect (= "Reasoning: high  [Locked]" (settings-option-label reasoning {})))
+               (expect (= "Reasoning  [Locked]" (settings-option-label reasoning {})))
+               (expect (= "high" (#'dlg/settings-option-value reasoning {})))
                (expect (nil? (:locked plans)))
                (with-redefs-fn {#'dlg/mini-note! (fn [_ _ _ title line]
                                                    (swap! events conj [title line]))
