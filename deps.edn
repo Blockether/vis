@@ -21,7 +21,7 @@
         ;; Repairs unbalanced quotes and brackets in a Python block before it runs.
         com.blockether/parinferish {:mvn/version "0.2.4"}
         com.blockether/rift {:mvn/version "0.0.10-11"}
-         com.blockether/svar {:mvn/version "0.7.194"}
+         com.blockether/svar {:mvn/version "0.7.195"}
         ;; The embedded CPython the sandbox runs; the per-platform interpreter comes from that
         ;; repository's release archive. A fresh checkout needs `clojure -X:deps prep`.
         com.blockether/vis-python-runtime {:git/sha "d2eae81be86cfafd47a41347376776f83a1bca91"
@@ -108,7 +108,8 @@
          :extra-paths ["test" "dev"]
          :jvm-opts ["-Xmx2g" "-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
                     "--enable-preview" "--sun-misc-unsafe-memory-access=allow"
-                    "-Dvis.drafts.dir=target/vis-drafts-test" "-Dvis.db.path=target/vis-test.mdb"]
+                    "-Dvis.drafts.dir=target/vis-drafts-test" "-Dvis.db.path=target/vis-test.mdb"
+                    "-Dvis.image-descriptions.dir=target/vis-image-descriptions-test"]
          :main-opts ["-m" "lazytest.main" "--hook"
                      "com.blockether.vis.test-network-guard/no-network" "test"]}
   ;; What only `target/vis` can answer, after `clojure -T:build native`; separate so it fails

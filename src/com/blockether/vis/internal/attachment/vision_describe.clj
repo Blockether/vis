@@ -16,9 +16,11 @@
 
    Three properties make it affordable rather than wasteful:
 
-   - CONTENT-KEYED CACHE. Attachments replay on every request for the rest of the
-     session, so a per-request description would be re-billed forever. Keyed by the
-     digest of the bytes, an image is described exactly ONCE per process.
+   - CONTENT-KEYED, PERSISTENT CACHE. Attachments replay on every request for the rest
+     of the session, so a per-request description would be re-billed forever. Keyed
+     by the digest of the bytes and stored under `~/.vis/image-descriptions`, an image
+     is described exactly ONCE: every later request, fold and process recalls it. A
+     pass that fails RESTS the image instead of retrying it on every request.
    - OWN FAILURE POLICY. Like titling, the describe call never waits out a 429 and
      never fails over provider chains: the foreground turn owns the quota. A refusal
      or a deadline returns nil and the caller keeps today's behaviour.
@@ -28,7 +30,9 @@
 
    A LEAF: svar + attachments + config + runtime-settings + toggles + the provider
    catalog, never back on the loop."
-  (:require [clojure.string :as str]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.config.core :as config]
@@ -38,8 +42,10 @@
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [taoensso.telemere :as tel])
-  (:import [java.time Instant]
-           [java.util Base64]))
+  (:import [java.io File]
+           [java.nio.file CopyOption Files StandardCopyOption]
+           [java.nio.file.attribute FileAttribute PosixFilePermissions]
+           [java.time Instant]))
 
 (def TOGGLE_ID
   "Feature toggle gating the whole side-channel (registered in `toggles`)."
@@ -91,6 +97,20 @@
   {:max-retries 1 :ttft-timeout-ms 8000 :idle-timeout-ms 15000})
 
 (def ^:private MAX_CACHE_ENTRIES 256)
+
+(def ^:private MAX_STORED_DESCRIPTIONS
+  "Cap on persisted descriptions. A description read back from the store has its file
+   touched, so pruning drops the images nobody has replayed for the longest time."
+  2048)
+
+(def ^:private FAILURE_REST_MS
+  "How long an image whose describe pass FAILED — deadline, refusal, every offered
+   provider broken — rests before a pass offers it again, doubled per consecutive
+   failure up to `MAX_FAILURE_REST_MS`. Without it a slow or blind fleet re-bills the
+   same picture, and parks request assembly on the same deadline, on every request."
+  (* 10 60 1000))
+
+(def ^:private MAX_FAILURE_REST_MS (* 6 60 60 1000))
 
 (def ^:private DESCRIBE_ROUTING
   "Capability-first routing: the cheapest+fastest model in the WHOLE fleet that
@@ -586,24 +606,148 @@
   (boolean (and (enabled?) (some? (sighted-model router)))))
 
 (defonce ^:private description-cache
-  ;; {content-digest {:text "…" :model "glm-5v-turbo"}} — an image replays on every
-  ;; request of the session, so its description is computed once per process.
+  ;; {content-digest {:text "…" :model "glm-5v-turbo"}} — the in-process layer over the
+  ;; persistent store: an image replays on every request of the session.
   (atom {}))
 
-(defn clear-cache! "Drop every memoized description. Tests only." [] (reset! description-cache {}))
+(defonce ^:private failed-descriptions
+  ;; {content-digest {:failures n :retry-at epoch-ms}} — images a pass could not
+  ;; describe. Process-local on purpose: a restart is a fair moment to try again.
+  (atom {}))
 
-(defn- content-digest
-  "Cache key: the payload's own bytes plus the container they ride in."
-  [{:keys [base64 media-type]}]
-  (let [digest (util/sha256 (util/utf8 (str media-type "|" base64)))]
-    (.encodeToString (Base64/getUrlEncoder) digest)))
+(defn- store-dir
+  "Where descriptions outlive the process: `-Dvis.image-descriptions.dir` when set (the
+   `:test` alias points it into `target/`), else `~/.vis/image-descriptions`. A
+   function, like `config/config-dir`, so native-image never folds the building
+   machine's home into the binary."
+  ^File []
+  (io/file (or (not-empty (System/getProperty "vis.image-descriptions.dir"))
+               (str (config/config-dir) "/image-descriptions"))))
 
-(defn- cache-put!
+(defn- stored-files
+  "The store's description files; empty while the directory does not exist."
+  [^File dir]
+  (filterv (fn [^File f]
+             (and (.isFile f) (str/ends-with? (.getName f) ".json")))
+    (.listFiles dir)))
+
+(defn- stored-description
+  "The persisted description of digest `k`, or nil. A hit touches the file, so pruning
+   keeps what a session still replays; an unreadable file is a miss, never an error."
+  [k]
+  (let [^File file (io/file (store-dir) (str k ".json"))]
+    (when (.isFile file)
+      (try (let [{:strs [text model]} (json/read-json (slurp file))]
+             (when-let [text (when (string? text) (not-empty (str/trim text)))]
+               (.setLastModified file (util/now-ms))
+               {:text (util/truncate text MAX_DESCRIPTION_CHARS) :model (str model)}))
+           (catch Throwable t
+             (tel/log! {:level :debug
+                        :id ::description-store-unreadable
+                        :data {:file (.getName file) :error (ex-message t)}}
+                       "Stored image description is unreadable; the image is described again")
+             nil)))))
+
+(defn- prune-store!
+  "Drop the least recently used descriptions beyond `MAX_STORED_DESCRIPTIONS`."
+  [^File dir]
+  (let [files
+        (stored-files dir)
+
+        excess
+        (- (count files) (long MAX_STORED_DESCRIPTIONS))]
+
+    (when (pos? excess)
+      (run! #(.delete ^File %) (take excess (sort-by #(.lastModified ^File %) files))))))
+
+(defn- store-description!
+  "Persist `description` under digest `k`, then prune the store. The directory is
+   owner-only and the write atomic: a description transcribes whatever the screenshot
+   showed, and a crashed writer must not leave half a file for the next process. Best
+   effort — a store that cannot be written costs a later process one describe call."
+  [k {:keys [text model]}]
+  (try
+    (let [^File dir (store-dir)]
+      (when-not (.isDirectory dir)
+        (.mkdirs dir)
+        (try (Files/setPosixFilePermissions (.toPath dir)
+                                            (PosixFilePermissions/fromString "rwx------"))
+             (catch Throwable _ nil)))
+      ;; Created owner-only (rw-------) wherever POSIX modes exist.
+      (let [tmp
+            (Files/createTempFile (.toPath dir) "description-" ".tmp" (make-array FileAttribute 0))]
+        (try (spit (.toFile tmp)
+                   (util/json-str {"text" text "model" model "described_at" (str (Instant/now))}))
+             (Files/move tmp
+                         (.toPath (io/file dir (str k ".json")))
+                         (into-array CopyOption
+                                     [StandardCopyOption/ATOMIC_MOVE
+                                      StandardCopyOption/REPLACE_EXISTING]))
+             (finally (Files/deleteIfExists tmp))))
+      (prune-store! dir))
+    (catch Throwable t
+      (tel/log! {:level :warn :id ::description-store-failed :data {:error (ex-message t)}}
+                "Could not persist an image description; a later process describes it again"))))
+
+(defn- remember-description!
+  "Put `description` in the bounded in-process layer; returns it."
   [k description]
   (swap! description-cache (fn [cache]
                              (assoc (if (>= (count cache) (long MAX_CACHE_ENTRIES)) {} cache)
                                k description)))
   description)
+
+(defn- cached-description
+  "What is on record for digest `k`: the in-process layer, then the store, whose hit is
+   promoted into the process. Never a network call."
+  [k]
+  (or (get @description-cache k)
+      (some->> (stored-description k)
+               (remember-description! k))))
+
+(defn- cache-put!
+  "Record a FRESH description wherever it is looked up, ending any rest the image
+   served after an earlier failed pass."
+  [k description]
+  (swap! failed-descriptions dissoc k)
+  (store-description! k description)
+  (remember-description! k description))
+
+(defn- resting?
+  "True while the image behind digest `k` serves the rest its last failed pass earned."
+  [k now]
+  (< (long now) (long (get-in @failed-descriptions [k :retry-at] 0))))
+
+(defn- note-failed-description!
+  "Rest an image a pass offered but could not describe. The rest doubles per
+   consecutive failure, capped: a picture no model can read stops charging a deadline
+   to every request, and a transient failure is still retried."
+  [k now]
+  (swap! failed-descriptions (fn [failed]
+                               (let [failures
+                                     (inc (long (get-in failed [k :failures] 0)))
+
+                                     rest-ms
+                                     (min (long MAX_FAILURE_REST_MS)
+                                          (* (long FAILURE_REST_MS)
+                                             (bit-shift-left 1 (min 20 (dec failures)))))]
+
+                                 (assoc (if (>= (count failed) (long MAX_CACHE_ENTRIES)) {} failed)
+                                   k {:failures failures :retry-at (+ (long now) rest-ms)})))))
+
+(defn clear-cache!
+  "Forget every description and every failure rest, the persisted store included.
+   Tests only."
+  []
+  (reset! description-cache {})
+  (reset! failed-descriptions {})
+  (run! #(.delete ^File %) (stored-files (store-dir))))
+
+(defn- content-digest
+  "Cache key: the payload's own bytes plus the container they ride in. Hex, because it
+   also names the stored file."
+  [{:keys [base64 media-type]}]
+  (util/sha256-hex (str media-type "|" base64)))
 
 (def ^:private describe-spec
   "Structured output, not a fence: `ask!` + spec means a model that wraps its answer
@@ -784,21 +928,21 @@
    `:base64`, `:media-type`), ALIGNED to the input order.
 
    Each entry is `{:text … :model …}` or nil — nil for an image this pass could not
-   describe (burst cap, deadline, refusal), which the caller renders exactly as it
-   does today. Returns nil outright when the fallback is off or nothing in the
-   fleet can see, so `(when-let [ds (describe-images …)] …)` is the whole
-   caller-side branch.
+   describe (burst cap, deadline, refusal) or one still resting after such a pass,
+   which the caller renders exactly as it does today. Returns nil outright when the
+   fallback is off or nothing in the fleet can see, so
+   `(when-let [ds (describe-images …)] …)` is the whole caller-side branch.
 
    Blocking, but bounded by `DESCRIBE_HARD_DEADLINE_MS` for the WHOLE pass: the
    asks run in PARALLEL against one shared wall clock, so a turn arriving with
-   several new images costs about one call's latency, and every later request in
-   the session answers from cache."
+   several new images costs about one call's latency, and every later request —
+   in this process or the next — answers from the store."
   [router context images preferred-provider]
   (when (and (seq images) (enabled?))
     (when-let [model (sighted-model router preferred-provider)]
       (let [entries (mapv (fn [image]
                             (let [k (content-digest image)]
-                              {:image image :key k :cached (get @description-cache k)}))
+                              {:image image :key k :cached (cached-description k)}))
                           images)
             ;; ONE ask per distinct payload. The same picture attached twice, or a
             ;; figure replayed under a second name, otherwise pays twice and burns
@@ -808,6 +952,10 @@
                                         (assoc entry :idx idx)))
                          (remove :cached)
                          (remove #(str/blank? (str (:base64 (:image %)))))
+                         ;; A failed pass RESTS its images: otherwise a slow or blind fleet
+                         ;; re-bills the same picture, and waits out the same deadline, on
+                         ;; every request.
+                         (remove #(resting? (:key %) (util/now-ms)))
                          (distinct-by :key)
                          (take MAX_DESCRIBED_PER_PASS)
                          vec)
@@ -869,6 +1017,10 @@
                                       [key (cache-put! key description)])))
                             pending)]
 
+        ;; Offered but not described — deadline, refusal, nobody left to ask: it rests.
+        (run! (fn [{:keys [key]}]
+                (when-not (contains? by-digest key) (note-failed-description! key (util/now-ms))))
+              pending)
         (mapv (fn [{:keys [key cached]}]
                 (or cached (get by-digest key)))
               entries)))))
@@ -878,6 +1030,16 @@
   ([router context images] (describe-images* router context images nil))
   ([router context images preferred-provider]
    (describe-images* router context images preferred-provider)))
+
+(defn recall-descriptions
+  "Descriptions already ON RECORD for wired `images`, aligned to the input order, nil
+   for any image nobody described yet — and never a network call. A render that
+   re-prices a trailer again and again (each fold-search candidate, an overflow
+   rescue, a fold estimate) keeps what the request's own pass paid for this way,
+   instead of dropping it or starting a round trip per candidate. Nil when the
+   fallback is off."
+  [images]
+  (when (and (seq images) (enabled?)) (mapv (comp cached-description content-digest) images)))
 
 (defn- describe-attachments*
   "Wire raw user attachments through the send-time image gate and describe what

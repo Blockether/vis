@@ -1,13 +1,18 @@
 (ns com.blockether.vis.internal.attachment.vision-describe-test
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.attachment.vision-describe :as vd]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.test-provider-policies :as policies]
-            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]])
+  (:import (java.io File)
+           (java.nio.file Files LinkOption)
+           (java.nio.file.attribute PosixFilePermissions)))
 
 (defn- throwaway-store
   "A `~/.vis` of this test's own, so the suite reads and grows a THROWAWAY memory. What the
@@ -212,6 +217,21 @@
 
     {:result result :calls @calls}))
 
+(defn- counting-asks
+  "`with-asks` WITHOUT clearing the cache first, so a test can prove what an earlier
+   pass left on record. Returns `{:result … :calls n}`."
+  [reply f]
+  (let [calls
+        (atom 0)
+
+        result
+        (with-redefs-fn {#'svar/ask! (fn [_ opts]
+                                       (swap! calls inc)
+                                       (reply opts))}
+          f)]
+
+    {:result result :calls @calls}))
+
 (defn- described-label
   "The label the describer put ON THE WIRE, recovered from the ask opts."
   [opts]
@@ -384,6 +404,103 @@
         (expect (= 9 (count result)))
         (expect (= 6 (count (filter some? result))))
         (expect (every? nil? (drop 6 result))))))
+
+(defdescribe
+  vision-describe-store-test
+  "A picture is described ONCE: the store answers every later request, fold and
+   process, and a failed pass rests the image instead of re-billing every request."
+  (it "answers a fresh process from the store, without asking again"
+      (let [img
+            (distinct-image "persisted")
+
+            first-pass
+            (with-asks descriptions #(vd/describe-images (mixed-fleet) "ctx" [img]))]
+
+        ;; A new process: an empty in-process layer over the same store.
+        (reset! @#'vd/description-cache {})
+        (let [{:keys [result calls]}
+              (counting-asks descriptions #(vd/describe-images (mixed-fleet) "ctx" [img]))]
+          (expect (= 1 (count (:calls first-pass))))
+          (expect (zero? calls))
+          (expect (= (:result first-pass) result)))))
+  (it "keeps the suite's store out of the real Vis home, owner-only"
+      (with-asks descriptions #(vd/describe-images (mixed-fleet) "ctx" [(distinct-image "file")]))
+      (let [^File dir
+            (#'vd/store-dir)
+
+            [^File stored :as files]
+            (#'vd/stored-files dir)
+
+            home
+            (.getCanonicalPath (io/file (System/getProperty "user.home") ".vis"))]
+
+        (expect (not (str/starts-with? (.getCanonicalPath dir) home)))
+        (expect (= 1 (count files)))
+        (expect (str/includes? (slurp stored) "seen: file"))
+        (expect (= "rw-------"
+                   (PosixFilePermissions/toString
+                     (Files/getPosixFilePermissions (.toPath stored) (make-array LinkOption 0)))))))
+  (it "treats an unreadable stored description as a miss, never an error"
+      (let [img (distinct-image "garbled")]
+        (with-asks descriptions #(vd/describe-images (mixed-fleet) "ctx" [img]))
+        (reset! @#'vd/description-cache {})
+        (run! #(spit % "{not json") (#'vd/stored-files (#'vd/store-dir)))
+        (let [{:keys [result calls]}
+              (counting-asks descriptions #(vd/describe-images (mixed-fleet) "ctx" [img]))]
+          (expect (= 1 calls))
+          (expect (= "seen: garbled" (:text (first result)))))))
+  (it "prunes the store to its cap"
+      (with-redefs [vd/MAX_STORED_DESCRIPTIONS 2]
+        (with-asks descriptions
+                   #(vd/describe-images (mixed-fleet)
+                                        "ctx"
+                                        (mapv (fn [n]
+                                                (distinct-image (str "p" n)))
+                                              (range 3))))
+        (expect (= 2 (count (#'vd/stored-files (#'vd/store-dir)))))))
+  (it "rests an image whose pass failed instead of asking on every request"
+      (vd/clear-cache!)
+      (let [img
+            (distinct-image "flaky")
+
+            now
+            (atom (System/currentTimeMillis))
+
+            pass
+            (fn []
+              (with-redefs-fn {#'util/now-ms (fn ^long []
+                                               (long @now))}
+                #(counting-asks (fn [_]
+                                  (throw (ex-info "stream stalled" {})))
+                                (fn []
+                                  (vd/describe-images (mixed-fleet) "ctx" [img])))))
+
+            first-pass
+            (pass)]
+
+        (expect (= [nil] (:result first-pass)))
+        (expect (pos? (:calls first-pass)))
+        ;; The next request of the session: the image rests and nobody is asked.
+        (expect (zero? (:calls (pass))))
+        ;; Past its rest the image is offered again; a second failure rests it twice as long.
+        (swap! now + (* 10 60 1000) 1)
+        (expect (pos? (:calls (pass))))
+        (swap! now + (* 10 60 1000) 1)
+        (expect (zero? (:calls (pass))))
+        (swap! now + (* 10 60 1000))
+        (expect (pos? (:calls (pass))))))
+  (it "recalls only what is on record, and never asks"
+      (let [seen (distinct-image "seen")]
+        (with-asks descriptions #(vd/describe-images (mixed-fleet) "ctx" [seen]))
+        (let [{:keys [result calls]} (counting-asks descriptions
+                                                    #(vd/recall-descriptions
+                                                       [seen (distinct-image "unseen")]))]
+          (expect (zero? calls))
+          (expect (= ["seen: seen" nil] (mapv :text result))))))
+  (it "recalls nothing when the fallback toggle is off"
+      (toggles/set-value! "vision_fallback_describe" false)
+      (try (expect (nil? (vd/recall-descriptions [(image "/tmp/a.png")])))
+           (finally (toggles/reset-to-default! "vision_fallback_describe")))))
 
 (defdescribe
   vision-describe-attachments-test

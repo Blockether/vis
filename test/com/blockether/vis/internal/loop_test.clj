@@ -5837,7 +5837,54 @@
           (expect (string? (:content note)))
           (expect (str/includes? (:content note) "a red pixel on white"))
           (expect (str/includes? (:content note) "seer"))
-          (expect (not (str/includes? (pr-str suffix) "image_url")))))))
+          (expect (not (str/includes? (pr-str suffix) "image_url")))))
+    ;; Session a2fe5dda: a proactive fold re-rendered the trailer without the
+    ;; descriptions this request had just waited for, so the blind model saw none.
+    (it "keeps the descriptions through a proactive fold, asking for none of its own"
+        (vision-describe/clear-cache!)
+        (let [calls
+              (atom 0)
+
+              target
+              {:provider :zai-coding-plan :model "glm-5-turbo"}
+
+              base
+              [{:role "user" :content "CURRENT REQUEST"}]
+
+              trailer
+              [(stub-tool-iter {:id 1})
+               (assoc-in (stub-tool-iter {:id 2})
+                 [1 :forms-vec 0 :stdout]
+                 (str "TOOL PAYLOAD " (apply str (repeat 10000 "old work "))))
+               (stub-tool-iter {:id 3 :attachments [(assoc att :tool-call-id "tc-3")]})]
+
+              options
+              {:describe-images ((deref #'transcript/replay-image-describer)
+                                  {:router seeing-router}
+                                  "why is the plot empty?"
+                                  :seeing)}
+
+              projection
+              (with-redefs-fn {#'svar/ask! (fn [_ _]
+                                             (swap! calls inc)
+                                             {:result {:description "a red pixel on white"}})}
+                #(#'iteration/pre-request-context-projection
+                   {:request-messages (into base (conversation-suffix trailer target options))
+                    :base-messages base
+                    :trailer-iters trailer
+                    :summaries []
+                    :replay-target target
+                    :model "gpt-4o"
+                    :budget-tokens 1500
+                    :conversation-options (transcript/recall-options options)}))
+
+              text
+              (str (:messages projection))]
+
+          (expect (= :proactive-fold (:projection-kind projection)))
+          (expect (not (str/includes? text "TOOL PAYLOAD")))
+          (expect (str/includes? text "a red pixel on white"))
+          (expect (= 1 @calls))))))
 
 (defdescribe
   replay-image-describer-test

@@ -1646,12 +1646,22 @@
   "Describer for replayed figures, or nil when the vision fallback is off or nothing
    in the fleet can see. Resolved per request (a provider switch mid-session takes
    effect immediately) but it costs only router arithmetic: the calls happen lazily,
-   per image actually in play, and each image is described once per process."
+   per image actually in play, and each image is described once, then recalled."
   [environment context preferred-provider]
   (let [router (:router environment)]
     (when (vision-describe/available? router)
       (fn [images]
         (vision-describe/describe-images router context images preferred-provider)))))
+
+(defn recall-options
+  "`options` for a render that RE-PRICES the trailer — each fold-search candidate, an
+   overflow rescue, a fold estimate — with the describer swapped for a cache-only
+   recall. What the request's own render described survives the fold, and no
+   candidate starts a round trip of its own."
+  [{:keys [describe-images] :as options}]
+  (cond-> options
+    describe-images
+    (assoc :describe-images vision-describe/recall-descriptions)))
 
 (defn- conversation-suffix-groups
   "Append-only conversation suffix for the current turn, kept as `[pos messages]`
@@ -1687,8 +1697,8 @@
    turn. Newest wins; older ones are named instead of sent. A target with no
    vision takes the same plan through `:describe-images` instead: the figures
    become one sighted model's report, so a blind model still knows what it drew."
-  ;; 2-arity: no side-channel at all — used by the emergency-fold ESTIMATOR, which
-  ;; re-prices the same trailer repeatedly and must never make a network call.
+  ;; 2-arity: no side-channel at all, so a blind target gets no descriptions. Renders
+  ;; that re-price a trailer pass `recall-options`: descriptions on record, no calls.
   ([trailer-iters target] (conversation-suffix-groups trailer-iters target nil))
   ([trailer-iters target {:keys [describe-images]}]
    (let [iters

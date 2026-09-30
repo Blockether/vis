@@ -1329,7 +1329,11 @@
    the pending request. A fold spends the least recent context it can; recent
    settled work survives verbatim. Canonical history and persisted semantic gists
    remain authoritative. Every actual send still repeats Svar's provider-aware
-   preflight; a local or usage-anchored estimate is not an exact provider count."
+   preflight; a local or usage-anchored estimate is not an exact provider count.
+
+   Every candidate renders with `conversation-options` — `transcript/recall-options`,
+   so a blind target keeps the image descriptions on record and no candidate calls
+   out for new ones."
   ([base-messages trailer-iters summaries replay-target model budget-fn]
    (emergency-fold-projection base-messages
                               trailer-iters
@@ -1339,7 +1343,7 @@
                               budget-fn
                               {}))
   ([base-messages trailer-iters summaries replay-target model budget-fn
-    {:keys [count-messages-fn reason]}]
+    {:keys [count-messages-fn conversation-options reason]}]
    (let [count-messages-fn
          (or count-messages-fn #(svar/count-messages model %))
 
@@ -1364,7 +1368,9 @@
 
      (when (seq foldable)
        (let [before-messages
-             (into (vec base-messages) (transcript/conversation-suffix trailer-iters replay-target))
+             (into
+               (vec base-messages)
+               (transcript/conversation-suffix trailer-iters replay-target conversation-options))
 
              before-tokens
              (count-messages-fn before-messages)
@@ -1402,7 +1408,9 @@
 
                      messages
                      (into (vec base-messages)
-                           (transcript/conversation-suffix folded-trailer replay-target))]
+                           (transcript/conversation-suffix folded-trailer
+                                                           replay-target
+                                                           conversation-options))]
 
                  {:messages messages
                   :scopes scopes
@@ -1517,14 +1525,16 @@
    proactive compaction and overflow recovery use the same graduated fold."
   [{:keys [request-messages base-messages trailer-iters summaries replay-target model
            canonical-base-messages-fn canonical-trailer-iters budget-tokens last-after-tokens
-           count-messages-fn reason]}]
+           count-messages-fn conversation-options reason]}]
   (let [count-messages-fn
         (or count-messages-fn #(svar/count-messages model %))
 
         before-tokens
         (count-messages-fn (or request-messages
                                (into (vec base-messages)
-                                     (transcript/conversation-suffix trailer-iters replay-target))))
+                                     (transcript/conversation-suffix trailer-iters
+                                                                     replay-target
+                                                                     conversation-options))))
 
         fits?
         (fn [after]
@@ -1543,7 +1553,8 @@
 
         canonical
         (when canonical-base
-          (into canonical-base (transcript/conversation-suffix trailer replay-target)))
+          (into canonical-base
+                (transcript/conversation-suffix trailer replay-target conversation-options)))
 
         canonical-tokens
         (when canonical (count-messages-fn canonical))
@@ -1556,15 +1567,17 @@
                :foldable-scopes 0
                :scopes #{}
                :projection-kind :canonical-rebuild})
-            (some->
-              (emergency-fold-projection base
-                                         trailer
-                                         summaries
-                                         replay-target
-                                         model
-                                         (constantly budget-tokens)
-                                         {:count-messages-fn count-messages-fn :reason reason})
-              (assoc :projection-kind (if (= :budget reason) :proactive-fold :emergency-fold))))]
+            (some-> (emergency-fold-projection base
+                                               trailer
+                                               summaries
+                                               replay-target
+                                               model
+                                               (constantly budget-tokens)
+                                               {:count-messages-fn count-messages-fn
+                                                :conversation-options conversation-options
+                                                :reason reason})
+                    (assoc :projection-kind
+                      (if (= :budget reason) :proactive-fold :emergency-fold))))]
 
     (when (and projection (fits? (:after-tokens projection)))
       (cond-> (assoc projection
@@ -1598,7 +1611,7 @@
    The caller retains a rebuilt base and any transport-only fold intent; persisted
    history and semantic summaries are never changed here."
   [{:keys [error output-started? recovery-state ctx-atom turn-input-tokens request-messages
-           base-messages trailer-iters replay-target model]
+           base-messages trailer-iters replay-target model conversation-options]
     :as opts}]
   (let [overflow (ex-data error)]
     (when (and (contains? perr/CONTEXT_OVERFLOW_TYPES (:type overflow)) (not @output-started?))
@@ -1619,7 +1632,8 @@
                                                        (into (vec base-messages)
                                                              (transcript/conversation-suffix
                                                                trailer-iters
-                                                               replay-target))))
+                                                               replay-target
+                                                               conversation-options))))
                 budget (overflow-fold-budget {:reported-tokens (:input-tokens overflow)
                                               :reported-limit (:max-input-tokens overflow)
                                               :margin (nth CONTEXT_OVERFLOW_MARGINS (dec attempt))
@@ -2392,6 +2406,12 @@
         {:describe-images
          (transcript/replay-image-describer environment user-request (:provider replay-target))}
 
+        ;; Every render AFTER this one — each fold-search candidate, an overflow rescue,
+        ;; a fold estimate — re-prices the same trailer. Those recall the descriptions
+        ;; this render paid for: a fold neither drops them nor describes anything again.
+        recall-options
+        (transcript/recall-options conversation-options)
+
         provider-base
         (transcript/conversation-messages message-base
                                           summarized-trailer-iters
@@ -2472,7 +2492,8 @@
                                  :count-messages-fn context-estimator
                                  :canonical-base-messages-fn (when (:resumed? message-base)
                                                                canonical-messages)
-                                 :canonical-trailer-iters summarized-trailer-iters})]
+                                 :canonical-trailer-iters summarized-trailer-iters
+                                 :conversation-options recall-options})]
           (install-projection! projection)
           (tel/log! {:level :info
                      :id ::context-proactive-fold
@@ -2499,7 +2520,6 @@
 
     (assoc state
       :context-recovery-state context-recovery-state
-      :conversation-options conversation-options
       :council-active council-active
       :council-input council-input
       :council-trailer council-trailer
@@ -2510,18 +2530,19 @@
       :messages messages
       :provider-output-started? provider-output-started?
       :provider-replay-unsafe? provider-replay-unsafe?
+      :recall-options recall-options
       :summaries summaries)))
 
 (defn- call-provider
   "Sends the iteration's request under the council execution scope, retrying through
    [[request-with-retries]], and adds its `:iteration-result`."
   [{:keys [accounting-atom active-exts cancel-atom canonical-messages context-recovery-state
-           conversation-options council-active effective-messages-atom emergency-summaries-atom
-           emit-hook! environment install-projection! iteration iteration-extra-body
-           max-context-tokens message-base-atom message-token-counter on-chunk pre-resolved-model
-           provider-output-started? provider-replay-unsafe? reasoning-effort reasoning-level
-           replay-target request-budget-atom route-change route-command-at-turn-start routing
-           session-turn-id summaries trailer-iters user-request]
+           council-active effective-messages-atom emergency-summaries-atom emit-hook! environment
+           install-projection! iteration iteration-extra-body max-context-tokens message-base-atom
+           message-token-counter on-chunk pre-resolved-model provider-output-started?
+           provider-replay-unsafe? reasoning-effort reasoning-level recall-options replay-target
+           request-budget-atom route-change route-command-at-turn-start routing session-turn-id
+           summaries trailer-iters user-request]
     :as state}]
   (let [resolved-model
         pre-resolved-model
@@ -2616,7 +2637,7 @@
                              :trailer-iters trailer-iters
                              :emergency-summaries-atom emergency-summaries-atom
                              :replay-target (transcript/replay-context resolved-model)
-                             :conversation-options conversation-options
+                             :conversation-options recall-options
                              :count-messages-fn message-token-counter})))
 
                       result
@@ -2707,6 +2728,7 @@
                                                  (when (:resumed? attempt-base) canonical-messages)
                                                  :canonical-trailer-iters attempt-trailer
                                                  :replay-target replay-target
+                                                 :conversation-options recall-options
                                                  :model (or (:name resolved-model)
                                                             (:model resolved-model))})]
                               (do
