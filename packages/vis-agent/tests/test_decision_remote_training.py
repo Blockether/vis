@@ -84,7 +84,16 @@ def test_remote_training_validates_local_filenames_and_preserves_gateway_failure
         assert error.value.status == 503
 
 
-@pytest.mark.parametrize("model_id", ["gliner2.5-base", "gliner2.5-decide"])
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "gliner2.5-base",
+        "gliner2.5-small",
+        "gliner2.5-multi",
+        "gliner2.5-decide",
+        "gliner2.5-multi-decide",
+    ],
+)
 def test_remote_training_explicit_gliner_family_and_resume(model_id):
     previous = "28b15a56-014d-4c3d-9824-dc41edb6569a"
     current = "93b91cb4-ed9a-421b-a4cd-0d659ea2c510"

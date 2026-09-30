@@ -23,7 +23,12 @@
 
 (def ^:private max-expanded-bytes gateway-contract/max-decision-expanded-bytes)
 
-(def gliner-architectures {"gliner2.5-base" "boundary" "gliner2.5-decide" "span"})
+(def gliner-architectures
+  {"gliner2.5-base" "boundary"
+   "gliner2.5-small" "boundary"
+   "gliner2.5-multi" "boundary"
+   "gliner2.5-decide" "span"
+   "gliner2.5-multi-decide" "boundary"})
 
 (defn inference-required
   "Files required by one explicitly named FP32 inference family."

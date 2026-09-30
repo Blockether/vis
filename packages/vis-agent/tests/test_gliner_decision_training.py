@@ -13,23 +13,28 @@ import pytest
 from blockether.vis.decisions import gliner_training
 from blockether.vis.decisions.gliner_training import GlinerTrainingBundle
 
-MODELS = {"gliner2.5-base": "boundary", "gliner2.5-decide": "span"}
+MODELS = {
+    "gliner2.5-base": "boundary",
+    "gliner2.5-small": "boundary",
+    "gliner2.5-multi": "boundary",
+    "gliner2.5-decide": "span",
+    "gliner2.5-multi-decide": "boundary",
+}
 
 
 @pytest.mark.parametrize(
     ("model_id", "revision"),
     [
         ("gliner2.5-base", "7f1ae80f150e9d3e262ec1684d0d78208e2595d0"),
+        ("gliner2.5-small", "7132dc4561c3f94563c6147e75ffa8ef34c4964a"),
+        ("gliner2.5-multi", "2ca71aafb3446d9014e1c55c7ff51c9bc7209c47"),
         ("gliner2.5-decide", "bbe10ff77ebb238777c17d3a8ac9260e30929057"),
+        ("gliner2.5-multi-decide", "a35a0cd3b7a0f00f2effc576f454cd48fa98aa5f"),
     ],
 )
 def test_catalog_pins_complete_gliner_downloads(model_id, revision):
     catalog = gliner_training._manifest()
-    assert {entry["id"] for entry in catalog} == {
-        "laya-typed-decisions",
-        "gliner2.5-base",
-        "gliner2.5-decide",
-    }
+    assert {entry["id"] for entry in catalog} == {"laya-typed-decisions", *MODELS}
     model = next(entry for entry in catalog if entry["id"] == model_id)
     assert model["revision"] == revision
     assert model["license"] == "Apache-2.0"
@@ -89,7 +94,7 @@ def test_local_checkpoint_is_inventoried_offline_and_fails_closed(tmp_path, mode
         GlinerTrainingBundle.from_local(
             source,
             tmp_path / "wrong",
-            model_id=next(x for x in MODELS if x != model_id),
+            model_id=next(x for x in MODELS if MODELS[x] != MODELS[model_id]),
             revision="a" * 40,
             license_file=license_file,
         )
@@ -242,11 +247,8 @@ def test_offline_full_checkpoint_training_export_sdk_publish_and_resume(model_id
     from blockether.vis.decisions import Decisions
     from blockether.vis.decisions.gliner_training import GlinerTrainer
 
-    env_name = (
-        "VIS_GLINER_BASE_CHECKPOINT"
-        if model_id.endswith("base")
-        else "VIS_GLINER_DECIDE_CHECKPOINT"
-    )
+    name = model_id.removeprefix("gliner2.5-").replace("-", "_").upper()
+    env_name = f"VIS_GLINER_{name}_CHECKPOINT"
     checkpoint_source = os.environ.get(env_name)
     license_name = os.environ.get("VIS_GLINER_LICENSE")
     if not checkpoint_source or not license_name:

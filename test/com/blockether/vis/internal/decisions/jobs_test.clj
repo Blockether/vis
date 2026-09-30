@@ -295,7 +295,7 @@
                            "bytes" 9
                            "decision_accuracy" 0.75
                            "action_accuracy" 0.5}))]
-              (doseq [model-id ["gliner2.5-base" "gliner2.5-decide"]]
+              (doseq [model-id (keys assets/gliner-architectures)]
                 (let [created (jobs/create! (assoc request "model_id" model-id))
                       id (get created "job_id")
                       done (await-status id "completed")]
@@ -317,10 +317,13 @@
                                                 "model_id" model-id
                                                 "source_job_id" id))]
                     (expect (= "completed"
-                               (get (await-status (get resumed "job_id") "completed") "status"))))))
-              (expect (= ["gliner2.5-base" "gliner2.5-base" "gliner2.5-decide" "gliner2.5-decide"]
+                               (get (await-status (get resumed "job_id") "completed") "status")))
+                    ;; Delete finished jobs so every GLiNER model fits under the saved-job limit.
+                    (doseq [job [(get resumed "job_id") id]]
+                      (expect (= "deleted" (get (jobs/delete! job) "status")))))))
+              (expect (= (mapcat #(repeat 2 %) (keys assets/gliner-architectures))
                          (mapv #(get % "model_id") @executed)))
-              (expect (= ["gliner2.5-base" "gliner2.5-decide"] @selected)))))))))
+              (expect (= (vec (keys assets/gliner-architectures)) @selected)))))))))
 
 (defdescribe
   gliner-jobs-fail-closed-without-their-interpreter-or-valid-model

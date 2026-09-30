@@ -176,9 +176,18 @@ def test_ambiguous_upload_reads_known_digest_without_resubmitting(
     gateway.close()
 
 
+GLINER_ARCHITECTURES = {
+    "gliner2.5-base": "boundary",
+    "gliner2.5-small": "boundary",
+    "gliner2.5-multi": "boundary",
+    "gliner2.5-decide": "span",
+    "gliner2.5-multi-decide": "boundary",
+}
+
+
 def gliner_bundle(root: Path, model_id: str) -> Path:
     root.mkdir()
-    architecture = {"gliner2.5-base": "boundary", "gliner2.5-decide": "span"}[model_id]
+    architecture = GLINER_ARCHITECTURES[model_id]
     files = {
         "model.onnx": b"graph",
         "config.json": json.dumps({"architecture": architecture}).encode(),
@@ -215,7 +224,7 @@ def gliner_bundle(root: Path, model_id: str) -> Path:
     return root
 
 
-@pytest.mark.parametrize("model_id", ["gliner2.5-base", "gliner2.5-decide"])
+@pytest.mark.parametrize("model_id", GLINER_ARCHITECTURES)
 def test_gliner_sdk_upload_alias_and_typed_inference(tmp_path, model_id):
     root = gliner_bundle(tmp_path / "inference", model_id)
     calls = []
@@ -270,11 +279,12 @@ def test_gliner_sdk_upload_alias_and_typed_inference(tmp_path, model_id):
         )
 
 
-@pytest.mark.parametrize("model_id", ["gliner2.5-base", "gliner2.5-decide"])
+@pytest.mark.parametrize("model_id", GLINER_ARCHITECTURES)
 def test_gliner_sdk_rejects_mismatched_architecture_before_upload(tmp_path, model_id):
     root = gliner_bundle(tmp_path / "inference", model_id)
     metadata = json.loads((root / "PROVENANCE.json").read_text())
-    metadata["architecture"] = "span" if model_id.endswith("base") else "boundary"
+    other = {"boundary": "span", "span": "boundary"}
+    metadata["architecture"] = other[GLINER_ARCHITECTURES[model_id]]
     (root / "PROVENANCE.json").write_text(json.dumps(metadata))
     gateway = GatewayClient("http://127.0.0.1:1")
     try:

@@ -131,8 +131,9 @@ class Decisions:
     ) -> dict[str, Any]:
         """Train offline on approved gateway-local filenames, without uploading rows.
 
-        For GLiNER, select ``gliner2.5-base`` or ``gliner2.5-decide`` explicitly. They
-        require a separate ``decisions-gliner-training`` environment. The gateway needs
+        For GLiNER, select ``gliner2.5-base``, ``gliner2.5-small``, ``gliner2.5-multi``,
+        ``gliner2.5-decide`` or ``gliner2.5-multi-decide`` explicitly. They require a
+        separate ``decisions-gliner-training`` environment. The gateway needs
         a pinned local checkpoint and an approved data directory. No model alias changes
         when the job finishes. Use ``get_training_job`` for progress. After review,
         activate its model_ref separately.

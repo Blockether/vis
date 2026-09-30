@@ -22,8 +22,70 @@
 (def ^:private qtypes {"choice" 0 "score" 1 "noul" 2})
 
 ;; Match the upstream GLiNER2.0 whitespace splitter before per-word subword encoding.
+;; Python `\w` is `str.isalnum()` or `_`, and Python `\s` also covers U+001C-U+001F;
+;; Java `(?U)\w` differs because it also matches combining marks and joiners.
 (def ^:private gliner-word-pattern
-  #"(?iU)(?:https?://[^\s]+|www\.[^\s]+)|[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|@[a-z0-9_]+|\w+(?:[-_]\w+)*|\S")
+  #"(?iU)(?:https?://[^\s\x1C-\x1F]+|www\.[^\s\x1C-\x1F]+)|[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|@[a-z0-9_]+|[\p{L}\p{N}_]+(?:[-_][\p{L}\p{N}_]+)*|[^\s\x1C-\x1F]")
+
+(def ^:private case-ignorable-types
+  (set (map long
+            [Character/NON_SPACING_MARK Character/ENCLOSING_MARK Character/FORMAT
+             Character/MODIFIER_LETTER Character/MODIFIER_SYMBOL])))
+
+;; Unicode Word_Break MidLetter, MidNumLet and Single_Quote characters are also case-ignorable.
+(def ^:private case-ignorable-points
+  #{0x27 0x2E 0x3A 0xB7 0x387 0x55F 0x5F4 0x2018 0x2019 0x2024 0x2027 0xFE13 0xFE52 0xFE55 0xFF07
+    0xFF0E 0xFF1A})
+
+(defn- case-ignorable?
+  [^long point]
+  (or (contains? case-ignorable-points point)
+      (contains? case-ignorable-types (long (Character/getType (int point))))))
+
+(defn- cased?
+  [^long point]
+  (let [point (int point)]
+    (or (Character/isLowerCase point) (Character/isUpperCase point) (Character/isTitleCase point))))
+
+(defn- python-lower
+  "Lower-case one word like CPython `str.lower`, whose Final_Sigma rule ignores word breaks."
+  ^String [^String word]
+  (if (neg? (.indexOf word (int 0x3A3)))
+    (.toLowerCase word java.util.Locale/ROOT)
+    (let [^ints points
+          (.toArray (.codePoints word))
+
+          size
+          (alength points)
+
+          skip
+          (fn [^long index ^long step]
+            (loop [index index]
+              (if (and (< -1 index size) (case-ignorable? (aget points index)))
+                (recur (+ index step))
+                index)))
+
+          out
+          (StringBuilder.)]
+
+      (dotimes [index size]
+        (let [point (aget points index)]
+          (if (= 0x3A3 point)
+            (let [before (long (skip (dec index) -1))
+                  after (long (skip (inc index) 1))
+                  final? (and (<= 0 before)
+                              (cased? (aget points before))
+                              (or (= after size) (not (cased? (aget points after)))))]
+
+              (.appendCodePoint out (int (if final? 0x3C2 0x3C3))))
+            (.append out
+                     (.toLowerCase (String. (Character/toChars point)) java.util.Locale/ROOT)))))
+      (.toString out))))
+
+(defn- gliner-words
+  "Split and lower-case state text exactly like the upstream GLiNER2 word splitter."
+  [value]
+  (map python-lower (re-seq gliner-word-pattern value)))
 
 (defn- invalid! [message] (throw (ex-info message {:type :decisions/invalid-request})))
 
@@ -253,7 +315,7 @@
         (if (some #(str/ends-with? value %) ["." "!" "?"]) value (str value "."))
 
         words
-        (map #(.toLowerCase ^String % java.util.Locale/ROOT) (re-seq gliner-word-pattern value))
+        (gliner-words value)
 
         tokens
         (concat decision

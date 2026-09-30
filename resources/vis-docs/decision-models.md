@@ -17,6 +17,10 @@ heads. Then decide when a human must review a result before you rely on it.
 - **You must decide when a person should review a result.** Each answer includes an
   action-versus-escalation score. Evaluate it on your own labels before you rely on
   it.
+- **Your requests use languages other than English.** Choose a multilingual
+  [GLiNER2.5 model](#choose-and-train-a-gliner2-5-model).
+- **Your gateway has little memory or CPU.** Choose the small
+  [GLiNER2.5 model](#choose-and-train-a-gliner2-5-model).
 - **The baseline does not fit your data.** [Train with your own
   labels](#train-locally-with-the-python-sdk), then [publish a verified version and
   select it](#publish-explicitly-and-select-a-version).
@@ -32,7 +36,7 @@ SDK](python-sdk.md) instead.
 ## Download the baseline
 
 The `assets-pack` release keeps the existing voice assets. It adds pinned FP32 inference bundles,
-complete checkpoints and offline training dependencies for Laya and both GLiNER2.5 decision models.
+complete checkpoints and offline training dependencies for Laya and five GLiNER2.5 decision models.
 You download them explicitly: starting a gateway never downloads weights. You call decision models
 from Python through the [`vis-agent` SDK](python-sdk.md). Its lightweight client works without
 PyTorch, and the training extras are optional.
@@ -192,15 +196,29 @@ check fails, you get no deployable result. A checkpoint that was saved can stay 
 Training and export use a lot of local CPU, RAM and disk. Clients that only run inference do not
 need the extra.
 
-### Train either GLiNER2.5 decision model
+### Choose and train a GLiNER2.5 model
 
-You can choose the ordinary GLiNER2.5 base model or GLiNER2.5-Decide instead of
-Laya. Download the pinned FP32 bundle for the model you want to use on the gateway:
+You can use a GLiNER2.5 model from Fastino instead of Laya. Choose a model for the language of your
+text and the memory of your gateway:
+
+| Model ID | Text language | Fastino model | FP32 bundle size | Checkpoint size |
+|---|---|---|---|---|
+| `gliner2.5-small` | English | Small multi-task model | 293 MB | 263 MB |
+| `gliner2.5-base` | English | Default multi-task model | 749 MB | 694 MB |
+| `gliner2.5-decide` | English | Classification model | 1.75 GB | 1.80 GB |
+| `gliner2.5-multi` | Many languages | Multilingual multi-task model | 1.13 GB | 960 MB |
+| `gliner2.5-multi-decide` | Many languages | Multilingual classification model | 1.13 GB | 998 MB |
+
+Fastino trained the Decide models for classification. The multi-task models can also extract
+entities, but Vis uses every model only for decisions. The small model needs the least memory and
+CPU. Evaluate your candidates on your own held-out labels before you choose one.
+
+Download the pinned FP32 bundle for the model you want to use on the gateway:
 
 ```bash
 vis-agent decisions models download --model gliner2.5-base
-# Or choose the other model:
-vis-agent decisions models download --model gliner2.5-decide
+# Or choose another model ID from the table, for example:
+vis-agent decisions models download --model gliner2.5-multi
 ```
 
 For training, explicitly download the same model's complete checkpoint and the
@@ -208,8 +226,8 @@ shared, platform-specific GLiNER training wheelhouse:
 
 ```bash
 vis-agent decisions models download --model gliner2.5-base --training
-# Or train the other model:
-vis-agent decisions models download --model gliner2.5-decide --training
+# Or train another model from the table, for example:
+vis-agent decisions models download --model gliner2.5-multi --training
 ```
 
 Each command prints the installed paths and an offline `install.sh` command for a **new** Python
@@ -366,7 +384,7 @@ files as model assets.
 ## Train on the gateway instead
 
 Set `VIS_DECISION_TRAINING_PYTHON` to a Python 3.12 executable with the SDK and
-`vis-agent[decisions-training]` for Laya. For GLiNER2.5 base or Decide, use a
+`vis-agent[decisions-training]` for Laya. For a GLiNER2.5 model, use a
 **separate** environment with `vis-agent[decisions-gliner-training]` and set
 `VIS_DECISION_GLINER_TRAINING_PYTHON` to its executable. The two training extras
 pin incompatible Transformers versions. The gateway never substitutes one
@@ -391,10 +409,10 @@ print(decisions.get_training_job(job["job_id"]))
 # after completion, it deletes the private resumable checkpoint.
 ```
 
-For GLiNER, pass `model_id="gliner2.5-base"` or `"gliner2.5-decide"` to
-`decisions.start_training(...)` with approved data and a GLiNER training config. Without `model_id`,
-the default stays Laya. Job status includes `model_id`, stage, progress, metrics and the final
-`model_ref`.
+For GLiNER, pass a model ID from the [GLiNER2.5 table](#choose-and-train-a-gliner2-5-model), such
+as `model_id="gliner2.5-multi"`, to `decisions.start_training(...)` with approved data and a GLiNER
+training config. Without `model_id`, the default stays Laya. Job status includes `model_id`, stage,
+progress, metrics and the final `model_ref`.
 
 The gateway stages bounded inputs and starts an isolated offline CPU worker. It then saves a private
 checkpoint and validates a new FP32 inference version. To continue from it, pass the completed or

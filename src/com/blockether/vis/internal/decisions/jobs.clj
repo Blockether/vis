@@ -21,7 +21,8 @@
 
 (def ^:private max-saved-jobs 4)
 
-(def ^:private training-models #{"laya-typed-decisions" "gliner2.5-base" "gliner2.5-decide"})
+(def ^:private training-models
+  (conj (set (keys assets/gliner-architectures)) "laya-typed-decisions"))
 
 (def ^:private inputs
   {"train_data" ["train.jsonl" 16777216]

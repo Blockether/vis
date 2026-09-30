@@ -96,12 +96,16 @@
 (defdescribe
   installed-gliner-worker-trains-registers-and-resumes-both-families-offline
   (it "installed gliner worker trains registers and resumes both families offline"
-      ;; Full gate: -Dvis.test.gliner.training.python and one or both of
-      ;; -Dvis.test.gliner.training.base.dir / -Dvis.test.gliner.training.decide.dir.
+      ;; Full gate: -Dvis.test.gliner.training.python and at least one
+      ;; -Dvis.test.gliner.training.{base,small,multi,decide,multi-decide}.dir.
       ;; The directories hold verified full checkpoints, not encoder-only ONNX bundles.
       (when-let [python (System/getProperty "vis.test.gliner.training.python")]
         (doseq [[model-id property] [["gliner2.5-base" "vis.test.gliner.training.base.dir"]
-                                     ["gliner2.5-decide" "vis.test.gliner.training.decide.dir"]]
+                                     ["gliner2.5-small" "vis.test.gliner.training.small.dir"]
+                                     ["gliner2.5-multi" "vis.test.gliner.training.multi.dir"]
+                                     ["gliner2.5-decide" "vis.test.gliner.training.decide.dir"]
+                                     ["gliner2.5-multi-decide"
+                                      "vis.test.gliner.training.multi-decide.dir"]]
                 :let [checkpoint (System/getProperty property)]
                 :when checkpoint]
 

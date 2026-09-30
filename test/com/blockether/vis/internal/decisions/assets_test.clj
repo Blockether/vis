@@ -107,11 +107,25 @@
                     "https://github.com/Blockether/vis/releases/download/assets-pack/"))
           (expect (seq (:requires artifact))))
         (expect (= :decisions/unknown-model (:type (error-data #(assets/entry "unknown")))))))
-  (it "publishes both complete GLiNER2.5 families with distinct pinned artifacts"
-      (expect (= #{"laya-typed-decisions" "gliner2.5-base" "gliner2.5-decide"}
+  (it "publishes every complete GLiNER2.5 model with distinct pinned artifacts"
+      (expect (= (conj (set (keys assets/gliner-architectures)) "laya-typed-decisions")
                  (set (map :id (assets/manifest)))))
+      (expect (= #{"gliner2.5-base" "gliner2.5-small" "gliner2.5-multi" "gliner2.5-decide"
+                   "gliner2.5-multi-decide"}
+                 (set (keys assets/gliner-architectures))))
+      (expect (apply distinct?
+                (for [id
+                      (keys assets/gliner-architectures)
+
+                      kind
+                      [:inference :training]]
+
+                  (:sha256 (assets/artifact (assets/entry id) kind)))))
       (doseq [[id revision] {"gliner2.5-base" "7f1ae80f150e9d3e262ec1684d0d78208e2595d0"
-                             "gliner2.5-decide" "bbe10ff77ebb238777c17d3a8ac9260e30929057"}]
+                             "gliner2.5-small" "7132dc4561c3f94563c6147e75ffa8ef34c4964a"
+                             "gliner2.5-multi" "2ca71aafb3446d9014e1c55c7ff51c9bc7209c47"
+                             "gliner2.5-decide" "bbe10ff77ebb238777c17d3a8ac9260e30929057"
+                             "gliner2.5-multi-decide" "a35a0cd3b7a0f00f2effc576f454cd48fa98aa5f"}]
         (let [model (assets/entry id)
               artifacts (concat (map #(assets/artifact model %) [:inference :training])
                                 (map #(assets/artifact model :wheels %)
