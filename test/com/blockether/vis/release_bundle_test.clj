@@ -660,7 +660,8 @@
                              "#!/usr/bin/env bash\nprintf 'web=%s\\n' \"${VIS_WEB_DIR:-}\"\n")
           (let [{:keys [output]} (run-bash ["bash" (.getAbsolutePath launcher) "web" "--no-open"]
                                            env)]
-            (expect (str/includes? output "could not download the web app published for v9.9.9") output)
+            (expect (str/includes? output "could not download the web app published for v9.9.9")
+                    output)
             (expect (not (.exists (io/file bin "vis-web"))))
             (expect (empty? (filter #(str/starts-with? (.getName ^java.io.File %) ".vis-web.")
                                     (.listFiles ^java.io.File bin))))
@@ -1878,20 +1879,25 @@
 
 (defdescribe
   native-build-logs-test
-  (it "retains engine and TUI build logs even when a build fails"
-      (let [workflow (slurp ".github/workflows/native-release.yml")]
-        (expect (= 2 (count (re-seq #"name: Upload native build logs" workflow))))
-        ;; A 403 from the artifact service failed the macOS job AFTER its binaries
-        ;; were built and tested, which skipped the attach and took the release
-        ;; down with it: the log upload runs after a failure and can never fail
-        ;; the job itself.
+  (it
+    "retains engine and TUI build logs even when a build fails"
+    (let [workflow (slurp ".github/workflows/native-release.yml")]
+      (expect (= 2 (count (re-seq #"name: Upload native build logs" workflow))))
+      ;; A 403 from the artifact service failed the macOS job AFTER its binaries
+      ;; were built and tested, which skipped the attach and took the release
+      ;; down with it: the log upload runs after a failure and can never fail
+      ;; the job itself.
+      (expect
+        (=
+          2
+          (count
+            (re-seq
+              #"if: always\(\)\n(?:        #[^\n]*\n)*        continue-on-error: true\n        uses: actions/upload-artifact@v4"
+              workflow))))
+      (doseq [name ["engine" "tui"]]
         (expect (= 2
-                   (count (re-seq #"if: always\(\)\n(?:        #[^\n]*\n)*        continue-on-error: true\n        uses: actions/upload-artifact@v4"
-                                  workflow))))
-        (doseq [name ["engine" "tui"]]
-          (expect (= 2
-                     (count (filter #(str/includes? % (str "tee \"$log_dir/" name ".log\""))
-                                    (str/split-lines workflow))))))))
+                   (count (filter #(str/includes? % (str "tee \"$log_dir/" name ".log\""))
+                                  (str/split-lines workflow))))))))
   (it
     "streams both channels and preserves a failing compiler exit through tee"
     (let
@@ -2391,46 +2397,42 @@
                (expect (not (zero? exit)) (str args "\n" output))
                (expect (not (str/includes? output "update --track")) (str args "\n" output))))
            (finally (delete-tree! dir)))))
-  (it
-    "sends `update` and `upgrade` to the same updater"
-    ;; `upgrade` was in no launcher's command table, so it fell through to the
-    ;; engine, matched nothing and ran as a PROMPT — a model turn instead of an
-    ;; update. They are aliases; the wrapper must own both.
-    (let [launcher
-          (slurp "bin/vis-agent")
+  (it "sends `update` and `upgrade` to the same updater"
+      ;; `upgrade` was in no launcher's command table, so it fell through to the
+      ;; engine, matched nothing and ran as a PROMPT — a model turn instead of an
+      ;; update. They are aliases; the wrapper must own both.
+      (let [launcher
+            (slurp "bin/vis-agent")
 
-          block
-          (or (re-find #"(?ms)^# .. Wrapper-owned commands.*?^esac\n" launcher)
-              (throw (ex-info "bin/vis-agent declares wrapper-owned commands" {})))
+            block
+            (or (re-find #"(?ms)^# .. Wrapper-owned commands.*?^esac\n" launcher)
+                (throw (ex-info "bin/vis-agent declares wrapper-owned commands" {})))
 
-          dir
-          (.toFile (Files/createTempDirectory "vis-upgrade" (make-array FileAttribute 0)))
+            dir
+            (.toFile (Files/createTempDirectory "vis-upgrade" (make-array FileAttribute 0)))
 
-          script
-          (str "set -u\n"
-               "die() { printf '%s\\n' \"$1\" >&2; exit 1; }\n"
-               "jvm_requested=0\n"
-               "runtime_effective() { printf 'release\\n'; }\n"
-               "configure_system_trust() { :; }\n"
-               "vis_do_desktop() { printf 'desktop %s\\n' \"$*\"; }\n"
-               "vis_do_switch() { printf 'switch %s\\n' \"$*\"; }\n"
-               "vis_do_update() { printf 'update %s\\n' \"$*\"; }\n"
-               block)]
+            script
+            (str "set -u\n"
+                 "die() { printf '%s\\n' \"$1\" >&2; exit 1; }\n" "jvm_requested=0\n"
+                 "runtime_effective() { printf 'release\\n'; }\n"
+                 "configure_system_trust() { :; }\n"
+                 "vis_do_desktop() { printf 'desktop %s\\n' \"$*\"; }\n"
+                 "vis_do_switch() { printf 'switch %s\\n' \"$*\"; }\n"
+                 "vis_do_update() { printf 'update %s\\n' \"$*\"; }\n" block)]
 
-      (try (spit (io/file dir "wrapper.sh") script)
-           (doseq [[args expected] [[["update"] "update"] [["upgrade"] "upgrade"]
-                                    [["update" "--track" "beta"] "update --track beta"]
-                                    [["upgrade" "--track" "beta"] "upgrade --track beta"]]]
-             (let [{:keys [exit output]}
-                   (run-bash (into ["bash" (.getPath (io/file dir "wrapper.sh"))] args) {})
+        (try (spit (io/file dir "wrapper.sh") script)
+             (doseq [[args expected] [[["update"] "update"] [["upgrade"] "upgrade"]
+                                      [["update" "--track" "beta"] "update --track beta"]
+                                      [["upgrade" "--track" "beta"] "upgrade --track beta"]]]
+               (let [{:keys [exit output]}
+                     (run-bash (into ["bash" (.getPath (io/file dir "wrapper.sh"))] args) {})
+                     expected-line (str "update " (str/join " " (rest args)))]
 
-                   expected-line
-                   (str "update " (str/join " " (rest args)))]
-               (expect (zero? exit) (str args "\n" output))
-               ;; both spellings reach vis_do_update with the SAME arguments
-               (expect (= (str/trim expected-line) (str/trim output)) (str args "\n" output))
-               (expect (not (str/includes? output "unknown")) (str expected "\n" output))))
-           (finally (delete-tree! dir)))))
+                 (expect (zero? exit) (str args "\n" output))
+                 ;; both spellings reach vis_do_update with the SAME arguments
+                 (expect (= (str/trim expected-line) (str/trim output)) (str args "\n" output))
+                 (expect (not (str/includes? output "unknown")) (str expected "\n" output))))
+             (finally (delete-tree! dir)))))
   (it "keeps a named beta build instead of resolving the published selection"
       (let [body (launcher-function (slurp "bin/vis-agent") "update_native")]
         ;; A pinned `beta-<commit>` is installed as named; only an unpinned beta
