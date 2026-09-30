@@ -235,6 +235,16 @@ export function sidebarRailClass(isUp: boolean): string {
 }
 
 /**
+ * THE PHONE'S LIST IS ONE LAYER, AND THE SESSION PANE COVERS ALL OF IT. The machine
+ * strip, the pinned project headers and the set bands carry their own `z-index`, and
+ * the pane over the list carries none, so each of them painted over an open session.
+ * Reported on a phone: the list's headers stood in the middle of the transcript.
+ * `isolate` keeps them inside the list, under the pane that follows it. The class is
+ * the same with and without a session on top, so neither way changes the list.
+ */
+const PHONE_LIST_CLASS = 'isolate h-full';
+
+/**
  * THE PHONE'S LIST WHILE ANOTHER SCREEN FILLS THE SHELL. `display: none` would
  * discard the list's styles, layout and scroll offset, and the way back would
  * rebuild them for every row before its first frame.
@@ -1350,11 +1360,11 @@ export function App() {
                 ? canSplit
                   ? sidebarRailClass(false)
                   : shellView === 'session'
-                    ? 'h-full'
+                    ? PHONE_LIST_CLASS
                     : PARKED_LIST_CLASS
                 : isSplit
                   ? sidebarRailClass(true)
-                  : 'h-full'
+                  : PHONE_LIST_CLASS
             }
             aria-hidden={!sessionsVisible || undefined}
           >

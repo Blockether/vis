@@ -297,7 +297,7 @@ describe('the app bar', () => {
     const view = await mount();
     const main = view.baseElement.querySelector('main') as HTMLElement;
     const list = Array.from(main.children).find(
-      (child) => child.className === 'h-full',
+      (child) => child.className === 'isolate h-full',
     ) as HTMLElement;
     expect(list).toBeInTheDocument();
 
@@ -307,7 +307,7 @@ describe('the app bar', () => {
 
     // The very same node, still carrying the fleet — never rebuilt, never hidden.
     expect(main.contains(list)).toBe(true);
-    expect(list.className).toBe('h-full');
+    expect(list.className).toBe('isolate h-full');
     expect(within(list).getByRole('button', { name: 'Projects on laptop' })).toBeVisible();
     view.unmount();
     view.restore();
