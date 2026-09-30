@@ -32,7 +32,19 @@ def endpoint(respond):
             pass
 
         def handle_request(self):
-            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
+                chunks = []
+                while True:
+                    size = int(self.rfile.readline().split(b";", 1)[0], 16)
+                    if not size:
+                        while self.rfile.readline().strip():
+                            pass
+                        break
+                    chunks.append(self.rfile.read(size))
+                    assert self.rfile.read(2) == b"\r\n"
+                body = b"".join(chunks)
+            else:
+                body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
             calls.append((self.command, self.path, dict(self.headers), body))
             result = respond(self.command, self.path, body)
             status, value = result[:2]
@@ -99,6 +111,28 @@ def test_model_upload_streams_without_a_32_bit_content_length(monkeypatch, lengt
                 content=io.BytesIO(b"fp32"), sha256="a" * 64, length=length
             )
         assert result["model_ref"] == "sha256-" + "a" * 64
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param(b"example", id="single-chunk"),
+        pytest.param(b"archive-data" * 4096, id="multiple-chunks"),
+    ],
+)
+def test_model_upload_endpoint_consumes_chunked_body(content):
+    digest = hashlib.sha256(content).hexdigest()
+    with endpoint(lambda *_: (201, {"model_ref": "uploaded"})) as (url, calls):
+        result = GatewayClient(url).post_decision_model(
+            content=io.BytesIO(content), sha256=digest, length=len(content)
+        )
+        assert result == {"model_ref": "uploaded"}
+        headers = {key.lower(): value for key, value in calls[-1][2].items()}
+        assert "content-length" not in headers
+        assert headers["transfer-encoding"] == "chunked"
+        assert headers["x-content-sha256"] == digest
+        assert len(calls[-1][3]) == len(content)
+        assert calls[-1][3] == content
 
 
 @pytest.mark.parametrize("length", [1, 6])
