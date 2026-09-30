@@ -46,6 +46,14 @@ top of that group.
 You can keep typing while Vis works. A message that you send during a running turn
 waits in a queue. You can also cancel the running turn or quit the session.
 
+### Follow progress
+
+Vis adds short notes while it works. Each Activity groups the steps between two notes.
+Open an Activity to see its steps and results. Files and images appear after it.
+
+To see each step as a separate Activity, turn off **Summarize steps between notes** in Settings, under **Responses**.
+The terminal and each app keep their own choice.
+
 ### Queue a message
 
 Press **Enter** to send. If no turn is running, the message starts one.
@@ -294,7 +302,7 @@ vis-agent sessions export 3a7b2c1d --html report.html
 ## See also
 
 - [Keyboard shortcuts](keyboard-shortcuts.md) — every terminal key, including the session commands on this page.
-- [Desktop and mobile setup](index.md#connecting-the-companion-app) — follow and control the same session from another device.
+- [Desktop and mobile setup](index.md#connect-an-app) — follow and control the same session from another device.
 - [Council](council.md) — ask another session for help or a second review.
 - [Reporting a bug](reporting-bugs.md) — remove private information before you share an export.
 - [Project instructions](context-and-prompts.md) — slash commands and shell shortcuts you can queue.

@@ -282,7 +282,7 @@ the gateway starts. Point it to a directory that contains the build's `index.htm
 1. [Download the installer from GitHub Releases](https://github.com/Blockether/vis/releases/latest)
    for your computer.
 2. Install the package and open **Vis** from your application launcher.
-3. [Connect to your gateway](index.md#connecting-the-companion-app) to open your
+3. [Connect to your gateway](index.md#connect-an-app) to open your
    projects and continue your sessions.
 
 | Platform | Package | Install |
@@ -303,7 +303,7 @@ the stable package. To keep your stable app, use
 
 Run the gateway on the computer where your projects live: macOS, Linux, or [Linux in
 WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) on Windows. For a local WSL2 gateway,
-enable localhost forwarding. The [connection guide](index.md#connecting-the-companion-app) covers
+enable localhost forwarding. The [connection guide](index.md#connect-an-app) covers
 both local addresses and remote pairing. [Isolated drafts](drafts.md) have more filesystem
 requirements.
 
@@ -421,7 +421,7 @@ A desktop launch does not use Java, change your engine track, or start or restar
 a gateway.
 
 On first launch, pair with your gateway in the app using its URL and bearer token.
-See [Desktop and mobile setup](index.md#connecting-the-companion-app) for connection options.
+See [Desktop and mobile setup](index.md#connect-an-app) for connection options.
 
 ## Automatic native betas
 
@@ -485,5 +485,5 @@ platforms without native bundles, use the dev track.
 ## See also
 
 - [Native builds for JVM extensions](jvm-native-image.md) — only for adding Java/Clojure capabilities inside Vis.
-- [Getting started](index.md#connecting-the-companion-app) — download a client and connect to your sessions.
+- [Getting started](index.md#connect-an-app) — download a client and connect to your sessions.
 - [Configuration](configuration.md)

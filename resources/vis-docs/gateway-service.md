@@ -1,9 +1,7 @@
 # Running a gateway
 
-Run a gateway when you want the Vis app, your scripts and other clients to share
-one agent service. The gateway owns sessions and runs tools on its machine.
-Clients send requests and follow progress. You can run it in your terminal or
-keep it running as a daemon under a service manager such as systemd.
+Keep a gateway available for desktop and phone apps, terminal clients or your own scripts.
+Your project files and tools stay on the computer running it.
 
 ## When to use
 
@@ -58,15 +56,32 @@ program to `http://127.0.0.1:7890`. If a gateway is already running, check its s
 before you start another. Do not stop a shared gateway only to try an example.
 
 `--require-token` enables authentication, even on loopback. The default token file is
-`~/.vis/gateway.token`, and only its owner can read it. `--token-file` selects another location.
+`~/.vis/gateway.token`, with owner-only permissions (mode `600`). `--token-file` selects another location.
 
 This token gives access to an agent that can run tools. Keep it out of source control, logs,
 screenshots and command arguments. The CLI can use the local token automatically. An SDK client
 needs its documented connection settings.
 
-An automatically started gateway can exit when it has no clients or active
-work. Explicit `gateway start` is different: it stays running without clients,
-which is the mode to use under a supervisor.
+The terminal client starts a managed gateway if needed. It stops after the last client disconnects and no work remains.
+Opening the desktop app does not start a gateway.
+Explicit `gateway start` stays running without clients. Use this mode under a service manager.
+
+### Stop or restart a gateway
+
+Check the gateway before stopping it:
+
+```bash
+vis-agent gateway status          # show the address and connected clients
+vis-agent gateway stop --if-idle  # stop only when nobody is using it
+vis-agent gateway stop            # stop even if clients are connected
+```
+
+Stopping a busy gateway interrupts its clients and active work.
+An unconditional stop can escalate to SIGTERM/SIGKILL. Use `--if-idle` to avoid interrupting another session.
+For a supervised service, use its service manager to stop it. Otherwise, its restart policy may start it again.
+
+To change the listening address, stop the gateway before starting it with the new address.
+Check for active work before any restart.
 
 ## Connect from another machine
 
@@ -87,9 +102,64 @@ with no path prefix if you use the Python SDK. Your proxy must forward
 authorization headers and let server-sent events stream without buffering or
 short idle timeouts.
 
-Supply the token through the secret configuration of your application. Pairing links and QR codes
-also contain connection credentials. Create or view them only in a private terminal, and do not use
-them as public examples. To pair the Vis app, see [remote app connections](index.md#pair-a-phone).
+Supply the token through your application's secret configuration.
+Pairing links and QR codes also contain credentials. View them only in a private terminal.
+For the app's first connection, see [Pair a phone](index.md#pair-a-phone).
+
+### Access from anywhere with Tailscale
+
+Put both devices on a [Tailscale](https://tailscale.com) tailnet.
+Start the gateway on the computer's Tailscale address, then pair the app.
+The pairing link prefers that address over a local network address.
+
+You can use `--host 0.0.0.0` to listen on all IPv4 interfaces, including public ones.
+The pairing link then includes other addresses the gateway can answer on.
+The app tries them in order, so it can change networks without a new pairing link.
+
+If you need only private access, bind to one private address.
+Keep token authentication enabled. A bearer token controls access, but it does not encrypt HTTP.
+
+### Choose a pairing address
+
+If you use a proxy, forwarded port or public hostname, set `--advertise` to its address:
+
+```bash
+vis-agent gateway start --host 0.0.0.0 --require-token --pair --advertise 10.0.0.5
+vis-agent gateway pair --advertise https://gateway.example.com
+```
+
+`--advertise` accepts a host, `host:port` or a full URL.
+It changes the pairing link, not the listening address. The address must still reach the gateway.
+For access through a router, forward the gateway's port and advertise the public address.
+Use a trusted VPN or HTTPS for remote connections.
+
+The address you choose comes first in the link. Detected addresses follow as fallbacks.
+To reuse it, set `VIS_GATEWAY_ADVERTISE` or your [gateway pairing address](configuration.md#gateway-pairing-address).
+The flag takes priority, then the environment variable, then the configuration file.
+
+### Using a remote gateway from the CLI
+
+The terminal client can also connect to another computer. Supply its address
+and token with these root flags:
+
+```bash
+vis-agent --gateway 10.0.0.5 --gateway-token "$TOKEN" tui
+vis-agent --gateway https://gateway.example.com/vis --gateway-token "$TOKEN" gateway status
+```
+
+`--gateway` accepts `HOST`, `HOST:PORT` or a full URL. A bare host means HTTP on
+port `7890`. You can instead set `VIS_GATEWAY_URL` and `VIS_GATEWAY_TOKEN` in
+your shell. To reach a local-only gateway through an SSH tunnel:
+
+```bash
+ssh -N -L 7890:127.0.0.1:7890 you@10.0.0.5 &
+vis-agent --gateway 127.0.0.1 tui
+```
+
+Supply a token if that gateway requires one. With `--gateway`, Vis never starts,
+restarts or stops a replacement gateway. An unreachable target is an error,
+not a fallback to a local one. The `sessions` commands (`list`, `show`, `fork`,
+`delete`, `export`) still read the local database.
 
 ## Keep it running on Linux
 
@@ -159,7 +229,7 @@ Use prebuilt native releases on a small VPS. Compile native images on a larger
 builder for the target operating system and architecture. A native engine does
 not eliminate the memory used by Python workers, extensions or commands the
 agent starts. Begin with modest concurrency and monitor memory under your real
-workload. See [resource limits](index.md#resource-limits).
+workload. See [resource limits](#resource-limits).
 
 The service account's `~/.vis` holds persistent configuration and history.
 Protect its backups and leave room for databases, attachments, logs and project
@@ -173,6 +243,34 @@ The new runtime is used after a planned restart. Restarting a service can
 interrupt requests and tools, so do it in a maintenance window, not on every
 client connection.
 
+### Resource limits
+
+Set these environment variables before starting the gateway:
+
+| Variable | Default | Purpose |
+| --- | ---: | --- |
+| `VIS_GATEWAY_MAX_CONCURRENT_TURNS` | `50` | Turns executing at once across all sessions |
+| `VIS_GATEWAY_EVENT_RING_MAX` | `2000` | Events kept per session for SSE replay |
+| `VIS_ENV_CACHE_MAX` | `8` | Idle session environments kept resident |
+| `VIS_ENV_MAX_TURNS_PER_CTX` | `5` | Turns before a Python session is recycled |
+| `VIS_ENV_RSS_BUDGET_MB` | `3072` native / `5120` JVM | Process memory threshold for eviction |
+
+A value `<= 0` disables an eviction threshold.
+
+## HTTP API
+
+The gateway serves its OpenAPI 3.1 schema without a token:
+
+```bash
+curl -sS http://127.0.0.1:7890/openapi.json -o vis-gateway.json
+```
+
+Use the schema for routes, request formats and responses. Protected routes
+require the gateway token. An incompatible client receives `HTTP 426`.
+Update the client or gateway to a compatible version.
+
+For integrations, use the [Python SDK](python-sdk.md) or [Java and Clojure SDK](jvm-sdk.md).
+
 ## Troubleshoot a connection
 
 | Symptom | Check |
@@ -184,9 +282,23 @@ client connection.
 | Python tools fail after a manual install | The launcher, Python sidecar, file permissions and service environment |
 | A session cannot find the project | The path exists and is accessible on the gateway machine |
 
-Stopping a shared gateway affects every client. `vis-agent gateway stop --if-idle` stops the gateway
-only when it is idle. `vis-agent gateway stop` can interrupt active work. To stop a supervised
-service, use the service manager. Then its restart policy does not undo your action.
+### Tokens and HTTP 401
+
+| Gateway address | Token required? |
+| --- | --- |
+| `127.0.0.1` (default) | No |
+| Any other address (`0.0.0.0`, LAN, Tailscale) | Yes |
+| `127.0.0.1 --require-token` | Yes |
+
+In the app's saved machine list, green means online. Red means offline.
+Amber means the token is wrong or missing.
+
+Remote clients can receive the token through pairing. In the desktop app,
+enter it when adding a token-protected local gateway.
+
+An `HTTP 401` error means the gateway is reachable but the token is missing or incorrect.
+Pair the client again or check that you supplied the token for the right gateway.
+Do not disable remote authentication to work around the error.
 
 ## Collect evidence when work stops progressing
 
@@ -201,6 +313,7 @@ for cleanup rules. Review the files before sharing them.
 
 ## See also
 
+- [Getting started](index.md) — install Vis and connect an app for the first time.
 - [Python SDK](python-sdk.md) — connect a script or wrap an owned local agent.
 - [Java and Clojure SDK](jvm-sdk.md) — connect a JVM application.
 - [Native builds for JVM extensions](jvm-native-image.md) — only when adding Java/Clojure capabilities to the engine.

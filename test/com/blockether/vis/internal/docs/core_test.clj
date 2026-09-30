@@ -534,39 +534,53 @@
         ;; A redirect keeps the fragment of an old bookmark, so every old anchor stays.
         (doseq [id ["queue-a-message" "cancel-a-turn" "quit" "export-a-session" "markdown" "html"]]
           (expect (contains? anchors id) id))))
-  (it "keeps app setup and gateway reference in the landing page"
-      (let [{:keys [pages] :as site}
-            (docs/collect)
+  (it
+    "keeps setup on the landing page and gateway details in their own guide"
+    (let [{:keys [pages] :as site}
+          (docs/collect)
 
-            home
-            (first (filter #(= "index" (:slug %)) pages))
+          home
+          (first (filter #(= "index" (:slug %)) pages))
 
-            md
-            (:md home)]
+          gateway
+          (first (filter #(= "gateway-service" (:slug %)) pages))
 
-        (doseq [mode
-                [:static :live]
+          sessions
+          (first (filter #(= "sessions" (:slug %)) pages))
 
-                :let [html
-                      (docs/page-html site home mode)]
-                anchor
-                ["connecting-the-companion-app" "connect-the-desktop-app" "pair-a-phone"
-                 "access-from-anywhere-with-tailscale" "gateway-reference" "starting-the-gateway"
-                 "using-a-remote-gateway-from-the-cli" "tokens-and-http-401" "http-api" "python-sdk"
-                 "resource-limits" "see-also"]]
+          md
+          (:md home)]
 
-          (expect (str/includes? html (str "id=\"" anchor "\"")) anchor))
-        (doseq [content ["vis-agent gateway start --host 127.0.0.1"
-                         "vis-agent gateway start --host 10.0.0.5 --require-token --pair"
-                         "vis-agent gateway pair" "vis-agent gateway stop --if-idle"
-                         "VIS_GATEWAY_URL" "VIS_GATEWAY_TOKEN" "HTTP 401" "HTTP 426"
-                         "VIS_GATEWAY_MAX_CONCURRENT_TURNS" "VIS_GATEWAY_EVENT_RING_MAX"
-                         "VIS_ENV_CACHE_MAX" "VIS_ENV_MAX_TURNS_PER_CTX" "VIS_ENV_RSS_BUDGET_MB"
-                         "GatewayClient" "Agent(project=" "does not encrypt HTTP"
-                         "Stopping a busy gateway interrupts"]]
-          (expect (str/includes? md content) content))
-        (expect (< (str/index-of md "## First session") (str/index-of md "## Gateway reference")))
-        (expect (not (str/includes? md "gateway.md"))))))
+      (doseq [mode
+              [:static :live]
+
+              :let [html
+                    (docs/page-html site home mode)]
+              anchor
+              ["why-vis" "see-vis-in-action" "connecting-the-companion-app" "connect-an-app"
+               "get-the-phone-app" "connect-the-desktop-app" "pair-a-phone"
+               "access-from-anywhere-with-tailscale" "work-with-a-project"
+               "put-your-expertise-into-code" "combine-steps-in-python"
+               "follow-the-work-on-every-screen" "keep-useful-work-when-you-return" "updating-vis"
+               "native-vs-jvm" "gateway-reference" "starting-the-gateway"
+               "using-a-remote-gateway-from-the-cli" "tokens-and-http-401" "http-api" "python-sdk"
+               "resource-limits" "see-also"]]
+
+        (expect (str/includes? html (str "id=\"" anchor "\"")) anchor))
+      (doseq [content ["vis-agent gateway start --host 127.0.0.1"
+                       "vis-agent gateway start --host 10.0.0.5 --require-token --pair"
+                       "vis-agent gateway pair" "gateway-service.md"]]
+        (expect (str/includes? md content) content))
+      (doseq [content ["VIS_GATEWAY_URL" "VIS_GATEWAY_TOKEN" "HTTP 401" "HTTP 426"
+                       "VIS_GATEWAY_MAX_CONCURRENT_TURNS" "VIS_GATEWAY_EVENT_RING_MAX"
+                       "VIS_ENV_CACHE_MAX" "VIS_ENV_MAX_TURNS_PER_CTX" "VIS_ENV_RSS_BUDGET_MB"
+                       "does not encrypt HTTP" "Stopping a busy gateway interrupts" "Amber means"]]
+        (expect (not (str/includes? md content)) content)
+        (expect (str/includes? (:md gateway) content) content))
+      (expect (not (str/includes? md "Summarize steps between notes")))
+      (expect (str/includes? (:md sessions) "Summarize steps between notes"))
+      (expect (< (str/index-of md "## First session") (str/index-of md "## Gateway reference")))
+      (expect (not (str/includes? md "gateway.md"))))))
 
 (defdescribe
   reader-first-onboarding-test
@@ -581,6 +595,17 @@
               ["python_execution" "await gather" "apropos()" "Path.write_text()" "toggles.shell"]]
 
         (expect (not (str/includes? intro term)) (str source " introduces " term " before setup"))))
+  (it "starts with a short introduction and installation rather than feature summaries"
+      (let [md
+            (:md (first (filter #(= "index" (:slug %)) (:pages (docs/collect)))))
+
+            lead
+            (first (str/split md #"\n\s*\n"))]
+
+        (expect (<= (count (str/split lead #"\s+")) 30))
+        (expect (= "Install" (second (re-find #"(?m)^## (.+)$" md))))
+        (doseq [heading ["## Why Vis" "## Work with a project" "## Native vs JVM"]]
+          (expect (not (str/includes? md heading)) heading))))
   (it "connects the landing page to desktop downloads and setup in both outputs"
       (let [{:keys [pages] :as site}
             (docs/collect)
@@ -601,9 +626,8 @@
           (expect (str/includes? html "href=\"https://github.com/Blockether/vis/releases/latest\""))
           (expect (str/includes? html (str "href=\"" setup "\"")))))))
 
-;; Regression: quick links inherited paragraph justification and split at separators on mobile.
-;; Motivation must open the full guide, not jump to the homepage summary.
-;; The sessions guide and the full page list must be reachable from the top of the page.
+;; Regression: fixed-width shortcuts let long labels spill into adjacent links.
+;; Keep only setup actions here. Motivation and session guides belong in Learn more.
 (defdescribe
   getting-started-quick-links-test
   (it
@@ -634,20 +658,18 @@
                             [href label])
                           (re-seq #"<a href=\"([^\"]+)\">([^<]+)</a>" (or navigation "")))]]
 
-        (expect (= [[(if (= mode :static) "motivation.html" "/docs/motivation") "Motivation"]
-                    ["#install" "Install"] ["#first-session" "First session"]
-                    ["#connecting-the-companion-app" "Desktop and mobile"]
-                    [(if (= mode :static) "sessions.html" "/docs/sessions") "Sessions"]
-                    ["#learn-more" "All guides"]]
+        (expect (= [["#install" "Install"] ["#first-session" "Try a task"]
+                    ["#connect-an-app" "Connect an app"]]
                    links))
         (expect (not (str/includes? (or navigation "") "·")))
         (expect (not (str/includes? html "<p><nav class=\"quick-links\"")))
         (let [link-css (second (re-find #"(?s)(?:^|\})\s*\.quick-links a\s*\{([^}]+)\}" css))]
-          (doseq [fragment ["min-height: 2.75rem" "white-space: nowrap"]]
+          (doseq [fragment ["flex: 0 1 auto" "min-height: 2.75rem" "max-width: 100%"
+                            "white-space: normal"]]
             (expect (str/includes? (or link-css "") fragment) fragment)))
         (expect (re-find #"\.quick-links\s*\{\s*display: flex;\s*flex-wrap: wrap;\s*gap: 0\.5rem"
                          css))
-        (expect (re-find #"\.quick-links a\s*\{\s*flex-basis: calc\(50% - 0\.25rem\);\s*\}" css))
+        (expect (not (str/includes? css "flex-basis: calc(50% - 0.25rem)")))
         (doseq [fragment [".quick-links a:hover" "a:focus-visible"]]
           (expect (str/includes? css fragment) fragment))))))
 

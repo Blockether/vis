@@ -739,4 +739,4 @@ to it. Run `/reload` after you edit these lists.
 - [Process jail and network policy](jail.md) — the `jail` block in full.
 - [Project instructions](context-and-prompts.md) — AGENTS.md, SYSTEM.md and prompt templates.
 - [Extending Vis](extending.md) — configuring providers, tools and toggles.
-- [Gateway reference](index.md#gateway-reference) — gateway connections and tokens.
+- [Running a gateway](gateway-service.md) — connect clients and resolve token errors.

@@ -351,7 +351,7 @@ a:hover {
 .content ol > li::marker {
   content: counter(list-item) '. ';
 }
-/* Keep page shortcuts out of justified prose and wrap whole links. */
+/* Size shortcuts to their labels and wrap them when space is limited. */
 .quick-links {
   display: flex;
   flex-wrap: wrap;
@@ -379,9 +379,10 @@ button,
   cursor: pointer;
 }
 .quick-links a {
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 2.75rem;
-  white-space: nowrap;
+  max-width: 100%;
+  white-space: normal;
 }
 button:hover,
 .quick-links a:hover {
@@ -972,9 +973,6 @@ button.primary:hover {
   }
   .main {
     padding: 1.6rem max(1rem, env(safe-area-inset-right)) 3rem max(1rem, env(safe-area-inset-left));
-  }
-  .quick-links a {
-    flex-basis: calc(50% - 0.25rem);
   }
   .content pre {
     padding: 0.875rem 1rem;

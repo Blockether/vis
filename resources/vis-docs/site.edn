@@ -1,7 +1,7 @@
 {:nav
  [{:pages
    [{:blurb
-     "Install Vis, connect the desktop or phone app and try your first task with a model you choose."
+     "Install Vis, try a first task and connect the desktop or phone app to the same sessions."
      :page "index"
      :title "Getting started"}
     {:blurb
@@ -126,5 +126,5 @@
    :section "Reference"}]
  :site {:extension-center {:section "Community" :title "Extension Center"}
         :repo "https://github.com/Blockether/vis"
-        :tagline "Vis is a coding agent you can adapt to your tools and workflow."
+        :tagline "Explore a project, change code and run checks."
         :title "Vis"}}

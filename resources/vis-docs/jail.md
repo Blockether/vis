@@ -338,4 +338,4 @@ cannot widen an existing environment until `/reload` invalidates it.
 
 - [Configuration](configuration.md): the complete `workspace`, `jail`, `environment` and toggle keys.
 - [Python sandbox](python-sandbox.md): Python runtime permissions.
-- [Gateway reference](index.md#gateway-reference): client connections and authentication.
+- [Running a gateway](gateway-service.md): client connections and authentication.

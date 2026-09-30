@@ -356,4 +356,4 @@ between sessions.
 
 - [Configuration](configuration.md) — persistent feature toggles.
 - [Python sandbox](python-sandbox.md) — host tools and session context.
-- [Gateway reference](index.md#gateway-reference) — gateway scope and authentication.
+- [Running a gateway](gateway-service.md) — gateway scope and authentication.
