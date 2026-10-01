@@ -3147,8 +3147,8 @@
         footer-row
         (get-in section-bounds [:footer :row])
 
-        ;; Start the transcript at the header boundary; its own padding provides
-        ;; the separation below the title border.
+        ;; `GridLayout` owns the one-row gap below the header and gives every
+        ;; section painter its measured origin.
         messages-top
         (get-in section-bounds [:transcript :row])
 

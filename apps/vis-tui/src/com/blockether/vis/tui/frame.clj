@@ -68,7 +68,7 @@
 
 (def section-order
   "Stable paint/layout order for the complete application frame."
-  [:header :transcript :echo :attachments :composer :footer])
+  [:header :header-gap :transcript :echo :attachments :composer :footer])
 
 (defn- checked-size
   ^long [label value]
@@ -123,6 +123,7 @@
 
          heights
          {:header (checked-size :header header)
+          :header-gap 1
           :transcript 0
           :echo 1
           :attachments (checked-size :attachments attachments)

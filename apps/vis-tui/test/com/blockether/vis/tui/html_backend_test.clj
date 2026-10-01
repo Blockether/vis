@@ -1018,13 +1018,13 @@
                        (update-vals sections frame/bounds)]
 
                    (expect (instance? GridLayout (.getLayoutManager ^Panel panel)))
-                   (expect (= [:header :transcript :echo :attachments :composer :footer]
+                   (expect (= [:header :header-gap :transcript :echo :attachments :composer :footer]
                               (vec (keys sections))))
                    (expect (every? #(instance? TextGraphicsComponent %) (vals sections)))
                    (expect (= {:col 0 :row 0 :cols 80 :rows 3} (:header bounds)))
-                   ;; Transcript padding already separates the content from the title border.
-                   ;; Reclaim the redundant spacer without moving the composer or footer.
-                   (expect (= {:col 0 :row 3 :cols 80 :rows 19} (:transcript bounds)))
+                   ;; Keep a fixed blank row below the header while the transcript scrolls.
+                   (expect (= {:col 0 :row 3 :cols 80 :rows 1} (:header-gap bounds)))
+                   (expect (= {:col 0 :row 4 :cols 80 :rows 18} (:transcript bounds)))
                    (expect (= {:col 0 :row 22 :cols 80 :rows 1} (:echo bounds)))
                    (expect (= {:col 0 :row 23 :cols 80 :rows 2} (:attachments bounds)))
                    (expect (= {:col 0 :row 25 :cols 80 :rows 3} (:composer bounds)))
@@ -1059,13 +1059,13 @@
                           5
                           {:header 1 :attachments 0 :composer 0 :footer 0}
                           {:transcript (fn [graphics _]
-                                         (.putString graphics 0 0 "above")
+                                         (.putString graphics 0 1 "above")
                                          (.putString graphics 0 2 "inside")
                                          (.putString graphics 0 4 "below"))})]
 
         (try (frame/paint! (.newTextGraphics screen) root :transcript)
              (.refresh screen)
-             (expect (= \space (.getCharacter (.getCharacter terminal (TerminalPosition. 0 0)))))
+             (expect (= \space (.getCharacter (.getCharacter terminal (TerminalPosition. 0 1)))))
              (expect (= \i (.getCharacter (.getCharacter terminal (TerminalPosition. 0 2)))))
              (expect (= \space (.getCharacter (.getCharacter terminal (TerminalPosition. 0 4)))))
              (finally (.stopScreen screen))))))
