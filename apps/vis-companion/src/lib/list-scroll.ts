@@ -119,11 +119,25 @@ export function forgetListScroll(): void {
 export function topVisibleRow(viewport: HTMLElement | null): ListAnchor | null {
   if (!viewport) return null;
   const viewportTop = viewport.getBoundingClientRect().top;
-  const row = Array.from(viewport.querySelectorAll<HTMLElement>('[data-session-id]')).find(
-    (element) => element.getBoundingClientRect().bottom > viewportTop,
-  );
-  const id = row?.dataset.sessionId;
-  return id ? { id, offset: row.getBoundingClientRect().top - viewportTop } : null;
+  const rows = viewport.querySelectorAll<HTMLElement>('[data-session-id]');
+  // Rows follow one vertical flow, including the gaps between groups. Binary search
+  // keeps a scroll near the end from laying out every preceding row's swipe track.
+  let first = 0;
+  let end = rows.length;
+  let anchor: ListAnchor | null = null;
+  while (first < end) {
+    const middle = Math.floor((first + end) / 2);
+    const row = rows[middle];
+    const bounds = row.getBoundingClientRect();
+    if (bounds.bottom > viewportTop) {
+      end = middle;
+      const id = row.dataset.sessionId;
+      anchor = id ? { id, offset: bounds.top - viewportTop } : null;
+    } else {
+      first = middle + 1;
+    }
+  }
+  return anchor;
 }
 
 /** Where row `id` sits now, relative to the top edge of `viewport`. */
@@ -167,13 +181,15 @@ export function useListScrollPark(
   useLayoutEffect(() => {
     const element = viewport.current;
     if (!element) return;
+    const currentMark = () =>
+      markListScroll(element, element.scrollTop <= AT_TOP_PX ? null : topVisibleRow(element));
     const capture = () => {
       if (!visible.current || !element.isConnected) return;
-      lastVisible.current = markListScroll(element, topVisibleRow(element));
+      lastVisible.current = currentMark();
       rememberListScroll(lastVisible.current);
     };
     const onScroll = () => {
-      if (visible.current) lastVisible.current = markListScroll(element, topVisibleRow(element));
+      if (visible.current) lastVisible.current = currentMark();
     };
     const abandon = () => {
       if (!visible.current) return;
