@@ -502,6 +502,8 @@ export type SessionRowsContext = {
 export type ProjectGroupReading = {
   pageSize: number;
   isVisible: boolean;
+  /** Accepted machine snapshots revalidate pages even when its head rows stay unchanged. */
+  revision?: number;
 };
 
 /** One project-creation lifecycle, shared so headers report the request they started. */
@@ -559,7 +561,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   const { label: project, root, sessions, tally } = group;
   const { conn, sessions: list } = machine;
   const { getClient, drafts, needle, actions: rowActions, openRow, previewId, preview } = context;
-  const { pageSize, isVisible } = reading;
+  const { pageSize, isVisible, revision = 0 } = reading;
   const { state: creating, start: onNewSession } = creation;
   const base = useMemo(() => getClient(conn).base, [conn, getClient]);
   const pendingDeleteId =
@@ -864,7 +866,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     };
   }, [
     conn, root, start, pageSize, isVisible, isShowing, searching, archived, bandWindow, list,
-    getClient, groupsRead, noteRefresh,
+    getClient, groupsRead, revision, noteRefresh,
   ]);
   // The gateway applies one archive filter to both sides of a project page. When the
   // two sets differ, read the grouped sidecar in its own view; the limit of one only
@@ -900,7 +902,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     };
   }, [
     conn, root, isVisible, isShowing, searching, groupArchived, archived, bandWindow, list,
-    getClient, groupsRead, noteRefresh,
+    getClient, groupsRead, revision, noteRefresh,
   ]);
   // The count under the header and the pages beside it are ONE number — the
   // project's own total, as the gateway counted it. Under a query the complete
@@ -1123,6 +1125,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   // exists here is a band every client of the machine paints. Read as soon as the
   // project is on screen, so a project that opens paints its bands already named.
   // The gateway owns the groups and their archive stamps, not this device.
+  // Revalidate on fleet changes and accepted snapshots, including an unchanged head window.
   useEffect(() => {
     if (!isVisible) return;
     const control = new AbortController();
@@ -1151,7 +1154,7 @@ export const ProjectGroup = memo(function ProjectGroup({
       live = false;
       control.abort();
     };
-  }, [conn, root, isVisible, groupArchived, bandWindow, getClient, groupsRead, noteRefresh]);
+  }, [conn, root, isVisible, groupArchived, bandWindow, list, getClient, groupsRead, revision, noteRefresh]);
   useEffect(() => {
     if (
       groupsReady?.view !== groupArchived ||

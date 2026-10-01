@@ -3618,34 +3618,38 @@
                               (get-in (first (filter :session (projects/sidebar-entries db)))
                                       [:project "id"]))))))
 
-(defdescribe
-  project-automatic-refresh-holds-new-rows-until-accepted-test
-  (it "project automatic refresh holds new rows until accepted"
-      (let [db (-> (fixture-db)
-                   (assoc-in [:project-sidebar :expanded] #{"a"})
-                   (assoc-in [:project-sidebar :pages]
-                             {"a" {:sessions [{"id" "a1" "title" "First"}]
-                                   :grouped []
-                                   :after nil
-                                   :history []
-                                   :request-id "first"}}))]
-        (with-redefs [state/app-db (atom db)]
-          (state/dispatch [:project-page-loaded "a" "first"
-                           {:sessions [{"id" "a-new" "title" "New"} {"id" "a1" "title" "Updated"}]
-                            :grouped []
-                            :total 2} {:groups [] :total 0} nil true])
-          (expect (= ["a1"]
-                     (mapv #(get % "id")
-                           (get-in @state/app-db [:project-sidebar :pages "a" :sessions]))))
-          (expect (= "Updated"
-                     (get-in @state/app-db [:project-sidebar :pages "a" :sessions 0 "title"])))
-          (expect (= [:updates "a"]
-                     (:action (first (filter #(= :project-updates (:kind %))
-                                             (projects/sidebar-entries @state/app-db))))))))))
+(defdescribe project-automatic-refresh-shows-new-rows-test
+             (it "shows arriving rows and adopts the current page cursor automatically"
+                 (let [db (-> (fixture-db)
+                              (assoc-in [:project-sidebar :expanded] #{"a"})
+                              (assoc-in [:project-sidebar :pages]
+                                        {"a" {:sessions [{"id" "a1" "title" "First"}]
+                                              :grouped []
+                                              :after nil
+                                              :history []
+                                              :next-cursor "old-cursor"
+                                              :has-more false
+                                              :request-id "first"}}))]
+                   (with-redefs [state/app-db (atom db)]
+                     (state/dispatch [:project-page-loaded "a" "first"
+                                      {:sessions [{"id" "a-new" "title" "New"}
+                                                  {"id" "a1" "title" "Updated"}]
+                                       :grouped []
+                                       :next-cursor "new-cursor"
+                                       :has-more true
+                                       :total 3} {:groups [] :total 0} nil true])
+                     (let [page (get-in @state/app-db [:project-sidebar :pages "a"])]
+                       (expect (= ["a-new" "a1"] (mapv #(get % "id") (:sessions page))))
+                       (expect (= "Updated" (get-in page [:sessions 1 "title"])))
+                       (expect (= "new-cursor" (:next-cursor page)))
+                       (expect (true? (:has-more page)))
+                       (expect (= [] (:history page))))
+                     (expect (not-any? #(= :project-updates (:kind %))
+                                       (projects/sidebar-entries @state/app-db)))))))
 
 (defdescribe
-  project-automatic-refresh-holds-arrivals-after-empty-page-test
-  (it "project automatic refresh holds arrivals after empty page"
+  project-automatic-refresh-shows-arrivals-after-empty-page-test
+  (it "shows arrivals on a previously empty page without an adoption action"
       (let [db (-> (fixture-db)
                    (assoc-in [:project-sidebar :expanded] #{"a"})
                    (assoc-in [:project-sidebar :pages]
@@ -3655,12 +3659,13 @@
             [:project-page-loaded "a" "empty"
              {:sessions [{"id" "new" "title" "Arrived"}] :grouped [] :has-more false :total 1}
              {:groups [] :total 0} nil true])
-          (expect (empty? (get-in @state/app-db [:project-sidebar :pages "a" :sessions])))
-          (expect (= 1 (get-in @state/app-db [:project-sidebar :pages "a" :pending-count])))
-          (let [update-row (first (filter #(= :project-updates (:kind %))
-                                          (projects/sidebar-entries @state/app-db)))]
-            (expect (= [:updates "a"] (:action update-row)))
-            (expect (= "1 new update · Enter to show" (:label update-row))))))))
+          (expect (= ["new"]
+                     (mapv #(get % "id")
+                           (get-in @state/app-db [:project-sidebar :pages "a" :sessions]))))
+          (expect (some #(= "new" (get-in % [:session "id"]))
+                        (projects/sidebar-entries @state/app-db)))
+          (expect (not-any? #(= :project-updates (:kind %))
+                            (projects/sidebar-entries @state/app-db)))))))
 
 (defdescribe
   project-search-paints-ranked-unloaded-group-and-archive-test
@@ -3822,9 +3827,9 @@
         (expect (= 5 (count (get-in @state/app-db [:project-sidebar :search :rows]))))))))
 
 (defdescribe
-  project-update-affordance-preserves-focused-session-test
+  project-automatic-refresh-preserves-focused-session-test
   (it
-    "project update affordance preserves focused session"
+    "shows arriving rows while preserving the focused session"
     (let [base
           (-> (fixture-db)
               (assoc-in [:project-sidebar :expanded] #{"a"})
@@ -3850,42 +3855,72 @@
                           :grouped []
                           :has-more false
                           :total 2} {:groups [] :total 0} nil true])
+        (expect (= ["new" "a1"]
+                   (mapv #(get % "id")
+                         (get-in @state/app-db [:project-sidebar :pages "a" :sessions]))))
         (expect (= "a1"
                    (get-in (nth (projects/sidebar-entries @state/app-db)
                                 (dec (get-in @state/app-db [:project-sidebar :index])))
                            [:session "id"])))
-        (expect (= 1 (get-in @state/app-db [:project-sidebar :pages "a" :pending-count])))
         (let [capture (cap/capture!
                         {:cols 144
                          :rows 24
                          :paint!
                          (fn [{:keys [screen]}]
                            (projects/paint! (.newTextGraphics screen) @state/app-db 144 24))})
-              hit (first (filter #(= :project-updates (:kind %)) (.current projects/hit-map)))
-              {:keys [col row]} (:bounds hit)]
+              hits (.current projects/hit-map)]
 
           (expect (nil? (:error capture)))
-          (expect (= [:updates "a"]
-                     (projects/key-action @state/app-db
-                                          (MouseAction. MouseActionType/CLICK_DOWN
-                                                        1
-                                                        (TerminalPosition. (int col) (int row))))))
-          (#'screen/project-sidebar-key!
-           (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. (int col) (int row)))
-           identity
-           identity
-           identity
-           identity
-           nil))
-        (expect (= ["new" "a1"]
-                   (mapv #(get % "id")
-                         (get-in @state/app-db [:project-sidebar :pages "a" :sessions]))))
-        (expect (zero? (get-in @state/app-db [:project-sidebar :pages "a" :pending-count])))
-        (expect (nil? (get-in @state/app-db [:project-sidebar :pages "a" :incoming])))
-        (expect (= "a1"
-                   (get-in (nth (projects/sidebar-entries @state/app-db)
-                                (dec (get-in @state/app-db [:project-sidebar :index])))
-                           [:session "id"])))))))
+          (expect (some #(= [:session "new"] (:action %)) hits))
+          (expect (not-any? #(= :project-updates (:kind %)) hits)))))))
+
+(defdescribe
+  project-automatic-refresh-shows-groups-and-grouped-arrivals-test
+  (it
+    "adopts group order, names and members while preserving focus and selection"
+    (let [base
+          (-> (fixture-db)
+              (assoc-in [:project-sidebar :expanded] #{"a"})
+              (assoc-in [:project-sidebar :selected "a"] #{"a1"})
+              (assoc-in [:project-sidebar :groups "a"] [{"id" "g1" "name" "Original group"}])
+              (assoc-in [:project-sidebar :pages "a"]
+                        {:sessions []
+                         :grouped [{"id" "a1" "title" "Current" "group_id" "g1"}]
+                         :request-id "groups"
+                         :has-more false}))
+
+          focused
+          (->> (projects/sidebar-entries base)
+               (filter #(= "a1" (get-in % [:session "id"])))
+               first
+               :index)
+
+          db
+          (assoc-in base [:project-sidebar :index] focused)]
+
+      (with-redefs [state/app-db (atom db)]
+        (state/dispatch
+          [:project-page-loaded "a" "groups"
+           {:sessions []
+            :grouped [{"id" "new-group-row" "title" "New group member" "group_id" "g-new"}
+                      {"id" "new-member" "title" "Arriving member" "group_id" "g1"}
+                      {"id" "a1" "title" "Current revised" "group_id" "g1"}]
+            :has-more false
+            :total 0}
+           {:groups [{"id" "g-new" "name" "Incoming group"} {"id" "g1" "name" "Renamed group"}]
+            :total 2} nil true])
+        (expect (= ["g-new" "g1"]
+                   (mapv #(get % "id") (get-in @state/app-db [:project-sidebar :groups "a"]))))
+        (expect (= 2 (get-in @state/app-db [:project-sidebar :group-total "a"])))
+        (let [entries (projects/sidebar-entries @state/app-db)
+              focused-row (nth entries (dec (get-in @state/app-db [:project-sidebar :index])))]
+
+          (expect (= ["new-group-row" "new-member" "a1"]
+                     (vec (keep #(get-in % [:session "id"]) entries))))
+          (expect (some #(= "Renamed group" (:label %)) entries))
+          (expect (= "a1" (get-in focused-row [:session "id"])))
+          (expect (:selected? focused-row))
+          (expect (not-any? #(= :project-updates (:kind %)) entries)))))))
 
 (defdescribe
   project-search-shortcut-and-empty-state-test

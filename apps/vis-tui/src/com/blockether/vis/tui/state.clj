@@ -2954,31 +2954,6 @@
                                   :grouped []
                                   :error nil)))))
 
-(defn- hold-project-window
-  "Refresh known rows in place, reserving new arrivals and reorders for adoption."
-  [before after]
-  (let [ids
-        (mapv #(str (get % "id")) before)
-
-        incoming
-        (mapv #(str (get % "id")) after)
-
-        rows
-        (into {}
-              (map (fn [row]
-                     [(str (get row "id")) row])
-                   after))
-
-        known
-        (filterv rows ids)
-
-        pending
-        (remove (set ids) incoming)]
-
-    (if (or (nil? before) (and (seq before) (empty? known)))
-      {:rows (vec after) :pending 0}
-      {:rows (mapv rows known) :pending (max (count pending) (if (= ids incoming) 0 1))})))
-
 (reg-event-db
   :project-page-request
   (fn [db [_ pid request-id focus-index automatic?]]
@@ -2994,50 +2969,12 @@
   :project-page-loaded
   (fn [db [_ pid request-id page group-page focus-index automatic?]]
     (if (= request-id (get-in db [:project-sidebar :pages pid :request-id]))
-      (let [old
-            (get-in db [:project-sidebar :pages pid])
-
-            old-groups
-            (get-in db [:project-sidebar :groups pid])
-
-            loose
-            (if automatic?
-              (hold-project-window (:sessions old) (:sessions page))
-              {:rows (:sessions page) :pending 0})
-
-            grouped
-            (if automatic?
-              (hold-project-window (:grouped old) (:grouped page))
-              {:rows (:grouped page) :pending 0})
-
-            groups
-            (if automatic?
-              (hold-project-window old-groups (:groups group-page))
-              {:rows (:groups group-page) :pending 0})
-
-            pending
-            (+ (long (:pending loose)) (long (:pending grouped)) (long (:pending groups)))
-
-            held?
-            (pos? pending)
-
-            next-page
-            (cond-> (merge old
-                           page
-                           {:sessions (:rows loose)
-                            :grouped (:rows grouped)
-                            :loading? false
-                            :error nil
-                            :pending-count pending
-                            :incoming (when held? [page group-page])})
-              held?
-              (assoc :next-cursor
-                (:next-cursor old) :has-more
-                (:has-more old)))
+      (let [next-page
+            (merge (get-in db [:project-sidebar :pages pid]) page {:loading? false :error nil})
 
             changes
             {:pages (assoc (get-in db [:project-sidebar :pages]) pid next-page)
-             :groups (assoc (get-in db [:project-sidebar :groups]) pid (:rows groups))
+             :groups (assoc (get-in db [:project-sidebar :groups]) pid (:groups group-page))
              :group-total (assoc (get-in db [:project-sidebar :group-total])
                             pid (:total group-page))}
 
@@ -3050,18 +2987,6 @@
           (some? next-index)
           (assoc-in [:project-sidebar :index] next-index)))
       db)))
-
-(reg-event-db :project-updates-accepted
-              (fn [db [_ pid focus-index]]
-                (if-let [[page group-page] (get-in db [:project-sidebar :pages pid :incoming])]
-                  (cond-> (-> db
-                              (update-in [:project-sidebar :pages pid]
-                                         #(merge % page {:incoming nil :pending-count 0}))
-                              (assoc-in [:project-sidebar :groups pid] (:groups group-page))
-                              (assoc-in [:project-sidebar :group-total pid] (:total group-page)))
-                    (some? focus-index)
-                    (assoc-in [:project-sidebar :index] focus-index))
-                  db)))
 
 (reg-event-db :project-page-failed
               (fn [db [_ pid request-id focus-index]]

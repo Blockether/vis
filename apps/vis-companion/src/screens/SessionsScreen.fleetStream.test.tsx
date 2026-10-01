@@ -306,6 +306,91 @@ describe('a session list carried by the fleet stream', () => {
     expect(listReads(view.requests)).toBeGreaterThan(read);
   });
 
+  it.each([false, true])(
+    'shows arriving sessions automatically (empty window: %s)',
+    async (empty) => {
+      const fleet = fleetHub();
+      const first = listSession({ id: 's1', title: 'First' });
+      const view = renderSessionsScreen({
+        machines: [{ sessions: empty ? [] : [first] }],
+        subscriptions: fleet.hub as never,
+      });
+      restore = view.restore;
+      fleet.hub.gatewayUrl = view.conns[0]!.url;
+      await settle(200);
+      const focused = document.querySelector<HTMLElement>('[data-session-id="s1"]');
+      focused?.focus();
+
+      const arriving = listSession({
+        id: 'arriving',
+        title: 'Arriving session',
+        live: true,
+        modified_at: new Date('2025-05-01T10:00:00Z').toISOString(),
+      });
+      view.setRows(0, empty ? [arriving] : [arriving, { ...first, title: 'First revised' }]);
+      await fleet.emit({
+        type: 'session.status',
+        session_id: 'arriving',
+        is_live: true,
+        is_awaiting_input: false,
+        current_turn_id: 'arriving-turn',
+      });
+      await settle(200);
+
+      expect(screen.getByText('Arriving session')).toBeVisible();
+      expect(Array.from(document.querySelectorAll('[data-session-id]'), (row) =>
+        row.getAttribute('data-session-id'))).toEqual(empty ? ['arriving'] : ['arriving', 's1']);
+      expect(screen.queryByText(/new updates?/i)).not.toBeInTheDocument();
+      if (!empty) {
+        expect(screen.getByText('First revised')).toBeVisible();
+        expect(document.activeElement).toBe(focused);
+      }
+    },
+  );
+
+  it.each([false, true])(
+    'refreshes remote groups with an unchanged session window (empty groups: %s)',
+    async (empty) => {
+      const fleet = fleetHub();
+      const original = {
+        id: 'g1',
+        project_id: null,
+        name: 'Original group',
+        color: 'blue',
+        position: 0,
+        session_count: 0,
+      };
+      const view = renderSessionsScreen({
+        machines: [{
+          sessions: [listSession({ id: 's1', title: 'First' })],
+          groups: empty ? [] : [original],
+        }],
+        subscriptions: fleet.hub as never,
+      });
+      restore = view.restore;
+      fleet.hub.gatewayUrl = view.conns[0]!.url;
+      await settle(200);
+      if (!empty) expect(screen.getByText('Original group')).toBeVisible();
+
+      view.setGroups(0, [{ ...original, name: 'Arriving group' }]);
+      await settle(30_000);
+      expect(screen.getByText('Arriving group')).toBeVisible();
+      expect(screen.queryByText('Original group')).not.toBeInTheDocument();
+      expect(screen.getByText('First')).toBeVisible();
+
+      view.setGroups(0, [{ ...original, name: 'Renamed group' }]);
+      await settle(30_000);
+      expect(screen.getByText('Renamed group')).toBeVisible();
+      expect(screen.queryByText('Arriving group')).not.toBeInTheDocument();
+
+      view.setGroups(0, []);
+      await settle(30_000);
+      expect(screen.queryByText('Renamed group')).not.toBeInTheDocument();
+      expect(screen.getByText('First')).toBeVisible();
+      expect(screen.queryByText(/new updates?/i)).not.toBeInTheDocument();
+    },
+  );
+
   // A long-running goal must not stay IDLE because its start crossed a list read
   // or happened while the fleet connection was down.
   it.each(['connection', 'ready'])('refreshes current status on fleet %s', async (signal) => {

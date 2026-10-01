@@ -126,9 +126,9 @@ To search saved session titles and conversation text, press **/** while Projects
 search also finds sessions outside the pages on screen. Result-page rows show more matches. Press
 **Esc** to go back to your previous folds and page.
 
-Projects shows only part of your sessions and groups at a time. To see the next page of a list,
-choose **More sessions** or **More groups**. To show rows that arrived while you were reading,
-choose **new updates**. The list you were reading does not move.
+Projects shows only part of your sessions and groups at a time. Use the page controls to see more
+sessions or groups. New sessions and groups appear automatically. If your selected row remains in
+the list, it keeps focus.
 
 ### In the desktop or phone app
 

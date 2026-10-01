@@ -343,6 +343,8 @@ export function SessionsScreen({
   // returning to this tab repaints the previous frame instantly; the effects
   // below revalidate each machine independently and reconcile on top.
   const [machines, setMachines] = useState<FleetMachine[]>(() => hydrateMachines(conns, []));
+  // A fresh machine snapshot also revalidates project windows outside its unchanged head.
+  const [machineReads, setMachineReads] = useState<ReadonlyMap<string, number>>(() => new Map());
   // A visit is local truth before the transcript's gateway read mark reaches this list.
   const [readFloors, setReadFloors] = useState<ReadonlyMap<string, number>>(() => new Map());
   const readFloorsRef = useRef(readFloors);
@@ -598,6 +600,7 @@ export function SessionsScreen({
           // Rows are muted above for visits made here, but the overview counted what the
           // gateway SERVED: that verdict travels beside the rows it no longer matches.
           const countedUnread = servedUnread(rows, held?.countedUnread);
+          setMachineReads((current) => new Map(current).set(key, (current.get(key) ?? 0) + 1));
           if (
             held &&
             held.error === null &&
@@ -1636,6 +1639,7 @@ export function SessionsScreen({
         reading: {
           pageSize,
           isVisible,
+          revision: machineReads.get(machineKey(entry.machine.conn)) ?? 0,
         },
         // Keep canonical gateway paths for identity and creation; shorten only for paint.
         groups: projectGroups(
@@ -1645,7 +1649,7 @@ export function SessionsScreen({
           readSinceCounted(entry.machine, (session) => isRowSeen(entry.machine.conn, session)),
         ),
       })),
-    [listed, pageSize, isVisible, isRowUnread, isRowSeen],
+    [listed, pageSize, isVisible, isRowUnread, isRowSeen, machineReads],
   );
   const foundSections = useMemo(
     () =>

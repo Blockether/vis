@@ -6531,14 +6531,6 @@
           (state/dispatch [:project-search-page request-id offset])
           (show-project-search-page! request-id (:matches search) offset)))
 
-      :updates
-      (let [db @state/app-db
-            [page groups] (get-in db [:project-sidebar :pages value :incoming])]
-
-        (when page
-          (state/dispatch [:project-updates-accepted value
-                           (page-focus-index db value page groups)])))
-
       :menu
       (menu! value)
 

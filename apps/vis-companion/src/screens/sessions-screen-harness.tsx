@@ -521,6 +521,11 @@ export function renderSessionsScreen({
       const machine = byOrigin.get(new URL(conns[index].url).origin);
       if (machine) machine.sessions = rows.map((row) => ({ ...row }));
     },
+    /** Gateway-owned groups change without changing the session head window. */
+    setGroups(index: number, groups: SessionGroup[]) {
+      const machine = byOrigin.get(new URL(conns[index].url).origin);
+      if (machine) machine.groups = groups.map((group) => ({ ...group }));
+    },
     /**
      * The PAIRED LIST changes under the screen: the app learns a machine's durable
      * id or the addresses it also answers on, and saves that beside the same URL.

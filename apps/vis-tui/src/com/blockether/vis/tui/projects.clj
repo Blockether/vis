@@ -238,14 +238,6 @@
                 :action [:toggle-project pid]}]
               (when expanded?
                 (concat
-                  (when (pos? (long (or (:pending-count page) 0)))
-                    [{:kind :project-updates
-                      :project project
-                      :label (str (:pending-count page)
-                                  " new update"
-                                  (when (not= 1 (:pending-count page)) "s")
-                                  " · Enter to show")
-                      :action [:updates pid]}])
                   (when (seq pinned)
                     (cons {:kind :project-set :label "Attention" :project project :action [:noop]}
                           (map session-row pinned)))
@@ -692,7 +684,7 @@
     :project-session
     ""
 
-    (:project-set :project-page :project-group-page :project-state :project-updates)
+    (:project-set :project-page :project-group-page :project-state)
     ""
 
     (let [{:keys [tab-count running needs-input unread project]}
@@ -1257,8 +1249,7 @@
           (if (#{:project-rail :project-select :project-group :project-input :project-unread
                  :project-session :project-details :project-set :project-page :project-group-page
                  :project-state :project-add :project-hide :project-suggest :project-new-folder
-                 :project-search-field :project-updates :project-group-add :project-session-add
-                 :project-set-menu}
+                 :project-search-field :project-group-add :project-session-add :project-set-menu}
                (:kind hit))
             (cond
               (#{MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN} (.getActionType mouse))
@@ -1274,11 +1265,11 @@
               [:menu hit]
               (and (= MouseActionType/CLICK_DOWN (.getActionType mouse)) (= 1 (.getButton mouse)))
               (case (:kind hit)
-                (:project-select :project-group :project-input
-                                 :project-unread :project-session
-                                 :project-details :project-set
-                                 :project-page :project-group-page
-                                 :project-state :project-updates)
+                (:project-select :project-group
+                                 :project-input :project-unread
+                                 :project-session :project-details
+                                 :project-set :project-page
+                                 :project-group-page :project-state)
                 (:action hit)
 
                 (:project-group-add :project-session-add)
