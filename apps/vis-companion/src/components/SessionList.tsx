@@ -306,6 +306,7 @@ const OFFSCREEN_ROW_CLASS =
 export const SessionRow = memo(function SessionRow({
   session,
   group,
+  location,
   draft,
   conn,
   needle,
@@ -327,6 +328,8 @@ export const SessionRow = memo(function SessionRow({
    * group owns both, so a rename or a recolour reaches every row wearing it at once.
    */
   group: SessionGroup | null;
+  /** Search names the location explicitly and does not use a group colour rail. */
+  location?: { project: string; group: string };
   /** This device's unsent composer content for the session; EMPTY when there is none. */
   draft: DraftMessage;
   conn: GatewayConn;
@@ -640,14 +643,7 @@ export const SessionRow = memo(function SessionRow({
         >
           {/* Hover changes the title ink; status marks retain their own meaning. */}
           <div className="group flex items-stretch">
-            {/* THE GROUP'S OWN COLOUR, down the leading edge of the row. A filed session
-                is filed wherever it is painted - pinned above the page, found by a
-                search, sitting under its band - and without this mark the only place
-                you could see it was the band, if the band happened to be on screen.
-                Both the colour and the name are read off the GROUP at paint time; a row
-                carrying a copy of them is a row that keeps painting a recoloured group
-                in its old ink. */}
-            {typeof session.group_id === 'string' && session.group_id !== '' && (
+            {!location && typeof session.group_id === 'string' && session.group_id !== '' && (
               <span className="flex shrink-0 items-stretch">
                 <span aria-hidden className={`w-1 ${groupSwatch(group?.color ?? null)}`} />
                 <span className="sr-only">{`In group ${group?.name ? group.name : 'unnamed'}`}</span>
@@ -788,7 +784,7 @@ export const SessionRow = memo(function SessionRow({
                     }
                     className={`shrink-0 items-center gap-1 font-mono text-chip font-bold tracking-[0.08em] ${
                       // Narrow sidebars show only live or input-needed marks.
-                      status === 'IDLE' ? 'hidden @sm:inline-flex' : 'inline-flex'
+                      status === 'IDLE' && !location ? 'hidden @sm:inline-flex' : 'inline-flex'
                     } ${statusTone(session, stopped, hasUnsent, unread, isPutAway)}`}
                   >
                     <span
@@ -796,8 +792,8 @@ export const SessionRow = memo(function SessionRow({
                       aria-hidden="true"
                       className={`size-1.5 shrink-0 ${statusDot(session, stopped, hasUnsent, unread, isPutAway)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`}
                     />
-                    <span className="sr-only @sm:not-sr-only">
-                      {renameBusy ? 'Saving' : status}
+                    <span className={location ? '' : 'sr-only @sm:not-sr-only'}>
+                      {renameBusy ? (location ? 'SAVING' : 'Saving') : status}
                     </span>
                   </span>
                 </span>
@@ -807,6 +803,12 @@ export const SessionRow = memo(function SessionRow({
                 >
                   {timeLabel(timestamp)}
                 </span>
+                {location && (
+                  <span data-session-location className="col-span-full flex min-w-0 flex-wrap gap-x-3 gap-y-1 font-mono text-meta text-dialog-hint">
+                    <span className="min-w-0 break-words">Project: {location.project}</span>
+                    <span className="min-w-0 break-words">Group: {location.group}</span>
+                  </span>
+                )}
               </span>
             </SessionRowSurface>
           </div>

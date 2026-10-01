@@ -7,6 +7,26 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
+  search-scopes-cross-the-transport
+  (it
+    "sends project and group unions, preserving explicit empty scopes"
+    (let [asked (atom [])]
+      (with-redefs-fn {#'client/send-json! (fn [_method path]
+                                             (swap! asked conj path)
+                                             {"sessions" [] "total" 0})}
+        (fn []
+          (client/search-sessions
+            "needle"
+            {:project-id "p/one" :group-ids #{"g2" "g1"} :limit 1 :after "next"})
+          (client/search-sessions "" {:root "" :group-ids #{}})
+          (client/search-sessions "")))
+      (expect
+        (=
+          ["/v1/sessions/actions/search?q=needle&limit=1&after=next&project_id=p%2Fone&group_ids=g1%2Cg2"
+           "/v1/sessions/actions/search?q=&root=&group_ids=" "/v1/sessions/actions/search?q="]
+          @asked)))))
+
+(defdescribe
   local-client-leases-and-streams-carry-the-process-id
   (it "local client leases and streams carry the process id"
       ;; A killed TUI must not leave a pidless lease or SSE stream pinning the daemon.

@@ -1484,81 +1484,102 @@
 
    The cap therefore counts matches BEFORE the claimed/unforked filter rather
    than after: beyond `transcript-hit-scan-limit` newest hits the tail is a
-   depth heuristic either way, and the per-session cap decides what is shown."
-  [side chan-sql]
-  (let [fts
-        (case side
-          :request
-          "transcript_request_fts"
+   depth heuristic either way, and the per-session cap decides what is shown.
+   Scoped searches check session membership inside that scan, before its cap."
+  ([side chan-sql] (transcript-hit-sql side chan-sql false))
+  ([side chan-sql scoped?]
+   (let [fts
+         (case side
+           :request
+           "transcript_request_fts"
 
-          :reply
-          "transcript_reply_fts")
+           :reply
+           "transcript_reply_fts")
 
-        ;; The reply side asks for one window per indexed column — assistant prose
-        ;; (0) then thinking (1) — so `hit-snippet` can tell an answer from the
-        ;; reasoning aside. `char(1)` is the marker that proves a column really
-        ;; matched; the request side has one column and needs none.
-        snips
-        (case side
-          :request
-          (str "snippet(" fts ", 0, '', '', '…', 20) AS snip")
-
-          :reply
-          (str "snippet("
-               fts
-               ", 0, char(1), '', '…', 20) AS s0, "
-               "snippet("
-               fts
-               ", 1, char(1), '', '…', 20) AS s1"))
-
-        cols
-        (case side
-          :request
-          "f.snip AS snip"
-
-          :reply
-          "f.s0 AS s0, f.s1 AS s1")
-
-        joins
-        (case side
-          :request
-          (str "JOIN session_turn_soul ts ON ts.rowid = f.rid "
-               "JOIN session_state s ON s.id = ts.session_state_id ")
-
-          :reply
-          (str "JOIN session_turn_iteration it ON it.rowid = f.rid "
-               "JOIN session_turn_state tst ON tst.id = it.session_turn_state_id "
-               "JOIN session_turn_soul ts ON ts.id = tst.session_turn_soul_id "
-               "JOIN session_state s ON s.id = ts.session_state_id "))
-
-        at
-        (case side
-          :request
-          "ts.created_at"
-
-          :reply
-          "it.created_at")]
-
-    (str "SELECT cs.id AS sid, f.rid AS rid, "
-         cols
-         ", "
-         at
-         " AS at "
-         "FROM (SELECT rowid AS rid, "
+         ;; The reply side asks for one window per indexed column — assistant prose
+         ;; (0) then thinking (1) — so `hit-snippet` can tell an answer from the
+         ;; reasoning aside. `char(1)` is the marker that proves a column really
+         ;; matched; the request side has one column and needs none.
          snips
-         " FROM "
-         fts
-         " WHERE "
-         fts
-         " MATCH ? "
-         "ORDER BY rowid DESC LIMIT "
-         transcript-hit-scan-limit
-         ") f "
+         (case side
+           :request
+           (str "snippet(" fts ", 0, '', '', '…', 20) AS snip")
+
+           :reply
+           (str "snippet("
+                fts
+                ", 0, char(1), '', '…', 20) AS s0, "
+                "snippet("
+                fts
+                ", 1, char(1), '', '…', 20) AS s1"))
+
+         cols
+         (case side
+           :request
+           "f.snip AS snip"
+
+           :reply
+           "f.s0 AS s0, f.s1 AS s1")
+
          joins
-         "JOIN session_soul cs ON cs.id = s.session_soul_id "
-         "WHERE cs.parent_state_id IS NULL AND cs.claimed_at IS NOT NULL"
-         chan-sql
-         " ORDER BY f.rid DESC")))
+         (case side
+           :request
+           (str "JOIN session_turn_soul ts ON ts.rowid = f.rid "
+                "JOIN session_state s ON s.id = ts.session_state_id ")
+
+           :reply
+           (str "JOIN session_turn_iteration it ON it.rowid = f.rid "
+                "JOIN session_turn_state tst ON tst.id = it.session_turn_state_id "
+                "JOIN session_turn_soul ts ON ts.id = tst.session_turn_soul_id "
+                "JOIN session_state s ON s.id = ts.session_state_id "))
+
+         at
+         (case side
+           :request
+           "ts.created_at"
+
+           :reply
+           "it.created_at")]
+
+     (str "SELECT cs.id AS sid, f.rid AS rid, "
+          cols
+          ", "
+          at
+          " AS at "
+          "FROM (SELECT rowid AS rid, "
+          snips
+          " FROM "
+          fts
+          " WHERE "
+          fts
+          " MATCH ? "
+          (when scoped?
+            (str "AND EXISTS (SELECT 1 FROM "
+                 (case side
+                   :request
+                   "session_turn_soul st JOIN session_state ss ON ss.id = st.session_state_id "
+
+                   :reply
+                   (str "session_turn_iteration si "
+                        "JOIN session_turn_state sts ON sts.id = si.session_turn_state_id "
+                        "JOIN session_turn_soul st ON st.id = sts.session_turn_soul_id "
+                        "JOIN session_state ss ON ss.id = st.session_state_id "))
+                 "WHERE " (case side
+                            :request
+                            "st"
+
+                            :reply
+                            "si")
+                 ".rowid = " fts
+                 ".rowid " "AND ss.session_soul_id IN (SELECT value FROM json_each(?))) "))
+          "ORDER BY rowid DESC LIMIT "
+          transcript-hit-scan-limit
+          ") f "
+          joins
+          "JOIN session_soul cs ON cs.id = s.session_soul_id "
+          "WHERE cs.parent_state_id IS NULL AND cs.claimed_at IS NOT NULL"
+          chan-sql
+          " ORDER BY f.rid DESC"))))
 
 (defn- transcript-hit-rows
   "FTS hits on ONE side, FAIRLY capped: up to `transcript-hits-per-session`
@@ -1570,17 +1591,21 @@
    `snippet()` windows arrive together, and the snippet is also what SPLITS the
    reply side into `:reply` (the answer) and `:thinking` (the reasoning aside) —
    see `hit-snippet`. The caps are applied here, on rows already in hand."
-  [db-info side ch match]
+  [db-info side ch match session-ids-json]
   (let [chan-sql
         (if ch " AND cs.channel = ?" "")
 
         params
         (cond-> [match]
+          session-ids-json
+          (conj session-ids-json)
+
           ch
           (conj ch))
 
         ranked
-        (raw-query! db-info (into [(transcript-hit-sql side chan-sql)] params))
+        (raw-query! db-info
+                    (into [(transcript-hit-sql side chan-sql (some? session-ids-json))] params))
 
         ;; `ranked` is newest-first, so first appearance order = sessions ordered
         ;; by their newest hit.
@@ -1621,20 +1646,27 @@
 
    The title travels as the hit's snippet only to carry the match; the caller
    keeps title hits out of the snippet list, which is about transcript text."
-  [db-info ch needle]
+  [db-info ch needle session-ids-json]
   (let [sql
-        (str "SELECT cs.id AS sid, s.title AS title, cs.created_at AS at " "FROM session_soul cs "
+        (str "SELECT cs.id AS sid, s.title AS title, cs.created_at AS at "
+             "FROM session_soul cs "
              "JOIN session_state s ON s.session_soul_id = cs.id "
              "WHERE cs.parent_state_id IS NULL AND cs.claimed_at IS NOT NULL "
              "AND s.title IS NOT NULL AND instr(lower(s.title), ?) > 0 "
              "AND s.version = (SELECT MAX(s2.version) FROM session_state s2 "
-             "WHERE s2.session_soul_id = cs.id)" (if ch " AND cs.channel = ?" "")
-             " ORDER BY cs.created_at DESC LIMIT " transcript-hit-sessions-limit)
+             "WHERE s2.session_soul_id = cs.id)"
+             (if ch " AND cs.channel = ?" "")
+             (when session-ids-json " AND cs.id IN (SELECT value FROM json_each(?))")
+             " ORDER BY cs.created_at DESC LIMIT "
+             transcript-hit-sessions-limit)
 
         params
         (cond-> [(str/lower-case (str needle))]
           ch
-          (conj ch))]
+          (conj ch)
+
+          session-ids-json
+          (conj session-ids-json))]
 
     (mapv (fn [row]
             {:sid (str (:sid row)) :side :title :at (:at row) :snippet (:title row)})
@@ -1779,27 +1811,31 @@
 
    This is the SERVER-side half of session search: the assistant text never
    crosses the wire, only these snippet windows. `channel` filters like
-   `db-list-sessions` (`:all`/nil = cross-channel). Blank query returns `[]`."
-  [db-info channel query]
-  (let [q (some-> query
-                  str
-                  str/trim)]
-    (if (or (not (ds db-info)) (nil? q) (= "" q))
-      []
-      (let [ch (some-> channel
-                       ->kw
-                       name)
-            ch (when-not (or (nil? ch) (= "all" ch)) ch)
-            match (fts-match-expr q)
-            rows (cond-> (title-hit-rows db-info ch q)
-                   match
-                   (into (transcript-hit-rows db-info :request ch match))
+   `db-list-sessions` (`:all`/nil = cross-channel). Optional `session-ids` restricts
+   both title and transcript matching before their scan and session budgets.
+   Nil means all sessions; an empty collection or blank query returns `[]`."
+  ([db-info channel query] (db-search-session-matches db-info channel query nil))
+  ([db-info channel query session-ids]
+   (let [q (some-> query
+                   str
+                   str/trim)]
+     (if (or (not (ds db-info)) (str/blank? q) (and (some? session-ids) (empty? session-ids)))
+       []
+       (let [ch (some-> channel
+                        ->kw
+                        name)
+             ch (when-not (or (nil? ch) (= "all" ch)) ch)
+             session-ids-json (when (some? session-ids) (wire/json-str (mapv str session-ids)))
+             match (fts-match-expr q)
+             rows (cond-> (title-hit-rows db-info ch q session-ids-json)
+                    match
+                    (into (transcript-hit-rows db-info :request ch match session-ids-json))
 
-                   match
-                   (into (transcript-hit-rows db-info :reply ch match)))
-            sids (into #{} (map :sid) rows)]
+                    match
+                    (into (transcript-hit-rows db-info :reply ch match session-ids-json)))
+             sids (into #{} (map :sid) rows)]
 
-        (search-rows->sessions rows (session-activity-at db-info sids))))))
+         (search-rows->sessions rows (session-activity-at db-info sids)))))))
 
 (defn db-search-session-ids
   "Soul ids whose TRANSCRIPT text matches `query`.

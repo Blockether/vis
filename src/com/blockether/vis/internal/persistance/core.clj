@@ -85,7 +85,8 @@
   (db-resolve-session-id [db-info sel])
   (db-list-sessions [db-info channel])
   (db-search-session-ids [db-info channel query])
-  (db-search-session-matches [db-info channel query])
+  (db-search-session-matches [db-info channel query]
+                             [db-info channel query session-ids])
   (db-find-session-by-external [db-info channel ext-id])
   (db-update-session-title! [db-info ref title])
   (db-get-session-goal [db-info session-id])

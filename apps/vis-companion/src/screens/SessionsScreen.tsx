@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Banner, overlayLayer } from '../components/ui';
+import { Banner, TextButton, overlayLayer } from '../components/ui';
 import {
   MachineGap,
   MachineProjectsButton,
@@ -17,6 +17,7 @@ import {
 } from '../components/SessionList';
 import { SearchMessages } from '../components/SearchMessages';
 import { SessionSearchDialog } from '../components/SessionSearchDialog';
+import { SearchSessionRows, SessionSearchScopes, useSessionSearchScope, type SearchScope } from './sessions/SessionSearchScopes';
 import {
   ProjectGroup,
   creationKey,
@@ -132,17 +133,42 @@ type SearchAnswer = {
   matches: SessionMatch[];
   rows: Session[];
   reached: boolean;
+  total: number;
+  nextCursor: string | null;
+  paging?: boolean;
+  pageError?: boolean;
 };
 
-// A machine that was asked and did not speak: dark before the question, or silent past
-// `SEARCH_REACH_MS`.
-const UNREACHED: SearchAnswer = { matches: [], rows: [], reached: false };
+// A machine that did not answer is not an empty result.
+const UNREACHED: SearchAnswer = {
+  matches: [], rows: [], reached: false, total: 0, nextCursor: null,
+};
+
+async function readSearchPage(
+  api: GatewayClient,
+  needle: string,
+  signal: AbortSignal,
+  filters: Parameters<GatewayClient['searchSessions']>[2],
+) {
+  const reach = new AbortController();
+  const giveUp = () => reach.abort();
+  signal.addEventListener('abort', giveUp, { once: true });
+  if (signal.aborted) giveUp();
+  const expiry = window.setTimeout(giveUp, SEARCH_REACH_MS);
+  try {
+    return await api.searchSessions(needle, reach.signal, filters).catch(() => null);
+  } finally {
+    window.clearTimeout(expiry);
+    // Keep cancellation wired until this query and scope are replaced.
+  }
+}
 
 // The fleet's answer to ONE needle, `''` being the recents. `asked` is who the question
 // went to, so `asked.length - byMachine.size` is exactly how much of the search is still
 // outstanding — the progress the screen reports while it waits.
 type SearchAnswers = {
   needle: string | null;
+  scopeKey: string;
   asked: string[];
   byMachine: Map<string, SearchAnswer>;
 };
@@ -152,6 +178,7 @@ const NO_MACHINES: string[] = [];
 // Nothing asked yet, so no needle is answered: not even the recents' blank one.
 const NO_SEARCH: SearchAnswers = {
   needle: null,
+  scopeKey: '',
   asked: NO_MACHINES,
   byMachine: new Map(),
 };
@@ -378,6 +405,8 @@ export function SessionsScreen({
   // screen has to be able to say which of them are still out. A machine answers
   // with its rows and where they matched in the same read.
   const [searchAnswers, setSearchAnswers] = useState<SearchAnswers>(NO_SEARCH);
+  const searchControllerRef = useRef<AbortController | null>(null);
+  const searchPagesRef = useRef(new Set<string>());
   // The create in flight and the project header that started it. Only that
   // header replaces its plus with the busy word.
   const [creating, setCreating] = useState<{
@@ -1116,6 +1145,8 @@ export function SessionsScreen({
   // before a word is typed. Words the pause has not settled yet ask nothing: recents
   // asked then would be a round trip nobody waits for.
   const searchQuestion = !isSearchOpen ? null : searchNeedle || (query.trim() ? null : '');
+  const searchScope = useSessionSearchScope(conns, isSearchOpen, scope, clientFor);
+  const searchFilter = searchScope.wire;
 
   // Ask once per settled question, abort superseded requests, ignore late answers by
   // key, and paint each machine as soon as its answer arrives.
@@ -1130,20 +1161,22 @@ export function SessionsScreen({
     const fanout = searchFanout(
       connsRef.current,
       machinesRef.current,
-      scope,
+      searchFilter.machine,
       searchSilentRef.current,
     );
     setSearchAnswers({
       needle,
-      asked: fanout.asked,
-      byMachine: new Map(fanout.dark.map((key) => [key, UNREACHED])),
+      scopeKey: searchFilter.key,
+      asked: fanout.asked.filter(searchFilter.accepts),
+      byMachine: new Map(fanout.dark.filter(searchFilter.accepts).map((key) => [key, UNREACHED])),
     });
-    const reachable = fanout.ask;
+    const reachable = fanout.ask.filter((conn) => searchFilter.accepts(machineKey(conn)));
     if (reachable.length === 0) return;
     const controller = new AbortController();
+    searchControllerRef.current = controller;
     const answer = (key: string, entry: SearchAnswer) =>
       setSearchAnswers((prev) =>
-        prev.needle === needle
+        prev.needle === needle && prev.scopeKey === searchFilter.key
           ? { ...prev, byMachine: new Map(prev.byMachine).set(key, entry) }
           : prev,
       );
@@ -1151,22 +1184,7 @@ export function SessionsScreen({
       const key = machineKey(conn);
       const api = clientFor(conn);
       void (async () => {
-        // The search's own deadline (`SEARCH_REACH_MS`), not the transport's: a
-        // blackholed socket ends only when someone cancels it, and the whole fleet's
-        // progress was hostage to the machine that never spoke.
-        const reach = new AbortController();
-        const giveUp = () => reach.abort();
-        controller.signal.addEventListener('abort', giveUp, { once: true });
-        const expiry = window.setTimeout(giveUp, SEARCH_REACH_MS);
-        // One machine failing to search (asleep, refused, older gateway, out of time)
-        // must not blank the matches the others found — and must not be filed as an
-        // answer it never gave, which is how a dead gateway used to report "no
-        // matches on this machine".
-        const found = await api.searchSessions(needle, reach.signal).catch(() => null);
-        // The deadline is spent; the read is the reader's again. The effect's own
-        // cancellation stays wired to this reach for as long as the effect lives, so a
-        // query the user has replaced still aborts the flight it started.
-        window.clearTimeout(expiry);
+        const found = await readSearchPage(api, needle, controller.signal, searchFilter.request(key));
         if (controller.signal.aborted) return;
         if (found === null) {
           // NOW KNOWN DARK. The next query skips this machine outright instead of
@@ -1178,13 +1196,17 @@ export function SessionsScreen({
         }
         // The rows ride IN the answer, in the gateway's own order: a hit the paged list
         // has not loaded needs no second read.
-        answer(key, { matches: found.matches, rows: found.sessions, reached: true });
+        answer(key, {
+          matches: found.matches, rows: found.sessions, reached: true,
+          total: found.total, nextCursor: found.nextCursor,
+        });
       })();
     }
     return () => {
       controller.abort();
+      if (searchControllerRef.current === controller) searchControllerRef.current = null;
     };
-  }, [searchQuestion, fleetKey, scope]);
+  }, [searchQuestion, fleetKey, scope, searchFilter]);
 
   // WHAT IS TYPED VS WHAT WAS ASKED. `typed` is the field this frame; `searchNeedle` is
   // the needle every row, count and answer below belongs to. They differ only inside a
@@ -1199,8 +1221,54 @@ export function SessionsScreen({
   const searched = searchNeedle.length > 0;
   // ONLY the answers to the needle on screen count. Anything filed under an older
   // needle is a superseded round trip, not a result.
-  const live = searchAnswers.needle === searchNeedle ? searchAnswers : null;
+  const live = searchAnswers.needle === searchNeedle && searchAnswers.scopeKey === searchFilter.key ? searchAnswers : null;
   const searchAsked = live?.asked ?? NO_MACHINES;
+  const searchPages = [...(live?.byMachine.values() ?? [])];
+  const searchHasMore = searchPages.some((answer) => answer.nextCursor !== null);
+  const searchPaging = searchPages.some((answer) => answer.paging);
+  const searchPageError = searchPages.some((answer) => answer.pageError);
+  const searchTotal = searchPages.reduce((total, answer) => total + answer.total, 0);
+  const loadMoreSearch = () => {
+    const controller = searchControllerRef.current;
+    if (!live || !controller || controller.signal.aborted || live.needle !== searchQuestion) return;
+    for (const conn of connsRef.current) {
+      const key = machineKey(conn);
+      const entry = live.byMachine.get(key);
+      if (!entry?.nextCursor || entry.paging) continue;
+      const cursor = entry.nextCursor;
+      const flight = JSON.stringify([live.scopeKey, live.needle, key, cursor]);
+      if (searchPagesRef.current.has(flight)) continue;
+      searchPagesRef.current.add(flight);
+      const update = (change: (previous: SearchAnswer) => SearchAnswer) => {
+        setSearchAnswers((previous) => {
+          const answer = previous.byMachine.get(key);
+          if (controller.signal.aborted || previous.needle !== live.needle ||
+              previous.scopeKey !== live.scopeKey || answer?.nextCursor !== cursor) return previous;
+          return { ...previous, byMachine: new Map(previous.byMachine).set(key, change(answer)) };
+        });
+      };
+      update((previous) => ({ ...previous, paging: true, pageError: false }));
+      void (async () => {
+        try {
+          const page = await readSearchPage(clientFor(conn), live.needle ?? '', controller.signal, {
+            ...searchFilter.request(key), after: cursor,
+          });
+          if (page === null) {
+            update((previous) => ({ ...previous, paging: false, pageError: true }));
+            return;
+          }
+          update((previous) => ({
+            ...previous,
+            rows: [...new Map([...previous.rows, ...page.sessions].map((row) => [row.id, row])).values()],
+            matches: [...new Map([...previous.matches, ...page.matches].map((match) => [match.sessionId, match])).values()],
+            total: page.total, nextCursor: page.nextCursor, paging: false, pageError: false,
+          }));
+        } finally {
+          searchPagesRef.current.delete(flight);
+        }
+      })();
+    }
+  };
   const searchAnswered = useMemo(
     () => new Set(searchAsked.filter((key) => live?.byMachine.has(key) === true)),
     [live, searchAsked],
@@ -1336,7 +1404,7 @@ export function SessionsScreen({
   // be missing from the recents altogether.
   const found = useMemo(() => {
     const needle = searchNeedle.toLowerCase();
-    return inScope.map((machine) => {
+    return inScope.filter((machine) => searchFilter.accepts(machineKey(machine.conn))).map((machine) => {
       const api = clientFor(machine.conn);
       const answered = (searchRows.get(machineKey(machine.conn)) ?? []).filter(
         (session) => !api.isSessionDeleted(session.id),
@@ -1353,7 +1421,7 @@ export function SessionsScreen({
           !api.isSessionDeleted(openSid)
             ? (machine.sessions?.find(isOpen) ?? api.cachedSession(openSid))
             : null);
-        return { machine, sessions: openFirst(answered, open) };
+        return { machine, sessions: openFirst(answered, open && searchFilter.includes(machine.conn, open) ? open : null) };
       }
       const draftFor = (session: Session) => draftMessages[draftMessageKey(api.base, session.id)];
       // The one thing no gateway can match: the words and file names waiting in THIS
@@ -1364,6 +1432,7 @@ export function SessionsScreen({
         (session) =>
           !answeredIds.has(session.id) &&
           !api.isSessionDeleted(session.id) &&
+          searchFilter.includes(machine.conn, session) &&
           draftSearchText(draftFor(session)).includes(needle),
       );
       const ordered = sessionOrder([...answered, ...drafted], {
@@ -1373,7 +1442,7 @@ export function SessionsScreen({
       // A query that matched the session in use answers with it on top.
       return { machine, sessions: openFirst(ordered, ordered.find(isOpen)) };
     });
-  }, [inScope, searchNeedle, searchRows, draftMessages, openRow, openSid]);
+  }, [inScope, searchNeedle, searchRows, draftMessages, openRow, openSid, searchFilter]);
 
   // A search is a FLEET question: it runs on every machine in scope, so the dialog
   // reports what came back and from how many of them.
@@ -1664,6 +1733,7 @@ export function SessionsScreen({
         );
         return {
           machine: entry.machine,
+          searchSessions: entry.sessions,
           // An open dialog is on the glass, whatever the list behind it is doing.
           reading: {
             pageSize,
@@ -1924,6 +1994,7 @@ export function SessionsScreen({
       <MachineSections
         isSearch
         sections={foundSections}
+        searchScope={searchScope}
         context={foundContext}
         creation={projectCreation}
         note={(machine) => {
@@ -2114,14 +2185,20 @@ export function SessionsScreen({
           onQuery={onQuery}
           onClose={onCloseSearch}
           scope={
-            showStrip ? (
-              <>
-                {machineSwitch}
-                {searchReport}
-              </>
-            ) : (
-              searchReport
-            )
+            <>
+              {showStrip && machineSwitch}
+              <SessionSearchScopes scope={searchScope} onEverything={() => setScopePick(null)} />
+              {(searchHasMore || searchPaging || searchPageError) && (
+                <div className="flex flex-wrap items-center gap-3 border-t border-edge px-3 py-2 font-mono text-meta text-dialog-hint">
+                  <span>{searchTotal} results in this scope</span>
+                  <TextButton disabled={searchPaging} onClick={loadMoreSearch}>
+                    {searchPaging ? 'Loading results…' : searchPageError ? 'Retry more results' : 'Load more results'}
+                  </TextButton>
+                  {searchPageError && <span role="status">Could not load more results. Your current results are kept.</span>}
+                </div>
+              )}
+              {searchReport}
+            </>
           }
           results={searchResults}
           messages={
@@ -2151,6 +2228,7 @@ type MachineSection = {
   machine: FleetMachine;
   reading: ProjectGroupReading;
   groups: ProjectGroupView[];
+  searchSessions?: Session[];
 };
 
 /**
@@ -2162,18 +2240,20 @@ function MachineSections({
   sections,
   context,
   creation,
+  searchScope,
   note,
 }: {
   isSearch?: boolean;
   sections: MachineSection[];
   context: SessionRowsContext;
   creation: ProjectCreation;
+  searchScope?: SearchScope;
   /** What a machine with no project to show says instead. */
   note: (machine: FleetMachine) => string;
 }) {
   return (
     <div>
-      {sections.map(({ machine, groups, reading }, sectionIndex) => {
+      {sections.map(({ machine, groups, reading, searchSessions }, sectionIndex) => {
         const key = machineKey(machine.conn);
         return (
           <section key={key} aria-label={`${machineLabel(machine.conn)} ${isSearch ? 'search results' : 'projects'}`}>
@@ -2194,6 +2274,9 @@ function MachineSections({
               <div className="px-3 py-3 sm:px-4">
                 <p className="font-mono text-meta text-dialog-hint">{note(machine)}</p>
               </div>
+            ) : isSearch && searchScope ? (
+              <SearchSessionRows conn={machine.conn}
+                sessions={searchSessions ?? []} context={context} scope={searchScope} />
             ) : (
               groups.map((group, groupIndex) => (
                 // Nothing separates two projects: the band that opens the next

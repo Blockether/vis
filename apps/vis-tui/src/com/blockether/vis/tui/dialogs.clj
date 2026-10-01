@@ -2002,112 +2002,116 @@
    cursor row, `a` toggles all, Enter confirms, Esc cancels. Returns the vec
    of selected strings (possibly empty) on confirm, nil on Esc. Mirrors the
    web modal's alias chips — same proposed options, multi-pick semantics."
-  [^TerminalScreen screen title items]
-  (with-modal-background
-    screen
-    (let [items
-          (vec items)
+  ([screen title items] (multi-select-dialog! screen title items #{}))
+  ([^TerminalScreen screen title items initial]
+   (with-modal-background
+     screen
+     (let [items
+           (vec items)
 
-          total
-          (count items)
+           total
+           (count items)
 
-          selected
-          (atom 0)
+           selected
+           (atom 0)
 
-          scroll
-          (atom 0)
+           scroll
+           (atom 0)
 
-          checked
-          (atom #{})]
+           checked
+           (atom (into #{}
+                       (keep-indexed (fn [idx item]
+                                       (when (contains? (set initial) item) idx)))
+                       items))]
 
-      (loop []
+       (loop []
 
-        (let [size
-              (modal-size! screen)
+         (let [size
+               (modal-size! screen)
 
-              cols
-              (.getColumns size)
+               cols
+               (.getColumns size)
 
-              rows
-              (.getRows size)
+               rows
+               (.getRows size)
 
-              g
-              (frame/surface-graphics screen cols rows)
+               g
+               (frame/surface-graphics screen cols rows)
 
-              footer
-              [["↑/↓" "move"] ["Space" "toggle"] ["a" "all"] ["Enter" "start"] ["Esc" "cancel"]]
+               footer
+               [["↑/↓" "move"] ["Space" "toggle"] ["a" "all"] ["Enter" "start"] ["Esc" "cancel"]]
 
-              item-w
-              (+ 6 (long (reduce max 0 (map #(p/display-width (str %)) items))))
+               item-w
+               (+ 6 (long (reduce max 0 (map #(p/display-width (str %)) items))))
 
-              bounds
-              (draw-dialog-chrome! g
-                                   cols
-                                   rows
-                                   title
-                                   (footer-content-width cols footer item-w)
-                                   (adaptive-content-height rows (max 1 total)))
+               bounds
+               (draw-dialog-chrome! g
+                                    cols
+                                    rows
+                                    title
+                                    (footer-content-width cols footer item-w)
+                                    (adaptive-content-height rows (max 1 total)))
 
-              {:keys [left inner-w]}
-              bounds
+               {:keys [left inner-w]}
+               bounds
 
-              {:keys [content-top content-h hint-row]}
-              (dialog-layout bounds (max 1 total))
+               {:keys [content-top content-h hint-row]}
+               (dialog-layout bounds (max 1 total))
 
-              visible
-              (min (long total) (long content-h))
+               visible
+               (min (long total) (long content-h))
 
-              _
-              (swap! selected #(p/clamp % 0 (max 0 (dec total))))
+               _
+               (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
-              _
-              (swap! scroll #(visible-window-start @selected % content-h total))]
+               _
+               (swap! scroll #(visible-window-start @selected % content-h total))]
 
-          (if (zero? total)
-            (draw-list-item! g left content-top inner-w false "  (no options)")
-            (dotimes [i visible]
-              (let [idx (+ (long @scroll) (long i))
-                    row (+ (long content-top) (long i))]
+           (if (zero? total)
+             (draw-list-item! g left content-top inner-w false "  (no options)")
+             (dotimes [i visible]
+               (let [idx (+ (long @scroll) (long i))
+                     row (+ (long content-top) (long i))]
 
-                (when (< (long idx) (long total))
-                  (draw-checkbox-item! g
-                                       left
-                                       row
-                                       inner-w
-                                       (= idx @selected)
-                                       (contains? @checked idx)
-                                       (nth items idx))))))
-          (draw-hint-bar! g left hint-row inner-w footer)
-          (.setCursorPosition screen (p/cursor-pos 0 0))
-          (frame/refresh! screen)
-          (let [key (read-modal-key! screen)]
-            (if (nil? key)
-              (recur)
-              (condp = (key-type key)
-                KeyType/Escape nil
-                KeyType/ArrowUp (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total))))
-                                    (recur))
-                KeyType/ArrowDown
-                (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur))
-                KeyType/PageUp
-                (do (swap! selected #(p/clamp (- (long %) (long content-h)) 0 (max 0 (dec total))))
-                    (recur))
-                KeyType/PageDown
-                (do (swap! selected #(p/clamp (+ (long %) (long content-h)) 0 (max 0 (dec total))))
-                    (recur))
-                KeyType/Enter (mapv #(nth items %) (sort @checked))
-                KeyType/Character
-                (let [c (lower-key-character key)]
-                  (cond (= c \space) (do (when (pos? total)
-                                           (swap! checked #(if (contains? % @selected)
-                                                             (disj % @selected)
-                                                             (conj % @selected))))
-                                         (recur))
-                        (= c \a) (do
-                                   (swap! checked #(if (= (count %) total) #{} (set (range total))))
-                                   (recur))
-                        :else (recur)))
-                (recur)))))))))
+                 (when (< (long idx) (long total))
+                   (draw-checkbox-item! g
+                                        left
+                                        row
+                                        inner-w
+                                        (= idx @selected)
+                                        (contains? @checked idx)
+                                        (nth items idx))))))
+           (draw-hint-bar! g left hint-row inner-w footer)
+           (.setCursorPosition screen (p/cursor-pos 0 0))
+           (frame/refresh! screen)
+           (let [key (read-modal-key! screen)]
+             (if (nil? key)
+               (recur)
+               (condp = (key-type key)
+                 KeyType/Escape nil
+                 KeyType/ArrowUp
+                 (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur))
+                 KeyType/ArrowDown
+                 (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur))
+                 KeyType/PageUp
+                 (do (swap! selected #(p/clamp (- (long %) (long content-h)) 0 (max 0 (dec total))))
+                     (recur))
+                 KeyType/PageDown
+                 (do (swap! selected #(p/clamp (+ (long %) (long content-h)) 0 (max 0 (dec total))))
+                     (recur))
+                 KeyType/Enter (mapv #(nth items %) (sort @checked))
+                 KeyType/Character
+                 (let [c (lower-key-character key)]
+                   (cond (= c \space) (do (when (pos? total)
+                                            (swap! checked #(if (contains? % @selected)
+                                                              (disj % @selected)
+                                                              (conj % @selected))))
+                                          (recur))
+                         (= c \a)
+                         (do (swap! checked #(if (= (count %) total) #{} (set (range total))))
+                             (recur))
+                         :else (recur)))
+                 (recur))))))))))
 
 ;;; ── Managed-resource dialog (stop by id) ──────────────────────────────────
 
@@ -5477,10 +5481,8 @@
     (if (= day "-") "-" (str (subs day 5) " " (format-session-time v)))))
 
 (defn- navigator-session-row
-  "Normalize a compact session row. Project metadata remains searchable and
-   group metadata supplies the date's ink; neither changes the recency order.
-   `groups` indexes the machine's session groups by id, so a filed row uses
-   the group's current name and palette token rather than a copied value."
+  "Normalize a session row with explicit project and group names.
+   Group metadata never determines the status or timestamp ink."
   [active-session-id groups session]
   (let [id
         (get session "id")
@@ -5535,25 +5537,50 @@
      :stopped? stopped?
      :title (session-title session)
      :session (short-session-id session)
-     :group (not-empty (get session "project_name"))
+     :group (or (not-empty (get session "project_name"))
+                (not-empty (str (get session "project_id")))
+                "No project")
+     :project-id (not-empty (str (get session "project_id")))
      :session-group-id gid
-     :session-group (not-empty (str (get group "name")))
-     :session-group-color (not-empty (str (get group "color")))
+     :session-group (or (not-empty (str (get group "name"))) gid "No group")
      ;; Keep the gateway's star for Ctrl+S without changing recency or row fields.
      :favorite-rank (get session "favorite_rank")
      :favorite? (some? (get session "favorite_rank"))
      :dir work-dir
      :work-dir work-dir
      :status (cond awaiting-input? (if (> awaiting-count 1)
-                                     (str "! input needed ×" awaiting-count)
-                                     "! input needed")
-                   live? "● live"
-                   stopped? "⨯ stopped"
+                                     (str "! INPUT NEEDED ×" awaiting-count)
+                                     "! INPUT NEEDED")
+                   live? "● LIVE"
+                   stopped? "⨯ STOPPED"
                    (pos? unread) (if (> unread 1) (str unread " NEW") "NEW")
-                   :else "idle")
+                   :else "IDLE")
      :created (navigator-stamp (get session "created_at"))
      :modified (navigator-stamp (or (get session "modified_at") (get session "created_at")))
      :target {:action :switch :id id}}))
+
+(defn- navigator-row-in-scope?
+  "Project scopes intersect the union of the selected groups."
+  [row {:keys [project-id root group-ids]}]
+  (and (or (nil? project-id) (= (str project-id) (:project-id row)))
+       (or (nil? root) (if (str/blank? root) (nil? (:project-id row)) (= root (:work-dir row))))
+       (or (nil? group-ids) (contains? (set group-ids) (:session-group-id row)))))
+
+(defn- navigator-scope-controls
+  "Three neutral, clickable controls share the row below the search field."
+  [width project group-count]
+  (let [cell (max 1 (quot (long width) 3))]
+    (mapv (fn [idx action label]
+            {:action action
+             :x (* (long idx) (long cell))
+             :width cell
+             :label (p/ellipsize label cell)})
+          (range 3)
+          [:project :groups :all]
+          [(str "C-p Project: " project)
+           (str "C-g Groups: "
+                (if (pos? (long group-count)) (str group-count " selected") "All groups"))
+           "C-a Everything"])))
 
 (defn- navigator-selected-index
   "Keep the selected session when recency, pages or search results move its row.
@@ -5592,13 +5619,9 @@
   8)
 
 (defn- navigator-page-in?
-  "Whether the picker should pull its next page. A QUERY is answered by the server's search
-   across the whole store, not by loading more rows, so paging only ever walks an unfiltered
-   list: a cursor left to continue, and a selection within `navigator-page-slack` of the
-   last row held."
-  [{:keys [query selected total next-cursor]}]
-  (boolean (and (str/blank? (str query))
-                (seq (str next-cursor))
+  "Pull the next scoped gateway window near the end of the held rows."
+  [{:keys [selected total next-cursor]}]
+  (boolean (and (seq (str next-cursor))
                 (>= (+ (long selected) (long navigator-page-slack)) (long total)))))
 
 (defn- navigator-merge-sessions
@@ -5778,9 +5801,9 @@
           (conj {:label "Vis" :role :ai :side :reply :text (:reply-snippet match)}))))))
 
 (defn- navigator-block-heights
-  "One terminal line per session. Messages paint only in the right pane."
+  "Two terminal lines per session: title/status, then explicit location."
   [visible-rows]
-  (vec (repeat (count visible-rows) 1)))
+  (vec (repeat (count visible-rows) 2)))
 
 (defn- navigator-scroll-start
   "First visible row index: the smallest scroll that still fits the selected
@@ -5816,18 +5839,22 @@
 
     (min (long tail-start)
          (long (loop [s (min (max 0 (long scroll)) selected)]
-                 (if (and (< s selected) (> (long (reduce + 1 (subvec heights s selected))) budget))
+                 (if (and (< s selected)
+                          (> (long (reduce +
+                                           (long (get heights selected 1))
+                                           (subvec heights s selected)))
+                             budget))
                    (recur (inc s))
                    s))))))
 
 (defn- navigator-visible-blocks
-  "Paint one compact session per terminal row, clipped to the list's budget."
+  "Paint complete two-line session rows, clipped to the list budget."
   [visible-rows start budget]
   (let [start
         (long (max 0 (long start)))
 
         end
-        (min (count visible-rows) (+ start (max 0 (long budget))))]
+        (min (count visible-rows) (+ start (max 1 (quot (long budget) 2))))]
 
     (mapv (fn [idx]
             {:idx idx :entry (nth visible-rows idx)})
@@ -5852,10 +5879,10 @@
         (long inner-w)
 
         body-top
-        (+ (long content-top) 2)
+        (+ (long content-top) 3)
 
         avail
-        (max 1 (- (long content-h) 2))
+        (max 1 (- (long content-h) 3))
 
         list-inner
         (long (p/clamp (quot (* 60 inner-w) 100) 4 (max 4 (- inner-w 4))))
@@ -5966,9 +5993,7 @@
               :else t/dialog-fg)
 
         date-color
-        (if (:session-group-color entry)
-          (t/group-ink (:session-group-color entry))
-          t/dialog-hint-key)
+        t/dialog-hint
 
         fields
         [[(str (:modified entry)) date-color true] [" / " t/dialog-hint false]
@@ -5979,7 +6004,7 @@
       g
       (p/selection-styles selected?)
       (p/set-colors! g t/dialog-fg t/dialog-bg)
-      (p/fill-rect! g x row width 1)
+      (p/fill-rect! g x row width 2)
       (loop [fields
              fields
 
@@ -6001,7 +6026,13 @@
 
             (p/set-colors! g color t/dialog-bg)
             (if bold? (p/styled g [p/BOLD] (p/put-str! g cx row text)) (p/put-str! g cx row text))
-            (recur (rest fields) (+ cx used) (- remaining used))))))))
+            (recur (rest fields) (+ cx used) (- remaining used)))))
+      (p/set-colors! g t/dialog-hint t/dialog-bg)
+      (p/put-str! g
+                  x
+                  (inc (long row))
+                  (p/ellipsize (str "Project: " (:group entry) " / Group: " (:session-group entry))
+                               width)))))
 
 (defn- draw-navigator-segments!
   "Paint `navigator-highlight-segments` from `x`, clipped to `width` columns. A
@@ -6114,10 +6145,21 @@
           loaded-sessions
           (atom (vec (:sessions opts)))
 
-          ;; Read current group metadata once, off this thread, for each date's ink.
-          ;; A failed read leaves dates in the default accent color.
+          ;; Catalog reads stay off the input thread. Rows name a group even while it loads.
           groups-index
           (atom (or (:groups opts) {}))
+
+          scope-projects
+          (atom (vec (:projects opts)))
+
+          search-scope
+          (atom {})
+
+          scope-project-label
+          (atom "All projects")
+
+          page-generation
+          (atom 0)
 
           groups-task
           (atom nil)
@@ -6137,15 +6179,9 @@
           load-more
           (:load-more opts)
 
-          ;; ONE search: the gateway answers the matches WITH their rows, so a hit outside
-          ;; the window joins the list on the search's own thread, before the result is
-          ;; painted, and no second read fetches it.
-          search-fn
-          (when-let [search-sessions (:search-sessions opts)]
-            (fn [q]
-              (let [{:keys [matches sessions]} (search-sessions q)]
-                (when (seq sessions) (swap! loaded-sessions navigator-merge-sessions sessions))
-                (or matches {}))))
+          ;; A worker returns data only. The UI adopts it after checking query and scope.
+          search-sessions
+          (:search-sessions opts)
 
           transcript-ids
           (atom {})
@@ -6176,20 +6212,35 @@
 
       (letfn
         [(start-search! []
-           (let [q (str/trim @query)]
+           (let [q
+                 (str/trim @query)
+
+                 scope
+                 @search-scope]
+
              (reset! transcript-ids {})
              (reset! transcript-query nil)
+             (reset! page-cursor nil)
+             (swap! page-generation inc)
+             (when-let [running @page-task]
+               (future-cancel running))
+             (reset! page-task nil)
+             (reset! page-result nil)
              (if (empty? q)
                (do (swap! search-generation inc)
                    (when-let [running @search-task]
                      (future-cancel running))
                    (reset! search-task nil)
-                   (reset! search-result nil))
+                   (reset! search-result nil)
+                   (when search-sessions (start-page! #(search-sessions q scope))))
                (schedule-navigator-search! search-task
                                            search-generation
                                            search-result
                                            q
-                                           search-fn))))
+                                           (when search-sessions
+                                             (fn [needle]
+                                               (assoc (search-sessions needle scope)
+                                                 :scope scope)))))))
          (reset-list! [search?]
            (reset! selected 0)
            (reset! scroll 0)
@@ -6198,49 +6249,138 @@
                                             str)}))
            (when search? (start-search!)))
          (start-page! [load!]
-           (reset! page-error nil)
-           (reset! page-task (future (try (reset! page-result {:page (load!)})
-                                          (catch InterruptedException _ nil)
-                                          (catch Throwable _
-                                            (reset! page-result {:retry load!}))))))
+           (let [token (swap! page-generation inc)]
+             (reset! page-error nil)
+             (when-let [running @page-task]
+               (future-cancel running))
+             (reset! page-task (future (try (let [page (load!)]
+                                              (when (= token @page-generation)
+                                                (reset! page-result {:token token :page page})))
+                                            (catch InterruptedException _ nil)
+                                            (catch Throwable _
+                                              (when (= token @page-generation)
+                                                (reset! page-result {:token token
+                                                                     :retry load!}))))))))
          (page-in! [total]
-           (when (and load-more
-                      (nil? @page-task)
-                      (nil? @page-error)
-                      (navigator-page-in?
-                        {:query @query :selected @selected :total total :next-cursor @page-cursor}))
-             (let [cursor @page-cursor]
-               (start-page! #(load-more cursor)))))]
+           (let [q
+                 (str/trim @query)
+
+                 scope
+                 @search-scope
+
+                 cursor
+                 @page-cursor]
+
+             (when (and (or load-more search-sessions)
+                        (nil? @page-task)
+                        (nil? @search-task)
+                        (nil? @page-error)
+                        (or (empty? q) (= q @transcript-query))
+                        (navigator-page-in? {:selected @selected :total total :next-cursor cursor}))
+               (start-page! (if (and load-more (empty? q))
+                              #(load-more cursor scope)
+                              #(search-sessions q (assoc scope :after cursor)))))))
+         (change-scope! [scope label]
+           (reset! search-scope scope)
+           (reset! scope-project-label label)
+           (reset! loaded-sessions [])
+           (reset! selection nil)
+           (reset-list! true))
+         (choose-project! []
+           (when-let [chosen (select-dialog! screen
+                                             "Search project"
+                                             (into [{:label "All projects" :scope {}}
+                                                    {:label "No project" :scope {:root ""}}]
+                                                   (map (fn [project]
+                                                          {:label (get project "name")
+                                                           :scope {:project-id (str (get project
+                                                                                         "id"))}})
+                                                        @scope-projects)))]
+             (change-scope! (:scope chosen) (:label chosen))))
+         (choose-groups! []
+           (let [project-id
+                 (:project-id @search-scope)
+
+                 choices
+                 (->> (vals @groups-index)
+                      (filter #(and (or (nil? project-id) (= project-id (str (get % "project_id"))))
+                                    (or (nil? (:root @search-scope)) (nil? (get % "project_id")))))
+                      (sort-by (juxt #(str (get % "name")) #(str (get % "id"))))
+                      (mapv (fn [group]
+                              (let [project (some #(when (= (str (get group "project_id"))
+                                                            (str (get % "id")))
+                                                     %)
+                                                  @scope-projects)]
+                                {:id (str (get group "id"))
+                                 :label (str (or (get project "name") "No project")
+                                             " / " (get group "name")
+                                             " · " (short-session-id (get group "id")))}))))
+
+                 initial
+                 (into #{}
+                       (keep #(when (contains? (set (:group-ids @search-scope)) (:id %))
+                                (:label %)))
+                       choices)]
+
+             (when-let [chosen (multi-select-dialog! screen
+                                                     "Search groups (any selected; empty means all)"
+                                                     (mapv :label choices)
+                                                     initial)]
+               (let [ids
+                     (into #{} (keep #(when (contains? (set chosen) (:label %)) (:id %))) choices)]
+                 (change-scope! (cond-> (dissoc @search-scope :group-ids)
+                                  (seq ids)
+                                  (assoc :group-ids ids))
+                                @scope-project-label)))))
+         (scope-action! [action]
+           (case action
+             :project
+             (choose-project!)
+
+             :groups
+             (choose-groups!)
+
+             :all
+             (change-scope! {} "All projects")
+
+             nil))]
         (try
           (when-let [load-initial (:load-initial opts)]
             (start-page! load-initial))
-          (when-let [load-groups (:load-groups opts)]
-            (reset! groups-task (future (try (when-let [index (load-groups)]
-                                               (reset! groups-index index))
+          (when-let [load-catalog (:load-catalog opts)]
+            (reset! groups-task (future (try (when-let [catalog (load-catalog)]
+                                               (reset! groups-index (:groups catalog))
+                                               (reset! scope-projects (:projects catalog)))
                                              (catch InterruptedException _ nil)
                                              (catch Throwable _ nil)))))
           (loop []
 
-            (when-let [{:keys [page retry]} (first (swap-vals! page-result (constantly nil)))]
-              (reset! page-task nil)
-              (reset! page-error retry)
-              (when-not retry
-                (reset! page-cursor (:next-cursor page))
-                (swap! loaded-sessions navigator-merge-sessions (:sessions page))))
+            (when (and @groups-task (future-done? @groups-task)) (reset! groups-task nil))
+            (when-let [{:keys [token page retry]} (first (swap-vals! page-result (constantly nil)))]
+              (when (= token @page-generation)
+                (reset! page-task nil)
+                (reset! page-error retry)
+                (when-not retry
+                  (reset! page-cursor (:next-cursor page))
+                  (swap! loaded-sessions navigator-merge-sessions (:sessions page))
+                  (when (seq (:matches page)) (swap! transcript-ids merge (:matches page))))))
             (when (seq @fleet-frames)
               (let [frames (first (swap-vals! fleet-frames empty))]
                 (swap! loaded-sessions #(reduce navigator-apply-fleet-frame % frames))))
             (when-let [{:keys [token query matches]} @search-result]
               (reset! search-result nil)
-              (when (= token @search-generation)
+              (when (and (= token @search-generation) (= (:scope matches) @search-scope))
+                (swap! loaded-sessions navigator-merge-sessions (:sessions matches))
+                (reset! page-cursor (:next-cursor matches))
                 (reset! transcript-query query)
-                (reset! transcript-ids matches)
+                (reset! transcript-ids (or (:matches matches) {}))
                 (reset! search-task nil)))
             (let [rows
-                  (navigator-all-rows (assoc opts
-                                        :sessions @loaded-sessions
-                                        :groups @groups-index
-                                        :show-empty-untitled? @show-empty-untitled?))
+                  (filterv #(navigator-row-in-scope? % @search-scope)
+                    (navigator-all-rows (assoc opts
+                                          :sessions @loaded-sessions
+                                          :groups @groups-index
+                                          :show-empty-untitled? @show-empty-untitled?)))
 
                   visible-rows
                   (navigator-visible-rows rows @query @transcript-ids)
@@ -6285,6 +6425,11 @@
 
                   content-w
                   (long (max 1 (- (long inner-w) 2)))
+
+                  scope-controls
+                  (navigator-scope-controls content-w
+                                            @scope-project-label
+                                            (count (:group-ids @search-scope)))
 
                   block-heights
                   (navigator-block-heights visible-rows)
@@ -6339,10 +6484,17 @@
                                                        @query
                                                        (count @query))]
                 (p/set-colors! g t/dialog-border t/dialog-bg)
-                (p/draw-separator! g left right (inc (long content-top)))
+                (p/set-colors! g t/dialog-hint t/dialog-bg)
+                (doseq [control scope-controls]
+                  (p/put-str! g
+                              (+ (inc (long left)) (long (:x control)))
+                              (inc (long content-top))
+                              (:label control)))
+                (p/set-colors! g t/dialog-border t/dialog-bg)
+                (p/draw-separator! g left right (+ (long content-top) 2))
                 (when (and page-status (pos? total))
                   (p/set-colors! g t/dialog-hint t/dialog-bg)
-                  (p/put-str! g body-x (inc (long content-top)) (ellipsize page-status body-w)))
+                  (p/put-str! g body-x (+ (long content-top) 2) (ellipsize page-status body-w)))
                 (if (zero? total)
                   (let [hidden-count (count (filter empty-untitled-session? @loaded-sessions))
                         message (cond page-status page-status
@@ -6359,9 +6511,9 @@
 
                     (when-let [{:keys [idx entry]} (first remaining)]
                       (draw-navigator-session! g body-x row body-w entry (= idx @selected))
-                      (recur (rest remaining) (inc (long row))))))
+                      (recur (rest remaining) (+ (long row) 2)))))
                 ;; The list and the selected session's messages always stay side by side.
-                (draw-navigator-divider! g divider content-top content-h)
+                (draw-navigator-divider! g divider (inc (long content-top)) (dec (long content-h)))
                 (draw-navigator-preview!
                   g
                   preview-x
@@ -6394,14 +6546,33 @@
                                  ["Esc" "cancel"]])
                 (.setCursorPosition screen cursor-pos)
                 (frame/refresh! screen))
-              (let [key (read-navigator-key! screen
-                                             search-task
-                                             search-result
-                                             (when (or stop-fleet! @page-task @page-result)
-                                               #(or (seq @fleet-frames) @page-result)))]
+              (let [key (read-navigator-key!
+                          screen
+                          search-task
+                          search-result
+                          (when (or stop-fleet! @page-task @page-result @groups-task)
+                            #(or (seq @fleet-frames)
+                                 @page-result
+                                 (and @groups-task (future-done? @groups-task)))))]
                 (if-not key
                   (recur)
                   (cond
+                    (input/ctrl-char? key \p) (do (scope-action! :project) (recur))
+                    (input/ctrl-char? key \g) (do (scope-action! :groups) (recur))
+                    (input/ctrl-char? key \a) (do (scope-action! :all) (recur))
+                    (and (instance? MouseAction key)
+                         (= MouseActionType/CLICK_DOWN (.getActionType ^MouseAction key))
+                         (= (inc (long content-top)) (.getRow (.getPosition ^MouseAction key))))
+                    (do (let [column (- (.getColumn (.getPosition ^MouseAction key))
+                                        (inc (long left)))
+                              control (some #(when (<= (long (:x %))
+                                                       column
+                                                       (dec (+ (long (:x %)) (long (:width %)))))
+                                               %)
+                                            scope-controls)]
+
+                          (scope-action! (:action control)))
+                        (recur))
                     (some? (ScrollBar/wheelStep ^KeyStroke key))
                     (do (swap! selected #(p/clamp (+ (long %)
                                                      (long (ScrollBar/wheelStep ^KeyStroke key)))

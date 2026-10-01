@@ -664,20 +664,15 @@ describe('the search starts on the session the reader is in', () => {
   const pane = () => screen.getByRole('region', { name: 'Matching messages' });
   const row = (region: string, sid: string) =>
     screen.getByRole('region', { name: region }).querySelector<HTMLElement>(`[data-session-id="${sid}"]`)!;
-  /** The projects a region lists, in the order it paints them. */
-  const projects = (region: string) =>
-    within(screen.getByRole('region', { name: region }))
-      .getAllByText(/^(alpha|zulu)$/)
-      .map((label) => label.textContent);
-
-  it('opens the recents on it, project first, when newer work pushed it out of their window', async () => {
+  it('shows the recents as explicit rows, including the session in use outside the window', async () => {
     const view = renderSessionsScreen({ machines: holding([fresh]), isSearchOpen: true });
     restore = view.restore;
     view.setOpenSession({ conn: view.conns[0], sid: 'in-use' });
 
-    await waitFor(() => expect(projects('Recent sessions')).toEqual(['zulu', 'alpha']));
-    // Only the first project opens by itself, and it is the one the session in use is in.
-    expect(rowOrder('Recent sessions')).toEqual(['in-use']);
+    await waitFor(() => expect(rowOrder('Recent sessions')).toEqual(['in-use', 'fresh']));
+    const results = within(screen.getByRole('region', { name: 'Recent sessions' }));
+    expect(results.getByText('Project: zulu')).toBeVisible();
+    expect(results.getByText('Project: alpha')).toBeVisible();
     expect(row('Recent sessions', 'in-use')).toHaveAttribute('aria-current', 'page');
   });
 
@@ -706,5 +701,137 @@ describe('the search starts on the session the reader is in', () => {
     await waitFor(() => expect(rowOrder()).toEqual(['fresh']));
     expect(within(pane()).getByRole('heading')).toHaveTextContent('Fresh work');
     expect(row('Matching sessions', 'fresh')).toHaveAttribute('aria-current', 'true');
+  });
+ });
+
+// The search scope belongs on the gateway request, not on the held list window.
+describe('explicit search locations and scopes', () => {
+  it('names each project and group and sends project and OR-group scopes', async () => {
+    const rows = [
+      listSession({ id: 'one', title: 'Needle one', project_id: 'p1', project_name: 'Workbench', group_id: 'g1' }),
+      listSession({ id: 'two', title: 'Needle two', project_id: 'p1', project_name: 'Workbench', group_id: 'g2' }),
+      listSession({ id: 'other', title: 'Needle other', project_id: 'p2', project_name: 'Archive', group_id: 'g3' }),
+    ];
+    const view = renderSessionsScreen({ machines: [{
+      label: 'alpha', sessions: rows,
+      routes: {
+        '/v1/projects': { projects: [
+          { id: 'p1', name: 'Workbench', workspace_root: '/work' },
+          { id: 'p2', name: 'Archive', workspace_root: '/archive' },
+        ] },
+        '/v1/session-groups': { groups: [
+          { id: 'g1', name: 'Planning', project_id: 'p1', color: 'red' },
+          { id: 'g2', name: 'Review', project_id: 'p1', color: 'blue' },
+          { id: 'g3', name: 'History', project_id: 'p2', color: 'green' },
+        ] },
+      },
+    }] });
+    restore = view.restore;
+    view.setQuery('needle');
+    const results = await screen.findByRole('region', { name: 'Matching sessions' });
+    await waitFor(() => expect(within(results).getByText('Needle one')).toBeVisible());
+    expect(within(results).getAllByText('Project: Workbench')[0]).toBeVisible();
+    expect(within(results).getByText('Group: Planning')).toBeVisible();
+    const project = await screen.findByRole('combobox', { name: 'Search project' });
+    fireEvent.change(project, { target: { value: screen.getByRole('option', { name: 'Workbench' }).getAttribute('value') } });
+    await waitFor(() => expect(searchParams(view.requests, 'project_id').at(-1)).toBe('p1'));
+    fireEvent.click(screen.getByRole('button', { name: /Search groups/ }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Planning/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /Review/ }));
+    await waitFor(() => expect(searchParams(view.requests, 'group_ids').at(-1)?.split(',').sort()).toEqual(['g1', 'g2']));
+    const oldRequest = view.requests.filter((request) => request.path.startsWith('/v1/sessions/actions/search')).at(-1)!;
+    fireEvent.click(screen.getByRole('button', { name: 'Search everything' }));
+    await waitFor(() => expect(searchParams(view.requests, 'group_ids').at(-1)).toBeNull());
+    expect(searchParams(view.requests, 'project_id').at(-1)).toBeNull();
+    expect(oldRequest.signal?.aborted).toBe(true);
+  });
+  it('pages the selected project and groups and preserves unfiled and empty-project scopes', async () => {
+    const rows = Array.from({ length: 60 }, (_, index) => listSession({
+      id: `hit-${index}`, title: `Needle ${index}`, project_id: 'p1', project_name: 'Workbench',
+      group_id: index % 2 === 0 ? 'g1' : 'g2', workspace: { root: '/work' },
+    }));
+    rows.push(listSession({ id: 'other', title: 'Needle other', project_id: 'p2', workspace: { root: '/other' } }));
+    rows.push(listSession({ id: 'unfiled', title: 'Needle unfiled', workspace: { root: '' } }));
+    const view = renderSessionsScreen({ machines: [{
+      sessions: rows,
+      routes: {
+        '/v1/projects': { projects: [
+          { id: 'p1', name: 'Workbench', workspace_root: '/work' },
+          { id: 'p2', name: 'Other', workspace_root: '/other' },
+          { id: 'empty', name: 'Empty project', workspace_root: '/empty', archived_at: 1 },
+        ] },
+        '/v1/session-groups': { groups: [
+          { id: 'g1', name: 'Planning', project_id: 'p1' },
+          { id: 'g2', name: 'Review', project_id: 'p1' },
+        ] },
+      },
+    }] });
+    restore = view.restore;
+    view.setQuery('needle');
+    const results = await screen.findByRole('region', { name: 'Matching sessions' });
+    const project = await screen.findByRole('combobox', { name: 'Search project' });
+    await screen.findByRole('option', { name: 'Empty project' });
+    fireEvent.change(project, { target: { value: screen.getByRole('option', { name: 'Workbench' }).getAttribute('value') } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search groups' }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Planning/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /Review/ }));
+    await waitFor(() => expect(screen.getByText('60 results in this scope')).toBeVisible());
+    expect(within(results).queryByText('Needle 59')).not.toBeInTheDocument();
+    expect(within(results).queryByText('Needle other')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Load more results' }));
+    await waitFor(() => expect(within(results).getByText('Needle 59')).toBeVisible());
+    expect(within(results).getAllByText('Project: Workbench')).toHaveLength(60);
+    const last = view.requests.filter((request) => request.path.startsWith('/v1/sessions/actions/search')).at(-1)!;
+    const params = new URLSearchParams(last.path.split('?')[1]);
+    expect(params.get('project_id')).toBe('p1');
+    expect(params.get('group_ids')).toBe('g1,g2');
+    expect(params.get('after')).toBe('50');
+    fireEvent.change(project, { target: { value: 'none' } });
+    await waitFor(() => expect(within(results).getByText('Needle unfiled')).toBeVisible());
+    expect(within(results).getByText('Project: No project')).toBeVisible();
+    expect(within(results).getByText('Group: No group')).toBeVisible();
+    expect(within(results).queryByText('Needle 0')).not.toBeInTheDocument();
+    expect(searchParams(view.requests, 'root').at(-1)).toBe('');
+    expect(searchParams(view.requests, 'group_ids').at(-1)).toBeNull();
+    fireEvent.change(project, { target: { value: screen.getByRole('option', { name: 'Empty project' }).getAttribute('value') } });
+    await waitFor(() => expect(within(results).queryByText('Needle unfiled')).not.toBeInTheDocument());
+    await screen.findByText('No matching sessions');
+  });
+
+  it('discards a late continuation when the project changes without changing the query', async () => {
+    const rows = Array.from({ length: 51 }, (_, index) => listSession({
+      id: `old-${index}`, title: `Needle old ${index}`, project_id: 'p1', workspace: { root: '/work' },
+    }));
+    rows.push(listSession({ id: 'unfiled', title: 'Needle unfiled', workspace: { root: '' } }));
+    const view = renderSessionsScreen({ machines: [{ sessions: rows,
+      routes: { '/v1/projects': { projects: [{ id: 'p1', name: 'Workbench', workspace_root: '/work' }] } },
+    }] });
+    restore = view.restore;
+    view.setQuery('needle');
+    const project = await screen.findByRole('combobox', { name: 'Search project' });
+    await screen.findByRole('option', { name: 'Workbench' });
+    fireEvent.change(project, { target: { value: screen.getByRole('option', { name: 'Workbench' }).getAttribute('value') } });
+    await screen.findByText('51 results in this scope');
+    const fetch = globalThis.fetch;
+    let release: ((answer: Response) => void) | undefined;
+    let lateAnswer: Response | undefined;
+    globalThis.fetch = async (input, init) => {
+      const answer = await fetch(input, init);
+      if (String(input).includes('after=')) {
+        lateAnswer = answer;
+        return new Promise<Response>((resolve) => { release = resolve; });
+      }
+      return answer;
+    };
+    fireEvent.click(screen.getByRole('button', { name: 'Load more results' }));
+    await waitFor(() => expect(typeof release).toBe('function'));
+    const oldRequest = view.requests.filter((request) => request.path.includes('after=')).at(-1)!;
+    fireEvent.change(project, { target: { value: 'none' } });
+    const results = screen.getByRole('region', { name: 'Matching sessions' });
+    await waitFor(() => expect(within(results).getByText('Needle unfiled')).toBeVisible());
+    expect(oldRequest.signal?.aborted).toBe(true);
+    await act(async () => { release!(lateAnswer!); });
+    expect(within(results).queryByText('Needle old 50')).not.toBeInTheDocument();
+    expect(within(results).getByText('Needle unfiled')).toBeVisible();
   });
 });

@@ -10,6 +10,7 @@
     com.blockether.vis.internal.persistance.sqlite.core-test
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.core :as vis]
             ;; Force-load the SQLite backend ns so the `private-core-fn` helper
             ;; below can resolve its private vars at top-level def time. The backend
@@ -2292,39 +2293,78 @@
         (expect (= 2 (count by-id)))
         (expect (<= 4 (long (get by-id older))))
         (expect (= (get by-id older) (get by-id newer))))))
+  (it "applies scoped session IDs before title and transcript budgets on both sides"
+      (let [s
+            (h/store)
+
+            older
+            (h/store-session! s {:channel :tui :title "needle scoped"})
+
+            newer
+            (h/store-session! s {:channel :tui :title "needle outside"})]
+
+        (doseq [sid [older newer]]
+          (let [tid (vis/db-store-session-turn!
+                      s
+                      {:parent-session-id sid :user-request "needle request" :status :done})]
+            (h/store-iteration!
+              s
+              {:session-turn-id tid :assistant-prose "needle answer" :code "x" :stdout "1\n"})))
+        (with-redefs-fn {#'sqlite-core/transcript-hit-scan-limit 1
+                         #'sqlite-core/transcript-hit-sessions-limit 1}
+          (fn []
+            (let [matches (vis/db-search-session-matches s :all "needle" [older])]
+              (expect (= [older] (mapv :id matches)))
+              (expect (= {:in-title? true :in-request? true :in-reply? true}
+                         (select-keys (first matches) [:in-title? :in-request? :in-reply?])))
+              (expect (= [] (vis/db-search-session-matches s :all "needle" [])))
+              (expect (= [] (vis/db-search-session-matches s :all "" [older])))
+              (expect (= [] (vis/db-search-session-matches s :api "needle" [older])))
+              (expect (= (vis/db-search-session-matches s :all "needle")
+                         (vis/db-search-session-matches s :all "needle" nil))))))))
   ;; Regression, issue: searching the app for a 4+ character word (`star`) sat
   ;; silent for about a second before it painted anything. The snippets came
   ;; from a SECOND statement that repeated the MATCH and intersected it with the
   ;; ranked rowids, so SQLite re-ran the query once PER rowid — and a prefix term
   ;; longer than the `prefix='2 3'` indexes was re-expanded across the term index
   ;; on every one of those seeks (~800ms of a ~925ms search on a real store).
-  (it "reads the ranked walk AND its snippets from ONE indexed FTS scan"
-      (let [s
-            (h/store)
+  (it
+    "reads the ranked walk AND its snippets from ONE indexed FTS scan"
+    (let [s
+          (h/store)
 
-            cid
-            (h/store-session! s {:channel :tui :title "Plan"})]
+          cid
+          (h/store-session! s {:channel :tui :title "Plan"})]
 
-        (vis/db-store-session-turn!
-          s
-          {:parent-session-id cid :user-request "needle ask" :status :done})
-        (doseq [side [:request :reply]]
-          (let [sql ((private-core-fn "transcript-hit-sql") side "")
-                plan (mapv :detail
-                           ((private-core-fn "raw-query!")
-                             s
-                             [(str "EXPLAIN QUERY PLAN " sql) "\"needle\"*"]))]
+      (vis/db-store-session-turn! s
+                                  {:parent-session-id cid :user-request "needle ask" :status :done})
+      (doseq [side
+              [:request :reply]
 
-            ;; The DESC walk belongs to the FTS subquery: ordering the JOINED
-            ;; result makes SQLite spool EVERY match into a temp B-tree and sort
-            ;; it before the LIMIT can apply — ~240ms of a ~300ms search.
-            (expect (seq plan))
-            (expect (not-any? #(re-find #"TEMP B-TREE" (str %)) plan))
-            ;; ONE MATCH for the whole side. A second one IS the per-rowid
-            ;; snippet pass coming back.
-            (expect (= 1 (count (re-seq #"MATCH" sql))))
-            ;; ...and it is the scan itself that renders the snippet.
-            (expect (re-find #"FROM \(SELECT rowid AS rid, snippet\(" sql))))))
+              scoped?
+              [false true]]
+
+        (let [sql
+              ((private-core-fn "transcript-hit-sql") side "" scoped?)
+
+              params
+              (cond-> [(str "EXPLAIN QUERY PLAN " sql) "\"needle\"*"]
+                scoped?
+                (conj (wire/json-str [(str cid)])))
+
+              plan
+              (mapv :detail ((private-core-fn "raw-query!") s params))]
+
+          ;; The DESC walk belongs to the FTS subquery: ordering the JOINED
+          ;; result makes SQLite spool EVERY match into a temp B-tree and sort
+          ;; it before the LIMIT can apply — ~240ms of a ~300ms search.
+          (expect (seq plan))
+          (expect (not-any? #(re-find #"TEMP B-TREE" (str %)) plan))
+          ;; ONE MATCH for the whole side. A second one IS the per-rowid
+          ;; snippet pass coming back.
+          (expect (= 1 (count (re-seq #"MATCH" sql))))
+          ;; ...and it is the scan itself that renders the snippet.
+          (expect (re-find #"FROM \(SELECT rowid AS rid, snippet\(" sql))))))
   (it "matches a PREFIX so search is useful mid-typing (`dia` finds `dialogs`)"
       (let [s
             (h/store)

@@ -1986,3 +1986,36 @@ it('rejects a marked HTTP 200 Activity export and preserves ordinary body failur
   fetches.mockResolvedValueOnce(new Response(complete));
   expect(await (await client.activityExport('s1', 'history')).text()).toBe(complete);
 });
+
+describe('GatewayClient search scopes', () => {
+  it('sends project and OR-group scopes with the cursor and keeps empty scopes explicit', async () => {
+    const fetches = vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({ sessions: [], total: 0 })));
+    vi.stubGlobal('fetch', fetches);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+    await client.searchSessions('needle', undefined, {
+      projectId: 'p/one', groupIds: ['g1', 'g2'], limit: 1, after: 'next',
+    });
+    await client.searchSessions('', undefined, { root: '', groupIds: [] });
+    await client.searchSessions('');
+    const queries = fetches.mock.calls.map(([input]) => new URL(String(input)).searchParams);
+    expect(queries[0].get('project_id')).toBe('p/one');
+    expect(queries[0].get('group_ids')).toBe('g1,g2');
+    expect(queries[0].get('after')).toBe('next');
+    expect(queries[0].get('limit')).toBe('1');
+    expect(queries[1].get('root')).toBe('');
+    expect(queries[1].get('group_ids')).toBe('');
+    expect(queries[2].has('root')).toBe(false);
+    expect(queries[2].has('group_ids')).toBe(false);
+  });
+
+  it('reads archived and empty projects from the complete catalog', async () => {
+    const projects = [{ id: 'empty', name: 'Empty', workspace_root: '/empty', archived_at: 1 }];
+    const fetches = vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({ projects })));
+    vi.stubGlobal('fetch', fetches);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+    expect(await client.listProjects()).toEqual(projects);
+    expect(String(fetches.mock.calls[0][0])).toContain('/v1/projects?archived=include');
+  });
+});

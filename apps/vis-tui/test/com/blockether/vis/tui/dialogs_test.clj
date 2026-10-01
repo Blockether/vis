@@ -404,13 +404,13 @@
           (expect (= "Untitled session" (:title r1)))
           (expect (= "s1" (:session r1)))
           (expect (:focused? r1))
-          (expect (= "idle" (:status r1)))))
+          (expect (= "IDLE" (:status r1)))))
     (it "shows an inactive session as idle instead of showing a turn count"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               rows (all-rows {:active-session-id "s1" :sessions sessions})]
 
           (expect (not (:focused? (second rows))))
-          (expect (= "idle" (:status (second rows))))))
+          (expect (= "IDLE" (:status (second rows))))))
     (it "compact MM-dd HH:mm timestamps (UTC)"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               rows (all-rows {:active-session-id "s1" :sessions sessions})
@@ -429,7 +429,7 @@
 
           (expect (= 1 (count vis)))
           (expect (:transcript-match? (first vis)))
-          (expect (= "idle" (:status (first vis))))))
+          (expect (= "IDLE" (:status (first vis))))))
     (it "body matches keep session status and carry the You/Vis snippets"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               visible-rows (var-get #'dlg/navigator-visible-rows)
@@ -444,13 +444,13 @@
                     (first (visible-rows rows "zzz-no-title-match" (mk k))))]
 
           ;; A request hit supplies only a You preview, not a replacement session status.
-          (expect (= "idle" (:status (tag :request))))
+          (expect (= "IDLE" (:status (tag :request))))
           (expect (= ["You"] (mapv :label (preview-entries (:transcript-match (tag :request))))))
           ;; An assistant reply supplies only a Vis preview.
-          (expect (= "idle" (:status (tag :reply))))
+          (expect (= "IDLE" (:status (tag :reply))))
           (expect (= ["Vis"] (mapv :label (preview-entries (:transcript-match (tag :reply))))))
           ;; Both sides preserve their author labels.
-          (expect (= "idle" (:status (tag :both))))
+          (expect (= "IDLE" (:status (tag :both))))
           (expect (= ["You" "Vis"] (mapv :label (preview-entries (:transcript-match (tag :both))))))
           ;; the match carries the session title so the preview leads with it,
           ;; before the You/Vis snippet — title first, then transcript.
@@ -499,7 +499,7 @@
 
           (expect (= ["muse" "reply" "ask" "named"] (mapv (comp str :id :target) vis)))
           (expect (= ["muse" "reply" "ask" "named"] (mapv (comp str :id :target) flipped)))
-          (expect (= "idle" (:status (first (filter #(= "muse" (str (:id (:target %)))) vis)))))))
+          (expect (= "IDLE" (:status (first (filter #(= "muse" (str (:id (:target %)))) vis)))))))
     (it "every matching row carries its own matches for the message pane"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               visible-rows (var-get #'dlg/navigator-visible-rows)
@@ -517,7 +517,7 @@
 
           (expect (= (count rows) (count vis)))
           (expect (every? #(= 1 (count (preview-entries (:transcript-match %)))) vis))))
-    (it "the list budgets one line per session and never scrolls past the end"
+    (it "the list budgets two lines per session and never scrolls past the end"
         (let [heights (var-get #'dlg/navigator-block-heights)
               blocks (var-get #'dlg/navigator-visible-blocks)
               scroll-start (var-get #'dlg/navigator-scroll-start)
@@ -526,34 +526,38 @@
               vis [(hit 3) (hit 0) (hit 2)]
               hs (heights vis)]
 
-          (expect (= [1 1 1] hs))
-          (expect (= [0 1] (mapv :idx (blocks vis 0 2))))
-          (expect (= [0 1 2] (mapv :idx (blocks vis 0 3))))
+          (expect (= [2 2 2] hs))
+          (expect (= [0 1] (mapv :idx (blocks vis 0 4))))
+          (expect (= [0 1 2] (mapv :idx (blocks vis 0 6))))
           (expect (= [1 2] (mapv :idx (blocks vis 1 99))))
-          (expect (= 1 (scroll-start hs 2 0 2)))
+          (expect (= 1 (scroll-start hs 2 0 4)))
           (expect (= 2 (scroll-start hs 2 0 1)))
           (expect (= 0 (scroll-start hs 0 0 99)))))
     (it
-      "keeps selection plain while fitting every session on one line"
+      "names the location in neutral ink and keeps selected rows plain"
       (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)
             draw-session (var-get #'dlg/draw-navigator-session!)
             entry {:focused? false
-                   :status "idle"
+                   :status "IDLE"
                    :title "First session"
                    :session "abc1234"
-                   :modified "now"}
+                   :modified "now"
+                   :group "Workbench"
+                   :session-group "Planning"
+                   :session-group-color "red"}
             line (fn [row]
                    (apply str
                      (for [column (range 80)]
                        (.getCharacterString (.getBackCharacter screen (int column) (int row))))))]
 
         (try (let [g (.newTextGraphics screen)]
-               (draw-session g 4 6 32 entry true)
-               (draw-session g 4 7 32 entry false)
+               (draw-session g 4 6 70 entry true)
+               (draw-session g 4 9 70 entry false)
                (expect (= (.getBackgroundColor (.getBackCharacter screen 6 6))
-                          (.getBackgroundColor (.getBackCharacter screen 6 7))))
-               (expect (str/includes? (line 6) "now / idle / First session"))
-               (expect (str/includes? (line 7) "now / idle / First session"))
+                          (.getBackgroundColor (.getBackCharacter screen 6 9))))
+               (expect (str/includes? (line 6) "now / IDLE / First session"))
+               (expect (str/includes? (line 7) "Project: Workbench / Group: Planning"))
+               (expect (= t/dialog-hint (.getForegroundColor (.getBackCharacter screen 4 6))))
                (expect (not (str/includes? (line 6) "abc1234")))
                (expect (str/blank? (line 8))))
              (finally (.stopScreen screen)))))
@@ -580,7 +584,7 @@
               (expect (= :side mode))
               (expect (< (+ body-x body-w) scrollbar-col divider preview-x))
               (expect (= (dec (:right bounds)) (+ preview-x preview-w)))
-              (expect (= [7 18 18] [preview-top preview-h list-budget]))))))
+              (expect (= [8 17 17] [preview-top preview-h list-budget]))))))
     (it "the message pane lists each match: author and time over the snippet, query marked"
         (let [lines (var-get #'dlg/navigator-preview-lines)
               entry {:title "Search redesign"
@@ -1482,11 +1486,8 @@
               (all-rows {:active-session-id "none" :sessions sessions :groups groups})]
 
           (expect (= ["loose-1" "filed-1" "loose-2" "filed-2"] (mapv (comp str :id :target) rows)))
-          (expect (= [nil "Release" nil "Release"] (mapv :session-group rows)))))
-    ;; Reported in this Vis session (paraphrased: recolouring a group repainted some of
-    ;; its rows and left the others alone). The COLOUR IS THE GROUP'S: a row names its
-    ;; group by id, so what the group wears now is what every one of its rows wears.
-    (it "inks a filed row with what its group wears NOW"
+          (expect (= ["No group" "Release" "No group" "Release"] (mapv :session-group rows)))))
+    (it "names a renamed group without encoding it in the date colour"
         (let [all-rows
               (var-get #'dlg/navigator-all-rows)
 
@@ -1496,8 +1497,8 @@
               rows
               (all-rows {:active-session-id "none" :sessions sessions :groups recoloured})]
 
-          (expect (= [nil "Releases" nil "Releases"] (mapv :session-group rows)))
-          (expect (= [nil "amber" nil "amber"] (mapv :session-group-color rows)))))
+          (expect (= ["No group" "Releases" "No group" "Releases"] (mapv :session-group rows)))
+          (expect (every? #(not (contains? % :session-group-color)) rows))))
     (it "does not add a heading or a count between compact session rows"
         (let [visible (#'dlg/navigator-visible-rows
                        (#'dlg/navigator-all-rows {:sessions sessions :groups groups})
@@ -1505,7 +1506,7 @@
                        {})]
           (expect (not-any? :group-start? visible))
           (expect (not-any? :group-count visible))
-          (expect (= [1 1 1 1] (#'dlg/navigator-block-heights visible)))))
+          (expect (= [2 2 2 2] (#'dlg/navigator-block-heights visible)))))
     (it "a query still finds a filed session in the same flat list"
         (let [visible (#'dlg/navigator-visible-rows
                        (#'dlg/navigator-all-rows {:sessions sessions :groups groups})
@@ -1519,16 +1520,14 @@
 ;; once and had no way to ask for more of it.
 (defdescribe
   navigator-window-walk-test
-  (it "pulls the next page only when an unfiltered list runs out under the reader"
+  (it "pulls the next scoped page when recents or matches run out under the reader"
       (let [page-in? (var-get #'dlg/navigator-page-in?)]
         (expect (true? (page-in? {:query "" :selected 42 :total 50 :next-cursor "2:-1:a"})))
         ;; Room left: the reader is nowhere near the end of what the picker holds.
         (expect (false? (page-in? {:query "" :selected 10 :total 50 :next-cursor "2:-1:a"})))
         ;; No cursor left: the walk is over.
         (expect (false? (page-in? {:query "" :selected 49 :total 50 :next-cursor nil})))
-        ;; A query is answered by the SERVER's search over the whole store, never by
-        ;; loading more rows into the list it filters.
-        (expect (false? (page-in? {:query "pager" :selected 49 :total 50 :next-cursor "2:-1:a"})))))
+        (expect (true? (page-in? {:query "pager" :selected 49 :total 50 :next-cursor "2:-1:a"})))))
   (it "paints a session once when a page and a search hit name the same row"
       (let [merge-sessions
             (var-get #'dlg/navigator-merge-sessions)
@@ -1619,7 +1618,7 @@
             {:sessions [{"id" "a" "title" "Alpha plan" "turn_count" 1}
                         {"id" "b" "title" "Beta notes" "turn_count" 1}]
              :search-sessions
-             (fn [_query]
+             (fn [_query _scope]
                {:matches
                 {"b"
                  {:rank 1
@@ -1674,7 +1673,7 @@
           (future
             (capture-navigator!
               {:sessions [{"id" "a" "title" "Alpha plan" "turn_count" 1}]
-               :search-sessions (fn [_query]
+               :search-sessions (fn [_query _scope]
                                   {:sessions [{"id" "z" "title" "Zeta far away" "turn_count" 1}]
                                    :matches {"z" {:rank 0 :kind :title}}})}
               (fn [^DefaultVirtualTerminal terminal]
@@ -1771,7 +1770,7 @@
           (future (capture-navigator! {:sessions
                                        [{"id" "a" "title" "Available session" "turn_count" 1}]
                                        :next-cursor "after-a"
-                                       :load-more (fn [cursor]
+                                       :load-more (fn [cursor _scope]
                                                     (swap! calls conj cursor)
                                                     (deliver entered true)
                                                     (try @release
@@ -1898,7 +1897,7 @@
                        {:load-initial load!}
                        {:sessions [{"id" "a" "title" "Available session" "turn_count" 1}]
                         :next-cursor "after-a"
-                        :load-more (fn [_]
+                        :load-more (fn [_ _scope]
                                      (load!))})
                      (fn [^DefaultVirtualTerminal terminal]
                        (case (swap! paints inc)
@@ -1947,7 +1946,7 @@
               {:load-initial (fn []
                                @first-release
                                {:sessions [{"id" "a" "title" "First page"}] :next-cursor "after-a"})
-               :load-more (fn [cursor]
+               :load-more (fn [cursor _scope]
                             (swap! calls conj cursor)
                             @next-release
                             {:sessions [{"id" "b" "title" "Second page"}] :next-cursor nil})}
@@ -2749,8 +2748,8 @@
                        live
                        {"id" "s-live" "title" "Deploy" "turn_count" 3 "live" true}]
 
-                   (expect (= "● live" (:status (row nil live))))
-                   (expect (= "● live" (:status (row "s-live" live)))))))
+                   (expect (= "● LIVE" (:status (row nil live))))
+                   (expect (= "● LIVE" (:status (row "s-live" live)))))))
 
 ;; The star is the GATEWAY's mark (`session_soul.favorite_rank`), and this terminal
 ;; painted none of it: a session starred on the phone stood here unmarked, sunk
@@ -2832,7 +2831,7 @@
       (let [row (fn [active session]
                   ((var-get #'dlg/navigator-session-row) active {} session))]
         (expect
-          (= "! input needed"
+          (= "! INPUT NEEDED"
              (:status
                (row nil
                     {"id" "s-parked" "title" "Deploy" "turn_count" 3 "is_awaiting_input" true}))))
@@ -2840,7 +2839,7 @@
                          (row nil {"id" "s-parked" "title" "Deploy" "is_awaiting_input" true}))))
         ;; TWO open requests used to read exactly like one, so answering the
         ;; first left the very same badge standing, naming nothing.
-        (expect (= "! input needed ×2"
+        (expect (= "! INPUT NEEDED ×2"
                    (:status (row nil
                                  {"id" "s-parked"
                                   "title" "Deploy"
@@ -2849,8 +2848,8 @@
   (it "shows idle status on quiet rows, including the current session"
       (let [row (fn [active session]
                   ((var-get #'dlg/navigator-session-row) active {} session))]
-        (expect (= "idle" (:status (row nil {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))
-        (expect (= "idle"
+        (expect (= "IDLE" (:status (row nil {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))
+        (expect (= "IDLE"
                    (:status (row "s-quiet" {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))
         (expect (not (:awaiting-input? (row nil {"id" "s-quiet" "title" "Deploy"})))))))
 
@@ -2877,7 +2876,7 @@
                                   "unread_answers" 2}))))
         (expect (true? (:unread? (row {"id" "s-new" "title" "Deploy" "unread_answers" 1}))))
         ;; A read session shows its state, not its turn count.
-        (expect (= "idle" (:status (row {"id" "s-read" "title" "Deploy" "turn_count" 3}))))))
+        (expect (= "IDLE" (:status (row {"id" "s-read" "title" "Deploy" "turn_count" 3}))))))
   (it
     "says a run STOPPED instead of letting it read as idle"
     (let [row
@@ -2887,18 +2886,18 @@
           cut
           {"id" "s-cut" "title" "Deploy" "turn_count" 3 "was_interrupted" true "unread_answers" 1}]
 
-      (expect (= "⨯ stopped" (:status (row cut))))
+      (expect (= "⨯ STOPPED" (:status (row cut))))
       (expect (true? (:stopped? (row cut))))
       (let [failed (-> cut
                        (dissoc "was_interrupted")
                        (assoc "was_failed" true))]
-        (expect (= "⨯ stopped" (:status (row failed))))
+        (expect (= "⨯ STOPPED" (:status (row failed))))
         (expect (true? (:stopped? (row failed)))))
       ;; Bounded by the read mark, exactly as the app bounds it: an interrupted
       ;; run the reader has already seen is an ordinary idle session.
-      (expect (= "idle" (:status (row (dissoc cut "unread_answers")))))
+      (expect (= "IDLE" (:status (row (dissoc cut "unread_answers")))))
       ;; Whatever the last turn did, a session running right now is live.
-      (expect (= "● live" (:status (row (assoc cut "live" true))))))))
+      (expect (= "● LIVE" (:status (row (assoc cut "live" true))))))))
 
 ;; Regression (user report): the fullscreen log viewer a diff visit opens
 ;; for a diff painted a scrollbar its key loop never wired mouse events to, so
@@ -3671,3 +3670,91 @@
                       (frame/refresh! screen)
                       (expect (= (back-buffer-text screen) (terminal-text terminal)))
                       (finally (.stopScreen screen))))))
+
+(defdescribe
+  navigator-search-scope-controls-test
+  (it "intersects a project with the union of groups and distinguishes unfiled rows"
+      (let [in-scope?
+            (var-get #'dlg/navigator-row-in-scope?)
+
+            row
+            {:project-id "p1" :session-group-id "g1" :work-dir "/work"}]
+
+        (expect (in-scope? row {}))
+        (expect (in-scope? row {:project-id "p1" :group-ids #{"g1" "g2"}}))
+        (expect (not (in-scope? row {:project-id "p2" :group-ids #{"g1"}})))
+        (expect (not (in-scope? row {:group-ids #{}})))
+        (expect (not (in-scope? row {:root ""})))
+        (expect (in-scope? (assoc row :project-id nil) {:root ""}))))
+  (it
+    "reissues the same blank query for project, OR groups and everything controls"
+    (let [sessions
+          [{"id" "one" "title" "First scoped" "turn_count" 1 "project_id" "p1" "group_id" "g1"}
+           {"id" "two" "title" "Second scoped" "turn_count" 1 "project_id" "p1" "group_id" "g2"}
+           {"id" "other" "title" "Other project" "turn_count" 1 "project_id" "p2" "group_id" "g3"}]
+
+          asked
+          (atom [])
+
+          phase
+          (atom 0)
+
+          task
+          (future
+            (with-redefs [dlg/select-dialog!
+                          (fn [_screen _title choices]
+                            (some #(when (= "Workbench" (:label %)) %) choices))
+
+                          dlg/multi-select-dialog!
+                          (fn [_screen _title choices _initial]
+                            (set choices))]
+
+              (capture-navigator!
+                {:sessions sessions
+                 :projects [{"id" "p1" "name" "Workbench"} {"id" "p2" "name" "Other"}]
+                 :groups {"g1" {"id" "g1" "project_id" "p1" "name" "Planning"}
+                          "g2" {"id" "g2" "project_id" "p1" "name" "Review"}
+                          "g3" {"id" "g3" "project_id" "p2" "name" "History"}}
+                 :search-sessions
+                 (fn [query scope]
+                   (swap! asked conj [query scope])
+                   {:sessions
+                    (filterv (fn [session]
+                               (and (or (nil? (:project-id scope))
+                                        (= (:project-id scope) (get session "project_id")))
+                                    (or (nil? (:group-ids scope))
+                                        (contains? (:group-ids scope) (get session "group_id")))))
+                      sessions)})}
+                (fn [^DefaultVirtualTerminal terminal]
+                  (let [text
+                        (str/join "\n" (terminal-lines terminal))
+
+                        scope
+                        (second (last @asked))]
+
+                    (cond
+                      (= 0 @phase)
+                      (do (reset! phase 1)
+                          (.addInput terminal (KeyStroke. (Character/valueOf \p) true false false)))
+                      (and (= 1 @phase)
+                           (= {:project-id "p1"} scope)
+                           (str/includes? text "First scoped"))
+                      (do (expect (not (str/includes? text "Other project")))
+                          (reset! phase 2)
+                          (.addInput terminal (KeyStroke. (Character/valueOf \g) true false false)))
+                      (and (= 2 @phase)
+                           (= #{"g1" "g2"} (:group-ids scope))
+                           (str/includes? text "Second scoped"))
+                      (do (reset! phase 3)
+                          (.addInput terminal (KeyStroke. (Character/valueOf \a) true false false)))
+                      (and (= 3 @phase) (= {} scope) (str/includes? text "Other project"))
+                      (do (reset! phase 4) (.addInput terminal (cap/key-stroke :esc)))))))))]
+
+      (try (let [result (deref task 5000 ::blocked)]
+             (expect (map? result))
+             (expect (nil? (:error result)))
+             (expect (= 4 @phase))
+             (expect (= [["" {:project-id "p1"}] ["" {:project-id "p1" :group-ids #{"g1" "g2"}}]
+                         ["" {}]]
+                        @asked)))
+           (finally (future-cancel task))))))

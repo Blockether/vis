@@ -4694,6 +4694,22 @@
           (expect (= "invalid-window"
                      (get-in (wire/parse-json (:body response)) ["error" "type"]))))))))
 
+(defdescribe
+  sessions-search-forwards-scope
+  (it "forwards project and OR-group filters, including an explicit empty scope"
+      (let [seen (atom [])]
+        (with-redefs [state/search-sessions (fn [_ opts]
+                                              (swap! seen conj opts)
+                                              {:sessions []})]
+          (#'sessions-api/search-sessions-handler
+           {:query-params {"q" "needle" "project_id" "p1" "group_ids" "g1,g2" "root" "/work"}})
+          (expect (= {:project-id "p1" :group-ids #{"g1" "g2"} :root "/work"}
+                     (select-keys (first @seen) [:project-id :group-ids :root])))
+          (#'sessions-api/search-sessions-handler {:query-params {"root" "" "group_ids" ""}})
+          (expect (= {:root "" :group-ids #{}} (select-keys (second @seen) [:root :group-ids])))
+          (#'sessions-api/search-sessions-handler {:query-params {}})
+          (expect (= {} (select-keys (last @seen) [:root :project-id :group-ids])))))))
+
 ;; Regression, user report (paraphrased: "groups should be outside the paging"): a client
 ;; could only paint the group bands of the page it was holding, so a session filed deeper
 ;; in the fleet looked like it was in no group at all (BLO-167).

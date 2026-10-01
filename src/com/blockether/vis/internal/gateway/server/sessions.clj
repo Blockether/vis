@@ -343,7 +343,7 @@
   50)
 
 (defn- search-sessions-handler
-  "GET /v1/sessions/actions/search?q=&limit=&after=&archived=&dirty=&channel= - THE
+  "GET /v1/sessions/actions/search with query, window, project and group scopes - THE
    session search every surface asks (`state/search-sessions`).
 
    A blank `q` answers the RECENTS, a query the sessions whose title or transcript
@@ -380,14 +380,22 @@
             400
             :invalid-window
             "limit must be an integer and after must be a <band>:<key>:<id> cursor")
-          :else (http/json-response (state/search-sessions
-                                      channel
-                                      {:query (str (get-in request [:query-params "q"]))
-                                       :limit
-                                       (max 1 (min 1000 (long (or limit search-session-window))))
-                                       :after after
-                                       :archived archived
-                                       :dirty (http/query-session-ids request "dirty")})))))
+          :else (http/json-response
+                  (state/search-sessions
+                    channel
+                    (cond-> {:query (str (get-in request [:query-params "q"]))
+                             :limit (max 1 (min 1000 (long (or limit search-session-window))))
+                             :after after
+                             :archived archived
+                             :dirty (http/query-session-ids request "dirty")}
+                      (given? "root")
+                      (assoc :root (str (get-in request [:query-params "root"])))
+
+                      (given? "project_id")
+                      (assoc :project-id (str (get-in request [:query-params "project_id"])))
+
+                      (given? "group_ids")
+                      (assoc :group-ids (http/query-session-ids request "group_ids"))))))))
 
 (defn- soul-handler
   [request]

@@ -1346,9 +1346,11 @@
               (expect (= (min 50 store-size) (count (:sessions page))))
               (expect (= "/workspace/project" (:work-dir (first (:sessions page)))))
               (expect (= (when (> store-size 50) "next") (:next-cursor page))))
-            ((:load-more @options) "next")
+            ((:load-more @options) "next" {:project-id "p1" :group-ids #{"g1" "g2"}})
             ;; Both windows use the gateway's recency cursor, without group shelves.
-            (expect (= [["" {:limit 50}] ["" {:limit 50 :after "next"}]] @requests)))))))
+            (expect (= [["" {:limit 50}]
+                        ["" {:limit 50 :after "next" :project-id "p1" :group-ids #{"g1" "g2"}}]]
+                       @requests)))))))
   ;; Regression, user report (paraphrased: the search should start on the session I am in).
   ;; The current row must join the window without being pinned ahead of newer rows.
   ;; Fetching its soul also retains an empty current session the list would hide.
@@ -1383,36 +1385,39 @@
             (expect (= [["" {:limit 50}] [:soul "in-use"]] @requests))))))
   ;; A search answers its hits WITH their rows, so a hit the picker's window does not
   ;; hold yet is painted without a second read.
-  (it "answers a search with the hits and their rows in one gateway read"
-      (let [calls
-            (atom [])
+  (it
+    "answers a search with the hits and their rows in one gateway read"
+    (let [calls
+          (atom [])
 
-            options
-            (atom nil)]
+          options
+          (atom nil)]
 
-        (with-redefs-fn
-          {#'screen/with-dialog-lock (fn [f]
-                                       (f))
-           #'dlg/navigator-dialog! (fn [_ opts]
-                                     (reset! options opts)
-                                     {:action :new})
-           #'vis/gateway-search-sessions
-           (fn [q opts]
-             (swap! calls conj [:search q opts])
-             {:sessions
-              [{"id" "far" "title" "Far away" "turn_count" 1 "workspace" {"root" "/workspace/far"}}]
-              :matches
-              [{:id "far" :rank 1 :in-request? true :request-snippet "…needle…" :hits []}]})}
-          (fn []
-            (#'screen/show-session-picker! nil "active" {})
-            (expect (nil? (:fetch-sessions @options)))
-            (let [answer ((:search-sessions @options) "needle")]
-              (expect (= [[:search "needle" {:limit 60}]] @calls))
-              (expect (= ["far"] (mapv #(get % "id") (:sessions answer))))
-              (expect (= "/workspace/far" (:work-dir (first (:sessions answer)))))
-              (expect
-                (= {:rank 1 :kind :request :request-snippet "…needle…" :reply-snippet nil :hits []}
-                   (get (:matches answer) "far"))))))))
+      (with-redefs-fn
+        {#'screen/with-dialog-lock (fn [f]
+                                     (f))
+         #'dlg/navigator-dialog! (fn [_ opts]
+                                   (reset! options opts)
+                                   {:action :new})
+         #'vis/gateway-search-sessions
+         (fn [q opts]
+           (swap! calls conj [:search q opts])
+           {:sessions
+            [{"id" "far" "title" "Far away" "turn_count" 1 "workspace" {"root" "/workspace/far"}}]
+            :matches [{:id "far" :rank 1 :in-request? true :request-snippet "…needle…" :hits []}]})}
+        (fn []
+          (#'screen/show-session-picker! nil "active" {})
+          (expect (nil? (:fetch-sessions @options)))
+          (let [answer
+                ((:search-sessions @options) "needle" {:project-id "p1" :group-ids #{"g1" "g2"}})]
+            (expect (= [[:search "needle"
+                         {:limit 60 :archived :include :project-id "p1" :group-ids #{"g1" "g2"}}]]
+                       @calls))
+            (expect (= ["far"] (mapv #(get % "id") (:sessions answer))))
+            (expect (= "/workspace/far" (:work-dir (first (:sessions answer)))))
+            (expect
+              (= {:rank 1 :kind :request :request-snippet "…needle…" :reply-snippet nil :hits []}
+                 (get (:matches answer) "far"))))))))
   (it "does not turn a gateway failure into a successful empty page"
       (with-redefs [vis/gateway-search-sessions (fn [_ _]
                                                   (throw (ex-info "Unavailable" {})))]

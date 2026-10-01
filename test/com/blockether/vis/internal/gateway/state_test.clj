@@ -3054,7 +3054,7 @@
                    #'bus/waiting-requests (constantly {})
                    #'state/soul (fn [sid]
                                   {"id" (str sid)})
-                   #'state/search-session-matches (fn [_ _]
+                   #'state/search-session-matches (fn [_ _ & _scope]
                                                     matches)}
     (fn []
       (state/search-sessions opts))))
@@ -3099,6 +3099,87 @@
         (expect (zero? (:total answer)))
         (expect (false? (:has-more answer)))
         (expect (nil? (:next-cursor answer))))))
+
+(defdescribe
+  gateway-search-scope-test
+  (it "cuts project and group scopes before counting or paging recents and matches"
+      (with-redefs [navigator-fleet
+                    [{:id "a" :title "First" :created-at 4000 :project-id "p1" :group-id "g1"}
+                     {:id "b" :title "Second" :created-at 3000 :project-id "p2" :group-id "g1"}
+                     {:id "c" :title "Third" :created-at 2000 :project-id "p1" :group-id "g2"}
+                     {:id "d" :title "Fourth" :created-at 1000 :project-id "p1" :group-id "g3"}]]
+        (doseq [query ["" "needle"]]
+          (let [matches (when (seq query) (mapv #(hash-map :session_id %) ["a" "b" "c" "d"]))
+                opts
+                {:query query :archived :include :project-id "p1" :group-ids #{"g1" "g2"} :limit 1}
+                head (navigator-search opts matches)
+                tail (navigator-search (assoc opts :after (:next-cursor head)) matches)]
+
+            (expect (= ["a"] (mapv #(get % "id") (:sessions head))))
+            (expect (= 2 (:total head)))
+            (expect (:has-more head))
+            (expect (= ["c"] (mapv #(get % "id") (:sessions tail))))
+            (expect (= 2 (:total tail)))
+            (expect (not (:has-more tail)))))
+        (expect (zero? (:total (navigator-search {:query "" :archived :include :group-ids #{}}
+                                                 nil)))))))
+
+(defdescribe
+  gateway-search-scopes-before-store-budgets-test
+  (it
+    "finds older scoped title and transcript matches beyond newer unscoped hits"
+    (let [store (sqlite/db-open! :memory)]
+      (try
+        (let [store-row (fn [row]
+                          (let [workspace (persistance/db-workspace-insert! store
+                                                                            {:repo-id "search-test"
+                                                                             :repo-root "/search"
+                                                                             :root "/search"
+                                                                             :state :active
+                                                                             :fork-ms 0})]
+                            (assoc row
+                              :id (sqlite/db-store-session! store
+                                                            (assoc row
+                                                              :channel :tui
+                                                              :workspace-id (:id workspace))))))
+              named (store-row
+                      {:title "needle named" :created-at 1000 :project-id "p1" :group-id "g1"})
+              asked (store-row {:title "Asked" :created-at 2000 :project-id "p1" :group-id "g2"})
+              outside (store-row
+                        {:title "needle outside" :created-at 3000 :project-id "p2" :group-id "g1"})
+              rows [named asked outside]]
+
+          (doseq [row [asked outside]]
+            (sqlite/db-store-session-turn!
+              store
+              {:parent-session-id (:id row) :user-request "needle request" :status :done}))
+          ;; Scope must precede both the FTS scan budget and the matching-session cap.
+          (with-redefs-fn {#'sqlite/transcript-hit-scan-limit 1
+                           #'sqlite/transcript-hit-sessions-limit 1
+                           #'lp/db-info (constantly store)
+                           #'lp/by-channel (constantly rows)
+                           #'lp/session-read-marks (constantly {})
+                           #'bus/live-turns (constantly {})
+                           #'bus/waiting-requests (constantly {})
+                           #'state/soul (fn [sid]
+                                          {"id" (str sid)})}
+            (fn []
+              (let [opts {:query "needle"
+                          :archived :include
+                          :project-id "p1"
+                          :group-ids #{"g1" "g2"}
+                          :limit 1}
+                    head (state/search-sessions opts)
+                    tail (state/search-sessions (assoc opts :after (:next-cursor head)))]
+
+                (expect (= 2 (:total head)))
+                (expect (:has-more head))
+                (expect
+                  (= #{(str (:id named)) (str (:id asked))}
+                     (into #{} (map #(get % "id")) (concat (:sessions head) (:sessions tail)))))
+                (expect (not (:has-more tail)))
+                (expect (zero? (:total (state/search-sessions (assoc opts :group-ids #{})))))))))
+        (finally (sqlite/db-close! store))))))
 
 (defdescribe gateway-owns-the-navigator-list-test
              "Which sessions are in the list, and where each one sits, is the GATEWAY's answer."

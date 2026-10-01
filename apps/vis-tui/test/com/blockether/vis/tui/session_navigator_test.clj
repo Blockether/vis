@@ -104,7 +104,7 @@
 
                   (expect (= ["newest" "star"] (mapv (comp :id :target) visible))))))
   (describe "compact rows"
-            (it "paints a colored bold date, status and title on exactly one line"
+            (it "paints a neutral date, uppercase status, title and explicit location on two lines"
                 (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)]
                   (try (#'dlg/draw-navigator-session!
                         (.newTextGraphics screen)
@@ -112,29 +112,32 @@
                         4
                         74
                         {:modified "09-30 11:34"
-                         :status "idle"
+                         :status "IDLE"
                          :title "Session title"
                          :session "hidden-id"
-                         :favorite? true}
+                         :favorite? true
+                         :group "Workbench"
+                         :session-group "Planning"}
                         false)
                        (let [date (.getBackCharacter screen 4 4)]
                          (expect (str/includes? (back-line screen 4)
-                                                "09-30 11:34 / idle / Session title"))
-                         (expect (str/blank? (back-line screen 5)))
-                         (expect (= t/dialog-hint-key (.getForegroundColor date)))
+                                                "09-30 11:34 / IDLE / Session title"))
+                         (expect (str/includes? (back-line screen 5)
+                                                "Project: Workbench / Group: Planning"))
+                         (expect (= t/dialog-hint (.getForegroundColor date)))
                          (expect (contains? (set (.getModifiers date)) SGR/BOLD))
                          (expect (not (str/includes? (back-line screen 4) "hidden-id")))
                          (expect (not (str/includes? (back-line screen 4) "*"))))
                        (finally (.stopScreen screen)))))
-            (it "fits one session per terminal row without group headings or spacer lines"
+            (it "fits one session per two terminal rows without group headings or spacer lines"
                 (let [rows
                       (#'dlg/navigator-all-rows {:sessions sessions})
 
                       visible
                       (#'dlg/navigator-visible-rows rows "" {})]
 
-                  (expect (= [1 1 1 1] (#'dlg/navigator-block-heights visible)))
-                  (expect (= [0 1 2] (mapv :idx (#'dlg/navigator-visible-blocks visible 0 3)))))))
+                  (expect (= [2 2 2 2] (#'dlg/navigator-block-heights visible)))
+                  (expect (= [0 1 2] (mapv :idx (#'dlg/navigator-visible-blocks visible 0 6)))))))
   (describe
     "opening and resize"
     (it "always keeps the list beside the preview, including a blank query and narrow terminals"

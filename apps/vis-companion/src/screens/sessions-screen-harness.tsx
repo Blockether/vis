@@ -252,12 +252,26 @@ export function sessionsWindow(
 export function searchAnswer(rows: Session[], url: URL) {
   const query = url.searchParams.get('q')?.trim() ?? '';
   const needle = query.toLowerCase();
-  const sessions = needle
-    ? rows
-        .filter((row) => (row.title ?? '').toLowerCase().includes(needle))
-        .map((row) => ({ ...row, match: { rank: 0, is_in_title: true } }))
-    : rows;
-  return { query, sessions, total: sessions.length, next_cursor: null, has_more: false };
+  const projectId = url.searchParams.get('project_id');
+  const root = url.searchParams.get('root');
+  const groupIds = url.searchParams.has('group_ids')
+    ? new Set((url.searchParams.get('group_ids') ?? '').split(',').filter(Boolean)) : null;
+  const scoped = rows.filter((row) =>
+    (projectId === null || row.project_id === projectId) &&
+    (root === null || (root === '' ? !row.project_id && !projectPath(row) : projectPath(row) === root)) &&
+    (groupIds === null || groupIds.has(row.group_id ?? '')));
+  const matched = needle
+    ? scoped.filter((row) => (row.title ?? '').toLowerCase().includes(needle))
+      .map((row) => ({ ...row, match: { rank: 0, is_in_title: true } }))
+    : scoped;
+  const limit = Number(url.searchParams.get('limit') ?? 50);
+  const offset = Number(url.searchParams.get('after') ?? 0);
+  const sessions = matched.slice(offset, offset + limit);
+  const hasMore = offset + sessions.length < matched.length;
+  return {
+    query, sessions, total: matched.length,
+    next_cursor: hasMore ? String(offset + sessions.length) : null, has_more: hasMore,
+  };
 }
 
 export function renderSessionsScreen({
@@ -384,6 +398,11 @@ export function renderSessionsScreen({
     if (machine.down && !(machine.heals && seen > 1)) throw new TypeError('Failed to fetch');
     if (machine.routes && url.pathname in machine.routes)
       return answer(machine.routes[url.pathname]);
+    if (url.pathname === '/v1/projects') {
+      return answer({ projects: (machine.projects ?? []).map((project) => ({
+        id: project.project_id, name: project.name, workspace_root: project.root,
+      })) });
+    }
     if (url.pathname === '/v1/projects/actions/ensure' && (init?.method ?? 'GET') === 'POST') {
       const body = (sent ? JSON.parse(sent) : {}) as Record<string, unknown>;
       const root = typeof body.root === 'string' ? body.root : '';

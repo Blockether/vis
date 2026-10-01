@@ -5501,29 +5501,23 @@
           own
           (update :sessions conj own))))))
 
-(defn- fleet-group-index
-  "Every session GROUP this machine holds, keyed by group id. A session row names its
-   group by ID and nothing else - the name and the palette token belong to the group -
-   so the picker reads the groups themselves, in one pass off the input thread, and
-   bands each filed row from what its group wears NOW."
+(defn- fleet-search-catalog
+  "Complete project and group names for the picker, including archived and empty projects."
   []
-  (into {}
-        (for [project
-              (try (vis/gateway-list-projects) (catch Throwable _ nil))
+  (let [projects
+        (vec (vis/gateway-list-projects {:archived :include}))
 
-              :let [pid
-                    (some-> (get project "id")
-                            str)]
-              :when pid
-              group
-              (try (vis/gateway-list-session-groups {:project-id pid}) (catch Throwable _ nil))
+        groups
+        (mapcat (fn [project]
+                  (vis/gateway-list-session-groups {:project-id (get project "id")
+                                                    :archived :include}))
+                projects)
 
-              :let [gid
-                    (some-> (get group "id")
-                            str)]
-              :when gid]
+        unfiled
+        (vis/gateway-list-session-groups {:root "" :archived :include})]
 
-          [gid group])))
+    {:projects projects
+     :groups (into {} (map (juxt #(str (get % "id")) identity)) (concat groups unfiled))}))
 
 (defn- show-session-picker!
   "Open the navigator without gateway I/O on the input thread. The dialog owns
@@ -5534,9 +5528,11 @@
        screen
        {:load-initial (fn []
                         (picker-first-page active-id))
-        :load-more (fn [cursor]
-                     (tui-session-page {:limit picker-page-size :after cursor}))
-        :load-groups fleet-group-index
+        :load-more (fn [cursor scope]
+                     (tui-session-page (assoc scope
+                                         :limit picker-page-size
+                                         :after cursor)))
+        :load-catalog fleet-search-catalog
         :watch-fleet (fn [sink]
                        (try (vis/gateway-fleet-subscribe! sink)
                             (catch Throwable _
@@ -5544,9 +5540,15 @@
         :active-session-id active-id
         :db db
         :search-sessions
-        (fn [q]
-          (try (let [answer (vis/gateway-search-sessions q {:limit picker-search-rows})]
+        (fn [q scope]
+          (try (let [answer (vis/gateway-search-sessions q
+                                                         (cond-> (assoc scope
+                                                                   :limit picker-search-rows)
+                                                           (not (str/blank? q))
+                                                           (assoc :archived :include)))]
                  {:sessions (mapv enrich-session-row (map session-summary (:sessions answer)))
+                  :next-cursor (:next-cursor answer)
+                  :total (:total answer)
                   :matches (into {}
                                  (map (fn [{:keys [id rank in-title? in-request? in-reply?
                                                    in-thinking? request-snippet reply-snippet

@@ -94,6 +94,12 @@ draft. To run them, submit the draft again.
 
 ## Find a saved session
 
+Each result names its **Project** and **Group**. Search rows do not use project or
+group colors. Status labels use uppercase, such as `IDLE`, `NEW` and `LIVE`.
+
+Scopes apply to recent sessions and text searches. Selecting several groups
+searches any of them. A project and group selection narrows both together.
+
 ### In the terminal
 
 Press **Ctrl+X s** to open the session switcher. Before you type, it lists your
@@ -103,12 +109,15 @@ session with **↑** and **↓**, and press **Enter** to open it.
 When you search, a border divides the switcher. The left side lists the sessions
 that match. The right side shows the matching messages of the selected session.
 Each message shows who wrote it, **You** or **Vis**, and when. Your search words
-are highlighted. In a narrow terminal, the messages are below the list.
+are highlighted. The messages stay beside the list in a narrow terminal.
 
 The switcher also has these keys:
 
 | Keys | What they do |
 |---|---|
+| Ctrl+P | Choose all projects, one project or No project |
+| Ctrl+G | Choose several groups, or clear the selection for all groups |
+| Ctrl+A | Search everything |
 | Ctrl+N | Start a new session |
 | Ctrl+F | Fork the selected session |
 | Ctrl+S | Star or unstar the selected session |
@@ -143,6 +152,12 @@ The dialog opens on your recent sessions, with the most recent at the top. Type 
 search session titles and conversation text. When you type, the search also finds
 sessions that you archived.
 
+Use **Project** to choose **All projects**, one named project or **No project**.
+Use **Groups** to select several groups.
+Choose **All groups** to clear the group selection.
+Choose **Search everything** to clear project, group and machine filters.
+If more results are available, choose **Load more results**.
+
 With a keyboard, press **Ctrl+/** to open the search. This shortcut also works while you
 type in a text box. When you are not typing, you can also press **/**.
 
@@ -173,6 +188,11 @@ rows are in order of recent activity, with the most recent first.
 - With words in `q`, the answer lists the sessions whose title or conversation text
   matches. Each of these rows also has a `match` object. It tells where the words
   matched and gives short text around each match.
+- `project_id` restricts results to one saved project.
+- `root` restricts results to one project directory. An empty `root` selects sessions without a project.
+- `group_ids` selects any group in a comma-separated list. An empty value selects no groups.
+- Without these parameters, the search includes every project and group.
+- Scopes apply before `total`, the page window and its cursor are calculated.
 - `limit` sets the page size, from 1 to 1000. The default is 50.
 - `total` is the number of sessions in all pages.
 - To read the next page, send the `next_cursor` value as `after`. When `has_more`

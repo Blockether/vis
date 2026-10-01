@@ -5826,6 +5826,23 @@
                     rows)]
     (when (seq fresh) (try (lp/seed-session-read-marks! reader-id fresh) (catch Throwable _ nil)))))
 
+(defn- session-scope-rows
+  "Apply root, project and OR-group membership before search or list budgets."
+  [db rows {:keys [root project-id group-ids]}]
+  (let [groups (when (some? group-ids) (into #{} (comp (map str) (remove str/blank?)) group-ids))]
+    (cond->> (vec rows)
+      (and db (some? root))
+      (filterv (fn [row]
+                 (= (str root) (str (session-project-root db (:id row))))))
+
+      (seq (str project-id))
+      (filterv (fn [row]
+                 (= (str project-id) (str (:project-id row)))))
+
+      (some? groups)
+      (filterv (fn [row]
+                 (contains? groups (str (:group-id row))))))))
+
 (defn list-sessions-page
   "A WINDOW of the navigator list, in the gateway's own order:
    `{:sessions rows :awaiting rows :grouped rows :total n :limit l :next-cursor s :has-more bool}`.
@@ -5869,7 +5886,9 @@
    collection answers no shelf at all; `nil` - no band window asked for - answers
    every filed session, as before. The loose window never moves with it: a filed
    session is out of the page whether or not its band is on screen, so turning the
-   bands never reshuffles the sessions beside them.
+   bands never reshuffles the sessions beside them. Without `:grouped :aside`,
+   `:group-ids` selects their union before the count, window and cursor. An empty
+   collection selects nothing; nil leaves every group in scope.
 
    Every row carries `is_unread`/`unread_answers` for the asking `:reader`
    (`default-reader-id` when a caller names none). The gateway owns NEW the way it
@@ -5964,16 +5983,20 @@
          (fn [row]
            (or (some? (:archived-at row)) (contains? archived-groups (:group-id row))))
 
+         aside-groups?
+         (= "aside"
+            (some-> grouped
+                    name))
+
+         shown-groups
+         (when (some? group-ids) (into #{} (comp (map str) (remove str/blank?)) group-ids))
+
          ranked
-         (cond->> (session-ranking channel stats live unsent)
-           (and db (some? root))
-           (filterv (fn [row]
-                      (= (str root) (str (session-project-root db (:id row))))))
-
-           (seq (str project-id))
-           (filterv (fn [row]
-                      (= (str project-id) (:project-id row))))
-
+         (cond->> (session-scope-rows db
+                                      (session-ranking channel stats live unsent)
+                                      {:root root
+                                       :project-id project-id
+                                       :group-ids (when-not aside-groups? group-ids)})
            ;; ONE group's shelf, opened on its own: the reveal a group offers asks
            ;; for exactly the sessions it holds, archived or not.
            (seq (str group-id))
@@ -6000,17 +6023,6 @@
            ;; the key changes after every cut, never which rows the list holds.
            (= :recent order)
            recency-ranking)
-
-         aside-groups?
-         (= "aside"
-            (some-> grouped
-                    name))
-
-         ;; The page of BANDS the client is painting, when it pages the groups:
-         ;; the shelves beside its window follow the same page, so one read
-         ;; answers exactly the shelves on screen. `nil` is every band.
-         shown-groups
-         (when (some? group-ids) (into #{} (comp (map str) (remove str/blank?)) group-ids))
 
          ;; Filed rows leave the WINDOW, not the listing: `awaiting` below still
          ;; sees them through `ranked`, and the cut, the total and the cursor are
@@ -6250,9 +6262,11 @@
    session is not lifted over that: a band that flips when a turn starts moved results
    under the reader's finger. `:rank` travels so a surface can say WHERE the query hit;
    it is not the order and no surface re-derives one from the flags.
+   Optional session IDs restrict matching before the store's search budgets.
    Blank query → []."
   ([query] (search-session-matches :all query))
-  ([channel query]
+  ([channel query] (search-session-matches channel query nil))
+  ([channel query session-ids]
    (let [db (try (lp/db-info) (catch Throwable _ nil))]
      (if db
        (mapv (fn [{:keys [id rank in-title? in-request? in-reply? in-thinking? request-snippet
@@ -6271,7 +6285,9 @@
                                :at (some-> (:at h)
                                            inst-ms)})
                             (or hits []))})
-             (persistance/db-search-session-matches db channel query))
+             (if (some? session-ids)
+               (persistance/db-search-session-matches db channel query session-ids)
+               (persistance/db-search-session-matches db channel query)))
        []))))
 
 (defn search-sessions
@@ -6289,13 +6305,23 @@
    The rows ARE `list-sessions-page` rows (`:order :recent`), decorated like a list
    read. Clients used to receive bare ids here, fetch each hit's row with a second
    read and merge it into whatever list they held; this answer stands on its own.
-   `:limit`, `:after`, `:archived`, `:dirty` and `:reader` mean what they mean there,
-   so a client walks the hits with the list's own cursor. The store bounds one
-   transcript search (`db-search-session-matches`)."
+   `:limit`, `:after`, `:archived`, `:dirty` and `:reader` mean what they mean there.
+   `:root`, `:project-id` and `:group-ids` filter before the count and window. Group ids
+   select their union; an empty set selects nothing and nil leaves groups unrestricted.
+   The store bounds one transcript search (`db-search-session-matches`)."
   ([opts] (search-sessions :all opts))
-  ([channel {:keys [query limit after archived dirty reader]}]
+  ([channel {:keys [query limit after archived dirty reader root project-id group-ids]}]
    (let [q
          (str query)
+
+         ;; Resolve only membership, not wire rows, before the store scans matches.
+         scope-ids
+         (when (and (not (str/blank? q)) (or (some? root) (seq (str project-id)) (some? group-ids)))
+           (into #{}
+                 (map (comp str :id))
+                 (session-scope-rows (try (lp/db-info) (catch Throwable _ nil))
+                                     (lp/by-channel channel)
+                                     {:root root :project-id project-id :group-ids group-ids})))
 
          ;; `nil` is NO query - the recents. An EMPTY map is a query nothing matched:
          ;; it stays empty instead of falling through to an uncut list.
@@ -6303,7 +6329,9 @@
          (when-not (str/blank? q)
            (into {}
                  (map (juxt :session_id #(wire/canonical (dissoc % :session_id))))
-                 (search-session-matches channel q)))
+                 (if (some? scope-ids)
+                   (search-session-matches channel q scope-ids)
+                   (search-session-matches channel q))))
 
          page
          (when (or (nil? matches) (seq matches))
@@ -6313,7 +6341,10 @@
                                         :after after
                                         :archived archived
                                         :dirty dirty
-                                        :reader reader}
+                                        :reader reader
+                                        :root root
+                                        :project-id project-id
+                                        :group-ids group-ids}
                                  matches
                                  (assoc :ids (keys matches)))))]
 

@@ -750,13 +750,18 @@
    :in-thinking? bool :request-snippet str :reply-snippet str
    :hits [{:side :request|:reply|:thinking :snippet str :at ms}]}`. `:rank` (0 best)
    says WHERE the query hit; it is never the order. `opts`: `:limit` rows, `:after` the
-   `:next-cursor` of the previous answer, `:archived` `:exclude`, `:include` or `:only`."
+   `:next-cursor` of the previous answer, `:archived` `:exclude`, `:include` or `:only`.
+   `:root`, `:project-id` and `:group-ids` restrict the search before paging. Group ids
+   select their union, nil means every group and an empty collection selects nothing."
   ([query] (search-sessions query {}))
-  ([query {:keys [limit after archived]}]
+  ([query {:keys [limit after archived root project-id group-ids]}]
    (let [qs
          (->> [(str "q=" (enc (str/trim (str query)))) (when limit (str "limit=" (enc limit)))
                (when (seq (str after)) (str "after=" (enc after)))
-               (when archived (str "archived=" (enc (name archived))))]
+               (when archived (str "archived=" (enc (name archived))))
+               (when (some? root) (str "root=" (enc root)))
+               (when (some? project-id) (str "project_id=" (enc project-id)))
+               (when (some? group-ids) (str "group_ids=" (enc (str/join "," (sort group-ids)))))]
               (remove nil?)
               (str/join "&"))
 

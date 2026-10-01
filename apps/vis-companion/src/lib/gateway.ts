@@ -52,6 +52,7 @@ import type {
   SessionGoal,
   SessionGroup,
   SessionGroupPage,
+  Project,
   SessionUsage,
   Subagent,
   SettingsResponse,
@@ -3526,9 +3527,19 @@ export class GatewayClient {
    * (`archived=include`): a session put away is still found by what was said in it,
    * while the recents stay the active work.
    */
-  async searchSessions(query: string, signal?: AbortSignal): Promise<SessionSearch> {
+  async searchSessions(
+    query: string,
+    signal?: AbortSignal,
+    scope: { projectId?: string; root?: string; groupIds?: readonly string[]; limit?: number; after?: string } = {},
+  ): Promise<SessionSearch> {
     await hydrateDraftMessages();
     const overlay = dirtySessionIds(this.base).join(',');
+    const filters = new URLSearchParams();
+    if (scope.projectId !== undefined) filters.set('project_id', scope.projectId);
+    if (scope.root !== undefined) filters.set('root', scope.root);
+    if (scope.groupIds !== undefined) filters.set('group_ids', scope.groupIds.join(','));
+    if (scope.limit !== undefined) filters.set('limit', String(scope.limit));
+    if (scope.after) filters.set('after', scope.after);
     const res = await this.request<{
       sessions?: (Session & { match?: RawSessionMatch | null })[];
       total?: number;
@@ -3538,7 +3549,7 @@ export class GatewayClient {
       'GET',
       `/v1/sessions/actions/search?q=${encodeURIComponent(query.trim())}${
         overlay ? `&dirty=${encodeURIComponent(overlay)}` : ''
-      }${query.trim() ? '&archived=include' : ''}`,
+      }${query.trim() ? '&archived=include' : ''}${filters.size ? `&${filters}` : ''}`,
       undefined,
       signal,
     );
@@ -3552,6 +3563,14 @@ export class GatewayClient {
       nextCursor: res.next_cursor ?? null,
       hasMore: res.has_more === true,
     };
+  }
+
+  /** The complete project catalog, including archived and empty projects. */
+  async listProjects(signal?: AbortSignal): Promise<Project[]> {
+    const answer = await this.request<{ projects?: Project[] }>(
+      'GET', '/v1/projects?archived=include', undefined, signal,
+    );
+    return answer.projects ?? [];
   }
 
   /**

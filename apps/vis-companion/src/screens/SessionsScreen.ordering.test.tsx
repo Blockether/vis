@@ -67,22 +67,24 @@ describe('the order the reader is looking at', () => {
 
     act(() => view.setQuery('Session'));
     await settle(1_000);
-    // The list behind the search dialog and the dialog's results keep one order.
+    // The main list keeps its headers. Search shows explicit locations on flat rows.
     const list = screen.getByRole('region', { name: 'Sessions' });
     const results = screen.getByRole('region', { name: 'Matching sessions' });
     expect(projectOrder(list)).toEqual(['/repo/a', '/repo/b']);
-    expect(projectOrder(results)).toEqual(['/repo/a', '/repo/b']);
+    expect(projectOrder(results)).toEqual([]);
+    expect(within(results).getByText('Project: a')).toBeVisible();
+    expect(within(results).getByText('Project: b')).toBeVisible();
     act(() => view.setQuery(''));
     await settle(50);
-    // A cleared field lists the recents in the dialog, under the same headers.
+    // Clearing the field keeps flat recents without changing the main list.
     expect(projectOrder(screen.getByRole('region', { name: 'Sessions' }))).toEqual([
       '/repo/a',
       '/repo/b',
     ]);
-    expect(projectOrder(screen.getByRole('region', { name: 'Recent sessions' }))).toEqual([
-      '/repo/a',
-      '/repo/b',
-    ]);
+    const recents = screen.getByRole('region', { name: 'Recent sessions' });
+    expect(projectOrder(recents)).toEqual([]);
+    expect(within(recents).getByText('Project: a')).toBeVisible();
+    expect(within(recents).getByText('Project: b')).toBeVisible();
   });
 
   it('uses the same repository order for a cached first paint and its revalidation', async () => {
