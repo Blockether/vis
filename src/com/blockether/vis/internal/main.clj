@@ -12,8 +12,8 @@
    Public entry point:
 
      (-main & args)   - invoked by the `:vis` alias / `bin/vis-agent`.
-                       Configures logging, discovers Clojure extensions, loads Python
-                       extensions before one-shot dispatches, redirects stderr to this
+                       Configures logging, initializes built-ins, loads Python extensions
+                       only for extension-dependent dispatches, redirects stderr to this
                        process's role/start-time/pid-stamped file under `~/.vis/logs/` for
                        any TTY-owning channel, then dispatches to the resolved
                        command's `:cmd/run-fn`.
@@ -2390,12 +2390,15 @@
   nil)
 
 (defn- deferred-python-dispatch?
-  "Defer gateway Python loading; keep declarative sync free of entrypoint imports
-   and the standalone interpreter free of extension loading and its output."
+  "Keep host-only commands independent of Python extension catalogs. Execution
+   backends admit extensions on demand; package management reconciles environments
+   without importing configured entrypoints."
   [args]
-  (or (contains? #{"stdio" "python" "web"} (first args))
-      (contains? #{["gateway" "start"] ["gateway" "tui"] ["extension" "sync"]}
-                 (vec (take 2 args)))))
+  (let [[command subcommand] args]
+    (or (contains? #{"stdio" "python" "web" "gateway" "sessions" "projects" "speech" "decisions"}
+                   command)
+        (and (= "extension" command)
+             (contains? #{"install" "sync" "versions" "update" "rollback"} subcommand)))))
 
 ;; Root command
 ;;
@@ -2566,7 +2569,7 @@
   (when (or (channel-help-request? args)
             (channel-parent-help-request? args)
             (ext-help-request? args))
-    (initialize-all!)))
+    (if (deferred-python-dispatch? args) (initialize-clojure-extensions!) (initialize-all!))))
 
 (defn- fast-help-dispatched?
   [_measure? args]
@@ -2781,9 +2784,9 @@
     (f)))
 
 (defn- initialize-for-dispatch!
-  "Initialize the closed manifest before dispatch. Long-lived TUI and gateway
-   processes leave Python to the gateway's on-demand execution boundary; one-shot
-   commands stay eager so their local extension surfaces are complete."
+  "Initialize the closed manifest before dispatch. Host-only commands skip Python
+   extension catalogs; commands that use registered extension surfaces load them
+   eagerly. Execution backends admit extensions at their on-demand boundary."
   [measure? args]
   (timed-startup! measure? "initialize-manifest" #(initialize-clojure-extensions!))
   (when-not (deferred-python-dispatch? args)

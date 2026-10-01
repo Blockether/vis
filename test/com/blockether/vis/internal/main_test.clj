@@ -3,15 +3,18 @@
             [com.blockether.vis.internal.commandline :as commandline]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.decisions.assets :as decisions-assets]
+            [com.blockether.vis.internal.gateway.cli :as gateway-cli]
+            [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.internal.gateway.state :as gateway-state]
             [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.main :as main]
             [com.blockether.vis.internal.extension.manifest :as manifest]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
+            [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.config.toggles :as toggles]
-            [lazytest.core :refer [defdescribe expect it throws?]]))
+            [lazytest.core :refer [defdescribe describe expect it throws?]]))
 
 (toggles/register-toggle!
   {:id "main_test_flag" :label "CLI toggle test flag" :default false :settings? false})
@@ -99,22 +102,91 @@
 ;; synchronously initialized CPython before dispatch, then its gateway did it again.
 (defdescribe
   dispatch-extension-initialization-test
-  (it "defers Python initialization for the gateway, declarative sync and the interpreter"
-      (doseq [args [["gateway" "start"] ["extension" "sync" "--dry-run"]
-                    ["extension" "sync" "--trust"] ["python" "-c" "print(1)"]]]
+  (it "skips extension catalogs for host-only commands (#300)"
+      (doseq [args
+              [["gateway"] ["gateway" "start"] ["gateway" "tui"] ["gateway" "stop"]
+               ["gateway" "stop" "--if-idle"] ["gateway" "stop" "--db" "unused.sqlite" "--if-idle"]
+               ["gateway" "status"] ["gateway" "pair"] ["gateway" "mcp" "list"] ["sessions" "list"]
+               ["sessions" "export" "session-id" "--md"] ["projects" "list"]
+               ["speech" "models" "status"] ["speech" "models" "download"]
+               ["decisions" "models" "status"] ["decisions" "models" "download"]
+               ["extension" "sync" "--dry-run"] ["extension" "sync" "--trust"]
+               ["extension" "install" "./vis-greeter"] ["extension" "versions" "example/greeting"]
+               ["extension" "update" "example/greeting"] ["extension" "rollback" "example/greeting"]
+               ["python" "-c" "print(1)"] ["stdio"] ["web"]]]
         (let [calls (atom [])]
           (with-redefs [manifest/initialize! #(swap! calls conj :clojure)
                         python-extensions/load-python-extensions! #(swap! calls conj :python)]
 
             (#'main/initialize-for-dispatch! false args)
             (expect (= [:clojure] @calls) (pr-str args))))))
-  (it "keeps Python initialization eager for one-shot commands"
-      (let [calls (atom [])]
-        (with-redefs [manifest/initialize! #(swap! calls conj :clojure)
-                      python-extensions/load-python-extensions! #(swap! calls conj :python)]
+  (it "loads extension catalogs for commands that use registered extension surfaces"
+      (doseq [args [["extension" "list"] ["extension" "vis-greeter" "greet"] ["channels" "tui"]
+                    ["providers" "list"] ["doctor"] ["--json" "Summarize this project"]]]
+        (let [calls (atom [])]
+          (with-redefs [manifest/initialize! #(swap! calls conj :clojure)
+                        python-extensions/load-python-extensions! #(swap! calls conj :python)]
 
-          (#'main/initialize-for-dispatch! false ["extension" "list"])
-          (expect (= [:clojure :python] @calls))))))
+            (#'main/initialize-for-dispatch! false args)
+            (expect (= [:clojure :python] @calls) (pr-str args))))))
+  (describe "gateway shutdown with unavailable extensions"
+            ;; #300: shutdown must reach its handler without importing or preparing extensions.
+            (it
+              "dispatches stop and idle-stop for running and already-stopped gateways"
+              (doseq [{:keys [args response idle-response expected-call expected-output]}
+                      [{:args ["gateway" "stop"]
+                        :response {:stopping true :pid 42 :clients 2 :running-turns 0}
+                        :expected-call :stop
+                        :expected-output "gateway stopping (pid 42) - releasing 2 clients\n"}
+                       {:args ["gateway" "stop"]
+                        :response {:status "stopped"}
+                        :expected-call :stop
+                        :expected-output "gateway stopped\n"}
+                       {:args ["gateway" "stop" "--if-idle"]
+                        :idle-response {:stopped? true}
+                        :expected-call :stop-if-idle
+                        :expected-output "gateway stopped - next session starts on 0.2.29\n"}
+                       {:args ["gateway" "stop" "--if-idle"]
+                        :idle-response {:reason :not-running}
+                        :expected-call :stop-if-idle
+                        :expected-output ""}]
+
+                      measure?
+                      [false true]]
+
+                (let [calls
+                      (atom [])
+
+                      lines
+                      (atom [])]
+
+                  (with-redefs-fn {#'manifest/initialize! #(swap! calls conj :clojure)
+                                   #'python-extensions/load-python-extensions!
+                                   (fn [& _]
+                                     (swap! calls conj :python)
+                                     (throw (ex-info "Configured extension cannot be loaded" {})))
+                                   #'python-runtime/ensure-project!
+                                   (fn [_]
+                                     (swap! calls conj :prepare)
+                                     (throw (ex-info "Configured extension cannot be prepared" {})))
+                                   #'config/init-cli! (constantly nil)
+                                   #'commandline/stdout! #(swap! lines conj %)
+                                   #'gateway-client/stop-daemon! (fn []
+                                                                   (swap! calls conj :stop)
+                                                                   response)
+                                   #'gateway-client/stop-daemon-if-idle! (fn []
+                                                                           (swap! calls conj
+                                                                             :stop-if-idle)
+                                                                           idle-response)
+                                   #'gateway-cli/this-handshake (constantly {:version "0.2.29"})}
+                    (fn []
+                      (binding [*err* (java.io.StringWriter.)]
+                        (#'main/initialize-for-dispatch! measure? args)
+                        (expect (= :ok
+                                   (:status (commandline/dispatch! (#'main/root-command)
+                                                                   (into ["vis-agent"] args))))))
+                      (expect (= [:clojure expected-call] @calls))
+                      (expect (= expected-output (apply str (map #(str % "\n") @lines)))))))))))
 
 (defdescribe one-shot-router-boundary-test
              (it "uses Vis's provider-enriching router builder for explicit overrides"
@@ -219,6 +291,26 @@
         (with-redefs [main/initialize-all! #(reset! initialized? true)]
           (#'main/initialize-fast-help-deps! ["channels" "tui" "--help"])
           (expect (true? @initialized?)))))
+  ;; #300: asking for package-management help must not prepare or import packages.
+  (it "renders package-management help without loading Python extensions"
+      (doseq [command ["install" "sync" "versions" "update" "rollback"]]
+        (let [calls (atom [])]
+          (with-redefs [manifest/initialize! #(swap! calls conj :clojure)
+                        python-extensions/load-python-extensions!
+                        (fn [& _]
+                          (swap! calls conj :python)
+                          (throw (ex-info "Configured extension cannot be loaded" {})))]
+
+            (with-out-str
+              (expect (true? (#'main/fast-help-dispatched? false ["extension" command "--help"]))))
+            (expect (= [:clojure] @calls) command)))))
+  (it "still loads extension catalogs for parent, list and contributed command help"
+      (doseq [args [["extension" "--help"] ["extension" "list" "--help"]
+                    ["extension" "vis-greeter" "--help"]]]
+        (let [calls (atom [])]
+          (with-redefs [main/initialize-all! #(swap! calls conj :all)]
+            (#'main/initialize-fast-help-deps! args)
+            (expect (= [:all] @calls) (pr-str args))))))
   (it "strips launcher-owned flags when they leak into JVM args"
       (expect (= ["channels" "--help"] (#'main/strip-global-args ["channels" "--jfr" "--help"]))))
   (it "strips --stream-trace, which the wrapper consumes as a system property"
