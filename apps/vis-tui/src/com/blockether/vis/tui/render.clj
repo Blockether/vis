@@ -6214,6 +6214,43 @@
                                                                           rows)))))))
         (activity-contract/operation-groups rows)))
 
+(defn- shell-call-history-row
+  "Keep a shell handle's current receipt separate from its retained call details."
+  [{:keys [id children]}]
+  (let [verbs
+        {"shell" ["Starting command" "Started command" "Command start failed"
+                  "Command start cancelled"]
+         "_shell-logs" ["Reading command output" "Read command output" "Command output read failed"
+                        "Command output read cancelled"]
+         "_shell-wait" ["Waiting for command" "Waited for command" "Command wait failed"
+                        "Command wait cancelled"]
+         "_shell-type" ["Sending command input" "Sent command input" "Command input failed"
+                        "Command input cancelled"]
+         "_shell-stop" ["Stopping command" "Stopped command" "Command stop failed"
+                        "Command stop cancelled"]}
+
+        calls
+        (mapv (fn [row]
+                (if-let [labels (get verbs (:operation row))]
+                  (assoc-in row
+                    [:presentation :headline]
+                    (nth labels
+                         (case (activity-row-state row)
+                           :succeeded
+                           1
+
+                           :failed
+                           2
+
+                           :cancelled
+                           3
+
+                           0)))
+                  row))
+              children)]
+
+    (activity-group-row (str id "#calls") "Call history" calls calls)))
+
 (defn- activity-detail-entries
   "A joined Activity band, closed until the reader explicitly opens it.
    Disclosure choices inside the band remain independent of its outer fold."
@@ -6621,7 +6658,11 @@
                                                                       :item-id id})}
 
                                                        nested
-                                                       (vec children)
+                                                       (if (and (= "shell" (:presenter row))
+                                                                (:handle-id row)
+                                                                (seq children))
+                                                         [(shell-call-history-row row)]
+                                                         (vec children))
 
                                                        touched
                                                        (if (seq nested) [] resources)

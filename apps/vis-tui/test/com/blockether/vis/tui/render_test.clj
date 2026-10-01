@@ -631,6 +631,161 @@
             (expect (str/includes? (:line entry) "presenter.clj")))))))
 
 (defdescribe
+  activity-shell-receipt-history-test
+  (let [presentation
+        {:headline "Command finished"
+         :summary "printf result"
+         :content [{:type "text" :text "CURRENT_SHELL_RESULT"}]}
+
+        started
+        {:id "start-call"
+         :sequence 0
+         :operation "shell"
+         :presenter "shell"
+         :handle-id "command-handle"
+         :state "succeeded"
+         :summary "printf result"
+         :presentation (assoc presentation :content [])}
+
+        waited
+        {:id "wait-call"
+         :sequence 1
+         :operation "_shell-wait"
+         :presenter "shell"
+         :handle-id "command-handle"
+         :state "succeeded"
+         :summary "printf result"
+         :presentation presentation}
+
+        receipt
+        {:id "command"
+         :sequence 0
+         :operation "shell"
+         :presenter "shell"
+         :handle-id "command-handle"
+         :state "succeeded"
+         :summary "printf result"
+         :presentation presentation
+         :children [started waited]}
+
+        entries
+        (fn [rows opened]
+          (#'render/activity-detail-entries
+           {:node-id "activity"
+            :activity-rows rows
+            :activity-expanded? (case opened
+                                  :all
+                                  (fn [_ _]
+                                    true)
+
+                                  :receipts
+                                  (fn [key _]
+                                    (not (str/ends-with? key "#calls")))
+
+                                  (fn [key default]
+                                    (get opened key default)))}
+           100
+           "shell-history"))
+
+        heads
+        (fn [shown]
+          (filter #(= :activity-row (get-in % [:meta :kind])) shown))
+
+        text
+        (fn [shown]
+          (str/join "\n" (map :line shown)))]
+
+    (it "shows one current shell result with its call history closed by default"
+        (let [shown
+              (entries [receipt] {"#band" true})
+
+              history
+              (first (filter #(= "command#calls" (get-in % [:meta :item-id])) (heads shown)))]
+
+          (expect (= 1 (count (re-seq #"Command finished" (text shown)))))
+          (expect (= 1 (count (re-seq #"CURRENT_SHELL_RESULT" (text shown)))))
+          (expect (= 2 (count (heads shown))))
+          (expect (str/includes? (:line history) "Call history ×2"))
+          (expect (true? (get-in history [:meta :collapsed?])))
+          (expect (= "activity:command#calls" (get-in history [:meta :node-id])))))
+    (it "opens the retained calls independently without repeating the receipt headline"
+        (let [shown
+              (entries [receipt] {"#band" true "command#calls" true})
+
+              ids
+              (map #(get-in % [:meta :item-id]) (heads shown))]
+
+          (expect (= ["command" "command#calls" "start-call" "wait-call"] ids))
+          (expect (str/includes? (text shown) "Started command"))
+          (expect (str/includes? (text shown) "Waited for command"))
+          (expect (= 1 (count (re-seq #"Command finished" (text shown)))))
+          (expect (= 1 (count (re-seq #"CURRENT_SHELL_RESULT" (text shown)))))
+          (expect (= 2
+                     (count (re-seq #"CURRENT_SHELL_RESULT"
+                                    (text (entries [receipt]
+                                                   {"#band" true
+                                                    "command#calls" true
+                                                    "wait-call" true}))))))))
+    (it "distinguishes each call when all details are explicitly expanded"
+        (let [shown (entries [receipt] :all)]
+          (expect (= 1 (count (re-seq #"Command finished" (text shown)))))
+          (expect (str/includes? (text shown) "Call history ×2"))
+          (expect (str/includes? (text shown) "Started command"))
+          (expect (str/includes? (text shown) "Waited for command"))
+          (expect (= 2 (count (re-seq #"CURRENT_SHELL_RESULT" (text shown)))))
+          (expect (= "Command finished" (get-in receipt [:children 1 :presentation :headline])))))
+    (it "keeps running and failed calls visible even when their history is closed"
+        (doseq [[state headline call-headline]
+                [["running" "Running command" "Waiting for command"]
+                 ["failed" "Command status unavailable" "Command wait failed"]
+                 ["cancelled" "Command cancelled" "Command wait cancelled"]]]
+          (let [row (-> receipt
+                        (assoc :state state)
+                        (assoc-in [:presentation :headline] headline)
+                        (assoc-in [:children 1 :state] state)
+                        (assoc-in [:children 1 :presentation :headline] headline))
+                shown (entries [row] {"#band" true "command#calls" false})
+                history (first (filter #(= "command#calls" (get-in % [:meta :item-id]))
+                                       (heads shown)))]
+
+            (expect (str/includes? (text shown) call-headline))
+            (expect (true? (get-in history [:meta :collapsed?]))))))
+    (it "uses readable call labels for every shell handle method"
+        (doseq [[operation headline] [["_shell-logs" "Read command output"]
+                                      ["_shell-type" "Sent command input"]
+                                      ["_shell-stop" "Stopped command"]]]
+          (let [row (assoc-in receipt [:children 1 :operation] operation)
+                shown (entries [row] :all)]
+
+            (expect (str/includes? (text shown) headline))
+            (expect (not (str/includes? (text shown) operation))))))
+    (it "does not merge different command handles with identical command text"
+        (let [other
+              (-> receipt
+                  (assoc :id "second-command"
+                         :handle-id "second-handle"
+                         :sequence 2)
+                  (update :children
+                          (fn [children]
+                            (mapv #(-> %
+                                       (update :id (partial str "second-"))
+                                       (update :sequence + 2)
+                                       (assoc :handle-id "second-handle"))
+                                  children))))
+
+              shown
+              (entries [receipt other] :receipts)]
+
+          (expect (= 2 (count (re-seq #"Command finished" (text shown)))))
+          (expect (= 2 (count (re-seq #"CURRENT_SHELL_RESULT" (text shown)))))
+          (expect (= 2 (count (re-seq #"Call history ×2" (text shown)))))
+          (expect (not (str/includes? (text shown) "Waited for command")))))
+    (it "does not add call history to a shell receipt without retained calls"
+        (let [shown (entries [(dissoc receipt :children)] :all)]
+          (expect (= 1 (count (re-seq #"Command finished" (text shown)))))
+          (expect (not (str/includes? (text shown) "Call history")))))))
+
+(defdescribe
   activity-leaf-disclosure-test
   (let [row
         {:id "search-1"
