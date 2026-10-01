@@ -91,8 +91,8 @@
                       (expect (nil? (:error via-missing)))
                       (expect (= "present.txt True" (out via-file)))
                       (expect (= "missing.txt False" (out via-missing)))
-                      (expect (str/includes? (get-in via-old [:error :message])
-                                             "`is_exists` is not defined")))))
+                      (expect (str/starts-with? (get-in via-old [:error :message])
+                                                "NameError: name 'is_exists' is not defined")))))
   (it "removing the binding makes probe_path undefined"
       (let [ctx (tpc/context ::ctx)]
         (ep/set-python-binding! ctx
@@ -105,9 +105,10 @@
                           "d = await probe_path('dynamic.txt')\nprint(d['path'], d['exists'])"
                           "t1/i3"))))
         (ep/remove-python-binding! ctx 'probe-path)
-        (expect (str/includes? (get-in (ep/run-python-block ctx "probe_path('dynamic.txt')" "t1/i4")
-                                       [:error :message])
-                               "`probe_path` is not defined")))))
+        (expect (str/starts-with? (get-in
+                                    (ep/run-python-block ctx "probe_path('dynamic.txt')" "t1/i4")
+                                    [:error :message])
+                                  "NameError: name 'probe_path' is not defined")))))
 
 (defdescribe
   runtime-builtin-shadow-boundary-test
@@ -354,6 +355,27 @@
         (expect (= 7 (get-in err [:data :column]))) ;; under `undefined_zzz`, not `print`
         (expect (str/includes? msg "1: print(undefined_zzz)"))
         (expect (str/includes? msg "^^^"))))        ;; a multi-char caret span
+  (it "an undefined variable reports only the native error and its source location"
+      (tpc/with-own
+        [ctx {}]
+        (let [code
+              (str "for iteration_record in incident_latest.transcript.turns[-1].iterations:\n"
+                   "    pass")
+
+              err
+              (:error (ep/run-python-block ctx code))]
+
+          (expect
+            (= (str "NameError: name 'incident_latest' is not defined\n\n"
+                    "1: for iteration_record in incident_latest.transcript.turns[-1].iterations:\n"
+                    (apply str (repeat 27 \space))
+                    (apply str (repeat 15 \^)))
+               (:message err)))
+          (expect (= :python/runtime (get-in err [:data :phase])))
+          (expect (= 1 (get-in err [:data :line])))
+          (expect (= 25 (get-in err [:data :column])))
+          (expect (true? (get-in err [:data :name-undefined?])))
+          (expect (= "incident_latest" (get-in err [:data :undefined-name]))))))
   (it "a long line shows the columns around the caret, not the whole line"
       (let [msg (:message (:error (ep/run-python-block (py-ctx)
                                                        (str "values = ["

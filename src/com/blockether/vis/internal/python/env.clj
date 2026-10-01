@@ -1725,9 +1725,7 @@
         denied-root?
         (boolean (re-find #"vis sandbox: .* is outside the (readable|writable) roots" base))
 
-        ;; `NameError: name 'X' is not defined` for a TOOL is usually an
-        ;; extension toggled OFF — the engine removes its symbols while inactive,
-        ;; so the call fails with nothing pointing at the toggle.
+        ;; Record the missing name without assuming it is a variable or a tool.
         undefined-name
         (when (and (not host?) (not syntax?))
           (second (re-find #"name '([^']+)' is not defined" base)))
@@ -1747,16 +1745,6 @@
                    "patch(path, edits) to edit, "
                    "or ask the USER to add the path to workspace.filesystem in vis.yml "
                    "and run /reload. Original error: ")
-              undefined-name
-              (str "`"
-                   undefined-name
-                   "` is not defined. If it's a TOOL you expected, it is "
-                   "likely an extension that is inactive — its symbols are removed while off. Run "
-                   "`apropos(\""
-                   undefined-name
-                   "\")`; if it isn't listed, ask the USER to enable "
-                   "it and do NOT retry the name. If it's a variable, define it first. "
-                   "Original error: ")
               ;; A refusal names its problem instead.
               (and indent? (not problem))
               (str "Python is INDENTATION-sensitive: a block (after def / if / for / with / "
