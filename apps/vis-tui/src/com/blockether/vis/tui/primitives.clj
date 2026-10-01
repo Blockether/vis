@@ -258,52 +258,20 @@
   ^String [widths left junction right]
   (TerminalTextUtils/boxedLine (int-widths widths) (char left) BOX_H (char junction) (char right)))
 
-;;; ── Selection marker (dot cursor component) ─────────────────────
-;;
-;; Universal cursor marker for every up/down navigable list in the
-;; TUI: dialogs (select, settings, sessions, file picker,
-;; resources, providers, models), command palette, slash overlay,
-;; etc.
-;;
-;; Selected rows use one left-anchored `•`, not row inversion and not
-;; ad-hoc `>` glyphs. Both selected and unselected states reserve the
-;; same display width (2 cols) so column layout survives navigation.
-;;
-;; The painter (`draw-selection-marker!`) is defined further down,
-;; AFTER the `styled` macro is in scope; the constants and the
-;; pure-string helper live up here so callers that just want the
-;; prefix string don't need to load the full painter graph.
+;;; ── Selection styling ─────────────────────────────────────────────────────
 
-(def ^:const SELECTION_GLYPH
-  "Two-col selection marker. Selected rows show `•`+space, unselected
-   rows show two spaces, so the body content stays column-aligned.
-
-   The glyph MUST be display-width 1 so glyph+space == 2 cols and
-   exactly fills the reserved gutter. `•` is the project-wide selector
-   dot, kept bare (no VS-16) to avoid terminal width surprises."
-  "• ")
-
-(def ^:const SELECTION_BLANK "  ")
-
-(def ^:const SELECTION_WIDTH 2)
-
-(defn selection-prefix
-  "Return the leading marker string for a list/menu row.
-
-   Use this for rows where the marker can be inlined into the body
-   text (simple list items, checkbox rows, slash-command rows). For
-   rows where the marker must live OUTSIDE a fixed-column body
-   (file/session pickers, provider/model cards) call
-   `draw-selection-marker!` from the caller's row loop instead."
+(defn selection-styles
+  "Return bold, reversed colors for a selected list or menu row.
+   Apply these styles to the row fill and all of its text."
   [selected?]
-  (if selected? SELECTION_GLYPH SELECTION_BLANK))
+  (if selected? [BOLD REVERSE] []))
 
 ;;; ── Status glyph vocabulary (● ○ ◆ ▸) ──────────────────────────────────────
 ;; ONE shared status-mark language across the TUI — the footer's resource ●, the
 ;; settings toggle rows, and the managed-resource rows all speak it, matching the
 ;; web's status dots. Each glyph MUST be display-width 1 (bare geometric, never a
 ;; VS-16 emoji) so `glyph + space` fills a 2-col gutter and the cell grid stays
-;; aligned — same rule as SELECTION_GLYPH above.
+;; aligned.
 (def ^:const STATUS_ON "●") ;; filled  — enabled / live / healthy
 
 (def ^:const STATUS_OFF "○") ;; hollow  — disabled / idle
@@ -389,27 +357,6 @@
     (set-char! g right row BOX_T_L)
     (put-str! g (inc left) row (horiz-line inner))
     g))
-
-(defn draw-selection-marker!
-  "Paint the selection marker at (col, row) when `selected?` is
-   truthy. Unselected rows get nothing — the surrounding row fill is
-   expected to already cover those cells.
-
-   The glyph is rendered BOLD. Provide `marker-fg` to give it its
-   own color (e.g. `dialog-hint-key`); when omitted, whatever fg is
-   currently set on `g` is used.
-
-   See the `Selection marker` block above for the project-wide
-   rationale. Callers that need the prefix as a STRING (to inline
-   into a row label) should use `selection-prefix` instead."
-  ([g col row selected?] (draw-selection-marker! g col row selected? nil))
-  ([^TextGraphics g col row selected? marker-fg]
-   (when selected?
-     (let [prev-fg (when marker-fg (.getForegroundColor g))]
-       (when marker-fg (set-fg! g marker-fg))
-       (styled g [BOLD] (put-str! g col row SELECTION_GLYPH))
-       (when marker-fg (set-fg! g prev-fg))))
-   g))
 
 ;;; ── Display-width (terminal columns, not Java chars) ──────────────────────
 ;;

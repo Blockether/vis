@@ -824,10 +824,9 @@
      edge. Right-aligning the meta spans the full width instead of stranding
      it next to the chip with a wide empty gutter (the old symmetric padding).
 
-   The first `p/SELECTION_WIDTH` cols are the selection gutter (`•` on the
-   selected row, painted by the caller); ONE col on the right is kept clear for
+   One column on the left provides padding; one on the right is kept clear for
    the overlay scrollbar thumb. Truncation drops the description first; the
-   chip renders fully whenever at all possible."
+   chip renders fully whenever possible."
   [^TextGraphics g row left inner-w suggestion]
   (let [row
         (long row)
@@ -838,16 +837,11 @@
         inner-w
         (long inner-w)
 
-        pad
-        (long p/SELECTION_WIDTH)
-
         file?
         (:file/mention? suggestion)
 
-        ;; One space between the selection marker gutter and the chip so
-        ;; the candidate never abuts the `•` — reads as `•  chip`.
         x0
-        (+ left pad 1)
+        (inc left)
 
         ;; Last paintable col of the inset body. Keep 1 col clear on the
         ;; right for the scrollbar thumb PLUS a 2-col right margin so the
@@ -1180,29 +1174,19 @@
            (p/put-str! g left border-row (p/horiz-line inner-w)))
          ;; Suggestion rows — inset by the same margin so the row body
          ;; lines up with the title accent and the input box rule.
-         ;; Selection is signalled by a `•` cursor glyph in the FIRST
-         ;; col of the inset row (matching the project-wide convention;
-         ;; see `p/SELECTION_GLYPH`). The marker sits INSIDE the inset
-         ;; body, not in the terminal-bg margin outside of it, so it
-         ;; reads as part of the menu rather than floating loose.
+         ;; Selected rows use bold, reversed colors across the inset body.
          (doseq [[i suggestion] (map-indexed vector visible)]
            (let [row (+ (long first-sug) (long i))]
              ;; Clear the full row to terminal-bg so the margin gutters
              ;; on each side don't bleed leftover paint.
              (p/set-colors! g t/text-fg t/terminal-bg)
              (p/fill-rect! g 0 row cols 1)
-             ;; Body row in the normal dialog palette (no inversion).
              (p/set-colors! g t/dialog-fg t/dialog-bg)
-             (p/fill-rect! g left row inner-w 1)
-             ;; Cursor glyph one col IN from the inset edge (a 1-col
-             ;; left margin before the dot) in the dialog palette so it
-             ;; visually belongs to the row. The bullet then abuts the
-             ;; candidate chip directly — no wide empty gutter between.
-             (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-             (p/draw-selection-marker! g (inc (long left)) row (:slash/selected? suggestion))
-             ;; Inline-code chip + ` - ` + italic description.
-             (p/set-colors! g t/dialog-fg t/dialog-bg)
-             (draw-slash-suggestion-row! g row left inner-w suggestion)))
+             (p/styled g
+                       (p/selection-styles (:slash/selected? suggestion))
+                       (p/fill-rect! g left row inner-w 1)
+                       ;; Inline-code chip + ` - ` + italic description.
+                       (draw-slash-suggestion-row! g row left inner-w suggestion))))
          ;; Right-side scrollbar when more matches exist than visible rows.
          ;; Lanterna's ScrollBar keeps this overlay aligned with every other
          ;; feel and the same 1-row thumb as every other modal. The

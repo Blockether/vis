@@ -3,27 +3,23 @@
 
    Composes the lower-level `table` border/row primitives with
    Lanterna's `ScrollBar` so callers don't repeat the same boilerplate (top
-   border + header row + middle separator + N body rows + selection
-   marker gutter + scrollbar) at every dialog site.
+   border + header row + middle separator + N body rows + scrollbar)
+   at every dialog site.
 
    Geometry rules
    --------------
    Given a dialog `bounds` ({:left :inner-w}) the layout reserves:
 
      col `left+1`            → table `│` left border (flush to dialog edge)
-     col `left+3`            → selection marker, INSIDE the first column
      cols `left+1 .. R-1`    → boxed table (own `│` borders included)
      col `R`                 → scrollbar (right of right table border)
 
    where `R = left + inner-w`. This guarantees the scrollbar never
    overpaints the table's right `│` border.
 
-   The selection marker lives INSIDE the first column: the first data
-   column is internally widened by `p/SELECTION_WIDTH`, its cell text
-   is indented by that many cols, and the marker glyph is painted over
-   the reserved gutter (matching the Ctrl+G navigator). Callers size
-   their columns against the reported `:table-content-w`, which already
-   excludes the marker reserve — no caller-side change needed.
+   Selected rows use bold, reversed colors across their interior.
+   Callers size their columns against the reported `:table-content-w`.
+   No selection gutter is reserved, so data uses the full table width.
 
    Row layout (relative to caller-provided `:top`)
    -----------------------------------------------
@@ -67,13 +63,10 @@
         rendered-w
         table-w
 
-        ;; First column hosts the marker inside the box, so the caller's
-        ;; data columns get `SELECTION_WIDTH` fewer cells.
         table-content-w
-        (long (max 1 (- rendered-w p/SELECTION_WIDTH)))]
+        rendered-w]
 
-    {:marker-col (+ table-x 2)
-     :table-x table-x
+    {:table-x table-x
      :table-w table-w
      :rendered-w rendered-w
      :table-content-w table-content-w
@@ -171,7 +164,7 @@
    {:keys [bounds top body-h headers widths total scroll selected cell-fn empty-cells empty-message
            aligns closed?]
     :or {empty-message "No items." aligns (repeat :left) closed? false}}]
-  (let [{:keys [marker-col table-x rendered-w scrollbar-col] :as geom}
+  (let [{:keys [table-x rendered-w scrollbar-col] :as geom}
         (layout bounds)
 
         row-ix
@@ -201,80 +194,59 @@
         aligns
         (vec (take (count widths) aligns))
 
-        mk
-        p/SELECTION_WIDTH
-
-        pad
-        (apply str (repeat mk \space))
-
-        ;; Widen the first column to host the in-box marker gutter and
-        ;; indent that column's text so the glyph never overpaints data.
-        full-widths
-        (let [v (vec widths)]
-          (if (seq v) (update v 0 + mk) v))
-
-        mark-first
-        (fn [cells]
-          (let [v (vec cells)]
-            (if (seq v) (update v 0 #(str pad %)) v)))
-
         empty-cells
-        (mark-first (or empty-cells (empty-row-cells widths empty-message)))]
+        (or empty-cells (empty-row-cells widths empty-message))]
 
     ;; Chrome
     (p/set-colors! g t/dialog-border t/dialog-bg)
-    (p/put-str! g table-x border-top (table/boxed-border-line full-widths :top))
+    (p/put-str! g table-x border-top (table/boxed-border-line widths :top))
     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-    (p/put-str! g table-x header (table/boxed-row-line full-widths (mark-first headers) aligns))
+    (p/put-str! g table-x header (table/boxed-row-line widths headers aligns))
     ;; Re-paint the side `│` borders in the border color: the header row
     ;; was painted in dialog-hint-key, which would otherwise leave the
     ;; vertical edges a different color than the top/middle/bottom chrome.
     (p/set-colors! g t/dialog-border t/dialog-bg)
     (p/put-str! g table-x header "│")
     (p/put-str! g (+ table-x (dec rendered-w)) header "│")
-    (p/put-str! g table-x separator (table/boxed-border-line full-widths :middle))
+    (p/put-str! g table-x separator (table/boxed-border-line widths :middle))
     (dotimes [i body-h]
       (let [idx (+ scroll i)
             row (+ body-top i)]
 
-        (cond (< idx total) (do (table/draw-line! g
-                                                  table-x
-                                                  row
-                                                  rendered-w
-                                                  (= idx selected)
-                                                  (table/boxed-row-line full-widths
-                                                                        (mark-first (cell-fn idx))
-                                                                        aligns))
+        (cond (< idx total) (do (table/draw-line!
+                                  g
+                                  table-x
+                                  row
+                                  rendered-w
+                                  (= idx selected)
+                                  (table/boxed-row-line widths (cell-fn idx) aligns))
                                 ;; Re-paint the side `│` borders in the border color: draw-line!
                                 ;; filled the whole row in dialog-fg, which would otherwise leave the
                                 ;; vertical edges lighter than the top/middle/bottom chrome.
                                 (p/set-colors! g t/dialog-border t/dialog-bg)
                                 (p/put-str! g table-x row "│")
-                                (p/put-str! g (+ table-x (dec rendered-w)) row "│")
-                                (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                                (p/draw-selection-marker! g marker-col row (= idx selected)))
+                                (p/put-str! g (+ table-x (dec rendered-w)) row "│"))
               (and (zero? total) (zero? i))
               (do (p/set-colors! g t/dialog-hint t/dialog-bg)
                   (p/fill-rect! g table-x row rendered-w 1)
-                  (p/put-str! g table-x row (table/boxed-row-line full-widths empty-cells aligns))
+                  (p/put-str! g table-x row (table/boxed-row-line widths empty-cells aligns))
                   (p/set-colors! g t/dialog-border t/dialog-bg)
                   (p/put-str! g table-x row "│")
                   (p/put-str! g (+ table-x (dec rendered-w)) row "│"))
               :else (do (p/set-colors! g t/dialog-fg t/dialog-bg)
                         (p/fill-rect! g table-x row rendered-w 1)
-                        (p/put-str! g
-                                    table-x
-                                    row
-                                    (table/boxed-row-line full-widths
-                                                          (vec (repeat (count full-widths) ""))
-                                                          aligns))
+                        (p/put-str!
+                          g
+                          table-x
+                          row
+                          (table/boxed-row-line widths (vec (repeat (count widths) "")) aligns))
                         (p/set-colors! g t/dialog-border t/dialog-bg)
                         (p/put-str! g table-x row "│")
                         (p/put-str! g (+ table-x (dec rendered-w)) row "│")))))
     ;; Optional closing border (matches navigator-style boxed picker)
     (when closed?
       (p/set-colors! g t/dialog-border t/dialog-bg)
-      (p/put-str! g table-x (+ body-top body-h) (table/boxed-border-line full-widths :bottom)))
+      (p/put-str! g table-x (+ body-top body-h) (table/boxed-border-line widths :bottom)))
     ;; Scrollbar (own column outside table's right `│` border)
     (ScrollBar/draw g
                     Direction/VERTICAL

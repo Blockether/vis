@@ -5277,7 +5277,8 @@
                  :w (.getColumns ^com.googlecode.lanterna.TerminalSize size)
                  :h (.getRows ^com.googlecode.lanterna.TerminalSize size)
                  :fg @fg
-                 :bg @bg})
+                 :bg @bg
+                 :sgr @active})
               this)
             (setCharacter [_ _ _] this))
 
@@ -5371,31 +5372,25 @@
 
         (expect (some #(<= pad % (+ pad 2)) cols-used))
         (expect (some #(>= % (+ pad (quot inner-w 2))) cols-used)))
-      ;; Suggestion rows are inset to the same column span as the
-      ;; title accent stripe (margin-left = margin-right = pad).
-      ;; The body fill on every row uses the normal `dialog-bg`
-      ;; palette — selection is signalled by the dot marker in the
-      ;; left margin, NOT by a full-row accent stripe.
-      (expect
-        (some
-          #(and (= first-sug (:row %)) (= pad (:col %)) (= inner-w (:w %)) (= t/dialog-bg (:bg %)))
-          @fills))
-      ;; The selected row carries a BOLD dot marker one col IN from the
-      ;; inset body edge (col `pad`+1, a 1-col left margin), painted in
-      ;; `dialog-hint-key` on `dialog-bg` so marker reads INSIDE menu
-      ;; rather than floating in terminal margin. Non-selected row gets
-      ;; nothing painted in that column.
+      ;; Selection covers the inset row fill and all text, not a cursor glyph.
       (expect (some #(and (= first-sug (:row %))
-                          (= (inc pad) (:col %))
-                          (= p/SELECTION_GLYPH (:text %))
-                          (= t/dialog-hint-key (:fg %))
+                          (= pad (:col %))
+                          (= inner-w (:w %))
                           (= t/dialog-bg (:bg %))
-                          (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD))
-                    @puts))
-      (expect (not-any? #(and (= (inc first-sug) (:row %))
-                              (= (inc pad) (:col %))
-                              (= p/SELECTION_GLYPH (:text %)))
-                        @puts))
+                          (contains? (:sgr %) p/BOLD)
+                          (contains? (:sgr %) p/REVERSE))
+                    @fills))
+      (expect (some #(and (= (inc first-sug) (:row %))
+                          (= pad (:col %))
+                          (= inner-w (:w %))
+                          (= t/dialog-bg (:bg %))
+                          (not (contains? (:sgr %) p/BOLD))
+                          (not (contains? (:sgr %) p/REVERSE)))
+                    @fills))
+      (expect (not-any? #(str/includes? (:text %) "•") @puts))
+      (doseq [put (filter #(= first-sug (:row %)) @puts)]
+        (expect (contains? (:sgr put) p/BOLD))
+        (expect (contains? (:sgr put) p/REVERSE)))
       ;; Each suggestion row paints a markdown-style chip:
       ;;   <code-bg fill> /cmd <code-bg fill end> ` - ` <italic desc>
       (let [sug-rows
@@ -5418,18 +5413,15 @@
         (expect (= n (count usages)))
         (expect (= n (count seps)))
         (expect (= n (count descs)))
-        ;; Layout invariants per row: chip wraps the usage with 1 col
-        ;; padding on each side, ` - ` follows the chip, italic desc
-        ;; follows the separator. The chip starts AFTER the selection
-        ;; gutter (`p/SELECTION_WIDTH` cols inside the inset body).
+        ;; Chips have one column of padding on each side, followed by the
+        ;; separator and italic description. There is no selection gutter.
         (doseq [[chip u s d] (map vector
                                   (sort-by :row chip-fills)
                                   (sort-by :row usages)
                                   (sort-by :row seps)
                                   (sort-by :row descs))]
-          ;; Chip lives past the selection gutter — first chip col is
-          ;; at least `pad + p/SELECTION_WIDTH` (cursor + 1-col margin).
-          (expect (>= (:col chip) (+ pad com.blockether.vis.tui.primitives/SELECTION_WIDTH)))
+          ;; A single padding column separates the chip from the inset edge.
+          (expect (= (:col chip) (inc pad)))
           ;; Chip starts one col before the usage and is exactly
           ;; (usage-width + 2) wide.
           (expect (= (:col u) (inc (:col chip))))

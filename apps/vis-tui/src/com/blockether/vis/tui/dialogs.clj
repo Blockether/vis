@@ -626,26 +626,13 @@
        (min (max 1 (- cols 8))))))
 
 (defn- draw-list-item!
-  ;; Selection visual:
-  ;;   col left   : │ (frame, painted by chrome)
-  ;;   col left+1 : `•` cursor glyph (or blank if not selected)
-  ;;   col left+2 : ` ` margin between marker and body
-  ;;   col left+3+: body label (BOLD on selected)
-  ;;
-  ;; The 2-col `selection-prefix` (`• ` / `  `) is concatenated to the
-  ;; label and the whole string is drawn at `(inc left)` so the marker
-  ;; lands RIGHT AT the inner edge of the dialog (no padding column
-  ;; between the frame and the marker), then a 1-col margin, then the
-  ;; label — matching the project-wide `•`-cursor convention.
+  ;; Selected rows use bold, reversed colors across the label, hints and padding.
   ([g left row inner-w selected? label] (draw-list-item! g left row inner-w selected? label nil))
   ([g left row inner-w selected? label hint]
    ;; `hint` (optional) is a dim, right-aligned chip — e.g. a command's keybind
    ;; — drawn opposite the label (opencode's justify-between rows). The label is
    ;; truncated so it never collides with the hint.
-   (let [prefix
-         (p/selection-prefix selected?)
-
-         hint
+   (let [hint
          (some-> hint
                  str
                  not-empty)
@@ -654,36 +641,23 @@
          (if hint (+ 2 (p/display-width hint)) 0)
 
          draw-text
-         (ellipsize (str prefix label) (max 0 (- (long inner-w) 2 (long hint-w))))]
+         (ellipsize label (max 0 (- (long inner-w) 2 (long hint-w))))]
 
      (p/set-colors! g t/dialog-fg t/dialog-bg)
-     (p/fill-rect! g (inc (long left)) row inner-w 1)
-     (if selected?
-       (p/styled g [p/BOLD] (p/put-str! g (inc (long left)) row draw-text))
-       (p/put-str! g (inc (long left)) row draw-text))
-     (when hint
-       (p/set-colors! g t/dialog-hint t/dialog-bg)
-       (p/put-str! g (- (+ (long left) (long inner-w)) (p/display-width hint)) row hint)
-       (p/set-colors! g t/dialog-fg t/dialog-bg)))))
+     (p/styled g
+               (p/selection-styles selected?)
+               (p/fill-rect! g (inc (long left)) row inner-w 1)
+               (p/put-str! g (inc (long left)) row draw-text)
+               (when hint
+                 (p/set-colors! g t/dialog-hint t/dialog-bg)
+                 (p/put-str! g (- (+ (long left) (long inner-w)) (p/display-width hint)) row hint)
+                 (p/set-colors! g t/dialog-fg t/dialog-bg))))))
 
 (defn draw-selectable-row!
-  "The ONE focusable-row painter for LIST dialogs: `p/selection-prefix`'s cursor
-   glyph, the text, bold while the cursor is on it.
-
-   `draw-checkbox-item!` is this row with a status glyph in front of the label,
-   and any new focusable LIST row joins them here instead of inventing a second
-   way to look selected. A form is the other family: its rows are drawn as
-   INPUTS on their own surface (`draw-field-row!`) and wear no cursor glyph at
-   all, because a `•` in front of every row says the same thing about all of
-   them."
+  "Paint a list row with bold, reversed colors while selected.
+   Checkbox rows share this painter; their status remains independent of focus."
   [g left row inner-w selected? text]
-  (let [draw-text (ellipsize (str (p/selection-prefix selected?) text)
-                             (max 0 (- (long inner-w) 2)))]
-    (p/set-colors! g t/dialog-fg t/dialog-bg)
-    (p/fill-rect! g (inc (long left)) row inner-w 1)
-    (if selected?
-      (p/styled g [p/BOLD] (p/put-str! g (inc (long left)) row draw-text))
-      (p/put-str! g (inc (long left)) row draw-text))))
+  (draw-list-item! g left row inner-w selected? text))
 
 (defn choice-mark
   "The status glyph a choice row wears in front of its label. An EXCLUSIVE choice
@@ -697,11 +671,8 @@
     (str "[" (if checked? "✓" " ") "] ")))
 
 (defn draw-checkbox-item!
-  "MULTI-choice LIST row — cursor glyph, a `[✓]`/`[ ]` box, then the label. The
-   cursor glyph and the checkbox glyph carry independent meaning: the first says
-   \"this row is the cursor\", the second says \"this option is currently on\".
-   Anchored at `(inc left)` so the marker sits right at the dialog's inner edge
-   (see `draw-list-item!`)."
+  "Paint a checkbox and label with row selection styling.
+   The checkbox shows whether the option is on; bold, reversed colors show focus."
   [g left row inner-w selected? checked? label]
   (draw-selectable-row! g left row inner-w selected? (str (choice-mark false checked?) label)))
 
@@ -4679,13 +4650,8 @@
                     option-indent
                     (long (settings-option-indent))
 
-                    ;; Reserve `p/SELECTION_WIDTH` cols at the start of the
-                    ;; option row for the selection gutter (`>` glyph + 1
-                    ;; col margin). The cursor itself is painted at
-                    ;; `(inc lleft)` (the pane's inner edge) by the row
-                    ;; loop; option body shifts right by the gutter.
                     option-x
-                    (+ lleft 2 option-indent p/SELECTION_WIDTH)
+                    (+ lleft 2 option-indent)
 
                     labels
                     (mapv #(settings-option-label % @values) rows)
@@ -4697,7 +4663,7 @@
                     linner
 
                     base-option-w
-                    (max 1 (- base-paint-w 2 option-indent p/SELECTION_WIDTH))
+                    (max 1 (- base-paint-w 2 option-indent))
 
                     base-desc-w
                     (max 1 (- base-option-w check-w))
@@ -4712,7 +4678,7 @@
                     (if scrollable? (max 1 (dec linner)) linner)
 
                     option-w
-                    (max 1 (- paint-w 2 option-indent p/SELECTION_WIDTH))
+                    (max 1 (- paint-w 2 option-indent))
 
                     desc-x
                     (+ option-x check-w)
@@ -4855,40 +4821,31 @@
                                           (p/put-str! g desc-x row-y (ellipsize text desc-w)))
                                 (p/put-str! g desc-x row-y (ellipsize text desc-w))))
 
-                          ;; Selection stays beside the label; the value owns the right column.
-                          (do (p/set-colors! g t/dialog-fg t/dialog-bg)
-                              (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                              ;; Cursor glyph sits immediately LEFT of the row body, so
-                              ;; a selected row reads as one unit instead of an orphan
-                              ;; bullet parked against the pane divider.
-                              (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                              (p/draw-selection-marker! g
-                                                        (- option-x p/SELECTION_WIDTH)
-                                                        row-y
-                                                        selected?)
-                              ;; Leading status glyph (●/○/◆/▸) via the shared component,
-                              ;; which returns the col to start the label at.
-                              (let [label-x
-                                    (p/status-mark! g option-x row-y mark mark-color t/dialog-bg)
-                                    value (nth option-values row-idx)
-                                    label-w (max 1
-                                                 (- option-w
-                                                    p/STATUS_WIDTH
-                                                    (if (and (some? value) (pos? value-w))
-                                                      (+ value-w 2)
-                                                      0)))
-                                    lbl (ellipsize option-label label-w)]
+                          ;; Highlight the setting while its status and value keep their meaning.
+                          (p/styled
+                            g
+                            (p/selection-styles selected?)
+                            (p/set-colors! g t/dialog-fg t/dialog-bg)
+                            (p/fill-rect! g (inc lleft) row-y paint-w 1)
+                            ;; The leading status glyph reports the current setting value.
+                            (let [label-x
+                                  (p/status-mark! g option-x row-y mark mark-color t/dialog-bg)
+                                  value (nth option-values row-idx)
+                                  label-w
+                                  (max 1
+                                       (- option-w
+                                          p/STATUS_WIDTH
+                                          (if (and (some? value) (pos? value-w)) (+ value-w 2) 0)))
+                                  lbl (ellipsize option-label label-w)]
 
-                                (p/set-colors! g t/dialog-fg t/dialog-bg)
-                                (if selected?
-                                  (p/styled g [p/BOLD] (p/put-str! g label-x row-y lbl))
-                                  (p/put-str! g label-x row-y lbl))
-                                (when (and (some? value) (pos? value-w))
-                                  (let [text (ellipsize value value-w)
-                                        dx (- (+ lleft paint-w) (p/display-width text))]
+                              (p/set-colors! g t/dialog-fg t/dialog-bg)
+                              (p/put-str! g label-x row-y lbl)
+                              (when (and (some? value) (pos? value-w))
+                                (let [text (ellipsize value value-w)
+                                      dx (- (+ lleft paint-w) (p/display-width text))]
 
-                                    (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                                    (p/put-str! g dx row-y text)))))))
+                                  (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                                  (p/put-str! g dx row-y text)))))))
                       (do (p/set-colors! g t/dialog-fg t/dialog-bg)
                           (p/fill-rect! g (inc lleft) row-y paint-w 1)))))
                 ;; Wide-only Table-of-Contents rail. Painted AFTER the settings pane so
@@ -5298,23 +5255,11 @@
 
 (defn- draw-session-row!
   [g left row inner-w selected? label]
-  ;; Session picker is a TABLE — cells must NOT shift between selected
-  ;; and unselected states, so the dot marker is painted by caller (see
-  ;; row loop in `session-picker-dialog!`) at `(inc left)`, inner edge
-  ;; of dialog frame. Body label sits two cols further in (gutter for
-  ;; marker + margin) and uses normal palette, BOLD on selected so row
-  ;; text echoes marker cue.
   (p/set-colors! g t/dialog-fg t/dialog-bg)
-  (p/fill-rect! g (inc (long left)) row inner-w 1)
-  (let [body-x
-        (+ (long left) 1 p/SELECTION_WIDTH)
-
-        body-w
-        (max 0 (- (long inner-w) 1 p/SELECTION_WIDTH))]
-
-    (if selected?
-      (p/styled g [p/BOLD] (p/put-str! g body-x row (ellipsize label body-w)))
-      (p/put-str! g body-x row (ellipsize label body-w)))))
+  (p/styled g
+            (p/selection-styles selected?)
+            (p/fill-rect! g (inc (long left)) row inner-w 1)
+            (p/put-str! g (inc (long left)) row (ellipsize label (max 0 (- (long inner-w) 1))))))
 
 (defn session-picker-dialog!
   "Show recent TUI sessions in a fixed-size table. Returns
@@ -5351,11 +5296,8 @@
               {:keys [left inner-w]}
               bounds
 
-              ;; Reserve `p/SELECTION_WIDTH` cols at start of inner area
-              ;; for dot marker gutter. Table itself is boxed; marker stays
-              ;; outside table so columns never shift.
               body-w
-              (long (max 1 (- (long inner-w) 4 p/SELECTION_WIDTH)))
+              (long (max 1 (- (long inner-w) 4)))
 
               items
               (session-dialog-items sessions active-id body-w)
@@ -5367,7 +5309,7 @@
               (dialog-layout bounds)
 
               table-x
-              (+ (long left) 1 p/SELECTION_WIDTH)
+              (inc (long left))
 
               table-top
               (long content-top)
@@ -5426,9 +5368,7 @@
                   ;; frame) a different color than the top/separator/bottom chrome.
                   (p/set-colors! g t/dialog-border t/dialog-bg)
                   (p/put-str! g table-x row "│")
-                  (p/put-str! g (+ table-x (dec body-w)) row "│")
-                  (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                  (p/draw-selection-marker! g (inc (long left)) row (= idx @selected)))
+                  (p/put-str! g (+ table-x (dec body-w)) row "│"))
                 (do (p/set-colors! g t/dialog-fg t/dialog-bg)
                     (p/fill-rect! g (inc (long left)) row inner-w 1)))))
           (p/set-colors! g t/dialog-border t/dialog-bg)
@@ -6035,29 +5975,33 @@
          [(str (:status entry)) status-color false] [" / " t/dialog-hint false]
          [(str (:title entry)) title-color (or selected? focused?)]]]
 
-    (p/draw-selection-marker! g x row selected? t/dialog-hint-key)
-    (loop [fields
-           fields
+    (p/styled
+      g
+      (p/selection-styles selected?)
+      (p/set-colors! g t/dialog-fg t/dialog-bg)
+      (p/fill-rect! g x row width 1)
+      (loop [fields
+             fields
 
-           cx
-           (+ (long x) 2)
+             cx
+             (long x)
 
-           remaining
-           (max 0 (- (long width) 2))]
+             remaining
+             (max 0 (long width))]
 
-      (when (and (seq fields) (pos? remaining))
-        (let [[text color bold?]
-              (first fields)
+        (when (and (seq fields) (pos? remaining))
+          (let [[text color bold?]
+                (first fields)
 
-              text
-              (if (next fields) (p/truncate-cols text remaining) (p/ellipsize text remaining))
+                text
+                (if (next fields) (p/truncate-cols text remaining) (p/ellipsize text remaining))
 
-              used
-              (long (p/display-width text))]
+                used
+                (long (p/display-width text))]
 
-          (p/set-colors! g color t/dialog-bg)
-          (if bold? (p/styled g [p/BOLD] (p/put-str! g cx row text)) (p/put-str! g cx row text))
-          (recur (rest fields) (+ cx used) (- remaining used)))))))
+            (p/set-colors! g color t/dialog-bg)
+            (if bold? (p/styled g [p/BOLD] (p/put-str! g cx row text)) (p/put-str! g cx row text))
+            (recur (rest fields) (+ cx used) (- remaining used))))))))
 
 (defn- draw-navigator-segments!
   "Paint `navigator-highlight-segments` from `x`, clipped to `width` columns. A

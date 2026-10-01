@@ -854,8 +854,7 @@
    PRIMARY vs SECONDARY is a SEMANTIC ranking, not a focus state — submit is the
    confirming action and keeps the ink fill wherever the cursor is, so walking the
    caps never promotes Cancel to look like the default. `:is-focused` says which
-   cap the cursor sits on, and the painter answers it with the project-wide `•`
-   marker instead of a second colour.
+   cap the cursor sits on.
 
    No chord travels with a button: a cap is a focus stop reached with ↑/↓ like
    every other row of the form. The hint bar one row below stays silent about

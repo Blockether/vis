@@ -173,10 +173,10 @@
 (defn draw-line!
   [g x row width selected? line]
   (p/set-colors! g t/dialog-fg t/dialog-bg)
-  (p/fill-rect! g x row width 1)
-  (if selected?
-    (p/styled g [p/BOLD] (p/put-str! g x row (ellipsize line width)))
-    (p/put-str! g x row (ellipsize line width))))
+  (p/styled g
+            (p/selection-styles selected?)
+            (p/fill-rect! g x row width 1)
+            (p/put-str! g x row (ellipsize line width))))
 
 (defn row-matches?
   [row query]
