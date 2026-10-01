@@ -801,7 +801,11 @@ describe('what the iteration cost', () => {
   it('states the mutations, and stays quiet about a kind that did not happen', () => {
     const parts = activityCostParts(activityProjection());
 
-    expect(parts.map((part) => part.text)).toEqual(['0 mutations', '1 observation', '1 check']);
+    expect(parts.map((part) => part.text)).toEqual([
+      '0 mutations',
+      '1 observation',
+      '1 verification',
+    ]);
     // Colour REPEATS the noun. Reading the words alone must lose nothing, so the
     // quiet count wears the margin's own ink and no tone at all.
     expect(parts.map((part) => part.tone)).toEqual([
@@ -821,7 +825,7 @@ describe('what the iteration cost', () => {
         counts: { running: 0, succeeded: 1, failed: 1, cancelled: 0 },
         rows: [{ ...first, signal: 'mutation' as const, state: 'failed' as const }, ...rest],
       }).map((part) => part.text),
-    ).toEqual(['1 mutation', '1 check']);
+    ).toEqual(['1 mutation', '1 verification']);
   });
 
   // The ENGINE's own bound is what drops rows, so the cost covers the whole run:
@@ -836,10 +840,10 @@ describe('what the iteration cost', () => {
         rows: [],
         omitted: {
           rows: 6,
-          by_classification: { mutation: 6, observation: 2 },
+          by_classification: { mutation: 6, observation: 2, verification: 2 },
         },
       }).map((part) => part.text),
-    ).toEqual(['6 mutations', '2 observations']);
+    ).toEqual(['6 mutations', '2 observations', '2 verifications']);
   });
 
   it('counts the calls that reached outside the machine, dropped rows included', () => {
@@ -851,13 +855,16 @@ describe('what the iteration cost', () => {
       omitted: { rows: 1, by_classification: { external: 1 } },
     });
 
-    expect(parts.map((part) => part.text)).toEqual(['0 mutations', '1 check', '2 external actions']);
+    expect(parts.map((part) => part.text)).toEqual([
+      '0 mutations',
+      '1 verification',
+      '2 external actions',
+    ]);
     expect(parts.at(-1)?.tone).toBe('text-code-syntax-special');
   });
 
-  // Regression, user screenshot: on a phone `3 mutations · 9 observations · 1 external
-  // action` wrapped onto a second line, so there the band abbreviates the three nouns.
-  it('abbreviates the three nouns on a phone and spells them out where there is room', () => {
+  // On a phone, all four counters use abbreviations to keep the band on one line.
+  it('abbreviates all four nouns on a phone and spells them out where there is room', () => {
     const projection = activityProjection();
     const [first, ...rest] = projection.rows;
     const activity = {
@@ -868,42 +875,68 @@ describe('what the iteration cost', () => {
     expect(activityCostParts(activity).map((part) => part.short)).toEqual([
       '0 mut',
       '1 obs',
-      undefined,
+      '1 ver',
       '1 ext',
     ]);
 
     render(<ActivityPanel activity={activity} />);
     const band = screen.getByRole('button', { name: /^(Expand|Collapse) Activity$/ });
     // The words stay whole in the document; a phone hides what follows each abbreviation.
-    expect(band).toHaveTextContent('0 mutations · 1 observation · 1 check · 1 external action');
+    expect(band).toHaveTextContent(
+      '0 mutations · 1 observation · 1 verification · 1 external action',
+    );
     const phone = band.cloneNode(true) as HTMLElement;
     phone.querySelectorAll('.max-sm\\:hidden').forEach((node) => node.remove());
-    expect(phone).toHaveTextContent('0 mut · 1 obs · 1 check · 1 ext');
+    expect(phone).toHaveTextContent('0 mut · 1 obs · 1 ver · 1 ext');
   });
 
-  // A check can find problems inside a call that succeeded; only its verdict says so.
-  it('says how many checks found failures inside calls that succeeded', () => {
-    const projection = activityProjection();
-    const rows = projection.rows.map((row) =>
-      row.signal === 'verification'
-        ? {
-            ...row,
+  it.each(['passed', 'failed', undefined] as const)(
+    'counts verification calls without verdicts in the header (%s)',
+    (verdict) => {
+      const projection = activityProjection();
+      const verification = projection.rows.find((row) => row.signal === 'verification')!;
+      const summary = verdict === 'failed' ? '38 passed, 2 failed' : '40 passed';
+      const activity = {
+        ...projection,
+        counts: { running: 0, succeeded: 3, failed: 0, cancelled: 0 },
+        rows: [
+          ...projection.rows.filter((row) => row.signal !== 'verification'),
+          ...['tests', 'lint'].map((id) => ({
+            ...verification,
+            id,
+            operation: id,
+            state: 'succeeded' as const,
             presentation: {
-              headline: 'Run tests',
-              summary: '38 passed, 2 failed',
-              content: [],
-              verdict: 'failed' as const,
+              headline: id === 'tests' ? 'Run tests' : 'Lint code',
+              summary,
+              content: [{ type: 'text' as const, text: 'Suite output' }],
+              verdict,
             },
-          }
-        : row,
-    );
+          })),
+        ],
+      };
 
-    expect(activityCostParts({ ...projection, rows }).map((part) => part.text)).toEqual([
-      '0 mutations',
-      '1 observation',
-      '1 check, 1 failing',
-    ]);
-  });
+      expect(activityCostParts(activity).map((part) => part.text)).toEqual([
+        '0 mutations',
+        '1 observation',
+        '2 verifications',
+      ]);
+      expect(activityCostParts(activity).at(-1)?.short).toBe('2 ver');
+
+      render(<ActivityPanel activity={activity} />);
+      const band = screen.getByRole('button', { name: 'Expand Activity' });
+      expect(band).toHaveTextContent('0 mutations · 1 observation · 2 verifications');
+      expect(band).not.toHaveTextContent(/checks?|failing|failed/);
+      const phone = band.cloneNode(true) as HTMLElement;
+      phone.querySelectorAll('.max-sm\\:hidden').forEach((node) => node.remove());
+      expect(phone).toHaveTextContent('0 mut · 1 obs · 2 ver');
+
+      fireEvent.click(band);
+      expect(screen.getAllByText(summary)[0]).toBeVisible();
+      fireEvent.click(screen.getAllByRole('button', { name: /Run tests/ })[0]);
+      expect(screen.getByText('Suite output')).toBeVisible();
+    },
+  );
 
   // Summarized steps pool into one band whose collapsed header is all a reader sees:
   // it names what the steps cost, not only how many ran.
@@ -921,7 +954,7 @@ describe('what the iteration cost', () => {
     );
     const toggle = screen.getByRole('button', { name: 'Expand Activity' });
 
-    expect(toggle).toHaveTextContent('1 mutation · 1 check · 1 failed');
+    expect(toggle).toHaveTextContent('1 mutation · 1 verification · 1 failed');
     expect(toggle).not.toHaveTextContent('operation');
     // The phone hides the tail of the noun, so the words span two text nodes.
     const mutations = within(toggle).getByText((_, node) => node?.textContent === '1 mutation');

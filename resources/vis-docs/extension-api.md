@@ -509,9 +509,8 @@ already lost records keep their original omission warning. The missing data cann
 ### Report checks and outside effects
 
 The `tag` on a tool tells Vis what kind of work each call did. Each Activity
-counts its steps in one line, such as
-`1 mutation · 6 observations · 2 checks, 1 failing`, and the tags decide where
-each call is counted:
+counts its steps in one line, such as `1 mutation · 6 observations · 2 verifications`.
+Short summaries use `ver` for verification. The tags decide where each call is counted:
 
 | Tag | Use it for |
 |---|---|
@@ -535,10 +534,13 @@ vis.ActivityPresentation(
 `verdict` is `"passed"` or `"failed"`. Sections do not accept it. Leave it out for calls that check
 nothing.
 
-A check whose verdict is `"failed"` counts as failing in the Activity line, as
-in `2 checks, 1 failing`, even when the call itself succeeded. A call that fails
-or is cancelled shows that state on its own step. Like `mutation`, the other tags
-describe the operation. They grant no permission and enforce no policy.
+A check's verdict describes its result, not the call's execution state.
+Verification counters count calls, not individual tests, without a failure count.
+Show the result in the step's summary and content.
+
+A call that fails or is cancelled shows that state on its own step.
+Like `mutation`, the other tags describe the operation.
+They grant no permission and enforce no policy.
 
 ## Prompts and discovery
 

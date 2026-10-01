@@ -7363,12 +7363,15 @@ h = 8"
                    (cost {:rows [{:signal "observation"} {:signal "external"}]
                           :omitted {:rows 1 :by-classification {:external 1}}})))
         (expect (= "1 mutation" (cost {:rows [{:signal "mutation"} {:signal "generic"}]})))))
-  (it "says how many checks found failures inside calls that succeeded"
+  (it "counts verifications without adding their verdicts to the summary"
       (let [cost @#'render/activity-cost-text]
-        (expect (= "0 mutations · 2 checks, 1 failing"
-                   (cost {:rows [{:signal "verification" :presentation {:verdict "failed"}}
-                                 {:signal "verification" :presentation {:verdict "passed"}}]})))
-        (expect (= "0 mutations · 1 check" (cost {:rows [{:signal "verification"}]})))))
+        (doseq [verdict [nil "passed" "failed"]]
+          (expect (= "0 mutations · 2 ver"
+                     (cost {:rows [{:signal "verification" :presentation {:verdict verdict}}
+                                   {:signal "verification" :presentation {:verdict verdict}}]}))))
+        (expect (= "0 mutations · 1 ver" (cost {:rows [{:signal "verification"}]})))
+        (expect (= "0 mutations · 2 ver"
+                   (cost {:rows [] :omitted {:rows 2 :by-classification {:verification 2}}})))))
   ;; Regression, issue td-132d91: expanded Activity receipts were detached into one
   ;; shared rail, so only the newest receipt could show its detail.
   (it "keeps combined results between their program and attached Activity"

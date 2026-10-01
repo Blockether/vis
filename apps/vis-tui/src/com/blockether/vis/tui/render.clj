@@ -5504,8 +5504,8 @@
    the ENGINE dropped still count, or a receipt showing four of ten calls would report
    the cost of four.
 
-   A check whose own `verdict` is `failed` says so beside the count, as in
-   `2 checks, 1 failing`: the call succeeded, so no mark or state word shows it."
+   Verification counters use `ver` and count calls, not individual tests.
+   Their results stay in the steps, without a failure count in this summary."
   ^String [activity]
   (let [rows
         (vec (:rows activity))
@@ -5527,15 +5527,8 @@
         observations
         (tally "observation")
 
-        checks
+        verifications
         (tally "verification")
-
-        failing
-        (count (filter #(and (= "verification" (str (:signal %)))
-                             (= "failed"
-                                (some-> (get-in % [:presentation :verdict])
-                                        name)))
-                       rows))
 
         external
         (tally "external")]
@@ -5545,10 +5538,8 @@
                 (pos? (long observations))
                 (conj (noun observations "observation"))
 
-                (pos? (long checks))
-                (conj (cond-> (noun checks "check")
-                        (pos? failing)
-                        (str ", " failing " failing")))
+                (pos? (long verifications))
+                (conj (str verifications " ver"))
 
                 (pos? (long external))
                 (conj (noun external "external action"))))))

@@ -113,8 +113,8 @@ export interface ActivityCostPart {
  * there, so no row on the axis can answer it. The other three print only when they
  * happened, because their zero is a fact the page already shows.
  *
- * A check whose own `verdict` is `failed` says so beside the count, as in
- * `2 checks, 1 failing`: the call succeeded, so no mark or state word shows it.
+ * Verification counters count calls, not individual tests. Their results stay
+ * in the steps rather than adding a failure count to this summary.
  *
  * The rows the engine's own bound DROPPED are counted here from
  * `omitted.by_classification`: this line covers the whole run, a chronology that
@@ -132,11 +132,7 @@ export function activityCostParts(activity?: ActivityProjection): readonly Activ
     rows.filter((row) => row.signal === signal).length + (dropped[signal] ?? 0);
   const noun = (amount: number, word: string) => `${amount} ${word}${amount === 1 ? '' : 's'}`;
   const observations = tally('observation');
-  const checks = tally('verification');
-  const failing = rows.filter(
-    (row) => row.signal === 'verification' && row.presentation?.verdict === 'failed',
-  ).length;
-  const checkText = noun(checks, 'check') + (failing ? `, ${failing} failing` : '');
+  const verifications = tally('verification');
   const external = tally('external');
   const mutations = tally('mutation');
   return [
@@ -150,7 +146,9 @@ export function activityCostParts(activity?: ActivityProjection): readonly Activ
           },
         ]
       : []),
-    ...(checks ? [{ text: checkText, tone: '' }] : []),
+    ...(verifications
+      ? [{ text: noun(verifications, 'verification'), short: `${verifications} ver`, tone: '' }]
+      : []),
     ...(external
       ? [
           {
