@@ -679,13 +679,13 @@
 
 (defdescribe
   prompt-core-test
-  ;; LintLang H5/H6: pin response defaults and the conditions for patch retry and completion.
-  (it "states the output default and exact retry and completion conditions"
+  ;; Regression: plain-text guidance turned response lists into literal bullet paragraphs.
+  (it "does not force plain-text responses"
+      (expect (not (str/includes? (prompt/build-system-prompt {}) "Respond in plain text"))))
+  ;; LintLang H5/H6: pin the conditions for patch retry and completion.
+  (it "states exact retry and completion conditions"
       (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
         (expect (str/includes? text "Prompt v1."))
-        (expect (str/includes?
-                  text
-                  "Respond in plain text unless the user or tool requires another format."))
         (expect (str/includes? text "for stale anchors, read only the indicated region"))
         (expect (str/includes? text "After changed-file checks pass"))
         ;; User report: a working turn ran silently between calls, where opencode asks for
