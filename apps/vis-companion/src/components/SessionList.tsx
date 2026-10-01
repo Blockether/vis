@@ -420,7 +420,7 @@ export const SessionRow = memo(function SessionRow({
   const skipRenameBlurRef = useRef(false);
   const selectRenameOnFocusRef = useRef(false);
   const inputDescription =
-    !renameBusy && status.startsWith('INPUT') ? status.replace('INPUT', 'Input needed') : undefined;
+    !renameBusy && status.startsWith('HITL') ? status.replace('HITL', 'Input needed') : undefined;
   const beginRename = useCallback(() => {
     skipRenameBlurRef.current = false;
     selectRenameOnFocusRef.current = true;
@@ -1160,7 +1160,7 @@ function statusLabel(session: Session, stopped: boolean, hasUnsent: boolean, unr
     // …and HOW MANY are open: answering one of two has to show, or the badge
     // reads exactly the same as it did before the answer.
     const open = sessionInputCount(session);
-    return open > 1 ? `INPUT ×${open}` : 'INPUT';
+    return open > 1 ? `HITL ×${open}` : 'HITL';
   }
   if (sessionIsLive(session)) return 'LIVE';
   if (stopped) return 'STOPPED';

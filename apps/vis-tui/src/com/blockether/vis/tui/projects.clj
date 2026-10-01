@@ -151,7 +151,7 @@
     (cond (or (get session "archived_at") group-archived?) "ARCHIVED"
           (true? (get session "is_awaiting_input"))
           (let [n (long (or (get session "awaiting_input_count") 1))]
-            (if (> n 1) (str "INPUT ×" n) "INPUT"))
+            (if (> n 1) (str "HITL ×" n) "HITL"))
           live? "LIVE"
           (and (or (true? (get session "was_interrupted")) (true? (get session "was_failed")))
                (pos? unread))
@@ -629,7 +629,7 @@
         ink
         (cond (= state "LIVE") t/status-ok
               (= state "STOPPED") t/status-bad
-              (or (str/starts-with? state "INPUT")
+              (or (str/starts-with? state "HITL")
                   (str/starts-with? state "NEW")
                   (#{"WAITING" "DIRTY"} state))
               t/warning-fg

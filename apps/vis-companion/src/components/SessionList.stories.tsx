@@ -103,7 +103,7 @@ export const Renaming: Story = {
     ).toHaveValue(STORY_SESSION_ROW.title);
     await expect(canvas.getByText(STORY_SESSION_ROW.id)).toBeInTheDocument();
     await expect(canvas.getByText(`${STORY_SESSION_ROW.turn_count} turns`)).toBeInTheDocument();
-    await expect(canvas.getByText('INPUT')).toBeInTheDocument();
+    await expect(canvas.getByText('HITL')).toBeInTheDocument();
     await expect(
       canvas.getByRole('button', {
         name: `Show details for ${STORY_SESSION_ROW.title}`,

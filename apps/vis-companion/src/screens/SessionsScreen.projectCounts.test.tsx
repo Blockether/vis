@@ -267,7 +267,7 @@ describe('the live count on a project band', () => {
     expect(live.textContent).toMatch(/^1 live$/);
     fireEvent.click(live);
     expect(opened).toEqual(['working']);
-    expect(within(row('Parked')).getByText('INPUT')).toBeInTheDocument();
+    expect(within(row('Parked')).getByText('HITL')).toBeInTheDocument();
   });
 
   it('opens a live run outside the loaded window without expanding its project', async () => {

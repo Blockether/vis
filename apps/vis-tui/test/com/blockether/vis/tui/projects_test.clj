@@ -1640,7 +1640,7 @@
         (state/dispatch [:project-sidebar {:expanded #{"a"} :index 3}])
         (let [entries (projects/sidebar-entries @state/app-db)]
           (expect (= "waiting" (get-in (nth entries 2) [:session "id"])))
-          (expect (= "INPUT" (:status (nth entries 2))))
+          (expect (= "HITL" (:status (nth entries 2))))
           (expect (= [:session "waiting"]
                      (projects/key-action @state/app-db (cap/key-stroke :enter)))))
         (#'screen/project-sidebar-key!
@@ -1694,13 +1694,18 @@
           entries
           (filterv #(= :project-session (:kind %)) (projects/sidebar-entries db))]
 
-      (expect (= ["INPUT ×2" "LIVE" "STOPPED" "NEW ×2" "WAITING" "DIRTY" "ARCHIVED" "IDLE"
-                  "STOPPED"]
+      (expect (= ["HITL ×2" "LIVE" "STOPPED" "NEW ×2" "WAITING" "DIRTY" "ARCHIVED" "IDLE" "STOPPED"]
                  (mapv :status entries)))
       (expect (= "Keep this draft" (:label (nth entries 5))))
       (expect (true? (:favorite? (nth entries 3))))
       (expect (= 4 (:turns (nth entries 3))))
-      (expect (= "2026-09-24T00:00:00Z" (:modified-at (nth entries 3)))))))
+      (expect (= "2026-09-24T00:00:00Z" (:modified-at (nth entries 3))))))
+  (it "keeps HITL badges in the attention color"
+      (with-open [terminal (review-terminal 20 2)]
+        (let [g (.newTextGraphics terminal)]
+          (doseq [status ["HITL" "HITL ×2"]]
+            (#'projects/paint-session-status! g {:status status} 0 0 20)
+            (expect (= theme/warning-fg (.getForegroundColor g))))))))
 
 (defdescribe saved-project-attachment-only-draft-test
              (it "saved project attachment only draft"
