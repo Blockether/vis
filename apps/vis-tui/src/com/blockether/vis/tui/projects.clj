@@ -1066,11 +1066,11 @@
           (p/draw-box! g left 0 width rows)
           (doseq [row (distinct (filter #(< 0 (long %) (dec rows)) [2 (- rows 3)]))]
             (p/put-str! g left row (str "├" (p/horiz-line (- width 2)) "┤"))))
-        (when (and (>= width 18) (> rows 3))
+        (when (and (>= width 19) (> rows 3))
           (p/set-fg! g t/header-fg)
           (p/styled g [p/BOLD] (p/put-str! g (+ left 2) 1 "Projects"))
           (components/button! g
-                              (+ left 10)
+                              (+ left 11)
                               1 " + "
                               :project-add {:accent? (and (:focused? sidebar)
                                                           (zero? (long (or (:index sidebar) 0))))})

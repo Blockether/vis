@@ -387,13 +387,15 @@
               (expect (str/includes? footer label)))))
         (expect (= "├" (get-in capture [:frames 0 15 0 :ch])))
         (let [header (nth (str/split-lines text) 1)]
-          (expect (= "│ Projects + " (subs header 0 13)))
+          ;; Keep one unfilled cell between the title and the Add button.
+          (expect (= "│ Projects  + " (subs header 0 14)))
           (expect (not (str/includes? header "⌕"))))
-        (expect (= :project-add (:kind (.lookup projects/hit-map 11 1))))
+        (expect (= :project-rail (:kind (.lookup projects/hit-map 10 1))))
+        (expect (= :project-add (:kind (.lookup projects/hit-map 12 1))))
         (expect (= [:add]
                    (projects/key-action
                      db
-                     (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 11 1)))))
+                     (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 12 1)))))
         (expect (not-any? #(= :project-search (:kind %)) (.current projects/hit-map)))
         (expect (= :project-hide (:kind (.lookup projects/hit-map (- width 4) 1))))
         (expect (= "┌" (get-in capture [:frames 0 0 0 :ch])))
@@ -403,6 +405,26 @@
                    (projects/key-action
                      db
                      (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 4 5)))))))))
+
+(defdescribe
+  project-sidebar-header-fit-test
+  (it "keeps the spaced header controls separate on narrow rails"
+      (doseq [cols [18 19]]
+        (let [db (fixture-db)
+              capture (cap/capture! {:cols cols
+                                     :rows 18
+                                     :paint!
+                                     (fn [{:keys [screen]}]
+                                       (projects/paint! (.newTextGraphics screen) db cols 18))})
+              hits (.current projects/hit-map)
+              add-bounds (:bounds (first (filter #(= :project-add (:kind %)) hits)))
+              close-bounds (:bounds (first (filter #(= :project-hide (:kind %)) hits)))]
+
+          (expect (nil? (:error capture)))
+          (if (= cols 18)
+            (expect (nil? add-bounds))
+            (do (expect (= {:col 11 :row 1 :width 3} add-bounds))
+                (expect (<= (+ (:col add-bounds) (:width add-bounds)) (:col close-bounds)))))))))
 
 (defdescribe
   project-sidebar-inline-add-test
