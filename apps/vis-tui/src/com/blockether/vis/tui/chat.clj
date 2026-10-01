@@ -772,6 +772,7 @@
                            (assoc "reasoning" (get q "output_reasoning_tokens")))
                   iteration-count (get q "iteration_count")
                   duration-ms (get q "duration_ms")
+                  tokens-per-second (get q "tokens_per_second")
                   cost (when-let [total-cost (or (get q "total_cost") (get q "cost"))]
                          (cond-> {"total_cost" total-cost}
                            (get q "provider")
@@ -848,6 +849,9 @@
 
                                       duration-ms
                                       (assoc :duration-ms duration-ms)
+
+                                      tokens-per-second
+                                      (assoc :tokens-per-second tokens-per-second)
 
                                       cost
                                       (assoc :cost cost)

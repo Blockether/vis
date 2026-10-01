@@ -763,6 +763,30 @@
                      (expect (= "↳ from anthropic/claude-opus — 429, retried 1×, prompt cache lost"
                                 (get turn "meta_fallback_note")))))))
 
+(defdescribe transcript-throughput-test
+             (it "rates a persisted turn over its timed model responses only"
+                 (with-redefs [persistance/db-list-session-turns
+                               (fn [_ sid]
+                                 [{:id sid
+                                   :status :success
+                                   :provider :openai
+                                   :model "gpt/5.4"
+                                   :input-tokens 200
+                                   :output-tokens 50
+                                   :duration-ms 2300}])
+
+                               persistance/db-list-session-turn-iterations
+                               (fn [_ _]
+                                 [{:output-tokens 20 :llm-full-duration-ms 2000}
+                                  {:output-tokens 30 :llm-full-duration-ms 3000}
+                                  ;; A failed iteration stores no model time.
+                                  {:output-tokens 0 :llm-full-duration-ms 0}])]
+
+                   (let [turn (first (state/transcript :session-1))]
+                     (expect (= 10.0 (get turn "tokens_per_second")))
+                     (expect (= "openai/gpt-5.4  ·  200→50  ·  10.0 tok/s  ·  2.3s"
+                                (get turn "meta_summary")))))))
+
 (defdescribe transcript-in-flight-footer-test
              ;; The engine persists the row at SUBMIT and stamps routing from the
              ;; last completed iteration, so a turn that is still working already

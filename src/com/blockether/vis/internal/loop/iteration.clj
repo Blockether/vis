@@ -2910,7 +2910,9 @@
                           :llm-provider {:error llm-provider-error}
                           :trace (conj trace (store-trace! trace-store trace-entry)))})))
     (let [_ (note-prompt-cache-status! (:prompt-cache iteration-result))
-          _ (swap! accounting-atom accounting/add-usage (:api-usage iteration-result))
+          _ (swap! accounting-atom accounting/add-usage
+              (:api-usage iteration-result)
+              (:duration-ms iteration-result))
           ;; Providers Svar left for rejecting their credentials start the auth
           ;; cooldown first: the re-admission and pick move below read it.
           _ (loop-router/note-auth-rejections! (:llm-routing-trace iteration-result) nil)

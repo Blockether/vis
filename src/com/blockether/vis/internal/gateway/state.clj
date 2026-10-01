@@ -13,6 +13,7 @@
    lives here - this namespace owns wire bookkeeping (events, turn
    records, subscribers), nothing else."
   (:require [clojure.string :as str]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.improve :as improve-settings]
             [com.blockether.vis.internal.config.toggles :as toggles]
@@ -2267,6 +2268,16 @@
    `:success`, `:error`, `:cancelled`, … — is a settled turn."
   #{"running" "streaming" "queued" "pending"})
 
+(defn- persisted-tokens-per-second
+  "Output rate of a persisted turn. Only iterations with a timed model response
+   count; error and preflight iterations store a zero model time."
+  [iterations]
+  (svar/tokens-per-second (keep (fn [{:keys [output-tokens llm-full-duration-ms]}]
+                                  (when (pos? (long (or llm-full-duration-ms 0)))
+                                    {:tokens {:output output-tokens}
+                                     :duration-ms llm-full-duration-ms}))
+                                iterations)))
+
 (defn- transcript-turn
   "Hydrate one persisted turn in the canonical remote-channel shape and attach
    the canonical TUI/CLI bubble-footer strings."
@@ -2307,6 +2318,9 @@
 
         last-it
         (last iterations)
+
+        tokens-per-second
+        (persisted-tokens-per-second iteration-rows)
 
         tokens
         (cond-> {}
@@ -2361,7 +2375,10 @@
           (assoc :llm-fallback? (:llm-fallback? last-it))
 
           (seq (:llm-routing-trace last-it))
-          (assoc :llm-routing-trace (:llm-routing-trace last-it)))
+          (assoc :llm-routing-trace (:llm-routing-trace last-it))
+
+          tokens-per-second
+          (assoc :tokens-per-second tokens-per-second))
 
         ;; The footer summarises a FINISHED turn. A row that is still RUNNING
         ;; already carries the last completed iteration's `:llm-actual`, so
@@ -2394,7 +2411,10 @@
       (assoc :meta-summary meta-summary)
 
       fallback-note
-      (assoc :meta-fallback-note fallback-note))))
+      (assoc :meta-fallback-note fallback-note)
+
+      tokens-per-second
+      (assoc :tokens-per-second tokens-per-second))))
 
 (defn transcript
   "Rich persisted transcript rows for `sid` in THE canonical wire shape
@@ -3642,6 +3662,7 @@
              :eval (:eval result)
              :iteration_count (:iteration-count result)
              :duration_ms (:duration-ms result)
+             :tokens_per_second (:tokens-per-second result)
              :utilization (:utilization result)
              :error (when failure-code failure-text)
              :completed_at (util/now-ms)}]

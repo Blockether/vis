@@ -373,6 +373,13 @@
                                 :else "%.6f")
                           (into-array Object [(double n)]))))))
 
+(defn meta-throughput
+  "Humanized output rate — \"42.5 tok/s\". nil for a missing or non-positive rate."
+  [tokens-per-second]
+  (when (and (number? tokens-per-second) (pos? (double tokens-per-second)))
+    (str (String/format Locale/US "%.1f" (into-array Object [(double tokens-per-second)]))
+         " tok/s")))
+
 (def meta-separator
   "Calm separator for the shared turn-summary line — a middot ringed by spaces.
    Identical across CLI and TUI so every surface reads the same."
@@ -439,7 +446,7 @@
   "The canonical, humanized turn-summary MAIN line, shared verbatim by the CLI
    bracket and the TUI bubble footer:
 
-     <provider/model>  ·  <in→out (cached)>  ·  ~$cost  ·  <duration>
+     <provider/model>  ·  <in→out (cached)>  ·  <N tok/s>  ·  ~$cost  ·  <duration>
 
    Zero-usage and zero-cost slots are dropped (no \"0→0\", no \"$0\"), so a turn
    that produced nothing reads as just the model + time. Does NOT include the
@@ -450,7 +457,7 @@
    :suffix [...]}` — `:model false` suppresses the model slot, a string overrides
    it; prefix/suffix are extra slots spliced in around the standard ones."
   ([result] (meta-summary-line result nil))
-  ([{:keys [tokens cost duration-ms] :as result} {:keys [model prefix suffix]}]
+  ([{:keys [tokens tokens-per-second cost duration-ms] :as result} {:keys [model prefix suffix]}]
    (let [model*
          (cond (false? model) nil
                (string? model) model
@@ -458,7 +465,8 @@
 
          parts
          (->> (concat (vec prefix)
-                      [model* (meta-tokens tokens) (meta-cost cost) (format-duration duration-ms)]
+                      [model* (meta-tokens tokens) (meta-throughput tokens-per-second)
+                       (meta-cost cost) (format-duration duration-ms)]
                       (vec suffix))
               (remove nil?))]
 

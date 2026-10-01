@@ -41,7 +41,7 @@
     (expect (= {:transcribe "voice.job" :synthesize "speech.job"} contract/job-events))
     (expect (= #{"model" "provider" "llm_selected" "llm_actual" "is_llm_fallback"
                  "llm_routing_trace" "tokens" "cost" "confidence" "eval" "duration_ms"
-                 "utilization"}
+                 "tokens_per_second" "utilization"}
                (set contract/turn-meta-keys))))
   (it "reads declarations directly from the schema, without a parallel catalog"
       (let [gateway

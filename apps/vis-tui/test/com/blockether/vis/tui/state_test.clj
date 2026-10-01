@@ -2485,7 +2485,7 @@
           (expect (nil? (nth event 8)))
           (expect (string? (nth event 9)))))))
   (it
-    "forwards routing trace from turn result to message metadata"
+    "forwards routing trace and output rate from turn result to message metadata"
     (let [session-turn-fx
           (-> #'state/fx-registry
               deref
@@ -2518,7 +2518,8 @@
                        "llm_selected" {"provider" "p1" "model" "m1"}
                        "llm_actual" {"provider" "p2" "model" "m2"}
                        "is_llm_fallback" true
-                       "llm_routing_trace" trace})]
+                       "llm_routing_trace" trace
+                       "tokens_per_second" 42.5})]
 
         (session-turn-fx :main {:id "c1"} "hello" :token nil nil {} {} "turn-1")
         ;; The turn also dispatches workspace re-sync + live F2 ctx-panel
@@ -2535,7 +2536,8 @@
           (expect (= {"provider" "p1" "model" "m1"} (:llm-selected metadata)))
           (expect (= {"provider" "p2" "model" "m2"} (:llm-actual metadata)))
           (expect (true? (:llm-fallback? metadata)))
-          (expect (= trace (:llm-routing-trace metadata)))))))
+          (expect (= trace (:llm-routing-trace metadata)))
+          (expect (= 42.5 (:tokens-per-second metadata)))))))
   ;; Regression, issue td-75dad4: the settled live trace retained streamed stdout
   ;; but never refreshed the iteration’s durable attachment descriptors.
   (it

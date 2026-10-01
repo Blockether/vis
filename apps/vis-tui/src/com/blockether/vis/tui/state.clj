@@ -462,8 +462,8 @@
    newer turn which may already be active in the same tab."
   [answer trace wall-ms
    {:keys [model provider llm-selected llm-actual llm-fallback? llm-routing-trace iteration-count
-           duration-ms tokens cost confidence session-turn-id turn-position timestamp status
-           client-turn-id slash]}]
+           duration-ms tokens tokens-per-second cost confidence session-turn-id turn-position
+           timestamp status client-turn-id slash]}]
   (->
     (chat/assistant-message (vec (or answer [])) (or timestamp (java.util.Date.)))
     (cond->
@@ -502,6 +502,9 @@
 
       tokens
       (assoc :tokens tokens)
+
+      tokens-per-second
+      (assoc :tokens-per-second tokens-per-second)
 
       cost
       (assoc :cost cost)
@@ -6512,6 +6515,7 @@
                             :llm-routing-trace (get result "llm_routing_trace")
                             :iteration-count (get result "iteration_count")
                             :duration-ms (get result "duration_ms")
+                            :tokens-per-second (get result "tokens_per_second")
                             :tokens (get result "tokens")
                             :cost (get result "cost")
                             :confidence (get result "confidence")
@@ -6633,6 +6637,7 @@
                             :llm-routing-trace (get result "llm_routing_trace")
                             :iteration-count (get result "iteration_count")
                             :duration-ms (get result "duration_ms")
+                            :tokens-per-second (get result "tokens_per_second")
                             :tokens (get result "tokens")
                             :cost (get result "cost")
                             :confidence (get result "confidence")

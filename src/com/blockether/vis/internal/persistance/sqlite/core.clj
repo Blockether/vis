@@ -5290,6 +5290,9 @@
       (some? (:eval_duration_ms row))
       (assoc :duration-ms (:eval_duration_ms row))
 
+      (some? (:llm_full_duration_ms row))
+      (assoc :llm-full-duration-ms (:llm_full_duration_ms row))
+
       (some? (:llm_thinking row))
       (assoc :thinking (:llm_thinking row))
 

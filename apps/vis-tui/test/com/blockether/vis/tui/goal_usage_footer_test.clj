@@ -127,3 +127,28 @@
 
                   (expect (not (str/includes? text "openai/gpt-test")))
                   (expect (= draw-height layout-height))))))
+
+(defdescribe output-rate-footer-test
+             (it "shows the output rate in live and restored footers"
+                 (let [live
+                       (#'state/completion-response
+                        (get goal-turn "content")
+                        []
+                        1200
+                        {:provider "openai"
+                         :model "gpt-test"
+                         :llm-actual {"provider" "openai" "model" "gpt-test"}
+                         :tokens {"input" 100 "output" 20 "cached" 70}
+                         :tokens-per-second 16.666
+                         :cost {"total_cost" 0.0123}})
+
+                       restored
+                       (peek (#'chat/turns->messages
+                              [(assoc goal-turn "tokens_per_second" 16.666)]))]
+
+                   (doseq [message [live restored]]
+                     (let [{:keys [text draw-height layout-height error]} (capture-bubble message)]
+                       (expect (nil? error))
+                       (expect (str/includes? text "100→20 (cached 70)"))
+                       (expect (str/includes? text "16.7 tok/s"))
+                       (expect (= draw-height layout-height)))))))

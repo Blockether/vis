@@ -17,7 +17,8 @@
                    (expect (= 0 (:input-tokens acc) (:output-tokens acc) (:iter-count acc)))
                    (expect (= 1234 (:previous-request-input acc)))
                    (expect (false? (:reasoning-reported? acc)))
-                   (expect (nil? (:accrued-cost acc)))))
+                   (expect (nil? (:accrued-cost acc)))
+                   (expect (= [] (:responses acc)))))
              (it "treats a session without a previous request as unmeasured"
                  (expect (= 0 (:previous-request-input (accounting/initial-usage nil))))))
 
@@ -27,28 +28,36 @@
       (let [acc (-> (accounting/initial-usage nil)
                     (accounting/add-usage {:input-tokens 100
                                            :output-tokens 10
-                                           :input-tokens-details {:cache-read 40 :cache-write 5}})
-                    (accounting/add-usage {:input-tokens 150
-                                           :output-tokens 20
-                                           :input-tokens-details {:cache-read 90}}))]
+                                           :input-tokens-details {:cache-read 40 :cache-write 5}}
+                                          2000)
+                    (accounting/add-usage
+                      {:input-tokens 150 :output-tokens 20 :input-tokens-details {:cache-read 90}}
+                      3000))]
         (expect (= 250 (:input-tokens acc)))
         (expect (= 30 (:output-tokens acc)))
         (expect (= 130 (:cached-tokens acc)))
         (expect (= 5 (:cache-creation-tokens acc)))
         (expect (= 150 (:last-iter-input acc)))
         (expect (= 2 (:iter-count acc)))
-        (expect (false? (:reasoning-reported? acc)))))
+        (expect (false? (:reasoning-reported? acc)))
+        (expect (= [{:tokens {:output 10} :duration-ms 2000}
+                    {:tokens {:output 20} :duration-ms 3000}]
+                   (:responses acc)))))
   (it "counts reasoning only when the provider reports it"
       (let [acc (-> (accounting/initial-usage nil)
                     (accounting/add-usage
-                      {:input-tokens 1 :output-tokens 1 :output-tokens-details {:reasoning 7}})
-                    (accounting/add-usage {:input-tokens 1 :output-tokens 1}))]
+                      {:input-tokens 1 :output-tokens 1 :output-tokens-details {:reasoning 7}}
+                      100)
+                    (accounting/add-usage {:input-tokens 1 :output-tokens 1} 100))]
         (expect (= 7 (:reasoning-tokens acc)))
         (expect (true? (:reasoning-reported? acc)))
         (expect (nil? (:last-iter-reasoning acc)))))
   (it "leaves the map unchanged when a response carried no usage"
       (let [acc (accounting/initial-usage nil)]
-        (expect (= acc (accounting/add-usage acc nil))))))
+        (expect (= acc (accounting/add-usage acc nil 1000)))))
+  (it "keeps a response without a measured time as unmeasured"
+      (let [acc (accounting/add-usage (accounting/initial-usage nil) {:output-tokens 5} nil)]
+        (expect (= [{:tokens {:output 5} :duration-ms nil}] (:responses acc))))))
 
 (defdescribe
   response-cost-test
@@ -120,9 +129,9 @@
 
             acc
             (-> (accounting/initial-usage nil)
-                (accounting/add-usage usage)
+                (accounting/add-usage usage 1000)
                 (accounting/add-cost cost)
-                (accounting/add-usage usage)
+                (accounting/add-usage usage 1000)
                 (accounting/add-cost cost))
 
             result
@@ -140,7 +149,7 @@
 
             acc
             (-> (accounting/initial-usage nil)
-                (accounting/add-usage usage)
+                (accounting/add-usage usage 1000)
                 (accounting/add-cost nil))
 
             result
@@ -155,15 +164,38 @@
 
             plain
             (-> (accounting/initial-usage nil)
-                (accounting/add-usage {:input-tokens 1 :output-tokens 1}))
+                (accounting/add-usage {:input-tokens 1 :output-tokens 1} 1000))
 
             reasoning
             (accounting/add-usage
               plain
-              {:input-tokens 1 :output-tokens 1 :output-tokens-details {:reasoning 0}})]
+              {:input-tokens 1 :output-tokens 1 :output-tokens-details {:reasoning 0}}
+              1000)]
 
         (expect (not (contains? (:tokens (accounting/turn-cost plain pricing)) "reasoning")))
-        (expect (= 0 (get-in (accounting/turn-cost reasoning pricing) [:tokens "reasoning"]))))))
+        (expect (= 0 (get-in (accounting/turn-cost reasoning pricing) [:tokens "reasoning"])))))
+  (it "reports the output rate over the timed responses"
+      (let [pricing
+            (accounting/pricing priced-model :openai nil nil)
+
+            acc
+            (-> (accounting/initial-usage nil)
+                (accounting/add-usage {:input-tokens 10 :output-tokens 20} 2000)
+                (accounting/add-usage {:input-tokens 10 :output-tokens 30} 3000))]
+
+        (expect (= 10.0 (:tokens-per-second (accounting/turn-cost acc pricing))))))
+  (it "omits the output rate when a response time is unknown"
+      (let [pricing
+            (accounting/pricing priced-model :openai nil nil)
+
+            partly-timed
+            (-> (accounting/initial-usage nil)
+                (accounting/add-usage {:input-tokens 10 :output-tokens 20} 2000)
+                (accounting/add-usage {:input-tokens 10 :output-tokens 30} nil))]
+
+        (expect (not (contains? (accounting/turn-cost partly-timed pricing) :tokens-per-second)))
+        (expect (not (contains? (accounting/turn-cost (accounting/initial-usage nil) pricing)
+                                :tokens-per-second))))))
 
 (defdescribe cache-created-tokens-test
              (it "reports only a positive cache write"
@@ -178,11 +210,12 @@
         (expect (= 5000 (accounting/latest-request-tokens acc)))
         (expect (= 700
                    (accounting/latest-request-tokens
-                     (accounting/add-usage acc {:input-tokens 700 :output-tokens 1}))))))
+                     (accounting/add-usage acc {:input-tokens 700 :output-tokens 1} 1000))))))
   (it "reports a streaming request on top of the folded turn input"
       (let [acc
             (accounting/add-usage (accounting/initial-usage nil)
-                                  {:input-tokens 300 :output-tokens 1})
+                                  {:input-tokens 300 :output-tokens 1}
+                                  1000)
 
             util
             (accounting/pending-utilization acc 400 1000 900)]
@@ -194,8 +227,8 @@
   (it "reports the latest folded response"
       (let [acc
             (-> (accounting/initial-usage nil)
-                (accounting/add-usage {:input-tokens 300 :output-tokens 1})
-                (accounting/add-usage {:input-tokens 400 :output-tokens 1}))
+                (accounting/add-usage {:input-tokens 300 :output-tokens 1} 1000)
+                (accounting/add-usage {:input-tokens 400 :output-tokens 1} 1000))
 
             util
             (accounting/measured-utilization acc 1000 900)]
@@ -206,7 +239,8 @@
   (it "attaches the prompt-cache status to the turn's final utilization"
       (let [acc
             (accounting/add-usage (accounting/initial-usage nil)
-                                  {:input-tokens 300 :output-tokens 1})
+                                  {:input-tokens 300 :output-tokens 1}
+                                  1000)
 
             status
             {"state" "warm"}

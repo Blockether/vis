@@ -1221,7 +1221,7 @@
    footer can render `provider/model / N iteration / duration / tokens / $total`."
   [{:keys [root-model root-provider reasoning-effort]}
    {:keys [start-time iteration-count status status-id trace locals answer confidence reasoning
-           utilization total-tokens-atom total-cost-atom]}]
+           utilization tokens-per-second total-tokens-atom total-cost-atom]}]
   (let [duration-ms
         (/ (- (System/nanoTime) (long start-time)) 1e6)
 
@@ -1249,7 +1249,10 @@
               (assoc :eval eval-evidence)
 
               (some? locals)
-              (assoc :locals locals))))
+              (assoc :locals locals)
+
+              (some? tokens-per-second)
+              (assoc :tokens-per-second tokens-per-second))))
       (do (iteration/log-stage! :turn/complete
                                 0
                                 {:duration-ms duration-ms
@@ -1269,7 +1272,10 @@
             (assoc :confidence confidence)
 
             (some? reasoning)
-            (assoc :reasoning reasoning))))))
+            (assoc :reasoning reasoning)
+
+            (some? tokens-per-second)
+            (assoc :tokens-per-second tokens-per-second))))))
 
 (defn- with-setting-defaults
   "Fill the response options a caller left unset from the turn's resolved
@@ -1385,7 +1391,8 @@
                 status-id :status-id
                 locals :locals
                 confidence :confidence
-                reasoning :reasoning}
+                reasoning :reasoning
+                tokens-per-second :tokens-per-second}
                iteration-result
 
                result
@@ -1399,6 +1406,7 @@
                                         :trace trace
                                         :locals locals
                                         :answer iteration-answer
+                                        :tokens-per-second tokens-per-second
                                         :total-tokens-atom total-tokens-atom
                                         :total-cost-atom total-cost-atom})
                  (finalize-turn-result ctx
@@ -1410,6 +1418,7 @@
                                         :confidence confidence
                                         :reasoning reasoning
                                         :utilization (:utilization iteration-result)
+                                        :tokens-per-second tokens-per-second
                                         :total-tokens-atom total-tokens-atom
                                         :total-cost-atom total-cost-atom}))]
 

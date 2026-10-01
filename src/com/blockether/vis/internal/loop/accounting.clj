@@ -2,17 +2,19 @@
   "Token, cost and context accounting for one turn.
 
    A turn keeps one accounting map. `initial-usage` seeds it, `add-usage` folds in
-   each provider response's reported tokens and `add-cost` folds in each response's
-   price. `turn-cost` and `turn-utilization` read the totals when the turn ends.
+   each provider response's reported tokens and response time and `add-cost` folds in
+   each response's price. `turn-cost` and `turn-utilization` read the totals when the
+   turn ends.
    Every function is pure; the caller owns the map and where it lives."
-  (:require [com.blockether.vis.internal.context.engine :as ctx-engine]
+  (:require [com.blockether.svar.core :as svar]
+            [com.blockether.vis.internal.context.engine :as ctx-engine]
             [com.blockether.vis.internal.loop.router :as loop-router]))
 
 (defn initial-usage
   "Accounting map at turn start. Until the turn measures its first request, the
    session's latest persisted request (`:last-request-tokens` of `previous-usage`)
    stands in for context pressure. `:accrued-cost` stays nil until a response is
-   priced."
+   priced. `:responses` keeps the output tokens and response time of each response."
   [previous-usage]
   {:input-tokens 0
    :output-tokens 0
@@ -24,30 +26,36 @@
    :last-iter-reasoning 0
    :previous-request-input (long (or (:last-request-tokens previous-usage) 0))
    :iter-count 0
-   :accrued-cost nil})
+   :accrued-cost nil
+   :responses []})
 
 (defn add-usage
   "Fold one response's provider usage into `acc`. Token totals accumulate; the
    `:last-iter-*` fields describe only the latest response. Reasoning tokens count
-   only when the provider reports them. A nil `api-usage` leaves `acc` unchanged."
-  [acc api-usage]
+   only when the provider reports them. `duration-ms` is the response time; nil
+   means the time was not measured. A nil `api-usage` leaves `acc` unchanged."
+  [acc api-usage duration-ms]
   (if-not api-usage
     acc
     (let [iter-in
           (long (or (:input-tokens api-usage) 0))
+
+          iter-out
+          (or (:output-tokens api-usage) 0)
 
           iter-reason
           (get-in api-usage [:output-tokens-details :reasoning])]
 
       (cond-> (-> acc
                   (update :input-tokens + iter-in)
-                  (update :output-tokens + (or (:output-tokens api-usage) 0))
+                  (update :output-tokens + iter-out)
                   (update :cached-tokens
                           +
                           (or (get-in api-usage [:input-tokens-details :cache-read]) 0))
                   (update :cache-creation-tokens
                           +
                           (or (get-in api-usage [:input-tokens-details :cache-write]) 0))
+                  (update :responses conj {:tokens {:output iter-out} :duration-ms duration-ms})
                   (assoc :last-iter-input iter-in)
                   (assoc :last-iter-reasoning iter-reason)
                   (update :iter-count inc))
@@ -133,30 +141,38 @@
     (when (pos? created) created)))
 
 (defn turn-cost
-  "Final token totals and cost of a turn. The cost is the sum of the per-response
-   prices in `acc`; a turn without a priced response is estimated at the rates of
-   the turn's model."
+  "Final token totals, cost and output rate of a turn. The cost is the sum of the
+   per-response prices in `acc`; a turn without a priced response is estimated at the
+   rates of the turn's model. `:tokens-per-second` is present only when the turn
+   measured the time of every response."
   [acc pricing]
   (let [{:keys [input-tokens output-tokens reasoning-tokens cached-tokens cache-creation-tokens
-                reasoning-reported? accrued-cost]}
-        acc]
-    {:tokens (cond-> {"input" input-tokens
-                      "output" output-tokens
-                      "cached" cached-tokens
-                      "cache_created" cache-creation-tokens
-                      "total" (+ (long input-tokens) (long output-tokens))}
-               reasoning-reported?
-               (assoc "reasoning" reasoning-tokens))
-     :cost (or accrued-cost
-               (loop-router/estimate-token-cost
-                 (:model pricing)
-                 input-tokens
-                 output-tokens
-                 {:cached-tokens cached-tokens
-                  :cache-creation-tokens cache-creation-tokens
-                  :cost-multiplier (loop-router/fast-mode-cost-multiplier (:extra-body pricing)
-                                                                          (:turn-features pricing)
-                                                                          (:provider pricing))}))}))
+                reasoning-reported? accrued-cost responses]}
+        acc
+
+        tokens-per-second
+        (svar/tokens-per-second responses)]
+
+    (cond-> {:tokens (cond-> {"input" input-tokens
+                              "output" output-tokens
+                              "cached" cached-tokens
+                              "cache_created" cache-creation-tokens
+                              "total" (+ (long input-tokens) (long output-tokens))}
+                       reasoning-reported?
+                       (assoc "reasoning" reasoning-tokens))
+             :cost (or accrued-cost
+                       (loop-router/estimate-token-cost
+                         (:model pricing)
+                         input-tokens
+                         output-tokens
+                         {:cached-tokens cached-tokens
+                          :cache-creation-tokens cache-creation-tokens
+                          :cost-multiplier (loop-router/fast-mode-cost-multiplier
+                                             (:extra-body pricing)
+                                             (:turn-features pricing)
+                                             (:provider pricing))}))}
+      tokens-per-second
+      (assoc :tokens-per-second tokens-per-second))))
 
 (defn latest-request-tokens
   "Input tokens of the latest measured request: this turn's latest response, or the

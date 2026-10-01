@@ -107,6 +107,19 @@
                                            "openai/gpt-4o"))))
 
 (defdescribe
+  meta-throughput-test
+  (it "rounds the rate to one decimal place"
+      (expect (= "10.0 tok/s" (fmt/meta-throughput 10.0)))
+      (expect (= "42.5 tok/s" (fmt/meta-throughput 42.46))))
+  (it "drops a missing or non-positive rate"
+      (expect (nil? (fmt/meta-throughput nil)))
+      (expect (nil? (fmt/meta-throughput 0.0)))
+      (expect (nil? (fmt/meta-throughput -1.0))))
+  (it "places the rate between the tokens and the cost"
+      (expect (= "openai/gpt-4o  ·  11.5k→35 (cached 4.1k)  ·  42.5 tok/s  ·  ~$0.0070  ·  4.9s"
+                 (fmt/meta-summary-line (assoc normal-result :tokens-per-second 42.49))))))
+
+(defdescribe
   meta-fallback-note-test
   ;; Regression, issue #154: a 401 fallback moved the turn onto a peer that had never
   ;; seen the pinned route's prompt cache, so every following request re-sent the whole
