@@ -419,6 +419,8 @@ export const SessionRow = memo(function SessionRow({
   const renameSavingRef = useRef(false);
   const skipRenameBlurRef = useRef(false);
   const selectRenameOnFocusRef = useRef(false);
+  const inputDescription =
+    !renameBusy && status.startsWith('INPUT') ? status.replace('INPUT', 'Input needed') : undefined;
   const beginRename = useCallback(() => {
     skipRenameBlurRef.current = false;
     selectRenameOnFocusRef.current = true;
@@ -780,7 +782,7 @@ export const SessionRow = memo(function SessionRow({
                     title={
                       status === 'DIRTY'
                         ? "Unsent message waiting in this session's composer"
-                        : undefined
+                        : inputDescription
                     }
                     className={`shrink-0 items-center gap-1 font-mono text-chip font-bold tracking-[0.08em] ${
                       // Narrow sidebars show only live or input-needed marks.
@@ -792,9 +794,13 @@ export const SessionRow = memo(function SessionRow({
                       aria-hidden="true"
                       className={`size-1.5 shrink-0 ${statusDot(session, stopped, hasUnsent, unread, isPutAway)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`}
                     />
-                    <span className={location ? '' : 'sr-only @sm:not-sr-only'}>
+                    <span
+                      className={location ? '' : 'sr-only @sm:not-sr-only'}
+                      aria-hidden={inputDescription ? true : undefined}
+                    >
                       {renameBusy ? (location ? 'SAVING' : 'Saving') : status}
                     </span>
+                    {inputDescription && <span className="sr-only">{inputDescription}</span>}
                   </span>
                 </span>
                 <span
@@ -1154,7 +1160,7 @@ function statusLabel(session: Session, stopped: boolean, hasUnsent: boolean, unr
     // …and HOW MANY are open: answering one of two has to show, or the badge
     // reads exactly the same as it did before the answer.
     const open = sessionInputCount(session);
-    return open > 1 ? `INPUT NEEDED ×${open}` : 'INPUT NEEDED';
+    return open > 1 ? `INPUT ×${open}` : 'INPUT';
   }
   if (sessionIsLive(session)) return 'LIVE';
   if (stopped) return 'STOPPED';

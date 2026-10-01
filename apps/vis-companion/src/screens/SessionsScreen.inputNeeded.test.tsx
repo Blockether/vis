@@ -33,12 +33,14 @@ describe('a session waiting on a human', () => {
     restore = view.restore;
 
     await screen.findByText('Parked');
-    expect(within(row('Parked')).getByText('INPUT NEEDED')).toBeInTheDocument();
+    expect(within(row('Parked')).getByText('INPUT')).toBeInTheDocument();
+    expect(within(row('Parked')).getByTitle('Input needed')).toBeInTheDocument();
+    expect(within(row('Parked')).getByText('Input needed')).toHaveClass('sr-only');
     expect(within(row('Working')).getByText('LIVE')).toBeInTheDocument();
     // Said ONCE, where the session lives. No second band repeats the same row above the
     // list it is already in.
     expect(screen.queryByLabelText('Sessions waiting on you')).toBeNull();
-    expect(screen.getAllByText('INPUT NEEDED')).toHaveLength(1);
+    expect(screen.getAllByText('INPUT')).toHaveLength(1);
   });
 
   // Regression, user report (paraphrased: answering the form does not clear INPUT
@@ -63,7 +65,9 @@ describe('a session waiting on a human', () => {
     restore = view.restore;
 
     await screen.findByText('Parked');
-    expect(within(row('Parked')).getByText('INPUT NEEDED ×2')).toBeInTheDocument();
+    expect(within(row('Parked')).getByText('INPUT ×2')).toBeInTheDocument();
+    expect(within(row('Parked')).getByTitle('Input needed ×2')).toBeInTheDocument();
+    expect(within(row('Parked')).getByText('Input needed ×2')).toHaveClass('sr-only');
   });
 
   // Regression, user report (phone, a project of 115 sessions): the header counted
@@ -87,8 +91,8 @@ describe('a session waiting on a human', () => {
     restore = view.restore;
 
     await screen.findByText('alpha 39');
-    expect(within(row('alpha 39')).getByText('INPUT NEEDED')).toBeInTheDocument();
-    expect(screen.getAllByText('INPUT NEEDED')).toHaveLength(1);
+    expect(within(row('alpha 39')).getByText('INPUT')).toBeInTheDocument();
+    expect(screen.getAllByText('INPUT')).toHaveLength(1);
     const shown = () => view.queryAllByText(/^alpha \d\d$/).map((node) => node.textContent);
     // Above the page, not in place of a row of it.
     expect(shown()[0]).toBe('alpha 39');
@@ -100,6 +104,6 @@ describe('a session waiting on a human', () => {
     fireEvent.click(view.getByLabelText('Next page'));
     await waitFor(() => expect(shown()).toHaveLength(10));
     expect(shown().filter((title) => title === 'alpha 39')).toHaveLength(1);
-    expect(screen.getAllByText('INPUT NEEDED')).toHaveLength(1);
+    expect(screen.getAllByText('INPUT')).toHaveLength(1);
   });
 });

@@ -1640,7 +1640,7 @@
         (state/dispatch [:project-sidebar {:expanded #{"a"} :index 3}])
         (let [entries (projects/sidebar-entries @state/app-db)]
           (expect (= "waiting" (get-in (nth entries 2) [:session "id"])))
-          (expect (= "INPUT NEEDED" (:status (nth entries 2))))
+          (expect (= "INPUT" (:status (nth entries 2))))
           (expect (= [:session "waiting"]
                      (projects/key-action @state/app-db (cap/key-stroke :enter)))))
         (#'screen/project-sidebar-key!
@@ -1694,7 +1694,7 @@
           entries
           (filterv #(= :project-session (:kind %)) (projects/sidebar-entries db))]
 
-      (expect (= ["INPUT NEEDED ×2" "LIVE" "STOPPED" "NEW ×2" "WAITING" "DIRTY" "ARCHIVED" "IDLE"
+      (expect (= ["INPUT ×2" "LIVE" "STOPPED" "NEW ×2" "WAITING" "DIRTY" "ARCHIVED" "IDLE"
                   "STOPPED"]
                  (mapv :status entries)))
       (expect (= "Keep this draft" (:label (nth entries 5))))

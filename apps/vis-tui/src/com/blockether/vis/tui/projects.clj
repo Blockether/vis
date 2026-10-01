@@ -151,7 +151,7 @@
     (cond (or (get session "archived_at") group-archived?) "ARCHIVED"
           (true? (get session "is_awaiting_input"))
           (let [n (long (or (get session "awaiting_input_count") 1))]
-            (if (> n 1) (str "INPUT NEEDED ×" n) "INPUT NEEDED"))
+            (if (> n 1) (str "INPUT ×" n) "INPUT"))
           live? "LIVE"
           (and (or (true? (get session "was_interrupted")) (true? (get session "was_failed")))
                (pos? unread))

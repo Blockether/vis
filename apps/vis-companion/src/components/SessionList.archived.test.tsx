@@ -69,7 +69,8 @@ describe('an archived session row', () => {
     // watching. The archive is the newer fact about that session, and the gateway
     // refuses work on it either way, so the mark cannot keep saying it is waiting.
     expect(statusCell({ archived_at: 1717 }).textContent).toContain('ARCHIVED');
-    expect(screen.queryByText('INPUT NEEDED')).not.toBeInTheDocument();
+    expect(screen.queryByText('INPUT')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Input needed')).not.toBeInTheDocument();
   });
 });
 

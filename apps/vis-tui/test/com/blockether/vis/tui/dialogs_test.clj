@@ -2831,7 +2831,7 @@
       (let [row (fn [active session]
                   ((var-get #'dlg/navigator-session-row) active {} session))]
         (expect
-          (= "! INPUT NEEDED"
+          (= "! INPUT"
              (:status
                (row nil
                     {"id" "s-parked" "title" "Deploy" "turn_count" 3 "is_awaiting_input" true}))))
@@ -2839,7 +2839,7 @@
                          (row nil {"id" "s-parked" "title" "Deploy" "is_awaiting_input" true}))))
         ;; TWO open requests used to read exactly like one, so answering the
         ;; first left the very same badge standing, naming nothing.
-        (expect (= "! INPUT NEEDED ×2"
+        (expect (= "! INPUT ×2"
                    (:status (row nil
                                  {"id" "s-parked"
                                   "title" "Deploy"

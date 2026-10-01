@@ -261,9 +261,7 @@
                   2
                   4
                   width
-                  {:modified "09-30 11:34"
-                   :status "! input needed ×2"
-                   :title (apply str (repeat 40 "界"))}
+                  {:modified "09-30 11:34" :status "! INPUT ×2" :title (apply str (repeat 40 "界"))}
                   true)
                  (expect (= (apply str (repeat (- 78 width) \.))
                             (subs (back-line screen 4) (+ 2 width)))))

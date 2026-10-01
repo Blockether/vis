@@ -88,7 +88,7 @@ describe('session row inline rename', () => {
     expect(document.querySelector(`[data-session-id="${STORY_SESSION_ROW.id}"]`)).toBeInTheDocument();
     expect(screen.getByText(STORY_SESSION_ROW.id)).toBeVisible();
     expect(screen.getByText(`${STORY_SESSION_ROW.turn_count} turns`)).toBeVisible();
-    expect(screen.getByText('INPUT NEEDED')).toBeVisible();
+    expect(screen.getByText('INPUT')).toBeVisible();
     expect(
       screen.getByRole('button', {
         name: `Show details for ${STORY_SESSION_ROW.title}`,

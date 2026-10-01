@@ -5548,9 +5548,8 @@
      :favorite? (some? (get session "favorite_rank"))
      :dir work-dir
      :work-dir work-dir
-     :status (cond awaiting-input? (if (> awaiting-count 1)
-                                     (str "! INPUT NEEDED ×" awaiting-count)
-                                     "! INPUT NEEDED")
+     :status (cond awaiting-input?
+                   (if (> awaiting-count 1) (str "! INPUT ×" awaiting-count) "! INPUT")
                    live? "● LIVE"
                    stopped? "⨯ STOPPED"
                    (pos? unread) (if (> unread 1) (str unread " NEW") "NEW")
