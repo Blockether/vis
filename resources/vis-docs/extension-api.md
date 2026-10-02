@@ -765,6 +765,10 @@ vis.SlashCommand(name, run, doc=None, usage=None)
 `vis.ok(title, body=None, data=None)`, `vis.err(title, body=None, data=None)`
 or a plain string, which counts as an ok title. `body` is Markdown.
 
+Vis runs `run` in the session that sent the command, as it does for a tool call.
+In `run`, [`vis.workspace_root()`](#workspace-root) returns the working copy of that
+session, including its draft.
+
 ## Op hooks
 
 ```python

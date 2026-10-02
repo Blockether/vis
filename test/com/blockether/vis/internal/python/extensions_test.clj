@@ -42,6 +42,8 @@
     [com.blockether.vis.internal.loop.environment :as loop-env]
     [com.blockether.vis.internal.loop.python-exec :as python-exec]
     [com.blockether.vis.internal.loop :as lp]
+    [com.blockether.vis.internal.loop.turn :as turn]
+    [com.blockether.vis.internal.context.loop :as ctx-loop]
     [com.blockether.vis.internal.loop.router :as loop-router]
     [com.blockether.vis.internal.extension.registry :as registry]
     [com.blockether.vis.internal.python.test-runner :as runner]
@@ -582,6 +584,65 @@
             (expect (= trunk (:result (root))))
             (swap! workspace assoc :root (.getCanonicalPath ^java.io.File draft))
             (expect (= (.getCanonicalPath ^java.io.File draft) (:result (root)))))))))
+  ;; Regression, #301: a slash command ran its callback in a session-less stub
+  ;; environment, so `vis.workspace_root()` failed instead of naming the workspace.
+  (it
+    "resolves the invoking session's workspace, then its draft, in a slash command turn"
+    (with-loaded
+      {"slashroot.py"
+       "import blockether.vis.extension as vis\ndef where(ctx):\n    return str(vis.workspace_root())\nvis.register_extension(vis.Extension(name='slashroot', description='slashroot', slash_commands=[vis.SlashCommand('workspace-test', where)]))"}
+      (fn [_ {:keys [store]}]
+        (let [trunk
+              (.getCanonicalPath ^java.io.File (temp-dir))
+
+              draft
+              (.getCanonicalPath ^java.io.File (doto (io/file trunk "draft") .mkdirs))
+
+              trunk-ws
+              (ps/db-workspace-insert!
+                store
+                {:repo-id "slashroot" :repo-root trunk :root trunk :fork-ms 0})
+
+              sid
+              (ps/db-store-session!
+                store
+                {:channel :tui :workspace-id (:id trunk-ws) :title "slashroot" :system-prompt ""})
+
+              ctx
+              (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+
+              env
+              {:python-context ctx
+               :db-info store
+               :session-id sid
+               :channel :tui
+               :extensions (atom [(registered "slashroot")])
+               :active-extensions (atom [])
+               :workspace-atom (atom trunk-ws)
+               :ctx-atom (ctx-loop/make-ctx-atom sid)
+               :turn-state-atom (ctx-loop/make-turn-state-atom)}
+
+              slash-root
+              (fn []
+                (let [slash (:slash (turn/run-turn! env "/workspace-test" {}))]
+                  (expect (nil? (:error slash)) (pr-str (dissoc slash :ex)))
+                  (get-in slash [:result :slash/title])))]
+
+          (try (expect (= trunk (slash-root)))
+               ;; Entering a draft pins the session to the draft's working copy.
+               (ps/db-session-state-set-workspace! store
+                                                   (ps/db-latest-session-state-id store sid)
+                                                   (:id (ps/db-workspace-insert!
+                                                          store
+                                                          {:repo-id "slashroot"
+                                                           :repo-root trunk
+                                                           :root draft
+                                                           :parent-workspace-id (:id trunk-ws)
+                                                           :fork-ms 0})))
+               (expect (= draft (slash-root)))
+               ;; Like a tool, the callback ran in the session's trusted worker.
+               (expect (some? (:context (get @@#'pyx/session-contexts [ctx "slashroot"]))))
+               (finally (ep/dispose-python-context! ctx)))))))
   (it "refuses a hosted call without an owning session"
       (let [root (get (pyx/host-doors nil "test" nil) "__vis_host_workspace_root__")]
         (expect (= :session-not-bound

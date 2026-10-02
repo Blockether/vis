@@ -1047,15 +1047,31 @@
                                     :data {:extension ext-name}})))))))
 
 (defn- sctx->env
-  "Minimal state env for a slash callback: the persistence handle and session
-   id the dispatcher stamps onto the slash ctx (see `slash/dispatch`)."
+  "The environment a slash callback runs in. A turn dispatches its slash command
+   inside the session's extension context, so the callback inherits that whole
+   environment, as a tool call does: the session's trusted worker and a
+   `vis.workspace_root()` that follows its draft and live workspace (#301).
+   Without a bound environment for that session, the callback gets only the
+   persistence handle and session id the dispatcher stamps onto the slash ctx
+   (see `slash/dispatch`)."
   [sctx]
-  (cond-> {}
-    (:db-info sctx)
-    (assoc :db-info (:db-info sctx))
+  (let [session-id
+        (:session/id sctx)
 
-    (:session/id sctx)
-    (assoc :session-id (:session/id sctx))))
+        ambient
+        extension/*current-environment*]
+
+    (if (and (some? session-id)
+             (= (str session-id)
+                (some-> (:session-id ambient)
+                        str)))
+      ambient
+      (cond-> {}
+        (:db-info sctx)
+        (assoc :db-info (:db-info sctx))
+
+        session-id
+        (assoc :session-id session-id)))))
 
 (defn- op-name
   "Python spelling of an op: `\"patch\"` for a tool, `\"draft/approve\"` for a
