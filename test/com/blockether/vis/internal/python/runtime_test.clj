@@ -335,8 +335,8 @@
                (fn []
                  (expect (= (.getCanonicalFile packages) (python-runtime/prepared-project project)))
                  (expect (= ["/bundled/uv" "sync" "--check"] (first @calls)))
-                 (expect (= ["/bundled/uv" "run" "--no-sync" "python" "-I" "-c"]
-                            (vec (take 6 (second @calls)))))
+                 (expect (= ["/bundled/uv" "run" "--no-sync" "python" "-I" "-B" "-c"]
+                            (vec (take 7 (second @calls)))))
                  (expect (= 2 (count @calls)))))
              (finally (doseq [file (reverse (file-seq project))]
                         (io/delete-file file true)))))))

@@ -5,7 +5,8 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [java.nio.file Files]
+  (:import [com.blockether.vispython Interpreter Locations]
+           [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
 (defn- with-uv-fixture
@@ -203,6 +204,79 @@
                                    (constantly (if index {"python" {"index_url" index}} {}))]
                        (expect (identical? builder (#'python-runtime/uv-index! builder)))
                        (expect (= expected (into {} environment))))))))
+
+(defdescribe bytecode-cache-environment-precedence-test
+             (it "bytecode cache environment precedence"
+                 (doseq [[inherited expected] [[{"UNRELATED" "kept"}
+                                                {"UNRELATED" "kept"
+                                                 "PYTHONPYCACHEPREFIX" (Locations/pycachePrefix)}]
+                                               [{"PYTHONPYCACHEPREFIX" "/explicit/pycache"}
+                                                {"PYTHONPYCACHEPREFIX" "/explicit/pycache"}]]]
+                   (let [builder (ProcessBuilder. ^java.util.List ["uv"])
+                         environment (.environment builder)]
+
+                     (.clear environment)
+                     (.putAll environment inherited)
+                     (expect (identical? builder (#'python-runtime/bytecode-cache! builder)))
+                     (expect (= expected (into {} environment)))))))
+
+(defdescribe uv-processes-keep-bytecode-out-of-the-runtime-test
+             (it "uv processes keep bytecode out of the runtime"
+                 ;; uv's interpreter query and build backends wrote __pycache__ beside the
+                 ;; shipped standard library, so the installed runtime no longer matched its archive.
+                 (python-runtime/ensure-library!)
+                 (with-uv-fixture
+                   "printf '%s' \"${PYTHONPYCACHEPREFIX:-unset}\" > \"$0.pycache\"\nexit 0\n"
+                   (fn [dir uv]
+                     (with-redefs [python-runtime/bundled-uv!
+                                   (constantly uv)
+
+                                   python-runtime/project-packages
+                                   (constantly dir)]
+
+                       (doseq [invoke [#(python-runtime/uv-command! ["sync"])
+                                       #(python-runtime/ensure-project! dir)]]
+                         (invoke)
+                         (expect (= (or (System/getenv "PYTHONPYCACHEPREFIX")
+                                        (Locations/pycachePrefix))
+                                    (slurp (io/file (str uv ".pycache")))))))))))
+
+(defdescribe
+  project-preparation-writes-no-bytecode-into-the-runtime-test
+  (it "project preparation writes no bytecode into the runtime"
+      ;; `python -I` ignores PYTHONPYCACHEPREFIX, so the site-packages probe compiled
+      ;; json and sysconfig beside the shipped standard library.
+      (python-runtime/ensure-library!)
+      (let [home
+            (-> (io/file (Interpreter/pythonExecutable))
+                .getCanonicalFile
+                .getParentFile
+                .getParentFile)
+
+            caches
+            #(set (filter (fn [^java.io.File file]
+                            (and (= "__pycache__" (.getName file)) (.isDirectory file)))
+                          (file-seq home)))
+
+            before
+            (caches)
+
+            project
+            (.toFile (Files/createTempDirectory "vis-uv-bytecode" (make-array FileAttribute 0)))]
+
+        (try (spit (io/file project "pyproject.toml")
+                   (str "[project]\nname = \"bytecode-probe\"\nversion = \"0.1.0\"\n"
+                        "requires-python = \">=3.11\"\ndependencies = []\n"))
+             ;; With nothing to install, the offline check passes before any environment
+             ;; exists, so sync first, as the first preparation of an extension does.
+             (#'python-runtime/run-uv!
+              project
+              [(#'python-runtime/bundled-uv!) "sync" "--python" (Interpreter/pythonExecutable)])
+             (let [^java.io.File packages (python-runtime/ensure-project! project)]
+               ;; The probe must run the shipped interpreter, or this check proves nothing.
+               (expect (.isDirectory (io/file home "lib" (.getName (.getParentFile packages)))))
+               (expect (= before (caches))))
+             (finally (#'python-runtime/delete-tree! project))))))
 
 (defdescribe uv-index-invalid-config-does-not-launch-test
              (it "uv index invalid config does not launch"

@@ -218,6 +218,18 @@
         (.put environment "UV_DEFAULT_INDEX" index))))
   builder)
 
+(defn- bytecode-cache!
+  "Send the bytecode of uv's Python children to the runtime cache, not the shipped tree.
+
+   uv runs the interpreter for its query and for build backends. Without a prefix,
+   CPython writes `__pycache__` beside the standard library it imports. An explicit
+   `PYTHONPYCACHEPREFIX` stays."
+  [^ProcessBuilder builder]
+  (let [environment (.environment builder)]
+    (when-not (.containsKey environment "PYTHONPYCACHEPREFIX")
+      (.put environment "PYTHONPYCACHEPREFIX" (Locations/pycachePrefix))))
+  builder)
+
 (def ^:private diagnostic-limit 16384)
 
 (defn- redact-installer-text
@@ -331,6 +343,7 @@
          (try (let [builder (doto (ProcessBuilder. ^java.util.List command)
                               (.directory project)
                               uv-index!
+                              bytecode-cache!
                               (.redirectErrorStream true))]
                 (when *extension-preparation?*
                   (.remove (.environment builder) "UV_PROJECT_ENVIRONMENT"))
@@ -388,7 +401,8 @@
     [output
      (run-uv!
        project
-       [(bundled-uv!) "run" "--no-sync" "python" "-I" "-c"
+       ;; -I ignores PYTHONPYCACHEPREFIX, so -B keeps bytecode out of the shipped runtime.
+       [(bundled-uv!) "run" "--no-sync" "python" "-I" "-B" "-c"
         "import json, sysconfig; print('VIS_PROJECT_SITE=' + json.dumps(sysconfig.get_path('purelib')))"])
 
      path
@@ -588,8 +602,11 @@
 
 (defn- shared-sync-process!
   [^File cwd args discard-stdout?]
-  (let [builder
-        (doto (ProcessBuilder. ^java.util.List args) (.directory cwd) uv-index! (.inheritIO))]
+  (let [builder (doto (ProcessBuilder. ^java.util.List args)
+                  (.directory cwd)
+                  uv-index!
+                  bytecode-cache!
+                  (.inheritIO))]
     (when discard-stdout? (.redirectOutput builder ProcessBuilder$Redirect/DISCARD))
     (.waitFor (.start builder))))
 
@@ -690,6 +707,7 @@
    (.waitFor (.start (doto (ProcessBuilder. ^java.util.List (into [(bundled-uv!)] args))
                        (.directory (io/file (System/getProperty "user.dir")))
                        uv-index!
+                       bytecode-cache!
                        (.inheritIO)))))
   ([args {:keys [shared?]}] (if shared? (shared-uv-sync! args) (uv-command! args))))
 
