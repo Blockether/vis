@@ -27,7 +27,11 @@
     "archived": false,
     "updated_at": "2026-02-10T12:00:00Z",
     "added_at": "2026-01-10T12:00:00Z",
-    "checked_at": "2026-02-20T12:00:00Z"
+    "checked_at": "2026-02-20T12:00:00Z",
+    "tags": [
+      "github",
+      "development"
+    ]
   },
   {
     "id": "de8810d599294874fc29465c",
@@ -57,7 +61,11 @@
     "archived": false,
     "updated_at": "2026-02-11T12:00:00Z",
     "added_at": "2026-01-11T12:00:00Z",
-    "checked_at": "2026-02-20T12:00:00Z"
+    "checked_at": "2026-02-20T12:00:00Z",
+    "tags": [
+      "search",
+      "research"
+    ]
   },
   {
     "id": "b2a6839b66a263ce796cdc75",
@@ -87,7 +95,11 @@
     "archived": false,
     "updated_at": "2026-02-12T12:00:00Z",
     "added_at": "2026-01-12T12:00:00Z",
-    "checked_at": "2026-02-20T12:00:00Z"
+    "checked_at": "2026-02-20T12:00:00Z",
+    "tags": [
+      "review",
+      "development"
+    ]
   },
   {
     "id": "47250cd32a9e0c54ab030bca",
@@ -117,7 +129,11 @@
     "archived": false,
     "updated_at": "2026-02-13T12:00:00Z",
     "added_at": "2026-01-13T12:00:00Z",
-    "checked_at": "2026-02-20T12:00:00Z"
+    "checked_at": "2026-02-20T12:00:00Z",
+    "tags": [
+      "local",
+      "models"
+    ]
   },
   {
     "id": "8871c37b77e3e06776e2546b",
@@ -147,7 +163,11 @@
     "archived": false,
     "updated_at": "2026-02-14T12:00:00Z",
     "added_at": "2026-01-14T12:00:00Z",
-    "checked_at": "2026-02-20T12:00:00Z"
+    "checked_at": "2026-02-20T12:00:00Z",
+    "tags": [
+      "browser",
+      "automation"
+    ]
   },
   {
     "id": "11f5a4574f73fb8924d4a590",
@@ -177,6 +197,10 @@
     "archived": false,
     "updated_at": "2026-02-15T12:00:00Z",
     "added_at": "2026-01-15T12:00:00Z",
-    "checked_at": "2026-02-20T12:00:00Z"
+    "checked_at": "2026-02-20T12:00:00Z",
+    "tags": [
+      "greetings",
+      "example"
+    ]
   }
 ]

@@ -71,15 +71,15 @@ function names() {
   return [...document.querySelectorAll('[data-name]')].map((e) => e.dataset.name);
 }
 
-test('catalog opens as responsive results, not a selected split pane, and filters by category and author', async () => {
+test('catalog opens as responsive results and filters by author-defined tags and author', async () => {
   setup();
   await tick();
   expect($('#detail-page').hidden).toBe(true);
   expect($('#results').hasAttribute('data-view')).toBe(false);
   expect(names()).toHaveLength(6);
-  $('[data-category="providers"]').click();
+  $('[data-tag="local"]').click();
   expect(names()).toEqual(['example/local-models']);
-  $('[data-category="all"]').click();
+  $('[data-catalog-filter="all"]').click();
   change('#search', 'example');
   expect(names()).toHaveLength(6);
   change('#search', 'vis-agent');
@@ -187,14 +187,14 @@ test.each(['grid', 'list'])(
   async (view) => {
     const search = '?sort=name&view=' + view;
     const state = filters(search);
-    expect(state).toEqual({ q: '', category: 'all', sort: 'name' });
+    expect(state).toEqual({ q: '', tag: '', official: false, sort: 'name' });
     expect(filterURL(state)).toBe('/extensions/?sort=name');
     const server = document.createElement('div');
     server.innerHTML = shellHTML({ items: fixtures, search });
     expect(server.querySelector('.view-switch,[name=view],[data-view]')).toBeNull();
     expect(server.querySelectorAll('.extension-card')).toHaveLength(6);
     expect(
-      [...server.querySelectorAll('[data-category]')].every(
+      [...server.querySelectorAll('[data-catalog-filter]')].every(
         (link) => !new URL(link.href).searchParams.has('view'),
       ),
     ).toBe(true);
@@ -618,14 +618,14 @@ test('the catalog uses the documentation stylesheet and three-column page shell'
   expect($('.top .center-link').getAttribute('href')).toBe('/extensions/');
   expect($('.top .center-link').getAttribute('aria-current')).toBe('location');
   expect($('.top .center-link').hasAttribute('target')).toBe(false);
-  expect($('.shell > .side #categories')).not.toBeNull();
+  expect($('.shell > .side #catalog-filters')).not.toBeNull();
   expect($('.shell > .main > .content #catalog-page')).not.toBeNull();
   expect($('.shell > .toc')).not.toBeNull();
-  expect($('[data-category="all"]').classList.contains('active')).toBe(true);
+  expect($('[data-catalog-filter="all"]').classList.contains('active')).toBe(true);
   expect($('.eyebrow')).toBeNull();
 });
 
-test('the mobile documentation drawer traps focus, closes on Escape and applies categories', async () => {
+test('the mobile catalog drawer traps focus, closes on Escape and applies tags', async () => {
   setup(undefined, true);
   await tick();
   const toggle = $('#navtoggle');
@@ -650,13 +650,13 @@ test('the mobile documentation drawer traps focus, closes on Escape and applies 
   expect($('.main').inert).toBe(false);
   expect(document.body.style.overflow).toBe('');
   open();
-  $('[data-category="providers"]').click();
+  $('[data-tag="local"]').click();
   expect(names()).toEqual(['example/local-models']);
   expect(toggle.checked).toBe(false);
   expect(document.activeElement).toBe($('#search'));
 });
 
-test('documentation section links scroll within details without losing the selected extension', async () => {
+test('detail section links scroll without losing the selected extension', async () => {
   setup();
   await tick();
   $('.card-main').click();
@@ -730,12 +730,12 @@ test('an expired or removed challenge cannot authorize a later form', async () =
   expect($('#submit-dialog').open).toBe(false);
 });
 
-test('documentation navigation leaves the catalog router in the same tab', async () => {
+test('documentation links outside the catalog sidebar use normal same-tab navigation', async () => {
   setup();
   await tick();
   for (const link of [
     $('.top .brand'),
-    ...document.querySelectorAll('nav[aria-label="Documentation"] a'),
+    ...document.querySelectorAll('#share a'),
   ]) {
     expect(link.target).toBe('');
     expect(new URL(link.href).origin).toBe(window.location.origin);
@@ -922,4 +922,56 @@ test('official badges survive client navigation without trusting API status flag
   await tick();
   expect($('#detail .official-badge').textContent).toBe('Vis Official');
   expect($('#detail .security-note').textContent).toContain('Review the source first.');
+});
+
+test('official and tag filters preserve counts, detail navigation, back history and clearing', async () => {
+  const official = {
+    ...item,
+    repository: 'Blockether/vis-lang-python',
+    repository_url: 'https://github.com/Blockether/vis-lang-python',
+    subdirectory: '',
+    name: 'vis-lang-python',
+    tags: ['python', 'development'],
+  };
+  const community = { ...item, tags: ['python', 'vis-official'], official: true };
+  const entries = [official, community];
+  setup(
+    vi.fn(async (path) => ({
+      ok: true,
+      json: async () => (path === '/api/extensions' ? { extensions: entries } : official),
+    })),
+  );
+  await tick();
+  expect($('[data-catalog-filter="official"] .count').textContent).toBe('1');
+  expect($('[data-tag="python"] .count').textContent).toBe('2');
+  $('[data-tag="python"]').click();
+  $('[data-catalog-filter="official"]').click();
+  expect(names()).toEqual(['blockether/vis-lang-python']);
+  expect(window.location.search).toBe('?tag=python&official=1');
+  expect($('#filters [name=tag]').value).toBe('python');
+  expect($('#filters [name=official]').value).toBe('1');
+  expect($('[data-tag="python"] .count').textContent).toBe('1');
+  $('.card-main').click();
+  await tick();
+  expect($('#detail-page').hidden).toBe(false);
+  expect($('#back-to-catalog').getAttribute('href')).toBe('/extensions/?tag=python&official=1');
+  $('[data-tag="development"]').click();
+  expect($('#detail-page').hidden).toBe(true);
+  expect(window.location.pathname).toBe('/extensions/');
+  expect(window.location.search).toBe('?tag=development&official=1');
+  window.history.back();
+  await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+  await tick();
+  expect($('#detail-page').hidden).toBe(false);
+  expect($('[data-tag="python"]').classList.contains('active')).toBe(true);
+  $('#back-to-catalog').click();
+  expect($('#detail-page').hidden).toBe(true);
+  $('[data-catalog-filter="all"]').click();
+  expect(names()).toHaveLength(2);
+  expect(window.location.search).toBe('');
+  $('[data-catalog-filter="official"]').click();
+  change('#search', 'absent');
+  $('#clear-filters').click();
+  expect(names()).toHaveLength(2);
+  expect(window.location.search).toBe('');
 });

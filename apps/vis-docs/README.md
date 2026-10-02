@@ -175,6 +175,18 @@ Project folders distinguish multiple packages in a monorepo. The API's `name`
 remains the Python package identifier used by installation and release tags;
 `repository` and `owner` carry the inspected GitHub identity.
 
+The catalog sidebar shows **All extensions**, **Vis Official** and author-defined
+**Tags**. Each count shows how many extensions match that choice and the current
+search. Tag counts also respect the official filter. Select a tag or **Vis Official**
+again to remove that filter. **All extensions** clears both filters and keeps your search.
+Links preserve sorting and work without JavaScript.
+
+Tags come from `project.keywords`: at most two unique lowercase slugs, each 1–24
+characters. They appear on cards, detail pages and repository previews. The official
+filter uses the same reviewed publisher identities as the badge. A custom tag or
+an API status flag cannot make an extension official. Package categories remain
+manifest metadata, not catalog navigation or URL filters.
+
 Public detail URLs use the lowercase owner and repository, such as
 `/extensions/example/github-tools`. Monorepo listings append the project folder,
 for example `/extensions/example/extensions/plugins/greeting`. Folder names keep

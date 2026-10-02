@@ -90,13 +90,22 @@ label input {
   position: absolute;
   inset: -0.5rem;
 }
-#categories a {
+#catalog-filters a {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
 }
+#catalog-filters .filter-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+#catalog-filters [data-catalog-filter='official'] {
+  color: var(--link);
+  font-weight: 600;
+}
 .count {
+  flex-shrink: 0;
   color: var(--dim);
   font-variant-numeric: tabular-nums;
 }

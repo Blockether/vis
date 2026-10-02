@@ -66,7 +66,8 @@ test('docs and catalog share an origin, with documentation independent of D1', a
   expect(catalog.status).toBe(200);
   expect(catalogHTML).toContain('No repositories yet');
   expect(catalogHTML).toContain('class="brand" href="/"');
-  expect(catalogHTML).toContain('href="/extending.html"');
+  expect(catalogHTML).not.toContain('href="/extending.html"');
+  expect(catalogHTML).toContain('href="/extension-packages.html#publish-and-maintain-releases"');
   expect(catalogHTML).not.toContain('blockether.github.io');
   expect(
     (await fixture.runtime.dispatchFetch('https://center.example.com/missing.html')).status,
@@ -80,11 +81,11 @@ test('docs and catalog share an origin, with documentation independent of D1', a
 });
 test('catalog canonicalization preserves filters and never redirects to another origin', async () => {
   const response = await fixture.runtime.dispatchFetch(
-    'https://center.example.com/extensions?category=tools',
+    'https://center.example.com/extensions?tag=python&official=1',
     { redirect: 'manual' },
   );
   expect(response.status).toBe(308);
-  expect(response.headers.get('location')).toBe('/extensions/?category=tools');
+  expect(response.headers.get('location')).toBe('/extensions/?tag=python&official=1');
 });
 test('Worker returns Vis light HTML rather than a JSON-only API', async () => {
   const response = await fixture.runtime.dispatchFetch('https://center.example.com/extensions/');
@@ -273,7 +274,7 @@ test('pending submissions and their refreshes cannot publish or replace a public
   expect(html).toContain('&#39;example/extensions/plugins/greeting&#39;');
   expect(html).not.toContain('--subdirectory');
 });
-test('SSR supports search, categories, sort, views and executable-free metadata', async () => {
+test('SSR supports search, tags, sorting and executable-free metadata without layout controls', async () => {
   const items = JSON.parse(readFileSync('web/catalog.fixture.json', 'utf8'));
   for (const item of items)
     await fixture.db
@@ -282,7 +283,7 @@ test('SSR supports search, categories, sort, views and executable-free metadata'
       .run();
   const html = await (
     await fixture.runtime.dispatchFetch(
-      'https://center.example.com/extensions/?category=providers&view=list&q=local',
+      'https://center.example.com/extensions/?tag=local&view=list&q=local&sort=name',
     )
   ).text();
   expect(html).not.toMatch(/data-view=|class="view-switch"|name="view"/);
@@ -305,6 +306,56 @@ test('SSR supports search, categories, sort, views and executable-free metadata'
     detail.match(/id="catalog-data" type="application\/json">(.*?)<\/script>/s)[1],
   );
   expect(data.item.description).toBe(malicious.description);
+});
+
+test('SSR applies official and tag filters with matching counters and a usable search form', async () => {
+  const items = JSON.parse(readFileSync('web/catalog.fixture.json', 'utf8'));
+  const official = {
+    ...items[0],
+    repository: 'Blockether/vis-lang-python',
+    repository_url: 'https://github.com/Blockether/vis-lang-python',
+    subdirectory: '',
+    name: 'vis-lang-python',
+    description: 'Python editor tools',
+    tags: ['python', 'development'],
+  };
+  const community = {
+    ...items[1],
+    description: 'Community editor tools',
+    tags: ['python', 'vis-official'],
+    official: true,
+  };
+  for (const item of [official, community])
+    await fixture.db
+      .prepare('INSERT INTO extensions VALUES (?, ?, ?)')
+      .bind(item.id, JSON.stringify(item), item.added_at)
+      .run();
+  const response = await fixture.runtime.dispatchFetch(
+    'https://center.example.com/extensions/?q=editor&tag=python&official=1&sort=name',
+  );
+  const dom = new JSDOM(await response.text());
+  try {
+    const document = dom.window.document;
+    expect(
+      [...document.querySelectorAll('.extension-card')].map((card) => card.dataset.name),
+    ).toEqual(['blockether/vis-lang-python']);
+    expect(document.querySelector('[data-catalog-filter="all"] .count').textContent).toBe('2');
+    expect(document.querySelector('[data-catalog-filter="official"] .count').textContent).toBe('1');
+    expect(document.querySelector('[data-tag="python"] .count').textContent).toBe('1');
+    expect(document.querySelector('#filters [name=tag]').value).toBe('python');
+    expect(document.querySelector('#filters [name=official]').value).toBe('1');
+    expect(document.querySelector('#filters [name=q]').value).toBe('editor');
+    expect(document.querySelector('#filters [name=sort]').value).toBe('name');
+    expect(document.querySelector('#filters').getAttribute('action')).toBe('/extensions/');
+    expect(document.querySelector('.card-main').getAttribute('href')).toContain(
+      '?q=editor&tag=python&official=1&sort=name',
+    );
+    expect(
+      document.querySelector('#categories,[name=category],nav[aria-label="Documentation"]'),
+    ).toBeNull();
+  } finally {
+    dom.window.close();
+  }
 });
 test('public catalog uses a shared cache key and HEAD returns no body', async () => {
   const response = await fixture.runtime.dispatchFetch('https://center.example.com/api/extensions');
@@ -607,7 +658,7 @@ test('published hash links redirect to the repository slug and preserve the sele
   for (const sql of moderationStatements('approve', pending.id))
     await fixture.db.prepare(sql).run();
   const id = await identity('https://github.com/example/extensions\nplugins/greeting');
-  const query = '?version=1.0.0&category=tools&q=greeting';
+  const query = '?version=1.0.0&tag=greetings&q=greeting';
   const path = '/extensions/example/extensions/plugins/greeting';
   for (const method of ['GET', 'HEAD']) {
     const redirect = await fixture.runtime.dispatchFetch(

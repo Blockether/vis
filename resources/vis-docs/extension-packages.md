@@ -508,12 +508,17 @@ pythonpath = ["src"]
 | `project.keywords` | Optional catalog tags. Supply at most two unique tags, each 1–24 lowercase letters or digits, with single hyphens between words |
 | `project.requires-python` | Must allow Vis's embedded interpreter. Vis does not download another Python |
 | `project.dependencies` | Must include an unconditional `vis-agent` requirement compatible with the running release |
-| `tool.vis.category` | `providers`, `tools` or `workflows` |
+| `tool.vis.category` | Required package metadata: `providers`, `tools` or `workflows`. Catalog filters use tags instead |
 | `tool.vis.source_paths` | Import roots inside the package, such as `src`, not the `vis_greeter` package directory |
 | `tool.vis.skills` | Optional relative skill directories. Omit it when no procedure is needed |
 
 Choose tags that describe what your extension helps people do, such as `browser` or `testing`.
-Tags appear on catalog cards and extension pages, and you can search for them.
+Tags appear on catalog cards and extension pages.
+
+In the catalog sidebar, select a tag to filter extensions.
+Select **Vis Official** to show extensions maintained by the Vis team.
+You can combine these filters with search. The counters show matching extensions.
+
 You can use your own tags. Tags do not grant the “Vis Official” badge.
 Publish a new release to change an approved extension's tags.
 

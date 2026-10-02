@@ -2,7 +2,7 @@
 import {
   shellHTML,
   cardsHTML,
-  categoriesHTML,
+  catalogFiltersHTML,
   detailHTML,
   previewHTML,
   installCommandHTML,
@@ -76,11 +76,12 @@ export function mount(container, request = fetch, initial) {
   syncNavigation();
   function renderList() {
     $('#results').innerHTML = cardsHTML(items, state);
-    $('#categories').innerHTML = categoriesHTML(items, state);
+    $('#catalog-filters').innerHTML = catalogFiltersHTML(items, state);
     $('#catalog-status').textContent = `${visibleItems(items, state).length} extensions`;
     $('#search').value = state.q;
     $('#sort').value = state.sort;
-    $('#filters [name=category]').value = state.category;
+    $('#filters [name=tag]').value = state.tag;
+    $('#filters [name=official]').value = state.official ? '1' : '';
     dropdowns.refresh();
   }
   function saveFilters() {
@@ -173,7 +174,7 @@ export function mount(container, request = fetch, initial) {
   };
   window.addEventListener('popstate', pop);
   function clearFilters() {
-    state = { ...state, q: '', category: 'all' };
+    state = { ...state, q: '', tag: '', official: false };
     renderList();
     saveFilters();
     $('#search').focus();
@@ -351,12 +352,11 @@ export function mount(container, request = fetch, initial) {
   const click = async (event) => {
     const node = event.target.closest('a,button');
     if (!node || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    if (node.matches('[data-category]')) {
+    if (node.matches('[data-catalog-filter]')) {
       event.preventDefault();
-      state.category = node.dataset.category;
+      state = filters(new URL(node.href).search);
       renderList();
-      saveFilters();
-      route();
+      navigate(filterURL(state));
       closeNavigation();
       if (mobile.matches) $('#search').focus({ preventScroll: true });
     } else if (node.matches('.card-main,#back-to-catalog,[data-release]')) {

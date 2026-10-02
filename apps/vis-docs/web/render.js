@@ -9,12 +9,6 @@ import {
 import { escapeHTML } from './html.js';
 import { readmeHTML } from './readme.js';
 import { communityHTML } from './community.js';
-export const categories = {
-  all: 'All extensions',
-  tools: 'Tools',
-  providers: 'Providers',
-  workflows: 'Workflows',
-};
 export const sorts = {
   stars: 'Most stars',
   updated: 'Recently updated',
@@ -78,18 +72,23 @@ const dateLabel = (value) =>
         year: 'numeric',
         timeZone: 'UTC',
       }).format(new Date(value));
+const extensionTags = (item) => (Array.isArray(item.tags) ? item.tags.slice(0, 2) : []);
 export function filters(search = '') {
-  const query = new URLSearchParams(search);
+  const query = new URLSearchParams(search),
+    tag = query.get('tag') || '';
   return {
     q: query.get('q') || '',
-    category: Object.hasOwn(categories, query.get('category')) ? query.get('category') : 'all',
+    tag: tag.length <= 24 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(tag) ? tag : '',
+    official: query.get('official') === '1',
     sort: Object.hasOwn(sorts, query.get('sort')) ? query.get('sort') : 'stars',
   };
 }
 export function filterURL(state) {
   const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(state))
-    if (value && !({ category: 'all', sort: 'stars' }[key] === value)) query.set(key, value);
+  if (state.q) query.set('q', state.q);
+  if (state.tag) query.set('tag', state.tag);
+  if (state.official) query.set('official', '1');
+  if (state.sort !== 'stars') query.set('sort', state.sort);
   return '/extensions/' + (query.size ? '?' + query : '');
 }
 export function visibleItems(items, state) {
@@ -97,7 +96,8 @@ export function visibleItems(items, state) {
   return items
     .filter(
       (p) =>
-        (state.category === 'all' || p.category === state.category) &&
+        (!state.tag || extensionTags(p).includes(state.tag)) &&
+        (!state.official || isOfficialExtension(p)) &&
         [
           p.name,
           p.description,
@@ -105,7 +105,7 @@ export function visibleItems(items, state) {
           p.repository,
           ...p.dependencies,
           ...p.topics,
-          ...(p.tags || []),
+          ...extensionTags(p),
         ]
           .join(' ')
           .toLowerCase()
@@ -123,13 +123,26 @@ export function visibleItems(items, state) {
         a.id.localeCompare(b.id),
     );
 }
-export function categoriesHTML(items, state) {
-  return Object.entries(categories)
-    .map(
-      ([value, label]) =>
-        `<a data-category="${value}" href="${escapeHTML(filterURL({ ...state, category: value }))}"${value === state.category ? ' class="active" aria-current="page"' : ''}><span>${label}</span><span class="count">${items.filter((p) => value === 'all' || p.category === value).length}</span></a>`,
-    )
-    .join('');
+export function catalogFiltersHTML(items, state) {
+  const count = (changes) => visibleItems(items, { ...state, ...changes }).length;
+  const filterLink = (label, total, changes, active, attributes) =>
+    `<a ${attributes} href="${escapeHTML(filterURL({ ...state, ...changes }))}"${active ? ' class="active" aria-current="page"' : ''}><span class="filter-label">${escapeHTML(label)}</span><span class="count">${total}</span></a>`;
+  const all = filterLink(
+    'All extensions',
+    count({ tag: '', official: false }),
+    { tag: '', official: false },
+    !state.tag && !state.official,
+    'data-catalog-filter="all"',
+  );
+  const official = filterLink(
+    'Vis Official',
+    count({ official: true }),
+    { official: !state.official },
+    state.official,
+    'data-catalog-filter="official"',
+  );
+  const tags = [...new Set(items.flatMap(extensionTags))].sort((a, b) => a.localeCompare(b));
+  return `<nav class="nav" aria-label="Extensions"><div class="nav-sec">Extensions</div>${all}${official}</nav>${tags.length ? `<nav class="nav" aria-label="Extension tags"><div class="nav-sec">Tags</div>${tags.map((tag) => filterLink(tag, count({ tag }), { tag: state.tag === tag ? '' : tag }, state.tag === tag, `data-catalog-filter="tag" data-tag="${escapeHTML(tag)}"`)).join('')}</nav>` : ''}`;
 }
 function officialBadgeHTML(item) {
   return isOfficialExtension(item)
@@ -137,7 +150,7 @@ function officialBadgeHTML(item) {
     : '';
 }
 function tagsHTML(item) {
-  const tags = Array.isArray(item.tags) ? item.tags.slice(0, 2) : [];
+  const tags = extensionTags(item);
   return tags.length
     ? `<ul class="extension-tags" aria-label="Tags">${tags.map((tag) => `<li class="extension-tag">${escapeHTML(tag)}</li>`).join('')}</ul>`
     : '';
@@ -145,7 +158,7 @@ function tagsHTML(item) {
 export function cardsHTML(items, state) {
   const visible = visibleItems(items, state);
   if (!visible.length)
-    return `<div class="empty"><h2>${items.length ? 'No matching extensions' : 'No repositories yet'}</h2><p>${items.length ? 'Try a different search or browse all categories.' : 'Use “Add a repository” above to submit a public GitHub project for moderation.'}</p>${items.length ? '<a id="clear-filters" href="/extensions/">Clear filters</a>' : ''}</div>`;
+    return `<div class="empty"><h2>${items.length ? 'No matching extensions' : 'No repositories yet'}</h2><p>${items.length ? 'Try a different search or clear the filters.' : 'Use “Add a repository” above to submit a public GitHub project for moderation.'}</p>${items.length ? '<a id="clear-filters" href="/extensions/">Clear filters</a>' : ''}</div>`;
   return visible
     .map(
       (item) =>
@@ -155,7 +168,7 @@ export function cardsHTML(items, state) {
 }
 const fact = (label, value) => `<dt>${label}</dt><dd>${escapeHTML(value)}</dd>`;
 export function previewHTML(item) {
-  return `<h3>${escapeHTML(extensionName(item))} · v${escapeHTML(item.version)}</h3>${officialBadgeHTML(item)}<p>${escapeHTML(item.description)}</p>${tagsHTML(item)}<dl class="facts">${fact('GitHub owner', item.owner) + fact('Extension', extensionName(item)) + fact('Project folder', item.subdirectory || 'Repository root') + fact('Category', categories[item.category]) + fact('Release', item.release_tag || item.version) + fact('Commit', item.revision)}</dl><h3>Repository checks passed</h3><ul class="repository-checks"><li>Public GitHub repository owner verified and commit pinned</li><li>Published GitHub Release matches the manifest version</li><li><code>pyproject.toml</code> and <code>extension.py</code> found</li><li>Required manifest fields and <code>vis-agent</code> dependency declared</li>${item.source_paths.length ? `<li>${item.source_paths.length} source directories found</li>` : ''}${item.skills?.length ? `<li>${item.skills.length} skill directories contain <code>SKILL.md</code></li>` : ''}</ul><p class="help">These are metadata and file checks, not a code audit. The SDK validates version requirements and runtime compatibility when installing.</p><div class="actions">${link('Review source on GitHub', item.source_url)}${link('pyproject.toml', item.manifest_url)}${item.release_url ? link('GitHub Release', item.release_url) : ''}</div><h3>Dependencies</h3><p class="help">Python ${escapeHTML(item.requires_python)}</p><ul class="dependencies">${item.dependencies.map((dep) => `<li>${escapeHTML(dep)}</li>`).join('')}</ul>`;
+  return `<h3>${escapeHTML(extensionName(item))} · v${escapeHTML(item.version)}</h3>${officialBadgeHTML(item)}<p>${escapeHTML(item.description)}</p>${tagsHTML(item)}<dl class="facts">${fact('GitHub owner', item.owner) + fact('Extension', extensionName(item)) + fact('Project folder', item.subdirectory || 'Repository root') + fact('Release', item.release_tag || item.version) + fact('Commit', item.revision)}</dl><h3>Repository checks passed</h3><ul class="repository-checks"><li>Public GitHub repository owner verified and commit pinned</li><li>Published GitHub Release matches the manifest version</li><li><code>pyproject.toml</code> and <code>extension.py</code> found</li><li>Required manifest fields and <code>vis-agent</code> dependency declared</li>${item.source_paths.length ? `<li>${item.source_paths.length} source directories found</li>` : ''}${item.skills?.length ? `<li>${item.skills.length} skill directories contain <code>SKILL.md</code></li>` : ''}</ul><p class="help">These are metadata and file checks, not a code audit. The SDK validates version requirements and runtime compatibility when installing.</p><div class="actions">${link('Review source on GitHub', item.source_url)}${link('pyproject.toml', item.manifest_url)}${item.release_url ? link('GitHub Release', item.release_url) : ''}</div><h3>Dependencies</h3><p class="help">Python ${escapeHTML(item.requires_python)}</p><ul class="dependencies">${item.dependencies.map((dep) => `<li>${escapeHTML(dep)}</li>`).join('')}</ul>`;
 }
 export function releaseHTML(item) {
   const releases = item.releases || [];
@@ -204,13 +217,13 @@ export function shellHTML({
     <header class="top"><label for="navtoggle" class="hamburger" title="Menu"><span></span><span></span><span></span></label><a class="brand" href="/" title="Vis" aria-label="Vis">Vis</a><a class="center-link" href="/extensions/" aria-current="location" title="Extension Center" aria-label="Extension Center">${extensionIcon}</a><span class="spacer"></span><a class="gh" href="https://github.com/Blockether/vis" title="GitHub" aria-label="GitHub" target="_blank" rel="noopener noreferrer"><svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a></header>
     <label for="navtoggle" class="scrim" aria-hidden="true"></label>
     <div class="shell">
-      <aside class="side" id="catalog-navigation" aria-label="Catalog navigation"><div class="tagline">A coding agent for your projects.</div><div class="nav-sec">Extensions</div><nav id="categories" class="nav" aria-label="Extension categories">${categoriesHTML(items, state)}</nav><nav class="nav" aria-label="Documentation"><div class="nav-sec">Documentation</div><a href="/">Getting started</a><a href="/extending.html">Writing extensions</a></nav></aside>
+      <aside class="side" id="catalog-navigation" aria-label="Catalog navigation"><div id="catalog-filters">${catalogFiltersHTML(items, state)}</div></aside>
       <main class="main"><article class="content">
         <section id="catalog-page"${detail ? ' hidden' : ''}>
-          <h1>Extension Center</h1><p>Find tools, providers and workflows for Vis. Browse public GitHub repositories and install a reviewed commit.</p>
+          <h1>Extension Center</h1><p>Find extensions by tag or choose Vis Official releases. Review the source and install an approved version.</p>
           <div class="intro-actions"><button id="submit-open" class="primary" type="button">Add a repository</button></div>
           <h2 id="explore">Explore extensions</h2>
-          <form class="toolbar" id="filters" method="get" action="/extensions/"><input type="hidden" name="category" value="${state.category}"><div class="search-field"><label for="search" class="sr-only">Search extensions</label><input id="search" name="q" value="${escapeHTML(state.q)}" type="search" autocomplete="off" placeholder="Search extensions, owners, tags…"><kbd aria-hidden="true">/</kbd></div><label class="sort-field"><span class="sr-only">Sort extensions</span><select id="sort" name="sort" aria-label="Sort extensions">${Object.entries(
+          <form class="toolbar" id="filters" method="get" action="/extensions/"><input type="hidden" name="tag" value="${escapeHTML(state.tag)}"><input type="hidden" name="official" value="${state.official ? '1' : ''}"><div class="search-field"><label for="search" class="sr-only">Search extensions</label><input id="search" name="q" value="${escapeHTML(state.q)}" type="search" autocomplete="off" placeholder="Search extensions, owners, tags…"><kbd aria-hidden="true">/</kbd></div><label class="sort-field"><span class="sr-only">Sort extensions</span><select id="sort" name="sort" aria-label="Sort extensions">${Object.entries(
             sorts,
           )
             .map(
