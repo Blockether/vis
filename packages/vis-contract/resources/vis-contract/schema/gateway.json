@@ -1290,6 +1290,12 @@
           "request": "json",
           "response": "json",
           "response_schema": "setting"
+        },
+        "patch": {
+          "request": "json",
+          "response": "json",
+          "request_schema": "settings_batch",
+          "response_schema": "settings"
         }
       },
       "path": "/v1/settings"
@@ -2378,7 +2384,10 @@
           "enum": [
             "boolean",
             "enum",
-            "string"
+            "string",
+            "number",
+            "array",
+            "object"
           ]
         },
         "scopes": {
@@ -2417,10 +2426,7 @@
               "type": "boolean"
             },
             "value": {
-              "type": [
-                "boolean",
-                "string"
-              ]
+              "$ref": "#/$defs/setting_value"
             }
           }
         },
@@ -2428,10 +2434,7 @@
           "type": "boolean"
         },
         "value": {
-          "type": [
-            "boolean",
-            "string"
-          ]
+          "$ref": "#/$defs/setting_value"
         },
         "choices": {
           "type": "array",
@@ -2442,9 +2445,16 @@
         "is_experimental": {
           "type": "boolean"
         },
-        "multiline": {
-          "type": "boolean"
-        }
+        "multiline": { "type": "boolean" },
+        "editor": {
+          "enum": ["switch", "select", "text", "multiline", "number", "paths", "filesystem", "network", "list", "json"]
+        },
+        "schema": { "type": "string" },
+        "applies": { "enum": ["immediate", "next_call", "next_turn", "reload", "restart"] },
+        "own_value": {},
+        "inherited_value": { "$ref": "#/$defs/setting_value" },
+        "inherited_source": { "enum": ["default", "global", "project", "group", "session"] },
+        "max_length": { "type": "integer", "minimum": 1 }
       }
     },
     "settings": {
@@ -2452,7 +2462,8 @@
       "required": [
         "scope",
         "target_id",
-        "groups"
+        "groups",
+        "revision"
       ],
       "properties": {
         "scope": {
@@ -2464,9 +2475,9 @@
             "null"
           ]
         },
-        "label": {
-          "type": "string"
-        },
+        "label": { "type": "string" },
+        "revision": { "type": "string", "minLength": 1 },
+        "lineage": { "type": "array", "items": { "type": "object" } },
         "groups": {
           "type": "array",
           "items": {
@@ -2520,10 +2531,7 @@
           ]
         },
         "value": {
-          "type": [
-            "boolean",
-            "string"
-          ]
+          "$ref": "#/$defs/setting_value"
         }
       },
       "allOf": [
@@ -2542,6 +2550,137 @@
           }
         }
       ]
+    },
+    "setting_value": {
+      "type": [
+        "boolean",
+        "string",
+        "number",
+        "array",
+        "object"
+      ]
+    },
+    "setting_change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "action"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action": {
+          "enum": [
+            "value",
+            "inherit"
+          ]
+        },
+        "value": {
+          "$ref": "#/$defs/setting_value"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "value"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "value"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "value"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "settings_batch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "revision",
+        "changes"
+      ],
+      "allOf": [
+        {
+          "$ref": "#/$defs/settings_target"
+        }
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/settings_target/properties/scope"
+        },
+        "target_id": {
+          "$ref": "#/$defs/settings_target/properties/target_id"
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "context_session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "changes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "$ref": "#/$defs/setting_change"
+          }
+        }
+      }
+    },
+    "settings_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "name",
+        "changes"
+      ],
+      "x-vis-max-bytes": 131072,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "changes": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "$ref": "#/$defs/setting_change"
+          }
+        }
+      }
+    },
+    "settings_profiles": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "$ref": "#/$defs/settings_profile"
+      }
     }
   }
 }

@@ -1293,7 +1293,7 @@ export function SessionScreen({
   function nextReasoningLevel(toggle: Toggle): string | null {
     const choices = toggle.choices ?? [];
     if (choices.length < 2) return null;
-    const at = toggle.value ? choices.indexOf(toggle.value) : -1;
+    const at = typeof toggle.value === 'string' ? choices.indexOf(toggle.value) : -1;
     return choices[(at + 1) % choices.length] ?? null;
   }
 
@@ -1329,7 +1329,7 @@ export function SessionScreen({
   // What the chip SAYS: the optimistic pick while the write is in flight, the
   // gateway's own value the rest of the time. Never empty — that is the whole
   // point of the swap.
-  const reasoningLevel = pendingLevel ?? reasoning?.value ?? 'default';
+  const reasoningLevel = pendingLevel ?? (typeof reasoning?.value === 'string' ? reasoning.value : 'default');
   const activeProvider = modelPref?.provider ?? defaultPref?.provider;
   const codexFastAvailable = activeProvider === 'openai-codex' && codexFast;
   const selectedModel = modelPref?.model ?? defaultPref?.model;
@@ -4173,7 +4173,7 @@ export function SessionScreen({
       verbosityAvailable && (verbosityAvailable.choices?.length ?? 0) > 0
         ? {
             label: verbosityAvailable.label,
-            value: verbosityAvailable.value ?? 'default',
+            value: typeof verbosityAvailable.value === 'string' ? verbosityAvailable.value : 'default',
             busy: verbosityBusy,
             cycle: cycleVerbosity,
           }

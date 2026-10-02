@@ -614,6 +614,22 @@
                       "show_python_code" false
                       "summarize_steps" false}
                      @written)))))
+  (it "stores settings profiles and removes the key when no profile remains"
+      (let [written
+            (atom nil)
+
+            profile
+            {"version" 1
+             "name" "Review"
+             "changes" [{"id" "show_python_code" "action" "value" "value" false}]}]
+
+        (with-redefs [vis/update-machine-config! (fn [f]
+                                                   (reset! written (f {"settings_profiles"
+                                                                       [profile]})))]
+          (#'state/persist-settings! {:theme-name :vis-dark :settings-profiles [profile]})
+          (expect (= [profile] (get @written "settings_profiles")))
+          (#'state/persist-settings! {:theme-name :vis-dark :settings-profiles []})
+          (expect (not (contains? @written "settings_profiles"))))))
   (it "reports a failed preference save instead of silently accepting it"
       (let [notifications (atom [])]
         (with-redefs [vis/update-machine-config! (fn [_]

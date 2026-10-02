@@ -286,12 +286,8 @@
                 target
                 (scoped/target db "global" nil)]
 
-            (policy/set-setting! db
-                                 target
-                                 "workspace_filesystem"
-                                 "value"
-                                 (json/write-json-str filesystem))
-            (policy/set-setting! db target "jail_enabled" "value" "false")
+            (policy/set-setting! db target "workspace_filesystem" "value" filesystem)
+            (policy/set-setting! db target "jail_enabled" "value" false)
             (config/invalidate-config-cache!)
             (expect (= filesystem
                        (get-in (config/load-global-config-raw) ["workspace" "filesystem"])))

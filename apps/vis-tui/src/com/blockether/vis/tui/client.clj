@@ -620,6 +620,15 @@
   ([id value target]
    (send-json! "POST" "/v1/settings" (merge target {:id id :action "value" :value value}))))
 
+(defn apply-settings!
+  "Apply explicit edits atomically to one owner using its catalog revision."
+  [revision changes target channel context-session-id]
+  (send-json! "PATCH"
+              "/v1/settings"
+              (merge {:scope "global" :revision revision :changes changes :channel (name channel)}
+                     (select-keys target [:scope :target-id])
+                     (when context-session-id {:context-session-id (str context-session-id)}))))
+
 (defn inherit-setting!
   "Remove only this target's override; never edit its parent."
   [id target]

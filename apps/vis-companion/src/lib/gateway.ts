@@ -2130,7 +2130,8 @@ export class GatewayClient {
   }
 
   cachedSettings(target?: SettingsTarget): SettingsResponse | null {
-    return readSnapshot<SettingsResponse>(this.settingsKey('settings', target));
+    const cached = readSnapshot<SettingsResponse>(this.settingsKey('settings', target));
+    return this.hasSettingsCatalogRevision(cached) ? cached : null;
   }
 
   /** Register paired identities with the primary; its durable order is authoritative. */
@@ -2164,7 +2165,7 @@ export class GatewayClient {
       undefined,
       signal,
     );
-    writeSnapshot(this.settingsKey('settings', target), response);
+    this.cacheSettingsCatalog(response, target);
     return response;
   }
 
@@ -2197,7 +2198,7 @@ export class GatewayClient {
   async setSetting(
     id: string,
     action: 'toggle' | 'cycle' | 'value' | 'inherit',
-    value?: string | boolean,
+    value?: import('./types').SettingValue,
     target?: SettingsTarget,
   ): Promise<Toggle> {
     const updated = await this.request<Toggle>('POST', '/v1/settings', {
@@ -2224,6 +2225,47 @@ export class GatewayClient {
       });
     }
     return updated;
+  }
+
+  private hasSettingsCatalogRevision(data: SettingsResponse | null): data is SettingsResponse {
+    return (
+      !!data &&
+      Array.isArray(data.groups) &&
+      typeof data.revision === 'string' &&
+      !!data.revision.trim()
+    );
+  }
+
+  private cacheSettingsCatalog(saved: SettingsResponse, target?: SettingsTarget): void {
+    if (!this.hasSettingsCatalogRevision(saved))
+      throw new GatewayError(
+        INCOMPATIBLE_STATUS,
+        'This machine returned an invalid settings catalog. Update the gateway and reconnect.',
+      );
+    writeSnapshot(this.settingsKey('settings', target), saved);
+    for (const group of saved.groups) {
+      for (const setting of group.toggles) {
+        writeSnapshot(this.settingsKey('setting', target, setting.id), setting);
+      }
+    }
+  }
+
+  /** Apply a versioned owner batch. No local snapshot changes before success. */
+  async applySettings(
+    revision: string,
+    changes: import('./types').SettingChange[],
+    target: SettingsTarget = { scope: 'global' },
+    contextSessionId?: string,
+  ): Promise<SettingsResponse> {
+    const saved = await this.request<SettingsResponse>('PATCH', '/v1/settings', {
+      scope: target.scope,
+      target_id: target.target_id,
+      revision,
+      changes,
+      ...(contextSessionId ? { context_session_id: contextSessionId } : {}),
+    });
+    this.cacheSettingsCatalog(saved, target);
+    return saved;
   }
 
   // ── Improve: project issues and governed review ─────────────────

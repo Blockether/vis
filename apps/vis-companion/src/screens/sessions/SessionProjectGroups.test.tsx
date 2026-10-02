@@ -495,6 +495,7 @@ describe('ProjectGroup groups', () => {
 
   it('opens project and group settings from cog-marked actions near the menu bottom', async () => {
     const read = vi.fn(async (_signal: AbortSignal | undefined, owner: SettingsTarget) => ({
+      revision: 'project-settings-fixture',
       scope: owner.scope,
       target_id: owner.target_id,
       groups: [],
@@ -515,7 +516,7 @@ describe('ProjectGroup groups', () => {
     await user.click(project);
     expect(screen.getByRole('dialog', { name: 'Project settings' })).toBeInTheDocument();
     await waitFor(() =>
-      expect(read).toHaveBeenCalledWith(expect.any(AbortSignal), { scope: 'project', target_id: ROOT }),
+      expect(read).toHaveBeenCalledWith(expect.any(AbortSignal), { scope: 'project', target_id: ROOT }, undefined),
     );
     await user.click(screen.getByRole('button', { name: 'Close Project settings' }));
     await user.click(screen.getByRole('button', { name: 'Actions for Wallet work' }));
@@ -529,7 +530,7 @@ describe('ProjectGroup groups', () => {
     await user.click(group);
     expect(screen.getByRole('dialog', { name: 'Group settings' })).toBeInTheDocument();
     await waitFor(() =>
-      expect(read).toHaveBeenCalledWith(expect.any(AbortSignal), { scope: 'group', target_id: WALLET }),
+      expect(read).toHaveBeenCalledWith(expect.any(AbortSignal), { scope: 'group', target_id: WALLET }, undefined),
     );
   });
 

@@ -39,15 +39,36 @@
   [rows keys &
    {:keys [cols callbacks values load!]
     :or {cols 100 callbacks {} values {} load! (constantly nil)}}]
-  (let [result (cap/capture! {:cols cols
-                              :rows 30
-                              :keys keys
-                              :paint! (fn [{:keys [screen]}]
-                                        (try (with-redefs-fn {#'dlg/settings-rows
-                                                              (if (fn? rows) rows (constantly rows))
-                                                              #'dlg/load-inventories! load!}
-                                               #(dlg/settings-dialog! screen values callbacks))
-                                             (finally (.stopScreen ^TerminalScreen screen))))})]
+  (let [result (cap/capture!
+                 {:cols cols
+                  :rows 30
+                  :keys keys
+                  :paint! (fn [{:keys [screen]}]
+                            (try (with-redefs-fn
+                                   {#'dlg/settings-rows (if (fn? rows) rows (constantly rows))
+                                    #'dlg/load-inventories!
+                                    (fn []
+                                      (let [items (if (fn? rows) (rows) rows)
+                                            catalog
+                                            {"revision" "fixture"
+                                             "scope" "global"
+                                             "groups"
+                                             [{"toggles"
+                                               (mapv (fn [row]
+                                                       (or (:setting row)
+                                                           {"id" (:toggle-id row)
+                                                            "type" (name (or (:toggle-type row)
+                                                                             :string))
+                                                            "is_override" (:is-override? row)
+                                                            "own_value" (:toggle-value row)
+                                                            "inherited_value" (:toggle-value row)}))
+                                                     (filter :toggle-id items))}]}]
+
+                                        (reset! dlg/*settings-draft*
+                                          {:base catalog :changes {} :latest nil :error nil}))
+                                      (load!))}
+                                   #(dlg/settings-dialog! screen values callbacks))
+                                 (finally (.stopScreen ^TerminalScreen screen))))})]
     (when-let [error (:error result)]
       (throw error))
     result))
@@ -288,18 +309,18 @@
                                                (swap! calls conj [id scope])
                                                {"id" id "enabled" false})]
             (with-redefs-fn {#'dlg/load-settings-inventory! (constantly nil)}
-              #(capture-settings rows [:f1 \i :esc] :callbacks {:settings-target target})))
+              #(capture-settings rows [:f1 \i :esc \y] :callbacks {:settings-target target})))
 
           frames
           (mapv cap/frame-text (:frames capture))]
 
       (expect (= 2 (count rows)))
       (expect (= "Allow filesystem reads." (:description (second rows))))
-      (expect (= [["compact_override" target]] @calls))
-      (expect (str/includes? (first frames) "[Override]"))
+      (expect (empty? @calls))
+      (expect (str/includes? (first frames) "[Set here]"))
       (expect (not (str/includes? (first frames) "Source:")))
       (expect (some #(str/includes? % "Source: project") frames))))
-  (it "explains locked values and prevents both edit and inherit in details"
+  (it "explains a more specific winner without locking ancestor edits"
       (let [row
             {:type :registry-toggle
              :toggle-id "compact_locked"
@@ -309,7 +330,8 @@
              :source "project"
              :label "Read filesystem"
              :description "Allow filesystem reads."
-             :locked "Project settings decide this value. Change it in Project settings."}
+             :override-warning
+             "Project settings decide the session value. You can still edit this owner."}
 
             calls
             (atom [])
@@ -324,7 +346,7 @@
                             (swap! calls conj args))]
 
               (capture-settings [{:type :section :label "Paths and access"} row]
-                                [:f1 :enter \i :esc :esc]))]
+                                [:f1 :enter :esc \y]))]
 
         (expect (empty? @calls))
         (expect (some #(str/includes? (cap/frame-text %) "Project settings decide")
@@ -346,8 +368,8 @@
                                                (swap! calls conj [id value target])
                                                {"id" id "value" value})]
           (with-redefs-fn {#'dlg/load-settings-inventory! (constantly nil)}
-            #(capture-settings rows [:enter \x :enter :esc])))
-        (expect (= [["compact_text" "examplex" nil]] @calls)))))
+            #(capture-settings rows [:enter \x :f2 :esc \y])))
+        (expect (empty? @calls)))))
 
 (defdescribe compact-settings-empty-state-test
              (it "shows a useful message for a search with no matches"

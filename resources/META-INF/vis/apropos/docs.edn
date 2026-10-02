@@ -13,6 +13,7 @@
  {:kind "doc" :name "jvm-sdk" :resource "vis-docs/jvm-sdk.md"}
  {:kind "doc" :name "gateway-service" :resource "vis-docs/gateway-service.md"}
  {:kind "doc" :name "configuration" :resource "vis-docs/configuration.md"}
+ {:kind "doc" :name "settings" :resource "vis-docs/settings.md"}
  {:kind "doc" :name "context-and-prompts" :resource "vis-docs/context-and-prompts.md"}
  {:kind "doc" :name "skills" :resource "vis-docs/skills.md"}
  {:kind "doc" :name "sessions" :resource "vis-docs/sessions.md"}

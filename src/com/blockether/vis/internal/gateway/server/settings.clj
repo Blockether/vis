@@ -2,6 +2,8 @@
   "Settings routes, including the Improve register and its settings."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.toggle :as toggle-contract]
+            [com.blockether.vis.contract.document :as document]
+            [com.blockether.vis.internal.config.settings-edit :as settings-edit]
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.sandbox.scoped-policy :as scoped-policy]
             [com.blockether.vis.internal.foundation.harness.discovery :as harness]
@@ -14,7 +16,7 @@
 
 (defn- toggle-json
   [{:keys [id label description type choices value experimental? scopes source scope is-override
-           overridden-by]}]
+           overridden-by inherited-value inherited-source own-value group]}]
   (cond-> {:id id
            :label label
            :type (name type)
@@ -22,7 +24,12 @@
            :scope scope
            :source source
            :is-override is-override
-           :is-experimental (boolean experimental?)}
+           :is-experimental (boolean experimental?)
+           :editor (if (= type :boolean) "switch" "select")
+           :own-value own-value
+           :inherited-value inherited-value
+           :inherited-source inherited-source
+           :applies (if (#{:skills :mcp :engines} group) "next_call" "next_turn")}
     description
     (assoc :description description)
 
@@ -79,7 +86,11 @@
   (try (f)
        (catch clojure.lang.ExceptionInfo e
          (if-let [status (:status (ex-data e))]
-           (http/error-response status (or (:type (ex-data e)) :invalid-setting) (ex-message e))
+           (http/error-response status
+                                (or (:type (ex-data e)) :invalid-setting)
+                                (ex-message e)
+                                :id (:id (ex-data e))
+                                :field-errors (:field-errors (ex-data e)))
            (throw e)))))
 
 (defn- agent-name-setting
@@ -89,7 +100,13 @@
    :description "Shared by all clients of this gateway. Overrides project names."
    :type "string"
    :value (config/agent-name)
-   :max-length 80})
+   :max-length 80
+   :editor "text"
+   :own-value (get (config/load-global-config-raw) "agent_name")
+   :is-override (contains? (config/load-global-config-raw) "agent_name")
+   :inherited-value (or (get (config/load-global-yaml-config-raw) "agent_name") "Vis")
+   :inherited-source "default"
+   :applies "next_turn"})
 
 (defn- set-agent-name-setting
   [action given]
@@ -102,62 +119,99 @@
              (http/error-response 400 :invalid-setting-value (ex-message e) :id "agent_name")
              (throw e))))))
 
+(defn- settings-catalog
+  [request target]
+  (let [local?
+        (not= "global" (:scope target))
+
+        resources
+        (resource-inventory target)
+
+        channel
+        (some-> (get-in request [:query-params "channel"])
+                keyword)
+
+        rows
+        (filter #(and (some #{(:scope target)} (:scopes %))
+                      (case (:group %)
+                        :skills
+                        (resources (:id %))
+
+                        :mcp
+                        (and (not local?) (resources (:id %)))
+
+                        true)
+                      (or local? (and (not (false? (:settings? %))) (toggles/toggle-visible? %)))
+                      (or (nil? channel)
+                          (#{:all :*} channel)
+                          (toggles/toggle-for-channel? channel %)))
+                (scoped/settings (lp/db-info) target))
+
+        grouped
+        (sort-by (comp str key)
+                 (group-by #(or (:group %) :other) (mark-overridden request target rows)))]
+
+    {:scope (:scope target)
+     :target-id (:target-id target)
+     :label (:label target)
+     :revision (settings-edit/revision (lp/db-info) target)
+     :lineage (cond-> [{:scope "global" :label "Machine"}]
+                (:project-id target)
+                (conj {:scope "project" :target-id (:project-id target)})
+
+                (:group-id target)
+                (conj {:scope "group" :target-id (:group-id target)})
+
+                (= "session" (:scope target))
+                (conj {:scope "session" :target-id (:target-id target) :label (:label target)}))
+     :groups (into (cond-> [{:id "access"
+                             :title "Files and permissions"
+                             :toggles (scoped-policy/settings (lp/db-info) target)}]
+                     (not local?)
+                     (conj {:id "agent"
+                            :title "Agent"
+                            :toggles [(assoc (agent-name-setting) :scopes ["global"])]}))
+                   (map (fn [[group specs]]
+                          {:id (name group)
+                           :title (group-title group local?)
+                           :toggles (mapv toggle-json specs)}))
+                   grouped)}))
+
 (defn- list-settings-handler
-  "GET /v1/settings?scope=...&target_id=...; all clients share this catalog."
+  "GET /v1/settings; typed catalog, provenance and a concurrency revision."
+  [request]
+  (settings-response #(http/json-response (settings-catalog request (request-target request nil)))))
+
+(defn- apply-settings-handler
+  "PATCH /v1/settings; apply one versioned owner batch, or write nothing."
   [request]
   (settings-response
     (fn []
-      (let [target
-            (request-target request nil)
+      (let [body
+            (http/body-json request)
 
-            local?
-            (not= "global" (:scope target))
+            _
+            (when-not (document/valid-json? "gateway" "settings_batch" body)
+              (throw (ex-info "Supply a valid settings batch" {:status 400})))
+
+            request
+            (update request :query-params merge (select-keys body ["channel" "context_session_id"]))
+
+            _
+            (when-let [sid (get-in request [:query-params "context_session_id"])]
+              (scoped/target (lp/db-info) "session" sid))
+
+            target
+            (request-target request body)
 
             resources
-            (resource-inventory target)
+            (resource-inventory target)]
 
-            channel
-            (some-> (get-in request [:query-params "channel"])
-                    keyword)
-
-            rows
-            (filter
-              #(and
-                 (some #{(:scope target)} (:scopes %))
-                 (case (:group %)
-                   :skills
-                   (resources (:id %))
-
-                   ;; Below global, the MCP servers section's own switch
-                   ;; writes this same availability setting.
-                   :mcp
-                   (and (not local?) (resources (:id %)))
-
-                   true)
-                 (or local? (and (not (false? (:settings? %))) (toggles/toggle-visible? %)))
-                 (or (nil? channel) (#{:all :*} channel) (toggles/toggle-for-channel? channel %)))
-              (scoped/settings (lp/db-info) target))
-
-            grouped
-            (sort-by (comp str key)
-                     (group-by #(or (:group %) :other) (mark-overridden request target rows)))]
-
-        (http/json-response
-          {:scope (:scope target)
-           :target-id (:target-id target)
-           :label (:label target)
-           :groups (into (cond-> [{:id "access"
-                                   :title "Paths and access"
-                                   :toggles (scoped-policy/settings (lp/db-info) target)}]
-                           (not local?)
-                           (conj {:id "agent"
-                                  :title "Agent"
-                                  :toggles [(assoc (agent-name-setting) :scopes ["global"])]}))
-                         (map (fn [[group specs]]
-                                {:id (name group)
-                                 :title (group-title group local?)
-                                 :toggles (mapv toggle-json specs)}))
-                         grouped)})))))
+        (doseq [{:strs [id]} (get body "changes")]
+          (when (and (#{:skills :mcp} (:group (toggles/toggle-spec id))) (not (resources id)))
+            (throw (ex-info "Resource is not available in this target" {:status 400 :id id}))))
+        (settings-edit/apply! (lp/db-info) target (get body "revision") (get body "changes"))
+        (http/json-response (settings-catalog request target))))))
 
 (defn- get-setting-handler
   "Read one setting, including response controls hidden in the global dialog."
@@ -267,6 +321,7 @@
   "Handlers for this namespace's routes, keyed by the gateway contract's `[method path]`."
   {[:get "/v1/settings"] list-settings-handler
    [:post "/v1/settings"] set-setting-handler
+   [:patch "/v1/settings"] apply-settings-handler
    [:get "/v1/improve"] (improve-handler :list)
    [:post "/v1/improve"] (improve-handler :create)
    [:get "/v1/improve/settings"] (improve-handler :settings)

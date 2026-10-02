@@ -1,110 +1,100 @@
-# Scoped settings across the app and TUI
+# Settings editing across the Companion and TUI
 
-One settings model, four scopes, explicit overrides.
+Make the scope, effect and saved value clear before you apply a change.
 
 ## Context
 
-The implementation uses the existing settings renderers and configuration owners.
-`src/com/blockether/vis/internal/config/scoped.clj` resolves sparse values through
-Global → canonical project → organizational group → session. Each declaration can
-allow any nonempty subset of these scopes. Explicit false differs from inheritance.
+The gateway catalog and sparse overrides already own settings. This task extends
+`config/scoped.clj`, `sandbox/scoped_policy.clj` and gateway settings routes rather
+than introducing a second configuration store. The Companion uses
+`apps/vis-companion/src/screens/settings/`; the TUI uses `dialogs.clj` and its client.
 
-`src/com/blockether/vis/internal/sandbox/scoped_policy.clj` applies the same
-hierarchy to access settings. Group and session values live in SQLite; project
-overrides use the hidden project configuration; global values use the machine
-store. Authored YAML is not rewritten. Providers, credentials and gateway
-administration remain global; device preferences stay local.
+Current problems: access fields are JSON strings, TUI text editing is one-line,
+ancestor overrides disable editing, forms lose drafts on refresh, and editing,
+service operations and device preferences share inconsistent controls.
 
-Rejected alternatives: copying effective settings into new sessions or forks,
-using Council groups as settings scopes, sending cached client toggles with every
-message, cancelling active calls when availability changes, and treating optional
-extension activation as decision-model routing.
+Rejected alternatives: duplicating catalogs in clients, rewriting authored YAML,
+copying inherited settings, saving every dependent field separately, widening host
+permissions in a local scope, and including credentials in presets or exports.
 
-## 1. Declarations, storage and resolution
+## 1. Contract, validation and atomic persistence
 
-Rationale: inheritance must be per key and identical for every client.
+Rationale: both clients must show and save the same configuration safely.
 
-Data: the portable toggle schema and contract; config/scoped; configuration writers;
-SQLite group/session overrides; gateway settings schemas and routes.
+Data: canonical gateway/config schemas, scoped resolver, atomic file writers and
+SQLite settings storage.
 
-Acceptance criteria: all 15 nonempty scope combinations, false values, inherit,
-canonical project identity, ungrouped sessions, moves, forks, concurrent writes,
-durable reopening, owner deletion, provenance and rejected unsupported writes.
-Explicit global access persists without importing project grants through other writes.
+Acceptance criteria: typed editors, inherited and own values, application timing,
+versioned atomic batches, explicit values, field errors, scope isolation and
+rejected policy expansion. Existing single-key callers retain their current API.
 
-Unknowns: none. Complete, with regression coverage.
+Unknowns: exact transaction and configuration writer boundaries are being checked.
 
-## 2. Response and resource lifecycle
+## 2. Companion editing and navigation
 
-Rationale: a submitted response must not change midway, while disabled resources
-must not remain callable through cached names or handles.
+Rationale: the phone and desktop need clear scope and task navigation.
 
-Data: gateway submission/queue snapshots, loop/turn bindings, live skill discovery,
-MCP definitions and availability, optional extension Auto/On/Off gates, access policy.
+Data: SettingsScreen, MachineSettings, ScopedSettingsDialog, shared typed editors,
+gateway client and settings drafts.
 
-Acceptance criteria: submission captures response settings, including queued work;
-new calls and lookups honor availability; active calls finish; subsequent turns
-rebuild access bindings; narrower scopes cannot relax host security ceilings.
+Acceptance criteria: structured access forms, staged configuration, protected drafts,
+conflict recovery, inline errors, shared search and categories, explicit sources,
+local preferences and service actions kept separate, keyboard and back navigation.
 
-Unknowns: none. Complete. Existing drafts are not moved when policy changes.
+Unknowns: existing interaction tests must be updated to the new authorized behavior.
 
-## 3. Python SDK and host boundary
+## 3. TUI editing and navigation
 
-Rationale: extensions declare typed settings without duplicating host contracts.
+Rationale: a compact list must not force complex configuration into one input line.
 
-Data: canonical `packages/vis-agent/src/blockether/vis/extension.py`, the outside
-bridge, engine extension validation, and Clojure Python-extension registration.
+Data: settings catalog projection, list/details/editor views, virtual terminal tests.
 
-Acceptance criteria: boolean/enum declarations, defaults and allowed scopes validate
-through the canonical contract; `Host.setting` reads the response snapshot; native
-and editable SDK paths support the same declarations. App-hosted extensions reject
-engine settings rather than silently accepting unsupported contributions.
+Acceptance criteria: staged values, Ctrl+S, discard guard, typed and multiline editors,
+inheritance preview, editable ancestor values, preserved selection/search, useful
+small-terminal layouts and source/effect details.
 
-Unknowns: none. JVM, SDK and native boundary tests cover the feature.
+Unknowns: verify both narrow and wide layouts with the existing virtual screen.
 
-## 4. Companion, TUI and MCP CLI
+## 4. Resources, presets and documentation
 
-Rationale: every scope uses the same controls and clearly exposes inheritance.
+Rationale: managing a service is different from setting its availability.
 
-Data: Companion ScopedSettingsDialog and MachineSettings; TUI dialogs/client/state;
-session, group and project entry points; MCP target-aware HTTP and CLI operations.
+Data: MCP/providers/speech/notifications, profile import/export and configuration guide.
 
-Acceptance criteria: effective value, source and own override are visible; inherit
-removes only the selected override; session response controls write to that session;
-no cached client values are resubmitted. Scoped MCP editing hides global credentials,
-authentication and lifecycle actions. TUI settings refresh on opening and local edits;
-Companion also refreshes the selected target while the dialog is open.
+Acceptance criteria: task-oriented navigation, clear device/gateway ownership,
+existing lifecycle progress/errors retained, safe presets/import/export, and updated
+user guidance without credentials or private deployment information.
 
-Unknowns: none. Complete, with client and target-routing tests.
+Unknowns: presets must remain explicit draft changes, never hidden remote actions.
 
-## 5. Documentation and verification
+## 5. Verification and publication
 
-Rationale: behavior must be documented and verified across real storage and interop.
+Rationale: complete the behavior across API, clients and the built application.
 
-Data: configuration, extension API and skills guides; existing Lazytest, pytest,
-Companion and native-image suites. No paid model end-to-end calls are required.
+Data: Lazytest, Companion Vitest/Storybook, formatter/linter/reflection, native build
+and affected native tests, final scoped Git diff.
 
-Acceptance criteria: affected tests, formatting, lint/reflection, documentation links,
-final diff review and native-image execution pass. Only task-owned files are committed.
+Acceptance criteria: regressions reproduced before fixes, affected checks and builds
+pass, unrelated changes preserved, task commits pushed to main and CI reported.
+No product release, live restart or store submission is authorized by this task.
 
-Unknowns: none for the scoped implementation. Affected verification is complete;
-full-suite CI reports its result on the committed revision.
+Unknowns: broader failures are classified against the scoped diff, never bypassed.
 
 ## Plan state
 
-- Implementation and documentation complete.
-- Companion: 3,777 tests passed, 3 skipped; typecheck and lint passed.
-- SDK: 1,011 tests passed, 43 skipped; Ruff checks passed.
-- Engine/contract/docs: 971 affected tests passed before the final access fix.
-- Final configuration/MCP/provider/gateway checks: 396 passed; loop/scoped: 604 passed.
-- TUI: 539 tests passed; Clojure lint/reflection checks passed.
-- Final GraalVM CE native build passed; all four native SDK boundary tests passed.
-- Final Companion settings checks: 21 passed; typecheck and lint passed again.
-- Post-push CI exposed six fixture/layering regressions. All 20 reproducing tests
-  and 790 affected follow-up tests now pass; lint/reflection checks are clean.
-- The follow-up GraalVM CE build and all four native SDK boundary tests passed.
-- A full local JVM follow-up did not complete. It also exposed an ambient-provider
-  fixture dependency and order-dependent failures outside this scoped follow-up.
-- Documentation/link and diff checks passed. Publication and full-suite CI results
-  are recorded against the commits delivering this plan and implementation.
-- No product release or live gateway restart is part of this task.
+- All five phases are complete and verified; publication to `main` follows these checks.
+- Base: bf769fa9b on `main` (initial HEAD b5c4538c9; peer commits landed meanwhile).
+- Phase 1: `PATCH /v1/settings` applies a typed, revision-checked batch in one
+  SQLite transaction. A stale revision returns 409, an invalid batch returns 400,
+  and neither writes anything.
+- Phase 2: the Companion machine and scoped dialogs share one draft, review and
+  apply editor with typed fields, inherited values and settings profiles.
+- Phase 3: the TUI Settings dialog uses the same draft, review and apply flow.
+- Phase 4: `resources/vis-docs/settings.md` guide, updated configuration reference,
+  and profile limits read from the gateway schema.
+- Phase 5: backend and TUI Lazytest, clj format and lint, Companion typecheck, lint,
+  unit and Storybook tests, `npm run build`, native build, `native_settings_test`,
+  `native-tui-resize-test` and the docs page canon tests pass.
+- Unrelated: the Storybook `IterationTrace` "Joined Activity" story fails at the base
+  (it expects "2 checks"; `ActivityPanel` shows "verifications"). Reported in Council #7500.
+- No product release, live restart or store submission is part of this task.

@@ -12,17 +12,7 @@ import {
 } from '../../components/ui';
 import { THEMES } from '../../lib/themes.generated';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
-import { SettingsColumn, SettingsPanel } from './SettingsLayout';
-
-/**
- * THE SETTINGS COLUMN'S TWO LIVES.
- *
- * On a phone the dialog's columns stack and the machines lead, so the
- * application's own settings fold behind their band — press the band, the
- * chevron turns, the panels stand under it. Where both columns fit beside each
- * other the same call paints no fold at all: switch the frame to Desktop and
- * the band is a plain heading again.
- */
+import { SettingsPanel } from './SettingsLayout';
 
 const body = (
   <SettingsPanel title="Theme">
@@ -32,76 +22,32 @@ const body = (
     </div>
   </SettingsPanel>
 );
-
 const meta = {
-  title: 'Screens/Settings column',
-  component: SettingsColumn,
+  title: 'Screens/Settings panels',
+  component: SettingsPanel,
   parameters: { layout: 'padded' },
   render: function Render(args) {
     const [open, setOpen] = useState(args.disclosure?.isOpen ?? false);
     return (
-      <SettingsColumn
+      <SettingsPanel
         {...args}
         disclosure={
           args.disclosure && {
+            ...args.disclosure,
             isOpen: open,
-            onToggle: () => setOpen((current) => !current),
-            label: `${open ? 'Hide' : 'Show'} application settings`,
+            onToggle: () => setOpen((value) => !value),
           }
         }
       />
     );
   },
-} satisfies Meta<typeof SettingsColumn>;
-
+} satisfies Meta<typeof SettingsPanel>;
 export default meta;
-
 type Story = StoryObj<typeof meta>;
-
-/** Phone: the machines lead, and the application's settings wait behind the band. */
-export const StackedFoldClosed: Story = {
-  args: {
-    title: 'Application',
-    disclosure: {
-      isOpen: false,
-      onToggle: () => {},
-      label: 'Show application settings',
-    },
-    children: body,
-  },
-};
-
-/** Phone, unfolded: the panels stand under the band, and the chevron points down. */
-export const StackedFoldOpen: Story = {
-  args: {
-    title: 'Application',
-    disclosure: {
-      isOpen: true,
-      onToggle: () => {},
-      label: 'Hide application settings',
-    },
-    children: body,
-  },
-};
-
-/** Desktop: both columns stand open, so the band carries no chevron at all. */
-export const StandingOpen: Story = {
-  args: {
-    title: 'Application',
-    disclosure: {
-      isOpen: true,
-      onToggle: () => {},
-      label: 'Hide application settings',
-    },
-    children: body,
-  },
-  parameters: { viewport: { defaultViewport: 'desktop' } },
-};
-
-/** The last settings panel ends without a rule above the phone's safe area. */
+export const Default: Story = { args: { title: 'This device', children: body } };
 export const DiagnosticsFooter: Story = {
   args: {
-    title: 'Application',
+    title: 'This device',
     children: (
       <>
         {body}
@@ -132,7 +78,9 @@ export const HeaderOnlyPanels: Story = {
     ),
   },
   play: async ({ canvas }) => {
-    await expect(canvas.getByRole('switch', { name: 'Notifications from visgw: off' })).toBeVisible();
+    await expect(
+      canvas.getByRole('switch', { name: 'Notifications from visgw: off' }),
+    ).toBeVisible();
   },
 };
 
@@ -143,7 +91,7 @@ export const HeaderRhythm: Story = {
     const [notify, setNotify] = useState(false);
     const [diagnostics, setDiagnostics] = useState(false);
     return (
-      <SettingsColumn
+      <SettingsPanel
         {...args}
         action={
           <IconButton variant="quiet" align="trailing" label="Add a machine">
@@ -212,7 +160,7 @@ export const HeaderRhythm: Story = {
           isOpen={diagnostics}
           onToggle={() => setDiagnostics((current) => !current)}
         />
-      </SettingsColumn>
+      </SettingsPanel>
     );
   },
   play: async ({ canvas }) => {

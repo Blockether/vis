@@ -32,10 +32,10 @@
       (expect (< 0 touch-ms keepalive-ms ttl-ms))
       (expect (< 0 keepalive-timeout-ms keepalive-ms)))
     (expect (= 137 (count contract/route-table)))
-    (expect (= 171 (count (contract/route-methods))))
-    (expect (= {:none 113 :json 53 :binary 5}
+    (expect (= 172 (count (contract/route-methods))))
+    (expect (= {:none 113 :json 54 :binary 5}
                (frequencies (map :request (mapcat (comp vals :operations) contract/route-table)))))
-    (expect (= {:json 153 :resource 2 :sse 5 :empty 3 :binary 5 :negotiated 1 :html 1 :markdown 1}
+    (expect (= {:json 154 :resource 2 :sse 5 :empty 3 :binary 5 :negotiated 1 :html 1 :markdown 1}
                (frequencies (map :response (mapcat (comp vals :operations) contract/route-table)))))
     (expect (= 35 (count contract/event-types)))
     (expect (= {:transcribe "voice.job" :synthesize "speech.job"} contract/job-events))
@@ -50,6 +50,9 @@
             devices
             (first (filter #(= "/v1/devices" (get % "path")) (get gateway "x-vis-routes")))
 
+            settings
+            (first (filter #(= "/v1/settings" (get % "path")) (get gateway "x-vis-routes")))
+
             events
             (mapv #(get % "const") (get-in gateway ["$defs" "session_event_type" "oneOf"]))]
 
@@ -57,6 +60,11 @@
         (expect (= "#/$defs/session" (get gateway "$ref")))
         (expect (= {"request" "none" "response" "json"} (get-in devices ["operations" "get"])))
         (expect (= {"request" "json" "response" "json"} (get-in devices ["operations" "post"])))
+        (expect (= {"request" "json"
+                    "response" "json"
+                    "request_schema" "settings_batch"
+                    "response_schema" "settings"}
+                   (get-in settings ["operations" "patch"])))
         (expect (= (sort events) events))
         (expect (= "subscription.ready"
                    (get-in gateway ["$defs" "subscription_ready" "properties" "type" "const"])))

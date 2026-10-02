@@ -255,13 +255,75 @@
                          :name name))
     nil))
 
+(defn inherited-layers
+  "Resolve ancestors without this target's writable overlay; authored YAML remains."
+  [db {:keys [scope root] :as target}]
+  (case scope
+    "global"
+    [{:scope "global" :values (raw-toggles (config/load-global-yaml-config-raw))}]
+
+    "project"
+    (conj (vec (filter #(= "global" (:scope %)) (layers db target)))
+          {:scope "project"
+           :values (when root
+                     (binding [workspace/*workspace-root* root]
+                       (raw-toggles (config/load-project-root-config-raw))))})
+
+    (vec (remove #(= scope (:scope %)) (layers db target)))))
+
+(defn inherited-definitions
+  "Named ancestor values after removing only the selected writable overlay."
+  [db {:keys [scope root] :as target} section]
+  (let [ancestors (case scope
+                    "global"
+                    [{:scope "global"
+                      :values (get-in (config/load-global-yaml-config-raw) section)}]
+
+                    "project"
+                    [{:scope "global"
+                      :values (merge (get-in (config/load-global-yaml-config-raw) section)
+                                     (get-in (config/load-global-config-raw) section))}
+                     {:scope "project"
+                      :values (when root
+                                (binding [workspace/*workspace-root* root]
+                                  (get-in (config/load-project-root-config-raw) section)))}]
+
+                    (map (fn [{:keys [name value source]}]
+                           {:scope source :values {name value}})
+                         (definitions db
+                                      (if (= scope "session")
+                                        (assoc target
+                                          :scope (if (:group-id target) "group" "project")
+                                          :target-id (:group-id target))
+                                        (assoc target
+                                          :scope "project"
+                                          :group-id nil))
+                                      section)))]
+    (reduce (fn [result {:keys [scope values]}]
+              (reduce-kv #(assoc %1 %2 {:value %3 :source scope}) result (or values {})))
+            {}
+            ancestors)))
+
 (defn settings
-  "Effective rows with allowed scopes, provenance and explicit-override markers."
+  "Effective, own and inherited values, with provenance and eligible scopes."
   [db target]
-  (resolve-layers (toggles/registered-toggles)
-                  (layers db target)
-                  (:scope target)
-                  (own-values db target)))
+  (let [specs
+        (toggles/registered-toggles)
+
+        own
+        (own-values db target)
+
+        inherited
+        (into {}
+              (map (juxt :id identity))
+              (resolve-layers specs (inherited-layers db target) (:scope target) {}))]
+
+    (mapv (fn [{:keys [id] :as row}]
+            (assoc row
+              :own-value (get own id)
+              :inherited-value (get-in inherited [id :value])
+              :inherited-source (get-in inherited [id :source])))
+          (resolve-layers specs (layers db target) (:scope target) own))))
 
 (defn- specificity
   "Position in resolution order: later scopes win; `default` precedes them all."
@@ -464,3 +526,51 @@
       (store/db-set-scoped-setting! db scope (:target-id target) id v))
     (notify-listeners! (assoc target :id id))
     (first (filter #(= id (:id %)) (settings db target)))))
+
+(defn edit-settings!
+  "Edit one owner atomically. `edit` validates inside the storage lock/transaction.
+   It receives the current store and returns section/name/value edits; nil inherits."
+  [db {:keys [scope target-id root] :as target} edit]
+  (let [apply-raw
+        (fn [current-db raw]
+          (reduce (fn [result {:keys [section name value]}]
+                    (if (nil? value)
+                      (if (seq section) (update-in result section dissoc name) (dissoc result name))
+                      (assoc-in result (conj section name) value)))
+                  raw
+                  (edit current-db)))
+
+        changed
+        (case scope
+          "global"
+          (config/update-machine-config! #(apply-raw db %))
+
+          "project"
+          (do (when-not root (throw (ex-info "Project has no workspace root" {:status 409})))
+              (binding [workspace/*workspace-root* root]
+                (config/update-project-config! #(apply-raw db %))))
+
+          (store/db-edit-scoped-settings!
+            db
+            scope
+            target-id
+            (fn [tx raw]
+              (reduce (fn [result {:keys [section name value]}]
+                        (let [id (if (= section ["toggles"])
+                                   name
+                                   (str (definition-prefix section) name))]
+                          (if (nil? value) (dissoc result id) (assoc result id value))))
+                      raw
+                      (edit tx)))))]
+
+    (when (= scope "global")
+      (binding [toggles/*overrides*
+                nil
+
+                toggles/*persist-writes*
+                false]
+
+        (doseq [{:keys [id value]} (settings db target)]
+          (toggles/set-value! id value))))
+    (notify-listeners! target)
+    changed))

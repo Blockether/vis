@@ -665,32 +665,50 @@
 
 (defdescribe
   scoped-settings-routing-test
-  (it "keeps targets on reads, explicit false writes, inheritance and MCP mutations"
-      (let [asked
-            (atom [])
+  (it
+    "keeps targets on reads, explicit false writes, inheritance and MCP mutations"
+    (let [asked
+          (atom [])
 
-            target
-            {:scope "session" :target-id "a/b"}]
+          target
+          {:scope "session" :target-id "a/b"}]
 
-        (with-redefs-fn {#'client/send-json! (fn [& args]
-                                               (swap! asked conj (vec args))
-                                               {})}
-          (fn []
-            (client/settings :tui target)
-            (client/setting "plans" target)
-            (client/set-setting-value! "plans" false target)
-            (client/inherit-setting! "plans" target)
-            (client/mcp-servers target)
-            (client/mcp-save-server! "docs" {"command" "echo"} target)
-            (client/mcp-set-server-enabled! "docs" false target)
-            (client/mcp-delete-server! "docs" target)))
-        (expect
-          (= [["GET" "/v1/settings?channel=tui&scope=session&target_id=a%2Fb"]
-              ["GET" "/v1/settings/plans?scope=session&target_id=a%2Fb"]
-              ["POST" "/v1/settings" (merge target {:id "plans" :action "value" :value false})]
-              ["POST" "/v1/settings" (merge target {:id "plans" :action "inherit"})]
-              ["GET" "/v1/mcp/servers?scope=session&target_id=a%2Fb"]
-              ["POST" "/v1/mcp/servers" (merge target {:name "docs" :server {"command" "echo"}})]
-              ["POST" "/v1/mcp/servers/docs/actions/enable" (merge target {:enabled false})]
-              ["DELETE" "/v1/mcp/servers/docs?scope=session&target_id=a%2Fb"]]
-             @asked)))))
+      (with-redefs-fn {#'client/send-json! (fn [& args]
+                                             (swap! asked conj (vec args))
+                                             {})}
+        (fn []
+          (client/settings :tui target)
+          (client/setting "plans" target)
+          (client/set-setting-value! "plans" false target)
+          (client/inherit-setting! "plans" target)
+          (client/apply-settings! "revision-1"
+                                  [{"id" "plans" "action" "value" "value" false}]
+                                  target
+                                  :tui
+                                  "context-1")
+          (client/apply-settings! "revision-2" [{"id" "plans" "action" "inherit"}] nil :tui nil)
+          (client/mcp-servers target)
+          (client/mcp-save-server! "docs" {"command" "echo"} target)
+          (client/mcp-set-server-enabled! "docs" false target)
+          (client/mcp-delete-server! "docs" target)))
+      (expect
+        (= [["GET" "/v1/settings?channel=tui&scope=session&target_id=a%2Fb"]
+            ["GET" "/v1/settings/plans?scope=session&target_id=a%2Fb"]
+            ["POST" "/v1/settings" (merge target {:id "plans" :action "value" :value false})]
+            ["POST" "/v1/settings" (merge target {:id "plans" :action "inherit"})]
+            ["PATCH" "/v1/settings"
+             {:scope "session"
+              :target-id "a/b"
+              :revision "revision-1"
+              :changes [{"id" "plans" "action" "value" "value" false}]
+              :channel "tui"
+              :context-session-id "context-1"}]
+            ["PATCH" "/v1/settings"
+             {:scope "global"
+              :revision "revision-2"
+              :changes [{"id" "plans" "action" "inherit"}]
+              :channel "tui"}] ["GET" "/v1/mcp/servers?scope=session&target_id=a%2Fb"]
+            ["POST" "/v1/mcp/servers" (merge target {:name "docs" :server {"command" "echo"}})]
+            ["POST" "/v1/mcp/servers/docs/actions/enable" (merge target {:enabled false})]
+            ["DELETE" "/v1/mcp/servers/docs?scope=session&target_id=a%2Fb"]]
+           @asked)))))

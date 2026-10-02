@@ -3275,6 +3275,26 @@
                  :do-update-set [:value]})))
   value)
 
+(defn db-edit-scoped-settings!
+  "Apply `edit` to an owner's map inside one transaction; exceptions write nothing.
+   `edit` receives the transaction store and current explicit values."
+  [db-info scope target-id edit]
+  (sqlite-write-tx! db-info
+                    (fn [tx]
+                      (let [before
+                            (db-scoped-settings tx scope target-id)
+
+                            after
+                            (edit tx before)]
+
+                        (doseq [id
+                                (distinct (concat (keys before) (keys after)))
+
+                                :when (not= (find before id) (find after id))]
+
+                          (db-set-scoped-setting! tx scope target-id id (get after id)))
+                        after))))
+
 ;; The human's star (session_soul.favorite_rank)
 
 (defn db-set-session-favorite!

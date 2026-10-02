@@ -328,7 +328,24 @@ export interface Project {
   [k: string]: unknown;
 }
 
-export type ToggleType = 'boolean' | 'enum' | 'string';
+export type SettingValue = string | boolean | number | SettingValue[] | { [key: string]: SettingValue | null };
+export type ToggleType = 'boolean' | 'enum' | 'string' | 'number' | 'array' | 'object';
+export type SettingEditor =
+  | 'switch'
+  | 'select'
+  | 'text'
+  | 'multiline'
+  | 'number'
+  | 'paths'
+  | 'filesystem'
+  | 'network'
+  | 'list'
+  | 'json';
+export interface SettingChange {
+  id: string;
+  action: 'value' | 'inherit';
+  value?: SettingValue;
+}
 
 export type SettingsScope = 'global' | 'project' | 'group' | 'session';
 
@@ -342,7 +359,7 @@ export interface SettingsTarget {
 export interface SettingOverride {
   scope: SettingsScope;
   enabled?: boolean;
-  value?: string | boolean;
+  value?: SettingValue;
 }
 
 export interface Toggle {
@@ -352,7 +369,7 @@ export interface Toggle {
   description?: string;
   enabled?: boolean;
   is_experimental?: boolean;
-  value?: string;
+  value?: SettingValue;
   choices?: string[];
   max_length?: number;
   multiline?: boolean;
@@ -362,6 +379,12 @@ export interface Toggle {
   is_override?: boolean;
   /** Present only when the request named a session whose own scopes decide this row. */
   overridden_by?: SettingOverride;
+  editor?: SettingEditor;
+  schema?: string;
+  own_value?: SettingValue | null;
+  inherited_value?: SettingValue;
+  inherited_source?: SettingsScope | 'default';
+  applies?: 'immediate' | 'next_call' | 'next_turn' | 'reload' | 'restart';
 }
 
 export interface ToggleGroup {
@@ -375,6 +398,8 @@ export interface SettingsResponse {
   scope?: SettingsScope;
   target_id?: string;
   label?: string;
+  revision: string;
+  lineage?: SettingsTarget[];
 }
 
 /** Sanitized MCP inventory served by one gateway. Secret values never travel here. */

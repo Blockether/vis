@@ -1,4 +1,4 @@
-import { useSyncExternalStore, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 import { SettingsHeader, Text } from '../../components/ui';
 
@@ -26,108 +26,12 @@ export function FormLabel({
   );
 }
 
-/** WHERE THE DIALOG'S TWO COLUMNS STAND SIDE BY SIDE: the same `sm:` the settings
- *  grid stacks at, so the fold and the layout it serves can never disagree. */
-const WIDE_COLUMNS = '(min-width: 640px)';
-
-const subscribeWideColumns = (onStoreChange: () => void) => {
-  const media = window.matchMedia?.(WIDE_COLUMNS);
-  media?.addEventListener('change', onStoreChange);
-  return () => media?.removeEventListener('change', onStoreChange);
-};
-
-/** True once there is room for both of the dialog's columns beside each other. */
-const useWideColumns = () =>
-  useSyncExternalStore(
-    subscribeWideColumns,
-    () => window.matchMedia?.(WIDE_COLUMNS).matches ?? false,
-  );
-
 type HeaderDisclosure = {
   isOpen: boolean;
   onToggle: () => void;
   /** What the fold is called to a screen reader. */
   label: string;
 };
-
-/** Settings owned by this companion installation, never by a gateway. */
-/**
- * ONE COLUMN OF SETTINGS, and the dialog has two of them.
- *
- * A column is the level ABOVE a `SettingsPanel`: it says whose settings these are —
- * this copy of Vis, or the machine — and every band under it belongs to that owner.
- * It is the sentence the two dialogs used to spend a whole header band saying.
- *
- * A BAND NAMES ITS GROUP AND NEVER EXPLAINS IT. Both levels took a `description`
- * under the title, and every one of them said what the rows under it already say
- * — "every palette Vis ships" over the list of palettes, "how many sessions a
- * project lists" over 5/10/15 — so a group of 48px rows opened with two lines of
- * grey prose nobody reads twice. Reported over this screen as pointless; the prop
- * went with the last three call sites that used it.
- */
-
-export function SettingsColumn({
-  title,
-  meta,
-  action,
-  disclosure,
-  children,
-}: {
-  title: string;
-  meta?: ReactNode;
-  /** One icon action; the header owns its alignment and trailing space. */
-  action?: ReactNode;
-  /**
-   * The fold to expose while the two columns stack on a phone, or nothing where
-   * they stand beside each other. `ProjectCrumb`'s shape: the caller owns the
-   * state, the band carries the chevron.
-   */
-  disclosure?: HeaderDisclosure;
-  children: ReactNode;
-}) {
-  // The fold lives ONLY where the columns stack — below the same `sm:` that makes
-  // the dialog one column wide. Beside each other there is nothing to fold, and a
-  // chevron on a band that hides nothing is one more lie on the screen.
-  const isWide = useWideColumns();
-  const fold = disclosure && !isWide ? disclosure : null;
-  const body = (
-    // Separate panels inside the column; the settings grid separates columns.
-    // No trailing rule above the dialog's bottom safe area.
-    <div className="min-w-0 divide-y divide-dialog-edge sm:min-h-0 sm:flex-1 sm:overflow-y-auto sm:overscroll-contain">
-      {children}
-    </div>
-  );
-  const TitleContainer = fold ? 'span' : 'div';
-  const TitleHeading = fold ? 'span' : 'h3';
-  const titleBlock = (
-    <TitleContainer className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
-      <Text
-        as={TitleHeading}
-        variant="heading"
-        role="heading"
-        aria-level={3}
-        className="min-w-0 flex-auto truncate"
-      >
-        {title}
-      </Text>
-      {meta && (
-        <span className="ms-auto min-w-0 max-w-full break-words text-right">
-          <Text variant="meta">{meta}</Text>
-        </span>
-      )}
-    </TitleContainer>
-  );
-  return (
-    <section className="flex min-w-0 flex-col sm:min-h-0">
-      <header className="min-w-0 shrink-0 border-b border-dialog-edge bg-level-machine">
-        <SettingsHeader action={action} disclosure={fold}>
-          {titleBlock}
-        </SettingsHeader>
-      </header>
-      {!fold || fold.isOpen ? body : null}
-    </section>
-  );
-}
 
 export function SettingsPanel({
   title,
@@ -138,7 +42,7 @@ export function SettingsPanel({
   children,
 }: {
   title: string;
-  /** Heading level beneath the surrounding dialog or settings column. */
+  /** Heading level beneath the surrounding dialog. */
   headingLevel?: 3 | 4;
   meta?: ReactNode;
   /** One icon action or switch; the header owns its alignment and trailing space. */

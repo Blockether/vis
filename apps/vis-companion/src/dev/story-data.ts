@@ -2468,8 +2468,13 @@ export function storySettingsFetch(populated = false): typeof fetch {
           : 'Review a versioned plan before implementation.',
     type: 'boolean',
     enabled: false,
+    is_override: false,
+    own_value: false,
+    source: 'global',
+    scopes: ['global', 'project', 'group', 'session'],
     is_experimental: true,
   }));
+  let settingsVersion = 0;
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const url = new URL(href);
@@ -2478,13 +2483,42 @@ export function storySettingsFetch(populated = false): typeof fetch {
     }
     let body: unknown = {};
     if (url.pathname === '/v1/router') body = { providers: populated ? STORY_PROVIDERS : [] };
-    if (url.pathname === '/v1/settings' && init?.method === 'POST') {
-      const request = JSON.parse(String(init.body));
-      const feature = features.find((item) => item.id === request.id);
-      if (feature) feature.enabled = !feature.enabled;
-      body = feature;
-    } else if (url.pathname === '/v1/settings') {
-      body = { groups: [{ id: 'experimental', title: 'Experimental', toggles: features }] };
+    if (url.pathname === '/v1/settings') {
+      if (init?.method === 'PATCH') {
+        const request = JSON.parse(String(init.body));
+        for (const change of request.changes) {
+          const feature = features.find((item) => item.id === change.id);
+          if (feature) {
+            feature.enabled = change.action === 'value' ? change.value : false;
+            feature.own_value = feature.enabled;
+            feature.is_override = change.action === 'value';
+          }
+        }
+        settingsVersion += 1;
+      }
+      body = {
+        revision: `story-${settingsVersion}`,
+        scope: 'global',
+        groups: [
+          {
+            id: 'agent',
+            title: 'Agent',
+            toggles: [
+              {
+                id: 'agent_name',
+                label: 'Agent name',
+                type: 'string',
+                value: 'Vis',
+                editor: 'text',
+                scopes: ['global', 'project', 'group', 'session'],
+                source: 'default',
+                is_override: false,
+              },
+            ],
+          },
+          { id: 'experimental', title: 'Experimental', toggles: features },
+        ],
+      };
     }
     if (url.pathname === '/v1/mcp/servers') body = { servers };
     const enable = url.pathname.match(/^\/v1\/mcp\/servers\/([^/]+)\/actions\/enable$/);

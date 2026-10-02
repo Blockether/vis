@@ -302,8 +302,7 @@ describe('the app bar', () => {
     expect(list).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Open preferences' }));
-    // The way in is the band's own + now, so the dialog is what to wait for.
-    await screen.findByRole('button', { name: 'Add a machine' });
+    await screen.findByRole('dialog', { name: 'Settings' });
 
     // The very same node, still carrying the fleet — never rebuilt, never hidden.
     expect(main.contains(list)).toBe(true);
@@ -323,19 +322,10 @@ describe('the app bar', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Open preferences' }));
     const dialog = await screen.findByRole('dialog', { name: 'Settings' });
 
-    // The fleet LEADS the dialog: it is what the cog is opened for.
-    const headings = within(dialog)
-      .getAllByRole('heading')
-      .map((heading) => heading.textContent ?? '');
-    expect(headings).toContain('Machines');
-    expect(headings.indexOf('Machines')).toBeLessThan(headings.indexOf('Application'));
-
-    // A machine is ONE ROW — its name, its marks and its verdict on a single line —
-    // not a bare tab, and EVERY row keeps the machine's own verbs under its own
-    // trailing edge.
-    // A sole online machine is already open; its identity is not a disclosure button.
-    const machineName = within(dialog).getByText('laptop', { exact: true });
-    expect(machineName.closest('button')).toBeNull();
+    // Fleet management remains inside the shared Settings dialog.
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Manage machines' }));
+    expect(within(dialog).getByRole('heading', { name: 'Machines' })).toBeVisible();
+    expect(within(dialog).getAllByText('laptop', { exact: true }).some((name) => name.closest('section'))).toBe(true);
     expect(
       within(within(dialog).getByRole('group', { name: 'laptop actions' })).getByRole('button', {
         name: 'Forget',
@@ -366,6 +356,7 @@ describe('the app bar', () => {
     // One box: this application's appearance AND the machines it talks to — a
     // machine's own verbs wait under its own row, and Escape closes what THEY
     // opened before it closes the dialog under it.
+    await userEvent.click(screen.getByRole('button', { name: 'Manage machines' }));
     await userEvent.click(
       within(screen.getByRole('group', { name: 'laptop actions' })).getByRole('button', {
         name: 'Forget',

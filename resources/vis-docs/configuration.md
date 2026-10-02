@@ -14,6 +14,8 @@ when you want settings shared across projects or checked into a repository.
 - **One session or group needs different behavior.** Open its
   [scoped settings](#project-group-and-session-settings) instead of changing the
   gateway defaults.
+- **You want to review, apply or share several setting changes.** Read
+  [Settings](settings.md) instead.
 - **A provider hits rate limits or fails, or a task should stay within a budget.**
   Set a [fallback model](#default-and-fallback), and set retries and token and cost
   limits under [Router](#router).
@@ -583,12 +585,12 @@ Run `/reload` after editing.
 
 ## Project, group and session settings
 
-In the app, choose **Session** with the cog icon from a session's **…** menu.
-Choose **Project** or **Group** with the cog icon from the corresponding menus.
-In the TUI, use **Session settings**, **Group settings** or **Project settings**
-from the command palette. The settings rows show the effective value and where
-it comes from.
-**Use inherited value** removes only the override at the scope you opened.
+In the app, select **Settings** with the cog icon in a session's **…** menu. For a project or a
+group, select **Settings** in its actions. In the TUI, use **Session settings**, **Group
+settings** or **Project settings** from the command palette. The settings rows show the
+effective value and where it comes from. Your changes stay in a draft until you apply them, as
+[Settings](settings.md) describes. **Use inherited value** removes only the override at the
+scope you opened.
 
 Vis resolves each setting in this order: **global → project → group → session**. A scope with no
 value is skipped. `false` is an explicit value, not inheritance. For example, disable plans in a
@@ -596,14 +598,15 @@ group and enable them in one session. To make that session follow the group agai
 inherited value** in it. A change to the group does not overwrite an explicit choice in another
 session.
 
-A more specific value wins. So Settings locks a row when a more specific scope decides it for the
-open session. The row names the scope that decides it.
+A more specific value wins. When a more specific scope decides a row for the open session,
+Settings shows a warning on that row. The warning names the scope that decides it. You can still
+edit the row. The new value applies where no more specific value exists.
 
 In this example, your project's `vis.yml` sets `toggles.shell: false`. While a session from that
-project is open, the global **Shell commands** row is locked in TUI **Settings** and in the app.
-Turning it on globally would not change that session. Open **Project settings** and turn it on
-there. Vis writes the change to `.vis/config.yml`, which overrides `vis.yml` without editing it.
-From a session outside that project, you can still edit the global row.
+project is open, the global **Shell commands** row shows a warning in TUI **Settings** and in the
+app. Turning it on globally does not change that session. Open **Project settings** and turn it
+on there. Vis writes the change to `.vis/config.yml`, which overrides `vis.yml` without editing it.
+The global value still applies to sessions outside that project.
 
 Global means this gateway, which all its connected clients share. Project settings use the canonical
 project root, not the working-copy path of a draft. Edits go to the project's `.vis/config.yml`, and
@@ -615,7 +618,8 @@ overrides of the source session. Sessions without a group skip the group layer.
 
 Response options, including reasoning, verbosity and fast mode, are captured
 when you submit a message. Later edits do not change running or queued responses.
-Paths and access rows accept JSON configuration and apply on the next turn.
+Paths and access rows have guided editors and an **Advanced JSON** editor, and they apply on
+the next turn.
 Local permissions cannot expand the host's global access policy. Draft settings
 govern future operations. Changing them does not move or delete an existing draft.
 
@@ -662,13 +666,37 @@ and lifecycle commands remain global-only.
 `GET /v1/settings` and `GET /v1/settings/:id` take `scope` and `target_id` query
 parameters. Omitted scope means global, never the currently viewed session.
 Non-global requests require a target. Rows include `scopes`, `scope`, `source`
-and `is_override`. Boolean rows use `enabled`, other rows use `value`.
+and `is_override`. Boolean rows use `enabled`, other rows use `value`. The catalog
+also includes `revision`, a hash of the saved values of its target.
 
 Add `context_session_id` to either `GET` to mark the rows that a more specific scope
 decides for that session. Such a row includes `overridden_by` with the deciding
 `scope` and its `enabled` or `value`. An unknown session, or one outside the
-requested target, marks no rows. Writes are not refused: the global value still
-applies to other projects, so clients lock the row only for the open session.
+requested target, marks no rows. Writes are not refused, because the global value
+still applies to other projects. Clients show a warning on the row, not a lock.
+
+`PATCH /v1/settings` applies one batch of changes to one target. The body has `scope`,
+`target_id` for a non-global scope, the `revision` that you read and `changes`. Each change
+has a unique `id` and an `action`, either `value` or `inherit`. A `value` change also
+requires `value`. A batch holds 1 to 256 changes. Optional `channel` and
+`context_session_id` work as in `GET`.
+
+```json
+{
+  "scope": "session",
+  "target_id": "<session-id>",
+  "revision": "<revision from GET>",
+  "changes": [
+    {"id": "refusal_fallback", "action": "value", "value": false},
+    {"id": "provider_fallback", "action": "inherit"}
+  ]
+}
+```
+
+The gateway applies the whole batch or none of it. A stale `revision` returns 409. An
+invalid batch or value returns 400 with the setting `id`. Access errors also list
+`field_errors`. An unknown target or context session returns 404. A successful response is
+the full catalog with its new `revision`.
 
 `POST /v1/settings` accepts the same target with `id` and `action`: `value`,
 `toggle`, `cycle` or `inherit`. A `value` action also requires `value`, including

@@ -113,6 +113,8 @@
   ;; Sparse entity-owned setting overrides. nil removes one override, false is a value.
   (db-scoped-settings [db-info scope target-id])
   (db-set-scoped-setting! [db-info scope target-id setting-id value])
+  ;; Validate and edit a complete owner inside one immediate write transaction.
+  (db-edit-scoped-settings! [db-info scope target-id edit])
   ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
   (db-get-project [db-info project-id])
   (db-list-projects [db-info opts])

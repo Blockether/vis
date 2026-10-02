@@ -1,32 +1,33 @@
 import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, within } from 'storybook/test';
-import { EnumSetting } from './MachineSettings';
+import { SettingField } from './SettingField';
 
 const meta = {
   title: 'Settings/Draft backend',
-  component: EnumSetting,
+  component: SettingField,
   parameters: { layout: 'padded' },
   args: {
-    toggle: {
+    setting: {
       id: 'draft_backend',
       label: 'Draft backend',
       type: 'enum',
       choices: ['auto', 'worktree', 'rift', 'off'],
-      value: 'off',
     },
-    onPick: () => {},
+    value: 'off',
+    disabled: false,
+    onChange: () => {},
+    onRawChange: () => {},
   },
   render: function BackendSetting(args) {
-    const [value, setValue] = useState(args.toggle.value);
-    return <EnumSetting {...args} toggle={{ ...args.toggle, value }} onPick={setValue} />;
+    const [value, setValue] = useState(args.value);
+    return <SettingField {...args} value={value} onChange={setValue} />;
   },
-} satisfies Meta<typeof EnumSetting>;
+} satisfies Meta<typeof SettingField>;
 export default meta;
 type Story = StoryObj<typeof meta>;
-
 export const Default: Story = {};
-export const Saving: Story = { args: { busy: true } };
+export const Saving: Story = { args: { disabled: true } };
 export const ChooseBackend: Story = {
   play: async ({ canvasElement }) => {
     const select = within(canvasElement).getByRole('combobox', { name: 'Draft backend' });
