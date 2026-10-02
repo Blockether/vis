@@ -654,24 +654,17 @@ export const ListRow = forwardRef<
  * `MenuItem`'s danger row and the swipe strip's `Delete` wear, so the ink that
  * means "this does not come back" is the same ink wherever it is asked.
  *
- * IT WEARS ITS OWN FRAME, AND THE COST IS ASKED INSIDE IT. The block REPLACES
- * the row it is asking about, so that row is off the screen and every edge
- * around the question was the list's own neutral divider — the same 1px rule
- * two calm rows share. Reported over a machine's providers: `Signs out of
- * OpenAI Codex…` hung under the OpenCode Go row and read as THAT row's meta
- * line, and the refusal, standing on the panel's own paper with no edge of any
- * kind, did not read as a control at all. So a non-sizing overlay boxes the
- * group in `err-edge` — a layout border made the confirmation taller than the
- * row it replaces — and the cost sentence is a PROP inside that box.
+ * THE QUESTION OWNS ITS HORIZONTAL EDGES, AND THE COST STAYS INSIDE. The block
+ * replaces a list row. The panel already owns the side edges, so painting them
+ * again makes a second frame. A non-sizing overlay replaces the neutral list
+ * dividers with `err-edge`, without making the question taller. A cost sentence
+ * stays inside the question rather than reading as the next row's metadata.
  *
- * IT STANDS WHAT THE ROW STOOD. The two answers own a 48px floor, and a floor is
- * not a row's height: a session row that stacks its metadata under the title
- * measures 52px on a phone, so the question replacing it left the list four
- * pixels shorter and everything below it jumped the moment it was asked. The row
- * hands over what it MEASURED as it asked — `rowHeight` — and the block takes
- * that as its own minimum, the answers splitting whatever height it leaves. A
- * cost sentence can still make the block taller, because that sentence has to
- * stand somewhere; nothing makes it shorter than the row it replaced.
+ * IT STANDS WHAT THE ROW STOOD. The row hands over its measured `rowHeight`,
+ * including its divider. The block takes that as its own minimum, and the
+ * answers fill it without an independent floor changing that height. Without
+ * a measurement, the answers keep their default floor. A cost sentence can
+ * still make the block taller, and its answers keep that floor as well.
  *
  * The question is also the group's own LABEL, for a reader who cannot see the
  * box it is asked in.
@@ -688,7 +681,7 @@ export function ConfirmRow({
 }: {
   /** What is being asked, for a reader who cannot see the row: `Delete alpha?`. */
   question: string;
-  /** What committing COSTS, in one sentence, standing inside the same frame. */
+  /** What committing COSTS, in one sentence, standing inside the same question. */
   cost?: ReactNode;
   /** The refusal, when keeping is not called "No, keep". */
   keepLabel?: string;
@@ -701,13 +694,12 @@ export function ConfirmRow({
   onConfirm: () => void;
 }) {
   return (
-    // The overlay REPLACES the list rule above it without contributing pixels
-    // of its own. A layout border made this confirmation taller than the calm
-    // row it replaces even though both answer buttons already owed 48px.
+    // The overlay replaces the horizontal list rules without contributing
+    // pixels of its own. The panel already supplies the side edges.
     <div
       role="group"
       aria-label={question}
-      className="relative flex flex-col after:pointer-events-none after:absolute after:-top-px after:inset-x-0 after:bottom-0 after:border after:border-err-edge"
+      className="relative flex flex-col after:pointer-events-none after:absolute after:-top-px after:inset-x-0 after:bottom-0 after:border-y after:border-err-edge"
       style={rowHeight === undefined ? undefined : { minHeight: rowHeight }}
     >
       {cost !== undefined && (
@@ -718,7 +710,11 @@ export function ConfirmRow({
           {cost}
         </p>
       )}
-      <div className="flex min-h-12 flex-1 items-stretch mouse:min-h-8">
+      <div
+        className={`flex flex-1 items-stretch ${
+          rowHeight === undefined || cost !== undefined ? 'min-h-12 mouse:min-h-8' : ''
+        }`}
+      >
         <button
           type="button"
           autoFocus

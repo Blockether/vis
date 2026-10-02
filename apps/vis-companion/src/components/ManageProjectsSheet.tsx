@@ -135,6 +135,7 @@ export interface ProjectRemovalProgress {
 
 interface ProjectRemoval {
   project: ManagedProject;
+  rowHeight?: number;
   busy: boolean;
   error: string | null;
   progress: ProjectRemovalProgress | null;
@@ -292,8 +293,8 @@ export function ManageProjectsSheet({
     }
   }, [alreadyProject, client, folder, here, onChoose, target]);
 
-  const askRemove = useCallback((project: ManagedProject) => {
-    setRemoving({ project, busy: false, error: null, progress: null });
+  const askRemove = useCallback((project: ManagedProject, rowHeight?: number) => {
+    setRemoving({ project, rowHeight, busy: false, error: null, progress: null });
   }, []);
 
   const keepProject = useCallback(() => setRemoving(null), []);
@@ -466,6 +467,7 @@ export function ManageProjectsSheet({
                         : 'Yes, delete'
                     }
                     isBusy={removing.busy}
+                    rowHeight={removing.rowHeight}
                     onKeep={keepProject}
                     onConfirm={() => void commitRemove(entry)}
                   />
@@ -482,7 +484,9 @@ export function ManageProjectsSheet({
                       <IconButton
                         variant="remove"
                         label={`Remove every transcript in ${entry.name}`}
-                        onClick={() => askRemove(entry)}
+                        onClick={(event) =>
+                          askRemove(entry, event.currentTarget.parentElement?.getBoundingClientRect().height)
+                        }
                         className="after:-left-[9px] after:-right-[3px] sm:after:-left-1.5 sm:after:-right-1.5"
                       >
                         <TrashIcon className="size-4" />

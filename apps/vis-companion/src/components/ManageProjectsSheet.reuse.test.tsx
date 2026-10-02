@@ -491,10 +491,9 @@ describe('the projects mark opens the inventory', () => {
     expect(await screen.findByText('New project')).toBeInTheDocument();
   });
 
-  // Regression, user report: project deletion expanded the selected row with a cost
-  // paragraph above the answers. It should replace that row with the same single-height
-  // yes/no strip used by session deletion.
-  it('asks to delete in one row-height strip, from an independent trash button', async () => {
+  // Regression, user report: deletion changed the row and sheet height on both pointer faces.
+  // Measure the whole row, including its divider, rather than the independent trash button.
+  it.each([37, 45, 63])('keeps the measured %ipx project row when asking to delete', async (rowHeight) => {
     const { client, onRemove, panel } = sheet();
 
     const row = await screen.findByRole('button', { name: /^vis/ });
@@ -508,12 +507,13 @@ describe('the projects mark opens the inventory', () => {
     });
     expect(row.contains(trash)).toBe(false);
     expect(trash.parentElement).toBe(row.parentElement);
+    vi.spyOn(row.parentElement!, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 384, rowHeight));
 
     await userEvent.click(trash);
 
     const question = screen.getByRole('group', { name: 'Delete vis?' });
     expect(question.querySelector('p')).toBeNull();
-    expect(question.querySelector('div.flex')).toHaveClass('min-h-12', 'mouse:min-h-8');
+    expect(question).toHaveStyle({ minHeight: `${rowHeight}px` });
     expect(screen.queryByRole('button', { name: /^vis/ })).toBeNull();
     expect(screen.getByRole('button', { name: /^demo/ })).toBeInTheDocument();
     // The anchored projects sheet is still the only dialog on screen.

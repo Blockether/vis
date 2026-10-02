@@ -440,6 +440,7 @@ describe('ConfirmRow', () => {
     const [keep, commit] = screen.getAllByRole('button');
     expect(keep).toHaveTextContent(/keep/i);
     expect(commit).toHaveTextContent('Yes, delete');
+    expect(keep.parentElement).toHaveClass('min-h-12', 'mouse:min-h-8');
   });
 
   it('spells the cost of the destructive answer inside the question', () => {
@@ -448,31 +449,36 @@ describe('ConfirmRow', () => {
         question="Remove Codex?"
         cost="Signs out on the gateway machine."
         confirmLabel="Yes, remove"
+        rowHeight={45}
         onKeep={() => {}}
         onConfirm={() => {}}
       />,
     );
 
     expect(screen.getByText('Signs out on the gateway machine.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'No, keep' }).parentElement).toHaveClass(
+      'min-h-12',
+      'mouse:min-h-8',
+    );
   });
 
-  // Regression, user report: the answers' own 48px floor is not the height of the row
-  // they replace, so a 52px session row left the list four pixels shorter the moment
-  // its question appeared. The row hands over what it stood.
-  it('stands what the row it replaces stood', () => {
+  // Regression, user report: the answer floor must not override a measured row,
+  // whether that row is shorter or taller than the standalone confirmation.
+  it.each([37, 45, 52])('stands what the %ipx row it replaces stood', (rowHeight) => {
     render(
       <ConfirmRow
         question="Delete alpha?"
         confirmLabel="Yes, delete"
-        rowHeight={52}
+        rowHeight={rowHeight}
         onKeep={() => {}}
         onConfirm={() => {}}
       />,
     );
 
     expect(screen.getByRole('group', { name: 'Delete alpha?' })).toHaveStyle({
-      minHeight: '52px',
+      minHeight: `${rowHeight}px`,
     });
+    expect(screen.getByRole('button', { name: 'No, keep' }).parentElement!.className).not.toMatch(/min-h-/);
   });
 });
 

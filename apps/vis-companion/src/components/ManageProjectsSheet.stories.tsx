@@ -46,21 +46,37 @@ export const DesktopInventory: Story = {
   args: { ...Inventory.args, at: { top: 46, left: 34 } },
 };
 
-/** Project removal stays in the selected row and never grows into a second line. */
+/** Deletion keeps the measured row, the next project and the sheet in place on both pointer faces. */
 export const DeleteConfirmation: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
-    await userEvent.click(
-      page.getByRole('button', {
-        name: `Remove every transcript in ${STORY_PROJECTS[0].name}`,
-      }),
-    );
+    const trash = page.getByRole('button', {
+      name: `Remove every transcript in ${STORY_PROJECTS[0].name}`,
+    });
+    const rowHeight = trash.parentElement!.getBoundingClientRect().height;
+    const panel = page.getByRole('dialog', { name: 'Manage projects on tower' });
+    const panelHeight = panel.getBoundingClientRect().height;
+    const nextProject = page.getByRole('button', { name: /^demo/i });
+    const nextOffset = nextProject.getBoundingClientRect().top - panel.getBoundingClientRect().top;
+    await userEvent.click(trash);
     const question = page.getByRole('group', {
       name: `Delete ${STORY_PROJECTS[0].name}?`,
     });
     await expect(question.querySelector('p')).toBeNull();
     await expect(page.getByRole('button', { name: 'No, keep' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Yes, delete' })).toBeVisible();
+    await expect(question).toHaveStyle({ minHeight: `${rowHeight}px` });
+    // jsdom has no layout; the same story checks geometry and painted edges in the browser.
+    if (rowHeight > 0) {
+      await expect(question.getBoundingClientRect().height).toBe(rowHeight);
+      await expect(panel.getBoundingClientRect().height).toBe(panelHeight);
+      await expect(
+        nextProject.getBoundingClientRect().top - panel.getBoundingClientRect().top,
+      ).toBeCloseTo(nextOffset, 3);
+      const edges = getComputedStyle(question, '::after');
+      await expect(parseFloat(edges.borderLeftWidth)).toBe(0);
+      await expect(parseFloat(edges.borderRightWidth)).toBe(0);
+    }
   },
 };
 
