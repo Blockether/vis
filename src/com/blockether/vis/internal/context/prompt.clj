@@ -306,7 +306,7 @@
     "- For an operational failure, use the known recovery.\n"
     "- For a missing fact, use the first row that matches. Then decide again.\n"
     "  Missing | Action\n" "  --- | ---\n"
-    "  Nothing | Call directly.\n"
+    "  Nothing | Call directly. Skip discovery.\n"
     "  Prior-turn context | Continue from the visible conversation and its fold gists, also for a follow-up "
     "(\"now…\", \"taking into account…\"). Read session history only for a named question that the conversation leaves "
     "open.\n"

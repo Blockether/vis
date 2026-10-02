@@ -533,7 +533,8 @@
       (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
         (doseq [rule ["Facts in the system prompt and the visible conversation stay known"
                       "Use `apropos()`, `doc()` and `inspect.signature()` only for new facts"
-                      "across turns, `/reload` and repeated calls" "Nothing | Call directly."]]
+                      "across turns, `/reload` and repeated calls"
+                      "Nothing | Call directly. Skip discovery."]]
           (expect (str/includes? text rule) rule))))
   (it "requires a missing fact or evidence of a changed contract before rediscovery"
       (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
