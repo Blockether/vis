@@ -210,6 +210,68 @@
   [db]
   (or (:active-tab-id db) (:id (some #(when (:active? %) %) (:tabs db))) (:id (first (:tabs db)))))
 
+(defn- composer-draft
+  [tab]
+  (when (or (not (str/blank? (input/input->text (:input tab)))) (seq (:attachments tab)))
+    (select-keys tab [:input :pastes :paste-counter :attachments :image-counter])))
+
+(defn- forget-session-draft
+  [db sid]
+  (if (contains? (:session-drafts db) sid) (update db :session-drafts dissoc sid) db))
+
+(defn- remember-session-draft
+  [db tab & [session-id]]
+  (if-let [sid (not-empty (some-> (or (get-in tab [:session :id]) session-id)
+                                  str))]
+    (if-let [draft (composer-draft tab)]
+      (assoc-in db [:session-drafts sid] draft)
+      (forget-session-draft db sid))
+    db))
+
+(defn- restore-session-draft
+  [db]
+  ;; Never overwrite words typed while a pending view was hydrating.
+  (if (composer-draft db)
+    db
+    (merge db
+           (get-in db
+                   [:session-drafts
+                    (some-> db
+                            :session
+                            :id
+                            str)]))))
+
+(defn session-draft-ids
+  "Session ids holding unsent composer work, including sessions without an open tab."
+  [db]
+  (let [active-id
+        (current-tab-id db)
+
+        active-sid
+        (or (get-in db [:session :id])
+            (:session-id (some #(when (= active-id (:id %)) %) (:tabs db))))
+
+        views
+        (cons [active-sid db]
+              (keep (fn [entry]
+                      (when (not= active-id (:id entry))
+                        (let [view (get-in db [:tab-locals (:id entry)])]
+                          [(or (get-in view [:session :id]) (:session-id entry)) view])))
+                    (:tabs db)))
+
+        sid
+        (fn [[id _]]
+          (not-empty (some-> id
+                             str)))
+
+        open-ids
+        (keep sid views)
+
+        dirty-ids
+        (keep #(when (composer-draft (second %)) (sid %)) views)]
+
+    (into (reduce disj (set (keys (:session-drafts db))) open-ids) dirty-ids)))
+
 (defn- active-tab-entry
   [db]
   (let [active-id (current-tab-id db)]
@@ -228,7 +290,9 @@
 (defn- sync-active-tab
   [db]
   (if-let [id (current-tab-id db)]
-    (assoc-in db [:tab-locals id] (tab-snapshot db))
+    (-> db
+        (assoc-in [:tab-locals id] (tab-snapshot db))
+        (remember-session-draft db (:session-id (active-tab-entry db))))
     db))
 
 (defn tab-session-snapshot
@@ -1259,6 +1323,7 @@
        :tabs []
        :active-tab-id nil
        :tab-locals {}
+       :session-drafts {}
        :dialog-open? false
        ;; Render thread coordination - see render-monitor docstring.
        :render-version 0
@@ -2188,10 +2253,7 @@
               (get-in db [:tab-locals target-id])
 
               closing-sid
-              (some-> closing-snap
-                      :session
-                      :id
-                      str)
+              (tab-session-id db target-id)
 
               closing-idle?
               (and (not (:loading? closing-snap)) (empty? (:pending-sends closing-snap)))
@@ -2222,6 +2284,7 @@
 
               db
               (-> db
+                  (remember-session-draft closing-snap closing-sid)
                   (assoc :tabs remaining)
                   (update :tab-locals dissoc target-id))
 
@@ -2292,7 +2355,7 @@
           (set (map :id removed))]
 
       (if (empty? removed)
-        {:db before}
+        {:db (forget-session-draft before sid)}
         (let [active-removed?
               (contains? removed-ids (current-tab-id db))
 
@@ -2317,6 +2380,7 @@
 
               db
               (-> db
+                  (forget-session-draft sid)
                   (assoc :tabs (if fresh (insert-tab-grouped remaining fresh) remaining))
                   (update :tab-locals #(apply dissoc % removed-ids))
                   (update :project-active-tabs #(into {} (remove (comp removed-ids val)) %)))
@@ -2611,6 +2675,7 @@
   :init-session
   (fn [db [_ session history workspace]]
     {:db (-> db
+             sync-active-tab
              ensure-tabs
              (assoc :session session
                     ;; The session's current gateway workspace record, JSON-keyed: "root"
@@ -2638,6 +2703,7 @@
                     :attachment-index 0
                     :detail-expansions {})
              (hydrate-input-history history)
+             restore-session-draft
              (reconcile-in-flight-state db session))
      :fx [[:refresh-session-settings (:id session)]]}))
 
@@ -2704,6 +2770,7 @@
                                                :session-model-pref nil
                                                :messages (or history []))
                                         (hydrate-input-history history)
+                                        restore-session-draft
                                         clear-active-turn-state)))
                       (cond->
                         (not background?)
@@ -2766,7 +2833,8 @@
                              :workspace/root (get workspace "root")
                              :title nil
                              :messages (or history []))
-                      (hydrate-input-history history))]
+                      (hydrate-input-history history)
+                      restore-session-draft)]
 
               {:db (seed-ctx db')})))))
 
@@ -2938,7 +3006,9 @@
 
                             (-> db
                                 (assoc :tabs (insert-tab-grouped entries entry))
-                                (assoc-in [:tab-locals id] (empty-tab-state)))))))
+                                (assoc-in [:tab-locals id]
+                                          (merge (empty-tab-state)
+                                                 (get-in db [:session-drafts sid]))))))))
           (-> db
               ensure-tabs
               sync-active-tab)
@@ -3077,12 +3147,16 @@
 
 (reg-event-db
   :project-page-request
-  (fn [db [_ pid request-id focus-index automatic?]]
+  (fn [db [_ pid request-id focus-index automatic? draft-ids]]
     (cond-> (update-in db
                        [:project-sidebar :pages pid]
                        #(cond-> (assoc %
                                   :error nil
-                                  :request-id request-id) (not automatic?) (assoc :loading? true)))
+                                  :request-id request-id) (not automatic?) (assoc :loading? true)
+                          (and (some? draft-ids) (not= (set (:dirty %)) draft-ids)) (assoc :after
+                                                                                      nil :history
+                                                                                      [])
+                          (some? draft-ids) (assoc :dirty draft-ids)))
       (some? focus-index)
       (assoc-in [:project-sidebar :index] focus-index))))
 

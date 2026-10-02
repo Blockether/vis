@@ -129,13 +129,15 @@
 
 (defn- session-local
   [db sid]
-  (when-let [tab (some (fn [tab]
-                         (when (= sid
-                                  (some-> (get-in (tab-state db tab) [:session :id])
-                                          str))
-                           tab))
-                       (:tabs db))]
-    (tab-state db tab)))
+  (or (when-let [tab (some (fn [tab]
+                             (when (= sid
+                                      (some-> (or (get-in (tab-state db tab) [:session :id])
+                                                  (:session-id tab))
+                                              str))
+                               tab))
+                           (:tabs db))]
+        (tab-state db tab))
+      (get-in db [:session-drafts sid])))
 
 (defn session-status
   "The app's gateway-backed status precedence, with the TUI's local unsent draft."

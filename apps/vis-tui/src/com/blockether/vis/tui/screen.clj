@@ -5477,12 +5477,19 @@
    what one keystroke costs."
   60)
 
+(defn- with-session-drafts
+  [opts]
+  (let [ids (state/session-draft-ids @state/app-db)]
+    (cond-> opts
+      (seq ids)
+      (assoc :dirty ids))))
+
 (defn- tui-session-page
   "One recency window, enriched for the navigator, and the cursor for its next
    page. The gateway orders blank searches by content time across projects,
    groups and stars, so the picker keeps that same order between pages."
   [opts]
-  (let [page (vis/gateway-search-sessions "" opts)]
+  (let [page (vis/gateway-search-sessions "" (with-session-drafts opts))]
     {:sessions (mapv (comp enrich-session-row session-summary) (:sessions page))
      :next-cursor (:next-cursor page)}))
 
@@ -5545,11 +5552,11 @@
         :db db
         :search-sessions
         (fn [q scope]
-          (try (let [answer (vis/gateway-search-sessions q
-                                                         (cond-> (assoc scope
-                                                                   :limit picker-search-rows)
-                                                           (not (str/blank? q))
-                                                           (assoc :archived :include)))]
+          (try (let [answer (vis/gateway-search-sessions
+                              q
+                              (cond-> (with-session-drafts (assoc scope :limit picker-search-rows))
+                                (not (str/blank? q))
+                                (assoc :archived :include)))]
                  {:sessions (mapv enrich-session-row (map session-summary (:sessions answer)))
                   :next-cursor (:next-cursor answer)
                   :total (:total answer)
@@ -5784,6 +5791,16 @@
         page
         (get-in @state/app-db [:project-sidebar :pages pid])
 
+        draft-ids
+        (state/session-draft-ids @state/app-db)
+
+        page
+        (cond-> page
+          (not= (set (:dirty page)) draft-ids)
+          (assoc :after
+            nil :history
+            []))
+
         limit
         (project-page-size)
 
@@ -5810,7 +5827,7 @@
 
     (state/dispatch [:project-page-request pid request-id
                      (when-not automatic? (page-focus-index @state/app-db pid request-page nil))
-                     automatic?])
+                     automatic? draft-ids])
     (vis/worker-future
       "tui-project-page"
       (fn []
@@ -5821,6 +5838,7 @@
 
                 sessions
                 (vis/gateway-list-sessions-page {:project-id pid
+                                                 :dirty draft-ids
                                                  :limit limit
                                                  :after (:after page)
                                                  :archived session-archive
@@ -5834,6 +5852,7 @@
                 (if (= group-archive session-archive)
                   (:grouped sessions)
                   (:grouped (vis/gateway-list-sessions-page {:project-id pid
+                                                             :dirty draft-ids
                                                              :limit 1
                                                              :archived group-archive
                                                              :grouped :aside
@@ -5894,7 +5913,8 @@
       (try
         (let [items
               (projects/with-gateway-counts (vec (vis/gateway-list-projects))
-                                            (vis/gateway-projects-overview))
+                                            (vis/gateway-projects-overview (with-session-drafts
+                                                                             {})))
 
               sidebar
               (:project-sidebar @state/app-db)
@@ -5939,24 +5959,44 @@
                (fn [])))
 
         thread
-        (Thread. ^Runnable
-                 (fn []
-                   (loop [last-read 0]
-                     (when-not (:shutdown? @state/app-db)
-                       (let [sidebar (:project-sidebar @state/app-db)
-                             now (System/currentTimeMillis)
-                             ready? (and (:open? sidebar)
-                                         (not (:adding sidebar))
-                                         (not (:search sidebar))
-                                         (not (:removing sidebar))
-                                         (not (:loading? sidebar))
-                                         (not-any? :loading? (vals (:pages sidebar))))
-                             due? (and ready? (or @dirty? (>= (- now last-read) 8000)))]
+        (Thread.
+          ^Runnable
+          (fn []
+            (loop [last-read
+                   0
 
-                         (when due? (reset! dirty? false) (refresh-projects! true))
-                         (try (Thread/sleep 1000) (catch InterruptedException _ nil))
-                         (recur (if due? now last-read))))))
-                 "vis-tui-projects-refresh")]
+                   last-drafts
+                   (state/session-draft-ids @state/app-db)]
+
+              (when-not (:shutdown? @state/app-db)
+                (let [db
+                      @state/app-db
+
+                      sidebar
+                      (:project-sidebar db)
+
+                      drafts
+                      (state/session-draft-ids db)
+
+                      now
+                      (System/currentTimeMillis)
+
+                      ready?
+                      (and (:open? sidebar)
+                           (not (:adding sidebar))
+                           (not (:search sidebar))
+                           (not (:removing sidebar))
+                           (not (:loading? sidebar))
+                           (not-any? :loading? (vals (:pages sidebar))))
+
+                      due?
+                      (and ready?
+                           (or @dirty? (not= drafts last-drafts) (>= (- now last-read) 8000)))]
+
+                  (when due? (reset! dirty? false) (refresh-projects! true))
+                  (try (Thread/sleep 1000) (catch InterruptedException _ nil))
+                  (recur (if due? now last-read) (if due? drafts last-drafts))))))
+          "vis-tui-projects-refresh")]
 
     (.setDaemon thread true)
     (.start thread)

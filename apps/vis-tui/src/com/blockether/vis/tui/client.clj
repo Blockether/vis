@@ -674,16 +674,19 @@
    `:root` one project's column, `:project-id` one project's tab set, `:id-prefix` the
    session a short id names, `:ids` exactly the rows those ids name, `:grouped` `:aside`
    the gateway's own split between a project's GROUPS and the loose sessions under them.
+   `:dirty` names this terminal's unsent composer drafts, including empty sessions.
    The gateway owns the ordering, so a caller that wants ten rows asks for ten instead of
    downloading the fleet to slice it locally - and a read that names no cut and no limit
    is answered with the head window, never the fleet."
-  [{:keys [limit after root project-id id-prefix ids grouped archived group-limit group-offset]}]
+  [{:keys [limit after root project-id id-prefix ids dirty grouped archived group-limit
+           group-offset]}]
   (let [qs (->> [(when limit (str "limit=" (enc limit)))
                  (when (seq (str after)) (str "after=" (enc after)))
                  (when (seq (str root)) (str "root=" (enc root)))
                  (when (seq (str project-id)) (str "project_id=" (enc project-id)))
                  (when (seq (str id-prefix)) (str "id_prefix=" (enc id-prefix)))
                  (when (seq ids) (str "ids=" (enc (str/join "," (map str ids)))))
+                 (when (seq dirty) (str "dirty=" (enc (str/join "," (sort (map str dirty))))))
                  (when grouped (str "grouped=" (enc (name grouped))))
                  (when archived (str "archived=" (enc (name archived))))
                  (when group-limit (str "group_limit=" (enc group-limit)))
@@ -752,16 +755,18 @@
    says WHERE the query hit; it is never the order. `opts`: `:limit` rows, `:after` the
    `:next-cursor` of the previous answer, `:archived` `:exclude`, `:include` or `:only`.
    `:root`, `:project-id` and `:group-ids` restrict the search before paging. Group ids
-   select their union, nil means every group and an empty collection selects nothing."
+   select their union, nil means every group and an empty collection selects nothing.
+   `:dirty` includes and prioritizes this terminal's unsent composer drafts."
   ([query] (search-sessions query {}))
-  ([query {:keys [limit after archived root project-id group-ids]}]
+  ([query {:keys [limit after archived root project-id group-ids dirty]}]
    (let [qs
          (->> [(str "q=" (enc (str/trim (str query)))) (when limit (str "limit=" (enc limit)))
                (when (seq (str after)) (str "after=" (enc after)))
                (when archived (str "archived=" (enc (name archived))))
                (when (some? root) (str "root=" (enc root)))
                (when (some? project-id) (str "project_id=" (enc project-id)))
-               (when (some? group-ids) (str "group_ids=" (enc (str/join "," (sort group-ids)))))]
+               (when (some? group-ids) (str "group_ids=" (enc (str/join "," (sort group-ids)))))
+               (when (seq dirty) (str "dirty=" (enc (str/join "," (sort (map str dirty))))))]
               (remove nil?)
               (str/join "&"))
 
@@ -806,9 +811,13 @@
 
 (defn projects-overview
   "GET /v1/projects/overview — every project with its counts plus the gateway's
-   totals, in one answer (`state/projects-overview`). The whole map."
-  []
-  (send-json! "GET" "/v1/projects/overview"))
+   totals, in one answer (`state/projects-overview`). `:dirty` names local unsent drafts."
+  ([] (projects-overview {}))
+  ([{:keys [dirty]}]
+   (send-json! "GET"
+               (str "/v1/projects/overview"
+                    (when (seq dirty)
+                      (str "?dirty=" (enc (str/join "," (sort (map str dirty))))))))))
 
 (defn create-project! [opts] (send-json! "POST" "/v1/projects" opts))
 
