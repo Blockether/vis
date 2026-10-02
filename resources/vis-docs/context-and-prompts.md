@@ -22,6 +22,9 @@ restart.
   Set a [goal](#explicit-goals-goal) with an iteration budget.
 - **A project needs different or extra system instructions.** Add [system prompt
   files](#system-prompt-files) under `.vis/`.
+- **You want to change how Vis reports progress or writes its replies.** Read [Progress notes and
+  writing style](#progress-notes-and-writing-style). Vis has built-in rules for both, so `AGENTS.md`
+  does not need to repeat them.
 - **You want to run a shell command without involving the model.** Start the message
   with [`!`](#shell-shortcuts-and).
 
@@ -59,6 +62,44 @@ project last.
 
 The built-in prompt describes Vis's tools. Use `APPEND_SYSTEM.md` or
 `AGENTS.md` to add instructions without removing those descriptions.
+
+## Progress notes and writing style
+
+The built-in system prompt controls how Vis reports its work and how it writes. These rules apply
+in every project, so do not copy them into `AGENTS.md`. A `SYSTEM.md` file replaces them together
+with the rest of the built-in prompt.
+
+While a task runs, Vis writes short progress notes:
+
+- Before substantial work, Vis says the first step. Before an edit, it says the change.
+- When a finding, a decision or a blocker changes the next step, Vis writes a note.
+- Each note has one or two sentences of useful facts. Routine reads and searches get no note.
+
+The last reply starts with the answer. You can read it without the progress notes.
+
+Vis writes notes, answers and other text in [ASD-STE100 Simplified Technical
+English](https://www.asd-ste100.org/), at about 80% of the full standard. It uses these rules:
+
+1. Keep sentences short.
+2. Put one action in each step.
+3. Say who does what.
+4. Give each thing one name, and use only that name.
+
+Vis uses the same rules when it writes in a language other than English. To get a different style,
+ask for it in your message. To change the style for a project, write the rule in `AGENTS.md`.
+
+Each interface shows the progress notes and the final answer in its own place:
+
+| Interface | Progress notes | Final answer |
+|---|---|---|
+| Terminal | Above the code of each step | After the last step |
+| Desktop and Companion apps | Above the code of each step | After the last step |
+| Phone and desktop alerts | No alert | The alert shows the answer |
+| [Python SDK](python-sdk.md#show-progress-while-a-turn-runs) | In the event stream after `send()` | In the turn record from `run()` or `turn.wait()` |
+
+Your [notification settings](distributions.md#notifications-on-the-desktop) control the alerts.
+Keep project-specific rules in `AGENTS.md`. Examples are test commands, code conventions, files
+that must not change and the format of results.
 
 ## Prompt templates: /name
 

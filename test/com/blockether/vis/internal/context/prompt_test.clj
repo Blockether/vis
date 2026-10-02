@@ -693,6 +693,19 @@
         (expect (str/includes? text "Narrate progress in prose"))
         (expect (str/includes? text "text beside a `python_execution` call reaches the user"))
         (expect (str/includes? text "it stands alone without the progress notes"))))
+  ;; #303: §7 owns when, where and how progress notes appear, so a project need not copy that
+  ;; policy into AGENTS.md. Prose defaults to ASD-STE100 unless the user or project asks otherwise.
+  (it "owns progress-note timing and style and the default prose standard"
+      (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
+        (doseq [rule ["Before substantial work, say the first step; before an edit, say the change"
+                      "when a finding, decision or blocker changes the next step"
+                      "one or two sentences of useful facts, not a running transcript"
+                      "routine reads, searches and restated code need none"
+                      "Unless the user or project asks for another style"
+                      "80% of the way to ASD-STE100 Simplified Technical English"
+                      "whatever the language" "keep sentences short" "one action per step"
+                      "say who does what" "give each thing one name and keep it"]]
+          (expect (str/includes? text rule) rule))))
   ;; Each capability owns its contract; doc() renders Python metadata and semantics.
   ;; The core prompt must point there instead of encouraging invented call shapes.
   (it "points authority at the document a capability carries"
@@ -816,7 +829,10 @@
       ;; It lands at 11 378.
       ;; A finished turn now keeps its notes and Activity, so §7 no longer says the notes
       ;; fold away; the rule is 26 characters shorter.
-      (expect (< (count text) 11400))
+      ;; 11.4k → 11.7k for #303: §7 states when, where and how to write progress notes, so
+      ;; projects stop copying that policy into AGENTS.md, and it makes ASD-STE100 the default
+      ;; prose standard unless the user or project asks for another style.
+      (expect (< (count text) 11700))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
