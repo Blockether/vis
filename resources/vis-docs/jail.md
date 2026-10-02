@@ -240,7 +240,7 @@ jail:
 - `none` permits no methods.
 
 `methods` can name an explicit method set, and `allow` adds method/path exceptions. `ports`
-applies to HTTP CONNECT and SOCKS as well as ordinary HTTP.
+applies to HTTP CONNECT, SOCKS and ordinary HTTP.
 
 The gateway inspects HTTPS using a temporary session CA. Common HTTP clients
 receive CA environment variables, and managed JVMs receive a temporary trust

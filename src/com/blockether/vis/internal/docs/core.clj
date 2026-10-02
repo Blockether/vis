@@ -44,7 +44,8 @@
        reader with basic English, or a translation tool, gets the same meaning.
        No sentence runs past 25 words and no paragraph past six sentences, where
        a code span counts as one word. A clause ends with a full stop, never with
-       a semicolon.
+       a semicolon. A hard word gives way to the simpler word that
+       `test-prose/simpler-words` names: `use`, not `utilize`.
 
    One renderer, two outputs:
      * `build-site!` writes a static, themed HTML bundle for the public Worker.

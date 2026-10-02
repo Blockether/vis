@@ -348,7 +348,7 @@ specific files](jail.md#deny-specific-files).
 | `id` | Name used by the allow list and the UI |
 | `path` | Absolute or `~`-relative directory |
 | `description` | Optional. Tells the model what the root is for. |
-| `python_name` | Optional Python variable for the path, e.g. `runtime_path` |
+| `python_name` | Optional Python variable for the path, for example `runtime_path` |
 | `access` | `read-write` or `read-only` |
 | `search` | Whether search indexes it |
 | `draft` | `shared`, `copy-only`, `copy-and-apply` or `not-allowed` in an isolated session (see [Drafts](drafts.md)) |

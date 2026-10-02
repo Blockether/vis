@@ -27,4 +27,10 @@
         (expect (= 1 (count (prose/breaks long-sentence))))
         (expect (re-find #"runs 26 words" (first (prose/breaks long-sentence))))
         (expect (re-find #"holds 7 sentences" (first (prose/breaks crowded))))
-        (expect (re-find #"semicolon" (first (prose/breaks "One clause; another clause.")))))))
+        (expect (re-find #"semicolon" (first (prose/breaks "One clause; another clause."))))))
+  (it "names a hard word with its simpler word, outside code spans and link targets"
+      (expect (re-find #"uses \"e\.g\.\" — write \"for example\""
+                       (first (prose/breaks "Name a path, e.g. a file."))))
+      (expect (re-find #"uses \"utilized\" — write \"use\""
+                       (first (prose/breaks "The gateway utilized the cache."))))
+      (expect (empty? (prose/breaks "Call `ensure_dir()` and read [the guide](via.md).")))))

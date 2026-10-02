@@ -228,7 +228,7 @@ CPU. Evaluate your candidates on your own held-out labels before you choose one.
 choose it:
 
 - While the model is loaded, the gateway reserves about 6 GB of memory. The default
-  `VIS_DECISION_MEMORY_BUDGET_MB` of 8,192 MB is sufficient for this model alone.
+  `VIS_DECISION_MEMORY_BUDGET_MB` of 8,192 MB is enough for this model alone.
 - Local training with a batch size of 2 used a peak of 23 GB of RAM. Larger batches need more.
 - The FP32 export used a peak of 10 GB of RAM.
 - Allow at least 25 GB of free disk for the checkpoint, a trained version and its upload archive.

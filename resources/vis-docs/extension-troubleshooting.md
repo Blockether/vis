@@ -121,8 +121,8 @@ or your development environment. Review the [execution boundary](extension-api.m
 and the returned error. Registration success alone is not an integration test.
 
 Forms and live views need a calling session in Vis. Do not open them from registration
-or passive provider callbacks. Test cancellation and an unavailable UI as well as a
-successful response. See [forms](human-input.md) and [live views](live-views.md).
+or passive provider callbacks. Test cancellation, an unavailable UI and a successful
+response. See [forms](human-input.md) and [live views](live-views.md).
 
 ## Live-view updates
 

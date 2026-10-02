@@ -1,7 +1,7 @@
 (ns com.blockether.vis.test-prose
   "Prose limits for reader-facing text: the paragraph size limit, the ASD-STE100
-   sentence and paragraph limits and the semicolon rule. The documentation page
-   canon and the symbol documentation guard share these rules."
+   sentence and paragraph limits, the semicolon rule and the simpler-word rule. The
+   documentation page canon and the symbol documentation guard share these rules."
   (:require [clojure.string :as str]))
 
 (def max-unit-chars
@@ -83,44 +83,77 @@
                      (str/replace #"&#?\w+;" ""))
                  ";"))
 
+(def simpler-words
+  "Hard words, each with the simpler word that ASD-STE100 writes instead. A pattern
+   matches the word in any case, with its common endings."
+  [[#"(?i)\butili[sz](?:e|es|ed|ing|ation)\b" "use"] [#"(?i)\bleverag(?:e|es|ed|ing)\b" "use"]
+   [#"(?i)\bfacilitat(?:e|es|ed|ing)\b" "help"] [#"(?i)\bin order to\b" "to"]
+   [#"(?i)\bprior to\b" "before"] [#"(?i)\bsubsequent(?:ly)?\b" "later"]
+   [#"(?i)\bcommenc(?:e|es|ed|ing)\b" "start"] [#"(?i)\bapproximately\b" "about"]
+   [#"(?i)\b(?:additionally|furthermore|moreover)\b" "also"] [#"(?i)\bnumerous\b" "many"]
+   [#"(?i)\bsufficient(?:ly)?\b" "enough"] [#"(?i)\bobtain(?:s|ed|ing)?\b" "get"]
+   [#"(?i)\bregarding\b" "about"] [#"(?i)\bwhilst\b" "while"] [#"(?i)\b(?:thus|hence)\b" "so"]
+   [#"(?i)\be\.g\." "for example"] [#"(?i)\bi\.e\." "that is"] [#"(?i)\bas well as\b" "and"]
+   [#"(?i)\bwhereas\b" "but"] [#"(?i)\bin the event that\b" "if"] [#"(?i)\bvia\b" "through"]
+   [#"(?i)\bensur(?:e|es|ed|ing)\b" "make sure"]])
+
+(defn hard-words
+  "PURE: `[[word simpler] …]` for each hard word in the prose of `unit`. Code spans,
+   link targets and tags keep their exact names, so the check skips them."
+  [^String unit]
+  (let [plain (-> unit
+                  (str/replace #"`[^`]*`" "code")
+                  (str/replace #"\]\([^)]*\)" "]")
+                  (str/replace #"<[^>]+>" ""))]
+    (for [[pattern simpler] simpler-words
+          :let [hit (re-find pattern plain)]
+          :when hit]
+
+      [hit simpler])))
+
 (defn breaks
   "PURE: every way `md` breaks a prose limit, as reader-facing lines that name the
    line of the paragraph."
   [^String md]
   (let [units (text-units md)]
-    (concat (for [[line text] units
-                  :when (> (count text) (long max-unit-chars))]
+    (concat
+      (for [[line text] units
+            :when (> (count text) (long max-unit-chars))]
 
-              (str "the paragraph on line "
-                   line
-                   " runs "
-                   (count text)
-                   " characters — over "
-                   max-unit-chars
-                   ", so it is a list or a table wearing prose"))
-            (for [[line text] units
-                  sentence (sentences text)
-                  :let [n (word-count sentence)]
-                  :when (> (long n) (long max-sentence-words))]
+        (str "the paragraph on line "
+             line
+             " runs "
+             (count text)
+             " characters — over "
+             max-unit-chars
+             ", so it is a list or a table wearing prose"))
+      (for [[line text] units
+            sentence (sentences text)
+            :let [n (word-count sentence)]
+            :when (> (long n) (long max-sentence-words))]
 
-              (str "a sentence in the paragraph on line " line
-                   " runs " n
-                   " words — over " max-sentence-words
-                   ", so split it: " (pr-str sentence)))
-            (for [[line text] units
-                  :let [n (count (sentences text))]
-                  :when (> (long n) (long max-unit-sentences))]
+        (str "a sentence in the paragraph on line " line
+             " runs " n
+             " words — over " max-sentence-words
+             ", so split it: " (pr-str sentence)))
+      (for [[line text] units
+            :let [n (count (sentences text))]
+            :when (> (long n) (long max-unit-sentences))]
 
-              (str "the paragraph on line "
-                   line
-                   " holds "
-                   n
-                   " sentences — over "
-                   max-unit-sentences
-                   ", so it covers more than one topic"))
-            (for [[line text] units
-                  :when (semicolon? text)]
+        (str "the paragraph on line "
+             line
+             " holds "
+             n
+             " sentences — over "
+             max-unit-sentences
+             ", so it covers more than one topic"))
+      (for [[line text] units
+            :when (semicolon? text)]
 
-              (str "the paragraph on line "
-                   line
-                   " joins clauses with a semicolon — end the first clause with a full stop")))))
+        (str "the paragraph on line "
+             line
+             " joins clauses with a semicolon — end the first clause with a full stop"))
+      (for [[line text] units
+            [word simpler] (hard-words text)]
+
+        (str "the paragraph on line " line " uses \"" word "\" — write \"" simpler "\" instead")))))

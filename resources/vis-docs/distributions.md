@@ -450,7 +450,7 @@ stable release on GitHub, and it does not publish mobile apps.
 | `~/.local/bin/vis-tui` | Matching native terminal client |
 | `~/.local/bin/vis-web/` | Web app that the gateway serves |
 | `~/.vis/install/desktop/` | Desktop apps by platform and version, with beta apps in `beta/` and dev builds in `dev/` |
-| `~/.vis/install/track` | Selection used for subsequent launches |
+| `~/.vis/install/track` | Selection for later launches |
 | `~/.vis/install/src` | Managed dev checkout at a detached main commit |
 | `~/.vis/install/ref` | Commit pinned by the last dev update |
 | `~/.vis/install/vis-agent-native` | Native engine for a checkout-owned launcher |

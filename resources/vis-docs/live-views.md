@@ -556,7 +556,7 @@ Companion app's Interrupt button opens the same input.
 
 - `view.is_interrupted` is true if the view ended without the extension closing
   it. Reading it uses at most one host call per batching interval.
-- `view.is_from_human` indicates a user-initiated stop. `view.note` contains
+- `view.is_from_human` is true when the user stopped the view. `view.note` contains
   their note or `None`.
 - Updating an ended view raises `vis.Interrupted` with the note, even if the
   loop does not check the flag.
