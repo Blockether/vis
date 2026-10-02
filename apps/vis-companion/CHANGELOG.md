@@ -2,6 +2,20 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.29 (7075) — 2026-10-02
+<!-- commit: ae87d583ca7a0a3f75e8b580dd686a664419293a -->
+
+- Read one loading signal instead of three
+- Cut cold-start payloads and name the connecting state
+- Review and apply typed settings batches
+- Label input-needed sessions as HITL
+- Shorten input-needed session badges
+- Add explicit project and group scopes
+- Bound session-list scroll measurements
+- Simplify verification counters
+- Show session and group updates automatically
+- Record companion build 7045
+
 ## 0.2.29 (7045) — 2026-09-30
 <!-- commit: 071454e08d51b5f8f132869881c7a329c6ae0722 -->
 
