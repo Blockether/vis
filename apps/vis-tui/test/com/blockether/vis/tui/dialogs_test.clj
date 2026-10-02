@@ -3577,8 +3577,9 @@
                    (assoc shell :type :inherit)]
 
                (expect (= shell-note (:locked shell)))
-               (expect (true? (:is-override? shell)))
-               (expect (= "Shell commands  [Override]  [Locked]" (settings-option-label shell {})))
+               ;; Global settings are the root scope: an explicit value there overrides nothing.
+               (expect (false? (:is-override? shell)))
+               (expect (= "Shell commands  [Locked]" (settings-option-label shell {})))
                (expect (= [:inherit shell-note] [(:type inherit) (:locked inherit)]))
                (expect
                  (= "Group settings set this to low for this session. Change it in Group settings."

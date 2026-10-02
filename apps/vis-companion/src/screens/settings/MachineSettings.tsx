@@ -284,7 +284,10 @@ export function lockNote(toggle: Toggle): string | null {
   return `Locked: ${where} ${effect} for this session. Change it in ${where}.`;
 }
 
-/** The same value row is used for gateway and scoped settings. */
+/**
+ * The same value row is used for gateway and scoped settings. Only scoped settings pass
+ * `onInherit`: global settings are the root scope, so their rows show no provenance or reset.
+ */
 export function SettingRow({ toggle, busy, onToggle, onPick, onInherit }: {
   toggle: Toggle;
   busy: boolean;
@@ -451,19 +454,6 @@ export function MachineSettings({
     }
   }
 
-  async function inherit(toggle: Toggle) {
-    setErr(null);
-    setPending(toggle.id);
-    try {
-      patch(await client.setSetting(toggle.id, 'inherit'));
-      await load();
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setPending(null);
-    }
-  }
-
   return (
     // Groups run FULL BLEED and are divided by one rule, so the dialog's own frame is
     // the only box on the screen. A banner still needs air, so it brings its own
@@ -563,8 +553,7 @@ export function MachineSettings({
             <div className="divide-y divide-dialog-edge">
               {group.toggles.map((toggle) => (
                 <SettingRow key={toggle.id} toggle={toggle} busy={pending === toggle.id}
-                  onToggle={() => void flip(toggle)} onPick={(value) => pick(toggle, value)}
-                  onInherit={toggle.is_override && toggle.id !== 'agent_name' ? () => void inherit(toggle) : undefined} />
+                  onToggle={() => void flip(toggle)} onPick={(value) => pick(toggle, value)} />
               ))}
             </div>
           </SettingsPanel>

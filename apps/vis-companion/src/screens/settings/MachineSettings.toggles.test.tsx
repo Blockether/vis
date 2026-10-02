@@ -57,30 +57,25 @@ async function openSettings() {
 }
 
 describe('global settings provenance', () => {
-  it('omits the default caption but keeps the reset action for explicit values', async () => {
-    let overridden = true;
+  // Global settings are the root scope: an explicit value there overrides nothing, so its
+  // row shows no "Set here" caption and offers no "Use inherited value" reset.
+  it('shows no provenance caption or reset action, even for explicit values', async () => {
     const plans: Toggle = { id: 'plans', label: 'Plans', type: 'boolean', enabled: false };
-    vi.spyOn(GatewayClient.prototype, 'settings').mockImplementation(async () => ({
+    vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue({
       revision: 'toggles-1',
       groups: [{
         id: 'sandbox', title: 'Sandbox', toggles: [
           { ...backend, source: 'default', is_override: false },
-          { ...plans, source: overridden ? 'global' : 'default', is_override: overridden },
+          { ...plans, source: 'global', is_override: true },
         ],
       }],
-    }));
-    const save = vi.spyOn(GatewayClient.prototype, 'setSetting').mockImplementation(async () => {
-      overridden = false;
-      return { ...plans, source: 'default', is_override: false };
     });
 
     await openSettings();
-    expect(screen.queryByText('Inherited from default')).toBeNull();
-    expect(screen.getByText('Set here')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Use inherited value' }));
-    expect(save).toHaveBeenCalledWith('plans', 'inherit');
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Use inherited value' })).toBeNull());
-    expect(screen.queryByText('Inherited from default')).toBeNull();
+    expect(await screen.findByRole('switch', { name: 'Plans: off' })).toBeEnabled();
+    expect(screen.queryByText('Set here')).toBeNull();
+    expect(screen.queryByText(/^Inherited from/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Use inherited value' })).toBeNull();
   });
 });
 describe('settings the open session decides elsewhere', () => {
@@ -115,7 +110,6 @@ describe('settings the open session decides elsewhere', () => {
     expect(
       screen.getByText('Locked: Project settings turn this off for this session. Change it in Project settings.'),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Use inherited value' })).toBeDisabled();
     expect(screen.getByRole('combobox', { name: 'Draft backend' })).toBeDisabled();
     expect(
       screen.getByText('Locked: Group settings set this to off for this session. Change it in Group settings.'),

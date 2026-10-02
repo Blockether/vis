@@ -3241,7 +3241,9 @@
               (or groups []))))))
 
 (defn- catalog-toggle-rows
-  "Project the gateway catalog without repeating metadata or reset actions in the list."
+  "Project the gateway catalog without repeating metadata or reset actions in the list.
+   Global settings are the root scope: an explicit value there overrides nothing, so only a
+   scoped target marks overrides and offers their reset."
   [groups]
   (vec
     (mapcat (fn [group]
@@ -3250,7 +3252,8 @@
                   (cons {:type :section :label (str (get group "title"))}
                         (mapv (fn [row]
                                 (let [type (get row "type")
-                                      id (get row "id")]
+                                      id (get row "id")
+                                      override? (and *settings-target* (get row "is_override"))]
 
                                   {:key (keyword (str "toggle::" id))
                                    :type (case type
@@ -3273,7 +3276,7 @@
                                    :choices (vec (get row "choices"))
                                    :experimental? (boolean (get row "is_experimental"))
                                    :source (get row "source")
-                                   :is-override? (boolean (get row "is_override"))
+                                   :is-override? (boolean override?)
                                    :label (str (get row "label"))
                                    :description (str (get row "description"))}))
                               rows)))))

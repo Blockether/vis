@@ -266,22 +266,24 @@
         (expect (= {:read-files true} (:ret capture)))))
   (it
     "keeps source and inheritance metadata out of the list and uses one row per override"
-    (let [rows
-          (#'dlg/catalog-toggle-rows
-           [{"title" "Paths and access"
-             "toggles" [{"id" "compact_override"
-                         "type" "boolean"
-                         "enabled" true
-                         "label" "Read filesystem"
-                         "description" "Allow filesystem reads."
-                         "source" "project"
-                         "is_override" true}]}])
+    (let [target
+          {:scope :project :target-id "example-project"}
+
+          ;; A scoped dialog projects its rows with its target bound.
+          rows
+          (binding [dlg/*settings-target* target]
+            (#'dlg/catalog-toggle-rows
+             [{"title" "Paths and access"
+               "toggles" [{"id" "compact_override"
+                           "type" "boolean"
+                           "enabled" true
+                           "label" "Read filesystem"
+                           "description" "Allow filesystem reads."
+                           "source" "project"
+                           "is_override" true}]}]))
 
           calls
           (atom [])
-
-          target
-          {:scope :project :target-id "example-project"}
 
           capture
           (with-redefs [vis/inherit-setting! (fn [id scope]
@@ -299,6 +301,35 @@
       (expect (str/includes? (first frames) "[Override]"))
       (expect (not (str/includes? (first frames) "Source:")))
       (expect (some #(str/includes? % "Source: project") frames))))
+  (it "marks no override and offers no inherit in global settings"
+      (let [rows
+            (#'dlg/catalog-toggle-rows
+             [{"title" "Paths and access"
+               "toggles" [{"id" "compact_override"
+                           "type" "boolean"
+                           "enabled" true
+                           "label" "Read filesystem"
+                           "description" "Allow filesystem reads."
+                           "source" "global"
+                           "is_override" true}]}])
+
+            calls
+            (atom [])
+
+            capture
+            (with-redefs [vis/inherit-setting! (fn [id scope]
+                                                 (swap! calls conj [id scope])
+                                                 {})]
+              (with-redefs-fn {#'dlg/load-settings-inventory! (constantly nil)}
+                #(capture-settings rows [:f1 \i :esc :esc])))
+
+            frames
+            (mapv cap/frame-text (:frames capture))]
+
+        (expect (false? (:is-override? (second rows))))
+        (expect (empty? @calls))
+        (expect (not-any? #(str/includes? % "[Override]") frames))
+        (expect (not-any? #(str/includes? % "overrides the inherited value") frames))))
   (it "explains locked values and prevents both edit and inherit in details"
       (let [row
             {:type :registry-toggle
