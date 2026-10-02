@@ -537,6 +537,22 @@ def test_machine_order_preserves_request_and_response():
         assert json.loads(calls[-1][3]) == body
 
 
+def test_settings_batch_preserves_request_and_response():
+    body = {
+        "scope": "global",
+        "revision": "a" * 64,
+        "changes": [
+            {"id": "refusal_fallback", "action": "value", "value": False},
+            {"id": "provider_fallback", "action": "inherit"},
+        ],
+    }
+    reply = {"revision": "b" * 64, "features": []}
+    with endpoint(lambda *_: (200, reply)) as (url, calls):
+        assert GatewayClient(url).patch_settings(body=body) == reply
+        assert calls[-1][:2] == ("PATCH", "/v1/settings")
+        assert json.loads(calls[-1][3]) == body
+
+
 def test_dedicated_methods_cover_every_public_nonstreaming_operation():
     import inspect
 

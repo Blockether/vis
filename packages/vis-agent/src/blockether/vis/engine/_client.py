@@ -2216,6 +2216,19 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def patch_settings(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """PATCH /v1/settings — json response."""
+        response = self._request(
+            "PATCH", "/v1/settings", path={}, query=query, timeout=timeout, body=body
+        )
+        return response.json()
+
     def get_setting(
         self, id: str, *, query: Query | None = None, timeout: float | None = None
     ) -> JSONValue:

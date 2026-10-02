@@ -56,10 +56,10 @@ def test_gateway_routes_and_lease_policy_are_shared():
     assert 0 < lease["touch_ms"] < lease["keepalive_ms"] < lease["ttl_ms"]
     assert 0 < lease["keepalive_timeout_ms"] < lease["keepalive_ms"]
     assert len(routes) == 137
-    assert len(operations) == 171
+    assert len(operations) == 172
     assert Counter(operation["request"] for operation in operations) == {
         "none": 113,
-        "json": 53,
+        "json": 54,
         "binary": 5,
     }
     assert by_path["/v1/decisions/models"]["operations"]["get"] == {
@@ -93,6 +93,12 @@ def test_gateway_routes_and_lease_policy_are_shared():
     assert by_path["/v1/speech/voices"]["operations"]["post"] == {
         "request": "binary",
         "response": "json",
+    }
+    assert by_path["/v1/settings"]["operations"]["patch"] == {
+        "request": "json",
+        "response": "json",
+        "request_schema": "settings_batch",
+        "response_schema": "settings",
     }
     assert by_path["/v1/events"]["operations"]["get"]["response"] == "sse"
 
