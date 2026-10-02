@@ -11,8 +11,6 @@ type FieldProps = {
   raw?: string;
   onRawChange: (text: string, error?: string) => void;
 };
-const textAreaClass =
-  'min-h-24 w-full rounded-none border border-dialog-edge bg-panel px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45';
 const objectValue = (value: SettingValue): ObjectValue =>
   !Array.isArray(value) && typeof value === 'object' ? value : {};
 const workspaceProperties = configSchema.$defs.workspaceEntry.properties;
@@ -82,41 +80,6 @@ function StringList({
         Add {label.toLowerCase()}
       </Button>
     </fieldset>
-  );
-}
-function JsonEditor({ setting, value, disabled, onChange, raw, onRawChange }: FieldProps) {
-  return (
-    <label className="block space-y-2">
-      <Text variant="label">{setting.label} JSON</Text>
-      <textarea
-        aria-label={`${setting.label} JSON`}
-        className={`${textAreaClass} font-mono`}
-        spellCheck={false}
-        disabled={disabled}
-        value={raw ?? JSON.stringify(value, null, 2)}
-        onChange={(event) => {
-          const text = event.target.value;
-          try {
-            const parsed: unknown = JSON.parse(text);
-            if (
-              parsed === null ||
-              (setting.type === 'array'
-                ? !Array.isArray(parsed)
-                : typeof parsed !== 'object' || Array.isArray(parsed))
-            )
-              throw new Error(`Enter a JSON ${setting.type}.`);
-            onRawChange(text);
-            onChange(parsed as SettingValue, true);
-          } catch (err) {
-            onRawChange(text, (err as Error).message);
-          }
-        }}
-      />
-      <Text as="p" variant="description">
-        Advanced options use the configuration schema. Existing attributes are kept when you edit
-        the form.
-      </Text>
-    </label>
   );
 }
 function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
@@ -382,21 +345,7 @@ export function SettingField(props: FieldProps) {
       />
     );
   }
-  const rawEditor = (
-    <details className="pt-2">
-      <summary className="cursor-pointer text-sm text-dialog-hint">Advanced JSON</summary>
-      <div className="pt-3">
-        <JsonEditor {...props} />
-      </div>
-    </details>
-  );
-  if (setting.editor === 'paths')
-    return (
-      <div className="space-y-3">
-        <WorkspaceEditor {...props} />
-        {rawEditor}
-      </div>
-    );
+  if (setting.editor === 'paths') return <WorkspaceEditor {...props} />;
   if (setting.editor === 'filesystem') {
     const object = objectValue(value);
     return (
@@ -414,7 +363,6 @@ export function SettingField(props: FieldProps) {
             onChange={(next) => onChange({ ...object, [key]: next })}
           />
         ))}
-        {rawEditor}
       </div>
     );
   }
@@ -456,16 +404,16 @@ export function SettingField(props: FieldProps) {
           disabled={disabled}
           onChange={(next) => onChange({ ...object, rules: next })}
         />
-        {rawEditor}
       </div>
     );
   }
   if (setting.editor === 'list')
     return (
-      <div className="space-y-3">
-        <StringList label={setting.label} value={value} disabled={disabled} onChange={onChange} />
-        {rawEditor}
-      </div>
+      <StringList label={setting.label} value={value} disabled={disabled} onChange={onChange} />
     );
-  return <JsonEditor {...props} />;
+  return (
+    <Text as="p" variant="description">
+      Edit this setting in your configuration file.
+    </Text>
+  );
 }

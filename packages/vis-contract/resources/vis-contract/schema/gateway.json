@@ -2447,7 +2447,7 @@
         },
         "multiline": { "type": "boolean" },
         "editor": {
-          "enum": ["switch", "select", "text", "multiline", "number", "paths", "filesystem", "network", "list", "json"]
+          "enum": ["switch", "select", "text", "multiline", "number", "paths", "filesystem", "network", "list"]
         },
         "schema": { "type": "string" },
         "applies": { "enum": ["immediate", "next_call", "next_turn", "reload", "restart"] },

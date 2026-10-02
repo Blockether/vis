@@ -614,8 +614,10 @@ overrides of the source session. Sessions without a group skip the group layer.
 
 Response options, including reasoning, verbosity and fast mode, are captured
 when you submit a message. Later edits do not change running or queued responses.
-Paths and access rows have guided editors and an **Advanced JSON** editor, and they apply on
-the next turn.
+
+Paths and access rows use guided editors. Changes apply on the next turn.
+To edit configuration files directly, use a text editor outside the app or TUI.
+
 Local permissions cannot expand the host's global access policy. Draft settings
 govern future operations. Changing them does not move or delete an existing draft.
 

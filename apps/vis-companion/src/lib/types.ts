@@ -339,8 +339,7 @@ export type SettingEditor =
   | 'paths'
   | 'filesystem'
   | 'network'
-  | 'list'
-  | 'json';
+  | 'list';
 
 export type SettingsScope = 'global' | 'project' | 'group' | 'session';
 

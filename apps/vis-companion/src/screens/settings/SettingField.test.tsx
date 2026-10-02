@@ -102,3 +102,61 @@ it('limits numbers by the setting schema and keeps invalid text local', () => {
   expect(onRawChange).toHaveBeenLastCalledWith('90', undefined);
   expect(onChange).toHaveBeenCalledExactlyOnceWith(90, true);
 });
+
+it.each([
+  ['paths', 'array', []],
+  ['filesystem', 'object', {}],
+  ['network', 'object', {}],
+  ['list', 'array', []],
+] satisfies [Toggle['editor'], Toggle['type'], SettingValue][])(
+  'offers only guided controls for %s settings',
+  (editor, type, value) => {
+    renderField({ id: 'guided', label: 'Guided setting', editor, type }, value);
+    expect(screen.queryByText('Advanced JSON')).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Guided setting JSON' })).toBeNull();
+    expect(screen.queryAllByRole('group').length).toBeGreaterThan(0);
+  },
+);
+
+it('edits filesystem paths without changing the other access lists', () => {
+  const { onChange, onRawChange } = renderField(
+    { id: 'jail_filesystem', label: 'Filesystem access', type: 'object', editor: 'filesystem' },
+    { allow: ['~/docs'], deny_read: ['~/private'], deny_write: ['~/readonly'] },
+  );
+  fireEvent.change(screen.getByRole('textbox', { name: 'Allowed paths 1' }), {
+    target: { value: '~/project' },
+  });
+  expect(onChange).toHaveBeenLastCalledWith({
+    allow: ['~/project'],
+    deny_read: ['~/private'],
+    deny_write: ['~/readonly'],
+  });
+  expect(onRawChange).not.toHaveBeenCalled();
+});
+
+it('edits list entries with ordinary controls', () => {
+  const { onChange, onRawChange } = renderField(
+    { id: 'jail_deny_exec', label: 'Denied executables', type: 'array', editor: 'list' },
+    ['curl'],
+  );
+  fireEvent.change(screen.getByRole('textbox', { name: 'Denied executables 1' }), {
+    target: { value: 'wget' },
+  });
+  expect(onChange).toHaveBeenLastCalledWith(['wget']);
+  fireEvent.click(screen.getByRole('button', { name: 'Add denied executables' }));
+  expect(onChange).toHaveBeenLastCalledWith(['curl', '']);
+  fireEvent.click(screen.getByRole('button', { name: 'Remove Denied executables 1' }));
+  expect(onChange).toHaveBeenLastCalledWith([]);
+  expect(onRawChange).not.toHaveBeenCalled();
+});
+
+it('directs unsupported settings to the configuration file instead of a JSON editor', () => {
+  const { onChange, onRawChange } = renderField(
+    { id: 'custom', label: 'Custom configuration', type: 'object' },
+    {},
+  );
+  expect(screen.getByText('Edit this setting in your configuration file.')).toBeInTheDocument();
+  expect(screen.queryByRole('textbox')).toBeNull();
+  expect(onChange).not.toHaveBeenCalled();
+  expect(onRawChange).not.toHaveBeenCalled();
+});

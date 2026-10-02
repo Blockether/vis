@@ -4184,20 +4184,6 @@
                                          {})]
     (vec (remove str/blank? (map str/trim (str/split-lines text))))))
 
-(defn- settings-json-editor!
-  [screen g region label value]
-  (let [original (wire/json-str value)]
-    (loop [raw original]
-      (when-let [text (settings-text-editor! screen
-                                             (str label " · Advanced JSON")
-                                             raw
-                                             {:changed? (not= raw original)})]
-        (let [parsed (wire/parse-json text)]
-          (if (some? parsed)
-            parsed
-            (do (mini-note! screen g region "Invalid JSON" "Keep editing or discard this text.")
-                (recur text))))))))
-
 (defn- settings-pick!
   [screen title items]
   (:value (run-modal! screen (select-modal-component title items {:height :content}))))
@@ -4210,7 +4196,6 @@
                                         :value i})
                                      entries)
                         [{:label "Add workspace path" :value :add}
-                         {:label "Advanced JSON" :value :advanced}
                          {:label "Save these paths" :value :done}])
           selected (settings-pick! screen "Workspace paths" (vec items))]
 
@@ -4220,9 +4205,6 @@
 
         :done
         entries
-
-        :advanced
-        (settings-json-editor! screen g region "Workspace paths" entries)
 
         :add
         (when-let [path (mini-read! screen
@@ -4284,7 +4266,6 @@
                                         :value index})
                                      entries)
                         [{:label (str "Add " (str/lower-case label)) :value :add}
-                         {:label "Advanced JSON" :value :advanced}
                          {:label "Use these rules" :value :done}])
           selected (settings-pick! screen label (vec items))]
 
@@ -4294,9 +4275,6 @@
 
         :done
         entries
-
-        :advanced
-        (settings-json-editor! screen g region label entries)
 
         :add
         (when-let [text (mini-read! screen g region (str label " · " summary-key) {})]
@@ -4385,17 +4363,13 @@
       (let [field (settings-pick! screen
                                   (:label row)
                                   (vec (concat fields
-                                               [{:label "Advanced JSON" :value :advanced}
-                                                {:label "Save this configuration" :value :done}])))]
+                                               [{:label "Save this configuration" :value :done}])))]
         (case field
           nil
           nil
 
           :done
           value
-
-          :advanced
-          (settings-json-editor! screen g region (:label row) value)
 
           (let [old (get value field)
                 next-value
@@ -4439,7 +4413,12 @@
     "list"
     (settings-list-editor! screen (:label row) (:toggle-value row))
 
-    (settings-json-editor! screen g region (:label row) (:toggle-value row))))
+    (do (mini-note! screen
+                    g
+                    region
+                    "Edit configuration file"
+                    "Edit this setting in your configuration file.")
+        nil)))
 
 (defn- pick-setting-value!
   "Open the enum's choice list on its saved value; Escape leaves it unchanged."

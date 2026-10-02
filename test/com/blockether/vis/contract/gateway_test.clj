@@ -24,6 +24,13 @@
          (sort-by :path)
          vec)))
 
+(defdescribe settings-editor-contract-test
+             (it "does not advertise raw JSON as a settings editor"
+                 (let [editors (get-in (document/schema-document "gateway")
+                                       ["$defs" "setting" "properties" "editor" "enum"])]
+                   (expect (seq editors))
+                   (expect (not-any? #{"json"} editors)))))
+
 (defdescribe
   gateway-contract-test
   (it

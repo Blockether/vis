@@ -247,16 +247,17 @@ describe('experimental feature flags', () => {
 
 describe('typed settings', () => {
   const turns: Toggle = { id: 'max_turns', label: 'Maximum turns', type: 'number', value: 30 };
-  const env: Toggle = {
-    id: 'jail_environment',
-    label: 'Environment',
+  const filesystem: Toggle = {
+    id: 'jail_filesystem',
+    label: 'Filesystem access',
     type: 'object',
-    value: { HOME: '/home/vis' },
+    editor: 'filesystem',
+    value: { allow: ['~/docs'], deny_read: ['~/private'] },
   };
   const renderTyped = async (name: string, role: 'spinbutton' | 'textbox') => {
     vi.mocked(GatewayClient.prototype.settings).mockResolvedValue({
       revision: 'typed-1',
-      groups: [{ id: 'limits', title: 'Limits', toggles: [turns, env] }],
+      groups: [{ id: 'limits', title: 'Limits', toggles: [turns, filesystem] }],
     });
     render(
       <MachineSettings
@@ -289,18 +290,38 @@ describe('typed settings', () => {
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
   });
 
-  it('keeps JSON that does not parse in the form, and Cancel restores the saved object', async () => {
+  it('keeps guided object edits local, and Cancel restores the saved paths', async () => {
     const save = vi.spyOn(GatewayClient.prototype, 'setSetting');
-    const { field, form } = await renderTyped('Environment JSON', 'textbox');
+    const { field, form } = await renderTyped('Allowed paths 1', 'textbox');
+    expect(screen.queryByText('Advanced JSON')).toBeNull();
 
     await userEvent.clear(field);
-    expect(form.getByRole('alert')).toBeInTheDocument();
-    expect(form.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await userEvent.type(field, '~/project');
+    expect(field).toHaveValue('~/project');
+    expect(form.getByRole('button', { name: 'Save' })).toBeEnabled();
+    expect(save).not.toHaveBeenCalled();
 
     await userEvent.click(form.getByRole('button', { name: 'Cancel' }));
-    expect(field).toHaveValue(JSON.stringify({ HOME: '/home/vis' }, null, 2));
+    expect(field).toHaveValue('~/docs');
+    expect(form.getByRole('textbox', { name: 'Blocked read paths 1' })).toHaveValue('~/private');
     expect(form.queryByRole('alert')).toBeNull();
     expect(form.queryByRole('button', { name: 'Save' })).toBeNull();
     expect(save).not.toHaveBeenCalled();
+  });
+
+  it('saves a guided object edit as a typed value and keeps the other paths', async () => {
+    const value = { allow: ['~/project'], deny_read: ['~/private'] };
+    const save = vi
+      .spyOn(GatewayClient.prototype, 'setSetting')
+      .mockResolvedValue({ ...filesystem, value });
+    const { field, form } = await renderTyped('Allowed paths 1', 'textbox');
+
+    await userEvent.clear(field);
+    await userEvent.type(field, '~/project');
+    expect(save).not.toHaveBeenCalled();
+    await userEvent.click(form.getByRole('button', { name: 'Save' }));
+    expect(save).toHaveBeenCalledWith('jail_filesystem', 'value', value);
+    await waitFor(() => expect(field).toHaveValue('~/project'));
+    expect(form.queryByRole('button', { name: 'Save' })).toBeNull();
   });
 });

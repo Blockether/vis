@@ -477,7 +477,8 @@
             (swap! queue rest)
             value))]
 
-    (with-redefs-fn {#'dlg/settings-pick! (fn [& _]
+    (with-redefs-fn {#'dlg/settings-pick! (fn [_ _ items]
+                                            (expect (not-any? #(= :advanced (:value %)) items))
                                             (take! picks))
                      #'dlg/mini-read! (fn [& _]
                                         (take! reads))
@@ -486,6 +487,47 @@
                      #'dlg/mini-note! (fn [_ _ _ title text]
                                         (swap! notes conj [title text]))}
       #((var-get #'dlg/settings-structured-editor!) nil nil nil row))))
+
+(defdescribe
+  guided-settings-editors-test
+  (describe
+    "ordinary controls"
+    (it "edits workspace paths and preserves other attributes"
+        (let [entry {"id" "docs" "path" "~/docs" "description" "Project notes"}]
+          (expect (= [(assoc entry "path" "~/project")]
+                     (scripted-structured-edit
+                       {:label "Workspace roots" :setting {"editor" "paths"} :toggle-value [entry]}
+                       [0 "path" :done]
+                       ["~/project"])))))
+    (it "edits allowed filesystem paths without changing blocked paths"
+        (let [value {"allow" ["~/docs"] "deny_read" ["~/private"] "deny_write" ["~/readonly"]}]
+          (expect (= (assoc value "allow" ["~/project"])
+                     (scripted-structured-edit {:label "Filesystem access"
+                                                :setting {"editor" "filesystem"}
+                                                :toggle-value value}
+                                               ["allow" :done]
+                                               []
+                                               {:lists [["~/project"]]}))))))
+  (it "directs unsupported settings to the configuration file without opening a raw editor"
+      (let [editors
+            (atom [])
+
+            notes
+            (atom [])]
+
+        (with-redefs-fn {#'dlg/settings-text-editor! (fn [& args]
+                                                       (swap! editors conj args)
+                                                       nil)
+                         #'dlg/mini-note! (fn [_ _ _ title text]
+                                            (swap! notes conj [title text]))}
+          #(expect (nil? (#'dlg/settings-structured-editor!
+                          nil
+                          nil
+                          nil
+                          {:label "Custom configuration" :setting {} :toggle-value {}}))))
+        (expect (empty? @editors))
+        (expect (= [["Edit configuration file" "Edit this setting in your configuration file."]]
+                   @notes)))))
 
 (defdescribe
   guided-network-rules-test
