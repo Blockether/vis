@@ -566,6 +566,38 @@
                "      names == labels,\n" "      any(p.endswith(\"/editing/\") for p in paths))")]
 
       (expect (= "True True True True\n" (out ctx code)))))
+  ;; Regression, user report: an absolute request inside the workspace came back
+  ;; workspace-relative, so `Path(p).relative_to(directory)` raised ValueError.
+  (it "keeps an absolute request absolute inside the workspace"
+      (let [ctx
+            (sandbox)
+
+            d
+            (str (System/getProperty "user.dir") "/src/com/blockether/vis/internal/foundation")
+
+            code
+            (str "from pathlib import Path\n"
+                 "d = " (pr-str d)
+                 "\n" "paths = ls(Path(d), as_paths=True)\n"
+                 "rel = [Path(p).relative_to(d).as_posix() for p in paths]\n"
+                 "print(all(p.startswith(d + \"/\") for p in paths), \"editing\" in rel)")]
+
+        (expect (= "True True\n" (out ctx code)))))
+  (it "joins entries to the requested path with `~` expanded, not the shown path"
+      (let [ctx
+            (sandbox)
+
+            code
+            (str "import json, os\n"
+                 "g = globals()\n" "saved = g[\"__vis_list_directories__\"]\n"
+                 "entry = {\"name\": \"a.txt\", \"type\": \"file\"}\n"
+                 "rows = [{\"path\": \"shown\", \"entries\": [entry]}]\n"
+                 "g[\"__vis_list_directories__\"] = lambda _a: json.dumps(rows)\n" "try:\n"
+                 "    paths = ls(\"~/project\", as_paths=True)\n" "finally:\n"
+                 "    g[\"__vis_list_directories__\"] = saved\n"
+                 "print(paths == [os.path.expanduser(\"~/project/a.txt\")])")]
+
+        (expect (= "True\n" (out ctx code)))))
   (it "descends with depth and flattens a BATCH into one list"
       (let [ctx
             (sandbox)

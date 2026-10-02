@@ -67,6 +67,10 @@ def __vis_install_ls__():
             else:
                 out.append(full)
 
+    def _requested(spec):
+        """The directory one request entry names, `~` expanded: `as_paths` joins to it."""
+        return _os.path.expanduser(spec["path"] if isinstance(spec, dict) else spec)
+
     def _section(path, entries):
         """One directory: the `path  Nd Nf` header, then its tree."""
         home = _os.path.expanduser("~")
@@ -107,10 +111,11 @@ def __vis_install_ls__():
             raise RuntimeError("ls: listing bridge not bound in this sandbox")
         one = _as_path(paths) is not None
         request = [paths] if one else list(paths)
+        specs = [_as_spec(entry) for entry in request]
         payload = bridge(
             _json.dumps(
                 {
-                    "paths": [_as_spec(entry) for entry in request],
+                    "paths": specs,
                     "depth": int(depth),
                     "is_hidden": bool(is_hidden),
                     "pattern": pattern,
@@ -119,9 +124,11 @@ def __vis_install_ls__():
         )
         rows = _decoded(payload)
         if as_paths:
+            # A row's `path` is the host's display form, relative inside the
+            # workspace, so each entry joins the path the caller asked for.
             flat = []
-            for row in rows:
-                _paths(row["path"], row["entries"], flat)
+            for spec, row in zip(specs, rows):
+                _paths(_requested(spec), row["entries"], flat)
             return flat
         if one:
             return _section(rows[0]["path"], rows[0]["entries"])
@@ -156,8 +163,9 @@ def __vis_install_ls__():
         "None, it overrides is_hidden. The listing never includes gitignored entries."
         "\n\nas_paths=True returns the same walk as a flat list of paths instead of "
         "the tree, in the same order. Each path is the requested path joined with the "
-        "entry name, and directories end in '/'. So a relative request gives relative "
-        "paths. `ls(dir, depth=3, as_paths=True)` is the whole file list, ready for "
+        "entry name, and directories end in '/'. A relative request gives relative "
+        "paths, and an absolute or `~` request gives absolute paths. "
+        "`ls(dir, depth=3, as_paths=True)` is the whole file list, ready for "
         "cat, grep or Path()."
     )
 
