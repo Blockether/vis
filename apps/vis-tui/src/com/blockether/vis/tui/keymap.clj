@@ -206,8 +206,50 @@
   \?)
 
 (def sidebar-help-hint
-  "The sidebar help keys, shared by dispatch and the help card."
+  "The sidebar help keys, shared by dispatch, the key list and the help card."
   (str (chord sidebar-help-key) " / " sidebar-help-alias-key))
+
+(def sidebar-commands
+  "The project sidebar's own keys while it has focus, in the order help lists
+   them. `:key` is the plain character the sidebar reads; `:keys` labels a key
+   that is not one plain character. Row menus show the same keys beside their
+   items, and the help keys list this table inside the sidebar."
+  [{:id :open :keys "Enter" :label "Open the row"} {:id :menu :key \g :label "Open the row menu"}
+   {:id :new-session :key \n :label "Start a session here"}
+   {:id :new-group :key \G :label "Create a group"}
+   {:id :add-project :key \a :label "Add a project"}
+   {:id :settings :key \s :label "Open settings for the row"}
+   {:id :select :key \space :label "Select or clear a session"}
+   {:id :move :key \m :label "Move sessions to a group"}
+   {:id :ungroup :key \u :label "Take sessions out of a group"}
+   {:id :details :key \d :label "Show session details"}
+   {:id :star :key \f :label "Star or unstar a session"}
+   {:id :rename :key \R :label "Rename the row"}
+   {:id :recolour :key \c :label "Change the group colour"}
+   {:id :archive :key \A :label "Archive or restore the row"}
+   {:id :show-archived :key \v :label "Show or hide archived rows"}
+   {:id :delete :key \D :label "Delete the row"}
+   {:id :add-here :key \+ :label "Add a group, session or project here"}
+   {:id :search :key \/ :label "Search sessions"} {:id :refresh :key \r :label "Reload projects"}
+   {:id :help :key sidebar-help-alias-key :keys sidebar-help-hint :label "Show these keys"}
+   {:id :back :keys "Esc · Tab" :label "Return to the chat"}
+   {:id :hide :keys (label-for :switch-project) :label "Hide the sidebar"}
+   {:id :rows :keys "↑ ↓ · C-p C-n" :label "Move between rows"}
+   {:id :jump :keys "PgUp PgDn · Home End" :label "Jump a page or to an end"}])
+
+(defn sidebar-key
+  "The plain character of the `sidebar-commands` entry `id`, or nil."
+  [id]
+  (some #(when (= id (:id %)) (:key %)) sidebar-commands))
+
+(defn sidebar-key-label
+  "The printed key of a `sidebar-commands` entry: its `:keys` label, `Space` or
+   the character itself."
+  [{:keys [key keys]}]
+  (cond keys keys
+        (= \space key) "Space"
+        key (str key)
+        :else ""))
 
 (def ^:const abort-key
   "C-g — Emacs `keyboard-quit` (abort): cancel a running turn / close a

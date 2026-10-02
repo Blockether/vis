@@ -226,6 +226,190 @@
 
                    (expect (= 5 (:selected (on-key s0 burst geom)))))))
 
+(defn- numbered-items
+  "`n` plain list items labelled Item 0, Item 1 and so on."
+  [n]
+  (mapv #(hash-map :label (str "Item " %) :id %) (range n)))
+
+(defdescribe
+  select-modal-direct-keys-test
+  (it "chooses an item from its key, or from its Ctrl key"
+      (let [items
+            [{:id :menu :label "Menu" :key \g} {:id :help :label "Keys" :key \? :ctrl-key \h}]
+
+            {:keys [init measure reconcile on-key]}
+            (dlg/select-modal-component "Keys" items {:height :content})
+
+            geom
+            (measure init 80 30)
+
+            s0
+            (reconcile init geom)]
+
+        (expect (= :menu (:id (done-key (on-key s0 (char-key \g) geom)))))
+        (expect (= :help (:id (done-key (on-key s0 (char-key \?) geom)))))
+        (expect (= :help (:id (done-key (on-key s0 (KeyStroke. \h true false) geom)))))
+        ;; A plain h is no item's key, and Alt never chooses.
+        (expect (= s0 (on-key s0 (char-key \h) geom)))
+        (expect (= s0 (on-key s0 (KeyStroke. \g false true) geom)))))
+  (it "types item keys into the query of a filtering list"
+      (let [{:keys [init measure reconcile on-key]}
+            (dlg/select-modal-component "Keys"
+                                        [{:id :menu :label "Menu" :key \g}]
+                                        {:filter? true :height :content})
+
+            geom
+            (measure init 80 30)
+
+            s1
+            (on-key (reconcile init geom) (char-key \g) geom)]
+
+        (expect (= "g" (:query s1)))
+        (expect (not (contains? s1 done-key)))))
+  (it
+    "moves the selection with C-n, C-p, Home and End"
+    (let [{:keys [init measure reconcile on-key]}
+          (dlg/select-modal-component "Items" (numbered-items 6) {:height :content})
+
+          geom
+          (measure init 80 30)
+
+          step
+          #(on-key %1 %2 geom)
+
+          next-line
+          (KeyStroke. \n true false)
+
+          previous-line
+          (KeyStroke. \p true false)
+
+          s0
+          (reconcile init geom)]
+
+      (expect (= 2
+                 (:selected (-> s0
+                                (step next-line)
+                                (step next-line)))))
+      (expect (= 0
+                 (:selected (-> s0
+                                (step next-line)
+                                (step previous-line)
+                                (step previous-line)))))
+      (expect (= 5 (:selected (step s0 (ks KeyType/End)))))
+      (expect (= 0
+                 (:selected (-> s0
+                                (step (ks KeyType/End))
+                                (step (ks KeyType/Home))))))))
+  (it "follows the pointer and chooses the item that a click pressed"
+      (let [{:keys [init measure reconcile on-key]}
+            (dlg/select-modal-component "Items" (numbered-items 6) {:height :content})
+
+            {:keys [bounds list-top] :as geom}
+            (measure init 80 30)
+
+            pointer
+            (fn [action row]
+              (MouseAction. action
+                            1
+                            (TerminalPosition. (int (+ (long (:left bounds)) 3))
+                                               (int (+ (long list-top) (long row))))))
+
+            s0
+            (reconcile init geom)
+
+            pressed
+            (on-key s0 (pointer MouseActionType/CLICK_DOWN 3) geom)]
+
+        (expect (= 2 (:selected (on-key s0 (pointer MouseActionType/MOVE 2) geom))))
+        (expect (= 3 (:selected pressed)))
+        (expect
+          (= 3 (:id (done-key (on-key pressed (pointer MouseActionType/CLICK_RELEASE 3) geom)))))
+        ;; Releasing over another item chooses nothing.
+        (expect (not (contains? (on-key pressed (pointer MouseActionType/CLICK_RELEASE 4) geom)
+                                done-key))))))
+
+(defdescribe
+  dialog-region-test
+  (it "lays a dialog out in the region band, under its anchor row"
+      (let [{:keys [init measure]}
+            (dlg/select-modal-component "Items" (numbered-items 6) {:height :content})
+
+            bounds
+            (fn [anchor]
+              (binding [dlg/*dialog-region* {:width (fn [_ _]
+                                                      40)
+                                             :anchor-row anchor}]
+                (:bounds (measure init 40 30))))
+
+            below
+            (bounds 5)
+
+            above
+            (bounds 26)
+
+            centered
+            (bounds nil)]
+
+        ;; The box and its two-column shadow stay inside the 40-column band.
+        (doseq [{:keys [left right]} [below above centered]]
+          (expect (<= 2 (long left)))
+          (expect (<= (+ (long right) 2) 40)))
+        (expect (= 6 (:top below)))
+        ;; Without room below, the box ends on the row above its anchor.
+        (expect (= 25 (:bottom above)))
+        (expect (= (quot (- 30 (- (long (:bottom centered)) (long (:top centered)) -1)) 2)
+                   (:top centered)))))
+  (it "fits a list dialog to its items inside a region"
+      (let [box-rows (fn [region]
+                       (let [capture (cap/capture! {:cols 80
+                                                    :rows 30
+                                                    :keys [:esc]
+                                                    :paint! (fn [{:keys [screen]}]
+                                                              (binding [dlg/*dialog-region* region]
+                                                                (dlg/list-dialog! screen
+                                                                                  "Items"
+                                                                                  (numbered-items 3)
+                                                                                  {})))})]
+                         (expect (nil? (:error capture)))
+                         (keep-indexed (fn [row line]
+                                         (when (re-find #"[┌└]" line) row))
+                                       (str/split-lines (cap/frame-text capture 0)))))]
+        (expect (= [3 12]
+                   (box-rows {:width (fn [_ _]
+                                       40)
+                              :anchor-row 2})))
+        ;; The whole terminal keeps the shared tall footprint.
+        (expect (= [3 21] (box-rows nil)))))
+  (it "keeps a wrapped confirmation's buttons inside its box"
+      ;; A narrow band wraps the question. The Yes/No row was placed by the
+      ;; unwrapped line count and landed on the hint separator.
+      (let [capture
+            (cap/capture! {:cols 80
+                           :rows 30
+                           :keys [:esc]
+                           :paint!
+                           (fn [{:keys [screen]}]
+                             (binding [dlg/*dialog-region* {:width (fn [_ _]
+                                                                     40)
+                                                            :anchor-row 2}]
+                               (dlg/confirm-dialog!
+                                 screen
+                                 "Delete session"
+                                 "Permanently delete Draft one alpha? This cannot be undone.")))})
+
+            lines
+            (str/split-lines (cap/frame-text capture 0))
+
+            yes-row
+            (first (keep-indexed (fn [row line]
+                                   (when (str/includes? line " Yes ") row))
+                                 lines))]
+
+        (expect (nil? (:error capture)))
+        (expect (some? yes-row))
+        (expect (re-find #"│ +Yes +No +│" (nth lines yes-row)))
+        (expect (re-find #"├─+┤" (nth lines (inc (long yes-row))))))))
+
 (defdescribe select-modal-paging-test
              (it "PageDown and PageUp move a viewport and stop at list boundaries"
                  (let [items

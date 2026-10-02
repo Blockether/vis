@@ -106,12 +106,31 @@
 
     (swap! (:state background) assoc :restore! nil :footprint nil :cursor nil)))
 
+(def ^:dynamic *dialog-region*
+  "Pane band that scopes dialogs opened from it, or nil for the whole terminal.
+
+   A map: `:width` is `(fn [cols rows] -> columns)`, the band at the left screen
+   edge; `:anchor-row` is the screen row the dialog belongs to, or nil. Dialogs in
+   a region lay out in the band with a compact inset and open below the anchor
+   row, or above it when the band has no room below. The rest of the screen
+   stays visible."
+  nil)
+
+(defn- region-size
+  "Narrow the terminal `size` to the `*dialog-region*` band, when one is bound."
+  ^TerminalSize [^TerminalSize size]
+  (if-let [width (:width *dialog-region*)]
+    (let [cols (.getColumns size)]
+      (TerminalSize. (int (p/clamp (long (width cols (.getRows size))) 1 cols)) (.getRows size)))
+    size))
+
 (defn- modal-size!
-  "Apply a pending resize and clear the old back buffer before the next paint."
+  "Apply a pending resize and clear the old back buffer before the next paint.
+   Returns the area dialogs lay out in: the terminal or the `*dialog-region*` band."
   ^TerminalSize [^TerminalScreen screen]
-  (if-let [size (frame/resize! screen)]
-    (do (clear-screen-buffer! screen size) (invalidate-modal-backgrounds! screen) size)
-    (.getTerminalSize screen)))
+  (region-size (if-let [size (frame/resize! screen)]
+                 (do (clear-screen-buffer! screen size) (invalidate-modal-backgrounds! screen) size)
+                 (.getTerminalSize screen))))
 
 (defn frame-restorer
   "Snapshot the screen's back buffer and return a function that restores its cells.
@@ -903,6 +922,55 @@
     (p/put-str! g x0 title-row label)
     (p/clear-styles! g)))
 
+(def ^:private region-inset
+  "Columns between a `*dialog-region*` band edge and a dialog box inside it."
+  2)
+
+(defn- region-top
+  "Top row for a `box-h` box in a region: below the anchor row when it fits, above
+   it when only that fits, else as low as the band allows. Centered without an anchor."
+  ^long [^long rows ^long box-h anchor-row]
+  (let [last-row (- rows 2)]
+    (if (nil? anchor-row)
+      (max 1 (quot (- rows box-h) 2))
+      (let [below (inc (long anchor-row))
+            above (- (long anchor-row) box-h)]
+
+        (cond (<= (+ below box-h -1) last-row) below
+              (>= above 1) above
+              :else (max 1 (- last-row box-h -1)))))))
+
+(defn- dialog-rect
+  "Golden box `[left top box-w box-h]` for `content-w`×`content-h` content in a
+   `cols`×`rows` layout area. The terminal centers the box with a generous inset,
+   nudged up and left. A `*dialog-region*` band keeps a compact inset, leaves room
+   for the drop shadow and anchors the box to the region's row."
+  [^long cols ^long rows ^long content-w ^long content-h]
+  (if-let [region *dialog-region*]
+    (let [[golden-w golden-h] (render/golden-dialog-size (+ cols 8) (+ rows 11) content-w content-h)
+          box-w (max 1 (min (long golden-w) (- cols (long region-inset) 3)))
+          box-h (max 1 (min (long golden-h) (- rows 2)))]
+
+      [(max (long region-inset) (quot (- cols box-w 2) 2))
+       (region-top rows box-h (:anchor-row region)) box-w box-h])
+    (let [[box-w box-h] (render/golden-dialog-size cols rows content-w content-h)
+          box-w (long box-w)
+          box-h (long box-h)]
+
+      [(max 3 (- (quot (- cols box-w) 2) 3)) (max 2 (- (quot (- rows box-h) 2) 2)) box-w box-h])))
+
+(defn- wrap-width
+  "Columns that dialog text wraps at before its box is sized: the shared estimate,
+   capped by the text area of the narrowest default box in `cols`×`rows`. A
+   `*dialog-region*` band draws a narrower box than the terminal, and text measured
+   wider than the box would push the rows below it out of the frame."
+  ^long [^long cols ^long rows]
+  (let [[_ _ box-w] (dialog-rect cols
+                                 rows
+                                 (default-content-width cols)
+                                 (adaptive-content-height rows min-adaptive-content-h))]
+    (max 1 (min (- (default-content-width cols) 2) (- (long box-w) 4)))))
+
 (defn draw-dialog-chrome!
   "Draw dialog background, shadow, border, and title.
 
@@ -934,20 +1002,20 @@
          content-h
          (long content-h)
 
-         [box-w box-h]
-         (render/golden-dialog-size cols rows content-w content-h)
+         [box-left box-top box-w box-h]
+         (dialog-rect cols rows content-w content-h)
+
+         box-left
+         (long box-left)
+
+         box-top
+         (long box-top)
 
          box-w
          (long box-w)
 
          box-h
          (long box-h)
-
-         box-left
-         (max 3 (- (quot (- cols box-w) 2) 3))
-
-         box-top
-         (max 2 (- (quot (- rows box-h) 2) 2))
 
          box-right
          (+ box-left box-w -1)
@@ -1025,20 +1093,23 @@
         content-h
         (default-content-height rows)
 
-        [box-w box-h]
-        (render/golden-dialog-size cols rows content-w content-h)
+        [box-left box-top box-w box-h]
+        (if *dialog-region*
+          (dialog-rect cols rows content-w content-h)
+          (let [[box-w box-h] (render/golden-dialog-size cols rows content-w content-h)]
+            [(quot (- cols (long box-w)) 2) (quot (- rows (long box-h)) 2) box-w box-h]))
+
+        box-left
+        (long box-left)
+
+        box-top
+        (long box-top)
 
         box-w
         (long box-w)
 
         box-h
         (long box-h)
-
-        box-left
-        (quot (- cols box-w) 2)
-
-        box-top
-        (quot (- rows box-h) 2)
 
         box-right
         (+ box-left box-w -1)
@@ -1080,20 +1151,20 @@
    window — before any drawing happens. Returns the SAME shape the chrome does
    ({:left :top :right :bottom :inner-w :inner-h}), from the same golden math."
   [^long cols ^long rows ^long content-w ^long content-h]
-  (let [[box-w box-h]
-        (render/golden-dialog-size cols rows content-w content-h)
+  (let [[box-left box-top box-w box-h]
+        (dialog-rect cols rows content-w content-h)
+
+        box-left
+        (long box-left)
+
+        box-top
+        (long box-top)
 
         box-w
         (long box-w)
 
         box-h
-        (long box-h)
-
-        box-left
-        (max 3 (- (quot (- cols box-w) 2) 3))
-
-        box-top
-        (max 2 (- (quot (- rows box-h) 2) 2))]
+        (long box-h)]
 
     {:left box-left
      :top box-top
@@ -1799,6 +1870,62 @@
                  (str/includes? (str/lower-case (str (or (:search-text item) (:label item)))) q))
         items))))
 
+(defn- list-pointer-index
+  "Index of the select-list item under a pointer event, or nil off the list."
+  [key {:keys [bounds list-top list-h total column-offset]} scroll]
+  (when (instance? MouseAction key)
+    (let [{:keys [left inner-w]}
+          bounds
+
+          scroll
+          (long (or scroll 0))
+
+          shown
+          (min (long list-h) (- (long total) scroll))]
+
+      (when (pos? shown)
+        (when-let [^TerminalPosition relative
+                   (.relativePosition (TerminalRectangle.
+                                        (int (+ (long (or column-offset 0)) (long left) 1))
+                                        (int list-top)
+                                        (int inner-w)
+                                        (int shown))
+                                      (.getPosition ^MouseAction key))]
+          (+ scroll (long (.getRow relative))))))))
+
+(defn- select-pointer
+  "Apply one pointer event to select-list `state`. Hover and press highlight an
+   item; releasing the button on the item it pressed chooses that item."
+  [state key geom]
+  (let [index
+        (list-pointer-index key geom (:scroll state))
+
+        action
+        (.getActionType ^MouseAction key)]
+
+    (cond (nil? index) (dissoc state :pressed)
+          (= MouseActionType/CLICK_DOWN action) (assoc state
+                                                  :selected index
+                                                  :pressed index)
+          (= MouseActionType/CLICK_RELEASE action) (if (= index (:pressed state))
+                                                     {::done (nth (:filtered geom) index)}
+                                                     (dissoc state :pressed))
+          (#{MouseActionType/MOVE MouseActionType/DRAG} action) (assoc state :selected index)
+          :else state)))
+
+(defn- accelerator-item
+  "The first item that `key` chooses directly, or nil. A plain character matches
+   an item's `:key`; the same character typed with Ctrl matches its `:ctrl-key`."
+  [items key]
+  (when (and (= KeyType/Character (key-type key)) (not (.isAltDown ^KeyStroke key)))
+    (let [c
+          (key-character key)
+
+          field
+          (if (.isCtrlDown ^KeyStroke key) :ctrl-key :key)]
+
+      (some #(when (= c (get % field)) %) items))))
+
 (defn select-modal-component
   "Build the `run-modal!` component behind `list-dialog!` — a scrollable,
    selectable, optionally type-to-filter list. This is the pure-fn heart of the
@@ -1947,33 +2074,50 @@
              (when cursor
                (TerminalPosition. (int (frame/screen-column (.getColumn ^TerminalPosition cursor)))
                                   (.getRow ^TerminalPosition cursor)))))))
-     :on-key
-     (fn [{:keys [selected query] :as state} key {:keys [total filtered list-h]}]
-       (let [clampf #(p/clamp % 0 (max 0 (dec (long total))))]
-         (if-let [wheel (ScrollBar/wheelStep ^KeyStroke key)]
-           (assoc state :selected (clampf (+ (long selected) (long wheel))))
-           (condp = (key-type key)
-             KeyType/Escape {::done nil}
-             KeyType/ArrowUp (assoc state :selected (clampf (dec (long selected))))
-             KeyType/ArrowDown (assoc state :selected (clampf (inc (long selected))))
-             KeyType/PageUp (assoc state :selected (clampf (- (long selected) (long list-h))))
-             KeyType/PageDown (assoc state :selected (clampf (+ (long selected) (long list-h))))
-             KeyType/Enter {::done (when (pos? (long total)) (nth filtered selected))}
-             KeyType/Backspace (if filter?
-                                 (assoc state
-                                   :query (if (seq query) (subs query 0 (dec (count query))) query)
-                                   :selected 0)
-                                 state)
-             KeyType/Character
-             (if filter?
-               (let [c (key-character key)]
-                 (if (and c (not (.isCtrlDown ^KeyStroke key)) (not (.isAltDown ^KeyStroke key)))
-                   (assoc state
-                     :query (str query c)
-                     :selected 0)
-                   state))
-               state)
-             state))))}))
+     :on-key (fn [{:keys [selected query] :as state} key {:keys [total filtered list-h] :as geom}]
+               (let [clampf
+                     #(p/clamp % 0 (max 0 (dec (long total))))
+
+                     c
+                     (key-character key)
+
+                     ctrl?
+                     (and (instance? KeyStroke key) (.isCtrlDown ^KeyStroke key))
+
+                     accelerator
+                     (when-not filter? (accelerator-item filtered key))]
+
+                 (if-let [wheel (ScrollBar/wheelStep ^KeyStroke key)]
+                   (assoc state :selected (clampf (+ (long selected) (long wheel))))
+                   (cond (instance? MouseAction key) (select-pointer state key geom)
+                         accelerator {::done accelerator}
+                         (and ctrl? (= KeyType/Character (key-type key)) (#{\n \p} c))
+                         (assoc state :selected (clampf ((if (= \n c) inc dec) (long selected))))
+                         :else
+                         (condp = (key-type key)
+                           KeyType/Escape {::done nil}
+                           KeyType/ArrowUp (assoc state :selected (clampf (dec (long selected))))
+                           KeyType/ArrowDown (assoc state :selected (clampf (inc (long selected))))
+                           KeyType/PageUp (assoc state
+                                            :selected (clampf (- (long selected) (long list-h))))
+                           KeyType/PageDown (assoc state
+                                              :selected (clampf (+ (long selected) (long list-h))))
+                           KeyType/Home (assoc state :selected 0)
+                           KeyType/End (assoc state :selected (clampf (dec (long total))))
+                           KeyType/Enter {::done (when (pos? (long total)) (nth filtered selected))}
+                           KeyType/Backspace
+                           (if filter?
+                             (assoc state
+                               :query (if (seq query) (subs query 0 (dec (count query))) query)
+                               :selected 0)
+                             state)
+                           KeyType/Character
+                           (if (and filter? c (not ctrl?) (not (.isAltDown ^KeyStroke key)))
+                             (assoc state
+                               :query (str query c)
+                               :selected 0)
+                             state)
+                           state)))))}))
 
 (defn list-dialog!
   "Reusable scrollable, selectable list dialog — the SINGLE implementation
@@ -1982,16 +2126,26 @@
    scroll / key logic and `run-modal!` owns the loop. Returns the chosen item
    map (the full map, so callers recover `:id`/slash keys), or nil on Esc.
 
-   `items` is a vec of maps with at least `:label`. opts:
+   `items` is a vec of maps with at least `:label`. An item's optional `:hint` is
+   a dim right-aligned chip; its optional `:key` character chooses it directly
+   when the list does not filter, and `:ctrl-key` does the same with Ctrl held.
+   A click chooses the item it pressed, and hover moves the selection. ↑↓,
+   C-p/C-n, PgUp/PgDn and Home/End move. opts:
      :filter?      type-to-filter on `:label`, case-insensitive (default false)
      :placeholder  query placeholder shown while the filter is empty
      :enter-label  hint-bar verb for Enter (default \"select\")
      :height       `:content` sizes the box to the item count (+ the query
-                    field), capped; nil uses the shared (tall) footprint.
+                    field), capped; nil uses the shared (tall) footprint, or
+                    `:content` inside a `*dialog-region*` band.
      :column-offset (fn [cols rows] -> left) scopes the dialog to columns from
                     `left` to the terminal edge. Recomputed for each paint."
   [^TerminalScreen screen title items opts]
-  (run-modal! screen (select-modal-component title items opts)))
+  (run-modal! screen
+              (select-modal-component title
+                                      items
+                                      (cond-> opts
+                                        (and *dialog-region* (nil? (:height opts)))
+                                        (assoc :height :content)))))
 
 (defn select-dialog!
   "Show a selection list dialog. Returns the selected item map or nil on Esc.
@@ -2483,10 +2637,10 @@
               (frame/surface-graphics screen cols rows)
 
               ;; Content: body rows + label row + spacer + 3-row bordered input box.
-              ;; Pre-estimate the content height (at the default width) so the box is
+              ;; Pre-estimate the content height at the box's text width so the box is
               ;; sized to the prompt it actually holds.
               est-w
-              (max 1 (- (default-content-width cols) 2))
+              (wrap-width cols rows)
 
               est-body
               (->> body-lines
@@ -2673,10 +2827,6 @@
           btn-gap
           4
 
-          ;; content: message lines + blank + button row = lines + 2
-          ch
-          (+ (count raw-lines) 2)
-
           focus
           (atom 0)]
 
@@ -2694,6 +2844,12 @@
 
               g
               (frame/surface-graphics screen cols rows)
+
+              ;; Content: wrapped message + blank + button row. A sidebar band wraps
+              ;; the message, and the button row must stay inside the box.
+              ch
+              (let [w (wrap-width cols rows)]
+                (+ (count (mapcat #(render/wrap-text % w) raw-lines)) 2))
 
               bounds
               (draw-dialog-chrome! g cols rows title ch)
@@ -3085,7 +3241,7 @@
           (frame/surface-graphics screen cols rows)
 
           est-w
-          (max 1 (- (default-content-width cols) 2))
+          (wrap-width cols rows)
 
           wrapped
           (->> (text-input-body-lines body)

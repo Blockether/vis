@@ -596,6 +596,17 @@
         (if (and (seq tail) parent) (if (= parent (first tail)) tail (into [parent] tail)) visible))
       visible)))
 
+(defn entry-row
+  "The last screen row of the visible entry at sidebar `index`, or nil when that
+   entry is scrolled away or the add field hides the list. Mirrors `paint!`: the
+   first entry starts at row 4, and a session card is three rows tall."
+  [db rows index]
+  (when-not (get-in db [:project-sidebar :adding])
+    (let [visible (visible-entries db rows)]
+      (some (fn [[entry row]]
+              (when (= index (:index entry)) (+ (long row) (dec (long (row-height entry))))))
+            (map vector visible (reductions + 4 (map row-height visible)))))))
+
 (defn- dark-selection?
   "Use a solid accent for focused and selected rows on dark surfaces."
   [entry active? focused?]
@@ -1045,6 +1056,84 @@
                                     (long (or (:cursor field) 0))
                                     "Search saved sessions")))))
 
+(def ^:private footer-commands
+  "The footer's sidebar commands in priority order; a narrow rail drops them from
+   the end. Each pair is a button that runs the same action as its key."
+  [[:help "keys"] [:menu "menu"] [:settings "settings"] [:add-project "add project"]
+   [:back "chat"]])
+
+(defn- footer-pairs
+  "The footer's `[key label command]` triples for the rail's mode, most important
+   first: a narrow rail keeps the leading pairs. Search and the add field describe
+   their own keys; their pairs have no command."
+  [sidebar]
+  (cond (:search sidebar) [["Enter" "open"] ["Esc" "clear search"] ["↑↓" "results"]]
+        (:adding sidebar) [["Enter" "add"] ["Esc" "cancel"] ["Tab" "complete"] ["C-n" "folder"]]
+        :else (mapv (fn [[id label]]
+                      [(or (some-> (keymap/sidebar-key id)
+                                   str)
+                           "Esc") label id])
+                    footer-commands)))
+
+(defn- paint-footer!
+  "Paint the footer row in the dialog hint style: bold keys and dim labels,
+   centered, with whole pairs only. List pairs register as `:project-footer`
+   buttons and light up under the pointer."
+  [g sidebar left width row]
+  (let [text-w
+        (max 0 (- (long width) 4))
+
+        sep
+        "  ·  "
+
+        sep-w
+        (long (p/display-width sep))
+
+        all
+        (footer-pairs sidebar)
+
+        pairs
+        (subvec all 0 (count (dlg/fit-hint-pairs (mapv #(subvec % 0 2) all) text-w)))
+
+        seg-w
+        (fn [[k a]]
+          (+ (long (p/display-width k)) 1 (long (p/display-width a))))
+
+        total
+        (+ (long (reduce + 0 (map seg-w pairs))) (* sep-w (max 0 (dec (count pairs)))))
+
+        hovered
+        (.hovered interactions/hit-map)]
+
+    (loop [col
+           (+ (long left) 2 (max 0 (quot (- text-w total) 2)))
+
+           [[k a command :as pair] & more]
+           (seq pairs)]
+
+      (when pair
+        (let [w
+              (long (seg-w pair))
+
+              hot?
+              (and command (= :project-footer (:kind hovered)) (= command (:command hovered)))]
+
+          (when command
+            (.register interactions/hit-map
+                       {:kind :project-footer
+                        :command command
+                        :bounds {:col col :row row :width w :height 1}}))
+          (p/clear-styles! g)
+          (if hot?
+            (p/set-colors! g t/header-active-tab-fg t/header-active-tab-accent)
+            (p/set-colors! g t/dialog-hint-key t/dialog-bg))
+          (p/styled g [p/BOLD] (p/put-str! g col row k))
+          (when-not hot? (p/set-fg! g t/dialog-hint))
+          (p/styled g [p/ITALIC] (p/put-str! g (+ col (long (p/display-width k))) row (str " " a)))
+          (p/set-colors! g t/dialog-hint t/dialog-bg)
+          (when (seq more) (p/put-str! g (+ col w) row sep))
+          (recur (+ col w sep-w) more))))))
+
 (defn paint!
   "Use the main view's three-row header, bordered container and inset footer.
    Waiting and unread sessions have filled buttons and independently focusable rows.
@@ -1223,27 +1312,7 @@
           (when-let [error (:error sidebar)]
             (p/set-colors! g t/warning-fg t/dialog-bg)
             (p/put-str! g (+ left 2) (- rows 4) (p/truncate-cols error (max 0 (- width 4))))))
-        (when (> rows 5)
-          (let [available (max 0 (- width 4))
-                hints (cond (:search sidebar) ["↑↓ results · ↵ open · Esc clear search"
-                                               "↑↓ · ↵ open · Esc clear" "↵ open · Esc clear"]
-                            (:adding sidebar) ["↵ add · ⇥ complete · Ctrl+N folder · Esc cancel"
-                                               "↵ add · ⇥ fill · Ctrl+N folder · Esc cancel"
-                                               "↵ add · Ctrl+N folder · Esc cancel"
-                                               "↵ add · Ctrl+N folder · Esc" "↵ add · Esc cancel"
-                                               "↵ add · Esc"]
-                            :else ["↑↓·↵ open·Space mark·g menu·C-x w hide·Esc chat"
-                                   "↑↓ · ↵ open · g menu · C-x w hide · Esc chat"
-                                   ;; The narrowest rail still spells every verb: tighter
-                                   ;; separators buy the room the words need.
-                                   "↑↓·↵ open·g menu·C-x w hide·Esc chat"
-                                   "↑↓ · ↵ · g menu · C-x w hide · Esc"
-                                   "↑↓ · ↵ · g menu · C-x w · Esc" "↑↓ · ↵ · g · C-x w · Esc"
-                                   "↑↓ ↵ g C-x w Esc"])
-                hint (or (first (filter #(<= (p/display-width %) available) hints)) (last hints))]
-
-            (p/set-colors! g t/dialog-hint t/dialog-bg)
-            (p/put-str! g (+ left 2) (- rows 2) (p/truncate-cols hint available))))))
+        (when (> rows 5) (paint-footer! g sidebar left width (- rows 2)))))
     (let [cursor (or (paint-add-field! g db cols rows) (paint-search-field! g db cols rows))]
       (.commitFrame hit-map)
       cursor)))
@@ -1262,6 +1331,179 @@
                            (= keymap/sidebar-help-alias-key (.getCharacter key))
                            (or (:help-open? db)
                                (not (or (:adding sidebar) (:search sidebar))))))))))
+
+(defn- menu-item
+  "A row-menu item that the sidebar command `command` runs, with its key chip."
+  [id label command]
+  (let [k (keymap/sidebar-key command)]
+    (cond-> {:id id :label label}
+      k
+      (assoc :key
+        k :hint
+        (keymap/sidebar-key-label {:key k})))))
+
+(defn row-menu-items
+  "The ⋮ menu of a sidebar `entry`, each verb with the key that runs it. The keys
+   work on the row without the menu: a key acts exactly where the menu lists it."
+  [db entry]
+  (let [project
+        (:project entry)
+
+        pid
+        (some-> (get project "id")
+                str)
+
+        group
+        (:group entry)
+
+        session
+        (:session entry)
+
+        sid
+        (some-> (get session "id")
+                str)
+
+        selected
+        (get-in db [:project-sidebar :selected pid] #{})
+
+        moving
+        (long (if (contains? selected sid) (count selected) 1))
+
+        archived-group?
+        (some? (get group "archived_at"))]
+
+    (cond
+      sid
+      (cond-> [(menu-item :details "Show session details" :details)
+               (menu-item :toggle-session
+                          (if (contains? selected sid) "Deselect session" "Select session")
+                          :select)
+               (menu-item
+                 :move-session
+                 (if (> moving 1) (str "Move " moving " selected sessions…") "Move to group…")
+                 :move)]
+        (or (> moving 1) (some? (get session "group_id")))
+        (conj (menu-item
+                :ungroup-session
+                (if (> moving 1) (str "Ungroup " moving " selected sessions") "Remove from group")
+                :ungroup))
+
+        true
+        (into [(menu-item :favorite (if (:favorite? entry) "Unstar session" "Star session") :star)
+               (menu-item :rename-session "Rename session…" :rename)
+               (menu-item :settings "Session settings…" :settings)])
+
+        (not archived-group?)
+        (conj (if (get session "archived_at")
+                (menu-item :unarchive-session "Unarchive session" :archive)
+                (menu-item :archive-session "Archive session" :archive)))
+
+        true
+        (conj (menu-item :delete-session "Delete session…" :delete)))
+      group (cond-> []
+              (not archived-group?)
+              (conj (menu-item :new-session "＋ New session here" :new-session))
+
+              (and (not archived-group?) (seq selected))
+              (conj
+                (menu-item :move-selected (str "Move " (count selected) " selected here") :move))
+
+              true
+              (into [(menu-item :new "＋ New group…" :new-group)
+                     (menu-item :rename "Rename group…" :rename)
+                     (menu-item :recolour "Change group colour…" :recolour)
+                     (menu-item :settings "Group settings…" :settings)
+                     (if archived-group?
+                       (menu-item :unarchive-group "Unarchive group" :archive)
+                       (menu-item :archive-group "Archive group" :archive))
+                     (menu-item :delete "✗ Delete group" :delete)]))
+      (= :sessions (:set entry))
+      (cond-> [(menu-item :toggle-session-archive
+                          (if (:archived? entry) "Hide archived sessions" "Show archived sessions")
+                          :show-archived) (menu-item :new-session "＋ New session here" :new-session)
+               (menu-item :new "＋ New group…" :new-group)]
+        (seq selected)
+        (conj (menu-item :ungroup-selected
+                         (str "Ungroup " (count selected) " selected sessions")
+                         :ungroup))
+
+        true
+        (conj (menu-item :settings "Project settings…" :settings)))
+      (= :groups (:set entry))
+      [(menu-item :new "＋ New group…" :new-group)
+       (menu-item :toggle-group-archive
+                  (if (:archived? entry) "Hide archived groups" "Show archived groups")
+                  :show-archived) (menu-item :settings "Project settings…" :settings)]
+      :else [(menu-item :use-project "Use project" nil)
+             (menu-item :new-session "＋ New session" :new-session)
+             (menu-item :new "＋ New group…" :new-group)
+             (menu-item :settings "Project settings…" :settings)
+             (menu-item :refresh "Refresh projects" :refresh)
+             (menu-item :delete-project "✗ Remove project and sessions…" :delete)])))
+
+(def ^:private menu-kinds
+  "Row kinds that own a ⋮ menu."
+  #{:project-select :project-group :project-set :project-session})
+
+(defn- focused-entry
+  "The entry under the sidebar cursor, or nil on the header row."
+  [db]
+  (let [index (long (or (get-in db [:project-sidebar :index]) 0))]
+    (when (pos? index) (nth (sidebar-entries db) (dec index) nil))))
+
+(defn- page-size
+  "Entries that PgUp and PgDn move: one screen of visible rows."
+  [db]
+  (max 1 (dec (count (visible-entries db (long (or (get-in db [:layout :rows]) 24)))))))
+
+(defn char-action
+  "The action of the plain character `c` on the row under the sidebar cursor.
+   A key that the row's menu lists runs that item without opening the menu."
+  [db c]
+  (let [entry
+        (focused-entry db)
+
+        is?
+        #(= c (keymap/sidebar-key %))
+
+        session?
+        (= :project-session (:kind entry))
+
+        sid
+        (some-> (get-in entry [:session "id"])
+                str)
+
+        item
+        (when (menu-kinds (:kind entry)) (some #(when (= c (:key %)) %) (row-menu-items db entry)))]
+
+    (cond (is? :search) [:search]
+          (is? :select)
+          (if session? [:toggle-session (str (get-in entry [:project "id"])) sid] [:noop])
+          (is? :details) (if session? [:details sid] [:noop])
+          (is? :add-here)
+          (if (and (= :project-set (:kind entry)) (#{:groups :sessions} (:set entry)))
+            [:menu (assoc entry :initial-action (if (= :groups (:set entry)) :new :new-session))]
+            [:add])
+          ;; `g` opens the row's own menu. Nothing to act on above the first row.
+          (is? :menu) (if (menu-kinds (:kind entry)) [:menu entry] [:noop])
+          (is? :add-project) [:add]
+          (is? :refresh) [:refresh]
+          item [:menu (assoc entry :initial-action (:id item))]
+          ;; Without a row of its own, settings opens the main settings.
+          (is? :settings) [:menu (assoc (or entry {}) :initial-action :settings)]
+          :else [:noop])))
+
+(defn- footer-action
+  "The action of a footer button: the same as its key."
+  [db command]
+  (case command
+    :help
+    [:help]
+
+    :back
+    [:blur]
+
+    (char-action db (keymap/sidebar-key command))))
 
 (defn key-action
   "Return a sidebar action or nil to leave the event to the normal TUI dispatcher."
@@ -1287,7 +1529,8 @@
           (if (#{:project-rail :project-select :project-group :project-input :project-unread
                  :project-session :project-details :project-set :project-page :project-group-page
                  :project-state :project-add :project-hide :project-suggest :project-new-folder
-                 :project-search-field :project-group-add :project-session-add :project-set-menu}
+                 :project-search-field :project-group-add :project-session-add :project-set-menu
+                 :project-footer}
                (:kind hit))
             (cond
               (#{MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN} (.getActionType mouse))
@@ -1348,6 +1591,9 @@
                 :project-hide
                 [:hide]
 
+                :project-footer
+                (footer-action db (:command hit))
+
                 [:focus])
               :else [:noop])
             (when (and (:focused? sidebar) (= MouseActionType/CLICK_DOWN (.getActionType mouse)))
@@ -1356,40 +1602,24 @@
         (help-key? db key) [:help]
         (and (:adding sidebar) (.isCtrlDown key) (= \n (.getCharacter key)))
         (when-not (:saving? sidebar) [:add-folder])
+        ;; C-n and C-p are Emacs next-line and previous-line: they walk the rows.
+        (and (.isCtrlDown key) (not (.isAltDown key)) (#{\n \p} (.getCharacter key)))
+        (key-action db
+                    (KeyStroke. (if (= \n (.getCharacter key)) KeyType/ArrowDown KeyType/ArrowUp)))
         (or (.isCtrlDown key) (.isAltDown key)) nil
         (:adding sidebar) (add-field-action (:adding sidebar) key)
         (and (:search sidebar) (= KeyType/Enter (.getKeyType key)))
         (if (pos? index) (or (:action (nth (sidebar-entries db) (dec index) nil)) [:noop]) [:noop])
         (:search sidebar) (search-field-action (:search sidebar) key)
-        (= \/ (.getCharacter key)) [:search]
         (= KeyType/Escape (.getKeyType key)) [:blur]
         (= KeyType/Tab (.getKeyType key)) [:blur]
         (= KeyType/ArrowUp (.getKeyType key)) [:move -1]
         (= KeyType/ArrowDown (.getKeyType key)) [:move 1]
+        (= KeyType/PageUp (.getKeyType key)) [:move (- (long (page-size db)))]
+        (= KeyType/PageDown (.getKeyType key)) [:move (page-size db)]
+        (= KeyType/Home (.getKeyType key)) [:move (- 1 index)]
+        (= KeyType/End (.getKeyType key)) [:move (- (count (sidebar-entries db)) index)]
         (= KeyType/Enter (.getKeyType key))
         (if (zero? index) [:add] (or (:action (nth (sidebar-entries db) (dec index) nil)) [:noop]))
-        (= \space (.getCharacter key)) (let [entry (when (pos? index)
-                                                     (nth (sidebar-entries db) (dec index) nil))]
-                                         (if (= :project-session (:kind entry))
-                                           [:toggle-session (str (get-in entry [:project "id"]))
-                                            (str (get-in entry [:session "id"]))]
-                                           [:noop]))
-        (= \d (.getCharacter key)) (let [entry (when (pos? index)
-                                                 (nth (sidebar-entries db) (dec index) nil))]
-                                     (if (= :project-session (:kind entry))
-                                       [:details (str (get-in entry [:session "id"]))]
-                                       [:noop]))
-        (= \+ (.getCharacter key))
-        (let [entry (when (pos? index) (nth (sidebar-entries db) (dec index) nil))]
-          (if (and (= :project-set (:kind entry)) (#{:groups :sessions} (:set entry)))
-            [:menu (assoc entry :initial-action (if (= :groups (:set entry)) :new :new-session))]
-            [:add]))
-        (= \g (.getCharacter key))
-        ;; `g` opens the row's own menu: group actions on a group row, project
-        ;; actions on a project row. Nothing to act on above the first row.
-        (let [entry (when (pos? index) (nth (sidebar-entries db) (dec index) nil))]
-          (if (#{:project-select :project-group :project-set :project-session} (:kind entry))
-            [:menu entry]
-            [:noop]))
-        (= \r (.getCharacter key)) [:refresh]
+        (= KeyType/Character (.getKeyType key)) (char-action db (.getCharacter key))
         :else [:noop]))))

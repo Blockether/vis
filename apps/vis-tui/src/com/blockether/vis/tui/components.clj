@@ -298,6 +298,10 @@
      ["C-v · M-v · PgDn · PgUp" "Scroll a screen forward · back"]
      [(keymap/label-for :show-sessions) "Switch session — the session-list picker"]
      [(keymap/label-for :session-metrics) "Session metrics — context health, totals and cache"]]}
+   {:title "Project sidebar"
+    :rows [[(keymap/label-for :switch-project) "Show or hide the project sidebar"]
+           [keymap/sidebar-help-hint "List the sidebar keys while the sidebar has focus"]
+           ["g · Right-click" "Open the menu of the selected row"]]}
    {:title "Folding"
     :rows [["C-x TAB · C-x S-Tab" "Fold / unfold every disclosure (thinking, tool calls)"]
            [(keymap/label-for :toggle-detail-labels)
@@ -310,26 +314,6 @@
            ["↑ · ↓ · ← · →" "History / move cursor (Alt+←/→ by word where supported)"]
            ["Copy / paste" "Use your terminal — select to copy, its paste key"]
            ["Mouse" "Click a session in Projects · ↓ messages jumps down"]]}])
-
-(def ^:private sidebar-help-sections
-  "Shortcuts for project navigation and its inline fields."
-  [{:title "Sidebar navigation"
-    :rows [[keymap/sidebar-help-hint "Open or close sidebar help"] ["↑ · ↓" "Move between rows"]
-           ["Enter" "Open a session or fold the selected row"] ["Esc · Tab" "Return to the chat"]
-           [(keymap/label-for :switch-project) "Show or hide the sidebar"]]}
-   {:title "Sessions and groups"
-    :rows [["Space" "Toggle session selection"] ["d" "Show session details"]
-           ["g · Right-click" "Open the selected row's menu"]
-           ["+" "Add a session or group on its section row; otherwise add a project"]]}
-   {:title "Search and projects"
-    :rows [["/" "Search sessions across projects"] ["r" "Refresh projects"]]}
-   {:title "Inline search and project fields"
-    :rows [["?" "Type a question mark in the query or project path"]
-           ["Enter" "Open a search result or add the selected directory"]
-           ["Tab" "Complete the project path"]
-           ["↑ · ↓" "Move through results or directory suggestions"]
-           ["C-n" "Create a folder while adding a project"]
-           ["Esc" "Close the search or project field"]]}])
 
 ;; ── header band chrome ──────────────────────────────────────────────────────
 (defn band-rule!
@@ -574,13 +558,13 @@
    scrolling always covers every visual line. Registers only its close-button
    click region; the caller dismisses it with C-x h, Esc or sidebar help keys. Returns
    `{:scroll :max-scroll}` so the caller can feed the clamp back, exactly like
-   `context-overlay!`. When `sidebar?` is true, show the sidebar help card."
-  [g cols rows scroll sidebar?]
+   `context-overlay!`."
+  [g cols rows scroll]
   (let [title
-        (if sidebar? "Sidebar help" "Keyboard shortcuts")
+        "Keyboard shortcuts"
 
         sections
-        (if sidebar? sidebar-help-sections help-sections)
+        help-sections
 
         all-rows
         (mapcat :rows sections)

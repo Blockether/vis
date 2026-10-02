@@ -93,20 +93,50 @@
               (expect (= (:project-sidebar db) (:project-sidebar @state/app-db)))
               (expect (true? (#'screen/project-sidebar-key! key nil nil nil nil nil)))
               (expect (false? (:help-open? @state/app-db)))))))
-    (it "paints sidebar shortcuts instead of the chat help card"
+    (it "opens the sidebar key list and runs the chosen command"
+        (doseq [key [(KeyStroke. \h true false) (cap/key-stroke \?)]]
+          (let [db (projects-test/fixture-db)
+                menus (atom [])
+                adds (atom 0)
+                press! (fn [command]
+                         (#'screen/project-sidebar-key!
+                          key
+                          nil
+                          #(swap! adds inc)
+                          nil
+                          #(swap! menus conj %)
+                          nil
+                          nil
+                          (constantly command)))]
+
+            (with-redefs [state/app-db (atom db)]
+              ;; Esc and the list's own help item close the list and change nothing.
+              (doseq [command [nil {:id :help} {:id :rows}]]
+                (expect (true? (press! command)))
+                (expect (= db @state/app-db)))
+              (expect (true? (press! {:id :menu :key \g})))
+              (expect (= [:project-select] (mapv :kind @menus)))
+              (expect (true? (press! {:id :back})))
+              (expect (false? (get-in @state/app-db [:project-sidebar :focused?])))
+              ;; The help keys act only while the rail has focus.
+              (reset! state/app-db db)
+              (expect (true? (press! {:id :hide})))
+              (expect (false? (get-in @state/app-db [:project-sidebar :open?])))
+              (expect (false? (boolean (:help-open? @state/app-db))))))))
+    (it "keeps one help card and lists the sidebar section in it"
         (let [capture
-              (help-frame (assoc (projects-test/fixture-db) :help-open? true))
+              (help-frame (assoc (projects-test/fixture-db)
+                            :help-open? true
+                            :help-scroll 1000))
 
               text
               (cap/frame-text capture)]
 
           (expect (nil? (:error capture)))
-          (expect (str/includes? text "Sidebar help"))
-          (expect (str/includes? text "Move between rows"))
-          (expect (str/includes? text "Toggle session selection"))
-          (expect (str/includes? text "C-h"))
-          (expect (str/includes? text "?"))
-          (expect (not (str/includes? text "Cycle model")))))
+          (expect (str/includes? text "Keyboard shortcuts"))
+          (expect (str/includes? text "Project sidebar"))
+          (expect (str/includes? text "List the sidebar keys"))
+          (expect (not (str/includes? text "Sidebar help")))))
     (it "keeps the normal help card when the sidebar is not focused"
         (let [capture
               (help-frame (-> (projects-test/fixture-db)
@@ -118,5 +148,4 @@
 
           (expect (nil? (:error capture)))
           (expect (str/includes? text "Keyboard shortcuts"))
-          (expect (str/includes? text "Cycle model"))
-          (expect (not (str/includes? text "Sidebar help")))))))
+          (expect (str/includes? text "Cycle model"))))))

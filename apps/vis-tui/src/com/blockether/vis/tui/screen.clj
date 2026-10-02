@@ -3449,12 +3449,7 @@
       ;; registers its dedicated close-button click region, which commit-frame!
       ;; below publishes so the locked-overlay mouse branch can dismiss on click.
       (when (:help-open? db)
-        (let [help-geom (components/help-overlay! g
-                                                  cols
-                                                  rows
-                                                  (:help-scroll db)
-                                                  (and (get-in db [:project-sidebar :open?])
-                                                       (get-in db [:project-sidebar :focused?])))]
+        (let [help-geom (components/help-overlay! g cols rows (:help-scroll db))]
           (when (not= (:max-scroll help-geom) (:help-scroll-max db))
             (state/dispatch [:set-help-scroll-max (:max-scroll help-geom)]))))
       ;; A human-input request is a TRANSIENT band, not a modal: the band
@@ -3658,6 +3653,19 @@
    (refresh-improve-settings!)
    nil))
 
+(defn- open-settings-target!
+  "Open the shared settings dialog for one `scope` target. `context-session-id`
+   names the session whose more specific settings lock the rows they decide."
+  [screen scope target-id label context-session-id]
+  (dlg/settings-dialog! screen
+                        {}
+                        {:settings-target {:scope scope :target-id (str target-id) :label label}
+                         :context-session-id context-session-id
+                         :mcp-add (fn [{:keys [g region]}]
+                                    (mcp/save-server! screen g region nil))
+                         :mcp-action (fn [{:keys [server action g region]}]
+                                       (mcp/run-action! screen g region server action))}))
+
 (defn- open-scoped-settings-modal!
   "Open the shared dialog for the active session or one of its current ancestors."
   [screen scope]
@@ -3679,17 +3687,11 @@
                (get row "project_id"))]
 
          (if target-id
-           (dlg/settings-dialog!
-             screen
-             {}
-             {:settings-target {:scope scope
-                                :target-id (str target-id)
-                                :label (if (= scope "session") (get row "title") (str target-id))}
-              :context-session-id sid
-              :mcp-add (fn [{:keys [g region]}]
-                         (mcp/save-server! screen g region nil))
-              :mcp-action (fn [{:keys [server action g region]}]
-                            (mcp/run-action! screen g region server action))})
+           (open-settings-target! screen
+                                  scope
+                                  target-id
+                                  (if (= scope "session") (get row "title") (str target-id))
+                                  sid)
            (vis/notify! (str "This session has no " scope) :level :warn))
          (state/dispatch [:refresh-session-settings sid]))
        (catch Exception e
@@ -6248,10 +6250,11 @@
                  (finally (state/dispatch [:project-sidebar {:removing nil :progress nil}])))))))))
 
 (defn- sidebar-row-menu!
-  "The rail's ⋯ menu for the row under the cursor: group verbs on a group row,
-   project verbs on a project row. Every verb that changes the gateway refreshes
-   the rail from the gateway's own answer. `start-in-group!` is called with a
-   group id and its project root when the human starts a session from a group."
+  "The rail's ⋮ menu for the row under the cursor, from `projects/row-menu-items`.
+   An `:initial-action` on `entry` runs that item without the menu, which is how
+   the sidebar keys act. Every verb that changes the gateway refreshes the rail
+   from the gateway's own answer. `start-in-group!` is called with a group id and
+   its project root when the human starts a session from a group."
   [screen entry start-in-group! & [choose!]]
   (let [group
         (:group entry)
@@ -6281,66 +6284,17 @@
         (when sid (if (contains? selected sid) (sort selected) [sid]))
 
         pick
-        (cond
-          (:show-details? entry) {:id :details}
-          (#{:new :new-session} (:initial-action entry)) {:id (:initial-action entry)}
-          :else
-          (with-dialog-lock
-            #(dlg/select-dialog!
-               screen
-               (cond sid (str "Session · " (:label entry))
-                     gid (str "Group · " (get group "name"))
-                     (= :project-set (:kind entry))
-                     (str (:label entry) " · " (projects/project-label project))
-                     :else (str "Project · " (projects/project-label project)))
-               (cond
-                 sid
-                 (cond-> [{:id :details :label "Show session details"}
-                          {:id :toggle-session
-                           :label (if (contains? selected sid) "Deselect session" "Select session")}
-                          {:id :move-session
-                           :label (if (> (count moving) 1)
-                                    (str "Move " (count moving) " selected sessions…")
-                                    "Move to group…")}
-                          {:id :favorite
-                           :label (if (:favorite? entry) "Unstar session" "Star session")}
-                          {:id :rename-session :label "Rename session…"}]
-                   (not (some? (get group "archived_at")))
-                   (conj {:id (if (get session "archived_at") :unarchive-session :archive-session)
-                          :label
-                          (if (get session "archived_at") "Unarchive session" "Archive session")})
-
-                   true
-                   (conj {:id :delete-session :label "Delete session…"}))
-                 gid (vec
-                       (concat
-                         (when-not (get group "archived_at")
-                           (concat [{:id :new-session :label "＋ New session here"}]
-                                   (when (seq selected)
-                                     [{:id :move-selected
-                                       :label (str "Move " (count selected) " selected here")}])))
-                         [{:id :rename :label "Rename group…"}
-                          {:id :recolour :label "Change group colour…"}
-                          {:id (if (get group "archived_at") :unarchive-group :archive-group)
-                           :label (if (get group "archived_at") "Unarchive group" "Archive group")}
-                          {:id :delete :label "✗ Delete group"}]))
-                 (= :sessions (:set entry))
-                 (cond-> [{:id :toggle-session-archive
-                           :label (if (:archived? entry)
-                                    "Hide archived sessions"
-                                    "Show archived sessions")}
-                          {:id :new-session :label "＋ New session here"}
-                          {:id :new :label "＋ New group…"}]
-                   (seq selected)
-                   (conj {:id :ungroup-selected
-                          :label (str "Ungroup " (count selected) " selected sessions")}))
-                 (= :groups (:set entry))
-                 [{:id :new :label "＋ New group…"}
-                  {:id :toggle-group-archive
-                   :label (if (:archived? entry) "Hide archived groups" "Show archived groups")}]
-                 :else [{:id :use-project :label "Use project"} {:id :new :label "＋ New group…"}
-                        {:id :refresh :label "Refresh projects"}
-                        {:id :delete-project :label "✗ Remove project and sessions…"}]))))]
+        (cond (:show-details? entry) {:id :details}
+              (:initial-action entry) {:id (:initial-action entry)}
+              :else (with-dialog-lock
+                      #(dlg/select-dialog!
+                         screen
+                         (cond sid (str "Session · " (:label entry))
+                               gid (str "Group · " (get group "name"))
+                               (= :project-set (:kind entry))
+                               (str (:label entry) " · " (projects/project-label project))
+                               :else (str "Project · " (projects/project-label project)))
+                         (projects/row-menu-items @state/app-db entry))))]
 
     (case (:id pick)
       :use-project
@@ -6357,6 +6311,9 @@
 
       :ungroup-selected
       (move-project-sessions! pid (sort selected) nil)
+
+      :ungroup-session
+      (when (and pid (seq moving)) (move-project-sessions! pid moving nil))
 
       :move-session
       (when (and pid (seq moving))
@@ -6466,8 +6423,12 @@
 
       :new-session
       ;; Starting FROM a group row files the session as the gateway mints it, so the
-      ;; new conversation opens INSIDE the band the cursor stood on (BLO-167).
-      (when (and pid start-in-group!) (start-in-group! gid (get project "workspace_root")))
+      ;; new conversation opens INSIDE the band the cursor stood on (BLO-167). The
+      ;; chat takes the keys next, as when a saved session opens: typing a first
+      ;; message never runs the rail's single-letter commands.
+      (when (and pid start-in-group!)
+        (state/dispatch [:project-sidebar {:focused? false :adding nil}])
+        (start-in-group! gid (get project "workspace_root")))
 
       :new
       (when pid (create-group! screen pid))
@@ -6550,6 +6511,21 @@
       :refresh
       (refresh-projects!)
 
+      :settings
+      ;; Settings is a hub with tabs, so it takes the whole screen, not the rail.
+      (binding [dlg/*dialog-region* nil]
+        (with-dialog-lock
+          #(try (cond
+                  sid (open-settings-target! screen "session" sid (:label entry) sid)
+                  gid (open-settings-target! screen "group" gid (get group "name") nil)
+                  pid
+                  (open-settings-target! screen "project" pid (projects/project-label project) nil)
+                  :else (open-settings-modal! screen))
+                (catch Exception e
+                  (vis/notify! (str "Settings unavailable: " (ex-message e)) :level :error))))
+        (when-let [active (get-in @state/app-db [:session :id])]
+          (state/dispatch [:refresh-session-settings active])))
+
       nil)))
 
 (defn- toggle-project-sidebar!
@@ -6558,9 +6534,47 @@
     (state/dispatch [:project-sidebar {:open? open? :focused? open? :index 0 :adding nil}])
     (when open? (refresh-projects!))))
 
+(defn- sidebar-dialog-region
+  "The `dlg/*dialog-region*` for dialogs opened from the project sidebar: the
+   rail's columns, anchored under the row of `entry` while that row is visible."
+  [entry]
+  (let [db
+        @state/app-db
+
+        rows
+        (long (or (get-in db [:layout :rows]) 0))
+
+        {:keys [row height]}
+        (:bounds entry)]
+
+    {:width (fn [cols rows]
+              (or (:width (projects/geometry @state/app-db cols rows)) cols))
+     :anchor-row (or (some->> (:index entry)
+                              (projects/entry-row db rows))
+                     (when row (+ (long row) (long (or height 1)) -1)))}))
+
+(defn- sidebar-keys-dialog!
+  "List the sidebar's keys inside the rail and return the chosen command, or nil.
+   A command's own key chooses it, and the help keys close the list."
+  [screen]
+  (with-dialog-lock #(dlg/list-dialog! screen
+                                       "Sidebar keys"
+                                       (mapv (fn [{:keys [id label] :as command}]
+                                               (cond-> {:id id
+                                                        :label label
+                                                        :hint (keymap/sidebar-key-label command)}
+                                                 (:key command)
+                                                 (assoc :key (:key command))
+
+                                                 (= :help id)
+                                                 (assoc :ctrl-key keymap/sidebar-help-key)))
+                                             keymap/sidebar-commands)
+                                       {:enter-label "run"})))
+
 (defn- project-sidebar-key!
-  "Apply a rail action, returning whether it consumed the key."
-  [key select! add! refresh! menu! open-session! & [new-folder!]]
+  "Apply a rail action, returning whether it consumed the key. `keys!` opens the
+   sidebar key list; its chosen command runs as if its key was typed."
+  [key select! add! refresh! menu! open-session! & [new-folder! keys!]]
   (when (and (instance? MouseAction key)
              (= MouseActionType/MOVE (.getActionType ^MouseAction key))
              (.updateHovered projects/hit-map ^MouseAction key))
@@ -6568,7 +6582,32 @@
   (when-let [[action value detail] (projects/key-action @state/app-db key)]
     (case action
       :help
-      (state/dispatch [:toggle-help])
+      (if (or (:help-open? @state/app-db) (nil? keys!))
+        (state/dispatch [:toggle-help])
+        (when-let [{:keys [id] :as command} (keys!)]
+          (case id
+            (:help :rows :jump)
+            nil
+
+            :hide
+            (state/dispatch [:project-sidebar {:open? false :focused? false :adding nil}])
+
+            (do (state/dispatch [:project-sidebar {:focused? true}])
+                (project-sidebar-key! (case id
+                                        :open
+                                        (KeyStroke. KeyType/Enter)
+
+                                        :back
+                                        (KeyStroke. KeyType/Escape)
+
+                                        (KeyStroke. ^Character (:key command) false false))
+                                      select!
+                                      add!
+                                      refresh!
+                                      menu!
+                                      open-session!
+                                      new-folder!
+                                      keys!)))))
 
       :toggle-session
       (state/dispatch [:project-session-select-toggle value detail])
@@ -7672,35 +7711,46 @@
                  select-project! #(request-project! % nil)
                  add-project! #(add-project! % select-project!)
                  switch-project! toggle-project-sidebar!
-                 sidebar-key! #(project-sidebar-key!
-                                 %
-                                 select-project!
-                                 add-project!
-                                 refresh-active-tab!
-                                 (fn [entry]
-                                   (sidebar-row-menu!
-                                     screen
-                                     entry
-                                     (fn [gid root]
-                                       (start-new-session! (:config @state/app-db)
-                                                           nil
-                                                           {:root root :group-id gid}))
-                                     (fn [project]
-                                       (choose-project!
-                                         project
-                                         (fn [sid]
-                                           (switch-session! {:action :switch :id sid}))
-                                         (fn [root build-id]
-                                           (start-new-session! (:config @state/app-db)
-                                                               nil
-                                                               {:root root :build-id build-id}))))))
-                                 (fn [sid]
-                                   (vis/worker-future "tui-open-saved-session"
-                                                      (fn []
-                                                        (switch-session! {:action :switch
-                                                                          :id sid}))))
-                                 (fn [field]
-                                   (create-project-folder! screen field add-project!)))]
+                 sidebar-key!
+                 #(project-sidebar-key!
+                    %
+                    select-project!
+                    add-project!
+                    refresh-active-tab!
+                    (fn [entry]
+                      (binding [dlg/*dialog-region* (sidebar-dialog-region entry)
+                                frame/*column-offset* 0]
+
+                        (sidebar-row-menu! screen
+                                           entry
+                                           (fn [gid root]
+                                             (start-new-session! (:config @state/app-db)
+                                                                 nil
+                                                                 {:root root :group-id gid}))
+                                           (fn [project]
+                                             (choose-project!
+                                               project
+                                               (fn [sid]
+                                                 (switch-session! {:action :switch :id sid}))
+                                               (fn [root build-id]
+                                                 (start-new-session! (:config @state/app-db)
+                                                                     nil
+                                                                     {:root root
+                                                                      :build-id build-id})))))))
+                    (fn [sid]
+                      (vis/worker-future "tui-open-saved-session"
+                                         (fn []
+                                           (switch-session! {:action :switch :id sid}))))
+                    (fn [field]
+                      (binding [dlg/*dialog-region* (sidebar-dialog-region nil)
+                                frame/*column-offset* 0]
+
+                        (create-project-folder! screen field add-project!)))
+                    (fn []
+                      (binding [dlg/*dialog-region* (sidebar-dialog-region nil)
+                                frame/*column-offset* 0]
+
+                        (sidebar-keys-dialog! screen))))]
 
              ;; Startup settlement opens the optional picker or restores the project
              ;; only after the gateway-backed session has been bound.

@@ -18,7 +18,7 @@
             [com.blockether.vis.tui.theme-test :as theme-test]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
-           [com.googlecode.lanterna.input KeyStroke MouseAction MouseActionType]
+           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.html HtmlTerminal]))
 
@@ -379,12 +379,17 @@
           (expect (str/includes? text "Companion"))
           (expect (str/includes? text "1 tab · 1 running")))
         (when (>= cols 26) (expect (str/includes? text "1 running")))
-        (let [footer (nth (str/split-lines text) 16)]
-          (doseq [label ["↑↓" "↵" "C-x w" "Esc"]]
+        (let [footer (nth (str/split-lines text) 16)
+              inside (subs footer 1 (dec (count footer)))
+              lead (count (take-while #(= \space %) inside))
+              trail (count (take-while #(= \space %) (reverse inside)))]
+
+          ;; Whole pairs only, the key list first, and centered on the rail.
+          (doseq [label ["? keys" "g menu"]]
             (expect (str/includes? footer label)))
-          (when (>= width 40)
-            (doseq [label ["open" "hide" "chat"]]
-              (expect (str/includes? footer label)))))
+          (when (>= width 40) (expect (str/includes? footer "s settings")))
+          (when (>= width 96) (expect (str/includes? footer "Esc chat")))
+          (expect (<= (abs (- lead trail)) 1)))
         (expect (= "├" (get-in capture [:frames 0 15 0 :ch])))
         (let [header (nth (str/split-lines text) 1)]
           ;; Keep one unfilled cell between the title and the Add button.
@@ -657,7 +662,7 @@
             (str/split-lines (cap/frame-text capture))]
 
         (expect (str/includes? (nth lines 14) "Project lookup failed"))
-        (doseq [label ["↑↓" "↵" "C-x w" "Esc"]]
+        (doseq [label ["? keys" "g menu" "s settings" "a add project"]]
           (expect (str/includes? (nth lines 16) label)))
         (expect (= 8
                    (count (projects/visible-entries
@@ -772,7 +777,7 @@
           (expect (nil? (:error capture)))
           ;; A narrow rail overlays the composer: input-only paint must not erase it.
           (expect (= (cap/frame-text capture 0) (cap/frame-text capture)))
-          (expect (str/includes? (cap/frame-text capture) "C-x w hide"))
+          (expect (str/includes? (cap/frame-text capture) "? keys"))
           (expect (= (projects/chat-cols (fixture-db) cols) (get-in capture [:ret :cols])))
           (expect (nil? (:error hidden)))
           (expect (= cols (get-in hidden [:ret :cols])))
@@ -2058,7 +2063,10 @@
       (expect (= (palette theme/text-fg 0.04) (bg project-row)))
       (expect (= (palette theme/header-active-tab-bg 0.08) (bg groups-row)))
       (expect (= (palette theme/text-fg 0.06) (bg sessions-row)))
-      (with-redefs [screen/create-group!
+      (with-redefs [state/app-db
+                    (atom (assoc-in db [:project-sidebar :focused?] true))
+
+                    screen/create-group!
                     (fn [_ pid]
                       (swap! calls conj [:group pid]))
 
@@ -2070,11 +2078,15 @@
          nil
          (assoc (first (filter #(= :groups (:set %)) entries)) :initial-action :new)
          nil)
+        (expect (true? (get-in @state/app-db [:project-sidebar :focused?]))
+                "Naming a new group keeps the rail focused")
         (#'screen/sidebar-row-menu!
          nil
          (assoc (first (filter #(= :sessions (:set %)) entries)) :initial-action :new-session)
          (fn [gid root]
-           (swap! calls conj [:session gid root]))))
+           (swap! calls conj [:session gid root])))
+        (expect (false? (get-in @state/app-db [:project-sidebar :focused?]))
+                "A new session hands the keys to the chat, so typing never runs rail commands"))
       (expect (= [[:group "a"] [:session nil "/work/vis"]] @calls)))))
 
 (defdescribe
@@ -4079,3 +4091,218 @@
             (expect (= [true] @reads))
             (finally (stop)))
           (expect (= 1 @stops)))))))
+
+(defn- every-kind-db
+  "A rail with every row kind: projects, both sets, two groups and two saved sessions."
+  []
+  (-> (grouped-db)
+      (assoc-in [:project-sidebar :expanded] #{"a"})
+      (assoc-in [:project-sidebar :pages "a"]
+                {:sessions [{"id" "s1" "title" "Loose session"}]
+                 :grouped [{"id" "s2" "title" "Grouped session" "group_id" "g1"}]})))
+
+(defn- paint-rail
+  "Capture `db` painted as the project rail."
+  [db cols rows]
+  (cap/capture! {:cols cols
+                 :rows rows
+                 :paint! (fn [{:keys [screen]}]
+                           (projects/paint! (.newTextGraphics screen) db cols rows))}))
+
+(defdescribe sidebar-row-keys-test
+             (it "runs every keyed menu item from its key on the focused row"
+                 (let [db (every-kind-db)]
+                   (doseq [entry (projects/sidebar-entries db)
+                           :let [focused (assoc-in db [:project-sidebar :index] (:index entry))
+                                 sid (get-in entry [:session "id"])]
+                           {:keys [id key hint]} (projects/row-menu-items db entry)
+                           :when key]
+
+                     (expect (= (if (= \space key) "Space" (str key)) hint))
+                     (expect (= (case id
+                                  :details
+                                  [:details sid]
+
+                                  :toggle-session
+                                  [:toggle-session "a" sid]
+
+                                  :refresh
+                                  [:refresh]
+
+                                  [:menu (assoc entry :initial-action id)])
+                                (projects/key-action focused (cap/key-stroke key)))))))
+             (it "gives every sidebar command its own key and an action on some row"
+                 (let [db
+                       (every-kind-db)
+
+                       keyed
+                       (filter :key keymap/sidebar-commands)]
+
+                   (expect (apply distinct? (map :key keyed)))
+                   (doseq [{:keys [key]} keyed]
+                     (expect (some (fn [entry]
+                                     (not= [:noop]
+                                           (projects/key-action
+                                             (assoc-in db [:project-sidebar :index] (:index entry))
+                                             (cap/key-stroke key))))
+                                   (projects/sidebar-entries db))
+                             (str "No row acts on " key)))))
+             (it "opens the main settings and adds a project above the first row"
+                 (let [header (assoc-in (every-kind-db) [:project-sidebar :index] 0)]
+                   (expect (= [:menu {:initial-action :settings}]
+                              (projects/key-action header (cap/key-stroke \s))))
+                   (expect (= [:add] (projects/key-action header (cap/key-stroke \a))))))
+             (it "walks rows with C-n, C-p, PgUp, PgDn, Home and End"
+                 (let [db
+                       (-> (every-kind-db)
+                           (assoc-in [:project-sidebar :index] 3)
+                           (assoc-in [:layout :rows] 12))
+
+                       page
+                       (dec (count (projects/visible-entries db 12)))]
+
+                   (expect (= [:move 1] (projects/key-action db (KeyStroke. \n true false))))
+                   (expect (= [:move -1] (projects/key-action db (KeyStroke. \p true false))))
+                   (expect (= [:move page] (projects/key-action db (KeyStroke. KeyType/PageDown))))
+                   (expect (= [:move (- page)]
+                              (projects/key-action db (KeyStroke. KeyType/PageUp))))
+                   (expect (= [:move -2] (projects/key-action db (KeyStroke. KeyType/Home))))
+                   (expect (= [:move 5] (projects/key-action db (KeyStroke. KeyType/End))))
+                   ;; In the add field, C-n still creates a folder.
+                   (expect (= [:add-folder]
+                              (projects/key-action
+                                (assoc-in db [:project-sidebar :adding] {:text "/work/" :cursor 6})
+                                (KeyStroke. \n true false)))))))
+
+(defdescribe
+  project-sidebar-footer-buttons-test
+  (it "runs each footer pair as its key"
+      (let [db
+            (every-kind-db)
+
+            entry
+            (first (projects/sidebar-entries db))
+
+            capture
+            (paint-rail db 240 24)
+
+            buttons
+            (sort-by (comp :col :bounds)
+                     (filter #(= :project-footer (:kind %)) (.current projects/hit-map)))
+
+            click
+            (fn [{{:keys [col row]} :bounds}]
+              (projects/key-action db
+                                   (MouseAction. MouseActionType/CLICK_DOWN
+                                                 1
+                                                 (TerminalPosition. (int col) (int row)))))]
+
+        (expect (nil? (:error capture)))
+        (expect (= [:help :menu :settings :add-project :back] (mapv :command buttons)))
+        (expect (every? #(= 22 (get-in % [:bounds :row])) buttons))
+        (expect (= [[:help] [:menu entry] [:menu (assoc entry :initial-action :settings)] [:add]
+                    [:blur]]
+                   (mapv click buttons)))))
+  (it "keeps Esc in a narrow add field footer, which has no buttons"
+      (let [db
+            (assoc-in (every-kind-db) [:project-sidebar :adding] {:text "/work/" :cursor 6})
+
+            capture
+            (paint-rail db 40 18)
+
+            footer
+            (nth (str/split-lines (cap/frame-text capture)) 16)]
+
+        (expect (nil? (:error capture)))
+        (expect (str/includes? footer "Enter add"))
+        (expect (str/includes? footer "Esc cancel"))
+        (expect (not-any? #(= :project-footer (:kind %)) (.current projects/hit-map))))))
+
+(defdescribe
+  sidebar-dialog-anchor-test
+  (it "anchors on the last painted row of each entry"
+      (let [db
+            (every-kind-db)
+
+            capture
+            (paint-rail db 144 24)
+
+            rows
+            (keep (fn [{:keys [kind index bounds]}]
+                    (when (#{:project-select :project-group :project-set :project-session} kind)
+                      [index (+ (long (:row bounds)) (long (:height bounds)) -1)]))
+                  (.current projects/hit-map))]
+
+        (expect (nil? (:error capture)))
+        (expect (= 8 (count rows)))
+        (doseq [[index row] rows]
+          (expect (= row (projects/entry-row db 24 index))))
+        ;; The add field hides the list, so no row anchors a dialog.
+        (expect (nil? (projects/entry-row
+                        (assoc-in db [:project-sidebar :adding] {:text "" :cursor 0})
+                        24
+                        1)))))
+  (it "scopes sidebar dialogs to the rail, under their row"
+      (let [db
+            (assoc-in (every-kind-db) [:layout :rows] 24)
+
+            session-entry
+            (nth (projects/sidebar-entries db) 3)]
+
+        (with-redefs [state/app-db (atom db)]
+          (let [{:keys [width anchor-row]} (#'screen/sidebar-dialog-region session-entry)]
+            (expect (= 9 anchor-row))
+            (expect (= (:width (projects/geometry db 144 24)) (width 144 24)))
+            ;; A row known only by its painted bounds anchors on its last row.
+            (expect (= 12
+                       (:anchor-row (#'screen/sidebar-dialog-region
+                                     {:bounds {:row 10 :height 3}})))))))))
+
+(defdescribe sidebar-row-menu-settings-and-ungroup-test
+             (it "opens the settings of the row's session, group or project"
+                 (let [db
+                       (dissoc (every-kind-db) :session)
+
+                       entries
+                       (projects/sidebar-entries db)
+
+                       opened
+                       (atom [])]
+
+                   (with-redefs-fn {#'state/app-db (atom db)
+                                    #'screen/with-dialog-lock (fn [f]
+                                                                (f))
+                                    #'screen/open-settings-target! (fn [_ scope id label context]
+                                                                     (swap! opened conj
+                                                                       [scope id label context]))
+                                    #'screen/open-settings-modal! (fn [& _]
+                                                                    (swap! opened conj [:main]))}
+                     (fn []
+                       (doseq [index [1 3 4]]
+                         (#'screen/sidebar-row-menu!
+                          nil
+                          (assoc (nth entries (dec index)) :initial-action :settings)
+                          nil))
+                       (#'screen/sidebar-row-menu! nil {:initial-action :settings} nil)))
+                   (expect (= [["project" "a" "Vis" nil] ["group" "g1" "Release apps" nil]
+                               ["session" "s2" "Grouped session" "s2"] [:main]]
+                              @opened))))
+             (it
+               "takes a grouped session out of its group"
+               (let [db
+                     (every-kind-db)
+
+                     moved
+                     (atom [])]
+
+                 (with-redefs-fn {#'state/app-db (atom db)
+                                  #'screen/with-dialog-lock (fn [f]
+                                                              (f))
+                                  #'screen/move-project-sessions! (fn [& args]
+                                                                    (swap! moved conj (vec args)))}
+                   (fn []
+                     (#'screen/sidebar-row-menu!
+                      nil
+                      (assoc (nth (projects/sidebar-entries db) 3) :initial-action :ungroup-session)
+                      nil)))
+                 (expect (= [["a" ["s2"] nil]] @moved)))))
