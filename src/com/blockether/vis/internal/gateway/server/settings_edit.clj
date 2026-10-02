@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.config.settings-edit
+(ns com.blockether.vis.internal.gateway.server.settings-edit
   "Versioned configuration edits shared by the Companion and terminal UI.
    A batch belongs to one owner. Validation and revision checks precede one write."
   (:require [clojure.walk :as walk]

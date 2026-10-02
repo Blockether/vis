@@ -3,7 +3,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.toggle :as toggle-contract]
             [com.blockether.vis.contract.document :as document]
-            [com.blockether.vis.internal.config.settings-edit :as settings-edit]
+            [com.blockether.vis.internal.gateway.server.settings-edit :as settings-edit]
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.sandbox.scoped-policy :as scoped-policy]
             [com.blockether.vis.internal.foundation.harness.discovery :as harness]

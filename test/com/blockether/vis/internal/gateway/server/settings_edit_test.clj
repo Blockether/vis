@@ -1,10 +1,10 @@
-(ns com.blockether.vis.internal.config.settings-edit-test
+(ns com.blockether.vis.internal.gateway.server.settings-edit-test
   (:require [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis.contract.toggle :as contract]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.scoped :as scoped]
-            [com.blockether.vis.internal.config.settings-edit :as edit]
+            [com.blockether.vis.internal.gateway.server.settings-edit :as edit]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.gateway.server.settings :as api]
             [com.blockether.vis.internal.loop :as lp]
