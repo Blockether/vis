@@ -42,7 +42,9 @@ export function readerMayBeScrolling(): boolean {
  * Only MOVEMENT counts, never a press. A tap on send, on a disclosure, on the
  * “↓ Latest” button is not a scroll, and treating it as one would stand the
  * catch-ups down exactly when they were asked for — the pin that a send sets up
- * would be cancelled by the tap that requested it.
+ * would be cancelled by the tap that requested it. Movement under a press counts
+ * only when that press can move a scroller (`pressCanScroll`); a wheel is never
+ * part of a tap, so it always counts.
  */
 function onReaderMove(event: Event): void {
   if (event.type === 'pointermove' && (event as PointerEvent).buttons === 0) {
@@ -50,6 +52,7 @@ function onReaderMove(event: Event): void {
     onPointerUp(event);
     return;
   }
+  if (event.type !== 'wheel' && !pressCanScroll(event)) return;
   noteReaderGesture();
 }
 
@@ -126,6 +129,37 @@ const pressed = new Set<EventTarget>();
 
 function notePress(event: Event): void {
   for (const target of event.composedPath()) pressed.add(target);
+  pressScrolls = undefined;
+}
+
+/**
+ * Whether the presses now down can move a scroller: one they landed in that has room
+ * to move, or the page. A fingertip resting on Stop moves a pixel before it lifts, and
+ * a mouse clicking it can do the same. Measured in WebKit, that movement counted as the
+ * reader's gesture: the clamp of the stopped turn's re-render then read as the reader
+ * leaving the end, and the handover left the transcript 1 460 px above it. Decided at
+ * the first movement of each press, so a drag does not restyle the path on every move.
+ */
+let pressScrolls: boolean | undefined;
+
+const SCROLLING = /^(auto|scroll|overlay)$/;
+
+function hasRoomToScroll(target: EventTarget): boolean {
+  if (target === document) {
+    const page = document.scrollingElement ?? document.documentElement;
+    return page.scrollHeight > page.clientHeight || page.scrollWidth > page.clientWidth;
+  }
+  if (!(target instanceof Element)) return false;
+  const { overflowX, overflowY } = getComputedStyle(target);
+  return (
+    (SCROLLING.test(overflowY) && target.scrollHeight > target.clientHeight) ||
+    (SCROLLING.test(overflowX) && target.scrollWidth > target.clientWidth)
+  );
+}
+
+function pressCanScroll(event: Event): boolean {
+  pressScrolls ??= [...pressed, ...event.composedPath()].some(hasRoomToScroll);
+  return pressScrolls;
 }
 
 /** A new scroll surface cannot inherit the gesture that owned the previous one. */
@@ -136,6 +170,7 @@ export function releaseReaderScroll(): void {
   dragging = false;
   forgetLandings();
   pressed.clear();
+  pressScrolls = undefined;
 }
 
 /** When the last finger or button lets go, a drag it made keeps the grace. */
@@ -144,6 +179,7 @@ function letGo(): void {
   if (dragging) noteReaderGesture();
   dragging = false;
   pressed.clear();
+  pressScrolls = undefined;
 }
 
 function onTouchStart(event: Event): void {
@@ -164,9 +200,13 @@ function onTouchEnd(event: Event): void {
   letGo();
 }
 
-// Touch has its own count above, which survives WebKit taking the drag over.
+// Touch has its own count above, which survives WebKit taking the drag over. Its
+// pointer still starts a press whose movement is judged afresh.
 function onPointerDown(event: Event): void {
-  if ((event as PointerEvent).pointerType === 'touch') return;
+  if ((event as PointerEvent).pointerType === 'touch') {
+    pressScrolls = undefined;
+    return;
+  }
   pointerHeld = true;
   notePress(event);
 }

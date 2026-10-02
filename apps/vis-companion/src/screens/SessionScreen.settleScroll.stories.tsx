@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, waitFor, within } from 'storybook/test';
+import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 import {
   STORY_COMPOSER_CLIENT as baseClient,
   STORY_COMPOSER_SESSION as baseSession,
@@ -300,5 +300,65 @@ export const ReaderInTheCancelledTurn: Story = {
     await expect(Math.abs(offset() - chosen)).toBeLessThan(2);
     // What was on screen when they pressed stop is still on screen afterwards.
     await expect(canvas.getAllByText(/live prose 6 paragraph 1/).length).toBeGreaterThan(0);
+  },
+};
+
+// The report behind this one: a reader following the newest turn presses Stop, and
+// the transcript ends ABOVE its end once the stopped bubble hands over to its row.
+// The real order: the press marks the bubble as cancelling, the gateway persists the
+// hollow `interrupted` row, then sends `turn.cancelled` with no content.
+export const ReaderAtTheEndStops: Story = {
+  play: async ({ canvasElement }) => {
+    persisted = false;
+    persistedRow = cancelledRow;
+    const canvas = within(canvasElement);
+    const viewport = await canvas.findByRole('region', { name: 'Transcript' });
+    await viewport.ownerDocument.fonts.ready;
+    await waitFor(() => expect(isViewportRotating()).toBe(false), { timeout: 2000 });
+    await paint();
+    const gap = () => viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
+
+    // The reader is watching the turn being written: at the end of it.
+    viewport.scrollTop = viewport.scrollHeight;
+    await paint();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await paint();
+    await expect(gap()).toBeLessThan(2);
+
+    // A fingertip resting on Stop moves a pixel before it lifts. Stop is in the
+    // composer, so that movement cannot scroll the transcript.
+    const stop = canvas.getByRole('button', { name: 'Stop response' });
+    const { left, top } = stop.getBoundingClientRect();
+    await userEvent.pointer([
+      { keys: '[TouchA>]', target: stop, coords: { clientX: left + 8, clientY: top + 8 } },
+      { pointerName: 'TouchA', target: stop, coords: { clientX: left + 9, clientY: top + 9 } },
+      { keys: '[/TouchA]', target: stop },
+    ]);
+    let worst = gap();
+    const watchFor = async (ms: number) => {
+      const started = Date.now();
+      while (Date.now() - started < ms) {
+        worst = Math.max(worst, gap());
+        await paint();
+      }
+    };
+    await watchFor(150);
+
+    persisted = true;
+    for (const on of listeners)
+      on({
+        type: 'turn.cancelled',
+        turn_id: RUNNING_ID,
+        seq: 2,
+        status: 'cancelled',
+        content: [],
+      } as unknown as SseEvent);
+
+    // Someone reading the end stays at the end through the whole handover.
+    await watchFor(1500);
+    await expect(worst).toBeLessThan(2);
+    await waitFor(() => expect(canvasElement.querySelector('[data-live="true"]')).toBeNull());
+    await paint();
+    await expect(gap()).toBeLessThan(2);
   },
 };

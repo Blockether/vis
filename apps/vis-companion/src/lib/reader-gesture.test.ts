@@ -14,6 +14,17 @@ function mount<K extends keyof HTMLElementTagNameMap>(tag: K): HTMLElementTagNam
   return document.body.appendChild(document.createElement(tag));
 }
 
+/** A scroller as the browser lays it out: `overflow-y: auto`, with `room` px to move. */
+function mountScroller(room = 1_000): HTMLDivElement {
+  const scroller = mount('div');
+  scroller.style.overflowY = 'auto';
+  Object.defineProperties(scroller, {
+    clientHeight: { value: 500 },
+    scrollHeight: { value: 500 + room },
+  });
+  return scroller;
+}
+
 describe('reader gestures', () => {
   beforeEach(() => {
     now = 1_000_000;
@@ -108,6 +119,66 @@ describe('reader gestures', () => {
     send('touchstart', { touches: [{}] }, line);
     line.remove();
     send('scroll', {}, transcript);
+
+    expect(readerOwnsScroll()).toBe(true);
+  });
+
+  // A fingertip resting on Stop moves a pixel before it lifts. Counted as a gesture,
+  // that movement read the clamp of the stopped turn's re-render as the reader leaving
+  // the end, and the handover left the transcript above it.
+  it('does not count movement of a press that cannot move a scroller', () => {
+    mountScroller();
+    const stop = mount('button');
+    send('pointerdown', { pointerType: 'touch', buttons: 1 }, stop);
+    send('touchstart', { touches: [{}] }, stop);
+    send('pointermove', { pointerType: 'touch', buttons: 1 }, stop);
+    send('touchmove', { touches: [{}] }, stop);
+
+    expect(readerOwnsScroll()).toBe(false);
+    expect(readerMayBeScrolling()).toBe(false);
+  });
+
+  it('does not count movement in a scroller with no room to move', () => {
+    const field = mountScroller(0);
+    send('touchstart', { touches: [{}] }, field);
+    send('touchmove', { touches: [{}] }, field);
+
+    expect(readerMayBeScrolling()).toBe(false);
+  });
+
+  it('counts movement of a press that landed in a scroller', () => {
+    const line = mountScroller().appendChild(document.createElement('p'));
+    send('touchstart', { touches: [{}] }, line);
+    send('touchmove', { touches: [{}] }, line);
+
+    expect(readerOwnsScroll()).toBe(true);
+  });
+
+  it('judges the movement of each press afresh', () => {
+    const line = mountScroller().appendChild(document.createElement('p'));
+    const stop = mount('button');
+    send('pointerdown', { pointerType: 'mouse', buttons: 1 }, stop);
+    send('pointermove', { pointerType: 'mouse', buttons: 1 }, stop);
+    send('pointerup', { pointerType: 'mouse', buttons: 0 }, stop);
+    expect(readerMayBeScrolling()).toBe(false);
+
+    send('pointerdown', { pointerType: 'mouse', buttons: 1 }, line);
+    send('pointermove', { pointerType: 'mouse', buttons: 1 }, line);
+    expect(readerOwnsScroll()).toBe(true);
+  });
+
+  it('counts movement anywhere on a page that scrolls', () => {
+    vi.spyOn(document.documentElement, 'scrollHeight', 'get').mockReturnValue(2_000);
+    vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(800);
+    const stop = mount('button');
+    send('touchstart', { touches: [{}] }, stop);
+    send('touchmove', { touches: [{}] }, stop);
+
+    expect(readerOwnsScroll()).toBe(true);
+  });
+
+  it('counts the wheel wherever it turns', () => {
+    send('wheel', {}, mount('button'));
 
     expect(readerOwnsScroll()).toBe(true);
   });
