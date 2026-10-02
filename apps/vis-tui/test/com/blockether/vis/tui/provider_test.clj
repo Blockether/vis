@@ -1106,7 +1106,7 @@
                    (expect (some? band))
                    (expect (str/includes? band "Set as Default..."))
                    ;; The band reuses Settings' box instead of opening a second dialog.
-                   (expect (str/includes? band "Machine settings"))
+                   (expect (str/includes? band "Settings"))
                    (expect (= 1 (count (re-seq #"✕" band))))))
              (it "restores the whole settings list when the band closes"
                  (let [frames

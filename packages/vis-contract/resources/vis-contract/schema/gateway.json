@@ -2647,40 +2647,6 @@
           }
         }
       }
-    },
-    "settings_profile": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "version",
-        "name",
-        "changes"
-      ],
-      "x-vis-max-bytes": 131072,
-      "properties": {
-        "version": {
-          "const": 1
-        },
-        "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 64
-        },
-        "changes": {
-          "type": "array",
-          "maxItems": 256,
-          "items": {
-            "$ref": "#/$defs/setting_change"
-          }
-        }
-      }
-    },
-    "settings_profiles": {
-      "type": "array",
-      "maxItems": 20,
-      "items": {
-        "$ref": "#/$defs/settings_profile"
-      }
     }
   }
 }

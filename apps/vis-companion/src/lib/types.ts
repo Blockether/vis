@@ -341,11 +341,6 @@ export type SettingEditor =
   | 'network'
   | 'list'
   | 'json';
-export interface SettingChange {
-  id: string;
-  action: 'value' | 'inherit';
-  value?: SettingValue;
-}
 
 export type SettingsScope = 'global' | 'project' | 'group' | 'session';
 
@@ -381,10 +376,6 @@ export interface Toggle {
   overridden_by?: SettingOverride;
   editor?: SettingEditor;
   schema?: string;
-  own_value?: SettingValue | null;
-  inherited_value?: SettingValue;
-  inherited_source?: SettingsScope | 'default';
-  applies?: 'immediate' | 'next_call' | 'next_turn' | 'reload' | 'restart';
 }
 
 export interface ToggleGroup {
@@ -399,7 +390,6 @@ export interface SettingsResponse {
   target_id?: string;
   label?: string;
   revision: string;
-  lineage?: SettingsTarget[];
 }
 
 /** Sanitized MCP inventory served by one gateway. Secret values never travel here. */

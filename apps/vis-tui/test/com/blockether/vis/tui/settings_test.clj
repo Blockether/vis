@@ -39,36 +39,15 @@
   [rows keys &
    {:keys [cols callbacks values load!]
     :or {cols 100 callbacks {} values {} load! (constantly nil)}}]
-  (let [result (cap/capture!
-                 {:cols cols
-                  :rows 30
-                  :keys keys
-                  :paint! (fn [{:keys [screen]}]
-                            (try (with-redefs-fn
-                                   {#'dlg/settings-rows (if (fn? rows) rows (constantly rows))
-                                    #'dlg/load-inventories!
-                                    (fn []
-                                      (let [items (if (fn? rows) (rows) rows)
-                                            catalog
-                                            {"revision" "fixture"
-                                             "scope" "global"
-                                             "groups"
-                                             [{"toggles"
-                                               (mapv (fn [row]
-                                                       (or (:setting row)
-                                                           {"id" (:toggle-id row)
-                                                            "type" (name (or (:toggle-type row)
-                                                                             :string))
-                                                            "is_override" (:is-override? row)
-                                                            "own_value" (:toggle-value row)
-                                                            "inherited_value" (:toggle-value row)}))
-                                                     (filter :toggle-id items))}]}]
-
-                                        (reset! dlg/*settings-draft*
-                                          {:base catalog :changes {} :latest nil :error nil}))
-                                      (load!))}
-                                   #(dlg/settings-dialog! screen values callbacks))
-                                 (finally (.stopScreen ^TerminalScreen screen))))})]
+  (let [result (cap/capture! {:cols cols
+                              :rows 30
+                              :keys keys
+                              :paint! (fn [{:keys [screen]}]
+                                        (try (with-redefs-fn {#'dlg/settings-rows
+                                                              (if (fn? rows) rows (constantly rows))
+                                                              #'dlg/load-inventories! load!}
+                                               #(dlg/settings-dialog! screen values callbacks))
+                                             (finally (.stopScreen ^TerminalScreen screen))))})]
     (when-let [error (:error result)]
       (throw error))
     result))
@@ -309,18 +288,18 @@
                                                (swap! calls conj [id scope])
                                                {"id" id "enabled" false})]
             (with-redefs-fn {#'dlg/load-settings-inventory! (constantly nil)}
-              #(capture-settings rows [:f1 \i :esc \y] :callbacks {:settings-target target})))
+              #(capture-settings rows [:f1 \i :esc] :callbacks {:settings-target target})))
 
           frames
           (mapv cap/frame-text (:frames capture))]
 
       (expect (= 2 (count rows)))
       (expect (= "Allow filesystem reads." (:description (second rows))))
-      (expect (empty? @calls))
-      (expect (str/includes? (first frames) "[Set here]"))
+      (expect (= [["compact_override" target]] @calls))
+      (expect (str/includes? (first frames) "[Override]"))
       (expect (not (str/includes? (first frames) "Source:")))
       (expect (some #(str/includes? % "Source: project") frames))))
-  (it "explains a more specific winner without locking ancestor edits"
+  (it "explains locked values and prevents both edit and inherit in details"
       (let [row
             {:type :registry-toggle
              :toggle-id "compact_locked"
@@ -330,8 +309,7 @@
              :source "project"
              :label "Read filesystem"
              :description "Allow filesystem reads."
-             :override-warning
-             "Project settings decide the session value. You can still edit this owner."}
+             :locked "Project settings decide this value. Change it in Project settings."}
 
             calls
             (atom [])
@@ -346,7 +324,7 @@
                             (swap! calls conj args))]
 
               (capture-settings [{:type :section :label "Paths and access"} row]
-                                [:f1 :enter :esc \y]))]
+                                [:f1 :enter \i :esc :esc]))]
 
         (expect (empty? @calls))
         (expect (some #(str/includes? (cap/frame-text %) "Project settings decide")
@@ -368,8 +346,8 @@
                                                (swap! calls conj [id value target])
                                                {"id" id "value" value})]
           (with-redefs-fn {#'dlg/load-settings-inventory! (constantly nil)}
-            #(capture-settings rows [:enter \x :f2 :esc \y])))
-        (expect (empty? @calls)))))
+            #(capture-settings rows [:enter \x :enter :esc])))
+        (expect (= [["compact_text" "examplex" nil]] @calls)))))
 
 (defdescribe compact-settings-empty-state-test
              (it "shows a useful message for a search with no matches"
@@ -398,3 +376,111 @@
 
                    (expect (some #{"Source: default"} lines))
                    (expect (some #{"Source: unavailable"} unknown)))))
+
+(defn- typed-rows
+  "Catalog rows for one typed gateway setting."
+  [setting]
+  (#'dlg/catalog-toggle-rows
+   [{"title" "Typed values" "toggles" [(merge {"source" "default"} setting)]}]))
+
+(defn- capture-saves
+  "Edit `rows` with `keys`; answer the values sent to the gateway and the notes shown."
+  [rows keys]
+  (let [calls
+        (atom [])
+
+        notes
+        (atom [])]
+
+    (with-redefs [vis/set-setting-value! (fn [id value target]
+                                           (swap! calls conj [id value target])
+                                           {"id" id "value" value})]
+      (with-redefs-fn {#'dlg/load-settings-inventory! (constantly nil)
+                       #'dlg/mini-note! (fn [_ _ _ title text]
+                                          (swap! notes conj [title text]))}
+        #(capture-settings rows keys)))
+    {:calls @calls :notes @notes}))
+
+(defdescribe
+  typed-settings-test
+  (describe
+    "immediate saves"
+    (it "saves a number when the reader confirms it"
+        (expect (= {:calls [["compact_number" 12 nil]] :notes []}
+                   (capture-saves
+                     (typed-rows
+                       {"id" "compact_number" "type" "number" "value" 4 "label" "Parallel tools"})
+                     [:enter :backspace \1 \2 :enter :esc]))))
+    (it "keeps invalid number text for correction and saves only a valid number"
+        (expect (= {:calls [["compact_number" 4.5 nil]]
+                    :notes [["Invalid number" "Enter a finite number. Your text is kept."]]}
+                   (capture-saves
+                     (typed-rows
+                       {"id" "compact_number" "type" "number" "value" 4 "label" "Parallel tools"})
+                     [:enter \x :enter :backspace \. \5 :enter :esc]))))
+    (it "edits list entries with movement, deletion and new lines before it saves them"
+        ;; The text editor once ignored arrows, Backspace, Delete and Enter (1bf1b2471).
+        (expect (= {:calls [["compact_list" ["cd" "e"] nil]] :notes []}
+                   (capture-saves (typed-rows {"id" "compact_list"
+                                               "type" "array"
+                                               "editor" "list"
+                                               "value" ["abc"]
+                                               "label" "Denied executables"})
+                                  [:enter :left :left :backspace :end \d :enter \e :up :home :delete
+                                   :f2 :esc]))))))
+
+(defn- scripted-structured-edit
+  [row picks reads & [{:keys [lists notes]}]]
+  (let [picks
+        (atom picks)
+
+        reads
+        (atom reads)
+
+        lists
+        (atom lists)
+
+        take!
+        (fn [queue]
+          (let [value (first @queue)]
+            (swap! queue rest)
+            value))]
+
+    (with-redefs-fn {#'dlg/settings-pick! (fn [& _]
+                                            (take! picks))
+                     #'dlg/mini-read! (fn [& _]
+                                        (take! reads))
+                     #'dlg/settings-list-editor! (fn [& _]
+                                                   (take! lists))
+                     #'dlg/mini-note! (fn [_ _ _ title text]
+                                        (swap! notes conj [title text]))}
+      #((var-get #'dlg/settings-structured-editor!) nil nil nil row))))
+
+(defdescribe
+  guided-network-rules-test
+  (describe "host rules without Advanced JSON"
+            (it "adds a host rule with its access and an allowed request as typed values"
+                (let [row {:label "Network"
+                           :setting {"editor" "network"}
+                           :toggle-value {"allowed_domains" ["gateway.example.com"]}}]
+                  (expect (= {"allowed_domains" ["gateway.example.com"]
+                              "rules" [{"host" "gateway.example.com"
+                                        "access" "read-only"
+                                        "allow" [{"method" "GET" "path" "/v1/*"}]}]}
+                             (scripted-structured-edit row
+                                                       ["rules" :add 0 "access" "read-only" 0
+                                                        "allow" :add 0 "path" :done :done :done]
+                                                       ["gateway.example.com" "GET" "/v1/*"])))))
+            (it "refuses an out-of-range port and keeps the rule unchanged"
+                (let [notes
+                      (atom [])
+
+                      row
+                      {:label "Network" :setting {"editor" "network"} :toggle-value {}}]
+
+                  (expect (= {"rules" [{"host" "gateway.example.com"}]}
+                             (scripted-structured-edit row
+                                                       ["rules" :add 0 "ports" :done :done]
+                                                       ["gateway.example.com"]
+                                                       {:lists [["70000"]] :notes notes})))
+                  (expect (= [["Invalid ports" "Use one valid integer port per line."]] @notes))))))

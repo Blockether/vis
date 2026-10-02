@@ -15,10 +15,6 @@
      :page "configuration"
      :title "Configuration"}
     {:blurb
-     "Change settings for a gateway, project, group or session, then review and apply them together."
-     :page "settings"
-     :title "Settings"}
-    {:blurb
      "Tell Vis how your project works, write reusable prompts and set a goal for a longer task."
      :page "context-and-prompts"
      :title "Project instructions"}

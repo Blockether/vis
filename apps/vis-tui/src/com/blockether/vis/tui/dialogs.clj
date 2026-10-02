@@ -11,7 +11,6 @@
             [com.blockether.vis.tui.transient :as tr]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.mcp-model :as mcp-model]
-            [com.blockether.vis.tui.settings-model :as sm]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
@@ -3189,8 +3188,6 @@
   "The session whose project, group and session settings may decide a row, or nil."
   nil)
 
-(def ^:dynamic *settings-draft* nil)
-
 (def ^:dynamic *local-settings-inventory* nil)
 
 (defn- settings-inventory-atom [] (or *local-settings-inventory* settings-inventory))
@@ -3211,70 +3208,76 @@
       (try (vis/toggle-set-value! id value) (catch Throwable _ nil)))))
 
 (defn load-settings-inventory!
-  "Read the current owner without replacing its draft. Failed reads keep cached values."
+  "Refresh the cached settings catalog from the gateway. Never throws: a daemon
+   that cannot answer keeps the catalog Settings last read — and, before the
+   first answer, the process-registry projection — instead of a blank pane."
   []
   (let [answer (try (let [response (vis/gateway-settings :tui *settings-target* *settings-context*)]
-                      (when-not (and (vector? (get response "groups"))
-                                     (not (str/blank? (get response "revision"))))
-                        (throw (ex-info "This gateway does not support versioned Settings" {})))
                       {:status :ok
-                       :catalog response
-                       :revision (get response "revision")
-                       :groups (get response "groups")
+                       :groups (vec (get response "groups"))
+                       ;; The gateway names a group or project; the caller only has its id.
                        :label (get response "label")
                        :error nil})
                     (catch Exception e {:status :error :error (ex-message e)}))]
     (if (= :ok (:status answer))
       (do (when-not *settings-target*
-            (run! mirror-setting-value! (mapcat #(get % "toggles") (:groups answer)))
-            (reset! settings-inventory answer))
-          (reset! (settings-inventory-atom) answer)
-          (when *settings-draft* (swap! *settings-draft* sm/receive (:catalog answer))))
+            (run! mirror-setting-value! (mapcat #(get % "toggles") (:groups answer))))
+          (reset! (settings-inventory-atom) answer))
       (swap! (settings-inventory-atom) assoc :status :error :error (:error answer)))))
 
+(defn- cache-setting-row!
+  "Fold ONE refreshed gateway row back into the cached catalog, so the frame
+   after a flip renders the value the daemon just confirmed without a re-read."
+  [row]
+  (when-let [id (get row "id")]
+    (swap! (settings-inventory-atom) update
+      :groups
+      (fn [groups]
+        (mapv (fn [group]
+                (update group
+                        "toggles"
+                        (fn [rows]
+                          (mapv #(if (= id (get % "id")) (merge % row) %) rows))))
+              (or groups []))))))
+
 (defn- catalog-toggle-rows
-  "Project typed gateway values and provenance into compact terminal rows."
+  "Project the gateway catalog without repeating metadata or reset actions in the list."
   [groups]
   (vec
-    (mapcat
-      (fn [group]
-        (when (seq (get group "toggles"))
-          (cons {:type :section :label (str (get group "title"))}
-                (mapv (fn [row]
-                        (let [type
-                              (get row "type")
+    (mapcat (fn [group]
+              (let [rows (filterv #(not= "agent_name" (get % "id")) (get group "toggles"))]
+                (when (seq rows)
+                  (cons {:type :section :label (str (get group "title"))}
+                        (mapv (fn [row]
+                                (let [type (get row "type")
+                                      id (get row "id")]
 
-                              id
-                              (get row "id")]
+                                  {:key (keyword (str "toggle::" id))
+                                   :type (case type
+                                           "string"
+                                           :text-setting
 
-                          {:key (keyword (str "toggle::" id))
-                           :type (case type
-                                   "string"
-                                   :text-setting
+                                           "number"
+                                           :number-setting
 
-                                   "number"
-                                   :number-setting
+                                           ("array" "object")
+                                           :structured-setting
 
-                                   ("array" "object")
-                                   :structured-setting
-
-                                   :registry-toggle)
-                           :toggle-id id
-                           :toggle-type (keyword type)
-                           :toggle-value (sm/setting-value row)
-                           :setting row
-                           :choices (vec (get row "choices"))
-                           :experimental? (boolean (get row "is_experimental"))
-                           :pending? (boolean (get row "pending"))
-                           :source (get row "source")
-                           :is-override? (boolean (get row "is_override"))
-                           :inherited-value (get row "inherited_value")
-                           :inherited-source (get row "inherited_source")
-                           :applies (get row "applies")
-                           :label (str (get row "label"))
-                           :description (str (get row "description"))}))
-                      (get group "toggles")))))
-      (or groups []))))
+                                           :registry-toggle)
+                                   :toggle-id id
+                                   :toggle-type (keyword type)
+                                   :toggle-value (if (= "boolean" type)
+                                                   (boolean (get row "enabled"))
+                                                   (get row "value"))
+                                   :setting row
+                                   :choices (vec (get row "choices"))
+                                   :experimental? (boolean (get row "is_experimental"))
+                                   :source (get row "source")
+                                   :is-override? (boolean (get row "is_override"))
+                                   :label (str (get row "label"))
+                                   :description (str (get row "description"))}))
+                              rows)))))
+            (or groups []))))
 
 (defn- override-note
   "Explain why a more specific scope decides this catalog row for the session
@@ -3287,19 +3290,20 @@
            (cond (some? enabled) (if enabled " turn this on" " turn this off")
                  (= "enum" (get row "type")) (str " set this to " value)
                  :else " set this")
-           " for this session. You can still edit this scope. Use F6 to open "
+           " for this session. Change it in "
            where
            "."))))
 
-(defn- annotate-overridden-rows
-  "Explain a more specific winner without preventing edits to this owner."
+(defn- lock-overridden-rows
+  "Lock each catalog row that a more specific scope decides for the session
+   Settings opened from; its description says where to change it instead."
   [groups rows]
   (let [notes (into {}
                     (keep #(when-let [note (override-note %)] [(get % "id") note]))
                     (mapcat #(get % "toggles") groups))]
     (mapv (fn [{:keys [toggle-id] :as row}]
             (if-let [note (get notes toggle-id)]
-              (assoc row :override-warning note)
+              (assoc row :locked note)
               row))
           rows)))
 
@@ -3313,11 +3317,9 @@
    binary. Until that first answer, and whenever the daemon cannot be reached,
    the process registry renders the pane instead of leaving it blank."
   []
-  (let [groups (if (and *settings-draft* (:base @*settings-draft*))
-                 (get (sm/preview @*settings-draft*) "groups")
-                 (:groups @(settings-inventory-atom)))]
+  (let [groups (:groups @(settings-inventory-atom))]
     (if (or *settings-target* (seq groups))
-      (annotate-overridden-rows groups (catalog-toggle-rows groups))
+      (lock-overridden-rows groups (catalog-toggle-rows groups))
       ;; `toggles-for-channel` drops provider-specific knobs whose provider
       ;; isn't configured (`:visible-fn`) AND toggles scoped to OTHER channels
       ;; (`:channels`) — e.g. the web theme never shows in the TUI dialog.
@@ -3602,6 +3604,13 @@
                   :label "Add MCP server…"
                   :description "Register a new one with the gateway"}])))))
 
+(defonce ^:private agent-name-setting (atom nil))
+
+(defn- load-agent-name!
+  []
+  (reset! agent-name-setting (try (vis/setting "agent_name")
+                                  (catch Exception e {"error" (ex-message e)}))))
+
 (defn- mark-inventories-loading!
   "Arm every gateway-backed inventory for a refresh WITHOUT clearing what they
    already hold: a re-opened Settings shows the fleet it last read and refreshes
@@ -3613,8 +3622,8 @@
   (swap! (settings-inventory-atom) assoc :status :loading))
 
 (defn- load-inventories!
-  "Read the settings catalog, MCP inventory and provider fleet in parallel.
-   Called only AFTER the settings frame is on the terminal."
+  "Read the gateway name, settings catalog, MCP inventory and provider fleet in
+   parallel. Called only AFTER the settings frame is on the terminal."
   []
   (if *settings-target*
     (do (load-settings-inventory!) (load-mcp-inventory!))
@@ -3624,54 +3633,40 @@
           catalog
           (vis/worker-future "vis-tui-settings-catalog" (bound-fn* load-settings-inventory!))]
 
-      (load-provider-inventory!)
+      (let [agent (vis/worker-future "vis-tui-settings-agent-name" load-agent-name!)]
+        (load-provider-inventory!)
+        @agent)
       @mcp
       @catalog
       nil)))
 
 (defn- settings-rows
-  "One searchable catalog. Gateway drafts and immediate terminal preferences stay separate."
+  "Every setting in one flat grouped list: response and theme preferences,
+   toggles, providers, and MCP servers. Empty sections are omitted."
   []
-  (vec
-    (concat [{:type :section :label "Settings tasks"}
-             {:type :action
-              :id :settings-apply
-              :label "Apply changes"
-              :description "Review and atomically save this owner's draft."}
-             {:type :action :id :settings-discard :label "Discard changes"}
-             {:type :action :id :settings-refresh :label "Refresh and review conflicts"}
-             {:type :action :id :settings-scope :label "Choose setting scope"}
-             {:type :action :id :settings-transfer :label "Profiles, presets, import and export"}]
-            (when *settings-draft*
-              [{:type :info
-                :label (str (count (:changes @*settings-draft*))
-                            " pending changes · "
-                            (or (get-in @*settings-draft* [:base "label"])
-                                (get-in @*settings-draft* [:base "scope"])
-                                "Machine"))
-                :description
-                (or (:error @*settings-draft*)
-                    (when (:latest @*settings-draft*)
-                      "Settings changed elsewhere. Refresh and review before Apply.")
-                    "Gateway settings use Apply. Resource actions take effect immediately.")}])
-            (when-not *settings-target*
-              (concat [{:type :section :label "This terminal · immediate"}] (settings-ui-options)))
-            (or (registry-toggle-rows) [])
-            (when-let [error (:error @(settings-inventory-atom))]
-              [{:type :info :tone :bad :label "Settings unavailable" :description error}])
-            (when-not *settings-target* (or (provider-settings-rows) []))
-            (or (mcp-settings-rows) []))))
+  (if *settings-target*
+    (vec (concat (or (registry-toggle-rows) [])
+                 (when-let [error (:error @(settings-inventory-atom))]
+                   [{:type :info :tone :bad :label "Settings unavailable" :description error}])
+                 (or (mcp-settings-rows) [])))
+    (vec (concat (settings-ui-options)
+                 [{:type :section :label "Agent"}
+                  {:type :agent-name
+                   :label "Agent name"
+                   :description (or (get @agent-name-setting "error")
+                                    "Shared by all gateway clients. Overrides project names.")}]
+                 (or (registry-toggle-rows) [])
+                 (or (provider-settings-rows) [])
+                 (or (mcp-settings-rows) [])))))
 
 (defn- settings-option-label
-  [{:keys [label type toggle-id experimental? pending? is-override? override-warning]} _values]
+  [{:keys [label type toggle-id experimental? locked is-override?]} _values]
   (if (contains? #{:registry-toggle :text-setting :number-setting :structured-setting} type)
     (let [spec (vis/toggle-spec toggle-id)]
       (str label
-           (when pending? "  [Draft]")
-           (when is-override? "  [Set here]")
-           (when override-warning "  [More specific scope]")
-           (when (if (some? experimental?) experimental? (:experimental? spec))
-             "  [Experimental]")))
+           (when is-override? "  [Override]")
+           (when (if (some? experimental?) experimental? (:experimental? spec)) "  [Experimental]")
+           (when locked "  [Locked]")))
     label))
 
 (defn- settings-option-value
@@ -3679,6 +3674,9 @@
   [{:keys [key type choices toggle-id toggle-type toggle-value set-key item-id inline-description
            description]} values]
   (case type
+    :agent-name
+    (or (get @agent-name-setting "value") "Unavailable")
+
     :choice
     (name (or (get values key) (first choices)))
 
@@ -3686,7 +3684,11 @@
     (str toggle-value)
 
     :structured-setting
-    (str (count toggle-value) (if (= :array toggle-type) " entries" " fields"))
+    (let [n (count toggle-value)]
+      (str n
+           (if (= :array toggle-type)
+             (if (= 1 n) " entry" " entries")
+             (if (= 1 n) " field" " fields"))))
 
     :registry-toggle
     (let [spec
@@ -3740,6 +3742,9 @@
 
       :env-var
       [" " t/dialog-fg]
+
+      :agent-name
+      val
 
       :choice
       val
@@ -3795,21 +3800,50 @@
 
     (nth choices (mod (inc (long (if (neg? idx) 0 idx))) (count choices)))))
 
-(defn- stage-setting!
-  [id action value]
-  (when-not (and *settings-draft* (:base @*settings-draft*))
-    (throw (ex-info "Refresh Settings before editing a gateway value" {})))
-  (swap! *settings-draft* sm/stage id action value))
-
 (defn- apply-registry-toggle
-  [values {:keys [toggle-id toggle-type toggle-value value]}]
-  (try (stage-setting! toggle-id
-                       "value"
-                       (if (= :enum (or toggle-type (:type (vis/toggle-spec toggle-id))))
-                         value
-                         (not toggle-value)))
-       (catch Exception e (vis/notify! (ex-message e) :level :error :ttl-ms 5000)))
-  values)
+  [values {:keys [toggle-id toggle-type value]}]
+  (try
+    (let [kind
+          (or toggle-type (:type (vis/toggle-spec toggle-id)))
+
+          remote-row
+          (case kind
+            :boolean
+            (vis/gateway-toggle-setting! toggle-id *settings-target*)
+
+            :enum
+            (vis/gateway-set-setting-value! toggle-id value *settings-target*)
+
+            (throw (ex-info "Unsupported registry setting type" {:toggle-id toggle-id :type kind})))
+
+          remote-value
+          (case kind
+            :boolean
+            (if (and (= "boolean" (get remote-row "type")) (contains? remote-row "enabled"))
+              (get remote-row "enabled")
+              (throw (ex-info "Gateway returned an invalid boolean setting row"
+                              {:toggle-id toggle-id})))
+
+            :enum
+            (if (and (= "enum" (get remote-row "type")) (contains? remote-row "value"))
+              (get remote-row "value")
+              (throw (ex-info "Gateway returned an invalid enum setting row"
+                              {:toggle-id toggle-id}))))]
+
+      ;; The daemon owns the effective value and atomically changes it. Mirror its
+      ;; answer only after success so the Settings glyph never promises a local
+      ;; preference the session runtime did not receive: into the catalog every
+      ;; row renders from, and into the process registry when this binary reads
+      ;; that toggle itself.
+      (cache-setting-row! remote-row)
+      (when (and (not *settings-target*) (vis/toggle-spec toggle-id))
+        (vis/toggle-set-value! toggle-id remote-value))
+      values)
+    (catch Throwable t
+      (vis/notify! (str "Setting was not changed: " (or (ex-message t) "gateway request failed"))
+                   :level :error
+                   :ttl-ms 5000)
+      values)))
 
 (defn- apply-settings-option
   [values {:keys [key type choices set-key item-id] :as row}]
@@ -3840,8 +3874,8 @@
 
 (defn- settings-selectable?
   [{:keys [type]}]
-  (contains? #{:toggle :choice :action :text-setting :number-setting :structured-setting :set-toggle
-               :registry-toggle :mcp :provider}
+  (contains? #{:toggle :choice :action :agent-name :text-setting :number-setting :structured-setting
+               :set-toggle :registry-toggle :mcp :provider}
              type))
 
 (defn- first-selectable-index
@@ -4021,6 +4055,11 @@
                    (notify-settings-change! callbacks next-values)))]
     (theme-picker! screen g region choices (get @values key) apply!)))
 
+(defn- settings-config-property
+  "One property's schema in the config document, such as a workspace entry's `access`."
+  [definition property]
+  (get-in (document/schema-document "config") ["$defs" definition "properties" property]))
+
 (defn- settings-save-key?
   [^KeyStroke key]
   (or (= KeyType/F2 (key-type key))
@@ -4114,7 +4153,7 @@
                                  (and (not changed?) (= initial (input/input->text editor)))
                                  (confirm-dialog! screen
                                                   "Discard text?"
-                                                  "The edited text has not been staged."))
+                                                  "The edited text has not been saved."))
                            {::done nil}
                            state)
                          :else (let [edit
@@ -4169,7 +4208,7 @@
                                      entries)
                         [{:label "Add workspace path" :value :add}
                          {:label "Advanced JSON" :value :advanced}
-                         {:label "Use these paths" :value :done}])
+                         {:label "Save these paths" :value :done}])
           selected (settings-pick! screen "Workspace paths" (vec items))]
 
       (case selected
@@ -4203,8 +4242,9 @@
           (cond (= field :remove) (if (mini-confirm! screen
                                                      g
                                                      region
-                                                     "Remove this workspace path from the draft?"
-                                                     {:cost "Nothing is saved until Apply."
+                                                     "Remove this workspace path?"
+                                                     {:cost
+                                                      "Nothing is saved until you save these paths."
                                                       :yes-label "Remove path"})
                                     (recur (vec (concat (subvec entries 0 selected)
                                                         (subvec entries (inc (long selected))))))
@@ -4213,12 +4253,13 @@
                 :else (let [current (get entry field)
                             value (cond (= field "search") (not (if (nil? current) true current))
                                         (#{"access" "draft"} field)
-                                        (settings-pick!
-                                          screen
-                                          (str "Workspace " field)
-                                          (mapv #(hash-map :label % :value %)
-                                                (get (sm/config-property "workspaceEntry" field)
-                                                     "enum")))
+                                        (settings-pick! screen
+                                                        (str "Workspace " field)
+                                                        (mapv #(hash-map :label % :value %)
+                                                              (get (settings-config-property
+                                                                     "workspaceEntry"
+                                                                     field)
+                                                                   "enum")))
                                         :else (mini-read! screen
                                                           g
                                                           region
@@ -4264,17 +4305,18 @@
                                     (conj fields {:label "Remove this rule" :value :remove}))]
 
           (cond (nil? field) (recur entries)
-                (= field :remove) (if (mini-confirm! screen
-                                                     g
-                                                     region
-                                                     "Remove this rule from the draft?"
-                                                     {:cost "Nothing is saved until Apply."
-                                                      :yes-label "Remove rule"})
+                (= field :remove) (if (mini-confirm!
+                                        screen
+                                        g
+                                        region
+                                        "Remove this rule?"
+                                        {:cost "Nothing is saved until you save this configuration."
+                                         :yes-label "Remove rule"})
                                     (recur (vec (concat (subvec entries 0 selected)
                                                         (subvec entries (inc (long selected))))))
                                     (recur entries))
                 :else
-                (let [property (sm/config-property definition field)
+                (let [property (settings-config-property definition field)
                       old (get entry field)
                       next-value
                       (cond
@@ -4341,7 +4383,7 @@
                                   (:label row)
                                   (vec (concat fields
                                                [{:label "Advanced JSON" :value :advanced}
-                                                {:label "Use this configuration" :value :done}])))]
+                                                {:label "Save this configuration" :value :done}])))]
         (case field
           nil
           nil
@@ -4396,222 +4438,6 @@
 
     (settings-json-editor! screen g region (:label row) (:toggle-value row))))
 
-(defn- discard-settings-draft!
-  [screen g region]
-  (when (and *settings-draft*
-             (sm/dirty? @*settings-draft*)
-             (mini-confirm! screen
-                            g
-                            region
-                            "Discard pending settings?"
-                            {:cost "Your unsaved gateway edits will be lost."
-                             :yes-label "Discard changes"
-                             :no-label "Keep editing"}))
-    (reset! *settings-draft* (sm/start (or (:latest @*settings-draft*)
-                                           (:base @*settings-draft*))))))
-
-(defn- apply-settings-draft!
-  [screen g region]
-  (cond (not (and *settings-draft* (sm/dirty? @*settings-draft*))) nil
-        (= :error (:status @(settings-inventory-atom)))
-        (mini-note! screen
-                    g
-                    region
-                    "Settings offline"
-                    "Refresh Settings after reconnecting. Your draft is kept.")
-        (:latest @*settings-draft*) (mini-note!
-                                      screen
-                                      g
-                                      region
-                                      "Settings changed elsewhere"
-                                      "Use F5 to review the latest values and keep your draft.")
-        :else
-        (when (settings-text-editor! screen
-                                     "Review changes · F2 applies this owner only"
-                                     (str/join "\n" (sm/review-lines @*settings-draft*))
-                                     {:read-only? true :submit-label "Apply"})
-          (when
-            (or
-              (not (sm/permission-change? @*settings-draft*))
-              (mini-confirm!
-                screen
-                g
-                region
-                "Apply these permission changes?"
-                {:cost
-                 "Active calls keep their permissions. Local access cannot exceed the host policy."
-                 :yes-label "Apply permissions"
-                 :no-label "Keep editing"}))
-            (try (let [draft
-                       @*settings-draft*
-
-                       response
-                       (vis/apply-settings! (get-in draft [:base "revision"])
-                                            (sm/changes draft)
-                                            *settings-target*
-                                            :tui
-                                            *settings-context*)]
-
-                   (when-not (and (vector? (get response "groups"))
-                                  (string? (get response "revision")))
-                     (throw (ex-info "Gateway returned an invalid settings catalog" {})))
-                   (reset! *settings-draft* (sm/start response))
-                   (reset! (settings-inventory-atom) {:status :ok
-                                                      :catalog response
-                                                      :groups (get response "groups")
-                                                      :revision (get response "revision")
-                                                      :label (get response "label")
-                                                      :error nil})
-                   (when-not *settings-target* (run! mirror-setting-value! (sm/rows response))))
-                 (catch Exception e
-                   (swap! *settings-draft* assoc :error (ex-message e))
-                   (when (= 409 (:http-status (ex-data e))) (load-settings-inventory!))
-                   (mini-note! screen
-                               g
-                               region
-                               "Settings not applied"
-                               (str (ex-message e) " Your draft is kept."))))))))
-
-(defn- refresh-settings-draft!
-  [screen g region]
-  (load-settings-inventory!)
-  (when (and *settings-draft* (:latest @*settings-draft*))
-    (try (let [rebased (sm/rebase @*settings-draft*)]
-           (when (settings-text-editor! screen
-                                        "Latest values and your draft · review before Apply"
-                                        (str/join "\n" (sm/review-lines rebased))
-                                        {:read-only? true :submit-label "Keep draft on latest"})
-             (reset! *settings-draft* rebased)))
-         (catch Exception e (mini-note! screen g region "Draft conflict" (ex-message e))))))
-
-(defn- settings-scope-picker!
-  [screen g region]
-  (let [catalog
-        (:base @*settings-draft*)
-
-        nodes
-        (vec (distinct (concat (get catalog "lineage")
-                               [{"scope" "global" "label" "Machine"}]
-                               (when *settings-context*
-                                 [{"scope" "session"
-                                   "target_id" (str *settings-context*)
-                                   "label" "Current session"}]))))
-
-        node
-        (settings-pick! screen
-                        "Choose setting scope"
-                        (mapv (fn [node]
-                                {:label (str (get node "label") " · " (get node "scope"))
-                                 :value node})
-                              nodes))]
-
-    (when (and node
-               (or (not (sm/dirty? @*settings-draft*))
-                   (mini-confirm! screen
-                                  g
-                                  region
-                                  "Discard changes and switch scope?"
-                                  {:cost "Your pending gateway changes will be lost."
-                                   :yes-label "Discard and switch"
-                                   :no-label "Keep editing"})))
-      (set!
-        *settings-target*
-        (when-not (= "global" (get node "scope"))
-          {:scope (get node "scope") :target-id (get node "target_id") :label (get node "label")}))
-      (reset! *settings-draft* (sm/start nil))
-      (reset! (settings-inventory-atom) {:status :unloaded :groups [] :error nil})
-      (reset! *local-mcp-inventory* {:status :unloaded :servers [] :error nil})
-      (load-inventories!))))
-
-(defn- settings-transfer!
-  [screen g region values callbacks]
-  (when-let [catalog (:base @*settings-draft*)]
-    (let [action (settings-pick! screen
-                                 "Profiles and presets"
-                                 [{:label "Save current values as a profile" :value :save}
-                                  {:label "Load a saved profile" :value :load}
-                                  {:label "Remove a saved profile" :value :remove}
-                                  {:label "Import profile JSON" :value :import}
-                                  {:label "Export profile JSON" :value :export}
-                                  {:label "Use inherited defaults" :value :inherit}])
-          profiles (vec (:settings-profiles @values))
-          changed! (fn [next-profiles]
-                     (notify-settings-change!
-                       callbacks
-                       (swap! values assoc :settings-profiles next-profiles)))
-          stage-profile! (fn [text]
-                           (let [profile (sm/parse-profile text catalog)]
-                             (doseq [{:strs [id action value]} (get profile "changes")]
-                               (stage-setting! id action value))))]
-
-      (try
-        (case action
-          nil
-          nil
-
-          :inherit
-          (doseq [row (sm/rows catalog)
-                  :when (get row "is_override")]
-
-            (stage-setting! (get row "id") "inherit" nil))
-
-          :import
-          (when-let [text (settings-text-editor! screen
-                                                 "Import profile · nothing is saved until Apply"
-                                                 ""
-                                                 {})]
-            (stage-profile! text))
-
-          (:load :remove)
-          (when-let [profile (settings-pick! screen
-                                             "Saved profiles"
-                                             (mapv #(hash-map :label (get % "name") :value %)
-                                                   profiles))]
-            (if (= action :load)
-              (stage-profile! (wire/json-str profile))
-              (when (mini-confirm! screen
-                                   g
-                                   region
-                                   (str "Remove profile " (get profile "name") "?")
-                                   {:cost
-                                    "This removes only your saved profile, not gateway settings."
-                                    :yes-label "Remove profile"})
-                (changed! (vec (remove #(= (get % "name") (get profile "name")) profiles))))))
-
-          (:save :export)
-          (if (sm/dirty? @*settings-draft*)
-            (mini-note! screen
-                        g
-                        region
-                        "Apply or discard first"
-                        "Profiles export validated saved values, not drafts or credentials.")
-            (when-let [name
-                       (mini-read! screen g region "Profile name" {:initial "Settings profile"})]
-              (let [profile (sm/export-profile name catalog)
-                    text (wire/json-str profile)]
-
-                (sm/parse-profile text catalog)
-                (if (= action :export)
-                  (settings-text-editor! screen
-                                         "Profile JSON · paths and domains can be private"
-                                         text
-                                         {:read-only? true :submit-label "Back"})
-                  (let [others (vec (remove #(= name (get % "name")) profiles))
-                        limit (get-in (document/schema-document "gateway")
-                                      ["$defs" "settings_profiles" "maxItems"])]
-
-                    (when (>= (count others) (long limit))
-                      (throw (ex-info "Remove a saved profile before adding another" {})))
-                    (when (or (= (count profiles) (count others))
-                              (mini-confirm! screen
-                                             g
-                                             region
-                                             "Replace this saved profile?"
-                                             {:cost "The old profile values will be replaced."
-                                              :yes-label "Replace profile"}))
-                      (changed! (conj others profile)))))))))
-        (catch Exception e (mini-note! screen g region "Profile not changed" (ex-message e)))))))
-
 (defn- pick-setting-value!
   "Open the enum's choice list on its saved value; Escape leaves it unchanged."
   [screen {:keys [label toggle-id choices toggle-value]}]
@@ -4636,65 +4462,99 @@
                           [:init :selected]
                           (max 0 (.indexOf ^java.util.List choices current)))))))
 
+(defn- save-setting-value!
+  "Save one value for the open owner, then show the row the gateway confirmed."
+  [screen g region id value]
+  (try (cache-setting-row! (vis/set-setting-value! id value *settings-target*))
+       (load-settings-inventory!)
+       (catch Exception e (mini-note! screen g region "Setting not saved" (ex-message e)))))
+
+(defn- setting-number
+  "The finite number `text` names, or nil. A whole number stays an integer."
+  [text]
+  (let [text (str/trim (str text))]
+    (or (parse-long text)
+        (when-let [number (parse-double text)]
+          (when (Double/isFinite (double number)) number)))))
+
 (defn- activate-unlocked-row!
   [^TerminalScreen screen g region values callbacks row]
   (case (:type row)
     :text-setting
-    (when-let [value (settings-text-editor! screen (:label row) (:toggle-value row) {})]
-      (stage-setting! (:toggle-id row) "value" value))
+    (when-let [value (mini-read! screen
+                                 g
+                                 (host-band-region screen region)
+                                 (:label row)
+                                 {:initial (:toggle-value row)})]
+      (save-setting-value! screen g region (:toggle-id row) value))
 
     :number-setting
     (loop [text (str (:toggle-value row))]
-      (when-let [value (settings-text-editor! screen (:label row) text {})]
-        (let [number (try (Double/parseDouble value) (catch NumberFormatException _ nil))]
-          (if (and number (Double/isFinite (double number)))
-            (stage-setting! (:toggle-id row) "value" number)
-            (do (mini-note! screen
-                            g
-                            region
-                            "Invalid number"
-                            "Enter a finite number. Your text is kept.")
-                (recur value))))))
+      (when-let [value (mini-read! screen
+                                   g
+                                   (host-band-region screen region)
+                                   (:label row)
+                                   {:initial text})]
+        (if-let [number (setting-number value)]
+          (save-setting-value! screen g region (:toggle-id row) number)
+          (do (mini-note! screen
+                          g
+                          region
+                          "Invalid number"
+                          "Enter a finite number. Your text is kept.")
+              (recur value)))))
 
     :structured-setting
     (when-let [value (settings-structured-editor! screen g region row)]
-      (stage-setting! (:toggle-id row) "value" value))
+      (save-setting-value! screen g region (:toggle-id row) value))
 
     :inherit
-    (stage-setting! (:toggle-id row) "inherit" nil)
+    (try (cache-setting-row! (vis/inherit-setting! (:toggle-id row) *settings-target*))
+         (load-settings-inventory!)
+         (catch Exception e (mini-note! screen g region "Setting not reset" (ex-message e))))
+
+    :agent-name
+    (let [region (host-band-region screen region)]
+      (try (let [current (vis/setting "agent_name")]
+             (reset! agent-name-setting current)
+             (when-let [value (mini-read! screen
+                                          g
+                                          region
+                                          "Agent name (all gateway clients):"
+                                          {:initial (get current "value")})]
+               (reset! agent-name-setting (vis/set-setting-value! "agent_name" value))))
+           (catch Exception e (mini-note! screen g region "Agent name not saved" (ex-message e)))))
 
     :registry-toggle
     (let [enum?
           (= :enum (or (:toggle-type row) (:type (vis/toggle-spec (:toggle-id row)))))
 
+          current
+          (if (some? (:toggle-value row)) (:toggle-value row) (vis/toggle-value (:toggle-id row)))
+
           value
           (when enum? (pick-setting-value! screen row))]
 
-      (when (or (not enum?) (some? value))
-        (apply-registry-toggle @values (assoc row :value value))))
+      (when (or (not enum?) (and value (not= value current)))
+        (->> (swap! values apply-settings-option (assoc row :value value))
+             (notify-settings-change! callbacks))
+        ;; A feature flag can reveal or hide dependent rows — Improve mode shows
+        ;; only while Improve is on — exactly as it does in the app, so re-read
+        ;; the catalog it just changed instead of waiting for the next open.
+        (when (and (:experimental? row) (seq (:groups @(settings-inventory-atom))))
+          (load-settings-inventory!))))
 
     :action
-    (case (:id row)
-      :settings-apply
-      (apply-settings-draft! screen g region)
-
-      :settings-discard
-      (discard-settings-draft! screen g region)
-
-      :settings-refresh
-      (refresh-settings-draft! screen g region)
-
-      :settings-scope
-      (settings-scope-picker! screen g region)
-
-      :settings-transfer
-      (settings-transfer! screen g region values callbacks)
-
-      (when-let [f (get callbacks (:id row))]
-        (let [result (f {:values @values :g g :region region})]
-          (when (= :mcp-add (:id row)) (load-mcp-inventory!))
-          (when (= :provider-add (:id row)) (load-provider-inventory!))
-          result)))
+    (when-let [f (get callbacks (:id row))]
+      ;; An action gets the SAME frame handle a provider row gets, so it can
+      ;; paint its own transient band inside Settings instead of stacking a
+      ;; dialog on top of it.
+      (let [result (f {:values @values :g g :region region})]
+        ;; Adding an entry changes what every row under it says; re-read that
+        ;; inventory instead of trusting the cached one.
+        (when (= :mcp-add (:id row)) (load-mcp-inventory!))
+        (when (= :provider-add (:id row)) (load-provider-inventory!))
+        result))
 
     ;; An MCP row IS its verbs — start, kill, enable, disable, sign in, edit,
     ;; remove — offered as a transient band in THIS frame, each on the key
@@ -4727,9 +4587,12 @@
            (notify-settings-change! callbacks)))))
 
 (defn- activate-settings-row!
-  "Stage a gateway edit or run a separate device/resource action."
+  "Activate one Settings row. A row that a more specific scope decides for the
+   session Settings opened from explains where to change it instead."
   [^TerminalScreen screen g region values callbacks row]
-  (activate-unlocked-row! screen g region values callbacks row))
+  (if-let [note (:locked row)]
+    (mini-note! screen g region "Locked" note)
+    (activate-unlocked-row! screen g region values callbacks row)))
 
 (defn- settings-section-text
   [label inner-w]
@@ -4880,10 +4743,12 @@
   (vec (concat (when-some [value (settings-option-value row values)]
                  [(str "Value: " value)])
                [(str "Source: "
-                     (or (:source row) (when (:toggle-id row) "unavailable") "this terminal")) ""
-                (:description row)]
+                     (or (:source row)
+                         (when (= :agent-name (:type row)) "gateway")
+                         (when (:toggle-id row) "unavailable")
+                         "this terminal")) "" (:description row)]
                (when (:is-override? row) ["" "This scope overrides the inherited value."])
-               (when-let [note (:override-warning row)]
+               (when-let [note (:locked row)]
                  ["" note]))))
 
 (defn- settings-details-dialog!
@@ -4896,7 +4761,7 @@
         (str (:label row) " · Details")
 
         editable?
-        (settings-selectable? row)
+        (not (:locked row))
 
         inherit?
         (and editable? (:is-override? row))
@@ -5060,14 +4925,12 @@
                *settings-context*
                (:context-session-id callbacks)
 
-               *settings-draft*
-               (atom (sm/start nil))
-
                *local-settings-inventory*
-               (atom {:status :unloaded :groups [] :error nil})
+               (when (:settings-target callbacks) (atom {:status :unloaded :groups [] :error nil}))
 
                *local-mcp-inventory*
-               (atom {:status :unloaded :servers [] :error nil})]
+               (when (:settings-target callbacks)
+                 (atom {:status :unloaded :servers [] :error nil}))]
 
        (let [;; MCP servers and providers are settings sections now, so both
              ;; inventories are read once per open instead of from behind dialogs of
@@ -5154,15 +5017,13 @@
                     (draw-dialog-chrome! g
                                          cols
                                          screen-rows
-                                         (str (if *settings-target*
-                                                (str (titleize-label (:scope *settings-target*))
-                                                     " settings: "
-                                                     (or (:label @(settings-inventory-atom))
-                                                         (:label *settings-target*)
-                                                         (:target-id *settings-target*)))
-                                                "Machine settings")
-                                              (when (sm/dirty? @*settings-draft*)
-                                                " · Pending changes"))
+                                         (if *settings-target*
+                                           (str (titleize-label (:scope *settings-target*))
+                                                " settings: "
+                                                (or (:label @(settings-inventory-atom))
+                                                    (:label *settings-target*)
+                                                    (:target-id *settings-target*)))
+                                           "Settings")
                                          (settings-content-width cols)
                                          (settings-content-height screen-rows))
 
@@ -5462,11 +5323,10 @@
                                 left
                                 hint-row
                                 inner-w
-                                (if (< inner-w 65)
-                                  [["F2" "Apply"] ["F3" "Discard"] ["F6" "scope"] ["Esc" "close"]]
-                                  [["Enter" "edit"] ["F1" "details"] ["F2/Ctrl+S" "Apply"]
-                                   ["F3" "Discard"] ["F4" "profiles"] ["F5" "refresh"]
-                                   ["F6" "scope"] ["Esc" "close"]]))
+                                (if (< inner-w 50)
+                                  [["↑/↓" "scroll"] ["F1" "details"] ["Esc" "clear/close"]]
+                                  [["↑/↓" "scroll"] ["PgUp/PgDn" "scroll"] ["Enter" "change"]
+                                   ["F1" "details"] ["Esc" "clear/close"]]))
                 (when-not paint-only?
                   (.setCursorPosition screen search-cursor)
                   (frame/refresh! screen))
@@ -5584,22 +5444,8 @@
                             ;; Esc clears an active search first, then closes on the next press.
                             KeyType/Escape
                             (if (str/blank? @query)
-                              (if (or (not (sm/dirty? @*settings-draft*))
-                                      (do (activate-row! {:type :action :id :settings-discard})
-                                          (not (sm/dirty? @*settings-draft*))))
-                                @values
-                                (recur))
+                              @values
                               (do (reset! query "") (reset! selected 0) (reset! scroll 0) (recur)))
-                            KeyType/F2 (do (activate-row! {:type :action :id :settings-apply})
-                                           (recur))
-                            KeyType/F3 (do (activate-row! {:type :action :id :settings-discard})
-                                           (recur))
-                            KeyType/F4 (do (activate-row! {:type :action :id :settings-transfer})
-                                           (recur))
-                            KeyType/F5 (do (activate-row! {:type :action :id :settings-refresh})
-                                           (recur))
-                            KeyType/F6 (do (activate-row! {:type :action :id :settings-scope})
-                                           (recur))
                             KeyType/F1
                             (do (when selected-row
                                   (let [restore!
@@ -5647,16 +5493,13 @@
                                                   (recur))
                             ;; Any printable character types into the search query (VS Code feel);
                             ;; Enter is the only key that toggles/activates the selected row.
-                            KeyType/Character
-                            (let [c (key-character key)]
-                              (cond (settings-save-key? key)
-                                    (do (activate-row! {:type :action :id :settings-apply}) (recur))
-                                    (and c (>= (int c) 32) (not (.isCtrlDown ^KeyStroke key)))
-                                    (do (swap! query str c)
-                                        (reset! selected 0)
-                                        (reset! scroll 0)
-                                        (recur))
-                                    :else (recur)))
+                            KeyType/Character (let [c (key-character key)]
+                                                (if (and c (>= (int c) 32))
+                                                  (do (swap! query str c)
+                                                      (reset! selected 0)
+                                                      (reset! scroll 0)
+                                                      (recur))
+                                                  (recur)))
                             KeyType/Enter (do (when selected-row (activate-row! selected-row))
                                               (recur))
                             (recur))))))))))

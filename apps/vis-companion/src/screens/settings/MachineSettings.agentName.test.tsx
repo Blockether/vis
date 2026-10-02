@@ -3,7 +3,6 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { GatewayClient } from '../../lib/gateway';
 import { DEFAULT_SPEECH_PREFS } from '../../lib/storage';
-import type { SettingsResponse } from '../../lib/types';
 import { MachineSettings } from './MachineSettings';
 
 const gateway = { id: 'agent-name-settings', url: 'http://127.0.0.1:7890', token: 'test' };
@@ -13,24 +12,27 @@ const setting = {
   type: 'string' as const,
   value: 'Ada',
   max_length: 80,
-  is_override: true,
-};
-const initial: SettingsResponse = {
-  revision: 'name-1',
-  groups: [{ id: 'agent', title: 'Agent', toggles: [setting] }],
 };
 beforeEach(() => {
   vi.spyOn(GatewayClient.prototype, 'cachedSettings').mockReturnValue(null);
-  vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue(initial);
-  vi.spyOn(GatewayClient.prototype, 'applySettings').mockResolvedValue({
-    ...initial,
-    revision: 'name-2',
-    groups: [{ ...initial.groups[0], toggles: [{ ...setting, value: 'Grace' }] }],
+  vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue({
+    revision: 'agent-name-1',
+    groups: [{ id: 'agent', title: 'Agent', toggles: [setting] }],
   });
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(
+      async () =>
+        new Response('{}', {
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    ),
+  );
 });
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 async function open() {
   render(
@@ -42,19 +44,25 @@ async function open() {
   );
   return screen.findByRole<HTMLInputElement>('textbox', { name: 'Agent name' });
 }
-it('keeps the batch disabled until the name changes and discards a draft', async () => {
+it('shows Save only after the agent name changes', async () => {
   const field = await open();
-  expect(screen.getByRole('button', { name: 'Apply changes' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
   fireEvent.focus(field);
-  expect(screen.getByRole('button', { name: 'Apply changes' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+
   fireEvent.change(field, { target: { value: 'Grace' } });
-  expect(screen.getByRole('button', { name: 'Apply changes' })).toBeEnabled();
-  fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }));
-  expect(field).toHaveValue('Ada');
+  expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+
+  fireEvent.change(field, { target: { value: 'Ada' } });
+  expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
 });
-it('saves to this gateway as one batch and adopts its normalized response', async () => {
-  let finish!: (value: SettingsResponse) => void;
-  const save = vi.mocked(GatewayClient.prototype.applySettings).mockImplementation(function (
+
+it('saves explicitly to this gateway and adopts its normalized response', async () => {
+  let finish!: (value: typeof setting) => void;
+  const save = vi.spyOn(GatewayClient.prototype, 'setSetting').mockImplementation(function (
     this: GatewayClient,
   ) {
     expect(this.base).toBe(gateway.url);
@@ -63,37 +71,41 @@ it('saves to this gateway as one batch and adopts its normalized response', asyn
     });
   });
   const field = await open();
+  expect(field).toHaveValue('Ada');
   expect(field).toHaveAttribute('maxlength', '80');
   fireEvent.change(field, { target: { value: '  Grace  ' } });
   expect(save).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Apply changes' }));
-  expect(save).toHaveBeenCalledWith(
-    'name-1',
-    [{ id: 'agent_name', action: 'value', value: '  Grace  ' }],
-    { scope: 'global', target_id: undefined },
-    undefined,
-  );
+  fireEvent.submit(field.closest('form')!);
+  expect(save).toHaveBeenCalledExactlyOnceWith('agent_name', 'value', '  Grace  ');
   expect(field).toBeDisabled();
-  finish({
-    ...initial,
-    revision: 'name-2',
-    groups: [{ ...initial.groups[0], toggles: [{ ...setting, value: 'Grace' }] }],
-  });
-  await waitFor(() => expect(field).toHaveValue('Grace'));
-  expect(screen.getByRole('button', { name: 'Apply changes' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
+  finish({ ...setting, value: 'Grace' });
+  await waitFor(() =>
+    expect(screen.getByRole('textbox', { name: 'Agent name' })).toHaveValue('Grace'),
+  );
+  expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
 });
-it('rejects a blank name locally and preserves a failed write for retry', async () => {
+it('cancels a draft, rejects a blank name locally and retries a failed write', async () => {
   const save = vi
-    .mocked(GatewayClient.prototype.applySettings)
-    .mockRejectedValueOnce(new Error('Gateway could not save the name; retry.'));
+    .spyOn(GatewayClient.prototype, 'setSetting')
+    .mockRejectedValueOnce(new Error('Gateway could not save the name; retry.'))
+    .mockResolvedValueOnce({ ...setting, value: 'Grace' });
   const field = await open();
+  fireEvent.change(field, { target: { value: 'Other' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(field).toHaveValue('Ada');
+  expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+  expect(save).not.toHaveBeenCalled();
   fireEvent.change(field, { target: { value: '   ' } });
-  expect(screen.getByRole('button', { name: 'Apply changes' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
   fireEvent.change(field, { target: { value: 'Grace' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Apply changes' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await screen.findByText('Gateway could not save the name; retry.');
   expect(field).toHaveValue('Grace');
-  expect(field).toBeEnabled();
-  fireEvent.click(screen.getByRole('button', { name: 'Apply changes' }));
-  await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+  expect(field).not.toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() =>
+    expect(screen.queryByText('Gateway could not save the name; retry.')).toBeNull(),
+  );
+  expect(save).toHaveBeenCalledTimes(2);
 });

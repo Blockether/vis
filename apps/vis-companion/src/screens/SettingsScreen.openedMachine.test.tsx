@@ -1,36 +1,64 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { SettingsDialog } from './SettingsScreen';
-import { GatewayClient, GatewayError, INCOMPATIBLE_STATUS } from '../lib/gateway';
 import type { GatewayConn } from '../lib/types';
 
-const URL_A = 'http://127.0.0.1:7890';
-const URL_B = 'http://127.0.0.1:7891';
-beforeEach(() => {
-  vi.spyOn(GatewayClient.prototype, 'cachedSettings').mockReturnValue(null);
-  vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue({
-    revision: 'machine-1',
-    groups: [
+const URL_A = 'http://10.0.0.5:7890';
+const URL_B = 'http://10.0.0.6:7890';
+
+/**
+ * A machine that answers every read with an empty body, so the bands can paint. Its
+ * settings catalog still names a revision, because the client refuses one that does not.
+ */
+const quiet = (input?: RequestInfo | URL) =>
+  Promise.resolve(
+    new Response(
+      JSON.stringify(
+        input && new URL(String(input), URL_A).pathname === '/v1/settings'
+          ? { revision: 'quiet-1', groups: [] }
+          : {},
+      ),
       {
-        id: 'agent',
-        title: 'Agent',
-        toggles: [{ id: 'plans', label: 'Plans', type: 'boolean', enabled: false }],
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
       },
-    ],
-  });
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async () => Response.json({})),
+    ),
   );
+
+/** A reachable gateway whose protocol floor excludes this app build. */
+const incompatibleSettings = (input: RequestInfo | URL) => {
+  const path = new URL(String(input), URL_A).pathname;
+  if (path !== '/v1/settings') return quiet();
+  return Promise.resolve(
+    new Response(
+      JSON.stringify({
+        error: {
+          type: 'incompatible_protocol',
+          title: 'Update this client',
+          message: 'The gateway speaks protocol 4 and no longer serves clients below protocol 4.',
+        },
+      }),
+      { status: 426, headers: { 'Content-Type': 'application/json' } },
+    ),
+  );
+};
+
+let previousFetch: typeof fetch;
+
+beforeEach(() => {
+  previousFetch = globalThis.fetch;
+  globalThis.fetch = vi.fn(quiet) as unknown as typeof fetch;
 });
+
 afterEach(() => {
   cleanup();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
+  globalThis.fetch = previousFetch;
   globalThis.localStorage?.clear();
+  vi.restoreAllMocks();
 });
+
 const open = (gateways: GatewayConn[], providerMachineUrl?: string) =>
   render(
     <SettingsDialog
@@ -41,67 +69,105 @@ const open = (gateways: GatewayConn[], providerMachineUrl?: string) =>
     />,
   );
 
-describe('one selected machine editor', () => {
-  it('opens a sole machine directly in Basics without loading every resource panel', async () => {
-    open([{ url: URL_A, label: 'tower' }]);
-    await screen.findByRole('switch', { name: 'Plans: off' });
-    expect(screen.getByRole('combobox', { name: 'Settings machine' })).toHaveTextContent('tower');
-    expect(screen.queryByRole('heading', { name: 'Providers' })).toBeNull();
-    expect(screen.queryByRole('heading', { name: 'MCP servers' })).toBeNull();
+/** A row becomes a disclosure only once its health check answers. */
+const onlineRows = (count = 1) =>
+  waitFor(() => {
+    const rows = screen
+      .getAllByRole('button')
+      .filter((row) => row.querySelector('[title="Online"]'));
+    expect(rows).toHaveLength(count);
+    return rows;
   });
-  it('switches machines only after the draft is discarded', async () => {
-    open([
-      { url: URL_A, label: 'tower' },
-      { url: URL_B, label: 'laptop' },
+
+describe('machine settings disclosures', () => {
+  it('opens a sole machine automatically and keeps it open when its name is pressed', async () => {
+    open([{ url: URL_A, token: 't', label: 'tower' }]);
+
+    expect(await screen.findByText('MCP servers')).toBeVisible();
+    expect(screen.getByText('Providers')).toBeVisible();
+    const name = screen.getByText('tower');
+    expect(name.closest('button')).toBeNull();
+    fireEvent.click(name);
+    expect(screen.getByText('MCP servers')).toBeVisible();
+  });
+
+  it('starts every machine closed and opens one only after its row is pressed', async () => {
+    const view = open([
+      { url: URL_A, token: 't', id: 'be2c15686eaef0f4' },
+      { url: URL_B, token: 't', id: 'cad6247b600f9bbc' },
     ]);
-    fireEvent.click(await screen.findByRole('switch', { name: 'Plans: off' }));
-    await userEvent.click(screen.getByRole('combobox', { name: 'Settings machine' }));
-    await userEvent.click(screen.getByRole('option', { name: 'laptop' }));
-    expect(screen.getByRole('combobox', { name: 'Settings machine' })).toHaveTextContent('tower');
-    fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
-    expect(screen.getByRole('switch', { name: 'Plans: on' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('combobox', { name: 'Settings machine' }));
-    await userEvent.click(screen.getByRole('option', { name: 'laptop' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Discard and leave' }));
-    await waitFor(() =>
-      expect(screen.getByRole('combobox', { name: 'Settings machine' })).toHaveTextContent(
-        'laptop',
-      ),
-    );
-    await screen.findByRole('switch', { name: 'Plans: off' });
+
+    const [first, second] = await onlineRows(2);
+    expect(first).toHaveAttribute('aria-expanded', 'false');
+    expect(second).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('MCP servers')).toBeNull();
+
+    fireEvent.click(first);
+
+    expect(first).toHaveAttribute('aria-expanded', 'true');
+    expect(second).toHaveAttribute('aria-expanded', 'false');
+    await waitFor(() => expect(screen.getByText('MCP servers')).toBeVisible());
+    view.unmount();
   });
-  it('opens a requested machine directly at Providers', async () => {
-    open(
+
+  it('opens the requested machine directly at its provider settings', async () => {
+    const view = open(
       [
-        { url: URL_A, label: 'tower' },
-        { url: URL_B, label: 'laptop' },
+        { url: URL_A, token: 't', id: 'be2c15686eaef0f4' },
+        { url: URL_B, token: 't', id: 'cad6247b600f9bbc' },
       ],
       URL_B,
     );
-    await screen.findByRole('heading', { name: 'Providers' });
-    expect(screen.getByRole('combobox', { name: 'Settings machine' })).toHaveTextContent('laptop');
-    expect(screen.getByRole('button', { name: 'Models and responses' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+
+    const [first, second] = await onlineRows(2);
+    expect(first).toHaveAttribute('aria-expanded', 'false');
+    expect(second).toHaveAttribute('aria-expanded', 'true');
+    await waitFor(() => expect(screen.getByText('Providers')).toBeVisible());
+    view.unmount();
   });
-  it('reports protocol incompatibility without calling the machine unreachable', async () => {
-    vi.mocked(GatewayClient.prototype.settings).mockRejectedValue(
-      new GatewayError(INCOMPATIBLE_STATUS, 'Update this client'),
+  // Regression, issue #ea166d2d-d22f-4a89-b117-d058641b7422: a protocol refusal
+  // proves the machine answered, so no unreachable-machine panel may follow it.
+  it('does not call a protocol-incompatible machine unreachable', async () => {
+    globalThis.fetch = vi.fn(incompatibleSettings) as unknown as typeof fetch;
+    const view = open([{ url: URL_A, token: 't', id: 'be2c15686eaef0f4' }]);
+
+    await waitFor(() =>
+      expect(screen.getAllByText(/gateway speaks protocol 4/i).length).toBeGreaterThan(0),
     );
-    open([{ url: URL_A, label: 'tower' }]);
-    await screen.findByText('Update this client');
     expect(screen.queryByText('Machine unreachable')).toBeNull();
-    expect(screen.queryByRole('heading', { name: 'MCP servers' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    view.unmount();
   });
-  it('allows device settings without fetching resource panels from an offline machine', async () => {
-    vi.mocked(GatewayClient.prototype.settings).mockRejectedValue(
-      new Error('Connection unavailable'),
+  it('retries an offline machine without fetching or expanding its settings', async () => {
+    const conn = { url: 'http://10.0.0.5:7891', label: 'laptop' };
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new TypeError('Load failed'));
+    globalThis.fetch = fetcher;
+    const view = open([conn]);
+    const retry = await screen.findByRole('button', { name: 'Retry connection to laptop' });
+    expect(retry).not.toHaveAttribute('aria-expanded');
+    expect(screen.queryByText('Machine unreachable')).toBeNull();
+    expect(screen.queryByText(/Can't load settings/)).toBeNull();
+    expect(screen.queryByText('MCP servers')).toBeNull();
+
+    let answer!: (response: Response) => void;
+    fetcher.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          answer = resolve;
+        }),
     );
-    open([{ url: URL_A, label: 'tower' }]);
-    await screen.findByText('Connection unavailable');
-    await userEvent.click(screen.getByRole('button', { name: 'This device' }));
-    expect(screen.getByRole('heading', { name: 'Theme' })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Providers' })).toBeNull();
+    fireEvent.click(retry);
+    const checking = screen.getByRole('button', { name: 'Checking connection to laptop' });
+    expect(checking).toHaveAttribute('aria-busy', 'true');
+    fireEvent.click(checking);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText('MCP servers')).toBeNull();
+
+    fetcher.mockImplementation(quiet);
+    await act(async () => answer(await quiet()));
+    await waitFor(() => expect(screen.getByText('MCP servers')).toBeVisible());
+    expect(screen.getByText('laptop').closest('button')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Checking connection to laptop' })).toBeNull();
+    view.unmount();
   });
 });

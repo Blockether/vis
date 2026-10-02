@@ -5,7 +5,9 @@ import { SwipeActions, type SwipeAction } from '../../components/SwipeActions';
 
 import {
   GatewayClient,
+  GatewayError,
   GatewayOAuthError,
+  INCOMPATIBLE_STATUS,
 } from '../../lib/gateway';
 import type {
   GatewayConn,
@@ -13,7 +15,10 @@ import type {
   McpServer,
   McpServerInput,
   McpTestResult,
+  SettingValue,
   SpeechPrefs,
+  Toggle,
+  ToggleGroup,
 } from '../../lib/types';
 import {
   ArrowOutIcon,
@@ -33,6 +38,7 @@ import {
   IconButton,
   Input,
   ListRow,
+  Select,
   Switch,
   Text,
 } from '../../components/ui';
@@ -46,68 +52,525 @@ import {
 import { NotificationsPanel } from './NotificationSettings';
 import { SpeechEnginesPanel, type SaveSpeechPrefs } from './SpeechSettings';
 import { FormLabel, SettingsPanel } from './SettingsLayout';
-import { SettingsEditor, type SettingsLeaveGuard } from './SettingsEditor';
-import type { SettingsTarget } from '../../lib/types';
-import type { SettingsCategory } from '../../lib/settings-model';
+import { SettingField } from './SettingField';
+import { IMPROVE_MODE_LABELS, type ImproveMode } from '../../lib/improve';
 
-/** One machine and one selected configuration owner share the protected editor. */
+/** Closed-choice setting: one shared picker, with saving disabling input. */
+export function EnumSetting({
+  toggle,
+  busy = false,
+  disabled = false,
+  onPick,
+}: {
+  toggle: Toggle;
+  busy?: boolean;
+  /** Locked by a more specific scope: the value shows, but cannot change. */
+  disabled?: boolean;
+  onPick: (value: string) => void;
+}) {
+  return (
+    <Select
+      className="self-center"
+      aria-label={toggle.label}
+      aria-busy={busy}
+      value={typeof toggle.value === 'string' ? toggle.value : ''}
+      disabled={busy || disabled}
+      onValueChange={onPick}
+      options={(toggle.choices ?? []).map((choice) => ({
+        value: choice,
+        label: toggle.id === 'improve_mode'
+          ? (IMPROVE_MODE_LABELS[choice as ImproveMode] ?? choice)
+          : choice,
+      }))}
+    />
+  );
+}
+
+/** Gateway-backed text setting. Drafts remain local until explicit Save/Enter. */
+export function StringSetting({
+  toggle,
+  busy,
+  disabled = false,
+  onSave,
+}: {
+  toggle: Toggle;
+  busy: boolean;
+  /** Locked by a more specific scope: the value shows, but cannot change. */
+  disabled?: boolean;
+  onSave: (value: string) => Promise<boolean>;
+}) {
+  const saved = typeof toggle.value === 'string' ? toggle.value : '';
+  const [draft, setDraft] = useState(saved);
+  const changed = draft !== saved;
+  return (
+    <form
+      className="flex min-w-0 flex-col gap-2 px-3 py-2 sm:px-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!busy && !disabled && changed && draft.trim()) {
+          void onSave(draft).then((saved) => {
+            if (saved) setDraft(draft.trim());
+          });
+        }
+      }}
+    >
+      <div>
+        <Text as="p" variant="label">
+          {toggle.label}
+        </Text>
+        {toggle.description && (
+          <Text as="p" variant="description" className="mt-0.5">
+            {toggle.description}
+          </Text>
+        )}
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        {toggle.multiline || toggle.editor === 'multiline' ? <textarea aria-label={toggle.label} value={draft} disabled={busy || disabled}
+          className="min-h-24 w-full border border-dialog-edge bg-input p-2 font-mono text-meta"
+          onChange={(event) => setDraft(event.target.value)} /> : <Input
+          aria-label={toggle.label}
+          value={draft}
+          maxLength={toggle.max_length}
+          disabled={busy || disabled}
+          required
+          className="flex-1"
+          onChange={(event) => setDraft(event.target.value)}
+        />}
+        {(changed || busy) && (
+          <Button
+            type="submit"
+            density="panel"
+            disabled={busy || !draft.trim()}
+            aria-busy={busy}
+          >
+            {busy ? 'Saving…' : 'Save'}
+          </Button>
+        )}
+        {changed && (
+          <Button
+            type="button"
+            variant="secondary"
+            density="panel"
+            disabled={busy}
+            onClick={() => setDraft(saved)}
+          >
+            Cancel
+          </Button>
+        )}
+      </div>
+    </form>
+  );
+}
+
+/** Values compare by content: an object's key order is not a change. */
+function sameValue(a: unknown, b: unknown): boolean {
+  const canonical = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(canonical)
+      : value && typeof value === 'object'
+        ? Object.fromEntries(
+            Object.entries(value)
+              .sort(([left], [right]) => left.localeCompare(right))
+              .map(([key, item]) => [key, canonical(item)]),
+          )
+        : value;
+  return JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+}
+
+/**
+ * Gateway-backed number, list or object setting. Like `StringSetting`, the form
+ * edits a local draft, and only Save sends it. Text that does not parse stays in
+ * the form with its error and is never sent.
+ */
+export function ValueSetting({
+  toggle,
+  busy,
+  disabled = false,
+  onSave,
+}: {
+  toggle: Toggle;
+  busy: boolean;
+  /** Locked by a more specific scope: the value shows, but cannot change. */
+  disabled?: boolean;
+  onSave: (value: SettingValue) => Promise<boolean>;
+}) {
+  const saved = toggle.value ?? (toggle.type === 'array' ? [] : toggle.type === 'object' ? {} : 0);
+  const [draft, setDraft] = useState<SettingValue>(saved);
+  const [raw, setRaw] = useState<string | undefined>(undefined);
+  const [error, setError] = useState<string | undefined>(undefined);
+  const changed = error !== undefined || !sameValue(draft, saved);
+  const cancel = () => {
+    setDraft(saved);
+    setRaw(undefined);
+    setError(undefined);
+  };
+  return (
+    <form
+      className="flex min-w-0 flex-col gap-2 px-3 py-2 sm:px-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!busy && !disabled && changed && error === undefined) void onSave(draft);
+      }}
+    >
+      <div>
+        <Text as="p" variant="label">
+          {toggle.label}
+        </Text>
+        {toggle.description && (
+          <Text as="p" variant="description" className="mt-0.5">
+            {toggle.description}
+          </Text>
+        )}
+      </div>
+      <SettingField
+        setting={toggle}
+        value={draft}
+        disabled={busy || disabled}
+        raw={raw}
+        onChange={(value, keepRaw) => {
+          setDraft(value);
+          if (!keepRaw) {
+            setRaw(undefined);
+            setError(undefined);
+          }
+        }}
+        onRawChange={(text, problem) => {
+          setRaw(text);
+          setError(problem);
+        }}
+      />
+      {error && (
+        <p className="text-err" role="alert">
+          <Text variant="description" tone="inherit">
+            {error}
+          </Text>
+        </p>
+      )}
+      {(changed || busy) && (
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Button
+            type="submit"
+            density="panel"
+            disabled={busy || error !== undefined}
+            aria-busy={busy}
+          >
+            {busy ? 'Saving…' : 'Save'}
+          </Button>
+          {changed && (
+            <Button type="button" variant="secondary" density="panel" disabled={busy} onClick={cancel}>
+              Cancel
+            </Button>
+          )}
+        </div>
+      )}
+    </form>
+  );
+}
+
+/**
+ * Why a more specific scope decides this row for the open session, or null. Such a
+ * row stays locked: changing it here would not change what that session uses.
+ */
+export function lockNote(toggle: Toggle): string | null {
+  const by = toggle.overridden_by;
+  if (!by) return null;
+  const where = `${by.scope.charAt(0).toUpperCase()}${by.scope.slice(1)} settings`;
+  const effect =
+    by.enabled !== undefined
+      ? `turn this ${by.enabled ? 'on' : 'off'}`
+      : (toggle.type === 'enum' || toggle.type === 'number') && by.value !== undefined
+        ? `set this to ${String(by.value)}`
+        : 'set this';
+  return `Locked: ${where} ${effect} for this session. Change it in ${where}.`;
+}
+
+/** The same value row is used for gateway and scoped settings. */
+export function SettingRow({ toggle, busy, onToggle, onPick, onInherit }: {
+  toggle: Toggle;
+  busy: boolean;
+  onToggle: () => void;
+  onPick: (value: SettingValue) => Promise<boolean>;
+  onInherit?: () => void;
+}) {
+  const lock = lockNote(toggle);
+  return (
+    <div>
+      {toggle.type === 'string' ? (
+        <StringSetting key={`${toggle.id}:${toggle.value}`} toggle={toggle} busy={busy} disabled={lock !== null} onSave={onPick} />
+      ) : toggle.type === 'number' || toggle.type === 'array' || toggle.type === 'object' ? (
+        <ValueSetting key={`${toggle.id}:${JSON.stringify(toggle.value)}`} toggle={toggle} busy={busy} disabled={lock !== null} onSave={onPick} />
+      ) : (
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-2 sm:px-4">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Text as="p" variant="label" className="break-words">{toggle.label}</Text>
+              {toggle.is_experimental && (
+                <span className="bg-thinking-surface px-1 font-mono text-ui text-warn">Experimental</span>
+              )}
+            </div>
+            {toggle.description && <Text as="p" variant="description" className="mt-0.5 break-words">{toggle.description}</Text>}
+          </div>
+          {toggle.type === 'boolean' && <Switch className="self-center" label={toggle.label} isOn={!!toggle.enabled} isBusy={busy} disabled={busy || lock !== null} onClick={onToggle} />}
+          {toggle.type === 'enum' && <EnumSetting toggle={toggle} busy={busy} disabled={lock !== null} onPick={(value) => void onPick(value)} />}
+        </div>
+      )}
+      {lock && (
+        <div className="px-3 pb-2 sm:px-4">
+          <Text as="p" variant="description" className="break-words">{lock}</Text>
+        </div>
+      )}
+      {onInherit && (
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2 sm:px-4">
+          <Text variant="description">{toggle.is_override ? 'Set here' : `Inherited from ${toggle.source ?? 'default'}`}</Text>
+          {toggle.is_override && <Button variant="secondary" density="panel" disabled={busy || lock !== null} onClick={onInherit}>Use inherited value</Button>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * ONE MACHINE'S OWN SETTINGS, standing under that machine's own row in `SettingsDialog`.
+ *
+ * These panels used to be a dialog of their own — `Machine settings`, opened from a
+ * machine's `⋯` — so the two halves of one question ("where do I change this?") stood
+ * behind two different doors that could not be open at once. The panels are unchanged;
+ * what left is the frame around them, and the dialog now owns Escape, the title and
+ * the way out.
+ */
 export function MachineSettings({
   gateway,
   speechPrefs,
   onSpeechChange,
   contextSessionId,
-  category,
-  onCategoryChange,
-  onLeaveGuard,
 }: {
   gateway: GatewayConn;
   speechPrefs: SpeechPrefs;
   onSpeechChange: SaveSpeechPrefs;
+  /** The session open on this machine: rows its own scopes decide stay locked. */
   contextSessionId?: string;
-  category?: SettingsCategory;
-  onCategoryChange?: (category: SettingsCategory) => void;
-  onLeaveGuard?: (guard: SettingsLeaveGuard | null) => void;
 }) {
+  // ONE CLIENT PER MACHINE, and the transport pair is its whole identity. A fresh
+  // `new GatewayClient(...)` per render re-fired every panel's `load` on every
+  // unrelated re-render of the dialog; renaming a machine — a field no client reads
+  // — must not rebuild it either. The panels mount only while this machine's row is
+  // open, so nothing here talks to a gateway the reader has not opened.
   const client = useMemo(
     () => new GatewayClient({ url: gateway.url, token: gateway.token }),
     [gateway.url, gateway.token],
   );
-  const [target, setTarget] = useState<SettingsTarget>({ scope: 'global', label: 'Machine' });
+  // Reopening the dialog paints the gateway's last known toggles immediately;
+  // `load` below refreshes them (and `setSetting` patches the cache in place).
+  const [groups, setGroups] = useState<ToggleGroup[] | null>(
+    () => client.cachedSettings()?.groups ?? null,
+  );
+  const [err, setErr] = useState<string | null>(null);
+  const [pending, setPending] = useState<string | null>(null);
+  const [failure, setFailure] = useState<'unreachable' | 'unauthorized' | 'incompatible' | null>(
+    null,
+  );
+
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      // Status flags are assigned only after the request settles, and never once the
+      // caller has been torn down — so mounting this loader writes no state
+      // synchronously and none after unmount.
+      try {
+        const settings = await client.settings(undefined, undefined, contextSessionId);
+        if (signal?.aborted) return;
+        setErr(null);
+        setFailure(null);
+        setGroups(settings.groups ?? []);
+      } catch (e) {
+        if (signal?.aborted) return;
+        // A token-gated gateway that's actually up answers /healthz (so the list
+        // reads Online) but 401s on /v1/settings. Surface that as "unauthorized",
+        // NOT "offline" — otherwise the dialog contradicts the reachable list.
+        if (e instanceof GatewayError && e.status === 401) {
+          setErr(null);
+          setFailure('unauthorized');
+          setGroups(null);
+          return;
+        }
+        setErr((e as Error).message);
+        setGroups(null);
+        if (e instanceof GatewayError && e.status === INCOMPATIBLE_STATUS) {
+          setFailure('incompatible');
+          return;
+        }
+        setFailure('unreachable');
+      }
+    },
+    [client, contextSessionId],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    // Mount-time settings fetch: `load` writes state only after it settles, and
+    // never once the signal aborts.
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
+
+  // Escape belongs to the dialog that frames these panels.
+
+  function patch(updated: Toggle) {
+    setGroups(
+      (current) =>
+        current?.map((group) => ({
+          ...group,
+          toggles: group.toggles.map((toggle) => (toggle.id === updated.id ? updated : toggle)),
+        })) ?? null,
+    );
+  }
+
+  async function flip(toggle: Toggle) {
+    setPending(toggle.id);
+    try {
+      patch(await client.setSetting(toggle.id, 'toggle'));
+      // Feature flags can reveal or hide their dependent settings.
+      if (toggle.is_experimental) await load();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function pick(toggle: Toggle, value: SettingValue) {
+    setErr(null);
+    setPending(toggle.id);
+    try {
+      patch(await client.setSetting(toggle.id, 'value', value));
+      return true;
+    } catch (e) {
+      setErr((e as Error).message);
+      return false;
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function inherit(toggle: Toggle) {
+    setErr(null);
+    setPending(toggle.id);
+    try {
+      patch(await client.setSetting(toggle.id, 'inherit'));
+      await load();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
   return (
-    <SettingsEditor
-      key={`${target.scope}:${target.target_id ?? ''}`}
-      client={client}
-      target={target}
-      contextSessionId={contextSessionId}
-      category={category}
-      onCategoryChange={onCategoryChange}
-      onLeaveGuard={onLeaveGuard}
-      onTargetChange={setTarget}
-      resources={(selected, search) => {
-        const needle = search.trim().toLowerCase();
-        const matches = (category: SettingsCategory, words: string) =>
-          needle ? words.includes(needle) : selected === category || selected === 'all';
-        const machine = target.scope === 'global';
-        return (
-          <div className="divide-y divide-dialog-edge">
-            {machine &&
-              matches('response', 'provider providers models model account sign in authentication') && (
-                <ProvidersPanel client={client} />
-              )}
-            {matches('tools', 'mcp server servers tools integrations authentication') && (
-              <McpServersPanel client={client} target={target} />
-            )}
-            {machine && matches('speech', 'notification notifications alert alerts push device') && (
-              <NotificationsPanel client={client} gateway={gateway} />
-            )}
-            {machine &&
-              matches('speech', 'voice speech audio transcription speak engines download') && (
-                <SpeechEnginesPanel client={client} prefs={speechPrefs} onChange={onSpeechChange} />
-              )}
+    // Groups run FULL BLEED and are divided by one rule, so the dialog's own frame is
+    // the only box on the screen. A banner still needs air, so it brings its own
+    // rather than padding every group to get it. The stack also RULES ITS OWN TOP:
+    // `divide-y` draws only BETWEEN groups, so the first band opened straight onto
+    // the machine row that owns it with nothing between them, and Providers read as
+    // part of that row instead of the first thing under it.
+    <div className="min-w-0 touch-pan-y divide-y divide-dialog-edge overflow-x-hidden border-t border-dialog-edge">
+      {err && (
+        <div className="p-3 sm:p-4">
+          <Banner kind="err">{err}</Banner>
+        </div>
+      )}
+
+      {failure === null && (
+        <>
+          <ProvidersPanel client={client} />
+          <NotificationsPanel client={client} gateway={gateway} />
+          <McpServersPanel client={client} />
+          <SpeechEnginesPanel client={client} prefs={speechPrefs} onChange={onSpeechChange} />
+        </>
+      )}
+
+      {failure === 'incompatible' ? null : failure === 'unreachable' ? (
+        <SettingsPanel title="Settings">
+          <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
+            <p className="text-err">
+              <Text variant="label" tone="inherit">
+                Machine unreachable
+              </Text>
+            </p>
+            <Text as="p" variant="description">
+              Can't load settings — vis isn't responding on this machine.
+            </Text>
+            <Button variant="secondary" onClick={() => void load()}>
+              Retry
+            </Button>
           </div>
-        );
-      }}
-    />
+        </SettingsPanel>
+      ) : failure === 'unauthorized' ? (
+        <SettingsPanel title="Settings" meta="unauthorized">
+          <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
+            <p className="text-warn-strong">
+              <Text variant="label" tone="inherit">
+                Token missing or invalid
+              </Text>
+            </p>
+            <Text as="p" variant="description" className="max-w-sm">
+              The machine is online, but rejected this token. Re-pair from{' '}
+              <code className="text-accent-ink">vis-agent gateway pair</code> and paste the fresh
+              link to load its settings.
+            </Text>
+            <Button variant="secondary" onClick={() => void load()}>
+              Retry
+            </Button>
+          </div>
+        </SettingsPanel>
+      ) : groups === null ? (
+        <SettingsPanel title="Loading">
+          {/* `bg-panel-2` equals `bg-panel` in the shipped themes, so plain
+                  tinted blocks were an invisible skeleton — a blank hole where
+                  the settings should be. Bars are drawn in `--color-muted`. */}
+          <div
+            className="space-y-px bg-dialog-edge"
+            role="status"
+            aria-live="polite"
+            aria-label="Loading settings"
+          >
+            <div className="bg-panel px-4 py-2">
+              <Text as="p" variant="description">
+                Loading settings…
+              </Text>
+            </div>
+            {['w-1/2', 'w-2/3', 'w-2/5'].map((width) => (
+              <div
+                key={width}
+                className="animate-pulse bg-panel px-4 py-3.5 motion-reduce:animate-none"
+              >
+                <span className={`block h-2.5 bg-muted/30 ${width}`} />
+                <span className="mt-2 block h-1.5 w-1/4 bg-muted/20" />
+              </div>
+            ))}
+          </div>
+        </SettingsPanel>
+      ) : groups.length === 0 ? (
+        <SettingsPanel title="Settings">
+          <p className="px-4 py-6 text-center">
+            <Text variant="description">No settings exposed by this machine.</Text>
+          </p>
+        </SettingsPanel>
+      ) : (
+        // A band's meta says what the list itself CANNOT — `unauthorized`, `app
+        // logs`, `this device`. A tally of the rows you are already looking at is
+        // not that, and it said the same nothing over every group.
+        groups.map((group) => (
+          <SettingsPanel key={group.id} title={group.title}>
+            <div className="divide-y divide-dialog-edge">
+              {group.toggles.map((toggle) => (
+                <SettingRow key={toggle.id} toggle={toggle} busy={pending === toggle.id}
+                  onToggle={() => void flip(toggle)} onPick={(value) => pick(toggle, value)}
+                  onInherit={toggle.is_override && toggle.id !== 'agent_name' ? () => void inherit(toggle) : undefined} />
+              ))}
+            </div>
+          </SettingsPanel>
+        ))
+      )}
+    </div>
   );
 }
 
@@ -580,7 +1043,7 @@ export function McpServersPanel({ client, target }: { client: GatewayClient; tar
   return (
     <SettingsPanel
       title="MCP servers"
-      headingLevel={4}
+      headingLevel={isScoped ? 3 : 4}
       action={
         showForm ? null : (
           <IconButton

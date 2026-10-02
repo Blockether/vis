@@ -270,7 +270,6 @@ To use Vis in your code, see the [Python SDK](python-sdk.md) or [Java and Clojur
 ### Guides
 
 - [Configuration](configuration.md) — providers, models and project settings.
-- [Settings](settings.md) — review, apply and share settings for a gateway, project, group or session.
 - [Project instructions](context-and-prompts.md) — tell the agent how your codebase works.
 - [Skills](skills.md) — reusable task instructions.
 - [Sessions](sessions.md) — continue, stop or find your work.

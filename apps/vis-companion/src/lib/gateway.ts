@@ -2387,24 +2387,6 @@ export class GatewayClient {
     }
   }
 
-  /** Apply a versioned owner batch. No local snapshot changes before success. */
-  async applySettings(
-    revision: string,
-    changes: import('./types').SettingChange[],
-    target: SettingsTarget = { scope: 'global' },
-    contextSessionId?: string,
-  ): Promise<SettingsResponse> {
-    const saved = await this.request<SettingsResponse>('PATCH', '/v1/settings', {
-      scope: target.scope,
-      target_id: target.target_id,
-      revision,
-      changes,
-      ...(contextSessionId ? { context_session_id: contextSessionId } : {}),
-    });
-    this.cacheSettingsCatalog(saved, target);
-    return saved;
-  }
-
   // ── Improve: project issues and governed review ─────────────────
 
   improveSettings(signal?: AbortSignal): Promise<ImproveSettings> {

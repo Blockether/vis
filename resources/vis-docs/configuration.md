@@ -14,8 +14,6 @@ when you want settings shared across projects or checked into a repository.
 - **One session or group needs different behavior.** Open its
   [scoped settings](#project-group-and-session-settings) instead of changing the
   gateway defaults.
-- **You want to review, apply or share several setting changes.** Read
-  [Settings](settings.md) instead.
 - **A provider hits rate limits or fails, or a task should stay within a budget.**
   Set a [fallback model](#default-and-fallback), and set retries and token and cost
   limits under [Router](#router).
@@ -588,9 +586,8 @@ Run `/reload` after editing.
 In the app, select **Settings** with the cog icon in a session's **…** menu. For a project or a
 group, select **Settings** in its actions. In the TUI, use **Session settings**, **Group
 settings** or **Project settings** from the command palette. The settings rows show the
-effective value and where it comes from. Your changes stay in a draft until you apply them, as
-[Settings](settings.md) describes. **Use inherited value** removes only the override at the
-scope you opened.
+effective value and where it comes from. **Use inherited value** removes only the override at
+the scope you opened.
 
 Vis resolves each setting in this order: **global → project → group → session**. A scope with no
 value is skipped. `false` is an explicit value, not inheritance. For example, disable plans in a
@@ -599,14 +596,13 @@ inherited value** in it. A change to the group does not overwrite an explicit ch
 session.
 
 A more specific value wins. When a more specific scope decides a row for the open session,
-Settings shows a warning on that row. The warning names the scope that decides it. You can still
-edit the row. The new value applies where no more specific value exists.
+Settings locks that row. The row names the scope that decides it.
 
 In this example, your project's `vis.yml` sets `toggles.shell: false`. While a session from that
-project is open, the global **Shell commands** row shows a warning in TUI **Settings** and in the
-app. Turning it on globally does not change that session. Open **Project settings** and turn it
-on there. Vis writes the change to `.vis/config.yml`, which overrides `vis.yml` without editing it.
-The global value still applies to sessions outside that project.
+project is open, the global **Shell commands** row is locked in TUI **Settings** and in the app.
+Turning it on globally does not change that session. Open **Project settings** and turn it on
+there. Vis writes the change to `.vis/config.yml`, which overrides `vis.yml` without editing it.
+From a session outside that project, you can still edit the global row.
 
 Global means this gateway, which all its connected clients share. Project settings use the canonical
 project root, not the working-copy path of a draft. Edits go to the project's `.vis/config.yml`, and
@@ -673,7 +669,7 @@ Add `context_session_id` to either `GET` to mark the rows that a more specific s
 decides for that session. Such a row includes `overridden_by` with the deciding
 `scope` and its `enabled` or `value`. An unknown session, or one outside the
 requested target, marks no rows. Writes are not refused, because the global value
-still applies to other projects. Clients show a warning on the row, not a lock.
+still applies to other projects. Clients lock the row only for the open session.
 
 `PATCH /v1/settings` applies one batch of changes to one target. The body has `scope`,
 `target_id` for a non-global scope, the `revision` that you read and `changes`. Each change

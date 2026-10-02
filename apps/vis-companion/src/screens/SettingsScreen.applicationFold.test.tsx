@@ -1,24 +1,65 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
-import { SettingsDialog } from './SettingsScreen';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { useState } from 'react';
+import { describe, expect, it } from 'vitest';
+import { SettingsColumn } from './settings/SettingsLayout';
 
-afterEach(() => {
-  cleanup();
-  vi.restoreAllMocks();
-});
-it('makes device settings reachable from navigation without a hidden application column', async () => {
-  render(<SettingsDialog gateways={[]} onAddMachine={async () => {}} onClose={() => {}} />);
-  fireEvent.click(screen.getByRole('button', { name: 'This device' }));
-  await screen.findByRole('heading', { name: 'Theme' });
-  expect(
-    screen.getByRole('switch', { name: 'Show Python code and results: on' }),
-  ).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: /Show application settings/ })).toBeNull();
-});
-it('keeps device preferences distinct from machine and session configuration', async () => {
-  render(<SettingsDialog gateways={[]} onAddMachine={async () => {}} onClose={() => {}} />);
-  fireEvent.click(screen.getByRole('button', { name: 'This device' }));
-  expect(screen.getByText(/Appearance and response display apply immediately/)).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Apply changes' })).toBeNull();
+/** The dialog's two columns stack below `sm:`; there the application's own settings
+ *  fold behind their band, and the machines lead. Beside each other — the same
+ *  breakpoint the grid turns two columns at — no fold exists at all. */
+
+function Harness({ initialOpen }: { initialOpen: boolean }) {
+  const [open, setOpen] = useState(initialOpen);
+  return (
+    <SettingsColumn
+      title="Application"
+      disclosure={{
+        isOpen: open,
+        onToggle: () => setOpen((current) => !current),
+        label: `${open ? 'Hide' : 'Show'} application settings`,
+      }}
+    >
+      <p>Theme</p>
+    </SettingsColumn>
+  );
+}
+
+/** The setup file's stand-in answers false to every query; a narrow window is the
+ *  honest default, and a wide one is spelled out here explicitly. */
+const setViewport = (wide: boolean) => {
+  window.matchMedia = ((query: string) => ({
+    matches: query === '(min-width: 640px)' ? wide : false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  })) as typeof window.matchMedia;
+};
+
+describe("the settings dialog's stacked application fold", () => {
+  it("hides the application column's body until its band is pressed", () => {
+    setViewport(false);
+    render(<Harness initialOpen={false} />);
+    expect(screen.queryByText('Theme')).not.toBeInTheDocument();
+    const band = screen.getByRole('button', { name: 'Show application settings' });
+    expect(band).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(screen.getByText('Application'));
+    expect(screen.getByText('Theme')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Hide application settings' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    fireEvent.click(screen.getByText('Application'));
+    expect(screen.queryByText('Theme')).not.toBeInTheDocument();
+  });
+
+  it('keeps a standing column open with no fold where both columns fit', () => {
+    setViewport(true);
+    render(<Harness initialOpen={false} />);
+    expect(screen.getByText('Theme')).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
 });

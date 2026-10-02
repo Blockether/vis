@@ -1,104 +1,72 @@
-# Settings editing across the Companion and TUI
+# Settings layout restored in the Companion and TUI
 
-Make the scope, effect and saved value clear before you apply a change.
+Keep the per-machine Settings layout, and save each change where you make it.
 
 ## Context
 
-The gateway catalog and sparse overrides already own settings. This task extends
-`config/scoped.clj`, `sandbox/scoped_policy.clj` and gateway settings routes rather
-than introducing a second configuration store. The Companion uses
-`apps/vis-companion/src/screens/settings/`; the TUI uses `dialogs.clj` and its client.
+b272eefd8 replaced the Companion machine settings with one editor: an "Editing: Machine" header,
+a scope picker, a draft with review and apply, and profiles with import and export. The TUI got
+the same staged flow. On a phone, this put several controls above every setting and removed the
+per-machine sections. The earlier layout lists each connected machine, opens its settings under
+it, keeps Application settings separate and saves a change when you make it.
 
-Current problems: access fields are JSON strings, TUI text editing is one-line,
-ancestor overrides disable editing, forms lose drafts on refresh, and editing,
-service operations and device preferences share inconsistent controls.
+This task restores that layout from b272eefd8^ and keeps the typed values that b272eefd8 added:
+numbers, lists and objects with their guided path, network, list and JSON editors.
+Companion code is in `apps/vis-companion/src/screens/SettingsScreen.tsx` and
+`apps/vis-companion/src/screens/settings/`. TUI code is in
+`apps/vis-tui/src/com/blockether/vis/tui/dialogs.clj` and its client. The gateway keeps the typed
+catalog, its `revision` and `PATCH /v1/settings`, which the Python SDK `patch_settings` uses.
 
-Rejected alternatives: duplicating catalogs in clients, rewriting authored YAML,
-copying inherited settings, saving every dependent field separately, widening host
-permissions in a local scope, and including credentials in presets or exports.
+Rejected alternatives: hide the editor controls only on small screens (two layouts to maintain);
+revert b272eefd8 completely (removes typed values, gateway validation and the SDK route); keep
+client-side profiles without the editor (no owner for review, import and export).
 
-## 1. Contract, validation and atomic persistence
+## 1. Companion layout
 
-Rationale: both clients must show and save the same configuration safely.
+Rationale: settings belong under the machine that owns them.
 
-Data: canonical gateway/config schemas, scoped resolver, atomic file writers and
-SQLite settings storage.
+Data: SettingsScreen, MachineSettings, ScopedSettingsDialog, SettingsLayout, SettingField,
+`lib/gateway.ts`, `lib/types.ts`, their stories and tests.
 
-Acceptance criteria: typed editors, inherited and own values, application timing,
-versioned atomic batches, explicit values, field errors, scope isolation and
-rejected policy expansion. Existing single-key callers retain their current API.
+Acceptance criteria: machine sections and the Application fold work as before b272eefd8.
+Switches and choices save immediately. Number, list and object rows edit in place with Save,
+Cancel and inline errors. No draft, review, profile, import or export controls remain. A row
+that a more specific scope decides is locked and names that scope.
 
-Unknowns: exact transaction and configuration writer boundaries are being checked.
+Unknowns: none.
 
-## 2. Companion editing and navigation
+## 2. TUI dialog
 
-Rationale: the phone and desktop need clear scope and task navigation.
+Rationale: the TUI follows the same model as the Companion.
 
-Data: SettingsScreen, MachineSettings, ScopedSettingsDialog, shared typed editors,
-gateway client and settings drafts.
+Data: `dialogs.clj`, `client.clj`, `state.clj`, `screen.clj` and their tests.
 
-Acceptance criteria: structured access forms, staged configuration, protected drafts,
-conflict recovery, inline errors, shared search and categories, explicit sources,
-local preferences and service actions kept separate, keyboard and back navigation.
+Acceptance criteria: the pre-b272eefd8 dialog returns. Text, number, list and object rows save
+when their editor confirms. The guided editors and the text-editor key fix (1bf1b2471) stay.
 
-Unknowns: existing interaction tests must be updated to the new authorized behavior.
+Unknowns: none.
 
-## 3. TUI editing and navigation
+## 3. Contract, documentation and verification
 
-Rationale: a compact list must not force complex configuration into one input line.
+Rationale: schemas and guides describe only behavior that exists.
 
-Data: settings catalog projection, list/details/editor views, virtual terminal tests.
+Data: `gateway.json`, `configuration.md`, `index.md`, `site.edn`, `docs.edn`, this plan.
 
-Acceptance criteria: staged values, Ctrl+S, discard guard, typed and multiline editors,
-inheritance preview, editable ancestor values, preserved selection/search, useful
-small-terminal layouts and source/effect details.
+Acceptance criteria: the settings profile schemas and the Settings guide are removed.
+Configuration describes locked rows again. Affected Companion and Lazytest suites, format and
+lint pass. Unrelated failures are reported, never bypassed.
 
-Unknowns: verify both narrow and wide layouts with the existing virtual screen.
-
-## 4. Resources, presets and documentation
-
-Rationale: managing a service is different from setting its availability.
-
-Data: MCP/providers/speech/notifications, profile import/export and configuration guide.
-
-Acceptance criteria: task-oriented navigation, clear device/gateway ownership,
-existing lifecycle progress/errors retained, safe presets/import/export, and updated
-user guidance without credentials or private deployment information.
-
-Unknowns: presets must remain explicit draft changes, never hidden remote actions.
-
-## 5. Verification and publication
-
-Rationale: complete the behavior across API, clients and the built application.
-
-Data: Lazytest, Companion Vitest/Storybook, formatter/linter/reflection, native build
-and affected native tests, final scoped Git diff.
-
-Acceptance criteria: regressions reproduced before fixes, affected checks and builds
-pass, unrelated changes preserved, task commits pushed to main and CI reported.
-No product release, live restart or store submission is authorized by this task.
-
-Unknowns: broader failures are classified against the scoped diff, never bypassed.
+Unknowns: none.
 
 ## Plan state
 
-- All five phases are complete and verified; publication to `main` follows these checks.
-- Base: bf769fa9b on `main` (initial HEAD b5c4538c9; peer commits landed meanwhile).
-- Phase 1: `PATCH /v1/settings` applies a typed, revision-checked batch in one
-  SQLite transaction. A stale revision returns 409, an invalid batch returns 400,
-  and neither writes anything.
-- Phase 2: the Companion machine and scoped dialogs share one draft, review and
-  apply editor with typed fields, inherited values and settings profiles.
-- Phase 3: the TUI Settings dialog uses the same draft, review and apply flow.
-- Phase 4: `resources/vis-docs/settings.md` guide, updated configuration reference,
-  and profile limits read from the gateway schema.
-- Phase 5: backend and TUI Lazytest, clj format and lint, Companion typecheck, lint,
-  unit and Storybook tests, `npm run build`, native build, `native_settings_test`,
-  `native-tui-resize-test` and the docs page canon tests pass.
-- CI follow-ups: the Python SDK client gained `patch_settings` (c42e507ef), and the edit
-  namespace moved to `gateway.server.settings-edit` to keep the config layer below services.
-  The TUI settings text editor now handles arrows, Backspace, Delete and Enter and starts
-  after the current text; the agent-name TUI tests drive the staged draft (1bf1b2471).
-- Unrelated: the Storybook `IterationTrace` "Joined Activity" story fails at the base
-  (it expects "2 checks"; `ActivityPanel` shows "verifications"). Reported in Council #7500.
+- Phases 1-3 are complete and verified.
+- Companion: typecheck, React compiler lint (542 files) and the full Vitest run pass: 3948 unit
+  and Storybook tests. The one failure is outside this diff: the Storybook `IterationTrace`
+  "Joined Activity" story fails at the base, as recorded for the previous plan.
+- TUI: the full Lazytest suite passes (2644 cases), and clj format and lint are clean. Typed rows
+  save immediately. List editing keeps the 1bf1b2471 key handling. Both are covered in
+  `settings_test.clj`.
+- Contract and docs: gateway contract, OpenAPI, JSON Schema, docs, manifest and assets tests pass.
+- Unchanged: the gateway `PATCH /v1/settings`, the Python SDK and `native_settings_test`.
 - No product release, live restart or store submission is part of this task.

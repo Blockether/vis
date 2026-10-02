@@ -4,7 +4,6 @@
 // inside a dialog, with two close marks, two Escape targets and the fleet greyed
 // out behind the form that joins it. Pairing is a band in the machines column.
 import { cleanup, render, screen, within } from '@testing-library/react';
-import { GatewayClient } from '../lib/gateway';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -25,11 +24,6 @@ const quiet = () =>
 let previousFetch: typeof fetch;
 
 beforeEach(() => {
-  vi.spyOn(GatewayClient.prototype, 'cachedSettings').mockReturnValue(null);
-  vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue({
-    revision: 'paired-1',
-    groups: [],
-  });
   previousFetch = globalThis.fetch;
   globalThis.fetch = vi.fn(quiet) as unknown as typeof fetch;
 });
@@ -52,24 +46,18 @@ describe('adding a machine from the settings dialog', () => {
     open();
     expect(field()).toBeNull();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Manage machines' }));
     await userEvent.click(screen.getByRole('button', { name: 'Add a machine' }));
 
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
     const settings = screen.getByRole('dialog', { name: 'Settings' });
-    expect(within(settings).getByRole('button', { name: 'Cancel adding a machine' })).toBeVisible();
+    expect(within(settings).getByRole('heading', { name: 'Add a machine' })).toBeVisible();
     expect(within(settings).getByPlaceholderText(/vis:\/\/gateway/)).toBeVisible();
     // The fleet the machine is about to join stands on the same plane as the form.
-    expect(
-      within(settings)
-        .getAllByText('tower')
-        .some((element) => element.closest('li,section')),
-    ).toBe(true);
+    expect(within(settings).getByText('tower')).toBeVisible();
   });
 
   it('closes the form from the same band mark that opened it', async () => {
     open();
-    await userEvent.click(screen.getByRole('button', { name: 'Manage machines' }));
     await userEvent.click(screen.getByRole('button', { name: 'Add a machine' }));
     await userEvent.click(screen.getByRole('button', { name: 'Cancel adding a machine' }));
 
@@ -80,7 +68,6 @@ describe('adding a machine from the settings dialog', () => {
   it('gives Escape to the form first and to Settings after it', async () => {
     const onClose = vi.fn();
     open(onClose);
-    await userEvent.click(screen.getByRole('button', { name: 'Manage machines' }));
     await userEvent.click(screen.getByRole('button', { name: 'Add a machine' }));
 
     await userEvent.keyboard('{Escape}');

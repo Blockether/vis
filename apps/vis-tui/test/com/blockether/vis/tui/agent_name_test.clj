@@ -111,27 +111,6 @@
                      (expect (str/includes? text "Ada is"))
                      (expect (not (str/includes? text "Vis is")))))))
 
-(defn- agent-catalog
-  "The machine-owner Agent group as `GET /v1/settings` answers it."
-  [revision agent-name]
-  {"revision" revision
-   "scope" "global"
-   "groups" [{"id" "agent"
-              "title" "Agent"
-              "toggles" [(cond-> {"id" "agent_name"
-                                  "label" "Agent name"
-                                  "type" "string"
-                                  "editor" "text"
-                                  "max_length" 80
-                                  "value" agent-name
-                                  "is_override" (not= "Vis" agent-name)
-                                  "inherited_value" "Vis"
-                                  "inherited_source" "default"
-                                  "applies" "next_turn"
-                                  "scopes" ["global"]}
-                           (not= "Vis" agent-name)
-                           (assoc "own_value" agent-name))]}]})
-
 (defn settings-fixture
   "Production settings dialog; only the gateway boundary is an in-memory fixture."
   [cols keys save-error]
@@ -144,22 +123,23 @@
         errors
         (atom [])]
 
-    (with-redefs [client/gateway-settings
-                  (fn [& _]
-                    (agent-catalog "initial" @saved))
+    (with-redefs [client/setting
+                  (fn [id]
+                    (expect (= "agent_name" id))
+                    {"id" id "type" "string" "value" @saved})
 
-                  client/apply-settings!
-                  (fn [revision changes & _]
-                    (swap! requests conj [revision changes])
+                  client/set-setting-value!
+                  (fn [id value]
+                    (swap! requests conj [id value])
                     (when save-error (throw (ex-info save-error {})))
-                    (reset! saved (get (first changes) "value"))
-                    (agent-catalog "saved" @saved))]
+                    (reset! saved (str/trim value))
+                    {"id" id "value" @saved})]
 
-      (with-redefs-fn {#'dialogs/settings-inventory (atom {:status :unloaded :groups [] :error nil})
+      (with-redefs-fn {#'dialogs/agent-name-setting (atom nil)
                        #'dialogs/provider-inventory (atom {:status :unloaded})
                        #'dialogs/mcp-inventory (atom {:status :unloaded})
                        #'dialogs/mark-inventories-loading! (constantly nil)
-                       #'dialogs/load-inventories! dialogs/load-settings-inventory!
+                       #'dialogs/load-inventories! #'dialogs/load-agent-name!
                        #'dialogs/mini-note! (fn [_ _ _ _ text]
                                               (swap! errors conj text))}
         (fn []
@@ -174,32 +154,30 @@
            :errors @errors})))))
 
 (defdescribe settings-edit-saves-through-the-gateway
-             (it "settings edit saves through the gateway after review"
+             (it "settings edit saves through the gateway"
                  (doseq [cols [40 100]]
-                   (let [{:keys [capture saved requests]} (settings-fixture
-                                                            cols
-                                                            [:enter :backspace :backspace :backspace
-                                                             \A \d \a :f2 :f2 :down :f2 :esc]
-                                                            nil)]
+                   (let [{:keys [capture saved requests]} (settings-fixture cols
+                                                                            [:enter :backspace
+                                                                             :backspace :backspace
+                                                                             \A \d \a :enter :esc]
+                                                                            nil)]
                      (expect (nil? (:error capture)))
                      (expect (= "Ada" saved))
-                     (expect (= [["initial" [{"id" "agent_name" "action" "value" "value" "Ada"}]]]
-                                requests))
-                     (expect (re-find #"Agent name .*\sAda\s" (cap/frame-text capture)))))))
+                     (expect (= [["agent_name" "Ada"]] requests))
+                     (expect (re-find #"Agent name\s+Ada" (cap/frame-text capture)))))))
 
-(defdescribe
-  settings-cancel-and-save-failure-preserve-the-name
-  (it "settings cancel and save failure preserve the name"
-      (let [{:keys [capture saved requests]} (settings-fixture 40 [:enter \x :esc \y :esc] nil)]
-        (expect (nil? (:error capture)))
-        (expect (= "Vis" saved))
-        (expect (empty? requests)))
-      (let [{:keys [capture saved requests errors]}
-            (settings-fixture 40 [:enter \x :f2 :f2 :down :f2 :esc \y] "Write failed")]
-        (expect (nil? (:error capture)))
-        (expect (= "Vis" saved))
-        (expect (= [["initial" [{"id" "agent_name" "action" "value" "value" "Visx"}]]] requests))
-        (expect (= ["Write failed Your draft is kept."] errors)))))
+(defdescribe settings-cancel-and-save-failure-preserve-the-name
+             (it "settings cancel and save failure preserve the name"
+                 (let [{:keys [capture saved requests]}
+                       (settings-fixture 40 [:enter \x :esc :esc] nil)]
+                   (expect (nil? (:error capture)))
+                   (expect (= "Vis" saved))
+                   (expect (empty? requests)))
+                 (let [{:keys [capture saved errors]}
+                       (settings-fixture 40 [:enter \x :enter :esc] "Write failed")]
+                   (expect (nil? (:error capture)))
+                   (expect (= "Vis" saved))
+                   (expect (= ["Write failed"] errors)))))
 
 (defdescribe
   gateway-rename-and-reconnect-update-the-owning-tab

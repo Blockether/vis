@@ -63,12 +63,13 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** Device appearance is immediate and separate from machine drafts. */
+/** Machines lead; the application fold opens by the same control used in the app. */
 export const Appearance: Story = {
   play: async ({ canvasElement, globals }) => {
     const page = within(canvasElement.ownerDocument.body);
     await expect(await page.findByRole('heading', { name: 'Settings' })).toBeVisible();
-    await userEvent.click(page.getByRole('button', { name: 'This device' }));
+    const application = page.queryByRole('button', { name: 'Show application settings' });
+    if (application) await userEvent.click(application);
     const theme = await page.findByRole('button', {
       name: resolveTheme(String(globals.theme)).label,
     });
@@ -94,25 +95,33 @@ export const Appearance: Story = {
   },
 };
 
-/** One selected machine owns one catalog and its task-specific resources. */
+/** A sole machine shows its full settings without a disclosure or an extra press. */
 export const SingleMachine: Story = {
   args: { gateways: STORY_GATEWAYS.slice(0, 1) },
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
-    await expect(await page.findByRole('textbox', { name: 'Agent name' })).toHaveValue('Vis');
-    await expect(page.getByRole('combobox', { name: 'Settings machine' })).toBeVisible();
-    await userEvent.click(page.getByRole('button', { name: 'Tools and integrations' }));
     await expect(await page.findByText('MCP servers')).toBeVisible();
+    await expect(page.getByText('Providers')).toBeVisible();
+    const name = page.getByText('tower');
+    await expect(name.closest('button')).toBeNull();
+    await expect(name.closest('[aria-expanded]')).toBeNull();
+    await expect(name.parentElement?.parentElement?.querySelector('.lucide-chevron-right')).toBeNull();
+    await userEvent.click(name);
+    await expect(page.getByText('MCP servers')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Add a machine' })).toBeVisible();
   },
 };
 
-/** Pairing stays inside Settings without a second dialog. */
+/**
+ * PAIRING IS A BAND IN THE MACHINES COLUMN, never a dialog over the dialog: the
+ * ＋ that opens it becomes − to hide it again, and the fleet stays on the same
+ * plane as the form that joins it.
+ */
 export const PairingInline: Story = {
   args: { gateways: STORY_GATEWAYS.slice(0, 1) },
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
     const dialog = await page.findByRole('dialog', { name: 'Settings' });
-    await userEvent.click(page.getByRole('button', { name: 'Manage machines' }));
     await userEvent.click(page.getByRole('button', { name: 'Add a machine' }));
     // Regression, settings screenshot: the expanded machine control used an X rather
     // than the minus mark of the matching provider control.
@@ -123,8 +132,8 @@ export const PairingInline: Story = {
 
     await expect(page.getAllByRole('dialog')).toHaveLength(1);
     await expect(within(dialog).getByPlaceholderText(/vis:\/\/gateway/)).toBeVisible();
-    const machines = within(dialog).getByRole('heading', { name: 'Machines' }).closest('section')!;
-    await expect(within(machines).getByText('tower')).toBeVisible();
+    const machine = within(dialog).getByText('tower');
+    await expect(machine).toBeVisible();
 
     await userEvent.click(toggle);
     const addButton = page.getByRole('button', { name: 'Add a machine' });
@@ -139,20 +148,15 @@ export const ExperimentalFeatures: Story = {
   args: { gateways: STORY_GATEWAYS.slice(0, 1) },
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
-    await userEvent.click(await page.findByRole('button', { name: 'Advanced' }));
     for (const label of ['Subagents', 'Improve', 'Plan before coding']) {
-      const toggle = await page.findByRole('switch', { name: new RegExp(`^${label}`) });
+      const toggle = await page.findByRole('switch', { name: `${label}: off` });
       await expect(toggle).not.toBeChecked();
+      const row = toggle.closest('.grid')!;
+      await expect(within(row as HTMLElement).getByText('Experimental')).toBeVisible();
       await userEvent.click(toggle);
-      await expect(toggle).toBeChecked();
-      const apply = page.getByRole('button', { name: 'Apply changes' });
-      await expect(apply).toBeEnabled();
-      await userEvent.click(apply);
-      await waitFor(() => expect(apply).toBeDisabled());
+      await waitFor(() => expect(toggle).toBeChecked());
       await userEvent.click(toggle);
-      await expect(toggle).not.toBeChecked();
-      await userEvent.click(page.getByRole('button', { name: 'Discard changes' }));
-      await expect(toggle).toBeChecked();
+      await waitFor(() => expect(toggle).not.toBeChecked());
     }
   },
 };
@@ -168,10 +172,12 @@ export const ReadingLayout: Story = {
   ),
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
-    await userEvent.click(await page.findByRole('button', { name: 'This device' }));
+    await page.findByText('MCP servers');
+    const application = page.queryByRole('button', { name: 'Show application settings' });
+    if (application) await userEvent.click(application);
     const sections = ['Responses', 'Theme'].map((name) => page.getByRole('heading', { name }));
     for (const section of sections) {
-      await expect(section).toHaveAttribute('aria-level', '3');
+      await expect(section).toHaveAttribute('aria-level', '4');
     }
     const toggle = page.getByRole('switch', { name: /^Show Python code and results:/ });
     const checked = toggle.getAttribute('aria-checked');
@@ -186,8 +192,7 @@ export const ReadingLayout: Story = {
         await expect(canvasElement.querySelector('[data-execution-activity]')).not.toBeNull();
       }
     }
-    await userEvent.click(page.getByRole('button', { name: 'Voice and notifications' }));
-    await userEvent.click(await page.findByRole('button', { name: /^ASR/ }));
+    await userEvent.click(page.getByRole('button', { name: /^ASR/ }));
     await page.findByText('No ASR engine is registered on this machine.');
   },
 };
@@ -203,7 +208,6 @@ export const FormTypography: Story = {
   args: { gateways: STORY_GATEWAYS.slice(0, 1) },
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
-    await userEvent.click(await page.findByRole('button', { name: 'Tools and integrations' }));
     await userEvent.click(await page.findByRole('button', { name: 'Add an MCP server' }));
     await page.findByRole('textbox', { name: 'Server name' });
     const args = page.getByRole('textbox', { name: /^Arguments — one per line/ });
@@ -229,10 +233,10 @@ export const Populated: Story = {
   parameters: { populated: true },
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
-    await userEvent.click(await page.findByRole('button', { name: 'Models and responses' }));
     await expect(await page.findByText('Anthropic', { exact: true })).toBeVisible();
-    await userEvent.click(page.getByRole('button', { name: 'Tools and integrations' }));
     await expect(await page.findByText('filesystem', { exact: true })).toBeVisible();
+    const application = page.queryByRole('button', { name: 'Show application settings' });
+    if (application) await userEvent.click(application);
     const toggle = page.getByRole('switch', { name: 'filesystem MCP server: on' });
     await userEvent.click(toggle);
     await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));

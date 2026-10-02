@@ -3601,21 +3601,6 @@
            (render-frame! screen cols rows @state/app-db (System/currentTimeMillis))))
        (catch Throwable _ nil)))
 
-(defn- settings-options
-  [screen]
-  {:context-session-id (get-in @state/app-db [:session :id])
-   :mcp-add (fn [{:keys [g region]}]
-              (mcp/save-server! screen g region nil))
-   :mcp-action (fn [{:keys [server action g region]}]
-                 (mcp/run-action! screen g region server action))
-   :provider-add (fn [{:keys [g region]}]
-                   (provider/add-provider-transient! screen g region))
-   :provider-transient (fn [{:keys [provider-id g region]}]
-                         (provider/provider-transient! screen g region provider-id))
-   :on-change (fn [settings]
-                (state/dispatch [:update-settings settings])
-                (repaint-chat-frame! screen))})
-
 (defn- open-settings-modal!
   "Open Settings: the one hub for everything configurable, providers included.
 
@@ -3635,10 +3620,30 @@
    settings frame and `:mcp-add` / `:provider-add` add a new entry. Returns nil."
   ([^TerminalScreen screen] (open-settings-modal! screen nil))
   ([^TerminalScreen screen focus-section]
-   (when-let [s (dlg/settings-dialog! screen
-                                      (:settings @state/app-db)
-                                      (assoc (settings-options screen)
-                                        :focus-section focus-section))]
+   (when-let [s (dlg/settings-dialog!
+                  screen
+                  (:settings @state/app-db)
+                  {:focus-section focus-section
+                   :context-session-id (get-in @state/app-db [:session :id])
+                   :mcp-add (fn [{:keys [g region]}]
+                              (mcp/save-server! screen g region nil))
+                   ;; One verb the server's transient fired — the manager runs
+                   ;; it IN THAT SAME BAND (its own frame handle comes back
+                   ;; here) and reports its own failures; Settings just reloads.
+                   :mcp-action (fn [{:keys [server action g region]}]
+                                 (mcp/run-action! screen g region server action))
+                   ;; Adding a provider is a BAND inside Settings, not a second
+                   ;; manager on top of it: same frame, same hint bar, and the
+                   ;; provider list it just changed stays visible behind it.
+                   :provider-add (fn [{:keys [g region]}]
+                                   (provider/add-provider-transient! screen g region))
+                   ;; The provider's transient paints INSIDE the settings frame,
+                   ;; so it borrows that frame's graphics and geometry.
+                   :provider-transient (fn [{:keys [provider-id g region]}]
+                                         (provider/provider-transient! screen g region provider-id))
+                   :on-change (fn [settings]
+                                (state/dispatch [:update-settings settings])
+                                (repaint-chat-frame! screen))})]
      (state/dispatch [:update-settings s]))
    (refresh-improve-settings!)
    nil))
@@ -3646,38 +3651,39 @@
 (defn- open-scoped-settings-modal!
   "Open the shared dialog for the active session or one of its current ancestors."
   [screen scope]
-  (try
-    (let [sid
-          (get-in @state/app-db [:session :id])
+  (try (let [sid
+             (get-in @state/app-db [:session :id])
 
-          row
-          (first (vis/list-sessions {:ids [(str sid)] :archived :include}))
+             row
+             (first (vis/list-sessions {:ids [(str sid)] :archived :include}))
 
-          target-id
-          (case scope
-            "session"
-            sid
+             target-id
+             (case scope
+               "session"
+               sid
 
-            "group"
-            (get row "group_id")
+               "group"
+               (get row "group_id")
 
-            "project"
-            (get row "project_id"))]
+               "project"
+               (get row "project_id"))]
 
-      (if target-id
-        (when-let [settings (dlg/settings-dialog! screen
-                                                  (:settings @state/app-db)
-                                                  (assoc (settings-options screen)
-                                                    :settings-target {:scope scope
-                                                                      :target-id (str target-id)
-                                                                      :label (if (= scope "session")
-                                                                               (get row "title")
-                                                                               (str target-id))}
-                                                    :context-session-id sid))]
-          (state/dispatch [:update-settings settings]))
-        (vis/notify! (str "This session has no " scope) :level :warn))
-      (state/dispatch [:refresh-session-settings sid]))
-    (catch Exception e (vis/notify! (str "Settings unavailable: " (ex-message e)) :level :error))))
+         (if target-id
+           (dlg/settings-dialog!
+             screen
+             {}
+             {:settings-target {:scope scope
+                                :target-id (str target-id)
+                                :label (if (= scope "session") (get row "title") (str target-id))}
+              :context-session-id sid
+              :mcp-add (fn [{:keys [g region]}]
+                         (mcp/save-server! screen g region nil))
+              :mcp-action (fn [{:keys [server action g region]}]
+                            (mcp/run-action! screen g region server action))})
+           (vis/notify! (str "This session has no " scope) :level :warn))
+         (state/dispatch [:refresh-session-settings sid]))
+       (catch Exception e
+         (vis/notify! (str "Settings unavailable: " (ex-message e)) :level :error))))
 
 (def ^:private view-churn-keys
   "app-db keys the render thread mutates as bookkeeping only — never part of the

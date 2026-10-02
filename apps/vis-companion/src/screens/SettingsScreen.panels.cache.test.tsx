@@ -2,7 +2,6 @@
 // Machine panels are warmed before settings open. Once they have answered,
 // reopening that machine must paint the cached answer immediately instead of flickering.
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SettingsDialog } from './SettingsScreen';
@@ -67,14 +66,13 @@ describe('opening settings for a machine that already answered', () => {
   it('paints the MCP servers and providers in the first open frame', async () => {
     globalThis.fetch = machine() as unknown as typeof fetch;
     const first = open();
-    await userEvent.click(screen.getByRole('button', { name: 'Tools and integrations' }));
+    await waitFor(() => expect(screen.getAllByTitle('Online').length).toBeGreaterThan(0));
     await waitFor(() => expect(screen.getByText('files')).toBeVisible());
     first.unmount();
 
     // A recheck is pending, but the last online verdict and panels are still fresh.
     globalThis.fetch = silent() as unknown as typeof fetch;
     const second = open();
-    await userEvent.click(screen.getByRole('button', { name: 'Tools and integrations' }));
     expect(screen.getByText('files')).toBeVisible();
     expect(screen.queryByText('Checking provider sign-in…')).toBeNull();
     second.unmount();

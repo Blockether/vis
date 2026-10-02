@@ -11,7 +11,6 @@
             [com.blockether.vis.tui.transient :as tr]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
-            [com.blockether.vis.tui.settings-model :as sm]
             [com.blockether.vis.tui.toggles :as toggles])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize TextCharacter]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
@@ -783,11 +782,6 @@
                  (let [settings-subsection-text (var-get #'dlg/settings-subsection-text)]
                    (expect (= "◆ Exa" (settings-subsection-text "Exa" 80))))))
 
-(defn- with-settings-draft
-  [catalog f]
-  (binding [dlg/*settings-draft* (atom (sm/start catalog))]
-    (f dlg/*settings-draft*)))
-
 (defn- exercise-backend-picker
   "Run the production Settings picker on a virtual terminal with a fixture gateway."
   [keys {:keys [width fail? experimental? value] :or {width 80 value "worktree"}}]
@@ -821,40 +815,34 @@
                                :settings? false})
     (try (.startScreen screen)
          (doseq [key keys]
-           (.addInput terminal (cap/key-stroke key)))
-         (let [catalog {"revision" "fixture"
-                        "scope" "global"
-                        "groups" [{"title" "Drafts"
-                                   "toggles" [{"id" id
-                                               "type" "enum"
-                                               "label" "Draft backend"
-                                               "value" value
-                                               "is_override" true
-                                               "own_value" value
-                                               "choices" ["auto" "worktree" "rift" "off"]
-                                               "is_experimental" (boolean experimental?)}]}]}]
-           (with-redefs-fn
-             {#'dlg/load-inventories! (fn []
-                                        (reset! dlg/*settings-draft* (sm/start catalog)))
-              #'dlg/settings-rows (fn []
-                                    (#'dlg/catalog-toggle-rows
-                                     (get (sm/preview @dlg/*settings-draft*) "groups")))
-              #'dlg/read-modal-key! (fn [s]
-                                      (swap! frames conj
-                                        (str/join "\n" (map :text (term/painted-rows terminal))))
-                                      (read-key s))
-              #'dlg/mini-note! (fn [_ _ _ _ line]
-                                 (swap! errors conj line))
-              #'vis/apply-settings! (fn [revision changes _target _channel _context]
-                                      (swap! requests conj ["/v1/settings" revision changes])
-                                      (if fail?
-                                        (throw (ex-info "Save refused" {}))
-                                        (assoc-in (assoc catalog "revision" "saved")
-                                          ["groups" 0 "toggles" 0 "value"]
-                                          (get (first changes) "value"))))
-              #'vis/notify! (fn [message & _]
-                              (swap! errors conj message))}
-             #(dlg/settings-dialog! screen {})))
+           (.addInput terminal
+                      (case key
+                        :enter
+                        (KeyStroke. KeyType/Enter)
+
+                        :down
+                        (KeyStroke. KeyType/ArrowDown)
+
+                        :up
+                        (KeyStroke. KeyType/ArrowUp)
+
+                        (term/keystroke key))))
+         (with-redefs-fn
+           {#'dlg/load-inventories! (constantly nil)
+            #'dlg/settings-rows (constantly
+                                  [{:type :registry-toggle :toggle-id id :label "Draft backend"}])
+            #'dlg/read-modal-key! (fn [s]
+                                    (swap! frames conj
+                                      (str/join "\n" (map :text (term/painted-rows terminal))))
+                                    (read-key s))
+            #'vis/send-json! (fn [_ path body]
+                               (swap! requests conj [path body])
+                               (if fail?
+                                 (throw (ex-info "Save refused" {}))
+                                 {"id" id "type" "enum" "value" (or (:value body) "auto")}))
+            #'vis/notify! (fn [message & _]
+                            (swap! errors conj message))}
+           #(dlg/settings-dialog! screen {}))
          {:requests @requests :frames @frames :errors @errors :value (vis/toggle-value id)}
          (finally (toggles/reset-to-default! id) (.stopScreen screen)))))
 
@@ -882,35 +870,32 @@
                                   ["auto" "worktree" "rift" "off" "current"]))
                         frames)))))
   (it "starts on the saved value and submits only the explicitly selected backend"
-      (let [{:keys [requests value]}
-            (exercise-backend-picker [:enter :down :enter :f2 :down :f2 :esc] {})]
-        (expect (= [["/v1/settings" "fixture"
-                     [{"id" "dialogs_draft_backend" "action" "value" "value" "rift"}]]]
+      (let [{:keys [requests value]} (exercise-backend-picker [:enter :down :enter :esc] {})]
+        (expect (= [["/v1/settings" {:id "dialogs_draft_backend" :action "value" :value "rift"}]]
                    requests))
         (expect (= "rift" value))))
   ;; #242 and #243: drafts remain available in Settings without enabling them on open.
   (it "shows off and lets the user explicitly enable and disable drafts"
-      (doseq [[initial keys expected]
-              [["off" [:esc] "off"]
-               ["off" [:enter :up :left :up :left :up :enter :f2 :down :f2 :esc] "auto"]
-               ["auto" [:enter :down :left :down :left :down :enter :f2 :down :f2 :esc] "off"]]]
+      (doseq [[initial keys expected] [["off" [:esc] "off"]
+                                       ["off" [:enter :up :up :up :enter :esc] "auto"]
+                                       ["auto" [:enter :down :down :down :enter :esc] "off"]]]
         (let [{:keys [requests frames value]} (exercise-backend-picker keys {:value initial})]
           (expect (= expected value))
           (expect (some #(str/includes? (str/lower-case %) initial) frames))
           (expect (= (if (= initial expected)
                        []
-                       [["/v1/settings" "fixture"
-                         [{"id" "dialogs_draft_backend" "action" "value" "value" expected}]]])
+                       [["/v1/settings"
+                         {:id "dialogs_draft_backend" :action "value" :value expected}]])
                      requests)))))
   (it "confirming the current backend is a no-op"
       (let [{:keys [requests value]} (exercise-backend-picker [:enter :enter :esc] {})]
         (expect (empty? requests))
         (expect (= "worktree" value))))
   (it "a refused save leaves the effective backend unchanged"
-      (let [{:keys [errors value]}
-            (exercise-backend-picker [:enter :down :enter :f2 :down :f2 :esc \y] {:fail? true})]
+      (let [{:keys [errors value]} (exercise-backend-picker [:enter :down :enter :esc]
+                                                            {:fail? true})]
         (expect (= "worktree" value))
-        (expect (= ["Save refused Your draft is kept."] errors)))))
+        (expect (= ["Setting was not changed: Save refused"] errors)))))
 
 (defdescribe
   apply-settings-option-test
@@ -919,60 +904,75 @@
         (expect (= {:show-thinking false}
                    (apply-settings-option {:show-thinking true}
                                           {:key :show-thinking :type :toggle})))))
-  ;; #106: Apply saves to the gateway; staging cannot mutate a process-local mirror.
-  (it "stages explicit booleans without writing or mirroring daemon state"
-      (let [id
-            "dialogs_test_registry_row"
+  ;; Regression, issue #106: Settings mutated only the TUI process's toggle, so
+  ;; the gateway kept `shell` absent from already-open sessions until `/reload`.
+  (it
+    "registry-toggle rows change daemon state before mirroring it locally"
+    (let [apply-settings-option
+          (var-get #'dlg/apply-settings-option)
 
-            catalog
-            {"revision" "fixture"
-             "groups" [{"toggles" [{"id" id "type" "boolean" "enabled" false}]}]}
+          settings-row-mark
+          (var-get #'dlg/settings-row-mark)
 
-            called
-            (atom [])]
+          id
+          "dialogs_test_registry_row"
 
-        (toggles/register-toggle! {:id id :label "Test" :default false})
-        (try (with-settings-draft
-               catalog
-               (fn [draft]
-                 (with-redefs [vis/gateway-toggle-setting! (fn [& args]
-                                                             (swap! called conj args))]
-                   (expect (= {:something "else"}
-                              (#'dlg/apply-settings-option
-                               {:something "else"}
-                               {:type :registry-toggle :toggle-id id :toggle-value false})))
-                   (expect (empty? @called))
-                   (expect (= [{"id" id "action" "value" "value" true}] (sm/changes @draft)))
-                   (expect (false? (toggles/enabled? id))))))
-             (finally (toggles/reset-to-default! id)))))
+          called
+          (atom [])
+
+          _
+          (toggles/register-toggle! {:id id :label "Test" :default false})]
+
+      (try (expect (false? (toggles/enabled? id)))
+           (with-redefs [vis/gateway-toggle-setting!
+                         (fn [toggle-id _target]
+                           (swap! called conj toggle-id)
+                           {"id" toggle-id "type" "boolean" "enabled" true})]
+             (let [out (apply-settings-option {:something "else"}
+                                              {:type :registry-toggle :toggle-id id})]
+               (expect (= {:something "else"} out))
+               (expect (= [id] @called))
+               (expect (true? (toggles/enabled? id)))))
+           ;; Boolean state is carried by the leading status glyph (●/○), not
+           ;; "(on)/(off)" text in the label.
+           (let [[on-glyph] (settings-row-mark {:type :registry-toggle :toggle-id id} {})]
+             (expect (= "●" on-glyph)))
+           (toggles/reset-to-default! id)
+           (let [[off-glyph] (settings-row-mark {:type :registry-toggle :toggle-id id} {})]
+             (expect (= "○" off-glyph)))
+           (finally (toggles/reset-to-default! id)))))
   ;; NOTE: the old "registry rows normalize fallback labels instead of
   ;; leaking raw ids" case was retired — the toggles registry now
   ;; REQUIRES a :label (register-toggle! rejects label-less specs), so the
   ;; id-derived fallback-label path no longer exists.
-  (it "stages explicit enum choices and keeps the live process value until Apply"
-      (let [id
-            "dialogs_test_registry_enum"
+  (it "registry enum rows submit an explicit value and adopt the daemon response"
+      (let [apply-settings-option
+            (var-get #'dlg/apply-settings-option)
 
-            catalog
-            {"revision" "fixture" "groups" [{"toggles" [{"id" id "type" "enum" "value" "low"}]}]}
+            settings-option-value
+            (var-get #'dlg/settings-option-value)
+
+            id
+            "dialogs_test_registry_enum"
 
             called
             (atom [])]
 
         (toggles/register-toggle!
           {:id id :label "Enum Test" :type :enum :choices [:low :medium :high] :default :low})
-        (try (with-settings-draft
-               catalog
-               (fn [draft]
-                 (with-redefs [vis/gateway-set-setting-value! (fn [& args]
-                                                                (swap! called conj args))]
-                   (expect (= {:something "else"}
-                              (#'dlg/apply-settings-option
-                               {:something "else"}
-                               {:type :registry-toggle :toggle-id id :value "medium"})))
-                   (expect (empty? @called))
-                   (expect (= [{"id" id "action" "value" "value" "medium"}] (sm/changes @draft)))
-                   (expect (= "low" (vis/toggle-value id))))))
+        (try (expect (= "low" (settings-option-value {:type :registry-toggle :toggle-id id} {})))
+             (with-redefs [vis/gateway-set-setting-value!
+                           (fn [toggle-id value _target]
+                             (swap! called conj [toggle-id value])
+                             {"id" toggle-id "type" "enum" "value" "high"})]
+               (let [out (apply-settings-option
+                           {:something "else"}
+                           {:type :registry-toggle :toggle-id id :value "medium"})]
+                 (expect (= {:something "else"} out))
+                 (expect (= [[id "medium"]] @called))
+                 (expect (= "high" (vis/toggle-value id)))
+                 (expect (= "high"
+                            (settings-option-value {:type :registry-toggle :toggle-id id} {})))))
              (finally (toggles/reset-to-default! id)))))
   (it "choice rows cycle quick -> balanced -> deep -> quick"
       (let [apply-settings-option (var-get #'dlg/apply-settings-option)]
@@ -1107,7 +1107,7 @@
                                   (.clear screen)
                                   (.putString (.newTextGraphics screen) 0 0 "Chat repaint"))})))))
         ;; The third input is read after the change, while the band still owns input.
-        (expect (str/includes? (nth @frames 2) "Machine settings"))
+        (expect (str/includes? (nth @frames 2) "Settings"))
         (expect (re-find #"Theme setting\s+vis-dark" (nth @frames 2)))
         (expect (not (str/includes? (nth @frames 2) "Apply theme")))
         (finally (.stopScreen screen)))))
@@ -1171,7 +1171,7 @@
                                     "Settings stays"))
              (finally (.stopScreen screen))))))
   (it
-    "keeps draft actions and immediate preferences in one flat Settings list"
+    "Settings is ONE flat list (no tabs): Responses + Theme + grouped toggles + Models"
     (let [settings-rows (var-get #'dlg/settings-rows)]
       (with-redefs [vis/get-router (constantly nil)]
         (let [rows (settings-rows)
@@ -1179,12 +1179,12 @@
                             (filter #(= :section (:type %)))
                             (mapv :label))]
 
-          ;; Draft actions and immediate terminal preferences lead the task list.
-          ;; Gateway settings follow in their catalog sections.
-          (expect (= ["Settings tasks" "This terminal · immediate" "Responses" "Theme"]
-                     (take 4 sections)))
+          ;; flat list, web-shaped: Responses and Theme lead, as in the app. The
+          ;; Models section was retired (it only carried reasoning-effort,
+          ;; which moved to Ctrl+R).
+          (expect (= ["Responses" "Theme" "Agent"] (take 3 sections)))
           (expect (= [:show-python-code :summarize-steps :theme-name]
-                     (vec (take 3 (keep :key rows)))))
+                     (vec (keep :key (take 5 rows)))))
           (expect (not-any? #{"Models"} sections))
           (expect (some #(= :theme-name (:key %)) rows))
           ;; vis-dark/light are pinned to the TOP; every other built-in follows by id.
@@ -3417,22 +3417,21 @@
                                                     "type" "boolean"
                                                     "enabled" false
                                                     "is_experimental" true}]}]})
-           ;; Agent name is now a normal typed draft field in the shared catalog.
+           ;; The agent group stays with the dialog's own agent-name row above,
+           ;; and the section header is the gateway's title verbatim.
            (let [rows (registry-toggle-rows)]
-             (expect (= [:section :text-setting :section :registry-toggle :registry-toggle]
-                        (mapv :type rows)))
-             (expect (= "Agent" (:label (first rows))))
-             (expect (= "Experimental" (:label (nth rows 2))))
+             (expect (= [:section :registry-toggle :registry-toggle] (mapv :type rows)))
+             (expect (= "Experimental" (:label (first rows))))
              ;; `draft_backend` lives in the engine, never in this binary's
              ;; registry: the catalog is what puts it on the screen.
              (expect (nil? (toggles/toggle-spec "draft_backend")))
-             (let [drafts (nth rows 3)]
+             (let [drafts (second rows)]
                (expect (= "draft_backend" (:toggle-id drafts)))
                (expect (= ["auto" "worktree" "rift" "off"] (:choices drafts)))
                (expect (= "Draft backend  [Experimental]" (settings-option-label drafts {})))
                (expect (= "Off" (#'dlg/settings-option-value drafts {})))
                (expect (= p/MARK_VALUE (first (settings-row-mark drafts {})))))
-             (let [plans (nth rows 4)]
+             (let [plans (nth rows 2)]
                (expect (= "Plan before coding  [Experimental]" (settings-option-label plans {})))
                (expect (= p/STATUS_OFF (first (settings-row-mark plans {}))))))
            (finally (reset! inventory original)))))
@@ -3443,6 +3442,9 @@
 
           registry-toggle-rows
           (var-get #'dlg/registry-toggle-rows)
+
+          settings-option-label
+          (var-get #'dlg/settings-option-label)
 
           inventory
           (var-get #'dlg/settings-inventory)
@@ -3460,15 +3462,13 @@
                                                     "value" "off"
                                                     "choices" ["auto" "worktree" "rift" "off"]
                                                     "is_experimental" true}]}]})
-           (with-settings-draft
-             {"revision" "fixture" "groups" (:groups @inventory)}
-             (fn [draft]
-               (apply-settings-option {} (assoc (second (registry-toggle-rows)) :value "worktree"))
-               (expect (= [{"id" "draft_backend" "action" "value" "value" "worktree"}]
-                          (sm/changes @draft)))
-               (expect (:pending? (second (registry-toggle-rows))))
-               (expect (= "worktree"
-                          (#'dlg/settings-option-value (second (registry-toggle-rows)) {})))))
+           (with-redefs [vis/gateway-set-setting-value! (fn [id value _target]
+                                                          {"id" id "type" "enum" "value" value})]
+             (apply-settings-option {} (assoc (second (registry-toggle-rows)) :value "worktree")))
+           (expect (= "Draft backend  [Experimental]"
+                      (settings-option-label (second (registry-toggle-rows)) {})))
+           (expect (= "worktree" (#'dlg/settings-option-value (second (registry-toggle-rows)) {})))
+           ;; A daemon-only toggle never leaks into the process registry.
            (expect (nil? (toggles/toggle-spec "draft_backend")))
            (finally (reset! inventory original)))))
   (it "falls back to the process registry when the daemon cannot answer"
@@ -3495,10 +3495,9 @@
         (binding [dlg/*settings-target* {:scope "group" :target-id "g1" :label "g1"}
                   dlg/*local-settings-inventory* local]
 
-          (with-redefs [vis/gateway-settings
-                        (fn [_ target _context]
-                          (expect (= "g1" (:target-id target)))
-                          {"revision" "fixture" "label" "Backend team" "groups" []})]
+          (with-redefs [vis/gateway-settings (fn [_ target _context]
+                                               (expect (= "g1" (:target-id target)))
+                                               {"label" "Backend team" "groups" []})]
             (dlg/load-settings-inventory!)))
         (expect (= "Backend team" (:label @local)))))
   (it "asks for the open session's locks, also from the parallel global load"
@@ -3516,93 +3515,90 @@
 
         (try (with-redefs-fn {#'dlg/load-mcp-inventory! (fn []
                                                           nil)
+                              #'dlg/load-agent-name! (fn []
+                                                       nil)
                               #'dlg/load-provider-inventory! (fn []
                                                                nil)
                               #'vis/gateway-settings (fn [_ target context]
                                                        (reset! seen [target context])
-                                                       {"revision" "fixture" "groups" []})}
+                                                       {"groups" []})}
                #(binding [dlg/*settings-context* "s1"] (load-inventories!)))
              (expect (= [nil "s1"] @seen))
              (finally (reset! inventory original)))))
-  (it
-    "annotates a more specific session winner without locking ancestor edits"
-    ;; A project `vis.yml` with `shell: false` decides Shell for its sessions, so
-    ;; flipping the global row would change nothing there.
-    (let
-      [registry-toggle-rows
-       (var-get #'dlg/registry-toggle-rows)
+  (it "locks a row the open session's own scopes decide and says where to change it"
+      ;; A project `vis.yml` with `shell: false` decides Shell for its sessions, so
+      ;; flipping the global row would change nothing there.
+      (let [registry-toggle-rows
+            (var-get #'dlg/registry-toggle-rows)
 
-       settings-option-label
-       (var-get #'dlg/settings-option-label)
+            settings-option-label
+            (var-get #'dlg/settings-option-label)
 
-       activate-settings-row!
-       (var-get #'dlg/activate-settings-row!)
+            activate-settings-row!
+            (var-get #'dlg/activate-settings-row!)
 
-       inventory
-       (var-get #'dlg/settings-inventory)
+            inventory
+            (var-get #'dlg/settings-inventory)
 
-       original
-       @inventory
+            original
+            @inventory
 
-       events
-       (atom [])
+            events
+            (atom [])
 
-       shell-note
-       "Project settings turn this off for this session. You can still edit this scope. Use F6 to open Project settings."]
+            shell-note
+            "Project settings turn this off for this session. Change it in Project settings."]
 
-      (try
-        (reset! inventory {:status :ok
-                           :error nil
-                           :groups [{"id" "tools"
-                                     "title" "Tools"
-                                     "toggles" [{"id" "shell"
-                                                 "label" "Shell commands"
-                                                 "type" "boolean"
-                                                 "enabled" true
-                                                 "is_override" true
-                                                 "overridden_by" {"scope" "project"
-                                                                  "enabled" false}}
-                                                {"id" "reasoning_effort"
-                                                 "label" "Reasoning"
-                                                 "type" "enum"
-                                                 "value" "high"
-                                                 "choices" ["low" "high"]
-                                                 "overridden_by" {"scope" "group" "value" "low"}}
-                                                {"id" "plans"
-                                                 "label" "Plan before coding"
-                                                 "type" "boolean"
-                                                 "enabled" true}]}]})
-        (let [[_ shell reasoning plans]
-              (registry-toggle-rows)
+        (try (reset! inventory {:status :ok
+                                :error nil
+                                :groups [{"id" "tools"
+                                          "title" "Tools"
+                                          "toggles"
+                                          [{"id" "shell"
+                                            "label" "Shell commands"
+                                            "type" "boolean"
+                                            "enabled" true
+                                            "is_override" true
+                                            "overridden_by" {"scope" "project" "enabled" false}}
+                                           {"id" "reasoning_effort"
+                                            "label" "Reasoning"
+                                            "type" "enum"
+                                            "value" "high"
+                                            "choices" ["low" "high"]
+                                            "overridden_by" {"scope" "group" "value" "low"}}
+                                           {"id" "plans"
+                                            "label" "Plan before coding"
+                                            "type" "boolean"
+                                            "enabled" true}]}]})
+             (let [[_ shell reasoning plans]
+                   (registry-toggle-rows)
 
-              inherit
-              (assoc shell :type :inherit)]
+                   inherit
+                   (assoc shell :type :inherit)]
 
-          (expect (= shell-note (:override-warning shell)))
-          (expect (true? (:is-override? shell)))
-          (expect (= "Shell commands  [Set here]  [More specific scope]"
-                     (settings-option-label shell {})))
-          (expect (= [:inherit shell-note] [(:type inherit) (:override-warning inherit)]))
-          (expect
-            (=
-              "Group settings set this to low for this session. You can still edit this scope. Use F6 to open Group settings."
-              (:override-warning reasoning)))
-          (expect (= "Reasoning  [More specific scope]" (settings-option-label reasoning {})))
-          (expect (= "high" (#'dlg/settings-option-value reasoning {})))
-          (expect (nil? (:override-warning plans)))
-          (with-redefs-fn {#'dlg/mini-note! (fn [_ _ _ title line]
-                                              (swap! events conj [title line]))
-                           #'dlg/activate-unlocked-row! (fn [& args]
-                                                          (swap! events conj
-                                                            [:changed (:toggle-id (last args))]))}
-            #(doseq [row [shell inherit plans]] (activate-settings-row! nil
-                                                                        nil
-                                                                        nil
-                                                                        (atom {})
-                                                                        {}
-                                                                        row))))
-        (expect (= [[:changed "shell"] [:changed "shell"] [:changed "plans"]] @events))
-        (finally (reset! inventory original))))))
+               (expect (= shell-note (:locked shell)))
+               (expect (true? (:is-override? shell)))
+               (expect (= "Shell commands  [Override]  [Locked]" (settings-option-label shell {})))
+               (expect (= [:inherit shell-note] [(:type inherit) (:locked inherit)]))
+               (expect
+                 (= "Group settings set this to low for this session. Change it in Group settings."
+                    (:locked reasoning)))
+               (expect (= "Reasoning  [Locked]" (settings-option-label reasoning {})))
+               (expect (= "high" (#'dlg/settings-option-value reasoning {})))
+               (expect (nil? (:locked plans)))
+               (with-redefs-fn {#'dlg/mini-note! (fn [_ _ _ title line]
+                                                   (swap! events conj [title line]))
+                                #'dlg/activate-unlocked-row!
+                                (fn [& args]
+                                  (swap! events conj [:changed (:toggle-id (last args))]))}
+                 #(doseq [row [shell inherit plans]] (activate-settings-row! nil
+                                                                             nil
+                                                                             nil
+                                                                             (atom {})
+                                                                             {}
+                                                                             row))))
+             (expect (= [["Locked" shell-note] ["Locked" shell-note] [:changed "plans"]] @events))
+             (finally (reset! inventory original))))))
 
 (defn- back-buffer-text
   "What the last paint asked the terminal to show, one line per screen row."

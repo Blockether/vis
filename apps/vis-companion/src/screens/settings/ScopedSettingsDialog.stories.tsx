@@ -6,7 +6,8 @@ import { ScopedSettingsDialog } from './ScopedSettingsDialog';
 
 const target: SettingsTarget = { scope: 'group', target_id: 'wallet', label: 'Wallet work' };
 const settings: SettingsResponse = {
-  revision: 'story-initial', scope: 'group', target_id: 'wallet',
+  revision: 'wallet-1',
+  scope: 'group', target_id: 'wallet',
   groups: [
     { id: 'agent', title: 'Agent', toggles: [
       { id: 'plans', label: 'Plans', description: 'Plan work before changing files.',
@@ -40,16 +41,19 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** All settings shows catalog sections and scoped resources together. */
+/** Adjacent sections should have one continuous rule, even before MCP servers. */
 export const Catalog: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
-    await userEvent.click(page.getByRole('combobox', { name: 'Settings category' }));
-    await userEvent.click(page.getByRole('option', { name: 'All settings' }));
     const panel = (title: string) => page.getByRole('heading', { name: title }).closest('section');
     await expect(panel('Agent')).toBeVisible();
     await expect(panel('Experimental')).toBeVisible();
     await expect(panel('MCP servers')).toBeVisible();
+    const sections = panel('Agent')?.parentElement;
+    await expect(sections).toHaveClass('divide-y', 'divide-dialog-edge');
+    await expect(Array.from(sections?.children ?? [])).toEqual([
+      panel('Agent'), panel('Experimental'), panel('MCP servers'),
+    ]);
   },
 };
 
@@ -58,7 +62,7 @@ export const NoMatches: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
     await userEvent.type(page.getByRole('searchbox', { name: 'Search settings' }), 'dd');
-    await expect(page.getByText('No settings match “dd”')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'No settings match “dd”' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Clear search' })).toBeVisible();
   },
 };

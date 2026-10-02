@@ -1,5 +1,4 @@
 import { Button, Input, Select, Switch, Text } from '../../components/ui';
-import { IMPROVE_MODE_LABELS, type ImproveMode } from '../../lib/improve';
 import type { SettingValue, Toggle } from '../../lib/types';
 import configSchema from '../../../../../packages/vis-contract/resources/vis-contract/schema/config.json';
 
@@ -352,33 +351,12 @@ function NetworkRules({
   );
 }
 
+/**
+ * The editor for a number, list or object setting. Switches, choices and text
+ * keep their own rows in `MachineSettings`.
+ */
 export function SettingField(props: FieldProps) {
   const { setting, value, onChange, disabled } = props;
-  if (setting.type === 'boolean')
-    return (
-      <Switch
-        label={setting.label}
-        isOn={value === true}
-        disabled={disabled}
-        onClick={() => onChange(value !== true)}
-      />
-    );
-  if (setting.type === 'enum')
-    return (
-      <Select
-        aria-label={setting.label}
-        disabled={disabled}
-        value={String(value)}
-        options={(setting.choices ?? []).map((choice) => ({
-          value: choice,
-          label:
-            setting.id === 'improve_mode'
-              ? (IMPROVE_MODE_LABELS[choice as ImproveMode] ?? choice)
-              : choice,
-        }))}
-        onValueChange={onChange}
-      />
-    );
   if (setting.type === 'number') {
     const schema = numericSchema(setting.schema);
     return (
@@ -402,21 +380,6 @@ export function SettingField(props: FieldProps) {
           if (!error) onChange(number, true);
         }}
       />
-    );
-  }
-  if (setting.type === 'string') {
-    const common = {
-      'aria-label': setting.label,
-      disabled,
-      maxLength: setting.max_length,
-      value: String(value),
-      onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-        onChange(event.target.value),
-    };
-    return setting.multiline || setting.editor === 'multiline' ? (
-      <textarea className={textAreaClass} {...common} />
-    ) : (
-      <Input {...common} />
     );
   }
   const rawEditor = (

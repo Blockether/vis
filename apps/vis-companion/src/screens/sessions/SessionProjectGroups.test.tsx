@@ -516,7 +516,7 @@ describe('ProjectGroup groups', () => {
     await user.click(project);
     expect(screen.getByRole('dialog', { name: 'Project settings' })).toBeInTheDocument();
     await waitFor(() =>
-      expect(read).toHaveBeenCalledWith(expect.any(AbortSignal), { scope: 'project', target_id: ROOT }, undefined),
+      expect(read).toHaveBeenCalledWith(expect.any(AbortSignal), { scope: 'project', target_id: ROOT }),
     );
     await user.click(screen.getByRole('button', { name: 'Close Project settings' }));
     await user.click(screen.getByRole('button', { name: 'Actions for Wallet work' }));
@@ -530,7 +530,7 @@ describe('ProjectGroup groups', () => {
     await user.click(group);
     expect(screen.getByRole('dialog', { name: 'Group settings' })).toBeInTheDocument();
     await waitFor(() =>
-      expect(read).toHaveBeenCalledWith(expect.any(AbortSignal), { scope: 'group', target_id: WALLET }, undefined),
+      expect(read).toHaveBeenCalledWith(expect.any(AbortSignal), { scope: 'group', target_id: WALLET }),
     );
   });
 

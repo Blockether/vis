@@ -2468,13 +2468,17 @@ export function storySettingsFetch(populated = false): typeof fetch {
           : 'Review a versioned plan before implementation.',
     type: 'boolean',
     enabled: false,
-    is_override: false,
-    own_value: false,
-    source: 'global',
-    scopes: ['global', 'project', 'group', 'session'],
     is_experimental: true,
   }));
-  let settingsVersion = 0;
+  const agentName = {
+    id: 'agent_name',
+    label: 'Agent name',
+    type: 'string',
+    value: 'Vis',
+    max_length: 80,
+    source: 'default',
+    is_override: false,
+  };
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const url = new URL(href);
@@ -2483,39 +2487,22 @@ export function storySettingsFetch(populated = false): typeof fetch {
     }
     let body: unknown = {};
     if (url.pathname === '/v1/router') body = { providers: populated ? STORY_PROVIDERS : [] };
-    if (url.pathname === '/v1/settings') {
-      if (init?.method === 'PATCH') {
-        const request = JSON.parse(String(init.body));
-        for (const change of request.changes) {
-          const feature = features.find((item) => item.id === change.id);
-          if (feature) {
-            feature.enabled = change.action === 'value' ? change.value : false;
-            feature.own_value = feature.enabled;
-            feature.is_override = change.action === 'value';
-          }
-        }
-        settingsVersion += 1;
+    if (url.pathname === '/v1/settings' && init?.method === 'POST') {
+      const request = JSON.parse(String(init.body));
+      if (request.id === agentName.id) {
+        agentName.value = String(request.value);
+        body = agentName;
+      } else {
+        const feature = features.find((item) => item.id === request.id);
+        if (feature) feature.enabled = !feature.enabled;
+        body = feature;
       }
+    } else if (url.pathname === '/v1/settings') {
+      // The client caches only a catalog that names its revision.
       body = {
-        revision: `story-${settingsVersion}`,
-        scope: 'global',
+        revision: 'story-settings',
         groups: [
-          {
-            id: 'agent',
-            title: 'Agent',
-            toggles: [
-              {
-                id: 'agent_name',
-                label: 'Agent name',
-                type: 'string',
-                value: 'Vis',
-                editor: 'text',
-                scopes: ['global', 'project', 'group', 'session'],
-                source: 'default',
-                is_override: false,
-              },
-            ],
-          },
+          { id: 'agent', title: 'Agent', toggles: [agentName] },
           { id: 'experimental', title: 'Experimental', toggles: features },
         ],
       };
