@@ -467,7 +467,8 @@ function LoadingSession({ ready, total }: { ready: number; total: number }) {
     : 'Loading recent turns…';
   return (
     <div
-      className="flex min-h-[55vh] items-center justify-center font-mono text-body text-white"
+      // A fast open drops the veil before the label shows, so the label never flashes.
+      className="flex min-h-[55vh] items-center justify-center font-mono text-body text-white transition-opacity delay-500 duration-200 starting:opacity-0 motion-reduce:duration-0"
       role="status"
       aria-label="Loading recent turns"
     >
@@ -581,6 +582,15 @@ function seedRunningTurn(
   // persisted row reaches the transcript. Retain that completed/error bubble too
   // — for as long as it still carries the pixels that made it worth retaining.
   return runningTurnCarriesOutput(cached.turn) ? cached : null;
+}
+
+/** The hub's state now: `subscribeConnection` reports it before it returns. */
+function currentConnection(subscriptions: SessionSubscriptionHub): boolean {
+  let connected = false;
+  subscriptions.subscribeConnection((live) => {
+    connected = live;
+  })();
+  return connected;
 }
 
 export function SessionScreen({
@@ -699,7 +709,11 @@ export function SessionScreen({
   // A cached transcript is already the honest first frame. Reserve the veil for
   // a genuinely cold open while its first transcript page crosses the network.
   const [loading, setLoading] = useState(() => !fresh && openingTranscript === null);
-  const [connected, setConnected] = useState(false);
+  // Open on the hub's real state: a first frame that says "Reconnecting" over a live
+  // socket flashes in the header on every switch.
+  const [connected, setConnected] = useState(() => currentConnection(subscriptions));
+  // A turn that was already running when the screen opened is restored, not new.
+  const [openedAt] = useState(() => Date.now());
   // The bubble this screen re-enters with, resolved ONCE at mount.
   const [runningTurnSeed] = useState(() => seedRunningTurn(client, subscriptions, sid));
   const [running, setRunning] = useState(runningTurnSeed?.turn.status === 'running');
@@ -4476,8 +4490,14 @@ export function SessionScreen({
         : undefined) ??
       runningTurn.attachments ??
       client.cachedSentAttachments(sid, runningTurn.id);
+    // A restored turn lands still, like the transcript it joins. Only a turn that starts
+    // while the reader watches enters with the live animation.
+    const restored = runningTurn.createdAt !== undefined && runningTurn.createdAt < openedAt;
     return (
-      <div className={`${turns.length ? 'mt-10 ' : ''}${transcriptEnterClass}`} data-live="true">
+      <div
+        className={`${turns.length ? 'mt-10 ' : ''}${restored ? '' : transcriptEnterClass}`}
+        data-live="true"
+      >
         {(runningTurn.request || (liveAttachments?.length ?? 0) > 0) && (
           <UserMessage
             position={runningTurn.position}
@@ -4529,6 +4549,7 @@ export function SessionScreen({
   }, [
     runningTurn,
     turns.length,
+    openedAt,
     client,
     sid,
     connected,
@@ -4749,9 +4770,10 @@ export function SessionScreen({
       <WorkspaceRootsContext.Provider value={workspaceRoots}>
         <section
           // Every layer that belongs to THIS session — an opened run, the paste editor —
-          // stands in here, so it covers the pane and never the desk beside it.
+          // stands in here, so it covers the pane and never the desk beside it. The pane
+          // has no entry fade: every switch remounts it, and a fade from blank is a flicker.
           data-session-surface
-          className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-ink transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
+          className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-ink"
         >
           {/* A run BLOCKED on the operator (`vis.request_human_input`) parks until it
            is answered. Its overlay stands in THIS pane, so a waiting question

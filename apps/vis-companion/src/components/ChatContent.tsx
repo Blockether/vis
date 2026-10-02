@@ -31,6 +31,7 @@ import {
   type ActivityProjection,
 } from '../lib/activity';
 import { usePythonCodeShown, useStepsSummarized } from '../lib/transcript-display';
+import { remarkParseCache } from '../lib/markdown-trees';
 import { AlertIcon, ArrowOutIcon, ChevronIcon, ForkIcon, PauseIcon, PlayIcon } from './icons';
 import { artifactShareVerb, shareArtifact } from '../lib/artifact-share';
 import {
@@ -532,6 +533,10 @@ function markdownUrlTransform(url: string): string {
   return attachmentIdFromHref(url) ? url : defaultUrlTransform(url);
 }
 
+/** Messages parse as GitHub markdown; the parse cache serves a text parsed before. */
+const MARKDOWN_PLUGINS = [remarkGfm, remarkParseCache];
+const HARD_BREAK_PLUGINS = [remarkGfm, remarkBreaks, remarkParseCache];
+
 /** Relative links are local names, not routes in the Companion web application. */
 function isLocalHref(href: string): boolean {
   return !/^(?:[a-z][a-z0-9+.-]*:|\/|#|\?)/i.test(href);
@@ -576,7 +581,7 @@ export const Markdown = memo(function Markdown({
         // A newline the model authored is a HARD break in reasoning: the engine's
         // `reasoning->ast` emits `[:br]` for it and the TUI paints it as its own row.
         // CommonMark would otherwise flow those lines into one paragraph.
-        remarkPlugins={hardBreaks ? [remarkGfm, remarkBreaks] : [remarkGfm]}
+        remarkPlugins={hardBreaks ? HARD_BREAK_PLUGINS : MARKDOWN_PLUGINS}
         components={{
           a: ({ children: label, href, title }) => {
             const local = href && isLocalHref(href);
@@ -1167,7 +1172,7 @@ export const InlineMarkdown = memo(function InlineMarkdown({
   if (!links && !INLINE_MARK.test(children)) return <>{children}</>;
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={MARKDOWN_PLUGINS}
       allowedElements={
         links ? ['p', 'strong', 'em', 'del', 'code', 'a'] : ['p', 'strong', 'em', 'del', 'code']
       }
