@@ -256,7 +256,6 @@ kbd {
 }
 .card-meta {
   display: flex;
-  justify-content: space-between;
   flex-wrap: wrap;
   gap: 0.25rem 0.75rem;
   margin-top: 0.75rem;
@@ -265,12 +264,17 @@ kbd {
   color: var(--dim);
   font-size: var(--text-small);
 }
-.card-stars {
+.card-meta > :last-child {
+  margin-left: auto;
+}
+.card-stars,
+.card-downloads {
   display: inline-flex;
   align-items: center;
   gap: 0.3125rem;
 }
-.card-stars svg {
+.card-stars svg,
+.card-downloads svg {
   flex: none;
 }
 .empty {

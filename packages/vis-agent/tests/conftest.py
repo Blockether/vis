@@ -24,3 +24,15 @@ def outside_home(tmp_path, monkeypatch):
     vis.outside.answer_with({})
     yield tmp_path
     vis.outside.answer_with({})
+
+
+@pytest.fixture(autouse=True)
+def counted_downloads(monkeypatch):
+    """Installs record download reports here instead of reaching the live catalog."""
+    from blockether.vis import extension_package
+
+    counted = []
+    monkeypatch.setattr(
+        extension_package, "_count_download", lambda *source: counted.append(source)
+    )
+    return counted

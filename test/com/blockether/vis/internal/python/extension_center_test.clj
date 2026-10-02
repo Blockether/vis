@@ -265,7 +265,8 @@
                "'[project]\\nname=\"vis-release-fixture\"\\nversion=\"' + version + '\"\\n'"
                " + 'description=\"Release fixture\"\\nrequires-python=\">=3.11\"\\n'"
                " + 'dependencies=[\"vis-agent>=0.1.0\"]\\n[tool.vis]\\ncategory=\"tools\"\\n')\n"
-               "    return revision\n")
+               "    return revision\n"
+               "def _count_download(repository, folder):\n" "    return None\n")
 
              package-call
              @invoke

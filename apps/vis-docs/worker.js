@@ -10,7 +10,7 @@ import {
   withRepositoryStats,
 } from './releases.js';
 import { protectedBody } from './antispam.js';
-import { readCommunity, writeCommunity } from './community.js';
+import { countDownload, readCommunity, writeCommunity } from './community.js';
 
 const reply = (body, status = 200, html = false, cache = 'no-store') =>
   new Response(html ? body : JSON.stringify(body), {
@@ -29,12 +29,13 @@ async function catalog(env, origin, ctx) {
   const saved = await cache?.match(key);
   if (saved) return saved.json();
   const { results } = await env.DB.prepare(
-    "SELECT e.id,json_remove(e.metadata,'$.readme') AS metadata,e.added_at,s.stars,s.checked_at FROM extensions e LEFT JOIN repository_stats s ON s.repository_url=lower(json_extract(e.metadata,'$.repository_url')) ORDER BY e.id",
+    "SELECT e.id,json_remove(e.metadata,'$.readme') AS metadata,e.added_at,s.stars,s.checked_at,COALESCE(d.downloads,0) AS downloads FROM extensions e LEFT JOIN repository_stats s ON s.repository_url=lower(json_extract(e.metadata,'$.repository_url')) LEFT JOIN download_counts d ON d.extension_id=e.id ORDER BY e.id",
   ).all();
   const data = {
     extensions: results.map((row) => ({
       ...withRepositoryStats(JSON.parse(row.metadata), row),
       added_at: row.added_at,
+      downloads: row.downloads,
     })),
   };
   if (cache) ctx.waitUntil(cache.put(key, reply(data, 200, false, 'public, max-age=60')));
@@ -180,6 +181,14 @@ async function handle(request, env, ctx) {
     if (path.startsWith('/api/')) return reply({ error: 'Not found.' }, 404);
     return env.ASSETS.fetch(request);
   }
+  const download = path.match(/^\/api\/extensions\/([0-9a-f]{24})\/downloads$/);
+  if (request.method === 'POST' && download) {
+    await countDownload(request, env, download[1]);
+    return new Response(null, {
+      status: 204,
+      headers: { ...security, 'Cache-Control': 'no-store' },
+    });
+  }
   const feedback = path.match(
     /^\/api\/extensions\/([0-9a-f]{24})\/(?:(vote|comments)|comments\/([1-9][0-9]{0,15})\/vote)$/,
   );
@@ -227,6 +236,10 @@ export default {
         refreshRepositoryStats(env),
         env.DB.prepare('DELETE FROM github_budget WHERE hour < ?')
           .bind(new Date(Date.now() - 2 * 3600 * 1000).toISOString().slice(0, 13))
+          .run(),
+        // Download marks only deduplicate the current UTC day.
+        env.DB.prepare('DELETE FROM download_marks WHERE day < ?')
+          .bind(new Date().toISOString().slice(0, 10))
           .run(),
       ]),
     );

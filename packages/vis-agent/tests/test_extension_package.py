@@ -19,6 +19,8 @@ category = "tools"
 source_paths = ["src"]
 """
 REPOSITORY = "https://github.com/example/extensions"
+# The conftest replaces the network report in every test; this keeps the real one.
+COUNT_DOWNLOAD = package._count_download
 
 
 def project(directory, manifest=MANIFEST):
@@ -829,6 +831,115 @@ def test_malformed_or_oversized_catalog_responses_fail_closed(monkeypatch, body)
     )
     with pytest.raises(ValueError):
         package._catalog(REPOSITORY, "")
+
+
+def test_download_report_posts_the_catalog_identifier_once(monkeypatch):
+    requests = []
+
+    def open_request(request, timeout):
+        requests.append(
+            (
+                request.get_method(),
+                request.full_url,
+                request.data,
+                request.get_header("User-agent"),
+                timeout,
+            )
+        )
+        return io.BytesIO(b"")
+
+    def opener(handler):
+        assert (
+            handler.redirect_request(
+                None, None, 302, None, None, "https://other.example.com"
+            )
+            is None
+        )
+        return SimpleNamespace(open=open_request)
+
+    monkeypatch.setattr(package, "build_opener", opener)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    assert COUNT_DOWNLOAD(REPOSITORY, "plugins/greeting") is None
+    identity = package._catalog_identity(REPOSITORY, "plugins/greeting")
+    assert requests == [
+        (
+            "POST",
+            "https://vis.blockether.com/api/extensions/" + identity + "/downloads",
+            b"",
+            "Vis-Extension-Installer",
+            5,
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        package.URLError("offline"),
+        package.HTTPError(package.CATALOG, 503, "Unavailable", {}, None),
+        TimeoutError("slow"),
+        package.HTTPException("malformed response"),
+    ],
+)
+def test_download_report_failures_never_fail_the_installation(monkeypatch, error):
+    def fail(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr(package, "build_opener", lambda *_: SimpleNamespace(open=fail))
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    assert COUNT_DOWNLOAD(REPOSITORY, "") is None
+
+
+@pytest.mark.parametrize(
+    "value, sent", [("1", False), ("true", False), ("0", True), ("", True)]
+)
+def test_do_not_track_skips_the_download_report(monkeypatch, value, sent):
+    requests = []
+    monkeypatch.setattr(
+        package,
+        "build_opener",
+        lambda *_: SimpleNamespace(
+            open=lambda request, timeout: requests.append(request) or io.BytesIO(b"")
+        ),
+    )
+    monkeypatch.setenv("DO_NOT_TRACK", value)
+    COUNT_DOWNLOAD(REPOSITORY, "")
+    assert len(requests) == int(sent)
+
+
+def test_only_fetched_approved_releases_count_as_downloads(
+    releases, counted_downloads, tmp_path
+):
+    metadata, target, _ = releases
+    folder = "plugins/greeting"
+    package.install(
+        REPOSITORY, target, trust=True, subdirectory=folder, version="1.0.0"
+    )
+    package.versions(REPOSITORY, folder, target)
+    package.update(REPOSITORY, target, trust=True, version="1.0.0")
+    assert counted_downloads == [(REPOSITORY, folder)]
+    package.update(REPOSITORY, target, trust=True)
+    package.rollback(REPOSITORY, target, trust=True)
+    package.update(REPOSITORY, target, trust=True)
+    assert counted_downloads == [(REPOSITORY, folder)] * 2
+    package.install(
+        REPOSITORY,
+        tmp_path / "pinned",
+        trust=True,
+        subdirectory=folder,
+        revision=metadata[0]["revision"],
+    )
+    package.install(tmp_path / "repository" / folder, tmp_path / "linked", trust=True)
+    metadata[1] = {**metadata[1], "version": "1.0.1"}
+    with pytest.raises(ValueError, match="does not match the approved release"):
+        package.install(
+            REPOSITORY,
+            tmp_path / "mismatch",
+            trust=True,
+            subdirectory=folder,
+            version="1.0.1",
+        )
+    assert counted_downloads == [(REPOSITORY, folder)] * 2
 
 
 def test_prerelease_only_needs_explicit_selection_and_update_never_downgrades(releases):

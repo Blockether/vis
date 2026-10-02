@@ -20,6 +20,8 @@ changes.
   the version that worked.
 - **You want to share your extension.** [Publish it](#publish-a-package) through
   GitHub Releases.
+- **You do not want your installs to count as downloads.** [Download
+  counts](#download-counts) explains what Vis reports and how to turn it off.
 
 For your first tool, start with [Extending Vis](extending.md). If you already have a
 uv package, follow [Using an existing Python project](extension-development.md).
@@ -373,6 +375,25 @@ Do not edit receipts or delete versions you still need. Local development links 
 unmanaged directories are never replaced by `update` or `rollback`. Use their source
 workflow instead. Old installation layouts are not loaded or migrated. Preserve any
 local edits before removing an old installation and installing it again.
+
+### Download counts
+
+The Extension Center shows how many times each extension was downloaded. Vis reports
+one download after it fetches an approved release to install, update, roll back or sync
+an extension. The report contains only the catalog identifier of the extension. A failed
+report does not affect the installation.
+
+The Extension Center counts each network address one time for each extension in one UTC
+day. It does not store the address. It keeps a private code for that day only, to prevent
+repeated counts. Several computers on one network count as one download on that day.
+Vis does not report a version that is already on your computer, a pinned commit or a
+local folder.
+
+To stop these reports, set `DO_NOT_TRACK=1` in your environment:
+
+```bash
+DO_NOT_TRACK=1 vis-agent extension install example/greeting --project --trust
+```
 
 ## Publish a package
 

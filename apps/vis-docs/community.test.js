@@ -52,6 +52,18 @@ const approve = async (reference) => {
   for (const sql of moderationStatements('approve-comment', String(reference)))
     await fixture.db.prepare(sql).run();
 };
+const download = (headers = {}, key = id) =>
+  fixture.runtime.dispatchFetch(`${origin}/api/extensions/${key}/downloads`, {
+    method: 'POST',
+    headers: { 'User-Agent': 'Vis-Extension-Installer', 'CF-Connecting-IP': ip(), ...headers },
+  });
+const downloads = async (key = id) =>
+  (
+    await fixture.db
+      .prepare('SELECT downloads FROM download_counts WHERE extension_id=?')
+      .bind(key)
+      .first()
+  )?.downloads ?? 0;
 
 test('community starts empty, private and bound to a listed package', async () => {
   const response = await get();
@@ -166,10 +178,43 @@ test('pagination is bounded, stable and excludes pending rows', async () => {
   expect(new Set([...first.comments, ...second.comments].map((row) => row.id)).size).toBe(52);
   expect((await get(id, '?before=-1')).status).toBe(400);
 });
-test('deleting a listing removes its comments and votes', async () => {
+test('deleting a listing removes its comments, votes and download counts', async () => {
   await post('vote', { value: 1 });
   await post('comments', { name: 'Reader', body: 'Feedback' });
+  await download();
   await fixture.db.prepare('DELETE FROM extensions WHERE id=?').bind(id).run();
-  for (const table of ['comments', 'package_votes', 'comment_votes'])
+  for (const table of [
+    'comments',
+    'package_votes',
+    'comment_votes',
+    'download_counts',
+    'download_marks',
+  ])
     expect((await fixture.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first()).n).toBe(0);
+});
+test('installer downloads count once per network and UTC day without storing addresses', async () => {
+  const first = await download();
+  expect(first.status).toBe(204);
+  expect(first.headers.get('cache-control')).toBe('no-store');
+  expect(await first.text()).toBe('');
+  expect((await download()).status).toBe(204);
+  expect(await downloads()).toBe(1);
+  expect((await download({ 'CF-Connecting-IP': '10.9.9.9' })).status).toBe(204);
+  expect(await downloads()).toBe(2);
+  expect(await downloads(other)).toBe(0);
+  await post('vote', { value: 1 });
+  const voter = (await fixture.db.prepare('SELECT voter FROM package_votes').first()).voter;
+  const { results } = await fixture.db.prepare('SELECT day,network FROM download_marks').all();
+  expect(results).toHaveLength(2);
+  for (const mark of results) {
+    expect(mark.day).toBe(new Date().toISOString().slice(0, 10));
+    expect(mark.network).toMatch(/^[0-9a-f]{64}$/);
+    expect(mark.network).not.toBe(voter);
+  }
+  expect(JSON.stringify(results)).not.toContain('10.');
+});
+test('download reports refuse browsers and unlisted packages', async () => {
+  expect((await download({ Origin: origin })).status).toBe(403);
+  expect((await download({}, '3'.repeat(24))).status).toBe(404);
+  expect(await downloads()).toBe(0);
 });

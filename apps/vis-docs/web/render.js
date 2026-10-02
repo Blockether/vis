@@ -11,6 +11,7 @@ import { readmeHTML } from './readme.js';
 import { communityHTML } from './community.js';
 export const sorts = {
   stars: 'Most stars',
+  downloads: 'Most downloads',
   updated: 'Recently updated',
   newest: 'Recently added',
   name: 'Name: A–Z',
@@ -115,10 +116,12 @@ export function visibleItems(items, state) {
       (a, b) =>
         (state.sort === 'stars'
           ? b.stars - a.stars
-          : state.sort === 'name'
-            ? 0
-            : Date.parse(b[state.sort === 'newest' ? 'added_at' : 'updated_at']) -
-              Date.parse(a[state.sort === 'newest' ? 'added_at' : 'updated_at'])) ||
+          : state.sort === 'downloads'
+            ? (b.downloads ?? 0) - (a.downloads ?? 0)
+            : state.sort === 'name'
+              ? 0
+              : Date.parse(b[state.sort === 'newest' ? 'added_at' : 'updated_at']) -
+                Date.parse(a[state.sort === 'newest' ? 'added_at' : 'updated_at'])) ||
         extensionName(a).localeCompare(extensionName(b)) ||
         a.id.localeCompare(b.id),
     );
@@ -157,6 +160,12 @@ function tagsHTML(item) {
 }
 const starIcon =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.8L12 16.9l-5.25 2.7 1-5.8L3.5 9.7l5.9-.9z"/></svg>';
+const downloadIcon =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/></svg>';
+const compactNumber = new Intl.NumberFormat('en', {
+  notation: 'compact',
+  maximumFractionDigits: 1,
+});
 export function cardsHTML(items, state) {
   const visible = visibleItems(items, state);
   if (!visible.length)
@@ -165,7 +174,7 @@ export function cardsHTML(items, state) {
     .map((item) => {
       const name = extensionName(item);
       const separator = name.indexOf('/');
-      return `<article class="extension-card" data-name="${escapeHTML(name)}"><a class="card-main" href="${escapeHTML(extensionPath(item))}${filterURL(state).slice('/extensions/'.length)}"><div class="extension-title"><h3>${escapeHTML(name.slice(separator + 1))}</h3>${officialBadgeHTML(item)}</div><p class="card-publisher">${escapeHTML(name.slice(0, separator))} · v${escapeHTML(item.version)}</p><p class="card-description">${escapeHTML(item.description)}</p></a>${tagsHTML(item)}<div class="card-meta"><span class="card-stars">${starIcon}${escapeHTML(new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(item.stars))}<span class="sr-only"> stars</span></span><span>Updated ${dateLabel(item.updated_at)}</span></div></article>`;
+      return `<article class="extension-card" data-name="${escapeHTML(name)}"><a class="card-main" href="${escapeHTML(extensionPath(item))}${filterURL(state).slice('/extensions/'.length)}"><div class="extension-title"><h3>${escapeHTML(name.slice(separator + 1))}</h3>${officialBadgeHTML(item)}</div><p class="card-publisher">${escapeHTML(name.slice(0, separator))} · v${escapeHTML(item.version)}</p><p class="card-description">${escapeHTML(item.description)}</p></a>${tagsHTML(item)}<div class="card-meta"><span class="card-stars">${starIcon}${escapeHTML(compactNumber.format(item.stars))}<span class="sr-only"> stars</span></span><span class="card-downloads">${downloadIcon}${escapeHTML(compactNumber.format(item.downloads ?? 0))}<span class="sr-only"> downloads</span></span><span>Updated ${dateLabel(item.updated_at)}</span></div></article>`;
     })
     .join('');
 }
@@ -183,7 +192,7 @@ export function detailHTML(item) {
     <section class="install-section"><h2 id="install">Install</h2>${releaseHTML(item)}<p>This command selects version ${escapeHTML(item.version)} at its approved commit. It never follows a moving tag or branch.</p><label class="install-scope" for="install-scope">Install for<select id="install-scope" aria-describedby="install-scope-help"><option value="project">Project</option><option value="global">Global</option></select></label><p id="install-scope-help" class="help">${installScopeHelp()}</p><p class="security-note">Review the source first. --trust allows extension code and build backends to run with your permissions.</p><pre id="install-command" tabindex="0" aria-label="Install command"><code class="language-bash">${installCommandHTML(item)}</code></pre><button id="copy-command" type="button" class="primary" aria-describedby="copy-status">Copy install command</button><p id="copy-status" role="status"></p><p class="help">Then start Vis or use /reload. Dependencies are prepared automatically.</p><details><summary>Already installed? Check, update or roll back</summary><pre><code class="language-bash">${escapeHTML(`vis-agent extension versions ${catalogSelector(item)}
 vis-agent extension update ${catalogSelector(item)} --trust
 vis-agent extension rollback ${catalogSelector(item)} --trust`)}</code></pre><p class="help">Use the identifier shown above, not the Python package name. Add --project for a project installation. Update selects the latest approved stable version; rollback restores the previous pinned source. <a href="/extension-packages.html#check-for-updates-and-roll-back">Choose a specific version and read the lifecycle contract</a>.</p></details></section>
-    <div class="project-details"><h2 id="project-details">Project details</h2><dl class="facts">${fact('Version', item.version) + fact('Extension', extensionName(item)) + fact('Project folder', item.subdirectory || 'Repository root') + fact('License', item.license && item.license !== 'NOASSERTION' ? item.license : 'Not specified') + fact('GitHub stars', item.stars) + fact('Updated', dateLabel(item.updated_at))}<dt>GitHub owner</dt><dd>${link(item.owner, 'https://github.com/' + item.owner, '', 'github-owner')}</dd><dt>Reviewed commit</dt><dd>${link(item.revision.slice(0, 12), item.repository_url + '/commit/' + item.revision)}</dd>${item.checked_at ? fact('Metadata checked', dateLabel(item.checked_at)) : ''}${item.archived ? fact('Repository status', 'Archived on GitHub') : ''}</dl><div class="actions">${link('View source on GitHub', item.source_url, '', 'source-link')}${link('pyproject.toml', item.manifest_url)}${item.readme_url ? link('Read README', item.readme_url) : ''}</div><h2 id="dependencies">Dependencies</h2><p>Python ${escapeHTML(item.requires_python)}</p><ul class="dependencies">${item.dependencies.map((dep) => `<li>${escapeHTML(dep)}</li>`).join('')}</ul></div>
+    <div class="project-details"><h2 id="project-details">Project details</h2><dl class="facts">${fact('Version', item.version) + fact('Extension', extensionName(item)) + fact('Project folder', item.subdirectory || 'Repository root') + fact('License', item.license && item.license !== 'NOASSERTION' ? item.license : 'Not specified') + fact('GitHub stars', item.stars) + fact('Downloads', item.downloads ?? 0) + fact('Updated', dateLabel(item.updated_at))}<dt>GitHub owner</dt><dd>${link(item.owner, 'https://github.com/' + item.owner, '', 'github-owner')}</dd><dt>Reviewed commit</dt><dd>${link(item.revision.slice(0, 12), item.repository_url + '/commit/' + item.revision)}</dd>${item.checked_at ? fact('Metadata checked', dateLabel(item.checked_at)) : ''}${item.archived ? fact('Repository status', 'Archived on GitHub') : ''}</dl><div class="actions">${link('View source on GitHub', item.source_url, '', 'source-link')}${link('pyproject.toml', item.manifest_url)}${item.readme_url ? link('Read README', item.readme_url) : ''}</div><h2 id="dependencies">Dependencies</h2><p>Python ${escapeHTML(item.requires_python)}</p><ul class="dependencies">${item.dependencies.map((dep) => `<li>${escapeHTML(dep)}</li>`).join('')}</ul></div>
     <section class="package-readme" aria-labelledby="readme"><h2 id="readme">README</h2>${readmeHTML(item)}</section>${communityHTML()}`;
 }
 export function tocHTML(detail = false) {

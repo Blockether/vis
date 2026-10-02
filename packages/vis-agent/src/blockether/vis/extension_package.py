@@ -14,6 +14,7 @@ import sys
 import tempfile
 import tomllib
 import uuid
+from http.client import HTTPException
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit
@@ -350,12 +351,15 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def _catalog(repository, subdirectory):
-    identity = hashlib.sha256(
+def _catalog_identity(repository, subdirectory):
+    return hashlib.sha256(
         (repository.lower() + "\n" + subdirectory).encode()
     ).hexdigest()[:24]
+
+
+def _catalog(repository, subdirectory):
     request = Request(
-        CATALOG + "/api/extensions/" + identity,
+        CATALOG + "/api/extensions/" + _catalog_identity(repository, subdirectory),
         headers={"Accept": "application/json", "User-Agent": "Vis-Extension-Installer"},
     )
     try:
@@ -376,6 +380,30 @@ def _catalog(repository, subdirectory):
         raise ValueError(
             "Extension Center is unavailable; no code was changed"
         ) from exc
+
+
+def _count_download(repository, subdirectory):
+    """Count one fetched approved release in Extension Center; failures never affect it.
+
+    The request repeats only the catalog identifier that release selection already sent.
+    Set `DO_NOT_TRACK` to skip it.
+    """
+    if os.environ.get("DO_NOT_TRACK", "").strip().lower() not in ("", "0", "false"):
+        return
+    request = Request(
+        CATALOG
+        + "/api/extensions/"
+        + _catalog_identity(repository, subdirectory)
+        + "/downloads",
+        data=b"",
+        headers={"User-Agent": "Vis-Extension-Installer"},
+        method="POST",
+    )
+    try:
+        with build_opener(_NoRedirect()).open(request, timeout=5):
+            pass
+    except (OSError, HTTPException):
+        pass
 
 
 def _releases(repository, subdirectory):
@@ -791,6 +819,8 @@ def _admit(
                 raise
         finally:
             lock.unlink()
+    if release and cached is None:
+        _count_download(repository, subdirectory)
     result = {
         "name": metadata["name"],
         "repository": repository.removeprefix("https://github.com/")

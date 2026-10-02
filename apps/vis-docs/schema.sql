@@ -68,3 +68,15 @@ CREATE TABLE IF NOT EXISTS github_budget (
   hour TEXT PRIMARY KEY,
   calls INTEGER NOT NULL CHECK(calls >= 0)
 );
+-- Installer downloads count once per package, network and UTC day. Marks hold a private HMAC,
+-- never a raw IP, and scheduled work deletes them after that day.
+CREATE TABLE IF NOT EXISTS download_counts (
+  extension_id TEXT PRIMARY KEY REFERENCES extensions(id) ON DELETE CASCADE,
+  downloads INTEGER NOT NULL CHECK(downloads >= 0)
+);
+CREATE TABLE IF NOT EXISTS download_marks (
+  day TEXT NOT NULL,
+  extension_id TEXT NOT NULL REFERENCES extensions(id) ON DELETE CASCADE,
+  network TEXT NOT NULL,
+  PRIMARY KEY(day,extension_id,network)
+);

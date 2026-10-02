@@ -3,7 +3,7 @@ import { protectedBody } from './antispam.js';
 
 // Network addresses never enter D1 or public responses. This is abuse mitigation,
 // not person-level authentication: shared networks share a vote; addresses can change.
-async function voterKey(request, env) {
+async function voterKey(request, env, purpose = 'extension-community') {
   const address = request.headers.get('CF-Connecting-IP');
   if (!address || !env.TURNSTILE_SECRET_KEY) return '';
   const encoder = new TextEncoder();
@@ -14,11 +14,7 @@ async function voterKey(request, env) {
     false,
     ['sign'],
   );
-  const digest = await crypto.subtle.sign(
-    'HMAC',
-    key,
-    encoder.encode('extension-community\n' + address),
-  );
+  const digest = await crypto.subtle.sign('HMAC', key, encoder.encode(purpose + '\n' + address));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 const votes = (row) => ({
@@ -133,4 +129,25 @@ export async function writeCommunity(request, env, id, kind, commentId) {
         .first(),
     ),
   };
+}
+
+// The installer reports each fetched release. A separate HMAC purpose keeps download marks
+// unlinkable to votes and comments. Browsers always send Origin, so pages cannot add counts.
+export async function countDownload(request, env, id) {
+  if (request.headers.has('Origin'))
+    throw new RequestError('Only the Vis installer reports downloads.', 403);
+  if (!(await env.DB.prepare('SELECT id FROM extensions WHERE id=?').bind(id).first()))
+    throw new RequestError('Repository not listed.', 404);
+  const network = await voterKey(request, env, 'extension-download');
+  const mark = await env.DB.prepare(
+    'INSERT OR IGNORE INTO download_marks (day,extension_id,network) VALUES (?,?,?)',
+  )
+    .bind(new Date().toISOString().slice(0, 10), id, network)
+    .run();
+  if (mark.meta.changes)
+    await env.DB.prepare(
+      'INSERT INTO download_counts (extension_id,downloads) VALUES (?,1) ON CONFLICT(extension_id) DO UPDATE SET downloads=downloads+1',
+    )
+      .bind(id)
+      .run();
 }

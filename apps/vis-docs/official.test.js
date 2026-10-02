@@ -130,10 +130,10 @@ test('official badges sit beside the extension title in every view', () => {
   }
 });
 
-test('cards show the repository name and badge, then owner and version, then stars', () => {
-  const card = JSDOM.fragment(cardsHTML([{ ...official, stars: 1234 }], filters())).querySelector(
-    '.extension-card',
-  );
+test('cards show the repository name and badge, then owner and version, then stars and downloads', () => {
+  const card = JSDOM.fragment(
+    cardsHTML([{ ...official, stars: 1234, downloads: 56789 }], filters()),
+  ).querySelector('.extension-card');
   expect(card.dataset.name).toBe('blockether/vis-lang-clojure');
   expect(card.querySelector('.card-main .extension-title > h3').textContent).toBe(
     'vis-lang-clojure',
@@ -146,4 +146,11 @@ test('cards show the repository name and badge, then owner and version, then sta
   expect(stars.textContent).toBe('1.2K stars');
   expect(stars.querySelector('svg').getAttribute('aria-hidden')).toBe('true');
   expect(stars.querySelector('.sr-only').textContent).toBe(' stars');
+  const downloads = stars.nextElementSibling;
+  expect(downloads.className).toBe('card-downloads');
+  expect(downloads.textContent).toBe('56.8K downloads');
+  expect(downloads.querySelector('svg').getAttribute('aria-hidden')).toBe('true');
+  expect(downloads.nextElementSibling.textContent).toMatch(/^Updated /);
+  const missing = JSDOM.fragment(cardsHTML([{ ...official, downloads: undefined }], filters()));
+  expect(missing.querySelector('.card-downloads').textContent).toBe('0 downloads');
 });

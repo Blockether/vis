@@ -110,3 +110,23 @@ test.each(['private', 'invalid'])('%s GitHub responses never invent a count', as
   expect((await get('/api/extensions/' + item.id)).stars).toBe(12);
   expect((await get('/api/extensions/' + item.id)).stars_checked_at).toBeNull();
 });
+
+test('download counts appear in list and detail, and scheduled work deletes earlier marks', async () => {
+  const item = await listing(30);
+  expect((await get('/api/extensions')).extensions[0].downloads).toBe(0);
+  const today = new Date().toISOString().slice(0, 10);
+  await fixture.db.batch([
+    fixture.db.prepare('INSERT INTO download_counts VALUES (?,?)').bind(item.id, 7),
+    ...[
+      ['2000-01-01', 'earlier'],
+      [today, 'today'],
+    ].map(([day, network]) =>
+      fixture.db.prepare('INSERT INTO download_marks VALUES (?,?,?)').bind(day, item.id, network),
+    ),
+  ]);
+  await tick();
+  expect((await get('/api/extensions')).extensions[0].downloads).toBe(7);
+  expect((await get('/api/extensions/' + item.id)).downloads).toBe(7);
+  const { results } = await fixture.db.prepare('SELECT network FROM download_marks').all();
+  expect(results.map((row) => row.network)).toEqual(['today']);
+});

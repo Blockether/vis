@@ -214,6 +214,16 @@ previous snapshot and delay retries; refresh latency also depends on catalog siz
 List responses may keep their previous snapshot for another 60 seconds. License and
 source dates remain snapshots from release inspection.
 
+Download counts come from the Vis installer. After it fetches an approved release to
+install, update, roll back or sync a package, it sends `POST /api/extensions/<id>/downloads`
+without a body and receives `204`. Requests with an `Origin` header get `403`, so web pages
+cannot add counts. A network address counts once per listing and UTC day. `download_marks`
+stores an HMAC with its own purpose, never the raw address, and the scheduled handler
+deletes earlier days. Catalog and detail responses include `downloads`, zero by default.
+Deleting a listing cascades to its count. The installer skips the report when
+`DO_NOT_TRACK` is set and never fails an installation because of it. Counts are usage
+signals, not unique people: shared networks count once a day.
+
 `GET /api/extensions/ID` and `GET /api/extensions/owner/repository[/folder]`
 return the default version, `latest_version` and approved `releases` summaries.
 For example, `/api/extensions/Blockether/vis-lang-python` looks up that listed

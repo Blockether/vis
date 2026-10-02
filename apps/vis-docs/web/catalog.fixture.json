@@ -19,6 +19,7 @@
     "manifest_url": "https://github.com/example/github-tools/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pyproject.toml",
     "readme_url": "https://github.com/example/github-tools/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/README.md",
     "stars": 248,
+    "downloads": 1840,
     "topics": [
       "tools",
       "github-tools"
@@ -53,6 +54,7 @@
     "manifest_url": "https://github.com/example/web-search/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pyproject.toml",
     "readme_url": "https://github.com/example/web-search/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/README.md",
     "stars": 186,
+    "downloads": 5230,
     "topics": [
       "tools",
       "web-search"
@@ -87,6 +89,7 @@
     "manifest_url": "https://github.com/example/code-review/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pyproject.toml",
     "readme_url": "https://github.com/example/code-review/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/README.md",
     "stars": 94,
+    "downloads": 610,
     "topics": [
       "workflows",
       "code-review"
@@ -121,6 +124,7 @@
     "manifest_url": "https://github.com/example/local-models/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pyproject.toml",
     "readme_url": "https://github.com/example/local-models/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/README.md",
     "stars": 132,
+    "downloads": 2975,
     "topics": [
       "providers",
       "local-models"
@@ -155,6 +159,7 @@
     "manifest_url": "https://github.com/example/browser-tools/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pyproject.toml",
     "readme_url": "https://github.com/example/browser-tools/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/README.md",
     "stars": 217,
+    "downloads": 3120,
     "topics": [
       "tools",
       "browser-tools"
@@ -189,6 +194,7 @@
     "manifest_url": "https://github.com/example/extension-examples/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/extensions/greeting/pyproject.toml",
     "readme_url": "https://github.com/example/extension-examples/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/extensions/greeting/README.md",
     "stars": 12,
+    "downloads": 85,
     "topics": [
       "tools",
       "extension-examples"

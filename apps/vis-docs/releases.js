@@ -66,7 +66,7 @@ export function withRepositoryStats(metadata, stats) {
 
 export async function extensionDetail(env, id, version = null) {
   const row = await env.DB.prepare(
-    "SELECT e.metadata,e.added_at,s.stars,s.checked_at FROM extensions e LEFT JOIN repository_stats s ON s.repository_url=lower(json_extract(e.metadata,'$.repository_url')) WHERE e.id=?",
+    "SELECT e.metadata,e.added_at,s.stars,s.checked_at,COALESCE(d.downloads,0) AS downloads FROM extensions e LEFT JOIN repository_stats s ON s.repository_url=lower(json_extract(e.metadata,'$.repository_url')) LEFT JOIN download_counts d ON d.extension_id=e.id WHERE e.id=?",
   )
     .bind(id)
     .first();
@@ -93,6 +93,7 @@ export async function extensionDetail(env, id, version = null) {
   return {
     ...withRepositoryStats(JSON.parse(selected.metadata), row),
     added_at: row.added_at,
+    downloads: row.downloads,
     latest_version: latest.version,
     releases,
   };

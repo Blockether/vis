@@ -136,6 +136,7 @@ test('sort controls affect real results and persist when the search form is subm
   await tick();
   expect(names()[0]).toBe('example/github-tools');
   for (const [sort, expected] of [
+    ['downloads', 'example/web-search'],
     ['updated', 'example/extension-examples'],
     ['newest', 'example/extension-examples'],
     ['name', 'example/browser-tools'],
