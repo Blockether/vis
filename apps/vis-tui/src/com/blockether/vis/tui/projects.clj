@@ -12,7 +12,10 @@
             [com.blockether.vis.tui.theme :as t])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.gui2 HitRegionMap]
-           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]))
+           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
+           [java.time Instant ZoneId]
+           [java.time.format DateTimeFormatter]
+           [java.util Locale]))
 
 (defonce ^HitRegionMap hit-map (interactions/create-hit-map))
 
@@ -151,18 +154,18 @@
           0
           (max 0 (long (or (get session "unread_answers") 0))))]
 
-    (cond (or (get session "archived_at") group-archived?) "ARCHIVED"
+    (cond (or (get session "archived_at") group-archived?) "Archived"
           (true? (get session "is_awaiting_input"))
           (let [n (long (or (get session "awaiting_input_count") 1))]
             (if (> n 1) (str "HITL ×" n) "HITL"))
-          live? "LIVE"
+          live? "Live"
           (and (or (true? (get session "was_interrupted")) (true? (get session "was_failed")))
                (pos? unread))
-          "STOPPED"
-          (pos? unread) (if (> unread 1) (str "NEW ×" unread) "NEW")
-          (= "suspended" (get session "status")) "WAITING"
-          dirty? "DIRTY"
-          :else "IDLE")))
+          "Stopped"
+          (pos? unread) (if (> unread 1) (str "New ×" unread) "New")
+          (= "suspended" (get session "status")) "Waiting"
+          dirty? "Dirty"
+          :else "Idle")))
 
 (defn- saved-entries
   "Rows from gateway windows. Open TUI views are never the source of the inventory."
@@ -637,63 +640,73 @@
         active? t/input-field-bg
         :else t/terminal-bg))
 
-(defn- session-age
-  [modified]
-  (when-let [ms (dlg/date->millis modified)]
-    (let [elapsed (max 0 (quot (- (System/currentTimeMillis) ms) 60000))]
-      (cond (< elapsed 60) (str elapsed "m")
-            (< elapsed 1440) (str (quot elapsed 60) "h")
-            :else (str (quot elapsed 1440) "d")))))
+(defn session-time-label
+  "When a session last changed, worded like the companion app: relative inside
+   the last day, then the date and time, with the year only when it differs."
+  ([value] (session-time-label value (System/currentTimeMillis) (ZoneId/systemDefault)))
+  ([value now-ms ^ZoneId zone]
+   (when-let [ms (dlg/date->millis value)]
+     (let [now-ms (long now-ms)
+           minutes (quot (max 0 (- now-ms (long ms))) 60000)]
+
+       (cond (< minutes 1) "now"
+             (< minutes 60) (str minutes " min ago")
+             (< minutes 120) "1 hour ago"
+             (< minutes 1440) (str (quot minutes 60) " hours ago")
+             :else (let [then (.atZone (Instant/ofEpochMilli (long ms)) zone)
+                         now (.atZone (Instant/ofEpochMilli now-ms) zone)]
+
+                     (.format (DateTimeFormatter/ofPattern
+                                (if (= (.getYear then) (.getYear now)) "MMM d HH:mm" "MMM d, yyyy")
+                                Locale/ENGLISH)
+                              then)))))))
+
+(defn- session-status-label
+  "The status that a session row shows, after a star for a favorite."
+  [entry]
+  (str (when (:favorite? entry) "* ") (:status entry)))
 
 (defn- paint-session-status!
-  "Show session activity (and favorite) in a stable column."
+  "Paint the session status in bold, in the companion app's colour for it."
   [g entry col row available selected-ink]
-  (let [state
-        (:status entry)
-
-        ink
-        (or selected-ink
-            (cond (= state "LIVE") t/status-ok
-                  (= state "STOPPED") t/status-bad
-                  (or (str/starts-with? state "HITL")
-                      (str/starts-with? state "NEW")
-                      (#{"WAITING" "DIRTY"} state))
-                  t/warning-fg
-                  :else t/dialog-hint-key))
-
-        label
-        (str (when (:favorite? entry) "* ") state)]
-
-    (p/set-colors! g ink t/dialog-bg)
-    (p/put-str! g col row (p/truncate-cols label (max 0 available)))))
+  (p/set-colors! g (or selected-ink (dlg/session-status-ink (:status entry))) t/dialog-bg)
+  (p/styled
+    g
+    [p/BOLD]
+    (p/put-str! g col row (p/truncate-cols (session-status-label entry) (max 0 (long available))))))
 
 (defn- paint-session-meta!
-  "Place activity and metadata in an adaptive second row, aligned with the title."
-  [g entry left width col row selected-ink]
-  (let [left
-        (long left)
+  "Paint the second row of a session from `col`: its status when the rail is
+   narrow, then when it last changed and how many turns it has. The turns, then
+   the date, give way before the row passes `right`."
+  [g entry col row right selected-ink status?]
+  (let [col
+        (long col)
 
-        width
-        (long width)
+        right
+        (long right)
 
-        col
-        (long col)]
+        start
+        (if status? (+ col (long (p/display-width (session-status-label entry)))) col)
 
-    (when (< width 48)
-      (paint-session-status! g
-                             entry
-                             col
-                             row
-                             (max 0 (- (+ left width) col (if (>= width 38) 17 5)))
-                             selected-ink))
-    (when (>= width 38)
-      (p/set-colors! g (or selected-ink t/dialog-hint-key) t/dialog-bg)
-      (when (>= width 48)
-        (p/put-str! g col row (p/truncate-cols (str (get-in entry [:session "id"])) 10)))
-      (when (pos? (long (:turns entry)))
-        (p/put-str! g (- (+ left width) 15) row (p/truncate-cols (str (:turns entry) "t") 6)))
-      (when-let [age (session-age (:modified-at entry))]
-        (p/put-str! g (- (+ left width) 6) row (p/truncate-cols age 4))))))
+        turns
+        (long (or (:turns entry) 0))
+
+        changed
+        (session-time-label (:modified-at entry))
+
+        details
+        (->> [(remove nil?
+                [changed (when (pos? turns) (str turns (if (= 1 turns) " turn" " turns")))])
+              (remove nil? [changed])]
+             (map #(cond->> (str/join " · " %) (and status? (seq %)) (str " · ")))
+             (filter #(<= (+ start (long (p/display-width %))) (inc right)))
+             first)]
+
+    (when status? (paint-session-status! g entry col row (max 0 (- (inc right) col)) selected-ink))
+    (when (seq details)
+      (p/set-colors! g (or selected-ink (t/legible-ink t/dialog-hint t/dialog-bg)) t/dialog-bg)
+      (p/put-str! g start row details))))
 
 (defn- row-status
   [entry sidebar width]
@@ -703,10 +716,10 @@
       (str n (if (= 1 n) " session" " sessions")))
 
     :project-input
-    (if (:unread? entry) " NEW · needs input " " needs input ")
+    "HITL"
 
     :project-unread
-    " NEW "
+    "New"
 
     :project-session
     ""
@@ -734,7 +747,7 @@
             (str separator running (if (and (pos? (long needs-input)) compact?) " run" " running")))
           (when (pos? (long needs-input))
             (str separator needs-input (if (pos? (long unread)) " input" " needs input")))
-          (when (pos? (long unread)) (str separator unread " NEW"))
+          (when (pos? (long unread)) (str separator unread " new"))
           (when (= (get project "id") (:opening sidebar)) " · Loading…"))))))
 
 (defn add-field
@@ -1190,7 +1203,10 @@
                       status (p/truncate-cols (row-status entry sidebar width) (max 0 (- width 9)))
                       status-col
                       (- (+ left width)
-                         (cond (= :project-session kind) (if (>= width 48) 21 7)
+                         (cond (= :project-session kind)
+                               (if (>= width 48)
+                                 (+ 6 (long (p/display-width (session-status-label entry))))
+                                 7)
                                (and (= :project-set kind) (#{:groups :sessions} (:set entry))) 10
                                :else 2)
                          (long (p/display-width status)))
@@ -1222,9 +1238,6 @@
                                                           (if (:expanded? entry) "▾ " "▸ ")
                                                           "  ")
 
-                                                        :project-input
-                                                        "! "
-
                                                         :project-group
                                                         (if (:folded? entry) "▸ " "▾ ")
 
@@ -1242,19 +1255,12 @@
                                                         :project-state
                                                         "  "
 
-                                                        "● ")
+                                                        "  ")
                                                       label)
                                                  (max 0 (- name-width 2)))))
             (if alert?
-              ;; Chips derive their ink from the dark surface, not the bright row fill.
-              (binding [t/dialog-bg (if selected-ink t/terminal-bg t/dialog-bg)]
-                (components/button!
-                  g
-                  status-col
-                  row
-                  status
-                  kind
-                  {:tint :warning :register? false :extra {:tab-id (:tab-id entry)}}))
+              (do (p/set-colors! g (or selected-ink (dlg/session-status-ink status)) t/dialog-bg)
+                  (p/styled g [p/BOLD] (p/put-str! g status-col row status)))
               (do (p/set-colors! g
                                  (or selected-ink
                                      (cond (and (= :project-group kind) (not focused?))
@@ -1267,7 +1273,13 @@
                   (p/put-str! g status-col row status)))
             (when (= :project-session kind)
               (when (>= width 48) (paint-session-status! g entry status-col row 14 selected-ink))
-              (paint-session-meta! g entry left width (+ row-left 4) (inc row) selected-ink))
+              (paint-session-meta! g
+                                   entry
+                                   (+ row-left 4)
+                                   (inc row)
+                                   (- (+ left width) 3)
+                                   selected-ink
+                                   (< width 48)))
             (when (= :project-group kind)
               (p/set-colors! g (or selected-ink (t/group-ink (:color entry))) t/dialog-bg)
               (p/put-str! g (inc left) row "▏")))

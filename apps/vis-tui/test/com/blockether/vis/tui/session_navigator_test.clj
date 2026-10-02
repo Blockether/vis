@@ -116,41 +116,45 @@
               (#'dlg/navigator-visible-rows rows "needle" matches)]
 
           (expect (= ["newest" "star"] (mapv (comp :id :target) visible))))))
-  (describe "compact rows"
-            (it "paints a neutral date, uppercase status, title and explicit location on two lines"
-                (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)]
-                  (try (#'dlg/draw-navigator-session!
-                        (.newTextGraphics screen)
-                        2
-                        4
-                        74
-                        {:modified "09-30 11:34"
-                         :status "IDLE"
-                         :title "Session title"
-                         :session "hidden-id"
-                         :favorite? true
-                         :group "Workbench"
-                         :session-group "Planning"}
-                        false)
-                       (let [date (.getBackCharacter screen 4 4)]
-                         (expect (str/includes? (back-line screen 4)
-                                                "09-30 11:34 / IDLE / Session title"))
-                         (expect (str/includes? (back-line screen 5)
-                                                "Project: Workbench / Group: Planning"))
-                         (expect (= t/dialog-hint (.getForegroundColor date)))
-                         (expect (contains? (set (.getModifiers date)) SGR/BOLD))
-                         (expect (not (str/includes? (back-line screen 4) "hidden-id")))
-                         (expect (not (str/includes? (back-line screen 4) "*"))))
-                       (finally (.stopScreen screen)))))
-            (it "fits one session per two terminal rows without group headings or spacer lines"
-                (let [rows
-                      (#'dlg/navigator-all-rows {:sessions sessions})
+  (describe
+    "compact rows"
+    (it "paints a neutral date, a bold Title case status, title and explicit location on two lines"
+        (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)]
+          (try (#'dlg/draw-navigator-session!
+                (.newTextGraphics screen)
+                2
+                4
+                74
+                {:modified "09-30 11:34"
+                 :status "Idle"
+                 :title "Session title"
+                 :session "hidden-id"
+                 :favorite? true
+                 :group "Workbench"
+                 :session-group "Planning"}
+                false)
+               (let [date (.getBackCharacter screen 4 4)
+                     status (.getBackCharacter screen 16 4)]
 
-                      visible
-                      (#'dlg/navigator-visible-rows rows "" {})]
+                 (expect (str/includes? (back-line screen 4) "09-30 11:34 / Idle / Session title"))
+                 (expect (str/includes? (back-line screen 5)
+                                        "Project: Workbench / Group: Planning"))
+                 (expect (= t/dialog-hint (.getForegroundColor date)))
+                 (expect (contains? (set (.getModifiers date)) SGR/BOLD))
+                 (expect (contains? (set (.getModifiers status)) SGR/BOLD))
+                 (expect (= (dlg/session-status-ink "Idle") (.getForegroundColor status)))
+                 (expect (not (str/includes? (back-line screen 4) "hidden-id")))
+                 (expect (not (str/includes? (back-line screen 4) "*"))))
+               (finally (.stopScreen screen)))))
+    (it "fits one session per two terminal rows without group headings or spacer lines"
+        (let [rows
+              (#'dlg/navigator-all-rows {:sessions sessions})
 
-                  (expect (= [2 2 2 2] (#'dlg/navigator-block-heights visible)))
-                  (expect (= [0 1 2] (mapv :idx (#'dlg/navigator-visible-blocks visible 0 6)))))))
+              visible
+              (#'dlg/navigator-visible-rows rows "" {})]
+
+          (expect (= [2 2 2 2] (#'dlg/navigator-block-heights visible)))
+          (expect (= [0 1 2] (mapv :idx (#'dlg/navigator-visible-blocks visible 0 6)))))))
   (describe
     "opening and resize"
     (it "always keeps the list beside the preview, including a blank query and narrow terminals"
@@ -274,7 +278,7 @@
                   2
                   4
                   width
-                  {:modified "09-30 11:34" :status "! HITL ×2" :title (apply str (repeat 40 "界"))}
+                  {:modified "09-30 11:34" :status "HITL ×2" :title (apply str (repeat 40 "界"))}
                   true)
                  (expect (= (apply str (repeat (- 78 width) \.))
                             (subs (back-line screen 4) (+ 2 width)))))

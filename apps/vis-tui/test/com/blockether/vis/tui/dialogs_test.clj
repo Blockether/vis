@@ -588,13 +588,13 @@
           (expect (= "Untitled session" (:title r1)))
           (expect (= "s1" (:session r1)))
           (expect (:focused? r1))
-          (expect (= "IDLE" (:status r1)))))
+          (expect (= "Idle" (:status r1)))))
     (it "shows an inactive session as idle instead of showing a turn count"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               rows (all-rows {:active-session-id "s1" :sessions sessions})]
 
           (expect (not (:focused? (second rows))))
-          (expect (= "IDLE" (:status (second rows))))))
+          (expect (= "Idle" (:status (second rows))))))
     (it "compact MM-dd HH:mm timestamps (UTC)"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               rows (all-rows {:active-session-id "s1" :sessions sessions})
@@ -613,7 +613,7 @@
 
           (expect (= 1 (count vis)))
           (expect (:transcript-match? (first vis)))
-          (expect (= "IDLE" (:status (first vis))))))
+          (expect (= "Idle" (:status (first vis))))))
     (it "body matches keep session status and carry the You/Vis snippets"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               visible-rows (var-get #'dlg/navigator-visible-rows)
@@ -628,13 +628,13 @@
                     (first (visible-rows rows "zzz-no-title-match" (mk k))))]
 
           ;; A request hit supplies only a You preview, not a replacement session status.
-          (expect (= "IDLE" (:status (tag :request))))
+          (expect (= "Idle" (:status (tag :request))))
           (expect (= ["You"] (mapv :label (preview-entries (:transcript-match (tag :request))))))
           ;; An assistant reply supplies only a Vis preview.
-          (expect (= "IDLE" (:status (tag :reply))))
+          (expect (= "Idle" (:status (tag :reply))))
           (expect (= ["Vis"] (mapv :label (preview-entries (:transcript-match (tag :reply))))))
           ;; Both sides preserve their author labels.
-          (expect (= "IDLE" (:status (tag :both))))
+          (expect (= "Idle" (:status (tag :both))))
           (expect (= ["You" "Vis"] (mapv :label (preview-entries (:transcript-match (tag :both))))))
           ;; the match carries the session title so the preview leads with it,
           ;; before the You/Vis snippet — title first, then transcript.
@@ -683,7 +683,7 @@
 
           (expect (= ["muse" "reply" "ask" "named"] (mapv (comp str :id :target) vis)))
           (expect (= ["muse" "reply" "ask" "named"] (mapv (comp str :id :target) flipped)))
-          (expect (= "IDLE" (:status (first (filter #(= "muse" (str (:id (:target %)))) vis)))))))
+          (expect (= "Idle" (:status (first (filter #(= "muse" (str (:id (:target %)))) vis)))))))
     (it "every matching row carries its own matches for the message pane"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               visible-rows (var-get #'dlg/navigator-visible-rows)
@@ -722,7 +722,7 @@
       (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)
             draw-session (var-get #'dlg/draw-navigator-session!)
             entry {:focused? false
-                   :status "IDLE"
+                   :status "Idle"
                    :title "First session"
                    :session "abc1234"
                    :modified "now"
@@ -739,7 +739,7 @@
                (draw-session g 4 9 70 entry false)
                (expect (= (.getBackgroundColor (.getBackCharacter screen 6 6))
                           (.getBackgroundColor (.getBackCharacter screen 6 9))))
-               (expect (str/includes? (line 6) "now / IDLE / First session"))
+               (expect (str/includes? (line 6) "now / Idle / First session"))
                (expect (str/includes? (line 7) "Project: Workbench / Group: Planning"))
                (expect (= t/dialog-hint (.getForegroundColor (.getBackCharacter screen 4 6))))
                (expect (not (str/includes? (line 6) "abc1234")))
@@ -2932,8 +2932,8 @@
                        live
                        {"id" "s-live" "title" "Deploy" "turn_count" 3 "live" true}]
 
-                   (expect (= "● LIVE" (:status (row nil live))))
-                   (expect (= "● LIVE" (:status (row "s-live" live)))))))
+                   (expect (= "Live" (:status (row nil live))))
+                   (expect (= "Live" (:status (row "s-live" live)))))))
 
 ;; The star is the GATEWAY's mark (`session_soul.favorite_rank`), and this terminal
 ;; painted none of it: a session starred on the phone stood here unmarked, sunk
@@ -3015,7 +3015,7 @@
       (let [row (fn [active session]
                   ((var-get #'dlg/navigator-session-row) active {} session))]
         (expect
-          (= "! HITL"
+          (= "HITL"
              (:status
                (row nil
                     {"id" "s-parked" "title" "Deploy" "turn_count" 3 "is_awaiting_input" true}))))
@@ -3023,7 +3023,7 @@
                          (row nil {"id" "s-parked" "title" "Deploy" "is_awaiting_input" true}))))
         ;; TWO open requests used to read exactly like one, so answering the
         ;; first left the very same badge standing, naming nothing.
-        (expect (= "! HITL ×2"
+        (expect (= "HITL ×2"
                    (:status (row nil
                                  {"id" "s-parked"
                                   "title" "Deploy"
@@ -3032,8 +3032,8 @@
   (it "shows idle status on quiet rows, including the current session"
       (let [row (fn [active session]
                   ((var-get #'dlg/navigator-session-row) active {} session))]
-        (expect (= "IDLE" (:status (row nil {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))
-        (expect (= "IDLE"
+        (expect (= "Idle" (:status (row nil {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))
+        (expect (= "Idle"
                    (:status (row "s-quiet" {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))
         (expect (not (:awaiting-input? (row nil {"id" "s-quiet" "title" "Deploy"})))))))
 
@@ -3046,13 +3046,13 @@
   (it "badges the answers that landed since this reader last read"
       (let [row (fn [session]
                   ((var-get #'dlg/navigator-session-row) nil {} session))]
-        (expect (= "NEW"
+        (expect (= "New"
                    (:status (row {"id" "s-new"
                                   "title" "Deploy"
                                   "turn_count" 3
                                   "is_unread" true
                                   "unread_answers" 1}))))
-        (expect (= "2 NEW"
+        (expect (= "New ×2"
                    (:status (row {"id" "s-new"
                                   "title" "Deploy"
                                   "turn_count" 3
@@ -3060,9 +3060,9 @@
                                   "unread_answers" 2}))))
         (expect (true? (:unread? (row {"id" "s-new" "title" "Deploy" "unread_answers" 1}))))
         ;; A read session shows its state, not its turn count.
-        (expect (= "IDLE" (:status (row {"id" "s-read" "title" "Deploy" "turn_count" 3}))))))
+        (expect (= "Idle" (:status (row {"id" "s-read" "title" "Deploy" "turn_count" 3}))))))
   (it
-    "says a run STOPPED instead of letting it read as idle"
+    "says a run Stopped instead of letting it read as Idle"
     (let [row
           (fn [session]
             ((var-get #'dlg/navigator-session-row) nil {} session))
@@ -3070,18 +3070,18 @@
           cut
           {"id" "s-cut" "title" "Deploy" "turn_count" 3 "was_interrupted" true "unread_answers" 1}]
 
-      (expect (= "⨯ STOPPED" (:status (row cut))))
+      (expect (= "Stopped" (:status (row cut))))
       (expect (true? (:stopped? (row cut))))
       (let [failed (-> cut
                        (dissoc "was_interrupted")
                        (assoc "was_failed" true))]
-        (expect (= "⨯ STOPPED" (:status (row failed))))
+        (expect (= "Stopped" (:status (row failed))))
         (expect (true? (:stopped? (row failed)))))
       ;; Bounded by the read mark, exactly as the app bounds it: an interrupted
       ;; run the reader has already seen is an ordinary idle session.
-      (expect (= "IDLE" (:status (row (dissoc cut "unread_answers")))))
+      (expect (= "Idle" (:status (row (dissoc cut "unread_answers")))))
       ;; Whatever the last turn did, a session running right now is live.
-      (expect (= "● LIVE" (:status (row (assoc cut "live" true))))))))
+      (expect (= "Live" (:status (row (assoc cut "live" true))))))))
 
 ;; Regression (user report): the fullscreen log viewer a diff visit opens
 ;; for a diff painted a scrollbar its key loop never wired mouse events to, so

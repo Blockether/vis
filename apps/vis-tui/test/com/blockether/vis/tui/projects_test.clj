@@ -17,7 +17,7 @@
             [com.blockether.vis.tui.shared-theme :as shared-theme]
             [com.blockether.vis.tui.theme-test :as theme-test]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
+  (:import [com.googlecode.lanterna TerminalPosition TerminalSize TextColor$RGB]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.html HtmlTerminal]))
@@ -39,6 +39,21 @@
                "is_repo" true
                "branch" "release"}
               {"name" "notes" "path" "/work/notes" "entry_count" 3 "is_repo" false "branch" nil}]})
+
+(defn- tuple-rgb
+  "A captured `[r g b]` cell colour as a Lanterna colour."
+  [[r g b]]
+  (TextColor$RGB. (int r) (int g) (int b)))
+
+(defn- cell-contrast
+  "The WCAG contrast between the ink and the paper of one captured cell."
+  [{:keys [fg bg]}]
+  (theme/contrast-ratio (tuple-rgb fg) (tuple-rgb bg)))
+
+(defn- cell-text
+  "The characters of captured `row` from column `from` up to column `to`."
+  [capture row from to]
+  (apply str (map #(str (get-in capture [:frames 0 row % :ch])) (range from to))))
 
 (defn fixture-db
   "Deterministic production-screen fixture, shared with live HTML review."
@@ -1101,7 +1116,7 @@
       (expect (= [{:tab-count 2 :running 2 :needs-input 1 :unread 2}
                   {:tab-count 1 :running 1 :needs-input 0 :unread 0}]
                  (mapv #(select-keys % [:tab-count :running :needs-input :unread]) headers)))
-      (expect (= "2 tabs · 2 run · 1 input · 2 NEW" (#'projects/row-status (first headers) nil 60)))
+      (expect (= "2 tabs · 2 run · 1 input · 2 new" (#'projects/row-status (first headers) nil 60)))
       ;; A project the overview never mentions keeps exactly what it came with.
       (expect (= [project-a] (projects/with-gateway-counts [project-a] {"projects" []})))
       (expect (= [project-a] (projects/with-gateway-counts [project-a] nil))))))
@@ -1142,16 +1157,21 @@
 
             (expect (nil? (:error capture)))
             (expect (str/includes? text "2 tabs · 1 running · 1 needs input"))
-            (expect (re-find #"! Mobile navigation +needs input" text))
+            (expect (re-find #"Mobile navigation +HITL" text))
+            (expect (not (str/includes? text "! Mobile")))
             (expect (= (inc (get-in (first (filter #(and (= :project-select (:kind %))
                                                          (= "b" (get-in % [:project "id"])))
                                                    (.current projects/hit-map)))
                                     [:bounds :row]))
                        row)
                     "The alert appears immediately below its project")
-            (expect (= (#'theme-test/rgb-tuple theme/warning-button-bg)
-                       (get-in capture [:frames 0 row 43 :bg])))
-            (expect (true? (get-in capture [:frames 0 row 43 :bold])))
+            (let [col (inc (long (str/index-of (nth (str/split-lines text) row) "HITL")))
+                  cell (get-in capture [:frames 0 row col])]
+
+              (expect (true? (:bold cell)))
+              (expect (= (#'theme-test/rgb-tuple
+                          (theme/legible-ink theme/warning-fg (tuple-rgb (:bg cell))))
+                         (:fg cell))))
             (if pointer?
               (handle!
                 (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. (int col) (int row))))
@@ -1366,13 +1386,19 @@
                              nil))]
 
             (expect (nil? (:error capture)))
-            (expect (str/includes? text "3 tabs · 1 run · 1 input · 1 NEW"))
-            (expect (re-find #"Keyboard navigation +NEW" text))
+            (expect (str/includes? text "3 tabs · 1 run · 1 input · 1 new"))
+            (expect (re-find #"Keyboard navigation +New" text))
             (expect (= 7 row))
-            (expect (= (#'theme-test/rgb-tuple theme/warning-button-bg)
-                       (get-in capture [:frames 0 row 51 :bg])))
+            (let [cell (get-in capture
+                               [:frames 0 row
+                                (str/index-of (nth (str/split-lines text) row) "New")])]
+              (expect (= "N" (str (:ch cell))))
+              (expect (true? (:bold cell)))
+              (expect (= (#'theme-test/rgb-tuple
+                          (theme/legible-ink theme/header-active-tab-bg (tuple-rgb (:bg cell))))
+                         (:fg cell))))
             (if pointer?
-              ;; Click the yellow cap, not only the row's title.
+              ;; Click the status, not only the row's title.
               (handle! (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 51 (int row))))
               (do (handle! (cap/key-stroke :down)) (handle! (cap/key-stroke :enter))))
             (expect (= :tab-5 (:active-tab-id @state/app-db)))
@@ -1409,53 +1435,45 @@
 
                    (expect (= 2 (:unread (second entries))))
                    (expect (= 1 (count (filter #(= :tab-3 (:tab-id %)) entries))))
-                   (expect (str/includes? (cap/frame-text capture) "NEW · needs input")))))
+                   (expect (str/includes? (cap/frame-text capture) "HITL"))
+                   (expect (not (str/includes? (cap/frame-text capture) "NEW"))))))
 
 (defdescribe
-  project-alert-buttons-hover-and-width-test
-  (it
-    "project alert buttons hover and width"
-    (let [before @theme/active-theme-id]
-      (try
-        (doseq [id (shared-theme/available-theme-ids)
-                cols [40 44 80 144]]
+  project-alert-status-test
+  (it "shows project alerts as bold Title case statuses that stay legible"
+      (let [before @theme/active-theme-id]
+        (try (doseq [id (shared-theme/available-theme-ids)
+                     cols [40 44 80 144]]
 
-          (theme/apply-theme! (keyword id))
-          (with-redefs [state/app-db (atom (news-fixture-db))]
-            (let [paint! (fn [{:keys [screen]}]
-                           (projects/paint! (.newTextGraphics screen) @state/app-db cols 24))
-                  initial (cap/capture! {:cols cols :rows 24 :paint! paint!})
-                  width (:width (projects/geometry @state/app-db cols 24))
-                  col (- width 4)
-                  hover!
-                  #(#'screen/project-sidebar-key!
-                     (MouseAction. MouseActionType/MOVE 0 (TerminalPosition. (int %) (int %2)))
-                     identity
-                     (constantly nil)
-                     (constantly nil)
-                     (constantly nil)
-                     (constantly nil))]
+               (theme/apply-theme! (keyword id))
+               (let [db (news-fixture-db)
+                     capture (cap/capture!
+                               {:cols cols
+                                :rows 24
+                                :paint! (fn [{:keys [screen]}]
+                                          (projects/paint! (.newTextGraphics screen) db cols 24))})
+                     text (cap/frame-text capture)
+                     width (long (:width (projects/geometry db cols 24)))
+                     rows (mapv #(get-in % [:bounds :row])
+                                (filter #(#{:project-input :project-unread} (:kind %))
+                                        (.current projects/hit-map)))]
 
-              (expect (nil? (:error initial)))
-              (expect (str/includes? (cap/frame-text initial) "needs input"))
-              (expect (str/includes? (cap/frame-text initial) "NEW"))
-              (when (= cols 44)
-                (expect (str/includes? (cap/frame-text initial) "Companion"))
-                (expect (str/includes? (cap/frame-text initial) "3 tabs 1 run 1 input 1 NEW")))
-              (doseq [row (map #(get-in % [:bounds :row])
-                               (filter #(#{:project-input :project-unread} (:kind %))
-                                       (.current projects/hit-map)))]
-                (hover! col row)
-                (let [hovered (cap/capture! {:cols cols :rows 24 :paint! paint!})
-                      cell (get-in hovered [:frames 0 row col])]
+                 (expect (nil? (:error capture)))
+                 (expect (seq rows))
+                 (expect (not (str/includes? text "NEW")))
+                 (when (= cols 44)
+                   (expect (str/includes? text "Companion"))
+                   (expect (str/includes? text "3 tabs 1 run 1 input 1 new")))
+                 (doseq [row rows]
+                   (let [line (cell-text capture row 0 width)]
+                     (expect (re-find #"(HITL|New) │$" line))
+                     (expect (not (re-find #"[!●]" line))))
+                   (doseq [col (range (- width 5) (- width 2))
+                           :let [cell (get-in capture [:frames 0 row col])]]
 
-                  (expect (= (#'theme-test/rgb-tuple theme/warning-button-bg) (:bg cell)))
-                  (expect (true? (:bold cell)))
-                  (expect (true? (:underline cell)))))
-              (hover! 0 0)
-              (let [away (cap/capture! {:cols cols :rows 24 :paint! paint!})]
-                (expect (false? (get-in away [:frames 0 7 col :underline])))))))
-        (finally (theme/apply-theme! before))))))
+                     (expect (true? (:bold cell)))
+                     (expect (<= theme/legible-contrast (cell-contrast cell)))))))
+             (finally (theme/apply-theme! before))))))
 
 (defdescribe project-unread-scroll-keeps-parent-test
              (it "project unread scroll keeps parent"
@@ -1699,7 +1717,7 @@
           entries
           (filterv #(= :project-session (:kind %)) (projects/sidebar-entries db))]
 
-      (expect (= ["HITL ×2" "LIVE" "STOPPED" "NEW ×2" "WAITING" "DIRTY" "ARCHIVED" "IDLE" "STOPPED"]
+      (expect (= ["HITL ×2" "Live" "Stopped" "New ×2" "Waiting" "Dirty" "Archived" "Idle" "Stopped"]
                  (mapv :status entries)))
       (expect (= "Keep this draft" (:label (nth entries 5))))
       (expect (true? (:favorite? (nth entries 3))))
@@ -1727,7 +1745,7 @@
                                       (projects/sidebar-entries db)))]
 
                    (expect (= "1 unsent attachment" (:label row)))
-                   (expect (= "DIRTY" (:status row))))))
+                   (expect (= "Dirty" (:status row))))))
 
 (defdescribe
   saved-session-menu-actions-use-the-gateway-test
@@ -2098,9 +2116,11 @@
               (assoc-in [:project-sidebar :expanded] #{"a"})
               (assoc-in [:project-sidebar :focused?] false)
               (assoc-in [:project-sidebar :groups "a"] [group-release])
-              (assoc-in [:project-sidebar :pages "a"]
-                        {:sessions [{"id" "loose-id" "title" "Loose session"}]
-                         :grouped [{"id" "group-id" "title" "Grouped session" "group_id" "g1"}]}))
+              (assoc-in
+                [:project-sidebar :pages "a"]
+                {:sessions [{"id" "loose-id" "title" "Loose session" "turn_count" 2}]
+                 :grouped
+                 [{"id" "group-id" "title" "Grouped session" "group_id" "g1" "turn_count" 5}]}))
 
           capture
           (cap/capture! {:cols 168
@@ -2149,8 +2169,9 @@
       (expect (= (inc (column group-row "Release apps")) (column grouped-row "Grouped session")))
       (expect (= (inc (column project-row "Vis")) (column sessions-row "Sessions")))
       (expect (= (inc (column sessions-row "Sessions")) (column loose-row "Loose session")))
-      (expect (= (column grouped-row "Grouped session") (column (inc grouped-row) "group-id")))
-      (expect (= (column loose-row "Loose session") (column (inc loose-row) "loose-id")))
+      (expect (= (column grouped-row "Grouped session") (column (inc grouped-row) "5 turns")))
+      (expect (= (column loose-row "Loose session") (column (inc loose-row) "2 turns")))
+      (expect (not-any? #(str/includes? (nth lines (inc %)) "-id") [grouped-row loose-row]))
       (expect (str/includes? (nth lines group-row) "▾ Release apps"))
       (doseq [[row label] [[1 "Projects"] [project-row "Vis"] [companion-row "Companion"]
                            [groups-row "Groups"] [sessions-row "Sessions"]]]
@@ -2415,18 +2436,21 @@
           (get-in idle [:bounds :row])
 
           status-cell
-          (get-in capture [:frames 0 live-row (- (:width (projects/geometry db 168 24)) 21)])]
+          (get-in capture [:frames 0 live-row (- (:width (projects/geometry db 168 24)) 7)])]
 
       (expect (nil? (:error capture)))
       (expect (= 3 (get-in live [:bounds :height])))
       (expect (= (+ live-row 3) idle-row))
       (expect (str/includes? (nth lines live-row) "Writing the tests"))
-      (expect (str/includes? (nth lines live-row) "* LIVE"))
-      (expect (str/includes? (nth lines idle-row) "IDLE"))
-      (expect (str/includes? (nth lines (inc live-row)) "live-sess"))
-      (expect (str/includes? (nth lines (inc live-row)) "12t"))
-      (expect (str/includes? (nth lines (inc idle-row)) "7t"))
-      (expect (= (#'theme-test/rgb-tuple theme/status-ok) (:fg status-cell)))
+      (expect (str/includes? (nth lines live-row) "* Live"))
+      (expect (str/includes? (nth lines idle-row) "Idle"))
+      (expect (not (str/includes? (nth lines (inc live-row)) "live-sess")))
+      (expect (str/includes? (nth lines (inc live-row)) "12 turns"))
+      (expect (str/includes? (nth lines (inc idle-row)) "7 turns"))
+      (expect (true? (:bold status-cell)))
+      (expect (= (#'theme-test/rgb-tuple
+                  (theme/legible-ink theme/status-ok (tuple-rgb (:bg status-cell))))
+                 (:fg status-cell)))
       (expect (= [:session "live-session"]
                  (projects/key-action db
                                       (MouseAction. MouseActionType/CLICK_DOWN
@@ -2436,36 +2460,205 @@
 
 (defdescribe
   saved-session-grid-narrow-status-and-metadata-test
-  (it "saved session grid narrow status and metadata"
-      (doseq [cols [32 100]]
-        (let [db (-> (fixture-db)
-                     (assoc-in [:project-sidebar :expanded] #{"a"})
-                     (assoc-in [:project-sidebar :pages "a"]
-                               {:sessions [{"id" "live-session"
-                                            "title" "Writing the tests"
-                                            "live" true
-                                            "favorite_rank" 1
-                                            "turn_count" 12}]
-                                :grouped []}))
-              capture (cap/capture! {:cols cols
-                                     :rows 24
-                                     :paint!
-                                     (fn [{:keys [screen]}]
-                                       (projects/paint! (.newTextGraphics screen) db cols 24))})
-              live (first (filter #(= :project-session (:kind %)) (.current projects/hit-map)))
-              row (get-in live [:bounds :row])
-              lines (str/split-lines (cap/frame-text capture))
-              status-cell (get-in capture [:frames 0 (inc row) 8])]
+  (it
+    "saved session grid narrow status and metadata"
+    (doseq [cols [32 100]]
+      (let [db (-> (fixture-db)
+                   (assoc-in [:project-sidebar :expanded] #{"a"})
+                   (assoc-in [:project-sidebar :pages "a"]
+                             {:sessions [{"id" "live-session"
+                                          "title" "Writing the tests"
+                                          "live" true
+                                          "favorite_rank" 1
+                                          "turn_count" 12}]
+                              :grouped []}))
+            capture (cap/capture! {:cols cols
+                                   :rows 24
+                                   :paint!
+                                   (fn [{:keys [screen]}]
+                                     (projects/paint! (.newTextGraphics screen) db cols 24))})
+            live (first (filter #(= :project-session (:kind %)) (.current projects/hit-map)))
+            row (get-in live [:bounds :row])
+            lines (str/split-lines (cap/frame-text capture))
+            status-cell (get-in capture [:frames 0 (inc row) 8])]
 
-          (expect (nil? (:error capture)))
-          (expect (str/includes? (nth lines row)
-                                 (if (= cols 32) "Writing the te" "Writing the tests")))
-          (expect (not (str/includes? (nth lines row) "LIVE")))
-          (expect (str/includes? (nth lines (inc row)) "* LIVE"))
-          (expect (= (str/index-of (nth lines row) "Writing")
-                     (str/index-of (nth lines (inc row)) "* LIVE")))
-          (expect (= (>= cols 38) (str/includes? (nth lines (inc row)) "12t")))
-          (expect (= (#'theme-test/rgb-tuple theme/status-ok) (:fg status-cell)))))))
+        (expect (nil? (:error capture)))
+        (expect (str/includes? (nth lines row)
+                               (if (= cols 32) "Writing the te" "Writing the tests")))
+        (expect (not (str/includes? (nth lines row) "Live")))
+        (expect (str/includes? (nth lines (inc row)) "* Live"))
+        (expect (= (str/index-of (nth lines row) "Writing")
+                   (str/index-of (nth lines (inc row)) "* Live")))
+        (expect (str/includes? (nth lines (inc row)) "* Live · 12 turns"))
+        (expect (true? (:bold status-cell)))
+        (expect (= (#'theme-test/rgb-tuple
+                    (theme/legible-ink theme/status-ok (tuple-rgb (:bg status-cell))))
+                   (:fg status-cell)))))))
+
+(defdescribe session-time-label-test
+             (it "words recent changes relative and older ones as a date"
+                 (let [zone
+                       (java.time.ZoneId/of "UTC")
+
+                       now
+                       (.toEpochMilli (java.time.Instant/parse "2026-10-02T12:00:00Z"))
+
+                       label
+                       #(projects/session-time-label (java.time.Instant/parse %) now zone)]
+
+                   (expect (= "now" (label "2026-10-02T11:59:30Z")))
+                   (expect (= "5 min ago" (label "2026-10-02T11:55:00Z")))
+                   (expect (= "1 hour ago" (label "2026-10-02T10:30:00Z")))
+                   (expect (= "23 hours ago" (label "2026-10-01T12:30:00Z")))
+                   (expect (= "Sep 28 09:15" (label "2026-09-28T09:15:00Z")))
+                   (expect (= "Dec 31, 2025" (label "2025-12-31T18:00:00Z")))
+                   (expect (nil? (projects/session-time-label nil now zone))))))
+
+(defdescribe
+  saved-session-rows-fit-every-width-test
+  (it
+    "shows the date instead of the ID and keeps title, status and details apart"
+    (let [before
+          @theme/active-theme-id
+
+          now
+          (System/currentTimeMillis)
+
+          hitl-at
+          (java.time.Instant/parse "2024-06-15T12:00:00Z")
+
+          stopped-at
+          (java.time.Instant/parse "2025-03-14T12:00:00Z")
+
+          long-title
+          (str/join " " (repeat 6 "Rework the sidebar layout"))
+
+          sessions
+          [{"id" "session-0001"
+            "title" long-title
+            "live" true
+            "favorite_rank" 1
+            "turn_count" 12
+            "modified_at" (java.time.Instant/ofEpochMilli (- now (* 3 3600000)))}
+           {"id" "session-0002"
+            "title" long-title
+            "is_awaiting_input" true
+            "awaiting_input_count" 12
+            "turn_count" 3
+            "modified_at" hitl-at}
+           {"id" "session-0003"
+            "title" long-title
+            "was_failed" true
+            "is_unread" true
+            "unread_answers" 1
+            "turn_count" 1
+            "modified_at" stopped-at}
+           {"id" "session-0004"
+            "title" "Fresh answers"
+            "is_unread" true
+            "unread_answers" 3
+            "turn_count" 9} {"id" "session-0005" "title" "Paused" "status" "suspended"}
+           {"id" "session-0006"
+            "title" "Old work"
+            "archived_at" "2025-01-01T00:00:00Z"
+            "turn_count" 2}
+           {"id" "session-0007"
+            "title" "Finished review"
+            "turn_count" 7
+            "modified_at" (java.time.Instant/ofEpochMilli (- now 60000))}]
+
+          labels
+          ["* Live" "HITL ×12" "Stopped" "New ×3" "Waiting" "Archived" "Idle"]
+
+          narrow-details
+          ["* Live · 3 hours ago · 12 turns"
+           (str "HITL ×12 · " (projects/session-time-label hitl-at))
+           (str "Stopped · " (projects/session-time-label stopped-at) " · 1 turn")
+           "New ×3 · 9 turns" "Waiting" "Archived · 2 turns" "Idle · 1 min ago · 7 turns"]
+
+          wide-details
+          ["3 hours ago · 12 turns" (str (projects/session-time-label hitl-at) " · 3 turns")
+           (str (projects/session-time-label stopped-at) " · 1 turn") "9 turns" "" "2 turns"
+           "1 min ago · 7 turns"]
+
+          index
+          (zipmap (map #(get % "id") sessions) (range))
+
+          db
+          (-> (fixture-db)
+              (assoc-in [:project-sidebar :expanded] #{"a"})
+              (assoc-in [:project-sidebar :pages "a"] {:sessions sessions :grouped []}))]
+
+      (try
+        (doseq [id
+                (shared-theme/available-theme-ids)
+
+                cols
+                [100 120 168]]
+
+          (theme/apply-theme! (keyword id))
+          (let [capture
+                (cap/capture! {:cols cols
+                               :rows 40
+                               :paint! (fn [{:keys [screen]}]
+                                         (projects/paint! (.newTextGraphics screen) db cols 40))})
+
+                width
+                (long (:width (projects/geometry db cols 40)))
+
+                wide?
+                (>= width 48)
+
+                hits
+                (filterv #(= :project-session (:kind %)) (.current projects/hit-map))]
+
+            (expect (nil? (:error capture)))
+            (expect (= (count sessions) (count hits)))
+            (doseq [hit
+                    hits
+
+                    :let [i
+                          (index (get-in hit [:session "id"]))
+
+                          label
+                          (nth labels i)
+
+                          row
+                          (long (get-in hit [:bounds :row]))
+
+                          n
+                          (count label)
+
+                          status-row
+                          (if wide? row (inc row))
+
+                          status-col
+                          (if wide? (- width 6 n) 6)]]
+
+              (expect (not (str/includes? (str (cell-text capture row 0 width)
+                                               (cell-text capture (inc row) 0 width))
+                                          "session-")))
+              (expect (= label (cell-text capture status-row status-col (+ status-col n))))
+              (expect (= (nth (if wide? wide-details narrow-details) i)
+                         (str/trim (cell-text capture (inc row) 6 (dec width)))))
+              (expect (str/blank? (if wide?
+                                    (cell-text capture row (- status-col 2) status-col)
+                                    (cell-text capture row (- width 9) (- width 5)))))
+              (expect (str/blank? (cell-text capture (inc row) (- width 2) (dec width))))
+              (doseq [col (range status-col (+ status-col n))]
+                (expect (true? (get-in capture [:frames 0 status-row col :bold]))))
+              (doseq [[r cols*]
+                      [[row (range 1 (- width 5))] [(inc row) (range 1 (dec width))]]
+
+                      col
+                      cols*
+
+                      :let [cell
+                            (get-in capture [:frames 0 r col])]
+                      :when (not (str/blank? (str (:ch cell))))]
+
+                (expect (<= theme/legible-contrast (cell-contrast cell)))))))
+        (finally (theme/apply-theme! before))))))
 
 (defdescribe
   saved-session-grid-scroll-keeps-focused-card-and-parent-test
@@ -3080,7 +3273,7 @@
           (expect (= ["Groups · Archived" "Sessions"]
                      (mapv :label (filter #(= :project-set (:kind %)) entries))))
           (expect (= ["Gateway"] (mapv :label (filter #(= :project-group (:kind %)) entries))))
-          (expect (= "ARCHIVED" (:status (first (filter #(= :project-session (:kind %)) entries)))))
+          (expect (= "Archived" (:status (first (filter #(= :project-session (:kind %)) entries)))))
           (expect (= ["filed-archived" "loose"]
                      (mapv #(get-in % [:session "id"])
                            (filter #(= :project-session (:kind %)) entries)))))

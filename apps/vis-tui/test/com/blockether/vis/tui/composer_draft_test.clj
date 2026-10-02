@@ -97,7 +97,7 @@
                                                          {"sessions" []})}
                     #(client/search-sessions "" {:dirty ["a" "b"]}))
                   (expect (str/includes? @asked "dirty=a%2Cb"))))
-            (it "keeps an empty session with a parked unsent first message in the sidebar as DIRTY"
+            (it "keeps an empty session with a parked unsent first message in the sidebar as Dirty"
                 (let [asked (atom [])]
                   (with-redefs [state/app-db (atom (draft-db))
                                 client/worker-future (fn [_ f]
@@ -116,7 +116,7 @@
                     (expect (= #{"a"} (set (:dirty (first @asked)))))
                     (let [row (some #(when (= "a" (get-in % [:session "id"])) %)
                                     (projects/sidebar-entries @state/app-db))]
-                      (expect (= "DIRTY" (:status row)))
+                      (expect (= "Dirty" (:status row)))
                       (expect (= "Unsent first message" (:label row)))
                       (expect (= [:session "a"] (:action row)))))))
             (it "passes the same dirty identities to the recent-session picker"
@@ -175,7 +175,7 @@
             (step closed :open-session-tab {:id "a"} [] nil)]
 
         (expect (= #{"a"} (state/session-draft-ids closed)))
-        (expect (= "DIRTY" (:status row)))
+        (expect (= "Dirty" (:status row)))
         (expect (= "1 unsent attachment" (:label row)))
         (expect (= [file] (:attachments reopened)))))
   (it "does not call an untouched or whitespace-only session dirty"
@@ -296,7 +296,7 @@
           (expect (= [:only :exclude] (mapv :archived @asked)))
           (expect (= [#{"a"} #{"a"}] (mapv (comp set :dirty) @asked))))))
   (it
-    "refreshes when draft presence changes, not on every edit, and removes DIRTY after clearing"
+    "refreshes when draft presence changes, not on every edit, and removes Dirty after clearing"
     (let [db
           (atom (update (draft-db) :tab-locals dissoc :tab-1))
 
@@ -367,7 +367,7 @@
             (step closed-again :open-session-tab {:id "a"} [] nil)]
 
         (expect (= "Edited before hydration" (:label row)))
-        (expect (= "DIRTY" (:status row)))
+        (expect (= "Dirty" (:status row)))
         (expect (= #{"a"} (state/session-draft-ids edited)))
         (expect (= "Edited before hydration" (input/input->text (:input reopened))))))
   (it "never resurrects a draft cleared before pending hydration finishes"

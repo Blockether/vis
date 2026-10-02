@@ -301,6 +301,51 @@
                   (int (mix-channel (.getGreen a) (.getGreen b) t))
                   (int (mix-channel (.getBlue a) (.getBlue b) t))))
 
+(defn- linear-channel
+  "One sRGB channel (0-255) as linear light, as WCAG 2 measures it."
+  ^double [^long c]
+  (let [s (/ (double c) 255.0)]
+    (if (<= s 0.04045) (/ s 12.92) (Math/pow (/ (+ s 0.055) 1.055) 2.4))))
+
+(defn- wcag-luminance
+  "WCAG 2 relative luminance of a palette colour, 0.0 (black) to 1.0 (white)."
+  ^double [^com.googlecode.lanterna.TextColor$RGB c]
+  (+ (* 0.2126 (linear-channel (.getRed c)))
+     (* 0.7152 (linear-channel (.getGreen c)))
+     (* 0.0722 (linear-channel (.getBlue c)))))
+
+(defn contrast-ratio
+  "WCAG 2 contrast ratio of two colours: 1.0 for equal colours, 21.0 for black on white."
+  ^double [a b]
+  (let [la
+        (wcag-luminance a)
+
+        lb
+        (wcag-luminance b)]
+
+    (/ (+ (max la lb) 0.05) (+ (min la lb) 0.05))))
+
+(def legible-contrast "Smallest contrast ratio for small status text: the WCAG 2 AA level." 4.5)
+
+(defn legible-ink
+  "Colour `ink` on paper `bg`, moved toward the theme's text colour until it
+   reaches `legible-contrast`.
+
+   A status keeps its own hue where the theme allows it, and it stays readable
+   on every row tint of every light or dark theme."
+  ^com.googlecode.lanterna.TextColor$RGB [ink bg]
+  (loop [step 0]
+    (let [c (mix-color ink text-fg (* 0.05 (double step)))]
+      (cond (>= (contrast-ratio c bg) (double legible-contrast)) c
+            (>= step 20) text-fg
+            :else (recur (inc step))))))
+
+(defn dirty-fg
+  "Ink for a session with unsent work: the companion app's ochre, mixed with the
+   theme's text colour in the same proportion as the app."
+  ^com.googlecode.lanterna.TextColor$RGB []
+  (mix-color (TextColor$RGB. 169 112 63) text-fg 0.38))
+
 (defn zebra-bg
   "Background for the ALTERNATING row of a striped table: the row's own
    background `bg` mixed a tenth of the way toward the theme's ink.

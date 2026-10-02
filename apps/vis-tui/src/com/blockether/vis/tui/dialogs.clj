@@ -6143,6 +6143,33 @@
   (let [day (format-session-day v)]
     (if (= day "-") "-" (str (subs day 5) " " (format-session-time v)))))
 
+(defn session-status-ink
+  "Ink of a session status, matched to the companion app's status tones.
+
+   HITL and Waiting take the warning ink, Live the ok ink and Stopped the error
+   ink. New takes the accent, Dirty the app's ochre and the rest the quiet hint.
+   `t/legible-ink` keeps each one readable on `bg`, the row paper by default."
+  ([status] (session-status-ink status t/dialog-bg))
+  ([status bg]
+   (t/legible-ink (case (first (str/split (str/trim (str status)) #"\s+"))
+                    ("HITL" "Waiting")
+                    t/warning-fg
+
+                    "Live"
+                    t/status-ok
+
+                    "Stopped"
+                    t/status-bad
+
+                    "New"
+                    t/header-active-tab-bg
+
+                    "Dirty"
+                    (t/dirty-fg)
+
+                    t/dialog-hint)
+                  bg)))
+
 (defn- navigator-session-row
   "Normalize a session row with explicit project and group names.
    Group metadata never determines the status or timestamp ink."
@@ -6211,12 +6238,11 @@
      :favorite? (some? (get session "favorite_rank"))
      :dir work-dir
      :work-dir work-dir
-     :status (cond awaiting-input?
-                   (if (> awaiting-count 1) (str "! HITL ×" awaiting-count) "! HITL")
-                   live? "● LIVE"
-                   stopped? "⨯ STOPPED"
-                   (pos? unread) (if (> unread 1) (str unread " NEW") "NEW")
-                   :else "IDLE")
+     :status (cond awaiting-input? (if (> awaiting-count 1) (str "HITL ×" awaiting-count) "HITL")
+                   live? "Live"
+                   stopped? "Stopped"
+                   (pos? unread) (if (> unread 1) (str "New ×" unread) "New")
+                   :else "Idle")
      :created (navigator-stamp (get session "created_at"))
      :modified (navigator-stamp (or (get session "modified_at") (get session "created_at")))
      :target {:action :switch :id id}}))
@@ -6704,10 +6730,7 @@
         (:focused? entry)
 
         status-color
-        (cond (:awaiting-input? entry) t/warning-fg
-              (:stopped? entry) t/cancelled-fg
-              (or focused? (:unread? entry)) t/dialog-hint-key
-              :else t/dialog-hint)
+        (session-status-ink (:status entry))
 
         title-color
         (cond (:awaiting-input? entry) t/warning-fg
@@ -6719,7 +6742,7 @@
 
         fields
         [[(str (:modified entry)) date-color true] [" / " t/dialog-hint false]
-         [(str (:status entry)) status-color false] [" / " t/dialog-hint false]
+         [(str (:status entry)) status-color true] [" / " t/dialog-hint false]
          [(str (:title entry)) title-color (or selected? focused?)]]]
 
     (p/styled
