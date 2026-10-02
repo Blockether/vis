@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SwipeActions } from './SwipeActions';
 import { PencilIcon, StarIcon, TrashIcon } from './icons';
@@ -535,5 +535,98 @@ describe('a press paints the whole row', () => {
     expect(details.closest(`[class*="${PRESSED}"]`)?.querySelector('[data-row-surface]')).toBe(
       null,
     );
+  });
+});
+
+// Regression, user report (paraphrased: scrolling over a big group on the phone was extremely
+// slow): every row's track was a horizontal scroller, and WebKit carried all 188 of them through
+// every frame of the list's own scroll. Only a row on screen can take a finger, so only it scrolls.
+describe('a track scrolls sideways only on screen', () => {
+  const OFF_SCREEN = 'not-data-on-screen:overflow-x-hidden';
+  let notify: IntersectionObserverCallback = () => {};
+  let observers = 0;
+  const watched = new Set<Element>();
+
+  beforeEach(() => {
+    observers = 0;
+    watched.clear();
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          notify = callback;
+          observers += 1;
+        }
+        observe(target: Element) {
+          watched.add(target);
+        }
+        unobserve(target: Element) {
+          watched.delete(target);
+        }
+        disconnect() {
+          watched.clear();
+        }
+      },
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const list = (...labels: string[]) => (
+    <div>
+      {labels.map((label) => (
+        <SwipeActions
+          key={label}
+          label={label}
+          actions={[{ key: 'rename', label: 'Rename', icon: <PencilIcon />, onSelect: () => {} }]}
+        >
+          <span>{label}</span>
+        </SwipeActions>
+      ))}
+    </div>
+  );
+  const trackOf = (label: string) =>
+    screen.getByRole('group', { name: `${label} actions` }).parentElement as HTMLElement;
+  const report = (target: Element, isIntersecting: boolean) =>
+    act(() =>
+      notify(
+        [{ target, isIntersecting } as unknown as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      ),
+    );
+
+  it('keeps a row off screen from scrolling until the list shows it', () => {
+    render(list('first', 'second'));
+    const first = trackOf('first');
+    expect(first).toHaveClass('overflow-x-auto', OFF_SCREEN);
+    expect(first).not.toHaveAttribute('data-on-screen');
+
+    report(first, true);
+    expect(first).toHaveAttribute('data-on-screen');
+    expect(trackOf('second')).not.toHaveAttribute('data-on-screen');
+
+    report(first, false);
+    expect(first).not.toHaveAttribute('data-on-screen');
+  });
+
+  it('watches every row with one observer and lets each row go', () => {
+    const { unmount } = render(
+      <>
+        {list('first', 'second')}
+        {list('third')}
+      </>,
+    );
+    expect(observers).toBe(1);
+    expect(watched).toEqual(new Set([trackOf('first'), trackOf('second'), trackOf('third')]));
+
+    unmount();
+    expect(watched.size).toBe(0);
+  });
+
+  it('leaves every row scrollable where nothing reports what is on screen', () => {
+    vi.stubGlobal('IntersectionObserver', undefined);
+    render(list('first'));
+    expect(trackOf('first')).toHaveAttribute('data-on-screen');
   });
 });

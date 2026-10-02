@@ -222,6 +222,53 @@ function RowActionMenu({
   );
 }
 
+/** The observer that marks the tracks on screen, with the number of tracks it watches. */
+let watcher: { observer: IntersectionObserver; size: number } | null = null;
+
+/**
+ * ONLY A ROW ON THE SCREEN IS A SCROLLER.
+ *
+ * Regression, user report (paraphrased: scrolling over a big group on the phone was
+ * extremely slow): every row's track was a horizontal scroller, and a project with a
+ * 134-session group put 188 of them in one list. WebKit carries every scroller through
+ * every frame of the list's own scroll, even when nothing overflows it. In real touch
+ * flings over that group on an iOS 26.5 simulator, about one frame in five ran past
+ * 25 ms, some to 60 ms. With only the rows on screen scrolling, about one in twenty did,
+ * and the page drew 30% more frames.
+ *
+ * A track must be a scroller BEFORE the finger lands: UIKit picks the scroll views a
+ * touch drives when the touch begins. A track that turned scrollable on its own
+ * `touchstart` missed its first swipe on the same simulator. So one observer marks the
+ * tracks on screen as their lists move, and every other track keeps `overflow-x: hidden`.
+ * The observer measures against the viewport, so every scrolling list above a track
+ * clips it too. A hidden track looks the same, because a closed drawer stands past the
+ * row's edge. Where nothing can observe, every track stays a scroller.
+ */
+function watchOnScreen(track: HTMLElement): () => void {
+  if (typeof IntersectionObserver !== 'function') {
+    track.setAttribute('data-on-screen', '');
+    return () => {};
+  }
+  watcher ??= {
+    observer: new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        entry.target.toggleAttribute('data-on-screen', entry.isIntersecting);
+      }
+    }),
+    size: 0,
+  };
+  const current = watcher;
+  current.observer.observe(track);
+  current.size += 1;
+  return () => {
+    current.observer.unobserve(track);
+    current.size -= 1;
+    if (current.size > 0) return;
+    current.observer.disconnect();
+    watcher = null;
+  };
+}
+
 /**
  * Shared row actions: a scroll-snap drawer on touch and a vertical-dot dropdown
  * under a pointer. Only the trigger reserves desktop width, regardless of action
@@ -342,6 +389,14 @@ export function SwipeActions({
     };
   }, [open, close]);
 
+  // Only a track on screen scrolls sideways; see `watchOnScreen`.
+  const hasTrack = actions.length > 0;
+  useEffect(() => {
+    const track = scrollerRef.current;
+    if (!hasTrack || !track) return;
+    return watchOnScreen(track);
+  }, [hasTrack]);
+
   if (actions.length === 0) {
     if (!trailing) return <>{children}</>;
     return (
@@ -384,7 +439,7 @@ export function SwipeActions({
         }
         setOpen((current) => (current === next ? current : next));
       }}
-      className={`group/swipe flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mouse:snap-none mouse:overflow-hidden ${isSelected ? 'bg-accent/15' : ''} ${ROW_PRESS_PAPER}`}
+      className={`group/swipe flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden not-data-on-screen:overflow-x-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mouse:snap-none mouse:overflow-hidden ${isSelected ? 'bg-accent/15' : ''} ${ROW_PRESS_PAPER}`}
     >
       {/* Touch keeps content and permanent controls in one full-width snap panel.
           Desktop ends the row with its menu trigger and stands the permanent controls
