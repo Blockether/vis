@@ -31,10 +31,37 @@ export const Empty: Story = {
     const page = within(canvasElement.ownerDocument.body);
     const dialog = page.getByRole('dialog', { name: 'Search sessions' });
     await expect(within(dialog).getByRole('searchbox', { name: 'Search session titles and messages' })).toHaveFocus();
-    await expect(within(dialog).queryByRole('region', { name: 'Matching messages' })).toBeNull();
 
     await userEvent.keyboard('{Escape}');
     await expect(args.onClose).toHaveBeenCalledOnce();
+  },
+};
+
+/** Before a word is typed, the recents stand beside the pane of the first one, as in the terminal switcher. */
+export const Recents: Story = {
+  args: {
+    results: (
+      <ul className="px-3 py-3">
+        <li className="font-mono text-body text-white">Windows runtime checks</li>
+      </ul>
+    ),
+    messages: (
+      <SearchMessages
+        title="Windows runtime checks"
+        match={null}
+        query=""
+        isSearching={false}
+        onOpen={fn()}
+        className="min-h-0 flex-1"
+      />
+    ),
+  },
+  play: async ({ canvasElement }) => {
+    const dialog = within(within(canvasElement.ownerDocument.body).getByRole('dialog', { name: 'Search sessions' }));
+    await expect(dialog.getByRole('region', { name: 'Recent sessions' })).toHaveTextContent('Windows runtime checks');
+    const pane = within(dialog.getByRole('region', { name: 'Matching messages' }));
+    await expect(pane.getByRole('heading')).toHaveTextContent('Windows runtime checks');
+    await expect(pane.getByText('Type to find matching messages.')).toBeVisible();
   },
 };
 

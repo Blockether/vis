@@ -5511,13 +5511,9 @@
         (mapcat (fn [project]
                   (vis/gateway-list-session-groups {:project-id (get project "id")
                                                     :archived :include}))
-                projects)
+                projects)]
 
-        unfiled
-        (vis/gateway-list-session-groups {:root "" :archived :include})]
-
-    {:projects projects
-     :groups (into {} (map (juxt #(str (get % "id")) identity)) (concat groups unfiled))}))
+    {:projects projects :groups (into {} (map (juxt #(str (get % "id")) identity)) groups)}))
 
 (defn- show-session-picker!
   "Open the navigator without gateway I/O on the input thread. The dialog owns

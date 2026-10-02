@@ -106,16 +106,16 @@ Press **Ctrl+X s** to open the session switcher. Before you type, it lists your
 recent sessions. Type to search session titles and conversation text, choose a
 session with **↑** and **↓**, and press **Enter** to open it.
 
-When you search, a border divides the switcher. The left side lists the sessions
-that match. The right side shows the matching messages of the selected session.
-Each message shows who wrote it, **You** or **Vis**, and when. Your search words
-are highlighted. The messages stay beside the list in a narrow terminal.
+A border always divides the switcher, also before you type. The left side lists the
+recent sessions or the sessions that match. The right side shows the matching messages
+of the selected session. Each message shows who wrote it, **You** or **Vis**, and when.
+Your search words are highlighted. The messages stay beside the list in a narrow terminal.
 
 The switcher also has these keys:
 
 | Keys | What they do |
 |---|---|
-| Ctrl+P | Choose all projects, one project or No project. All projects also clears the groups |
+| Ctrl+P | Choose all projects or one project. All projects also clears the groups |
 | Ctrl+G | Choose groups in the chosen project, or select none for all groups. It works only if the project has groups |
 | Ctrl+N | Start a new session |
 | Ctrl+F | Fork the selected session |
@@ -155,27 +155,28 @@ Menus below the search field control where the search looks. If you added more t
 machine, use **Machine** to choose the machine to search. You cannot choose a machine that
 does not answer.
 
-Use **Project** to choose **All projects**, one named project or **No project**.
+Use **Project** to choose **All projects** or one named project.
 If the project you choose has groups, the **Groups** menu appears.
 Use **Groups** to select several groups. The list stays open while you select them.
 Choose **All groups** to clear the group selection.
 To search all projects and groups again, choose **All projects**.
 
-When you type, the line below the menus shows the number of matches. If more results are
-available, choose **Load more results** below the last result.
+When you type, the line below the menus shows the number of matches. When you scroll to
+the end of the results, more results load automatically. If they cannot load, choose
+**Try again** below the last result.
 
 With a keyboard, press **Ctrl+/** to open the search. This shortcut also works while you
 type in a text box. When you are not typing, you can also press **/**.
 
-A border divides the dialog in the same way as the terminal switcher. The sessions that
-match are on the left. The matching messages of one session are on the right, with your
-search words highlighted. On a phone or in a narrow window, the messages are below the
-sessions.
+A border always divides the dialog in the same way as the terminal switcher. The sessions
+are on the left. The matching messages of one session are on the right, with your search
+words highlighted. Before you type, the right side names one session and asks you to type.
+On a phone or in a narrow window, the messages are below the sessions.
 
 The messages of the first session in the results show first. To see the messages of a
 different session, choose that session. To open the session, choose it again. You
-can also choose **Open** or one of its messages. To close the search, press **Esc** or
-choose the close button.
+can also choose **Open** or one of its messages. Before you type, choose a recent session
+once to open it. To close the search, press **Esc** or choose the close button.
 
 ### Search through the gateway API
 

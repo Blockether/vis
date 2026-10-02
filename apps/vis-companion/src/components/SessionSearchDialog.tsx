@@ -11,10 +11,11 @@ import { CloseButton, DialogFrame, Input, Modal } from './ui';
  * stays as it was, and the search stands over the app with its field, the machine
  * it asks, the sessions it found and the messages that matched.
  *
- * On a phone the dialog is the whole glass and the two answers stack, sessions on
- * top. From 40rem of dialog width they stand side by side, split by one rule, as in
- * the terminal's session switcher. Before a word is typed it lists the recent sessions,
- * as that switcher does. Closing the dialog clears the query, so the next search starts
+ * The dialog is always split, as the terminal's session switcher is: the sessions, and
+ * beside them the messages of the one picked. That holds before a word is typed too, when
+ * it lists the recent sessions as that switcher does. On a phone the dialog is the whole
+ * glass and the two stack, sessions on top. From 40rem of dialog width they stand side by
+ * side, split by one rule. Closing the dialog clears the query, so the next search starts
  * from the recents again.
  */
 export function SessionSearchDialog({
@@ -34,7 +35,7 @@ export function SessionSearchDialog({
   scope?: ReactNode;
   /** The sessions the search found, or the state that stands in for them. */
   results: ReactNode;
-  /** The messages that matched in the picked session; `null` while no session is picked. */
+  /** The messages of the picked session; `null` leaves the pane empty while no session is listed. */
   messages?: ReactNode;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -68,19 +69,15 @@ export function SessionSearchDialog({
             <div
               role="region"
               aria-label={query.trim() ? 'Matching sessions' : 'Recent sessions'}
-              className={`@container min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain bg-page pb-3 ${
-                messages ? '@min-[40rem]/search:w-[clamp(20rem,45%,30rem)] @min-[40rem]/search:flex-none' : ''
-              }`}
+              className="@container min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain bg-page pb-3 @min-[40rem]/search:w-[clamp(20rem,45%,30rem)] @min-[40rem]/search:flex-none"
             >
               {results}
             </div>
             {/* Stacked, the messages take the bottom 45%. Side by side they take the width
                 the sessions leave, and the rule between the two is their leading edge. */}
-            {messages && (
-              <div className="flex h-[45%] min-h-0 min-w-0 shrink-0 flex-col border-t border-dialog-edge @min-[40rem]/search:h-auto @min-[40rem]/search:flex-1 @min-[40rem]/search:border-t-0 @min-[40rem]/search:border-l">
-                {messages}
-              </div>
-            )}
+            <div className="flex h-[45%] min-h-0 min-w-0 shrink-0 flex-col border-t border-dialog-edge @min-[40rem]/search:h-auto @min-[40rem]/search:flex-1 @min-[40rem]/search:border-t-0 @min-[40rem]/search:border-l">
+              {messages}
+            </div>
           </div>
         </div>
       </DialogFrame>

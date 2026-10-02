@@ -9,9 +9,8 @@ import type { SessionRowsContext } from './SessionProjectGroups';
 
 const ALL_SCOPE = null;
 const ALL_PROJECTS = 'all';
-const NO_PROJECT = 'none';
 const keyFor = (machine: string, id: string) => `${machine}\u0000${id}`;
-type CatalogProject = { conn: GatewayConn; project: Project; groups: SessionGroup[] };
+type CatalogProject = { conn: GatewayConn; project: Project; groups: SessionGroup[]; unread: boolean };
 type Filters = { machineScope: string | null; project: string; groups: string[] };
 
 /** Search scopes use durable catalogs, not the session page currently on the glass. */
@@ -32,28 +31,33 @@ export function useSessionSearchScope(
     void Promise.allSettled(conns.map(async (conn) => {
       const api = getClient(conn);
       const projects = await api.listProjects(controller.signal);
-      const entries = [...projects, { id: NO_PROJECT, name: 'No project', workspace_root: '' }];
-      return Promise.all(entries.map(async (project) => {
-        const page = await api.listSessionGroups(String(project.workspace_root ?? ''), controller.signal, 'include');
-        return { conn, project, groups: (page.groups ?? []).filter((group) =>
-          project.id === NO_PROJECT ? !group.project_id : group.project_id === project.id) };
+      // Each project's groups are a read of their own. One that fails costs that project its
+      // group choices, never the machine its projects: one refused read used to leave the
+      // project picker with no project at all.
+      return Promise.all(projects.map(async (project): Promise<CatalogProject> => {
+        const root = String(project.workspace_root ?? '');
+        const page = root
+          ? await api.listSessionGroups(root, controller.signal, 'include').catch(() => null)
+          : { groups: [] as SessionGroup[] };
+        return {
+          conn, project, unread: page === null,
+          groups: (page?.groups ?? []).filter((group) => group.project_id === project.id),
+        };
       }));
     })).then((answers) => {
       if (controller.signal.aborted) return;
-      setCatalog(answers.flatMap((answer) => answer.status === 'fulfilled' ? answer.value : []));
-      setFailure(answers.some((answer) => answer.status === 'rejected')
+      const read = answers.flatMap((answer) => answer.status === 'fulfilled' ? answer.value : []);
+      setCatalog(read);
+      setFailure(answers.some((answer) => answer.status === 'rejected') || read.some((entry) => entry.unread)
         ? 'Some project and group choices could not be read. Reopen search to retry.' : null);
     });
     return () => controller.abort();
   }, [isOpen, conns, getClient]);
   const projects = catalog.filter((entry) => machineScope === ALL_SCOPE || machineKey(entry.conn) === machineScope);
   const chosen = projects.find((entry) => keyFor(machineKey(entry.conn), entry.project.id) === filters.project);
-  // All projects already means all groups: only a chosen project, or the unfiled
-  // sessions under No project, has groups to narrow to.
-  const groups = filters.project === ALL_PROJECTS ? [] : projects.filter((entry) =>
-    filters.project === NO_PROJECT ? entry.project.id === NO_PROJECT : entry === chosen);
+  // All projects already means all groups: only a chosen project has groups to narrow to.
   // The project picker already names the project, so a group needs only its own name.
-  const options = groups.flatMap((entry) => entry.groups.map((group) => ({
+  const options = (chosen ? [chosen] : []).flatMap((entry) => entry.groups.map((group) => ({
     value: keyFor(machineKey(entry.conn), group.id),
     label: `${group.name}${machineScope === ALL_SCOPE ? ` / ${machineLabel(entry.conn)}` : ''}`,
   })));
@@ -64,7 +68,6 @@ export function useSessionSearchScope(
       (filters.groups.length === 0 || filters.groups.some((group) => group.startsWith(`${key}\u0000`)));
     const request = (key: string) => ({
       ...(selected.length === 2 ? { projectId: selected[1] } : {}),
-      ...(filters.project === NO_PROJECT ? { root: '' } : {}),
       ...(filters.groups.length > 0 ? { groupIds: filters.groups.filter((group) =>
         group.startsWith(`${key}\u0000`)).map((group) => group.slice(key.length + 1)) } : {}),
     });
@@ -72,7 +75,6 @@ export function useSessionSearchScope(
       const key = machineKey(conn);
       const scope = request(key);
       return accepts(key) && (!scope.projectId || scope.projectId === session.project_id) &&
-        (scope.root !== '' || !session.project_id) &&
         (!scope.groupIds || scope.groupIds.includes(session.group_id ?? ''));
     };
     return { key: JSON.stringify([machineScope, filters.project, filters.groups]), machine, accepts, request, includes };
@@ -89,7 +91,7 @@ export function useSessionSearchScope(
   };
   return {
     wire, location,
-    projects: projects.filter((entry) => entry.project.id !== NO_PROJECT), options, filters, failure,
+    projects, options, filters, failure,
     setProject: (project: string) => setStored({ machineScope, project, groups: [] }),
     setGroups: (groups: string[]) => setStored({ ...filters, groups }),
   };
@@ -118,7 +120,6 @@ export function SessionSearchScopes({ scope, machine = null, report = null }: {
   const id = useId();
   const projects = [
     { value: ALL_PROJECTS, label: 'All projects' },
-    { value: NO_PROJECT, label: 'No project' },
     ...scope.projects.map(({ conn, project }) => ({
       value: keyFor(machineKey(conn), project.id),
       label: `${project.name}${scope.filters.machineScope === ALL_SCOPE ? ` / ${machineLabel(conn)}` : ''}`,

@@ -1762,13 +1762,13 @@ export function SessionsScreen({
   );
 
   // THE ROW THE SEARCH PANE SHOWS: the one the reader last pressed while it is still a
-  // result, else the session in use when the query matched it, else the first result.
-  // The pane is never empty beside a list of answers, and it starts where the terminal
-  // switcher's cursor does: on the session the reader is in.
+  // result, else the session in use when the list holds it, else the first row. The recents
+  // have the pane too, because the dialog is always split, as the terminal switcher is. The
+  // pane is never empty beside a list, and it starts where the switcher's cursor does: on
+  // the session the reader is in.
   const [previewPick, setPreviewPick] = useState<string | null>(null);
   if (!searching && previewPick !== null) setPreviewPick(null);
   const preview = useMemo(() => {
-    if (!searching) return null;
     let open: { session: Session; conn: GatewayConn } | null = null;
     let first: { session: Session; conn: GatewayConn } | null = null;
     for (const { machine, groups } of foundSections) {
@@ -1781,7 +1781,7 @@ export function SessionsScreen({
       }
     }
     return open ?? first;
-  }, [searching, foundSections, previewPick, openRow]);
+  }, [foundSections, previewPick, openRow]);
   const previewId = preview?.session.id ?? null;
   const openPreview = useCallback(() => {
     if (!preview) return;
@@ -2057,22 +2057,9 @@ export function SessionsScreen({
             return searching ? 'No matches on this machine.' : 'No recent sessions on this machine.';
           }}
         />
-        {/* More results wait where the list stops, not above it. */}
+        {/* More results load where the list stops, as the reader scrolls there. */}
         {(searchHasMore || searchPaging || searchPageError) && (
-          <div className="px-3 pb-3 sm:px-4">
-            <LoadMore
-              label={searchPaging ? 'Loading more results' : searchPageError ? 'Retry more results' : 'Load more results'}
-              disabled={searchPaging}
-              onClick={loadMoreSearch}
-            >
-              {searchPaging ? 'Loading more results…' : searchPageError ? 'Retry more results' : 'Load more results'}
-            </LoadMore>
-            {searchPageError && (
-              <p role="status" className="mt-1 text-center font-mono text-meta text-err">
-                Could not load more results. Your current results are kept.
-              </p>
-            )}
-          </div>
+          <SearchPageEnd isPaging={searchPaging} hasFailed={searchPageError} onReach={loadMoreSearch} />
         )}
       </>
     );
@@ -2265,9 +2252,9 @@ export function SessionsScreen({
             preview && (
               <SearchMessages
                 title={preview.session.title?.trim() || 'Untitled session'}
-                match={matches?.get(preview.session.id) ?? null}
-                query={searchNeedle}
-                isSearching={searchPending}
+                match={searching ? matches?.get(preview.session.id) ?? null : null}
+                query={searching ? searchNeedle : ''}
+                isSearching={searching && searchPending}
                 onOpen={openPreview}
                 className="min-h-0 flex-1"
               />
@@ -2282,6 +2269,67 @@ export function SessionsScreen({
 /** `rows` led by `open`, the session in use, and otherwise in their own order. */
 function openFirst(rows: Session[], open: Session | null | undefined): Session[] {
   return open ? [open, ...rows.filter((session) => session.id !== open.id)] : rows;
+}
+
+/**
+ * THE END OF THE SEARCH RESULTS, WHERE THE NEXT PAGE LOADS.
+ *
+ * Reported: the reader had to press "Load more results" under the last row to see more
+ * matches. A mark now stands under the last row, and it asks for the next page once it
+ * comes within half a pane of view. Each answered page arms it again, so a page too short
+ * to fill the pane asks for the one after it. A page that failed waits for Try again:
+ * asking again on its own would repeat the failure in a loop.
+ */
+function SearchPageEnd({ isPaging, hasFailed, onReach }: {
+  /** A next page is on its way. */
+  isPaging: boolean;
+  /** The last page could not be read. */
+  hasFailed: boolean;
+  /** Ask every machine that has more results for its next page. */
+  onReach: () => void;
+}) {
+  const markRef = useRef<HTMLDivElement>(null);
+  const reach = useRef(onReach);
+  useEffect(() => {
+    reach.current = onReach;
+  });
+  const isArmed = !isPaging && !hasFailed;
+  useEffect(() => {
+    const mark = markRef.current;
+    if (!isArmed || !mark || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) reach.current();
+      },
+      { root: scrollerOf(mark), rootMargin: '0px 0px 50% 0px' },
+    );
+    observer.observe(mark);
+    return () => observer.disconnect();
+  }, [isArmed]);
+  return (
+    <div className="px-3 pb-3 sm:px-4">
+      <div ref={markRef} aria-hidden="true" className="h-px" />
+      {isPaging && <LoadMore label="Loading more results">Loading more results…</LoadMore>}
+      {hasFailed && (
+        <>
+          <LoadMore label="Try loading more results again" tone="error" onClick={onReach}>
+            Try again
+          </LoadMore>
+          <p role="status" className="mt-1 text-center font-mono text-meta text-err">
+            Could not load more results. Your current results are kept.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** The nearest ancestor that scrolls `node`, or `null` when the page itself scrolls. */
+function scrollerOf(node: HTMLElement): HTMLElement | null {
+  for (let at = node.parentElement; at; at = at.parentElement) {
+    if (/auto|scroll/.test(getComputedStyle(at).overflowY)) return at;
+  }
+  return null;
 }
 
 type MachineSection = {

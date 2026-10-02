@@ -5996,19 +5996,15 @@
 
 (defn- navigator-row-in-scope?
   "Project scopes intersect the union of the selected groups."
-  [row {:keys [project-id root group-ids]}]
+  [row {:keys [project-id group-ids]}]
   (and (or (nil? project-id) (= (str project-id) (:project-id row)))
-       (or (nil? root) (if (str/blank? root) (nil? (:project-id row)) (= root (:work-dir row))))
        (or (nil? group-ids) (contains? (set group-ids) (:session-group-id row)))))
 
 (defn- navigator-scope-group?
   "Whether the search scope offers this group to narrow to: one of the chosen project's
-   groups, or an unfiled one under No project. All projects offers none, because it
-   already means all groups."
+   groups. All projects offers none, because it already means all groups."
   [scope group]
-  (cond (:project-id scope) (= (:project-id scope) (str (get group "project_id")))
-        (contains? scope :root) (nil? (get group "project_id"))
-        :else false))
+  (and (some? (:project-id scope)) (= (:project-id scope) (str (get group "project_id")))))
 
 (defn- navigator-scope-controls
   "The row below the search field says where the search looks. Each control is its key
@@ -6791,8 +6787,7 @@
          (choose-project! []
            (when-let [chosen (select-dialog! screen
                                              "Search project"
-                                             (into [{:label "All projects" :scope {}}
-                                                    {:label "No project" :scope {:root ""}}]
+                                             (into [{:label "All projects" :scope {}}]
                                                    (map (fn [project]
                                                           {:label (get project "name")
                                                            :scope {:project-id (str (get project

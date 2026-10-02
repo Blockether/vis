@@ -3674,7 +3674,7 @@
 
 (defdescribe
   navigator-search-scope-controls-test
-  (it "intersects a project with the union of groups and distinguishes unfiled rows"
+  (it "intersects a project with the union of groups"
       (let [in-scope?
             (var-get #'dlg/navigator-row-in-scope?)
 
@@ -3684,10 +3684,8 @@
         (expect (in-scope? row {}))
         (expect (in-scope? row {:project-id "p1" :group-ids #{"g1" "g2"}}))
         (expect (not (in-scope? row {:project-id "p2" :group-ids #{"g1"}})))
-        (expect (not (in-scope? row {:group-ids #{}})))
-        (expect (not (in-scope? row {:root ""})))
-        (expect (in-scope? (assoc row :project-id nil) {:root ""}))))
-  (it "offers groups only inside the chosen project or under No project"
+        (expect (not (in-scope? row {:group-ids #{}})))))
+  (it "offers groups only inside the chosen project"
       (let [offers?
             (var-get #'dlg/navigator-scope-group?)
 
@@ -3701,9 +3699,7 @@
         (expect (not (offers? {} unfiled)))
         (expect (offers? {:project-id "p1"} filed))
         (expect (not (offers? {:project-id "p2"} filed)))
-        (expect (not (offers? {:project-id "p1"} unfiled)))
-        (expect (offers? {:root ""} unfiled))
-        (expect (not (offers? {:root ""} filed)))))
+        (expect (not (offers? {:project-id "p1"} unfiled)))))
   (it "sizes each scope control to its words and shows groups only when offered"
       (let [controls
             (var-get #'dlg/navigator-scope-controls)
@@ -3736,10 +3732,14 @@
           phase
           (atom 0)
 
+          offered
+          (atom nil)
+
           task
           (future
             (with-redefs [dlg/select-dialog!
                           (fn [_screen _title choices]
+                            (reset! offered (mapv :label choices))
                             (let [pick (if (< (long @phase) 3) "Workbench" "All projects")]
                               (some #(when (= pick (:label %)) %) choices)))
 
@@ -3797,6 +3797,8 @@
              (expect (map? result))
              (expect (nil? (:error result)))
              (expect (= 4 @phase))
+             ;; A session always lives in a project, so the chooser offers no "No project".
+             (expect (= ["All projects" "Workbench" "Other"] @offered))
              (expect (= [["" {:project-id "p1"}] ["" {:project-id "p1" :group-ids #{"g1" "g2"}}]
                          ["" {}]]
                         @asked)))

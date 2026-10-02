@@ -1418,6 +1418,24 @@
             (expect
               (= {:rank 1 :kind :request :request-snippet "…needle…" :reply-snippet nil :hits []}
                  (get (:matches answer) "far"))))))))
+  ;; Regression, user report (paraphrased: the project picker offered no projects).
+  ;; There is no project-less scope, and the gateway refuses a group read without a
+  ;; project, so one such read failed the whole catalog.
+  (it "reads the search catalog with one group read per project"
+      (let [reads (atom [])]
+        (with-redefs [vis/gateway-list-projects (fn [_]
+                                                  [{"id" "p1" "name" "Workbench"}])
+                      vis/gateway-list-session-groups
+                      (fn [opts]
+                        (swap! reads conj opts)
+                        (if (:project-id opts)
+                          [{"id" "g1" "name" "Planning" "project_id" "p1"}]
+                          (throw (ex-info "project or root is required" {:http-status 400}))))]
+
+          (expect (= {:projects [{"id" "p1" "name" "Workbench"}]
+                      :groups {"g1" {"id" "g1" "name" "Planning" "project_id" "p1"}}}
+                     (#'screen/fleet-search-catalog)))
+          (expect (= [{:project-id "p1" :archived :include}] @reads)))))
   (it "does not turn a gateway failure into a successful empty page"
       (with-redefs [vis/gateway-search-sessions (fn [_ _]
                                                   (throw (ex-info "Unavailable" {})))]

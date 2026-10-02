@@ -530,7 +530,7 @@ describe('search shows the matching messages of one session beside the results',
     expect(side.className).toContain('@min-[40rem]/search:border-l');
 
     view.setQuery('');
-    await waitFor(() => expect(noPane()).toBeNull());
+    await waitFor(() => expect(within(pane()).getByText('Type to find matching messages.')).toBeVisible());
   });
 
   it('previews another session on the first press and opens it on the second', async () => {
@@ -578,13 +578,17 @@ describe('the search dialog opens on the recent sessions', () => {
       .getByRole('region', { name: 'Recent sessions' })
       .querySelector<HTMLElement>(`[data-session-id="${sid}"]`)!;
 
-  it('lists the recents in the order the gateway answered, with no messages pane', async () => {
+  // Regression, user report (paraphrased: the search dialog should always be split, as the
+  // terminal's switcher is): the recents used to fill the dialog with no messages pane.
+  it('lists the recents in the order the gateway answered, beside the messages pane', async () => {
     const view = renderSessionsScreen({ machines: recents([newer, older]), isSearchOpen: true });
     restore = view.restore;
 
     await waitFor(() => expect(rowOrder('Recent sessions')).toEqual(['newer', 'older']));
     expect(searches(view.requests)).toEqual(['']);
-    expect(screen.queryByRole('region', { name: 'Matching messages' })).toBeNull();
+    const pane = screen.getByRole('region', { name: 'Matching messages' });
+    expect(within(pane).getByRole('heading')).toHaveTextContent('Newer work');
+    expect(within(pane).getByText('Type to find matching messages.')).toBeVisible();
   });
 
   it('opens a recent session on the first press', async () => {
@@ -713,6 +717,40 @@ async function choose(picker: HTMLElement, option: string) {
 
 // The search scope belongs on the gateway request, not on the held list window.
 describe('explicit search locations and scopes', () => {
+  // The results end in a mark that loads the next page once it is in view. jsdom lays
+  // nothing out, so `reachEnd` stands in for the reader scrolling to the last row.
+  const ends = new Set<{ callback: IntersectionObserverCallback; targets: Element[] }>();
+  class EndObserver {
+    callback: IntersectionObserverCallback;
+    targets: Element[] = [];
+    constructor(callback: IntersectionObserverCallback) {
+      this.callback = callback;
+      ends.add(this);
+    }
+    observe(target: Element) {
+      this.targets.push(target);
+    }
+    unobserve() {}
+    disconnect() {
+      ends.delete(this);
+    }
+    takeRecords() {
+      return [];
+    }
+  }
+  const reachEnd = () =>
+    act(() => {
+      for (const end of [...ends])
+        end.callback(end.targets.map((target) => ({ isIntersecting: true, target }) as never), end as never);
+    });
+  const jsdomObserver = globalThis.IntersectionObserver;
+  beforeEach(() => {
+    globalThis.IntersectionObserver = EndObserver as never;
+  });
+  afterEach(() => {
+    globalThis.IntersectionObserver = jsdomObserver;
+    ends.clear();
+  });
   it('names each project and group, offers groups only inside a project and sends OR-group scopes', async () => {
     const rows = [
       listSession({ id: 'one', title: 'Needle one', project_id: 'p1', project_name: 'Workbench', group_id: 'g1' }),
@@ -766,13 +804,14 @@ describe('explicit search locations and scopes', () => {
     expect(screen.queryByRole('combobox', { name: 'Groups' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /clear filters|search everything/i })).not.toBeInTheDocument();
   });
-  it('pages the selected project and groups and preserves unfiled and empty-project scopes', async () => {
+  // Regression, user report (paraphrased: the results should keep loading as the list
+  // scrolls, without a button to press): the next page loads once the list's end is in view.
+  it('pages the selected project and groups as the results scroll', async () => {
     const rows = Array.from({ length: 60 }, (_, index) => listSession({
       id: `hit-${index}`, title: `Needle ${index}`, project_id: 'p1', project_name: 'Workbench',
       group_id: index % 2 === 0 ? 'g1' : 'g2', workspace: { root: '/work' },
     }));
     rows.push(listSession({ id: 'other', title: 'Needle other', project_id: 'p2', workspace: { root: '/other' } }));
-    rows.push(listSession({ id: 'unfiled', title: 'Needle unfiled', workspace: { root: '' } }));
     const view = renderSessionsScreen({ machines: [{
       sessions: rows,
       routes: {
@@ -793,6 +832,7 @@ describe('explicit search locations and scopes', () => {
     const project = await screen.findByRole('combobox', { name: 'Project' });
     await userEvent.click(project);
     await screen.findByRole('option', { name: 'Empty project' });
+    expect(screen.queryByRole('option', { name: 'No project' })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('option', { name: 'Workbench' }));
     await userEvent.click(screen.getByRole('combobox', { name: 'Groups' }));
     await userEvent.click(await screen.findByRole('option', { name: 'Planning' }));
@@ -801,25 +841,21 @@ describe('explicit search locations and scopes', () => {
     await waitFor(() => expect(screen.getByText('50 of 60 matches')).toBeVisible());
     expect(within(results).queryByText('Needle 59')).not.toBeInTheDocument();
     expect(within(results).queryByText('Needle other')).not.toBeInTheDocument();
-    await userEvent.click(within(results).getByRole('button', { name: 'Load more results' }));
+    expect(within(results).queryByRole('button', { name: /load more/i })).not.toBeInTheDocument();
+    reachEnd();
     await waitFor(() => expect(within(results).getByText('Needle 59')).toBeVisible());
     expect(screen.getByText('60 matches')).toBeVisible();
-    expect(within(results).queryByRole('button', { name: 'Load more results' })).not.toBeInTheDocument();
     expect(within(results).getAllByText('Project: Workbench')).toHaveLength(60);
     const last = view.requests.filter((request) => request.path.startsWith('/v1/sessions/actions/search')).at(-1)!;
     const params = new URLSearchParams(last.path.split('?')[1]);
     expect(params.get('project_id')).toBe('p1');
     expect(params.get('group_ids')).toBe('g1,g2');
     expect(params.get('after')).toBe('50');
-    await choose(project, 'No project');
-    await waitFor(() => expect(within(results).getByText('Needle unfiled')).toBeVisible());
-    expect(within(results).getByText('Project: No project')).toBeVisible();
-    expect(within(results).getByText('Group: No group')).toBeVisible();
-    expect(within(results).queryByText('Needle 0')).not.toBeInTheDocument();
-    expect(searchParams(view.requests, 'root').at(-1)).toBe('');
-    expect(searchParams(view.requests, 'group_ids').at(-1)).toBeNull();
+    // The last page leaves nothing more to ask for.
+    reachEnd();
+    expect(view.requests.filter((request) => request.path.includes('after=')).length).toBe(1);
     await choose(project, 'Empty project');
-    await waitFor(() => expect(within(results).queryByText('Needle unfiled')).not.toBeInTheDocument());
+    await waitFor(() => expect(within(results).queryByText('Needle 0')).not.toBeInTheDocument());
     await screen.findByText('No matching sessions');
   });
 
@@ -827,9 +863,12 @@ describe('explicit search locations and scopes', () => {
     const rows = Array.from({ length: 51 }, (_, index) => listSession({
       id: `old-${index}`, title: `Needle old ${index}`, project_id: 'p1', workspace: { root: '/work' },
     }));
-    rows.push(listSession({ id: 'unfiled', title: 'Needle unfiled', workspace: { root: '' } }));
+    rows.push(listSession({ id: 'other', title: 'Needle other', project_id: 'p2', workspace: { root: '/other' } }));
     const view = renderSessionsScreen({ machines: [{ sessions: rows,
-      routes: { '/v1/projects': { projects: [{ id: 'p1', name: 'Workbench', workspace_root: '/work' }] } },
+      routes: { '/v1/projects': { projects: [
+        { id: 'p1', name: 'Workbench', workspace_root: '/work' },
+        { id: 'p2', name: 'Other', workspace_root: '/other' },
+      ] } },
     }] });
     restore = view.restore;
     view.setQuery('needle');
@@ -847,16 +886,76 @@ describe('explicit search locations and scopes', () => {
       }
       return answer;
     };
-    fireEvent.click(screen.getByRole('button', { name: 'Load more results' }));
+    reachEnd();
     await waitFor(() => expect(typeof release).toBe('function'));
     const oldRequest = view.requests.filter((request) => request.path.includes('after=')).at(-1)!;
-    await choose(project, 'No project');
+    await choose(project, 'Other');
     const results = screen.getByRole('region', { name: 'Matching sessions' });
-    await waitFor(() => expect(within(results).getByText('Needle unfiled')).toBeVisible());
+    await waitFor(() => expect(within(results).getByText('Needle other')).toBeVisible());
     expect(oldRequest.signal?.aborted).toBe(true);
     await act(async () => { release!(lateAnswer!); });
     expect(within(results).queryByText('Needle old 50')).not.toBeInTheDocument();
-    expect(within(results).getByText('Needle unfiled')).toBeVisible();
+    expect(within(results).getByText('Needle other')).toBeVisible();
+  });
+
+  it('waits for Try again after a page fails, instead of asking again on its own', async () => {
+    const rows = Array.from({ length: 51 }, (_, index) => listSession({ id: `hit-${index}`, title: `Needle ${index}` }));
+    const view = renderSessionsScreen({ machines: [{ sessions: rows }] });
+    restore = view.restore;
+    view.setQuery('needle');
+    const results = await screen.findByRole('region', { name: 'Matching sessions' });
+    await screen.findByText('50 of 51 matches');
+    const fetch = globalThis.fetch;
+    let refusals = 1;
+    globalThis.fetch = async (input, init) => {
+      if (String(input).includes('after=') && refusals-- > 0) throw new TypeError('Failed to fetch');
+      return fetch(input, init);
+    };
+    reachEnd();
+    const retry = await within(results).findByRole('button', { name: 'Try loading more results again' });
+    expect(within(results).getByText('Could not load more results. Your current results are kept.')).toBeVisible();
+    // The end of the list is still in view, and nothing asks again until the reader does.
+    reachEnd();
+    expect(refusals).toBe(0);
+    await userEvent.click(retry);
+    await waitFor(() => expect(within(results).getByText('Needle 50')).toBeVisible());
+    expect(within(results).queryByRole('button', { name: 'Try loading more results again' })).not.toBeInTheDocument();
+  });
+
+  // Regression, user report (paraphrased: the Project menu offered no project, and the rows
+  // named their group by its id): one group read the gateway refused emptied the machine's
+  // whole project picker. Each project's groups are now a read of their own.
+  it('keeps every project to choose when one project cannot list its groups', async () => {
+    const view = renderSessionsScreen({ machines: [{
+      sessions: [listSession({
+        id: 'w1', title: 'Needle work', project_id: 'p1', group_id: 'g1', workspace: { root: '/work' },
+      })],
+      routes: {
+        '/v1/projects': { projects: [
+          { id: 'p1', name: 'Workbench', workspace_root: '/work' },
+          { id: 'p2', name: 'Broken', workspace_root: '/broken' },
+        ] },
+        '/v1/session-groups': { groups: [{ id: 'g1', name: 'Planning', project_id: 'p1' }] },
+      },
+    }] });
+    restore = view.restore;
+    const fetch = globalThis.fetch;
+    globalThis.fetch = async (input, init) =>
+      String(input).includes('/v1/session-groups') && String(input).includes('root=%2Fbroken')
+        ? new Response(JSON.stringify({ error: { message: 'refused' } }), { status: 400 })
+        : fetch(input, init);
+    view.setQuery('needle');
+    const results = await screen.findByRole('region', { name: 'Matching sessions' });
+    await waitFor(() => expect(within(results).getByText('Group: Planning')).toBeVisible());
+    expect(screen.getByText('Some project and group choices could not be read. Reopen search to retry.')).toBeVisible();
+    await userEvent.click(screen.getByRole('combobox', { name: 'Project' }));
+    expect(await screen.findByRole('option', { name: 'Workbench' })).toBeVisible();
+    expect(screen.getByRole('option', { name: 'Broken' })).toBeVisible();
+    // A session is always in a project, so there is no No project choice and no read of
+    // the groups under an empty root.
+    expect(screen.queryByRole('option', { name: 'No project' })).not.toBeInTheDocument();
+    expect(view.requests.some((request) => request.path.startsWith('/v1/session-groups') &&
+      new URLSearchParams(request.path.split('?')[1]).get('root') === '')).toBe(false);
   });
 
   // Regression, user report (paraphrased: the search looked bad and hard to use on an

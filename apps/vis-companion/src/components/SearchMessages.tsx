@@ -43,12 +43,16 @@ export function SearchMessages({
 }) {
   const terms = searchTerms(query);
   const rows = match ? matchRows(match) : [];
+  // Before a word is typed the pane names the session and says what typing does, as the
+  // terminal switcher's pane does.
   const note =
     isSearching && !match
       ? 'Searching messages...'
-      : match?.inTitle || searchRanges(title, terms).length > 0
-        ? 'The title matches. No message matches.'
-        : 'No message matches.';
+      : terms.length === 0
+        ? 'Type to find matching messages.'
+        : match?.inTitle || searchRanges(title, terms).length > 0
+          ? 'The title matches. No message matches.'
+          : 'No message matches.';
   return (
     <section
       aria-label="Matching messages"
