@@ -26,7 +26,7 @@ type Story = StoryObj<typeof meta>;
  */
 export const Search: Story = {
   play: async ({ args, canvas }) => {
-    const glass = canvas.getByRole('button', { name: 'Search all machines' });
+    const glass = canvas.getByRole('button', { name: 'Search sessions' });
     await expect(glass).toHaveAttribute('aria-keyshortcuts', 'Control+/ /');
     await userEvent.click(glass);
     await expect(args.onSearch).toHaveBeenCalledTimes(1);
@@ -69,7 +69,7 @@ export const SearchDarkPointer: Story = {
 export const NothingToSearch: Story = {
   render: (args) => <Header {...args} onSearch={null} />,
   play: async ({ canvas }) => {
-    await expect(canvas.queryByRole('button', { name: 'Search all machines' })).toBeNull();
+    await expect(canvas.queryByRole('button', { name: 'Search sessions' })).toBeNull();
     await userEvent.keyboard('/');
     await expect(canvas.getByRole('button', { name: 'Open preferences' })).toBeVisible();
   },

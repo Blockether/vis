@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { TextButton } from '../../components/ui';
+import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { Select, TextButton } from '../../components/ui';
 import { SessionRow } from '../../components/SessionList';
 import { EMPTY_DRAFT_MESSAGE, draftMessageKey } from '../../lib/draft-messages';
 import { machineKey, machineLabel, projectLabel, sessionRowKey } from '../../lib/fleet';
@@ -50,9 +50,11 @@ export function useSessionSearchScope(
   const chosen = projects.find((entry) => keyFor(machineKey(entry.conn), entry.project.id) === filters.project);
   const groups = projects.filter((entry) => filters.project === ALL_PROJECTS ||
     (filters.project === NO_PROJECT ? entry.project.id === NO_PROJECT : entry === chosen));
+  // With one project chosen, its name is already on the project picker.
   const options = groups.flatMap((entry) => entry.groups.map((group) => ({
-    key: keyFor(machineKey(entry.conn), group.id),
-    label: `${entry.project.name} / ${group.name}${machineScope === ALL_SCOPE ? ` / ${machineLabel(entry.conn)}` : ''}`,
+    value: keyFor(machineKey(entry.conn), group.id),
+    label: `${filters.project === ALL_PROJECTS ? `${entry.project.name} / ` : ''}${group.name}${
+      machineScope === ALL_SCOPE ? ` / ${machineLabel(entry.conn)}` : ''}`,
   })));
   const wire = useMemo(() => {
     const selected = filters.project.split('\u0000');
@@ -87,81 +89,96 @@ export function useSessionSearchScope(
   return {
     wire, location,
     projects: projects.filter((entry) => entry.project.id !== NO_PROJECT), options, filters, failure,
+    isFiltered: filters.project !== ALL_PROJECTS || filters.groups.length > 0,
     setProject: (project: string) => setStored({ machineScope, project, groups: [] }),
-    toggleGroup: (group: string) => setStored({ ...filters, groups: filters.groups.includes(group)
-      ? filters.groups.filter((id) => id !== group) : [...filters.groups, group] }),
-    allGroups: () => setStored({ ...filters, groups: [] }),
-    everything: () => setStored({ machineScope, project: ALL_PROJECTS, groups: [] }),
+    setGroups: (groups: string[]) => setStored({ ...filters, groups }),
+    clear: () => setStored({ machineScope, project: ALL_PROJECTS, groups: [] }),
   };
 }
 
 export type SearchScope = ReturnType<typeof useSessionSearchScope>;
 
-export function SessionSearchScopes({ scope, onEverything }: {
+type Choice = { value: string; label: string; disabled?: boolean };
+
+/**
+ * WHERE A SEARCH LOOKS, as one row of labelled choices: the machine (when there is more
+ * than one), the project and the groups. Each is the app's own picker, never the system
+ * one: the project used to be a bare system select and the groups a text button that
+ * unfolded checkboxes, so on a phone the band read as loose words, not as controls.
+ * The line under the choices says what came back. Clearing the filters resets the
+ * project and the groups; the machine is where the search runs, not a filter.
+ */
+export function SessionSearchScopes({ scope, machine = null, report = null }: {
   scope: SearchScope;
-  onEverything: () => void;
+  /** The machine the search asks; `null` when there is no other machine to choose. */
+  machine?: { value: string; options: readonly Choice[]; onChange: (key: string) => void } | null;
+  /** What the search came back with. */
+  report?: ReactNode;
 }) {
-  const [groupsOpen, setGroupsOpen] = useState(false);
+  const id = useId();
+  const projects = [
+    { value: ALL_PROJECTS, label: 'All projects' },
+    { value: NO_PROJECT, label: 'No project' },
+    ...scope.projects.map(({ conn, project }) => ({
+      value: keyFor(machineKey(conn), project.id),
+      label: `${project.name}${scope.filters.machineScope === ALL_SCOPE ? ` / ${machineLabel(conn)}` : ''}`,
+    })),
+  ];
   return (
-    <div className="flex flex-wrap items-center gap-3 border-t border-edge px-3 py-2 font-mono text-meta text-dialog-hint">
-      <label className="flex min-w-0 items-center gap-2">
-        Project
-        <select
-          aria-label="Search project"
-          value={scope.filters.project}
-          onChange={(event) => scope.setProject(event.target.value)}
-          className="min-w-0 max-w-64 bg-panel px-2 py-1 text-white focus-visible:outline focus-visible:outline-current"
-        >
-          <option value={ALL_PROJECTS}>All projects</option>
-          <option value={NO_PROJECT}>No project</option>
-          {scope.projects.map(({ conn, project }) => (
-            <option
-              key={keyFor(machineKey(conn), project.id)}
-              value={keyFor(machineKey(conn), project.id)}
-            >
-              {project.name}
-              {scope.filters.machineScope === ALL_SCOPE ? ` / ${machineLabel(conn)}` : ''}
-            </option>
-          ))}
-        </select>
-      </label>
-      <TextButton
-        aria-label="Search groups"
-        aria-expanded={groupsOpen}
-        onClick={() => setGroupsOpen(!groupsOpen)}
-      >
-        Groups: {scope.filters.groups.length ? `${scope.filters.groups.length} selected` : 'All groups'}
-      </TextButton>
-      <TextButton onClick={() => {
-        scope.everything();
-        setGroupsOpen(false);
-        onEverything();
-      }}>
-        Search everything
-      </TextButton>
-      {groupsOpen && (
-        <fieldset
-          className="flex max-h-40 w-full flex-wrap gap-x-4 gap-y-2 overflow-y-auto"
-          aria-label="Search groups"
-        >
-          <legend className="sr-only">Search any selected group</legend>
-          <TextButton onClick={scope.allGroups}>All groups</TextButton>
-          {scope.options.map((group) => (
-            <label key={group.key} className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={scope.filters.groups.includes(group.key)}
-                onChange={() => scope.toggleGroup(group.key)}
-              />
-              {group.label}
-            </label>
-          ))}
-          {scope.options.length === 0 && <span>No groups in this scope</span>}
-        </fieldset>
+    <div className="flex flex-col gap-2">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-x-3 gap-y-2">
+        {machine && (
+          <ScopeChoice id={`${id}machine`} label="Machine">
+            <Select
+              aria-labelledby={`${id}machine`}
+              value={machine.value}
+              onValueChange={machine.onChange}
+              options={machine.options}
+              className="w-full"
+            />
+          </ScopeChoice>
+        )}
+        <ScopeChoice id={`${id}project`} label="Project">
+          <Select
+            aria-labelledby={`${id}project`}
+            value={scope.filters.project}
+            onValueChange={scope.setProject}
+            options={projects}
+            className="w-full"
+          />
+        </ScopeChoice>
+        <ScopeChoice id={`${id}groups`} label="Groups">
+          <Select
+            aria-labelledby={`${id}groups`}
+            values={scope.filters.groups}
+            onValuesChange={scope.setGroups}
+            noneLabel="All groups"
+            options={scope.options}
+            className="w-full"
+          />
+        </ScopeChoice>
+      </div>
+      {(report || scope.isFiltered || scope.failure) && (
+        <div className="flex min-h-6 min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+          {report}
+          {scope.failure && (
+            <p role="status" className="font-mono text-meta text-dialog-hint">{scope.failure}</p>
+          )}
+          {scope.isFiltered && (
+            <TextButton className="ml-auto" onClick={scope.clear}>Clear filters</TextButton>
+          )}
+        </div>
       )}
-      {scope.failure && (
-        <p role="status" className="w-full">{scope.failure}</p>
-      )}
+    </div>
+  );
+}
+
+/** One labelled choice: the caption names the picker under it. */
+function ScopeChoice({ id, label, children }: { id: string; label: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <span id={id} className="font-mono text-meta text-dialog-hint">{label}</span>
+      {children}
     </div>
   );
 }

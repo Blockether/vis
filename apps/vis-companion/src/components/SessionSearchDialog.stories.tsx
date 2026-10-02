@@ -30,7 +30,7 @@ export const Empty: Story = {
   play: async ({ args, canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
     const dialog = page.getByRole('dialog', { name: 'Search sessions' });
-    await expect(within(dialog).getByRole('searchbox', { name: 'Search sessions on every machine' })).toHaveFocus();
+    await expect(within(dialog).getByRole('searchbox', { name: 'Search session titles and messages' })).toHaveFocus();
     await expect(within(dialog).queryByRole('region', { name: 'Matching messages' })).toBeNull();
 
     await userEvent.keyboard('{Escape}');

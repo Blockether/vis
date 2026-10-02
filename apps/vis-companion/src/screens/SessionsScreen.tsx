@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Banner, TextButton, overlayLayer } from '../components/ui';
+import { Banner, LoadMore, overlayLayer } from '../components/ui';
 import {
   MachineGap,
   MachineProjectsButton,
@@ -1867,8 +1867,8 @@ export function SessionsScreen({
     ) : null;
   if (loadError) return null;
 
-  // ONE MACHINE SWITCH, TWO PLACES: over the list, and under the search field, because a
-  // search asks the machine the switch has picked.
+  // ONE MACHINE SWITCH over the list. The search dialog offers the same choice as a
+  // picker (`searchMachine`), because a search asks the machine the switch has picked.
   const machineSwitch = (
     <div role="group" aria-label="Machines" className="flex min-w-0 flex-1">
       <MachineSwitcher>
@@ -1925,18 +1925,41 @@ export function SessionsScreen({
       </MachineSwitcher>
     </div>
   );
-  // A search report gets its own line instead of compressing the machine switch.
+  // The search asks the machine the switch has picked. With more than one machine, the
+  // dialog offers that choice as a picker beside its project and groups. A machine that
+  // is not answering has nothing to search: it stays listed there, but cannot be chosen.
+  const searchMachine =
+    switcherMachines.length > 1
+      ? {
+          value: scope ?? '',
+          options: switcherMachines.map((machine) => {
+            const read = machineRead(machine);
+            const note = read === 'down' ? 'Not answering' : read === 'reading' ? 'Connecting…' : null;
+            const name = machineLabel(machine.conn);
+            return {
+              value: machineKey(machine.conn),
+              label: note ? `${name} · ${note}` : name,
+              disabled: read === 'down',
+            };
+          }),
+          onChange: selectScope,
+        }
+      : null;
+  // What the search came back with, on the line under its choices.
   const searchReport = searching && sessions !== null && (
-    <div className="order-last flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
       {/* A filter is a FLEET question, and the count it came back with is the
           only proof it left this gateway. It is the one fact this row reports:
           totals were the same numbers the project headers below already carry.
           It counts the ROWS ON SCREEN, so it is spoken only once a needle has
           actually been asked: inside a pause the list is still the last answer,
-          and before the first one there is nothing filtered to count. */}
+          and before the first one there is nothing filtered to count. While the gateway
+          holds more pages, it says how many of the scope's total those rows are. */}
       {searched && (
         <span className="whitespace-nowrap font-mono text-chip font-bold text-accent-ink">
-          {searchCounts.matches} {searchCounts.matches === 1 ? 'match' : 'matches'}
+          {searchHasMore && searchTotal > searchCounts.matches
+            ? `${searchCounts.matches} of ${searchTotal} matches`
+            : `${searchCounts.matches} ${searchCounts.matches === 1 ? 'match' : 'matches'}`}
         </span>
       )}
       {/* A search is a fleet ROUND TRIP over a transcript store, not a filter
@@ -2016,23 +2039,42 @@ export function SessionsScreen({
         </p>
       </div>
     ) : (
-      <MachineSections
-        isSearch
-        sections={foundSections}
-        searchScope={searchScope}
-        context={foundContext}
-        creation={projectCreation}
-        note={(machine) => {
-          const key = machineKey(machine.conn);
-          // Saved rows are not an answer here either (see `MachineRead`): the dialog
-          // waits on the gateway, not on whatever this device kept from last time.
-          if (machineRead(machine) === 'reading') return 'Reading sessions...';
-          if (searchUnreached.has(key)) return 'Could not reach this machine.';
-          if (!searchAnswered.has(key))
-            return searching ? 'Searching this machine...' : 'Reading this machine...';
-          return searching ? 'No matches on this machine.' : 'No recent sessions on this machine.';
-        }}
-      />
+      <>
+        <MachineSections
+          isSearch
+          sections={foundSections}
+          searchScope={searchScope}
+          context={foundContext}
+          creation={projectCreation}
+          note={(machine) => {
+            const key = machineKey(machine.conn);
+            // Saved rows are not an answer here either (see `MachineRead`): the dialog
+            // waits on the gateway, not on whatever this device kept from last time.
+            if (machineRead(machine) === 'reading') return 'Reading sessions...';
+            if (searchUnreached.has(key)) return 'Could not reach this machine.';
+            if (!searchAnswered.has(key))
+              return searching ? 'Searching this machine...' : 'Reading this machine...';
+            return searching ? 'No matches on this machine.' : 'No recent sessions on this machine.';
+          }}
+        />
+        {/* More results wait where the list stops, not above it. */}
+        {(searchHasMore || searchPaging || searchPageError) && (
+          <div className="px-3 pb-3 sm:px-4">
+            <LoadMore
+              label={searchPaging ? 'Loading more results' : searchPageError ? 'Retry more results' : 'Load more results'}
+              disabled={searchPaging}
+              onClick={loadMoreSearch}
+            >
+              {searchPaging ? 'Loading more results…' : searchPageError ? 'Retry more results' : 'Load more results'}
+            </LoadMore>
+            {searchPageError && (
+              <p role="status" className="mt-1 text-center font-mono text-meta text-err">
+                Could not load more results. Your current results are kept.
+              </p>
+            )}
+          </div>
+        )}
+      </>
     );
 
   return (
@@ -2217,22 +2259,7 @@ export function SessionsScreen({
           query={query}
           onQuery={onQuery}
           onClose={onCloseSearch}
-          scope={
-            <>
-              {showStrip && machineSwitch}
-              <SessionSearchScopes scope={searchScope} onEverything={() => setScopePick(null)} />
-              {(searchHasMore || searchPaging || searchPageError) && (
-                <div className="flex flex-wrap items-center gap-3 border-t border-edge px-3 py-2 font-mono text-meta text-dialog-hint">
-                  <span>{searchTotal} results in this scope</span>
-                  <TextButton disabled={searchPaging} onClick={loadMoreSearch}>
-                    {searchPaging ? 'Loading results…' : searchPageError ? 'Retry more results' : 'Load more results'}
-                  </TextButton>
-                  {searchPageError && <span role="status">Could not load more results. Your current results are kept.</span>}
-                </div>
-              )}
-              {searchReport}
-            </>
-          }
+          scope={<SessionSearchScopes scope={searchScope} machine={searchMachine} report={searchReport} />}
           results={searchResults}
           messages={
             preview && (

@@ -186,3 +186,82 @@ describe('Select', () => {
     expect(screen.getByRole('combobox')).toHaveTextContent('remote-backend');
   });
 });
+
+const groupChoices = [
+  { value: 'plan', label: 'Planning' },
+  { value: 'review', label: 'Review' },
+  { value: 'old', label: 'Archive', disabled: true },
+];
+
+function GroupFilter() {
+  const [values, setValues] = useState<string[]>([]);
+  return (
+    <>
+      <Select
+        aria-label="Groups"
+        values={values}
+        onValuesChange={setValues}
+        noneLabel="All groups"
+        options={groupChoices}
+      />
+      <Button variant="secondary">Continue</Button>
+    </>
+  );
+}
+
+describe('Select with several choices', () => {
+  it('toggles choices by tap, Space and Enter while the list stays open, and Escape returns focus', async () => {
+    render(<GroupFilter />);
+    const trigger = screen.getByRole('combobox', { name: 'Groups' });
+    expect(trigger).toHaveTextContent('All groups');
+    await userEvent.click(trigger);
+    const listbox = screen.getByRole('listbox', { name: 'Groups' });
+    expect(listbox).toHaveAttribute('aria-multiselectable', 'true');
+    expect(screen.getByRole('option', { name: 'All groups' })).toHaveAttribute('aria-selected', 'true');
+    await userEvent.click(screen.getByRole('option', { name: 'Planning' }));
+    expect(screen.getByRole('listbox')).toBe(listbox);
+    expect(screen.getByRole('option', { name: 'Planning' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('option', { name: 'All groups' })).toHaveAttribute('aria-selected', 'false');
+    await userEvent.keyboard('{ArrowDown}');
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Review' })).toHaveFocus());
+    await userEvent.keyboard(' ');
+    expect(trigger).toHaveTextContent('Planning, Review');
+    await userEvent.keyboard('{Enter}');
+    expect(trigger).toHaveTextContent('Planning');
+    expect(screen.getByRole('listbox')).toBe(listbox);
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(trigger).toHaveTextContent('Planning');
+  });
+
+  it('clears every choice from its none row and closes', async () => {
+    render(<GroupFilter />);
+    const trigger = screen.getByRole('combobox', { name: 'Groups' });
+    await userEvent.click(trigger);
+    await userEvent.click(screen.getByRole('option', { name: 'Planning' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Review' }));
+    expect(trigger).toHaveTextContent('Planning, Review');
+    await userEvent.click(screen.getByRole('option', { name: 'All groups' }));
+    expect(trigger).toHaveTextContent('All groups');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  });
+
+  it('closes on an outside press and is unavailable with nothing to choose', async () => {
+    render(
+      <>
+        <GroupFilter />
+        <Select aria-label="Empty groups" values={[]} onValuesChange={vi.fn()} noneLabel="All groups" options={[]} />
+      </>,
+    );
+    const trigger = screen.getByRole('combobox', { name: 'Groups' });
+    await userEvent.click(trigger);
+    await userEvent.click(screen.getByRole('option', { name: 'Review' }));
+    fireEvent.pointerDown(document.body);
+    await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument());
+    expect(trigger).toHaveTextContent('Review');
+    const empty = screen.getByRole('combobox', { name: 'Empty groups' });
+    expect(empty).toBeDisabled();
+    expect(empty).toHaveTextContent('All groups');
+  });
+});

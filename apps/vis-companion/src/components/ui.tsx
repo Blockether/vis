@@ -1980,11 +1980,15 @@ function isolateSelectContent(node: HTMLDivElement | null) {
 }
 
 /**
- * A single choice with app-owned faces and a portalled, collision-aware listbox.
+ * A choice with app-owned faces and a portalled, collision-aware listbox.
  * Radix owns keyboard navigation, typeahead, touch scrolling and focus return.
  * Arrows explore; Enter/Space commits; Escape cancels without dismissing a parent.
  * While open, Tab stays in the picker (the primitive's native-select convention).
  * Callers own the saved value; rejected saves never replace it optimistically here.
+ *
+ * Given `values` instead of `value`, it is a filter that holds any number of choices:
+ * Enter, Space or a tap toggles one and the list stays open for the next, and the
+ * `noneLabel` row at the top clears them all and closes it.
  */
 export const Select = forwardRef<
   HTMLButtonElement,
@@ -1992,28 +1996,90 @@ export const Select = forwardRef<
     ButtonHTMLAttributes<HTMLButtonElement>,
     'id' | 'aria-label' | 'aria-labelledby' | 'aria-describedby' | 'aria-busy' | 'disabled' | 'className'
   > & {
-    value: string;
-    onValueChange: (value: string) => void;
     options: readonly { value: string; label: string; disabled?: boolean }[];
-  }
->(function Select({ value, onValueChange, options, disabled = false, className = '', ...props }, ref) {
+  } & (
+      | {
+          value: string;
+          onValueChange: (value: string) => void;
+          values?: never;
+          onValuesChange?: never;
+          noneLabel?: never;
+        }
+      | {
+          values: readonly string[];
+          onValuesChange: (values: string[]) => void;
+          /** What the trigger says while nothing is chosen, and the row that clears the choices. */
+          noneLabel: string;
+          value?: never;
+          onValueChange?: never;
+        }
+    )
+>(function Select(
+  { value, onValueChange, values, onValuesChange, noneLabel = '', options, disabled = false, className = '', ...props },
+  ref,
+) {
   const [open, setOpen] = useState(false);
+  // Radix closes the list after every pick. A toggle in a filter is the one pick that
+  // keeps it open, so the next choice is one tap away.
+  const toggledRef = useRef(false);
   const generatedId = useId();
   const triggerId = props.id ?? generatedId;
   const unavailable = disabled || options.length === 0;
-  const selected = options.find((option) => option.value === value);
-  const label = options.length === 0 ? 'No options available' : (selected?.label ?? value);
+  const isChosen = (option: string) => (values ? values.includes(option) : option === value);
+  const chosen = options.filter((option) => isChosen(option.value));
+  const label = !values
+    ? options.length === 0
+      ? 'No options available'
+      : (chosen[0]?.label ?? value ?? '')
+    : values.length === 0
+      ? noneLabel
+      : chosen.length > 0
+        ? chosen.map((option) => option.label).join(', ')
+        : `${values.length} selected`;
   // An empty string is a real choice (Unassigned, No group), not Radix's placeholder.
   // Prefix every value so the mapping is reversible and cannot collide with caller data.
   const prefix = 'option:';
+  // A filter's root value matches no row, so Radix reports every row as a change.
+  const several = 'several';
+  const clear = 'clear';
+  const rows = [
+    ...(values ? [{ item: clear, label: noneLabel, disabled: false, isChosen: values.length === 0 }] : []),
+    ...options.map((option) => ({
+      item: `${prefix}${option.value}`,
+      label: option.label,
+      disabled: option.disabled ?? false,
+      isChosen: isChosen(option.value),
+    })),
+  ];
   if (unavailable && open) setOpen(false);
 
   return (
     <SelectPrimitive.Root
-      value={`${prefix}${value}`}
-      onValueChange={(next) => onValueChange(next.slice(prefix.length))}
+      value={values ? several : `${prefix}${value}`}
+      onValueChange={(next) => {
+        if (!values) {
+          onValueChange?.(next.slice(prefix.length));
+        } else if (next === clear) {
+          onValuesChange?.([]);
+        } else {
+          const option = next.slice(prefix.length);
+          toggledRef.current = true;
+          queueMicrotask(() => {
+            toggledRef.current = false;
+          });
+          onValuesChange?.(
+            values.includes(option) ? values.filter((entry) => entry !== option) : [...values, option],
+          );
+        }
+      }}
       open={open && !unavailable}
-      onOpenChange={setOpen}
+      onOpenChange={(next) => {
+        if (!next && toggledRef.current) {
+          toggledRef.current = false;
+          return;
+        }
+        setOpen(next);
+      }}
       disabled={unavailable}
     >
       <SelectPrimitive.Trigger
@@ -2038,6 +2104,7 @@ export const Select = forwardRef<
           collisionPadding={12}
           aria-label={props['aria-label']}
           aria-labelledby={props['aria-labelledby'] ?? (props['aria-label'] ? undefined : triggerId)}
+          aria-multiselectable={values ? true : undefined}
           className="z-[60] flex max-h-[min(20rem,var(--radix-select-content-available-height))] min-w-[var(--radix-select-trigger-width)] max-w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-none border border-dialog-edge bg-panel font-mono text-ui text-white shadow-float"
           onKeyDown={(event) => {
             // Do not let the surrounding dialog interpret a picker key as its own.
@@ -2052,26 +2119,24 @@ export const Select = forwardRef<
             <ChevronIcon open className="size-3 rotate-180" />
           </SelectPrimitive.ScrollUpButton>
           <SelectPrimitive.Viewport className="min-h-0 p-1">
-            {options.map((option) => (
+            {rows.map((row) => (
               <SelectPrimitive.Item
-                key={option.value}
-                value={`${prefix}${option.value}`}
-                disabled={option.disabled}
-                textValue={option.label}
-                aria-selected={option.value === value}
+                key={row.item}
+                value={row.item}
+                disabled={row.disabled}
+                textValue={row.label}
+                aria-selected={row.isChosen}
                 onPointerMove={(event) => {
                   // Hover changes ink only; keep the keyboard focus indicator in place.
                   if (event.pointerType === 'mouse') event.preventDefault();
                 }}
-                className="flex min-h-11 cursor-default select-none items-center gap-2 rounded-none px-2 py-1.5 outline-none data-[state=checked]:bg-panel-2 data-[disabled]:text-muted data-[disabled]:pointer-events-none [&:not([data-disabled])]:hover:text-accent-ink focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent mouse:min-h-7"
+                className="flex min-h-11 cursor-default select-none items-center gap-2 rounded-none px-2 py-1.5 outline-none aria-selected:bg-panel-2 data-[disabled]:text-muted data-[disabled]:pointer-events-none [&:not([data-disabled])]:hover:text-accent-ink focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent mouse:min-h-7"
               >
                 <SelectPrimitive.ItemText className="min-w-0 flex-1 break-words">
-                  {option.label}
+                  {row.label}
                 </SelectPrimitive.ItemText>
-                <span className="ml-auto flex size-3 shrink-0 items-center justify-center">
-                  <SelectPrimitive.ItemIndicator>
-                    <CheckIcon className="size-3" />
-                  </SelectPrimitive.ItemIndicator>
+                <span aria-hidden="true" className="ml-auto flex size-3 shrink-0 items-center justify-center">
+                  {row.isChosen && <CheckIcon className="size-3" />}
                 </span>
               </SelectPrimitive.Item>
             ))}

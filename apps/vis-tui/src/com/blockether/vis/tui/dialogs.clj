@@ -6156,20 +6156,79 @@
        (or (nil? group-ids) (contains? (set group-ids) (:session-group-id row)))))
 
 (defn- navigator-scope-controls
-  "Three neutral, clickable controls share the row below the search field."
-  [width project group-count]
-  (let [cell (max 1 (quot (long width) 3))]
-    (mapv (fn [idx action label]
-            {:action action
-             :x (* (long idx) (long cell))
-             :width cell
-             :label (p/ellipsize label cell)})
-          (range 3)
-          [:project :groups :all]
-          [(str "C-p Project: " project)
-           (str "C-g Groups: "
-                (if (pos? (long group-count)) (str group-count " selected") "All groups"))
-           "C-a Everything"])))
+  "The row below the search field says where the search looks. Each control is its key
+   in hint ink and its current choice in text ink, at its own width, so only a long
+   project, then a long groups label, gives up columns. Clear filters appears only
+   while a filter narrows the search."
+  [width project group-count filtered?]
+  (let [gap
+        3
+
+        controls
+        (cond-> [{:action :project :key "C-p" :text (str "Project: " project)}
+                 {:action :groups
+                  :key "C-g"
+                  :text
+                  (str "Groups: "
+                       (if (pos? (long group-count)) (str group-count " selected") "All groups"))}]
+          filtered?
+          (conj {:action :all :key "C-a" :text "Clear filters"}))
+
+        natural
+        (mapv #(+ (count (:key %)) 1 (count (:text %))) controls)
+
+        spare
+        (- (long width) (* gap (dec (count controls))))
+
+        widths
+        (loop [idx
+               0
+
+               widths
+               natural
+
+               over
+               (max 0 (- (long (reduce + natural)) spare))]
+
+          (if (or (zero? over) (= idx (count widths)))
+            widths
+            (let [w
+                  (long (widths idx))
+
+                  give
+                  (min over (max 0 (- w (+ (count (:key (controls idx))) 9))))]
+
+              (recur (inc idx) (assoc widths idx (- w give)) (- over give)))))]
+
+    (loop [idx
+           0
+
+           x
+           0
+
+           out
+           []]
+
+      (if (= idx (count controls))
+        out
+        (let [control
+              (controls idx)
+
+              w
+              (min (long (widths idx)) (- (long width) x))
+
+              text-w
+              (- w (count (:key control)) 1)]
+
+          (if (< text-w 1)
+            out
+            (recur (inc idx)
+                   (+ x w gap)
+                   (conj out
+                         (assoc control
+                           :x x
+                           :width w
+                           :label (p/ellipsize (:text control) text-w))))))))))
 
 (defn- navigator-selected-index
   "Keep the selected session when recency, pages or search results move its row.
@@ -6930,7 +6989,7 @@
              (choose-groups!)
 
              :all
-             (change-scope! {} "All projects")
+             (when (seq @search-scope) (change-scope! {} "All projects"))
 
              nil))]
         (try
@@ -7018,7 +7077,8 @@
                   scope-controls
                   (navigator-scope-controls content-w
                                             @scope-project-label
-                                            (count (:group-ids @search-scope)))
+                                            (count (:group-ids @search-scope))
+                                            (boolean (seq @search-scope)))
 
                   block-heights
                   (navigator-block-heights visible-rows)
@@ -7073,12 +7133,15 @@
                                                        @query
                                                        (count @query))]
                 (p/set-colors! g t/dialog-border t/dialog-bg)
-                (p/set-colors! g t/dialog-hint t/dialog-bg)
                 (doseq [control scope-controls]
-                  (p/put-str! g
-                              (+ (inc (long left)) (long (:x control)))
-                              (inc (long content-top))
-                              (:label control)))
+                  (let [x (+ (inc (long left)) (long (:x control)))]
+                    (p/set-colors! g t/dialog-hint t/dialog-bg)
+                    (p/put-str! g x (inc (long content-top)) (:key control))
+                    (p/set-colors! g t/dialog-fg t/dialog-bg)
+                    (p/put-str! g
+                                (+ x (count (:key control)) 1)
+                                (inc (long content-top))
+                                (:label control))))
                 (p/set-colors! g t/dialog-border t/dialog-bg)
                 (p/draw-separator! g left right (+ (long content-top) 2))
                 (when (and page-status (pos? total))

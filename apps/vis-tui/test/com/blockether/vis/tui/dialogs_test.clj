@@ -3690,6 +3690,25 @@
         (expect (not (in-scope? row {:group-ids #{}})))
         (expect (not (in-scope? row {:root ""})))
         (expect (in-scope? (assoc row :project-id nil) {:root ""}))))
+  (it "sizes each scope control to its words and offers Clear filters only while filtered"
+      (let [controls
+            (var-get #'dlg/navigator-scope-controls)
+
+            wide
+            (controls 100 "All projects" 0 false)
+
+            narrow
+            (controls 72 "A very long project name indeed" 2 true)]
+
+        (expect (= [:project :groups] (mapv :action wide)))
+        (expect (= ["C-p" "C-g"] (mapv :key wide)))
+        (expect (= ["Project: All projects" "Groups: All groups"] (mapv :label wide)))
+        (expect (= [0 28] (mapv :x wide)))
+        (expect (= [:project :groups :all] (mapv :action narrow)))
+        (expect (str/starts-with? (:label (first narrow)) "Project: A very"))
+        (expect (not= "Project: A very long project name indeed" (:label (first narrow))))
+        (expect (= ["Groups: 2 selected" "Clear filters"] (mapv :label (rest narrow))))
+        (expect (<= (+ (long (:x (last narrow))) (long (:width (last narrow)))) 72))))
   (it
     "reissues the same blank query for project, OR groups and everything controls"
     (let [sessions

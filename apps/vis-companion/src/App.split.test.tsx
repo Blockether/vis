@@ -88,8 +88,8 @@ describe('a desk keeps the list beside the conversation', () => {
     const rail = () => main.firstElementChild as HTMLElement;
     const search = () => screen.getByRole('dialog', { name: 'Search sessions' });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Search all machines' }));
-    const field = within(search()).getByLabelText('Search sessions on every machine');
+    fireEvent.click(screen.getByRole('button', { name: 'Search sessions' }));
+    const field = within(search()).getByLabelText('Search session titles and messages');
     expect(field).toHaveFocus();
     fireEvent.change(field, { target: { value: 'alpha' } });
     await waitFor(() =>
@@ -102,8 +102,8 @@ describe('a desk keeps the list beside the conversation', () => {
 
     fireEvent.click(within(search()).getByRole('button', { name: 'Close search' }));
     expect(screen.queryByRole('dialog', { name: 'Search sessions' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Search all machines' }));
-    expect(within(search()).getByLabelText('Search sessions on every machine')).toHaveValue('');
+    fireEvent.click(screen.getByRole('button', { name: 'Search sessions' }));
+    expect(within(search()).getByLabelText('Search session titles and messages')).toHaveValue('');
   });
 
   it('opens a session beside the list, with no way back because nothing was left', async () => {

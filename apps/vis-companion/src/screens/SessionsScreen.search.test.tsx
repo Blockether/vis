@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Session } from '../lib/types';
@@ -396,12 +397,12 @@ describe('typing does not redraw the list under the thumb', () => {
     await settle(300);
     const report = screen.getByText('1 match').closest('div');
     expect(report).toBeVisible();
-    const row = report!.parentElement!;
-    // The report stays on its own line at every width, behind the machine and routes.
-    expect(row.className).toContain('flex-wrap');
-    expect(report!.className).toContain('order-last');
-    expect(report!.className).toContain('w-full');
-    // And it is not sharing a box with the machine's own verb any more.
+    const line = report!.parentElement!;
+    // The report stands on the line under the search choices, and that line wraps.
+    expect(line.className).toContain('flex-wrap');
+    expect(line.previousElementSibling).toContainElement(screen.getByRole('combobox', { name: 'Project' }));
+    // And it shares no box with a machine switch or the machine's own verb.
+    expect(line.querySelector('[role="group"][aria-label="Machines"]')).toBeNull();
     expect(report!.querySelector('[aria-label^="Projects on"]')).toBeNull();
   });
 });
@@ -704,6 +705,12 @@ describe('the search starts on the session the reader is in', () => {
   });
  });
 
+/** Picks one choice from the app's own picker. */
+async function choose(picker: HTMLElement, option: string) {
+  await userEvent.click(picker);
+  await userEvent.click(await screen.findByRole('option', { name: option }));
+}
+
 // The search scope belongs on the gateway request, not on the held list window.
 describe('explicit search locations and scopes', () => {
   it('names each project and group and sends project and OR-group scopes', async () => {
@@ -732,18 +739,28 @@ describe('explicit search locations and scopes', () => {
     await waitFor(() => expect(within(results).getByText('Needle one')).toBeVisible());
     expect(within(results).getAllByText('Project: Workbench')[0]).toBeVisible();
     expect(within(results).getByText('Group: Planning')).toBeVisible();
-    const project = await screen.findByRole('combobox', { name: 'Search project' });
-    fireEvent.change(project, { target: { value: screen.getByRole('option', { name: 'Workbench' }).getAttribute('value') } });
+    const project = await screen.findByRole('combobox', { name: 'Project' });
+    // With one machine there is no machine to choose.
+    expect(screen.queryByRole('combobox', { name: 'Machine' })).not.toBeInTheDocument();
+    await choose(project, 'Workbench');
     await waitFor(() => expect(searchParams(view.requests, 'project_id').at(-1)).toBe('p1'));
-    fireEvent.click(screen.getByRole('button', { name: /Search groups/ }));
-    fireEvent.click(await screen.findByRole('checkbox', { name: /Planning/ }));
-    fireEvent.click(screen.getByRole('checkbox', { name: /Review/ }));
+    const groups = screen.getByRole('combobox', { name: 'Groups' });
+    await userEvent.click(groups);
+    expect(screen.getByRole('listbox', { name: 'Groups' })).toHaveAttribute('aria-multiselectable', 'true');
+    await userEvent.click(screen.getByRole('option', { name: 'Planning' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Review' }));
     await waitFor(() => expect(searchParams(view.requests, 'group_ids').at(-1)?.split(',').sort()).toEqual(['g1', 'g2']));
+    await userEvent.keyboard('{Escape}');
+    expect(groups).toHaveTextContent('Planning, Review');
+    expect(screen.getByRole('dialog', { name: 'Search sessions' })).toBeInTheDocument();
     const oldRequest = view.requests.filter((request) => request.path.startsWith('/v1/sessions/actions/search')).at(-1)!;
-    fireEvent.click(screen.getByRole('button', { name: 'Search everything' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
     await waitFor(() => expect(searchParams(view.requests, 'group_ids').at(-1)).toBeNull());
     expect(searchParams(view.requests, 'project_id').at(-1)).toBeNull();
     expect(oldRequest.signal?.aborted).toBe(true);
+    expect(project).toHaveTextContent('All projects');
+    expect(groups).toHaveTextContent('All groups');
+    expect(screen.queryByRole('button', { name: 'Clear filters' })).not.toBeInTheDocument();
   });
   it('pages the selected project and groups and preserves unfiled and empty-project scopes', async () => {
     const rows = Array.from({ length: 60 }, (_, index) => listSession({
@@ -769,31 +786,35 @@ describe('explicit search locations and scopes', () => {
     restore = view.restore;
     view.setQuery('needle');
     const results = await screen.findByRole('region', { name: 'Matching sessions' });
-    const project = await screen.findByRole('combobox', { name: 'Search project' });
+    const project = await screen.findByRole('combobox', { name: 'Project' });
+    await userEvent.click(project);
     await screen.findByRole('option', { name: 'Empty project' });
-    fireEvent.change(project, { target: { value: screen.getByRole('option', { name: 'Workbench' }).getAttribute('value') } });
-    fireEvent.click(screen.getByRole('button', { name: 'Search groups' }));
-    fireEvent.click(await screen.findByRole('checkbox', { name: /Planning/ }));
-    fireEvent.click(screen.getByRole('checkbox', { name: /Review/ }));
-    await waitFor(() => expect(screen.getByText('60 results in this scope')).toBeVisible());
+    await userEvent.click(screen.getByRole('option', { name: 'Workbench' }));
+    await userEvent.click(screen.getByRole('combobox', { name: 'Groups' }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Planning' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Review' }));
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.getByText('50 of 60 matches')).toBeVisible());
     expect(within(results).queryByText('Needle 59')).not.toBeInTheDocument();
     expect(within(results).queryByText('Needle other')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Load more results' }));
+    await userEvent.click(within(results).getByRole('button', { name: 'Load more results' }));
     await waitFor(() => expect(within(results).getByText('Needle 59')).toBeVisible());
+    expect(screen.getByText('60 matches')).toBeVisible();
+    expect(within(results).queryByRole('button', { name: 'Load more results' })).not.toBeInTheDocument();
     expect(within(results).getAllByText('Project: Workbench')).toHaveLength(60);
     const last = view.requests.filter((request) => request.path.startsWith('/v1/sessions/actions/search')).at(-1)!;
     const params = new URLSearchParams(last.path.split('?')[1]);
     expect(params.get('project_id')).toBe('p1');
     expect(params.get('group_ids')).toBe('g1,g2');
     expect(params.get('after')).toBe('50');
-    fireEvent.change(project, { target: { value: 'none' } });
+    await choose(project, 'No project');
     await waitFor(() => expect(within(results).getByText('Needle unfiled')).toBeVisible());
     expect(within(results).getByText('Project: No project')).toBeVisible();
     expect(within(results).getByText('Group: No group')).toBeVisible();
     expect(within(results).queryByText('Needle 0')).not.toBeInTheDocument();
     expect(searchParams(view.requests, 'root').at(-1)).toBe('');
     expect(searchParams(view.requests, 'group_ids').at(-1)).toBeNull();
-    fireEvent.change(project, { target: { value: screen.getByRole('option', { name: 'Empty project' }).getAttribute('value') } });
+    await choose(project, 'Empty project');
     await waitFor(() => expect(within(results).queryByText('Needle unfiled')).not.toBeInTheDocument());
     await screen.findByText('No matching sessions');
   });
@@ -808,10 +829,9 @@ describe('explicit search locations and scopes', () => {
     }] });
     restore = view.restore;
     view.setQuery('needle');
-    const project = await screen.findByRole('combobox', { name: 'Search project' });
-    await screen.findByRole('option', { name: 'Workbench' });
-    fireEvent.change(project, { target: { value: screen.getByRole('option', { name: 'Workbench' }).getAttribute('value') } });
-    await screen.findByText('51 results in this scope');
+    const project = await screen.findByRole('combobox', { name: 'Project' });
+    await choose(project, 'Workbench');
+    await screen.findByText('50 of 51 matches');
     const fetch = globalThis.fetch;
     let release: ((answer: Response) => void) | undefined;
     let lateAnswer: Response | undefined;
@@ -826,12 +846,38 @@ describe('explicit search locations and scopes', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Load more results' }));
     await waitFor(() => expect(typeof release).toBe('function'));
     const oldRequest = view.requests.filter((request) => request.path.includes('after=')).at(-1)!;
-    fireEvent.change(project, { target: { value: 'none' } });
+    await choose(project, 'No project');
     const results = screen.getByRole('region', { name: 'Matching sessions' });
     await waitFor(() => expect(within(results).getByText('Needle unfiled')).toBeVisible());
     expect(oldRequest.signal?.aborted).toBe(true);
     await act(async () => { release!(lateAnswer!); });
     expect(within(results).queryByText('Needle old 50')).not.toBeInTheDocument();
     expect(within(results).getByText('Needle unfiled')).toBeVisible();
+  });
+
+  // Regression, user report (paraphrased: the search looked bad and hard to use on an
+  // iPhone, and its pickers were the system's, not the app's): the machine strip ran off
+  // the glass inside the dialog. The search now names its machine in the app's own picker.
+  it('chooses the machine from a picker that lists a silent machine without letting it be chosen', async () => {
+    const view = renderSessionsScreen({ machines: [
+      { label: 'alpha', sessions: [listSession({ id: 'a1', title: 'Needle alpha' })] },
+      { label: 'gamma', sessions: [listSession({ id: 'g1', title: 'Needle gamma' })] },
+      { label: 'beta', down: true, sessions: [listSession({ id: 'b1', title: 'Needle beta' })] },
+    ] });
+    restore = view.restore;
+    view.setQuery('needle');
+    const results = await screen.findByRole('region', { name: 'Matching sessions' });
+    await waitFor(() => expect(within(results).getByText('Needle alpha')).toBeVisible());
+    const dialog = screen.getByRole('dialog', { name: 'Search sessions' });
+    expect(within(dialog).queryByRole('group', { name: 'Machines' })).not.toBeInTheDocument();
+    const machine = within(dialog).getByRole('combobox', { name: 'Machine' });
+    expect(machine).toHaveTextContent('alpha');
+    await userEvent.click(machine);
+    await waitFor(() => expect(screen.getByRole('option', { name: 'beta · Not answering' }))
+      .toHaveAttribute('aria-disabled', 'true'));
+    await userEvent.click(screen.getByRole('option', { name: 'gamma' }));
+    await waitFor(() => expect(within(results).getByText('Needle gamma')).toBeVisible());
+    expect(within(results).queryByText('Needle alpha')).not.toBeInTheDocument();
+    expect(machine).toHaveTextContent('gamma');
   });
 });

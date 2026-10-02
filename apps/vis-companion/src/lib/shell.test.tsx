@@ -152,9 +152,9 @@ describe('the app bar', () => {
         const header = view.baseElement.querySelector('header')!;
         expect(header).toHaveClass('pt-[env(safe-area-inset-top)]', 'sm:pt-0');
         expect(header.firstElementChild).toHaveClass('flex', 'w-full');
-        expect(screen.getByRole('button', { name: 'Search all machines' })).toBeVisible();
+        expect(screen.getByRole('button', { name: 'Search sessions' })).toBeVisible();
         expect(screen.getByRole('button', { name: 'Open preferences' })).toBeVisible();
-        await userEvent.click(screen.getByRole('button', { name: 'Search all machines' }));
+        await userEvent.click(screen.getByRole('button', { name: 'Search sessions' }));
         const dialog = await screen.findByRole('dialog', { name: 'Search sessions' });
         const close = within(dialog).getByRole('button', { name: 'Close search' });
         expect(close).toBeVisible();
@@ -204,7 +204,7 @@ describe('the app bar', () => {
   it('marks the bar’s two verbs and names them twice', async () => {
     const view = await mount();
     for (const [label, title] of [
-      ['Search all machines', 'Search all machines (Ctrl+/)'],
+      ['Search sessions', 'Search sessions (Ctrl+/)'],
       ['Open preferences', 'Preferences'],
     ]) {
       const mark = screen.getByRole('button', { name: label });
@@ -251,12 +251,12 @@ describe('the app bar', () => {
   // moved the field and its answers out of the list and into a dialog.
   it('opens search as a focused dialog and clears its query on close', async () => {
     const view = await mount();
-    await userEvent.click(screen.getByRole('button', { name: 'Search all machines' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Search sessions' }));
     const dialog = await screen.findByRole('dialog', { name: 'Search sessions' });
     const field = within(dialog).getByRole('searchbox', {
-      name: 'Search sessions on every machine',
+      name: 'Search session titles and messages',
     });
-    expect(field.getAttribute('placeholder')).toBe('Search all machines…');
+    expect(field.getAttribute('placeholder')).toBe('Search titles and messages…');
     expect(field).toHaveFocus();
     expect(within(dialog).getByRole('button', { name: 'Close search' })).toBeVisible();
     // The list behind the dialog stays whole: nothing in it is filtered away.
@@ -270,7 +270,7 @@ describe('the app bar', () => {
     // Opening by keyboard is the same dialog, with a fresh query and the caret ready.
     await userEvent.keyboard('/');
     const reopened = await screen.findByRole('searchbox', {
-      name: 'Search sessions on every machine',
+      name: 'Search session titles and messages',
     });
     expect(reopened).toHaveFocus();
     expect(reopened).toHaveValue('');
@@ -281,7 +281,7 @@ describe('the app bar', () => {
     // `Ctrl+/` is the same door: the chord a desktop or browser reader presses anywhere.
     await userEvent.keyboard('{Control>}/{/Control}');
     expect(
-      await screen.findByRole('searchbox', { name: 'Search sessions on every machine' }),
+      await screen.findByRole('searchbox', { name: 'Search session titles and messages' }),
     ).toHaveFocus();
     await userEvent.click(screen.getByRole('button', { name: 'Close search' }));
     view.unmount();

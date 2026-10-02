@@ -97,8 +97,8 @@ draft. To run them, submit the draft again.
 Each result names its **Project** and **Group**. Search rows do not use project or
 group colors. Status labels use uppercase, such as `IDLE`, `NEW` and `LIVE`.
 
-Scopes apply to recent sessions and text searches. Selecting several groups
-searches any of them. A project and group selection narrows both together.
+Project and group filters apply to recent sessions and text searches. Selecting several
+groups searches any of them. A project and group selection narrows both together.
 
 ### In the terminal
 
@@ -117,7 +117,7 @@ The switcher also has these keys:
 |---|---|
 | Ctrl+P | Choose all projects, one project or No project |
 | Ctrl+G | Choose several groups, or clear the selection for all groups |
-| Ctrl+A | Search everything |
+| Ctrl+A | Clear the project and group filters |
 | Ctrl+N | Start a new session |
 | Ctrl+F | Fork the selected session |
 | Ctrl+S | Star or unstar the selected session |
@@ -152,11 +152,17 @@ The dialog opens on your recent sessions, with the most recent at the top. Type 
 search session titles and conversation text. When you type, the search also finds
 sessions that you archived.
 
+Menus below the search field control where the search looks. If you added more than one
+machine, use **Machine** to choose the machine to search. You cannot choose a machine that
+does not answer.
+
 Use **Project** to choose **All projects**, one named project or **No project**.
-Use **Groups** to select several groups.
+Use **Groups** to select several groups. The list stays open while you select them.
 Choose **All groups** to clear the group selection.
-Choose **Search everything** to clear project, group and machine filters.
-If more results are available, choose **Load more results**.
+To clear the project and group filters, choose **Clear filters**. The machine does not change.
+
+When you type, the line below the menus shows the number of matches. If more results are
+available, choose **Load more results** below the last result.
 
 With a keyboard, press **Ctrl+/** to open the search. This shortcut also works while you
 type in a text box. When you are not typing, you can also press **/**.

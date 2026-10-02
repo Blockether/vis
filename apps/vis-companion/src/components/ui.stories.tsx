@@ -1332,6 +1332,48 @@ export const ClosedChoices: Story = {
   },
 };
 
+const storyGroups = [
+  { value: 'planning', label: 'Planning' },
+  { value: 'review', label: 'Review' },
+  { value: 'release', label: 'Release' },
+];
+
+/** A filter that holds several choices uses the same picker and keeps its list open. */
+function SeveralChoiceControls() {
+  const [groups, setGroups] = useState<string[]>(['planning']);
+  return (
+    <Sheet>
+      <Group of="Select — several choices">
+        <Select
+          aria-label="Groups"
+          values={groups}
+          onValuesChange={setGroups}
+          noneLabel="All groups"
+          options={storyGroups}
+        />
+      </Group>
+      <Group of="Select — several choices, nothing to choose">
+        <Select aria-label="Empty groups" values={[]} onValuesChange={noop} noneLabel="All groups" options={[]} />
+      </Group>
+    </Sheet>
+  );
+}
+
+export const SeveralChoices: Story = {
+  render: () => <SeveralChoiceControls />,
+  play: async ({ canvas, canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    const groups = canvas.getByRole('combobox', { name: 'Groups' });
+    await expect(groups).toHaveTextContent('Planning');
+    // While the list is open the rest of the page is inert, so check the empty filter first.
+    await expect(canvas.getByRole('combobox', { name: 'Empty groups' })).toBeDisabled();
+    await userEvent.click(groups);
+    await userEvent.click(page.getByRole('option', { name: 'Review' }));
+    await expect(page.getByRole('listbox', { name: 'Groups' })).toHaveAttribute('aria-multiselectable', 'true');
+    await expect(groups).toHaveTextContent('Planning, Review');
+  },
+};
+
 export const OpenChoices: Story = {
   render: () => <ChoiceControls />,
   play: async ({ canvas, canvasElement }) => {

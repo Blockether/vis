@@ -66,7 +66,7 @@ describe('Escape over a running turn', () => {
     render(
       <SessionSearchDialog query="" onQuery={() => {}} onClose={onClose} results={<p>No recent sessions</p>} />,
     );
-    const field = screen.getByRole('searchbox', { name: 'Search sessions on every machine' });
+    const field = screen.getByRole('searchbox', { name: 'Search session titles and messages' });
     expect(field).toHaveFocus();
 
     fireEvent.keyDown(field, { key: 'Escape' });

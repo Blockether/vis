@@ -1542,8 +1542,8 @@ export function Header({
           {onSearch && (
             <IconButton
               type="button"
-              label="Search all machines"
-              title="Search all machines (Ctrl+/)"
+              label="Search sessions"
+              title="Search sessions (Ctrl+/)"
               aria-keyshortcuts="Control+/ /"
               onClick={onSearch}
             >

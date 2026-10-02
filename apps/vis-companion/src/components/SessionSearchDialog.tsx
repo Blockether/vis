@@ -30,7 +30,7 @@ export function SessionSearchDialog({
   onQuery: (next: string) => void;
   /** Leave the search. The shell clears the query with it. */
   onClose: () => void;
-  /** The band under the field: the machine the search asks and what came back. */
+  /** The band under the field: where the search looks and what came back. */
   scope?: ReactNode;
   /** The sessions the search found, or the state that stands in for them. */
   results: ReactNode;
@@ -59,9 +59,7 @@ export function SessionSearchDialog({
       <DialogFrame title="Search sessions" onClose={onClose} closeLabel="Close search">
         <div className="shrink-0 border-b border-dialog-edge px-3 py-3 sm:px-4">
           <SearchField inputRef={inputRef} value={query} onValue={onQuery} />
-          {scope && (
-            <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-2">{scope}</div>
-          )}
+          {scope && <div className="mt-3">{scope}</div>}
         </div>
         <div className="@container/search flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1 flex-col @min-[40rem]/search:flex-row">
@@ -110,8 +108,8 @@ function SearchField({
       autoCorrect="off"
       autoCapitalize="none"
       spellCheck={false}
-      placeholder="Search all machines…"
-      aria-label="Search sessions on every machine"
+      placeholder="Search titles and messages…"
+      aria-label="Search session titles and messages"
       icon={<SearchIcon className="size-3" />}
       action={
         value ? (

@@ -181,7 +181,7 @@ describe('App wiring', () => {
     // Re-subscribing when the shell's state changes would leave a window with no
     // listener attached — precisely when the launch tap is replayed.
     // Changing what the shell shows must not re-subscribe.
-    await userEvent.click(screen.getByRole('button', { name: 'Search all machines' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Search sessions' }));
     await screen.findByRole('button', { name: 'Close search' });
     await waitFor(() => expect(taps).toHaveLength(1));
     view.unmount();
