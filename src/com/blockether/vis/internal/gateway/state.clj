@@ -2684,11 +2684,6 @@
          (tel/log! :warn ["gateway: turn-trace hydration failed" tid (ex-message t)])
          nil)))
 
-(defn reconcile-running-turns!
-  "Gateway facade for startup/client resume reconciliation of orphaned running turns."
-  []
-  (try (lp/db-sweep-orphaned-running-turns!) (catch Throwable _ nil)))
-
 (defn- report-agent-outcome!
   [db sid tid patch]
   (when-let [child (agents/info db sid)]
@@ -4606,13 +4601,16 @@
     result))
 
 (defn reconcile-orphaned-turns!
-  "Mark turns left running by a dead process as interrupted.
+  "Mark turns left running by a dead process as interrupted. A turn that
+   [[bus/live-turns]] reports is still in flight in a live vis process, so the
+   sweep leaves it to that process.
 
    Queued work is deliberately memory-only. Startup never reconstructs or
    resubmits messages from persisted user requests. Returns the persistence
    sweep result."
   []
-  (try (lp/db-sweep-orphaned-running-turns!) (catch Throwable _ nil)))
+  (try (lp/db-sweep-orphaned-running-turns! (lp/db-info) (vals (bus/live-turns)))
+       (catch Throwable _ nil)))
 
 (defn- terminal-event->result
   "Resolve a terminal event against the in-process registry; the shared contract

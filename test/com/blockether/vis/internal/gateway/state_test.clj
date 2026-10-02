@@ -24,6 +24,7 @@
             [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.persistance.sqlite.core :as sqlite]
+            [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.workspace.drafts :as drafts]
@@ -2288,12 +2289,49 @@
 
 (defdescribe volatile-queue-reconciliation-test
              (it "marks orphaned running turns interrupted without reconstructing messages"
-                 (let [sweeps (atom 0)]
-                   (with-redefs [lp/db-sweep-orphaned-running-turns! (fn []
-                                                                       (swap! sweeps inc)
+                 (let [sweeps (atom [])]
+                   (with-redefs [lp/db-info (constantly ::db)
+                                 bus/live-turns (constantly {"live-session" "live-turn"})
+                                 lp/db-sweep-orphaned-running-turns! (fn [db live-turn-ids]
+                                                                       (swap! sweeps conj
+                                                                         [db (vec live-turn-ids)])
                                                                        :swept)]
+
                      (expect (= :swept (state/reconcile-orphaned-turns!)))
-                     (expect (= 1 @sweeps))))))
+                     (expect (= [[::db ["live-turn"]]] @sweeps))))))
+
+;; A gateway starting next to a sibling vis process on the same database swept the
+;; sibling's LIVE turn to :interrupted. Every later fold checkpoint of that turn
+;; was then refused ("the turn changed or ended") and its terminal write found the
+;; turn already settled. The startup sweep must spare turns a live process announces.
+(defdescribe
+  orphan-sweep-spares-live-turns-test
+  (it "interrupts only the running turns that no live process announces"
+      (let [store (sqlite/db-open! :memory)]
+        (try
+          (let [live-sid (h/store-session! store {:channel :api})
+                dead-sid (h/store-session! store {:channel :api})
+                live (persistance/db-store-session-turn! store
+                                                         {:parent-session-id live-sid
+                                                          :user-request "still running"})
+                orphan (persistance/db-store-session-turn! store
+                                                           {:parent-session-id dead-sid
+                                                            :user-request "killed"})
+                live-state (:state-id (last (persistance/db-list-session-turn-states store live)))]
+
+            (with-redefs [lp/db-info (constantly store)
+                          bus/live-turns (constantly {(str live-sid) (str live)})]
+
+              (expect (= 1 (state/reconcile-orphaned-turns!))))
+            (expect (= :running (:status (persistance/db-read-session-turn store live-sid live))))
+            (expect (= :interrupted
+                       (:status (persistance/db-read-session-turn store dead-sid orphan))))
+            (expect (true? (persistance/db-checkpoint-session-turn-ctx!
+                             store
+                             live
+                             live-state
+                             {"session_summaries_revision" 1}))))
+          (finally (sqlite/db-close! store))))))
 
 (defdescribe
   turn-stall-watchdog-test

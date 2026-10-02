@@ -351,14 +351,22 @@
   "Warning: Turn interrupted - the server was restarted before this answer could finalize. Re-send the message to retry.")
 
 (defn db-sweep-orphaned-running-turns!
-  "Mark every `:running` turn as `:interrupted`. Run at process start
-   to clean up turns that crashed or were killed mid-write so the next
-   turn's handover digest renders the right outcome instead of guessing.
+  "Mark every `:running` turn as `:interrupted`, except the turns named in
+   `live-turn-ids`. Run at process start to clean up turns that crashed or
+   were killed mid-write so the next turn's handover digest renders the right
+   outcome instead of guessing. A sibling vis process on the same database may
+   still run a turn: without its id here the sweep settles that turn under its
+   owner, which then has every checkpoint and terminal write refused.
    Returns the number of turns swept."
-  ([] (db-sweep-orphaned-running-turns! (db-info)))
-  ([db]
-   (let [orphans (try (persistance/db-list-session-turns-by-status db :running)
-                      (catch Exception _ []))]
+  ([db] (db-sweep-orphaned-running-turns! db nil))
+  ([db live-turn-ids]
+   (let [live
+         (into #{} (map str) live-turn-ids)
+
+         orphans
+         (remove #(contains? live (str (:id %)))
+           (try (persistance/db-list-session-turns-by-status db :running) (catch Exception _ [])))]
+
      (doseq [{:keys [id iteration-count duration-ms]} orphans]
        (transcript/persist-turn-outcome!
          db
