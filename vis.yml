@@ -87,11 +87,11 @@ toggles:
 extensions:
   vis-lang-interface:
     source: https://github.com/Blockether/vis-lang-interface
-    version: "2.6.0"
+    version: "2.6.1"
   vis-lang-clojure:
     source: https://github.com/Blockether/vis-lang-clojure
     subdirectory: extension
-    version: "1.9.0"
+    version: "1.9.1"
   vis-lang-python:
     source: https://github.com/Blockether/vis-lang-python
-    version: "1.6.0"
+    version: "1.6.1"

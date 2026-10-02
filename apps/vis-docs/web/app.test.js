@@ -96,12 +96,8 @@ test('every extension uses its GitHub owner/repository as its catalog name', asy
   expect(
     [...document.querySelectorAll('.card-main h3')].map((node) => node.textContent).sort(),
   ).toEqual(fixtures.map((entry) => entry.repository.toLowerCase()).sort());
-  expect($(`[data-name="${item.repository.toLowerCase()}"] .repository-link`).textContent).toBe(
-    item.subdirectory,
-  );
-  expect($(`[data-name="${item.repository.toLowerCase()}"] .repository-link`).href).toBe(
-    item.source_url,
-  );
+  expect($('#results .repository-link')).toBeNull();
+  expect($('#results .tag')).toBeNull();
   $(`[data-name="${item.repository.toLowerCase()}"] .card-main`).click();
   await tick();
   expect($('#detail h1').textContent).toBe(item.repository.toLowerCase());
@@ -314,12 +310,14 @@ test('extension detail spacing overrides prose margins without changing README t
   expect(css('#version-help').textAlign).toBe('start');
   expect(css('.release-history ol').marginTop).toBe('0.5rem');
   expect(css('.package-readme p').textAlign).toBe('justify');
-  // Owner links must not inherit the standalone repository link's row-expanding target.
+  // Source and owner links remain available in project details.
   expect(css('#github-owner').display).toBe('inline');
   expect(css('#github-owner').minHeight).toBe(
     css('.project-details .facts dd a:not(#github-owner)').minHeight,
   );
-  expect(css('.detail-heading .repository-link').minHeight).toBe('2rem');
+  expect($('.detail-heading .repository-link')).toBeNull();
+  expect($('.detail-heading .tag')).toBeNull();
+  expect($('#source-link').href).toBe(item.source_url);
 });
 test('repository anti-spam check is separated from the review button', () => {
   const style = document.createElement('style');

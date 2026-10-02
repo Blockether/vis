@@ -488,6 +488,7 @@ uses this manifest. Generate and commit `uv.lock` before publishing:
 name = "vis-greeter"
 version = "1.0.0"
 description = "Typed greeting tools and an optional greeting procedure."
+keywords = ["greetings", "example"]
 requires-python = ">=3.11"
 dependencies = ["vis-agent>=0.1.45"]
 
@@ -504,11 +505,17 @@ pythonpath = ["src"]
 | --- | --- |
 | `project.name` | The normalized package name must equal the registered extension name |
 | `project.description`, `project.version` | Supply displayed package metadata |
+| `project.keywords` | Optional catalog tags. Supply at most two unique tags, each 1–24 lowercase letters or digits, with single hyphens between words |
 | `project.requires-python` | Must allow Vis's embedded interpreter. Vis does not download another Python |
 | `project.dependencies` | Must include an unconditional `vis-agent` requirement compatible with the running release |
 | `tool.vis.category` | `providers`, `tools` or `workflows` |
 | `tool.vis.source_paths` | Import roots inside the package, such as `src`, not the `vis_greeter` package directory |
 | `tool.vis.skills` | Optional relative skill directories. Omit it when no procedure is needed |
+
+Choose tags that describe what your extension helps people do, such as `browser` or `testing`.
+Tags appear on catalog cards and extension pages, and you can search for them.
+You can use your own tags. Tags do not grant the “Vis Official” badge.
+Publish a new release to change an approved extension's tags.
 
 Keep the implementation under the selected package directory. Do not put a PEP 723
 block in this package's `extension.py`. See [Extension design](extension-design.md#keep-the-entrypoint-small)

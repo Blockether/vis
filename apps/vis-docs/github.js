@@ -159,11 +159,23 @@ export function manifestMetadata(text) {
   for (const path of skills)
     assert(projectFolder(path) && path !== '.', 'skills must name directories inside the project.');
   assert(new Set(skills).size === skills.length, 'skills must not repeat a directory.');
+  const tags = p.keywords ?? [];
+  assert(
+    Array.isArray(tags) &&
+      tags.length <= 2 &&
+      tags.every(
+        (tag) =>
+          typeof tag === 'string' && tag.length <= 24 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(tag),
+      ) &&
+      new Set(tags).size === tags.length,
+    'project.keywords must contain at most two unique tags, each 1–24 lowercase letters, digits or single hyphens between words.',
+  );
   return {
     name: p.name.toLowerCase().replace(/[-_.]+/g, '-'),
     version: p.version,
     description: p.description,
     category: v.category,
+    tags,
     requires_python: p['requires-python'],
     dependencies: p.dependencies,
     source_paths: paths,

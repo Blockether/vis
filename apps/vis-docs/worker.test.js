@@ -122,6 +122,53 @@ test('root and monorepo previews use pinned GitHub metadata only', async () => {
       .every((url) => url.endsWith('?ref=' + fixture.revision)),
   ).toBe(true);
 });
+test('manifest tags stay pinned through preview, approval, API and server rendering', async () => {
+  fixture.controls.manifest = fixture.controls.manifest.replace(
+    '[project]',
+    '[project]\nkeywords = ["custom-tag", "automation"]',
+  );
+  const preview = await post('/api/preview');
+  expect(preview.status).toBe(200);
+  expect((await preview.json()).tags).toEqual(['custom-tag', 'automation']);
+  for (const path of ['/api/preview', '/api/submissions']) {
+    expect((await post(path, { revision: fixture.revision, tags: ['injected'] })).status).toBe(400);
+  }
+  const pending = await (await post('/api/submissions', { revision: fixture.revision })).json();
+  for (const sql of moderationStatements('approve', pending.id))
+    await fixture.db.prepare(sql).run();
+  fixture.controls.manifest = fixture.controls.manifest.replace('custom-tag', 'unreviewed');
+  const response = await fixture.runtime.dispatchFetch('https://center.example.com/api/extensions');
+  const [item] = (await response.json()).extensions;
+  expect(item.tags).toEqual(['custom-tag', 'automation']);
+  for (const path of [
+    '/extensions/?q=custom-tag',
+    '/extensions/example/extensions/plugins/greeting',
+  ]) {
+    const response = await fixture.runtime.dispatchFetch('https://center.example.com' + path);
+    expect(response.status).toBe(200);
+    const dom = new JSDOM(await response.text());
+    try {
+      const scope = path.includes('?') ? '#results' : '.detail-heading';
+      expect(
+        [...dom.window.document.querySelectorAll(`${scope} .extension-tag`)].map(
+          (tag) => tag.textContent,
+        ),
+      ).toEqual(['custom-tag', 'automation']);
+    } finally {
+      dom.window.close();
+    }
+  }
+});
+test.each(['/api/preview', '/api/submissions'])('invalid manifest tags block %s', async (path) => {
+  fixture.controls.manifest = fixture.controls.manifest.replace(
+    '[project]',
+    '[project]\nkeywords = ["one", "two", "three"]',
+  );
+  const response = await post(path, { revision: fixture.revision });
+  expect(response.status).toBe(400);
+  expect((await response.json()).error).toContain('project.keywords');
+  expect(await fixture.db.prepare('SELECT COUNT(*) FROM submissions').first('COUNT(*)')).toBe(0);
+});
 test.each(['/api/preview', '/api/submissions'])(
   '%s rejects author-supplied official status before inspecting GitHub',
   async (path) => {

@@ -149,6 +149,16 @@ def test_manifest_inspection_never_imports_code(tmp_path):
     assert "repository" not in metadata
 
 
+def test_catalog_keywords_remain_standard_installable_project_metadata(tmp_path):
+    manifest = MANIFEST.replace(
+        "[project]", '[project]\nkeywords = ["greetings", "custom-tag"]'
+    )
+    source = project(tmp_path / "tagged-extension", manifest)
+    metadata = package.inspect_source(source)
+    assert metadata["name"] == "vis-greeter"
+    assert metadata["source_paths"] == ["src"]
+
+
 @pytest.mark.parametrize(
     "manifest",
     [

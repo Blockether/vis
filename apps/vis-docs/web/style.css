@@ -175,11 +175,8 @@ kbd {
   color: var(--dim);
   font-size: var(--text-small);
 }
-.extension-labels {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem 0.75rem;
+.card-top .version {
+  margin-left: auto;
 }
 .official-badge {
   display: inline-flex;
@@ -218,14 +215,24 @@ kbd {
   margin: 0.5rem 0;
   text-align: start;
 }
-.repository-link {
-  display: inline-flex;
-  align-items: center;
-  min-height: 2rem;
-  width: fit-content;
+.content .extension-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.content .extension-tag {
   max-width: 100%;
+  margin: 0;
+  padding: 0.125rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-soft);
   color: var(--dim);
   font-size: var(--text-small);
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 .card-meta {
@@ -330,16 +337,12 @@ button.quiet {
 .facts dd:last-child {
   border-bottom: 0;
 }
-.actions,
-.topics {
+.actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem 1rem;
   font-size: var(--text-small);
-}
-.topics {
-  margin-top: 1.4rem;
 }
 .dependencies {
   font-size: var(--text-small);
@@ -537,7 +540,6 @@ dialog form label {
   white-space: nowrap;
 }
 @media (pointer: coarse) {
-  .repository-link,
   .actions a {
     min-height: 2.75rem;
   }
