@@ -125,10 +125,10 @@
    the wrong session - and A's `:cancelling-at-ms` was lost, so `cancel-self-heal-due?`
    could never time the stuck cancel out and `:cancelling?` wedged input forever."
   [:session :workspace :workspace/root :title :messages :utilization :scroll :layout :input
-   :input-history :input-history-index :input-history-draft :slash-command-index
-   :slash-command-hidden? :submitted-input :pending-sends :retracted-sends :queue-paused :pastes
-   :paste-counter :image-counter :attachments :attachment-feedback :attachment-focus?
-   :attachment-index :loading? :cancel-token :cancelling? :cancelling-at-ms
+   :input-history :input-history-session-id :input-history-index :input-history-draft
+   :slash-command-index :slash-command-hidden? :submitted-input :pending-sends :retracted-sends
+   :queue-paused :pastes :paste-counter :image-counter :attachments :attachment-feedback
+   :attachment-focus? :attachment-index :loading? :cancel-token :cancelling? :cancelling-at-ms
    :cancel-awaiting-client-id :gateway-turn-id :live-turn-client-id :progress :turn-start-ms
    :detail-expansions :mouse-selection :session-model-pref :human-input :human-input-queue
    :live-views :live-viewer-id :live-viewer-search
@@ -147,6 +147,7 @@
    :layout nil
    :input (input/empty-input)
    :input-history []
+   :input-history-session-id nil
    :input-history-index nil
    :input-history-draft nil
    :slash-command-index 0
@@ -904,28 +905,81 @@
   [text]
   (boolean (re-find #"^/[^\s/]+(?:\s|$)" (str/triml (str text)))))
 
+(def ^:private ^:const input-history-limit 20)
+
+(defn- bounded-input-history [texts] (vec (take-last input-history-limit texts)))
+
+(defn- input-history-session-id
+  [tab]
+  (some-> tab
+          :session
+          :id
+          str))
+
+(defn- input-history-enabled?
+  [tab]
+  (let [{:keys [archived-at group-id group-archived-at]} (:session tab)]
+    (not (or archived-at
+             group-archived-at
+             (and group-id
+                  (some #(and (= (str group-id) (str (get % "id"))) (get % "archived_at"))
+                        (mapcat val (get-in tab [:project-sidebar :groups]))))))))
+
+(defn- clear-input-history
+  [tab]
+  (assoc tab
+    :input-history []
+    :input-history-session-id (input-history-session-id tab)
+    :input-history-index nil
+    :input-history-draft nil))
+
+(defn- scoped-input-history
+  "Discard a recall ring and its navigation draft unless they belong to this session."
+  [tab]
+  (if (and (= (input-history-session-id tab) (:input-history-session-id tab))
+           (input-history-enabled? tab))
+    tab
+    (clear-input-history tab)))
+
 (defn- remember-input
-  "Append `text` to this tab's ↑ recall ring — what the user can walk back to.
-   A command ([[command-submission?]]) and an immediate repeat of the newest
-   entry are never remembered."
+  "Append a prompt to this session's recall ring, retaining its newest 20 entries.
+   Commands and immediate repeats of the newest entry are not remembered.
+   Archived sessions have no recall ring."
   [tab text]
-  (cond-> tab
-    (not (command-submission? text))
-    (update :input-history
-            (fn [xs]
-              (let [xs (vec (or xs []))]
-                (if (= text (last xs)) xs (conj xs text)))))))
+  (let [tab (scoped-input-history tab)]
+    (cond-> tab
+      (and (input-history-enabled? tab) (not (command-submission? text)))
+      (update :input-history
+              (fn [xs]
+                (let [xs (vec (or xs []))]
+                  (bounded-input-history (if (= text (last xs)) xs (conj xs text)))))))))
 
 (defn- history-user-texts
-  "The ↑ recall ring hydrated from a persisted transcript: its USER messages
-   minus the commands — a resumed session must not re-stock the ring with the
-   `/reload`s of its own past."
+  "The newest 20 user prompts in a persisted transcript, excluding commands."
   [history]
   (->> (or history [])
        (keep (fn [message]
                (let [text (:text message)]
                  (when (and (= :user (:role message)) (not (command-submission? text))) text))))
-       vec))
+       bounded-input-history))
+
+(defn- hydrate-input-history
+  [tab history]
+  (assoc (clear-input-history tab)
+    :input-history (if (input-history-enabled? tab) (history-user-texts history) [])))
+
+(defn- prepend-input-history
+  [tab history]
+  (let [tab (scoped-input-history tab)]
+    (if-not (input-history-enabled? tab)
+      tab
+      (let [current (vec (:input-history tab))
+            combined (bounded-input-history (into (history-user-texts history) current))
+            added (- (count combined) (count current))]
+
+        (cond-> (assoc tab :input-history combined)
+          (some? (:input-history-index tab))
+          (update :input-history-index #(+ (long %) (long added))))))))
 
 (defn- tab-number
   [entry]
@@ -1172,6 +1226,7 @@
        :scroll scroll/follow
        :input (input/empty-input)
        :input-history []
+       :input-history-session-id nil
        :input-history-index nil
        :input-history-draft nil
        :slash-command-index 0
@@ -2293,6 +2348,61 @@
                             [:cancel-local-turn token]))
                      tokens)})))))
 
+(reg-event-db :session-archive-changed
+              (fn [db [_ session-id archived-at]]
+                (reduce (fn [db {:keys [id]}]
+                          (if (= (str session-id) (tab-session-id db id))
+                            (update-tab db
+                                        id
+                                        (fn [tab]
+                                          (if (= archived-at (get-in tab [:session :archived-at]))
+                                            (scoped-input-history tab)
+                                            (-> tab
+                                                (assoc-in [:session :archived-at] archived-at)
+                                                clear-input-history))))
+                            db))
+                        (-> db
+                            ensure-tabs
+                            sync-active-tab)
+                        (:tabs db))))
+
+(reg-event-db
+  :session-group-archive-changed
+  (fn [db [_ group-id archived-at]]
+    (let [db
+          (-> db
+              ensure-tabs
+              sync-active-tab)
+
+          db
+          (cond-> db
+            (seq (get-in db [:project-sidebar :groups]))
+            (update-in [:project-sidebar :groups]
+                       (fn [groups]
+                         (into {}
+                               (map (fn [[pid records]]
+                                      [pid
+                                       (mapv (fn [record]
+                                               (if (= (str group-id) (str (get record "id")))
+                                                 (assoc record "archived_at" archived-at)
+                                                 record))
+                                             records)]))
+                               groups))))]
+
+      (reduce (fn [db {:keys [id]}]
+                (update-tab db
+                            id
+                            (fn [tab]
+                              (if (= (str group-id) (str (get-in tab [:session :group-id])))
+                                (if (= archived-at (get-in tab [:session :group-archived-at]))
+                                  (scoped-input-history tab)
+                                  (-> tab
+                                      (assoc-in [:session :group-archived-at] archived-at)
+                                      clear-input-history))
+                                tab))))
+              db
+              (:tabs db)))))
+
 (reg-event-fx
   :project-removed
   ;; The gateway has confirmed recursive deletion. Session-deleted already pruned
@@ -2500,39 +2610,36 @@
 (reg-event-fx
   :init-session
   (fn [db [_ session history workspace]]
-    (let [user-history (history-user-texts history)]
-      {:db (-> db
-               ensure-tabs
-               (assoc :session session
-                      ;; The session's current gateway workspace record, JSON-keyed: "root"
-                      ;; is the active filesystem root; "repo_root" retains the canonical
-                      ;; project identity for internally isolated workspaces.
-                      :workspace workspace
-                      :title nil
-                      ;; This tab is being REBOUND to another session, so the
-                      ;; previous session's optimistic model pick must not survive:
-                      ;; `session-model-pref` prefers this key over the gateway
-                      ;; value, so a leftover pinned the footer chip (and the codex
-                      ;; verbosity gating) to the OLD session's model until restart.
-                      ;; nil = re-read the new session's real preference.
-                      :session-model-pref nil
-                      :messages (or history [])
-                      :scroll scroll/follow
-                      :input (input/empty-input)
-                      :input-history user-history
-                      :input-history-index nil
-                      :input-history-draft nil
-                      :submitted-input nil
-                      :pastes {}
-                      :paste-counter 0
-                      :image-counter 0
-                      :attachments []
-                      :attachment-feedback []
-                      :attachment-focus? false
-                      :attachment-index 0
-                      :detail-expansions {})
-               (reconcile-in-flight-state db session))
-       :fx [[:refresh-session-settings (:id session)]]})))
+    {:db (-> db
+             ensure-tabs
+             (assoc :session session
+                    ;; The session's current gateway workspace record, JSON-keyed: "root"
+                    ;; is the active filesystem root; "repo_root" retains the canonical
+                    ;; project identity for internally isolated workspaces.
+                    :workspace workspace
+                    :title nil
+                    ;; This tab is being REBOUND to another session, so the
+                    ;; previous session's optimistic model pick must not survive:
+                    ;; `session-model-pref` prefers this key over the gateway
+                    ;; value, so a leftover pinned the footer chip (and the codex
+                    ;; verbosity gating) to the OLD session's model until restart.
+                    ;; nil = re-read the new session's real preference.
+                    :session-model-pref nil
+                    :messages (or history [])
+                    :scroll scroll/follow
+                    :input (input/empty-input)
+                    :submitted-input nil
+                    :pastes {}
+                    :paste-counter 0
+                    :image-counter 0
+                    :attachments []
+                    :attachment-feedback []
+                    :attachment-focus? false
+                    :attachment-index 0
+                    :detail-expansions {})
+             (hydrate-input-history history)
+             (reconcile-in-flight-state db session))
+     :fx [[:refresh-session-settings (:id session)]]}))
 
 (reg-event-fx
   :open-session-tab
@@ -2587,17 +2694,17 @@
                                       es)))
                       (update-tab tab-id
                                   (fn [w]
-                                    (clear-active-turn-state
-                                      (assoc w
-                                        :session session
-                                        :workspace workspace
-                                        :workspace/root (get workspace "root")
-                                        :title nil
-                                        ;; Same reason as :init-session — a
-                                        ;; bound tab shows THIS session's model.
-                                        :session-model-pref nil
-                                        :messages (or history [])
-                                        :input-history (history-user-texts history)))))
+                                    (-> w
+                                        (assoc :session session
+                                               :workspace workspace
+                                               :workspace/root (get workspace "root")
+                                               :title nil
+                                               ;; Same reason as :init-session — a
+                                               ;; bound tab shows THIS session's model.
+                                               :session-model-pref nil
+                                               :messages (or history []))
+                                        (hydrate-input-history history)
+                                        clear-active-turn-state)))
                       (cond->
                         (not background?)
                         (activate-tab tab-id))
@@ -2616,9 +2723,19 @@
             existing
             ;; Already open — just focus that tab; its view state
             ;; (messages, scroll, in-flight turn) lives in :tab-locals.
-            (cond-> {:db (seed-ctx (if background? db (activate-tab db (:id existing))))}
-              (and sid (not background?))
-              (assoc :fx [[:mark-session-read sid]]))
+            (let [db (update-tab
+                       db
+                       (:id existing)
+                       (fn [tab]
+                         (-> (cond-> tab
+                               (and (contains? session :group-id)
+                                    (not= (:group-id session) (get-in tab [:session :group-id])))
+                               (update :session dissoc :group-archived-at))
+                             (update :session merge (select-keys session [:archived-at :group-id]))
+                             scoped-input-history)))]
+              (cond-> {:db (seed-ctx (if background? db (activate-tab db (:id existing))))}
+                (and sid (not background?))
+                (assoc :fx [[:mark-session-read sid]])))
             :else
             (let [n
                   (next-tab-number entries)
@@ -2648,8 +2765,8 @@
                              :workspace workspace
                              :workspace/root (get workspace "root")
                              :title nil
-                             :messages (or history [])
-                             :input-history (history-user-texts history)))]
+                             :messages (or history []))
+                      (hydrate-input-history history))]
 
               {:db (seed-ctx db')})))))
 
@@ -2765,13 +2882,14 @@
               (update-tab db
                           tab-id
                           (fn [w]
-                            (clear-active-turn-state (assoc w
-                                                       :session session
-                                                       :workspace workspace
-                                                       :workspace/root (get workspace "root")
-                                                       :messages (or history [])
-                                                       :input-history (history-user-texts history)
-                                                       :title nil))))
+                            (-> w
+                                (assoc :session session
+                                       :workspace workspace
+                                       :workspace/root (get workspace "root")
+                                       :messages (or history [])
+                                       :title nil)
+                                (hydrate-input-history history)
+                                clear-active-turn-state)))
 
               tab-view
               (if (= tab-id (current-tab-id db)) db (get-in db [:tab-locals tab-id]))
@@ -3903,7 +4021,10 @@
 (reg-event-fx
   :history-up
   (fn [db _]
-    (let [history
+    (let [db
+          (scoped-input-history db)
+
+          history
           (vec (or (:input-history db) []))
 
           cur-idx
@@ -3968,7 +4089,10 @@
 
 (reg-event-db :history-down
               (fn [db _]
-                (let [history
+                (let [db
+                      (scoped-input-history db)
+
+                      history
                       (vec (or (:input-history db) []))
 
                       cur-idx
@@ -4172,10 +4296,8 @@
 
                     (-> db
                         (update :messages #(into older (or % [])))
-                        ;; Older prompts belong at the FRONT of the up-arrow ring:
-                        ;; the ring is oldest-first and `:history-up` walks back from
-                        ;; the end.
-                        (update :input-history #(into (vec (history-user-texts older)) (or % [])))
+                        ;; Keep the newest 20 prompts and preserve the selected entry.
+                        (prepend-input-history older)
                         (update :session assoc
                                 :history-loading? false
                                 :history-cursor {:offset (:offset page)

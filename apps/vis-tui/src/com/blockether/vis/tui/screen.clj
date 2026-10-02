@@ -5427,6 +5427,14 @@
     (let [title (get session "title")]
       (when-not (str/blank? (str title)) (str title)))))
 
+(defn- refresh-session-metadata!
+  "Refresh the owning tab's archive state and title from one gateway record."
+  [session-id]
+  (when-let [session (try (vis/gateway-soul session-id) (catch Throwable _ nil))]
+    (state/dispatch [:session-archive-changed session-id (get session "archived_at")])
+    (let [title (get session "title")]
+      (when-not (str/blank? (str title)) (state/dispatch [:set-title (str title) session-id])))))
+
 (defn- session-workspace
   "Workspace metadata pinned to `session-id`."
   [session-id]
@@ -6362,7 +6370,8 @@
           (vis/worker-future
             "tui-session-archive"
             (fn []
-              (try (vis/gateway-set-session-archived! sid away?)
+              (try (let [result (vis/gateway-set-session-archived! sid away?)]
+                     (state/dispatch [:session-archive-changed sid (get result "archived_at")]))
                    (refresh-projects!)
                    (catch Throwable error
                      (vis/notify!
@@ -6441,7 +6450,8 @@
         (vis/worker-future
           "tui-group-archive"
           (fn []
-            (try (vis/gateway-update-session-group! gid {:archived away?})
+            (try (let [result (vis/gateway-update-session-group! gid {:archived away?})]
+                   (state/dispatch [:session-group-archive-changed gid (get result "archived_at")]))
                  (refresh-projects!)
                  (catch Throwable error
                    (vis/notify!
@@ -7182,8 +7192,8 @@
                      (state/dispatch [:open-session-tab
                                       (select-keys session-result
                                                    [:id :status :current-turn-id :history-cursor
-                                                    :agent]) history (session-workspace id)
-                                      background?])
+                                                    :archived-at :group-id :agent]) history
+                                      (session-workspace id) background?])
                      ;; `:open-session-tab` already reset `:title nil`. Only
                      ;; push a title when the DB actually has one — mirror
                      ;; refresh-active-tab! and NEVER overwrite with "" (a
@@ -7262,8 +7272,8 @@
                          (try (let [{:keys [id history]} @fut]
                                 (when (and pid (not gid)) (vis/gateway-assign-project! id pid))
                                 (ensure-session-live! id)
-                                (state/dispatch [:bind-built-session build-id {:id id} history
-                                                 (session-workspace id)])
+                                (state/dispatch [:bind-built-session build-id {:id id :group-id gid}
+                                                 history (session-workspace id)])
                                 (persist-tabs!)
                                 (vis/notify! "Opened session"
                                              :level :success
@@ -7275,8 +7285,7 @@
                  refresh-active-tab-impl! (fn [notify?]
                                             (let [db @state/app-db]
                                               (when-let [id (current-session-id)]
-                                                (when-let [title (session-db-title id)]
-                                                  (state/dispatch [:set-title title]))
+                                                (refresh-session-metadata! id)
                                                 (ensure-session-live! id)
                                                 (warm-session-render! {:id id
                                                                        :history (:messages db)})))

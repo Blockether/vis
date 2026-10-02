@@ -2627,6 +2627,7 @@
            :messages initial-messages
            :messages-scroll 9
            :input-history ["prior"]
+           :input-history-session-id "c1"
            :input-history-index nil
            :input-history-draft nil
            :settings {:reasoning-level "balanced" :verbosity "low"}

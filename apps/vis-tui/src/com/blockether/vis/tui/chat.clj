@@ -1649,6 +1649,8 @@
 
         (cond-> {:id resolved-id
                  :history (:messages page)
+                 :archived-at (get soul "archived_at")
+                 :group-id (get soul "group_id")
                  :goal (gateway-contract/newer-session-goal nil (get soul "goal"))
                  :agent (when-let [agent (get soul "agent")]
                           {:role (get agent "role")
