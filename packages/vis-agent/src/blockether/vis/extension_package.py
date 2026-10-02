@@ -4,6 +4,7 @@ For building, distributing and installing packages, use the
 [extension package guide](https://vis.blockether.com/extension-packages.html).
 """
 
+import fcntl
 import hashlib
 import json
 import os
@@ -12,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 import uuid
 from http.client import HTTPException
@@ -34,6 +36,8 @@ except ImportError:
 CATALOG = "https://vis.blockether.com"
 CATEGORIES = ("tools", "providers", "workflows")
 LATEST = "latest"
+# A sync can fetch several packages; a second start waits for it this long.
+LOCK_WAIT_S = 300
 MAX_METADATA = 128 * 1024
 _EXCLUDED = {".git", ".venv", "venv", "__pycache__", "node_modules", ".DS_Store"}
 
@@ -599,6 +603,45 @@ def _trust(trust):
         )
 
 
+def _acquire(lock):
+    """Lock one extension operation. Wait for a running holder, not for a crashed one.
+
+    The kernel drops an advisory lock when its process exits, so a file that a crash left
+    does not block. The holder deletes the file before it releases the lock. A waiter that
+    then locks the deleted file opens the path again.
+    """
+    deadline = time.monotonic() + LOCK_WAIT_S
+    while True:
+        fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            f"{lock} is still held by another extension operation"
+                            f" after {LOCK_WAIT_S} seconds"
+                        ) from None
+                    time.sleep(0.05)
+            try:
+                same = os.path.samestat(os.fstat(fd), os.stat(lock))
+            except FileNotFoundError:
+                same = False
+            if same:
+                return fd
+        except BaseException:
+            os.close(fd)
+            raise
+        os.close(fd)
+
+
+def _release(lock, fd):
+    lock.unlink(missing_ok=True)
+    os.close(fd)
+
+
 def _admit(
     source,
     directory,
@@ -665,8 +708,7 @@ def _admit(
         destination = _destination(directory, metadata["name"])
         snapshot = destination.parent / metadata["version"]
         lock = directory / ("." + metadata["name"] + ".install-lock")
-        fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        os.close(fd)
+        fd = _acquire(lock)
         try:
             previous = None
             save_state = None
@@ -818,7 +860,7 @@ def _admit(
                     destination.parent.rmdir()
                 raise
         finally:
-            lock.unlink()
+            _release(lock, fd)
     if release and cached is None:
         _count_download(repository, subdirectory)
     result = {
@@ -1076,8 +1118,7 @@ def _sync_owned(destination, record):
 def _restore_saved_link(directory, name, expected, target):
     destination = _destination(directory, name)
     lock = directory / ("." + name + ".install-lock")
-    fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    os.close(fd)
+    fd = _acquire(lock)
     try:
         if (
             expected is None
@@ -1112,7 +1153,7 @@ def _restore_saved_link(directory, name, expected, target):
                 pointer.symlink_to(version, target_is_directory=True)
                 os.replace(pointer, destination)
     finally:
-        lock.unlink()
+        _release(lock, fd)
 
 
 def _install_saved(source, directory, subdirectory, revision, vis_version, release):
@@ -1134,8 +1175,7 @@ def _install_saved(source, directory, subdirectory, revision, vis_version, relea
     directory = Path(directory).expanduser().resolve()
     directory.mkdir(parents=True, exist_ok=True)
     lock = directory / ".sync-lock"
-    fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    os.close(fd)
+    fd = _acquire(lock)
     try:
         records = _sync_records(directory)
         result = _admit(
@@ -1168,7 +1208,7 @@ def _install_saved(source, directory, subdirectory, revision, vis_version, relea
             "save_state": {**save_state, "installed": record},
         }
     finally:
-        lock.unlink()
+        _release(lock, fd)
 
 
 def rollback_saved_install(directory, name, save_state):
@@ -1181,8 +1221,7 @@ def rollback_saved_install(directory, name, save_state):
     name = _name(name)
     directory = Path(directory).expanduser().resolve()
     lock = directory / ".sync-lock"
-    fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    os.close(fd)
+    fd = _acquire(lock)
     try:
         records = _sync_records(directory)
         current = records.get(name)
@@ -1205,7 +1244,7 @@ def rollback_saved_install(directory, name, save_state):
             raise
         return {"name": name, "status": "restored" if previous_target else "removed"}
     finally:
-        lock.unlink()
+        _release(lock, fd)
 
 
 def _sync_one(name, spec, directory, current, refresh, vis_version):
@@ -1301,8 +1340,7 @@ def sync(
         directory.mkdir(parents=True, exist_ok=True)
     lock = directory / ".sync-lock"
     if not dry_run:
-        fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        os.close(fd)
+        fd = _acquire(lock)
     try:
         records = _sync_records(directory)
         results = []
@@ -1355,4 +1393,4 @@ def sync(
         return results
     finally:
         if not dry_run:
-            lock.unlink()
+            _release(lock, fd)

@@ -1,8 +1,14 @@
 """GitHub and local project admission share one inert manifest contract."""
 
+import contextlib
+import fcntl
 import io
 import json
+import os
 import subprocess
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -30,6 +36,26 @@ def project(directory, manifest=MANIFEST):
     (directory / "src").mkdir()
     (directory / "src/greeter.py").write_text("VALUE = 1")
     return directory
+
+
+@contextlib.contextmanager
+def running_operation(lock):
+    """Hold an extension lock the way a running sync in another Vis process does."""
+    fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        yield
+    finally:
+        lock.unlink(missing_ok=True)
+        os.close(fd)
+
+
+def sync_greeter(source, target):
+    return package.sync({"vis-greeter": {"source": str(source)}}, target, trust=True)
+
+
+def install_greeter(source, target):
+    return package.install(str(source), target, trust=True)
 
 
 @pytest.mark.parametrize("suffix", ["", "/", ".git"])
@@ -1163,19 +1189,73 @@ def test_sync_failure_keeps_last_source_and_name_mismatch_installs_nothing(
     assert not (target / "wrong-name").exists()
 
 
-def test_sync_lock_and_corrupt_receipts_fail_without_touching_source(tmp_path):
+def test_held_sync_lock_times_out_and_corrupt_receipts_fail_without_touching_source(
+    tmp_path, monkeypatch
+):
     target = tmp_path / "extensions"
     target.mkdir()
     source = project(tmp_path / "source")
     config = {"vis-greeter": {"source": str(source)}}
-    (target / ".sync-lock").write_text("")
-    with pytest.raises(FileExistsError):
-        package.sync(config, target, trust=True)
-    (target / ".sync-lock").unlink()
+    monkeypatch.setattr(package, "LOCK_WAIT_S", 0.2)
+    with running_operation(target / ".sync-lock"):
+        with pytest.raises(TimeoutError, match="another extension operation"):
+            package.sync(config, target, trust=True)
     (target / ".sync.json").write_text('{"vis-greeter": {}}')
     with pytest.raises(ValueError):
         package.sync(config, target, trust=True)
     assert not (target / "vis-greeter/current").exists()
+    assert not (target / ".sync-lock").exists()
+
+
+# Parallel Vis starts died with FileExistsError on .sync-lock instead of waiting.
+@pytest.mark.parametrize(
+    ("lock", "operation"),
+    [(".sync-lock", sync_greeter), (".vis-greeter.install-lock", install_greeter)],
+)
+def test_extension_operation_waits_for_a_running_one(tmp_path, lock, operation):
+    source = project(tmp_path / "source")
+    target = tmp_path / "extensions"
+    target.mkdir()
+    held = threading.Event()
+
+    def hold():
+        with running_operation(target / lock):
+            held.set()
+            time.sleep(0.3)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    assert held.wait(5)
+    started = time.monotonic()
+    operation(source, target)
+    waited = time.monotonic() - started
+    holder.join()
+    assert waited >= 0.2
+    assert (target / "vis-greeter/current").resolve() == source
+    assert not (target / lock).exists()
+
+
+# A crashed operation left its lock file behind, and every later start failed.
+@pytest.mark.parametrize(
+    ("lock", "operation"),
+    [(".sync-lock", sync_greeter), (".vis-greeter.install-lock", install_greeter)],
+)
+def test_lock_file_left_by_a_crash_does_not_block(tmp_path, lock, operation):
+    source = project(tmp_path / "source")
+    target = tmp_path / "extensions"
+    target.mkdir()
+    (target / lock).write_text("")
+    operation(source, target)
+    assert (target / "vis-greeter/current").resolve() == source
+    assert not (target / lock).exists()
+
+
+def test_parallel_syncs_install_once(tmp_path):
+    source = project(tmp_path / "source")
+    target = tmp_path / "extensions"
+    with ThreadPoolExecutor(4) as pool:
+        runs = list(pool.map(lambda _: sync_greeter(source, target), range(4)))
+    assert sorted(run[0]["status"] for run in runs) == ["cached"] * 3 + ["installed"]
     assert not (target / ".sync-lock").exists()
 
 
@@ -1404,16 +1484,17 @@ def test_save_rollback_receipt_failure_restores_the_current_pointer(
     assert (target / ".sync.json").read_bytes() == receipt
 
 
-def test_saved_install_requires_trust_and_respects_the_sync_lock(tmp_path):
+def test_saved_install_requires_trust_and_respects_the_sync_lock(tmp_path, monkeypatch):
     source = project(tmp_path / "source")
     target = tmp_path / "extensions"
     with pytest.raises(ValueError, match="trust"):
         package.install(str(source), target, save=True)
     assert not target.exists()
     target.mkdir()
-    (target / ".sync-lock").write_text("")
-    with pytest.raises(FileExistsError):
-        package.install(str(source), target, trust=True, save=True)
+    monkeypatch.setattr(package, "LOCK_WAIT_S", 0.2)
+    with running_operation(target / ".sync-lock"):
+        with pytest.raises(TimeoutError):
+            package.install(str(source), target, trust=True, save=True)
     assert not (target / "vis-greeter/current").exists()
 
 
