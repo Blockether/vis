@@ -551,39 +551,43 @@
 (defn build-router
   "Build a router, retaining network policy and account-scoped model metadata provenance."
   [config]
-  (try (let [providers
-             (runtime-router-providers config)
+  (try
+    (let [providers
+          (runtime-router-providers config)
 
-             by-id
-             (into {} (map (juxt :id identity)) providers)
+          by-id
+          (into {} (map (juxt :id identity)) providers)
 
-             router
-             (svar/make-router providers (config/router-opts config))]
+          router
+          (svar/make-router providers (config/router-opts config))]
 
-         (update router
-                 :providers
-                 (fn [normalized]
-                   (mapv (fn [provider]
-                           (let [source
-                                 (by-id (:id provider))
+      (update router
+              :providers
+              (fn [normalized]
+                (mapv
+                  (fn [provider]
+                    (let [source
+                          (by-id (:id provider))
 
-                                 catalog-id
-                                 (::config/model-catalog-identity source)]
+                          catalog-id
+                          (::config/model-catalog-identity source)]
 
-                             (cond-> (merge provider (select-keys source [:network]))
-                               catalog-id
-                               (assoc ::model-catalog
-                                 {:identity catalog-id
-                                  :learned (into {} (map (juxt :name identity)) (:models provider))
-                                  :fallback (into {}
-                                                  (map (juxt :name identity))
-                                                  (catalog/normalize-models
-                                                    (:priority provider)
-                                                    (assoc source
-                                                      :models (::config/configured-models
-                                                                source))))}))))
-                         normalized))))
-       (catch Throwable t (throw (env-gap-router-error config t)))))
+                      (cond-> (merge provider
+                                     (select-keys source [:network])
+                                     {::configured-models (or (::config/configured-models source)
+                                                              (:models source))})
+                        catalog-id
+                        (assoc ::model-catalog
+                          {:identity catalog-id
+                           :learned (into {} (map (juxt :name identity)) (:models provider))
+                           :fallback (into {}
+                                           (map (juxt :name identity))
+                                           (catalog/normalize-models
+                                             (:priority provider)
+                                             (assoc source
+                                               :models (::config/configured-models source))))}))))
+                  normalized))))
+    (catch Throwable t (throw (env-gap-router-error config t)))))
 
 (defn- refresh-router-models!
   "Schedule catalog discovery after the router is published; never block its caller."
@@ -965,6 +969,75 @@
   ([environment provider-id]
    (auth-health/ensure-authenticated! provider-id)
    (hydrate-environment-router environment)))
+
+(defn hydrate-request-model-metadata
+  "Resolve missing or invalid model limits from the selected provider before preflight.
+   Discovery uses the current credential and Svar's account-scoped cache. Explicit
+   configuration wins; only this request's router snapshot changes. A failed or
+   incomplete catalog leaves Svar's metadata diagnostic intact, never a guessed limit."
+  [environment routing]
+  (let [router
+        (:router environment)
+
+        missing
+        (when (seq (:providers router))
+          (try (svar/context-budget router {:routing routing})
+               nil
+               (catch clojure.lang.ExceptionInfo e
+                 (if (= :svar.llm/model-metadata-unavailable (:type (ex-data e))) e (throw e)))))]
+
+    (if-not missing
+      environment
+      (let [provider-id
+            (:provider-id (ex-data missing))
+
+            provider
+            (some #(when (= provider-id (:id %)) %) (:providers router))
+
+            live
+            (svar/models! router
+                          (assoc (select-keys provider [:api-key :base-url :api-style :llm-headers])
+                            :provider-id provider-id))
+
+            by-name
+            (into {}
+                  (keep (fn [model]
+                          (when-let [m (config/->svar-model
+                                         (assoc model :name (or (:id model) (:name model))))]
+                            [(:name m) m])))
+                  live)
+
+            explicit
+            (into {} (map (juxt :name identity)) (::configured-models provider))
+
+            models
+            (catalog/normalize-models (:priority provider)
+                                      (update provider
+                                              :models
+                                              #(mapv (fn [model]
+                                                       (merge (dissoc model :capabilities)
+                                                              (by-name (:name model))
+                                                              (explicit (:name model))))
+                                                     %)))
+
+            updated
+            (assoc provider
+              :models models
+              ::model-catalog {:identity (svar/model-catalog-identity provider)
+                               :learned (into {} (map (juxt :name identity)) models)
+                               :fallback
+                               (or (:fallback (::model-catalog provider))
+                                   (into {} (map (juxt :name identity)) (:models provider)))})
+
+            hydrated
+            (update environment
+                    :router update
+                    :providers #(mapv (fn [p]
+                                        (if (= provider-id (:id p)) updated p))
+                                      %))]
+
+        (svar/context-budget (:router hydrated) {:routing routing})
+        hydrated))))
 
 (defn try-refresh-provider-token!
   "Recover a refreshable auth rejection of provider `pid` without mutating any router.

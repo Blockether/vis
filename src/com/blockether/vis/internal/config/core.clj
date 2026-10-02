@@ -393,6 +393,15 @@
          (some? (:tool-call? m))
          (assoc :tool-call? (:tool-call? m))
 
+         (some? (:vision? m))
+         (assoc :vision? (:vision? m))
+
+         (some? (:reasoning? m))
+         (assoc :reasoning? (:reasoning? m))
+
+         (some? (:parallel-tool-calls? m))
+         (assoc :parallel-tool-calls? (:parallel-tool-calls? m))
+
          ;; Per-model `:api-style` override, normalized through the same dialect
          ;; vocabulary as the provider key: svar reads `(or (:api-style
          ;; model-map) (:api-style provider))` at request build, so a single

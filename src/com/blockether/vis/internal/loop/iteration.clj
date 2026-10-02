@@ -2295,6 +2295,9 @@
                          (update :provider keyword)))
           routing)
 
+        environment
+        (loop-router/hydrate-request-model-metadata environment routing)
+
         pre-resolved-model
         (loop-router/resolve-model-info (:router environment) (:provider routing) (:model routing))
 
@@ -2593,10 +2596,9 @@
                         resolved-model)
 
                       attempt-env
-                      (update (loop-router/hydrate-environment-router env
-                                                                      (:provider resolved-model))
-                              :router
-                              #(agents/restrict-router env %))
+                      (-> (loop-router/hydrate-environment-router env (:provider resolved-model))
+                          (update :router #(agents/restrict-router env %))
+                          (loop-router/hydrate-request-model-metadata attempt-routing))
 
                       _
                       (when route-change (reset! applied-route-command (:command route-change)))

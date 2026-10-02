@@ -161,6 +161,15 @@
         "is_tool_call": {
           "type": "boolean"
         },
+        "is_vision": {
+          "type": "boolean"
+        },
+        "is_reasoning": {
+          "type": "boolean"
+        },
+        "is_parallel_tool_calls": {
+          "type": "boolean"
+        },
         "api_style": {
           "$ref": "#/$defs/apiStyle"
         }

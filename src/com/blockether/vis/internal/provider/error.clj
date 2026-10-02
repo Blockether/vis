@@ -414,6 +414,11 @@
   [err]
   (contains? CONTEXT_OVERFLOW_TYPES (or (:type (:data err)) (:type err) (:type (ex-data err)))))
 
+(defn- model-metadata-error?
+  [err]
+  (= :svar.llm/model-metadata-unavailable
+     (or (:type (:data err)) (:type err) (:type (ex-data err)))))
+
 (defn unroutable-error?
   "True when svar's ROUTER gave up BEFORE sending anything and kept no upstream
    evidence: its typed `:svar.llm/provider-unavailable` (thrown when
@@ -614,6 +619,12 @@
            "or refused to bind this session's tools. A leftover global in the "
            "session's sandbox file whose name matches an extension tool fails every "
            "later bind the same way.")
+      (model-metadata-error? err)
+      (str
+        "WHAT HAPPENED: the provider's model catalog did not supply valid input/context limits for "
+        (:model data)
+        ". The request was not sent. This is missing or inconsistent model metadata, "
+        "not evidence that your conversation exceeds the model's context window.")
       (context-overflow-error? err)
       (str "WHAT HAPPENED: the request exceeded the model's context window."
            (when-let [input (:input-tokens data)]
@@ -767,6 +778,9 @@
         (or (:data err) (ex-data err) err)]
 
     (case (provider-error-kind err)
+      :model-metadata
+      "Model limits unavailable"
+
       :context-overflow
       "Context window exceeded"
 
@@ -868,6 +882,9 @@
            "worker log named in the error, then check this session's file under "
            "`~/.vis/sandbox/`: a saved global whose name matches an extension tool "
            "(for example `py`) breaks every tool bind until that line is removed.")
+
+      :model-metadata
+      "NEXT STEP: refresh the provider's model list and retry, configure verified model limits, or choose another model."
 
       :context-overflow
       "NEXT STEP: fold older settled history, choose a larger-context model, or start a fresh session."
@@ -1011,6 +1028,7 @@
 
     (cond (fd-exhaustion-error? err) :file-descriptors-exhausted
           (python-worker-error? err) :python-worker
+          (model-metadata-error? err) :model-metadata
           (context-overflow-error? err) :context-overflow
           (stream-timeout-error? err) :stream-timeout
           (refusal-error? err) :refusal
