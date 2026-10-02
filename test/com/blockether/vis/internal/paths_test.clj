@@ -62,6 +62,35 @@
                    (expect (= (paths/unixify (str home "/projects/vis"))
                               (paths/unixify (paths/expand-home abbreviated)))))))
 
+(defdescribe compact-path-text-test
+             ;; #306: extension diagnostics use this so shared terminal output never names the user.
+             (it "shows home as `~` and the root as relative inside text"
+                 (expect (= "File \"~/.vis/x.py\", line 3"
+                            (paths/compact-path-text nil "File \"/home/u/.vis/x.py\", line 3" "/home/u")))
+                 (expect (= "edit src/a.clj in ~"
+                            (paths/compact-path-text "/home/u/p"
+                                                     "edit /home/u/p/src/a.clj in /home/u"
+                                                     "/home/u"))))
+             (it "leaves sibling names, URL paths and non-strings unchanged"
+                 (expect (= "/home/u2/x and https://example.test/home/u/x"
+                            (paths/compact-path-text nil
+                                                     "/home/u2/x and https://example.test/home/u/x"
+                                                     "/home/u")))
+                 (expect (nil? (paths/compact-path-text nil nil "/home/u")))
+                 (expect (= "/home/u/x" (paths/compact-path-text nil "/home/u/x" nil)))))
+
+(defdescribe shell-path-test
+             ;; #306: a command printed in an error must still work when it is pasted into a shell.
+             (it "keeps `~/` unquoted so the shell expands it"
+                 (expect (= "~/vis-repro" (paths/shell-path "/home/u/vis-repro" "/home/u")))
+                 (expect (= "~/" (paths/shell-path "/home/u" "/home/u")))
+                 (expect (= "/opt/work/p" (paths/shell-path "/opt/work/p" "/home/u"))))
+             (it "single-quotes only a remainder that needs quotes"
+                 (expect (= "~/'My Projects/it'\\''s'"
+                            (paths/shell-path "/home/u/My Projects/it's" "/home/u")))
+                 (expect (= "'/opt/my work'" (paths/shell-path "/opt/my work" "/home/u")))
+                 (expect (nil? (paths/shell-path nil "/home/u")))))
+
 (defdescribe logs-dir-test
              (it "is a DEDICATED subdir, never ~/.vis itself"
                  ;; The file tools and the Python sandbox get always-on access to logs; that

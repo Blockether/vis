@@ -14,8 +14,7 @@
   (:import [java.io File]
            [java.nio.charset StandardCharsets]
            [java.util UUID]
-           [java.util.concurrent.atomic AtomicLong]
-           [java.util.regex Pattern]))
+           [java.util.concurrent.atomic AtomicLong]))
 
 (def max-event-bytes contract/event-byte-limit)
 
@@ -86,33 +85,10 @@
 
         (str (String. head 0 (int end) StandardCharsets/UTF_8) marker)))))
 
-(defn- compact-path-text
-  "Shorten known path prefixes in display text, not embedded URL paths or sibling names.
-   Code, markdown and diff blocks are kept outside this function."
-  [workspace-root text]
-  (if-not (string? text)
-    text
-    (reduce (fn [text [prefix replacement]]
-              (if (str/blank? prefix)
-                text
-                (str/replace
-                  text
-                  (re-pattern
-                    (str "(?<![\\p{L}\\p{N}_./\\\\:~%-])"
-                         (str/join "[/\\\\]"
-                                   (map #(Pattern/quote %) (str/split (paths/unixify prefix) #"/")))
-                         "(?:([/\\\\])(?=[^\\s\"'`),;\\]}])|[/\\\\]?(?=$|[\\s\"'`),;\\]}]))"))
-                  (fn [[_ separator]]
-                    (if separator (if (= replacement ".") "" "~/") replacement)))))
-            text
-            (distinct [[workspace-root "."]
-                       [(when workspace-root (paths/abbreviate-home workspace-root)) "."]
-                       [(System/getProperty "user.home") "~"]]))))
-
 (defn- compact-presentation
   [workspace-root presentation]
   (let [compact
-        #(compact-path-text workspace-root %)
+        #(paths/compact-path-text workspace-root %)
 
         block
         (fn [block]
@@ -766,23 +742,24 @@
 
         (get-in details [:activity :headline])
         (assoc :presentation
-          {"headline" (bounded-text (compact-path-text workspace-root
-                                                       (util/redact-secret-text
-                                                         (get-in details [:activity :headline])))
+          {"headline" (bounded-text (paths/compact-path-text workspace-root
+                                                             (util/redact-secret-text
+                                                               (get-in details
+                                                                       [:activity :headline])))
                                     max-summary-bytes)
-           "summary" (bounded-text (compact-path-text workspace-root
-                                                      (util/redact-secret-text (or label "")))
+           "summary" (bounded-text (paths/compact-path-text workspace-root
+                                                            (util/redact-secret-text (or label "")))
                                    max-summary-bytes)
            "content" []})
 
         label
         (assoc :label
-          (bounded-text (compact-path-text workspace-root (util/redact-secret-text label))
+          (bounded-text (paths/compact-path-text workspace-root (util/redact-secret-text label))
                         max-summary-bytes))
 
         phrase
         (assoc :phrase
-          (bounded-text (compact-path-text workspace-root (util/redact-secret-text phrase))
+          (bounded-text (paths/compact-path-text workspace-root (util/redact-secret-text phrase))
                         max-summary-bytes))
 
         classification
@@ -857,10 +834,11 @@
           (when-not (get-in details [:activity :summary-only])
             (some-> (displayable-result result)
                     (bounded-summary max-detail-bytes)))
-          (bounded-rendered (compact-path-text (:workspace-root details)
-                                               (util/redact-secret-text (or (some-> error*
+          (bounded-rendered (paths/compact-path-text (:workspace-root details)
+                                                     (util/redact-secret-text (or (some->
+                                                                                    error*
                                                                                     ex-message)
-                                                                            (str error*))))
+                                                                                  (str error*))))
                             max-detail-bytes))
 
         presentation

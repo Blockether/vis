@@ -49,6 +49,7 @@
     [com.blockether.vis.internal.extension.registry :as registry]
     [com.blockether.vis.internal.python.test-runner :as runner]
     [com.blockether.vis.internal.workspace.core :as workspace]
+    [com.blockether.vis.internal.paths :as paths]
     [taoensso.nippy :as nippy]
     [lazytest.core :refer [defdescribe expect it]])
   (:import [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
@@ -254,6 +255,95 @@
            (finally (doseq [root roots]
                       (binding [workspace/*workspace-root* root]
                         (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))))
+
+(defdescribe declared-project-problems-test
+             ;; #306: a declared project without uv.lock failed with one generic sentence that named
+             ;; neither the missing file nor the directory, and gave no next step.
+             (it
+               "names the missing project file, the resolved directory and the next step"
+               (let [entry (fn [project]
+                             (str "# /// script\n# [tool.vis]\n# project = '" project
+                                  "'\n# ///\n" "import blockether.vis.extension as vis\n"))]
+                 (with-fresh-loaded
+                   {"absent.py" (entry "nowhere")
+                    "unpacked.py" (entry "bare")
+                    "bare/uv.lock" "version = 1\n"
+                    "unlocked.py" (entry "nolock")
+                    "nolock/pyproject.toml" "[project]\nname='nolock'\nversion='1.0.0'\n"}
+                   (fn [result {:keys [ext-dir]}]
+                     (let [errors (into {}
+                                        (map (juxt #(.getName (io/file (:file %))) :error))
+                                        (pyx/load-failures))
+                           canonical #(.getCanonicalPath (io/file ext-dir %))
+                           shown #(paths/abbreviate-home (canonical %))]
+
+                       (expect (= 3 (:failed result)) (pr-str errors))
+                       (expect (= (str "tool.vis.project "
+                                       (shown "nowhere")
+                                       " does not exist.\n"
+                                       "Check project = \"nowhere\" in absent.py.\n"
+                                       "The path is relative to "
+                                       (shown ".")
+                                       ".")
+                                  (get errors "absent.py")))
+                       (expect (= (str "tool.vis.project "
+                                       (shown "bare")
+                                       " has no pyproject.toml.\n"
+                                       "Check project = \"bare\" in unpacked.py.\n"
+                                       "The path is relative to "
+                                       (shown ".")
+                                       ".")
+                                  (get errors "unpacked.py")))
+                       (expect (= (str "tool.vis.project "
+                                       (shown "nolock")
+                                       " has no uv.lock.\n"
+                                       "Run: vis-agent python uv lock --project "
+                                       (paths/shell-path (canonical "nolock"))
+                                       "\n" "Then run /reload.")
+                                  (get errors "unlocked.py")))))))))
+
+(defdescribe
+  project-problem-test
+  ;; #306: diagnostics name home as `~`, and the lock command stays one shell word.
+  (it
+    "shortens home and quotes the lock command"
+    (let [home
+          (.getCanonicalFile (temp-dir))
+
+          base
+          (doto (io/file home "clone/.vis/extensions") .mkdirs)
+
+          entry
+          (io/file base "repro.py")
+
+          project
+          (doto (io/file home "my project") .mkdirs)
+
+          prior-home
+          (System/getProperty "user.home")]
+
+      (spit entry "import blockether.vis.extension as vis\n")
+      (spit (io/file project "pyproject.toml") "[project]\nname='repro'\n")
+      (try (System/setProperty "user.home" (.getPath home))
+           (expect (= (str "tool.vis.project ~/my project has no uv.lock.\n"
+                           "Run: vis-agent python uv lock --project ~/'my project'\n"
+                           "Then run /reload.")
+                      (#'pyx/project-problem entry "../../../my project" base project)))
+           (expect
+             (= (str "tool.vis.project ~/clone/.vis/vendor does not exist.\n"
+                     "Check project = \"../vendor\" in repro.py.\n"
+                     "The path is relative to ~/clone/.vis/extensions.")
+                (#'pyx/project-problem entry "../vendor" base (io/file home "clone/.vis/vendor"))))
+           (expect (= (str "tool.vis.project ~/clone/.vis/extensions/repro.py is not a directory.\n"
+                           "Check project = \"~/clone/.vis/extensions/repro.py\" in repro.py.")
+                      (#'pyx/project-problem entry (.getPath entry) base entry)))
+           (expect
+             (str/includes?
+               (#'pyx/failure-summary {:file (.getPath entry) :error "Broken entry"})
+               "Python extension ~/clone/.vis/extensions/repro.py: reload failed; not loaded"))
+           (spit (io/file project "uv.lock") "version = 1\n")
+           (expect (nil? (#'pyx/project-problem entry "../../../my project" base project)))
+           (finally (System/setProperty "user.home" prior-home))))))
 
 (defdescribe
   project-extension-settings-test

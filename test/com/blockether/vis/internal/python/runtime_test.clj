@@ -9,6 +9,7 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
@@ -365,7 +366,7 @@
                                    ", then /reload.")
                               (.getMessage same-dir)))
                    (expect (= (str "uv sync failed\nRun vis-agent python uv sync --project "
-                                   (pr-str (.getCanonicalPath elsewhere))
+                                   (paths/shell-path (.getCanonicalPath elsewhere))
                                    ", then /reload.")
                               (.getMessage other-dir)))
                    (expect (= ::python-runtime/project-sync-required (:type (ex-data same-dir)))))))

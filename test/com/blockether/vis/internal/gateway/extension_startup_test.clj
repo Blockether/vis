@@ -227,3 +227,47 @@
           (doseq [hidden ["fixture-password" "fixture-token" "fixture-key" "fixture-private-key"
                           "\\u001b" "\\r"]]
             (expect (not (str/includes? encoded hidden)))))))))
+
+(defdescribe
+  extension-diagnostics-name-home-paths-with-tilde
+  ;; #306: startup output printed the user's home directory in every failed entry path.
+  (it
+    "extension diagnostics name home paths with tilde"
+    (let [home
+          (System/getProperty "user.home")
+
+          entry
+          (str home "/clone/.vis/extensions/repro.py")
+
+          output
+          (java.io.StringWriter.)]
+
+      (with-redefs [pyx/ensure-python-extensions-loaded!
+                    (constantly {:loaded 0 :failed 1})
+
+                    pyx/load-failures
+                    (constantly [{:file entry
+                                  :error (str "tool.vis.project "
+                                              home
+                                              "/clone has no uv.lock.\n"
+                                              "File \""
+                                              entry
+                                              "\", line 1\n"
+                                              "Sibling "
+                                              home
+                                              "-other/x")}])]
+
+        (#'server/prepare-startup-extensions!)
+        (let [response (wire/->wire {:extensions (#'server/extension-startup-status)})]
+          (with-redefs-fn {#'client/send-json-with-entry! (fn [& _]
+                                                            response)}
+            #(binding [*err* output] (#'client/await-extension-startup! {} response)))))
+      (let [printed (str output)]
+        (expect (str/includes? printed
+                               "[vis extensions] ~/clone/.vis/extensions/repro.py: not loaded")
+                printed)
+        (expect (str/includes? printed "  tool.vis.project ~/clone has no uv.lock.") printed)
+        (expect (str/includes? printed "  File \"~/clone/.vis/extensions/repro.py\", line 1")
+                printed)
+        (expect (str/includes? printed (str home "-other/x")) printed)
+        (expect (not (str/includes? printed (str home "/"))) printed)))))

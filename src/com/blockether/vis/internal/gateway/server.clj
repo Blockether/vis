@@ -53,6 +53,7 @@
     [com.blockether.vis.internal.gateway.resources :as resources]
     [com.blockether.vis.internal.python.extensions :as python-extensions]
     [com.blockether.vis.internal.python.runtime :as python-runtime]
+    [com.blockether.vis.internal.paths :as paths]
     [com.blockether.vis.internal.config.toggles :as toggles]
     [com.blockether.vis.internal.util :as util]
     [com.blockether.vis.internal.speech.core :as speech]
@@ -254,13 +255,16 @@
 (defonce ^:private extension-startup (atom {:stage "idle"}))
 
 (defn- extension-diagnostic-text
+  "Extension diagnostics a person can share: no terminal control codes or credentials,
+   and paths under home read `~/…` instead of naming the user."
   [text]
-  (-> (str text)
-      (str/replace #"\u001b\[[0-?]*[ -/]*[@-~]" "")
-      (str/replace #"[\p{Cntrl}&&[^\n\t]]" "")
-      (util/redact-secret-text (keep (fn [[key value]]
-                                       (when (util/secret-key? key) value))
-                                     (System/getenv)))))
+  (paths/compact-path-text nil
+                           (-> (str text)
+                               (str/replace #"\u001b\[[0-?]*[ -/]*[@-~]" "")
+                               (str/replace #"[\p{Cntrl}&&[^\n\t]]" "")
+                               (util/redact-secret-text (keep (fn [[key value]]
+                                                                (when (util/secret-key? key) value))
+                                                              (System/getenv))))))
 
 (defn- extension-startup-status
   "Current extension counts and safe diagnostics for client registration and admin status."

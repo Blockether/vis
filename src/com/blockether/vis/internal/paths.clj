@@ -1,12 +1,14 @@
 (ns com.blockether.vis.internal.paths
   "Cross-platform path helpers. A LEAF namespace (no project deps) so any
    layer — core, extensions, tests — can normalize without a require cycle."
+  (:require [clojure.string :as str])
   (:import [java.io File]
            [java.nio.channels FileChannel FileLock]
            [java.nio.file Files OpenOption Path Paths StandardOpenOption]
            [java.time Instant LocalDate ZoneOffset]
            [java.time.format DateTimeFormatter DateTimeParseException]
-           [java.util Locale]))
+           [java.util Locale]
+           [java.util.regex Pattern]))
 
 (defn unixify
   "Normalize a path string to `/` separators on every OS. Java's `File`/`Path`
@@ -75,6 +77,47 @@
                     (str "~/" (unixify (.toString (.relativize normalized-home normalized-path))))
                     :else path))
             (catch Throwable _ path))))))
+
+(defn compact-path-text
+  "Shorten absolute path prefixes inside DISPLAY text: `root` (and its `~/` spelling)
+   becomes relative and the user's home dir becomes `~`, the spelling the footer,
+   navigator and dialogs use. Embedded URL paths and sibling names that merely START
+   with a prefix stay unchanged. A nil `root` shortens home alone; non-string `text`
+   passes through."
+  ([root text] (compact-path-text root text (System/getProperty "user.home")))
+  ([root text home]
+   (if-not (string? text)
+     text
+     (reduce (fn [text [prefix replacement]]
+               (if (str/blank? prefix)
+                 text
+                 (str/replace
+                   text
+                   (re-pattern
+                     (str "(?<![\\p{L}\\p{N}_./\\\\:~%-])"
+                          (str/join "[/\\\\]"
+                                    (map #(Pattern/quote %) (str/split (unixify prefix) #"/")))
+                          "(?:([/\\\\])(?=[^\\s\"'`),;\\]}])|[/\\\\]?(?=$|[\\s\"'`),;\\]}]))"))
+                   (fn [[_ separator]]
+                     (if separator (if (= replacement ".") "" "~/") replacement)))))
+             text
+             (distinct [[root "."] [(when root (abbreviate-home root home)) "."] [home "~"]])))))
+
+(defn shell-path
+  "Render `path` for DISPLAY as one copyable POSIX shell word. A path at or under
+   home reads `~/…` with `~/` left unquoted, so the shell still expands it; a
+   remainder holding anything beyond `[A-Za-z0-9_@%+=:,./-]` is single-quoted.
+   Nil-safe."
+  (^String [path] (shell-path path (System/getProperty "user.home")))
+  (^String [path home]
+   (when-let [display (abbreviate-home path home)]
+     (let [tilde? (str/starts-with? display "~/")
+           word (if tilde? (subs display 2) display)]
+
+       (str (when tilde? "~/")
+            (if (re-matches #"[A-Za-z0-9_@%+=:,./-]*" word)
+              word
+              (str "'" (str/replace word "'" "'\\''") "'")))))))
 
 (defn logs-dir
   "Root for diagnostic logs and reports: `~/.vis/logs`. Writers use UTC date

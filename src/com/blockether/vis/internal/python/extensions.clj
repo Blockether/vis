@@ -1880,7 +1880,7 @@
 (defn- failure-summary
   [{:keys [file error extension stale? loaded-fingerprint requested-fingerprint]}]
   (str "Python extension "
-       (or extension file)
+       (or extension (paths/abbreviate-home file))
        ": reload failed; "
        (if stale? "last-known-good tools and docs are stale" "not loaded")
        (when loaded-fingerprint (str "; loaded fingerprint " loaded-fingerprint))
@@ -2089,6 +2089,37 @@
         (filter #(or prune (seq (:packages %)) (.isFile (io/file (:directory %) ".sync.json")))
                 scopes)))))
 
+(defn- project-problem
+  "Why an entry's `tool.vis.project` cannot be admitted, naming the resolved directory
+   and the next step; nil when that directory holds `pyproject.toml` and `uv.lock`.
+   A wrong location is fixed in the entry. A missing lock only needs generating:
+   `/reload` then prepares the environment."
+  [^File entry declared ^File base ^File dir]
+  (let [shown
+        (paths/abbreviate-home (.getPath dir))
+
+        location
+        (cond (not (.exists dir)) "does not exist"
+              (not (.isDirectory dir)) "is not a directory"
+              (not (.isFile (io/file dir "pyproject.toml"))) "has no pyproject.toml")
+
+        lines
+        (cond location
+              [(str "tool.vis.project " shown " " location ".")
+               (str "Check project = "
+                    (pr-str (paths/abbreviate-home declared))
+                    " in "
+                    (.getName entry)
+                    ".")
+               (when-not (.isAbsolute (io/file declared))
+                 (str "The path is relative to " (paths/abbreviate-home (.getPath base)) "."))]
+              (not (.isFile (io/file dir "uv.lock")))
+              [(str "tool.vis.project " shown " has no uv.lock.")
+               (str "Run: vis-agent python uv lock --project " (paths/shell-path (.getPath dir)))
+               "Then run /reload."])]
+
+    (when lines (str/join "\n" (remove nil? lines)))))
+
 (defn- extension-plan
   [^File f]
   (let [source
@@ -2142,10 +2173,8 @@
             (let [raw (io/file path)
                   dir (.getCanonicalFile (if (.isAbsolute raw) raw (io/file root path)))]
 
-              (when-not (and (.isFile (io/file dir "pyproject.toml"))
-                             (.isFile (io/file dir "uv.lock")))
-                (throw (ex-info "tool.vis.project requires pyproject.toml and uv.lock"
-                                {:type ::invalid-project})))
+              (when-let [problem (project-problem f path root dir)]
+                (throw (ex-info problem {:type ::invalid-project})))
               dir)))]
 
     {:roots (into [root] (distinct extras))
