@@ -23,7 +23,8 @@
 (defn wake-allowed?
   "Automatic resume has two sources: an explicit ping between independent sessions, and
    a managed team. A child may return to its leader; siblings must share a task team.
-   A managed session keeps its team rule, so a cancelled or exhausted subagent stays idle."
+   A managed session keeps its team rule, so a cancelled or exhausted subagent stays idle.
+   Only a managed subagent wakes itself; an independent session stays idle."
   [db author-id recipient-id]
   (let [author-id
         (str author-id)
@@ -37,7 +38,7 @@
         recipient
         (info db recipient-id)]
 
-    (boolean (or (and (nil? author) (nil? recipient))
+    (boolean (or (and (nil? author) (nil? recipient) (not= author-id recipient-id))
                  (and (toggles/enabled? "subagents")
                       (or (and (wakeable? recipient) (= author-id (:leader_id recipient)))
                           ;; Returning an outcome costs no further child iteration.

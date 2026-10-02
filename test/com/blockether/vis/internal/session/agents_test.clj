@@ -104,6 +104,9 @@
       (expect (not (agents/wake-allowed? db other child)))
       (expect (agents/wake-allowed? db leader other))
       (expect (not (agents/wake-allowed? db child other)))
+      ;; #202: only a managed subagent wakes itself; an independent leader stays idle.
+      (expect (not (agents/wake-allowed? db leader leader)))
+      (expect (not (agents/wake-allowed? db other other)))
       (expect
         (= [{:role :user :content "Full current context"} {:role :user :content "Delegated task"}]
            (:messages (agents/inherited-base env 2 [{:role :user :content "Delegated task"}] []))))

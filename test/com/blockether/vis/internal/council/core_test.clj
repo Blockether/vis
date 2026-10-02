@@ -1641,6 +1641,46 @@
               (finally (run! drop! ids)))))))))
 
 (defdescribe
+  independent-session-self-wake-test
+  (it "independent session self wake stays idle"
+      ;; #202: only a managed subagent wakes itself; an idle independent session stays idle.
+      (with-council
+        (let [{:keys [db ids gid]}
+              (world 1)
+
+              sid
+              (first ids)
+
+              drop!
+              (ns-resolve 'com.blockether.vis.internal.gateway.state 'drop-session!)
+
+              launched
+              (atom [])]
+
+          (with-redefs-fn {(ns-resolve 'com.blockether.vis.internal.loop 'db-info) (constantly db)
+                           (ns-resolve 'com.blockether.vis.internal.gateway.state 'session-model)
+                           (constantly {:provider "fixture" :model "fixture"})
+                           (ns-resolve 'com.blockether.vis.internal.gateway.state 'fresh-entry)
+                           (fn [_]
+                             {:next-seq 0 :turns {} :turn-order []})
+                           (ns-resolve 'com.blockether.vis.internal.gateway.state
+                                       'launch-turn-worker!)
+                           (fn [sid tid request opts]
+                             (swap! launched conj [sid tid request opts]))}
+            (fn []
+              (try (let [entry (council 'wake!
+                                        db
+                                        #(council 'runtime db)
+                                        {:session-id sid :source "sdk"}
+                                        {:kind "informational"
+                                         :content "Build finished"
+                                         :idempotency_key "build-1"})]
+                     (expect (= [sid] (:ping entry)))
+                     (expect (= gid (:group_id entry)))
+                     (expect (empty? @launched)))
+                   (finally (drop! sid)))))))))
+
+(defdescribe
   explicit-idle-ping-wakes-once-test
   (it
     "explicit idle ping wakes once"
