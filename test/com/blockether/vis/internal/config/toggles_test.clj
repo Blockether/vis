@@ -428,3 +428,42 @@
       (try (expect (false? (t/enabled? "speech_preload_model")))
            (finally (t/reset-to-default! "speech_preload_model")))
       (expect (true? (t/enabled? "speech_preload_model")))))
+
+(defdescribe
+  project-toggles-test
+  ;; #302: a project extension's settings exist only where its project runs.
+  (it
+    "keeps project settings in their project and replaces the settings of overridden extensions"
+    (let [root
+          "/tmp/vis-project-toggles"
+
+          ids
+          (fn [root]
+            (set (keep #{"test_project_global" "test_project_shared" "test_project_local"}
+                       (map :id (t/target-toggles root)))))]
+
+      (try (t/register-toggle!
+             {:id "test_project_global" :label "Global" :default true :owner "test.overridden"})
+           (t/register-toggle!
+             {:id "test_project_shared" :label "Shared" :default true :owner "test.overridden"})
+           (t/set-project-toggles! root
+                                   ["test.overridden"]
+                                   [{:id "test_project_shared"
+                                     :label "Project shared"
+                                     :default false
+                                     :owner "test.overridden"}
+                                    {:id "test_project_local"
+                                     :label "Local"
+                                     :type :enum
+                                     :choices ["fast" "slow"]
+                                     :default "fast"
+                                     :owner "test.overridden"}])
+           (expect (= #{"test_project_global" "test_project_shared"} (ids nil)))
+           (expect (= #{"test_project_shared" "test_project_local"} (ids root)))
+           (expect (= "Project shared" (:label (t/target-toggle-spec root "test_project_shared"))))
+           (expect (= "Shared" (:label (t/target-toggle-spec nil "test_project_shared"))))
+           (expect (nil? (t/target-toggle-spec root "test_project_global")))
+           (expect (nil? (t/toggle-spec "test_project_local")))
+           (expect (= {:value "slow"} (t/wire-value root "test_project_local" "SLOW")))
+           (expect (nil? (t/wire-value "test_project_local" "slow")))
+           (finally (t/set-project-toggles! root [] []) (t/unregister-owner! "test.overridden"))))))

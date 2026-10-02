@@ -800,8 +800,9 @@ class Setting:
     """Declare a boolean or choice setting shared by the app and TUI.
 
     `scopes` allows any non-empty combination of global, project, group and session.
-    Omitting it uses the contract's global-only default. `group` is a presentation
-    category, not an organizational group. `value()` reads the current callback's
+    Omitting it uses the contract's global-only default. A project extension exists
+    only in its project, so there `global` means the whole project. The setting shows
+    in its extension's own settings section. `value()` reads the current callback's
     response snapshot. Outside Vis, it returns the declared default.
     """
 
@@ -812,7 +813,6 @@ class Setting:
     choices: Sequence[str] = ()
     scopes: Sequence[str] | None = None
     description: str | None = None
-    group: str = "extensions"
 
     def __post_init__(self):
         for name, value in (("scopes", self.scopes), ("choices", self.choices)):
@@ -840,7 +840,6 @@ class Setting:
             "label": self.label,
             "default": self.default,
             "type": self.type,
-            "group": self.group,
             "is_persist": True,
         }
         if self.scopes is not None:

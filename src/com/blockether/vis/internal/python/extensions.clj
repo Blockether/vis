@@ -1779,7 +1779,6 @@
                                            :label (get setting "label")
                                            :default (get setting "default")
                                            :type (keyword (get setting "type"))
-                                           :group (keyword (get setting "group"))
                                            :scopes (vec (get setting "scopes"))
                                            :persist? true}
                                     (get setting "description")
@@ -2383,8 +2382,9 @@
                         (get metadata "repository")
                         (assoc :ext/repository (get metadata "repository")))
                       spec)
-               validated (if (:project-root frozen)
-                           (extension/extension spec)
+               validated (if-let [root (:project-root frozen)]
+                           (extension/project-extension spec
+                                                        (keep :ext (vals (scope-entries root))))
                            (extension/register-extension! spec))]
 
            (tel/log! {:level :info

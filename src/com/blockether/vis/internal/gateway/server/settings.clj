@@ -12,6 +12,7 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.gateway.server.http :as http]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.gateway.state :as state]))
 
 (defn- toggle-json
@@ -64,7 +65,6 @@
    provider group holds only response options, because providers are global."
   [group local?]
   (cond (and local? (= group :provider)) "Response"
-        (= group :engines) "Extension engines"
         :else (str/capitalize (str/replace (name group) #"[-_]+" " "))))
 
 (defn- request-target
@@ -118,6 +118,20 @@
              (http/error-response 400 :invalid-setting-value (ex-message e) :id "agent_name")
              (throw e))))))
 
+(defn- extension-rows
+  "Row id -> `[extension position]` for each extension loaded where `target` runs.
+   An extension's own section holds its engine choice, its settings and its packaged skills."
+  [target]
+  (into {}
+        (mapcat (fn [{ext-name :ext/name :as ext}]
+                  (map-indexed (fn [position id]
+                                 [id [ext-name position]])
+                               (concat [(scoped/resource-id :engines ext-name)]
+                                       (map :id (:ext/toggles ext))
+                                       (map #(scoped/resource-id :skills (:name %))
+                                            (:ext/skills ext))))))
+        (extension/registered-extensions (:root target))))
+
 (defn- settings-catalog
   [request target]
   (let [local?
@@ -126,30 +140,44 @@
         resources
         (resource-inventory target)
 
+        owners
+        (extension-rows target)
+
         channel
         (some-> (get-in request [:query-params "channel"])
                 keyword)
 
         ;; MCP rows stay out: every scope's MCP servers section owns each server's switch.
+        ;; An engine row shows only where its extension is loaded.
         rows
-        (filter #(and (some #{(:scope target)} (:scopes %))
-                      (case (:group %)
-                        :skills
-                        (resources (:id %))
+        (filter #(and
+                   (some #{(:scope target)} (:scopes %))
+                   (case (:group %)
+                     :skills
+                     (resources (:id %))
 
-                        :mcp
-                        false
+                     :mcp
+                     false
 
-                        true)
-                      (or local? (and (not (false? (:settings? %))) (toggles/toggle-visible? %)))
-                      (or (nil? channel)
-                          (#{:all :*} channel)
-                          (toggles/toggle-for-channel? channel %)))
+                     :engines
+                     (owners (:id %))
+
+                     true)
+                   (or local? (and (not (false? (:settings? %))) (toggles/toggle-visible? %)))
+                   (or (nil? channel) (#{:all :*} channel) (toggles/toggle-for-channel? channel %)))
                 (scoped/settings (lp/db-info) target))
 
+        ;; Everything an extension contributes is configured in that extension's section.
+        section
+        (fn [row]
+          (if-let [[ext-name] (owners (:id row))]
+            [:extension ext-name]
+            [:vis (or (:group row) :other)]))
+
         grouped
-        (sort-by (comp str key)
-                 (group-by #(or (:group %) :other) (mark-overridden request target rows)))]
+        (sort-by (fn [[[kind group] _]]
+                   [(if (= :vis kind) 0 1) (str group)])
+                 (group-by section (mark-overridden request target rows)))]
 
     {:scope (:scope target)
      :target-id (:target-id target)
@@ -171,10 +199,14 @@
                      (conj {:id "agent"
                             :title "Agent"
                             :toggles [(assoc (agent-name-setting) :scopes ["global"])]}))
-                   (map (fn [[group specs]]
-                          {:id (name group)
-                           :title (group-title group local?)
-                           :toggles (mapv toggle-json specs)}))
+                   (map (fn [[[kind group] specs]]
+                          (if (= :extension kind)
+                            {:id (str "extension:" group)
+                             :title (str group)
+                             :toggles (mapv toggle-json (sort-by #(second (owners (:id %))) specs))}
+                            {:id (name group)
+                             :title (group-title group local?)
+                             :toggles (mapv toggle-json specs)})))
                    grouped)}))
 
 (defn- list-settings-handler

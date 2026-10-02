@@ -573,7 +573,7 @@
 
           (expect (= "auto" (scoped/engine-mode env {:ext/name "infrastructure_fixture"} live)))
           (expect (not (realized? live))))))
-  (it "titles settings groups in plain words and leaves scoped MCP availability to its section"
+  (it "titles groups in plain words and hides unloaded engines and scoped MCP rows"
       (with-empty-config
         (let [db
               (h/store)
@@ -603,9 +603,120 @@
                   titles
                   (into {} (map (juxt #(get % "id") #(get % "title"))) groups)]
 
-              (expect (= "Extension engines" (get titles "engines")))
+              (expect (not (contains? titles "engines")))
               (expect (= "Response" (get titles "provider")))
               (expect (not (contains? titles "mcp"))))))))
+  (it
+    "puts an extension's engine choice, settings and packaged skills in its own section"
+    (with-empty-config
+      (let [db
+            (h/store)
+
+            ext
+            {:ext/name "section-fixture"
+             :ext/engine {:ext.engine/symbols ['fixture]}
+             :ext/toggles [{:id "section_fixture_flag"}]
+             :ext/skills [{:name "section-fixture/guide"}]}]
+
+        (toggles/register-toggle! {:id "section_fixture_flag"
+                                   :label "Flag"
+                                   :default true
+                                   :owner "section-fixture"
+                                   :scopes contract/scopes})
+        (try (with-redefs [lp/db-info
+                           (constantly db)
+
+                           discovery/all-skills
+                           (constantly [{:name "section-fixture/guide"}])
+
+                           extension/registered-extensions
+                           (constantly [ext])]
+
+               (let [engine
+                     (scoped/engine-setting! ext)
+
+                     groups
+                     (-> (#'settings-api/list-settings-handler {:query-params {}})
+                         :body
+                         json/read-json
+                         (get "groups"))
+
+                     section
+                     (last groups)]
+
+                 (expect (= "extension:section-fixture" (get section "id")))
+                 (expect (= "section-fixture" (get section "title")))
+                 (expect (= [engine "section_fixture_flag"
+                             (scoped/resource-id :skills "section-fixture/guide")]
+                            (mapv #(get % "id") (get section "toggles"))))
+                 (expect (not-any? #(#{"engines" "skills"} (get % "id")) groups))))
+             (finally (toggles/unregister-owner! "section-fixture"))))))
+  (it
+    "lists a project extension's settings only in that project"
+    ;; #302: project extension settings never reached a settings catalog.
+    (with-empty-config
+      (let [db
+            (h/store)
+
+            root
+            (workspace/normalize-root "target/project-settings-catalog")
+
+            project
+            (store/db-create-project! db {:name "Project settings" :workspace-root root})
+
+            sid
+            (h/store-session! db {:title "In project"})
+
+            rows
+            (fn [params]
+              (into {}
+                    (for [group
+                          (-> (#'settings-api/list-settings-handler {:query-params params})
+                              :body
+                              json/read-json
+                              (get "groups"))
+
+                          row
+                          (get group "toggles")]
+
+                      [(get row "id") (assoc row "group" (get group "id"))])))]
+
+        (store/db-set-session-project! db sid (:id project))
+        (try (extension/set-project-extensions! root
+                                                [{:ext/name "project-settings-fixture"
+                                                  :ext/description "Project settings fixture"
+                                                  :ext/toggles [{:id "project_settings_flag"
+                                                                 :label "Flag"
+                                                                 :default false
+                                                                 :scopes ["global" "project"
+                                                                          "session"]}]}])
+             (with-redefs [lp/db-info
+                           (constantly db)
+
+                           discovery/all-skills
+                           (constantly [])]
+
+               (let [row (get (rows {"scope" "project" "target_id" (str (:id project))})
+                              "project_settings_flag")]
+                 (expect (= "extension:project-settings-fixture" (get row "group")))
+                 (expect (= ["project" "session"] (get row "scopes"))))
+               (expect (not (contains? (rows {}) "project_settings_flag")))
+               (scoped/set-setting! db
+                                    (scoped/target db "session" sid)
+                                    "project_settings_flag"
+                                    "toggle"
+                                    nil)
+               (expect (true? (get-in (rows {"scope" "session" "target_id" (str sid)})
+                                      ["project_settings_flag" "enabled"])))
+               (expect (= 404
+                          (try (scoped/set-setting! db
+                                                    (scoped/target db "global" nil)
+                                                    "project_settings_flag"
+                                                    "toggle"
+                                                    nil)
+                               nil
+                               (catch clojure.lang.ExceptionInfo e (:status (ex-data e)))))))
+             (finally (extension/set-project-extensions! root []))))))
   (it "leaves global MCP availability to the MCP servers section"
       (with-empty-config
         (let [db (h/store)]

@@ -139,6 +139,16 @@
       (= :enum t)
       (assoc :choices (mapv ->str-choice choices)))))
 
+(defn- validated-spec
+  "Normalize one contribution after checking the contract-owned shape."
+  [contribution]
+  (when-not (toggle-contract/contribution-valid? contribution)
+    (throw (ex-info "Invalid toggle contribution"
+                    {:type :vis.toggles/invalid-contribution
+                     :contribution contribution
+                     :explain (toggle-contract/explain-contribution contribution)})))
+  (normalize-spec contribution))
+
 (defn register-toggle!
   "Register one toggle that satisfies the contract-owned contribution shape.
 
@@ -146,13 +156,8 @@
    live VALUE in `state` is preserved (user overrides survive reload).
    Returns the normalized contribution."
   [contribution]
-  (when-not (toggle-contract/contribution-valid? contribution)
-    (throw (ex-info "Invalid toggle contribution"
-                    {:type :vis.toggles/invalid-contribution
-                     :contribution contribution
-                     :explain (toggle-contract/explain-contribution contribution)})))
   (let [normalized
-        (normalize-spec contribution)
+        (validated-spec contribution)
 
         id
         (:id normalized)]
@@ -217,6 +222,42 @@
   (filterv #(toggle-for-channel? channel %) (visible-toggles)))
 
 (defn toggle-spec "Lookup the registered spec for `id`, or nil." [id] (get @registry id))
+
+(defonce ^:private project-registry
+  ;; Canonical project root -> {:owners extension names, :specs their settings in order}.
+  (atom {}))
+
+(defn set-project-toggles!
+  "Publish the settings a project's own extensions declare, replacing earlier ones.
+   `owners` names those extensions: where `root` runs they replace the same-named global
+   extensions and their settings. Nothing enters the process registry."
+  [root owners contributions]
+  (let [specs (mapv validated-spec contributions)]
+    (swap! project-registry assoc root {:owners (set owners) :specs specs})
+    specs))
+
+(defn target-toggles
+  "Every setting where `root` runs: registered toggles without those of replaced global
+   extensions, then the project's own declarations, which replace any of the same id.
+   A nil `root` is the machine."
+  [root]
+  (let [{:keys [owners specs]}
+        (get @project-registry root)
+
+        ids
+        (into #{} (map :id) specs)]
+
+    (into (filterv #(not (or (ids (:id %)) (contains? owners (:owner %)))) (registered-toggles))
+          specs)))
+
+(defn target-toggle-spec
+  "[[toggle-spec]] where `root` runs: the project's own declaration, else a registered
+   toggle that no project extension replaces."
+  [root id]
+  (let [{:keys [owners specs]} (get @project-registry root)]
+    (or (some #(when (= id (:id %)) %) specs)
+        (let [spec (toggle-spec id)]
+          (when-not (contains? owners (:owner spec)) spec)))))
 
 ;; State ops
 
@@ -444,32 +485,35 @@
   "Coerce ONE value that arrived over the wire (`POST /v1/settings`) onto the
    REGISTERED type of `id`, using the vocabulary the CLI's `--toggles` already
    accepts: `true`/`on`/`yes`/`1` and `false`/`off`/`no`/`0` for a `:boolean`, the
-   name of a registered choice (case-insensitive) for an `:enum`.
+   name of a registered choice (case-insensitive) for an `:enum`. With `root`, `id`
+   may also name a setting that project's own extensions declare.
 
    Answers `{:value v}` — a one-entry map, because the legal value `false` is
    itself falsey — or nil when the wire named nothing legal. Deliberately
    STRICTER than [[coerce-config-value]]: a hand-written YAML line may degrade to
    `false`, but a client asking for `\"maybe\"` deserves a refusal, not a
    coin-flip stored as its choice."
-  [id v]
-  (case (type-of id)
-    :boolean
-    (cond (boolean? v) {:value v}
-          (string? v) (let [token (str/lower-case (str/trim v))]
-                        (cond (contains? toggle-contract/boolean-true-tokens token) {:value true}
-                              (contains? toggle-contract/boolean-false-tokens token) {:value
-                                                                                      false})))
+  ([id v] (wire-value nil id v))
+  ([root id v]
+   (let [{spec-type :type choices :choices} (target-toggle-spec root id)]
+     (case spec-type
+       :boolean
+       (cond (boolean? v) {:value v}
+             (string? v) (let [token (str/lower-case (str/trim v))]
+                           (cond (contains? toggle-contract/boolean-true-tokens token) {:value true}
+                                 (contains? toggle-contract/boolean-false-tokens token) {:value
+                                                                                         false})))
 
-    :enum
-    (let [target (some-> (cond (keyword? v) (name v)
-                               (string? v) v)
-                         str/trim
-                         str/lower-case)]
-      (some (fn [c]
-              (when (and target (= target (str/lower-case (name c)))) {:value c}))
-            (choices-of id)))
+       :enum
+       (let [target (some-> (cond (keyword? v) (name v)
+                                  (string? v) v)
+                            str/trim
+                            str/lower-case)]
+         (some (fn [c]
+                 (when (and target (= target (str/lower-case (name c)))) {:value c}))
+               choices))
 
-    nil))
+       nil))))
 
 (defn hydrate-from-config!
   "Bulk-apply values from the string-keyed YAML `toggles` map."

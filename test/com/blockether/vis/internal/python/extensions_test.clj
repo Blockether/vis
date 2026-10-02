@@ -21,6 +21,7 @@
     [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
     [com.blockether.vis.internal.foundation.harness.core :as harness]
     [com.blockether.vis.internal.config.core :as config]
+    [com.blockether.vis.internal.config.scoped :as scoped]
     [com.blockether.vis.internal.config.runtime-settings :as rt]
     [com.blockether.vis.internal.gateway.state :as gateway-state]
     [com.blockether.vis.internal.session.cancellation :as cancellation]
@@ -253,6 +254,45 @@
            (finally (doseq [root roots]
                       (binding [workspace/*workspace-root* root]
                         (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))))
+
+(defdescribe
+  project-extension-settings-test
+  ;; #302: a project extension's settings reached no settings catalog.
+  (it
+    "lists a project extension's settings in that project and nowhere else"
+    (let [dir
+          (temp-dir)
+
+          root
+          (.getCanonicalPath ^java.io.File dir)
+
+          listed?
+          (fn [target]
+            (boolean (some #(= "project_setting_fixture" (:id %)) (scoped/settings nil target))))]
+
+      (write-ext! dir
+                  ".vis/extensions/settings.py"
+                  (str "import blockether.vis.extension as vis\n"
+                       "enabled = vis.Setting(id='project_setting_fixture', label='Feature', "
+                       "default=False, scopes=['global', 'project', 'session'])\n"
+                       "def read_feature() -> bool:\n    \"Read this response's setting.\"\n"
+                       "    return enabled.value()\n"
+                       "vis.register_extension(vis.Extension(name='project-settings', "
+                       "description='Project settings fixture', alias='project_settings', "
+                       "settings=[enabled], symbols=[vis.Symbol(read_feature, "
+                       "activity=vis.Activity(label='Read feature', show_start=False))]))\n"))
+      (try (binding [workspace/*workspace-root* root]
+             (pyx/ensure-python-extensions-loaded! {:dirs [(str root "/.vis/extensions")]
+                                                    :project-root root})
+             (expect (= [] (pyx/load-failures)))
+             (expect (= {:owner "project-settings" :scopes ["project" "session"]}
+                        (select-keys (toggles/target-toggle-spec root "project_setting_fixture")
+                                     [:owner :scopes])))
+             (expect (nil? (toggles/toggle-spec "project_setting_fixture")))
+             (expect (listed? {:scope "project" :root root}))
+             (expect (not (listed? {:scope "global"}))))
+           (finally (binding [workspace/*workspace-root* root]
+                      (pyx/reload-python-extensions! {:dirs [] :project-root root})))))))
 
 (defdescribe
   project-admission-retry-test

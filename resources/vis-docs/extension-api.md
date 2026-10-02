@@ -125,16 +125,24 @@ vis.register_extension(vis.Extension(
 ))
 ```
 
-`id` is a unique lower-case snake_case identifier. `type` defaults to `"boolean"`
-with a boolean `default`. For a choice row, use `type="enum"`, string `choices`
-and a `default` from those choices. Optional `group` organizes settings visually.
-It is not a session's organizational group.
+`id` is a lower-case snake_case identifier. It must be unique among the settings of Vis and
+of the other loaded extensions. If another owner already uses your `id`, your extension does not
+load. The load error names that owner.
+
+`type` defaults to `"boolean"` with a boolean `default`. For a choice row, use `type="enum"`,
+string `choices` and a `default` from those choices.
+
+The app and the TUI show your settings in a section with your extension's name. That section also
+holds the extension's engine choice and its packaged skills.
 
 `scopes` accepts any non-empty, duplicate-free subset of `global`, `project`, `group` and `session`.
 Without it, only `global` is permitted. The backend enforces eligibility for writes and resolution,
 not only for display. A missing override inherits, but `False` does not. Reloading or temporarily
 removing an extension keeps its stored choices. These declarations belong to gateway-hosted
 extensions, not application-hosted tool bridges.
+
+A project extension exists only in its project. For a project extension, `global` means the whole
+project. Its settings show only in the settings of that project.
 
 See [scoped settings](configuration.md#project-group-and-session-settings) for
 inheritance, submission timing, engine activation and access limits.

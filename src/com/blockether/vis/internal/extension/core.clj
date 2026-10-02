@@ -2617,6 +2617,13 @@
                              :collisions (vec collisions)}))))))
     ext))
 
+(defn- setting-collision
+  "The load error for a setting id that `owner` already declares; Vis owns ownerless ids."
+  [id owner]
+  (let [owner (if (or (nil? owner) (keyword? owner)) "Vis" (str owner))]
+    (ex-info (str "Setting id '" id "' already belongs to " owner)
+             {:type :extension/setting-collision :id id :owner owner})))
+
 (defn register-extension!
   "Register an extension in the global process-level registry.
 
@@ -2642,8 +2649,7 @@
     (doseq [spec (:ext/toggles ext)]
       (when-let [existing (toggles/toggle-spec (:id spec))]
         (when-not (= ns-sym (:owner existing))
-          (throw (ex-info "Setting id belongs to another owner"
-                          {:type :extension/setting-collision :id (:id spec)})))))
+          (throw (setting-collision (:id spec) (:owner existing))))))
     (toggles/unregister-owner! ns-sym)
     (doseq [spec (:ext/toggles ext)]
       (toggles/register-toggle! (assoc spec :owner ns-sym)))
@@ -2832,9 +2838,41 @@
 
 (defonce ^:private project-extensions (atom {}))
 
+(defn- project-scopes
+  "A project extension exists only in its project, so its widest scope is the project:
+   a declared global scope means the project."
+  [scopes]
+  (vec (distinct (map #(if (= "global" %) "project" %)
+                      (or (seq scopes) toggle-contract/default-scopes)))))
+
+(defn- validate-project-settings!
+  "Reject a setting id that Vis, a global extension or one of `others` already owns.
+   A project extension may redeclare the settings of the global extension it replaces."
+  [ext others]
+  (let [ext-name (:ext/name ext)]
+    (doseq [{:keys [id]} (:ext/toggles ext)]
+      (when-let [owner (or (when-let [existing (toggles/toggle-spec id)]
+                             (when-not (= ext-name (:owner existing)) (or (:owner existing) :vis)))
+                           (some #(when (and (not= ext-name (:ext/name %))
+                                             (some (fn [spec]
+                                                     (= id (:id spec)))
+                                                   (:ext/toggles %)))
+                                    (:ext/name %))
+                                 others))]
+        (throw (setting-collision id owner))))))
+
+(defn project-extension
+  "Validate one project extension against the settings already declared where it runs:
+   by Vis, by global extensions and by `others`, the other extensions of its project."
+  [ext others]
+  (let [ext (extension ext)]
+    (validate-project-settings! ext others)
+    ext))
+
 (defn set-project-extensions!
   "Publish a validated Python extension catalog for one canonical project root.
-   These descriptors never enter the process registry or replace another project's tools."
+   These descriptors never enter the process registry or replace another project's tools.
+   Their settings exist only in that project."
   [root extensions]
   (let [root
         (workspace/normalize-root root)
@@ -2845,7 +2883,19 @@
     (when-not root (throw (ex-info "Project extensions require a workspace root" {})))
     (let [catalog (merge @extension-registry (into {} (map (juxt :ext/name identity)) extensions))]
       (doseq [ext extensions]
-        (validate-slash-collisions! ext catalog)))
+        (validate-slash-collisions! ext catalog)
+        (validate-project-settings! ext extensions)))
+    (toggles/set-project-toggles! root
+                                  (map :ext/name extensions)
+                                  (for [ext
+                                        extensions
+
+                                        spec
+                                        (:ext/toggles ext)]
+
+                                    (assoc spec
+                                      :owner (:ext/name ext)
+                                      :scopes (project-scopes (:scopes spec)))))
     (registry/set-project-providers! root
                                      (mapcat :ext/providers extensions)
                                      (set (map :ext/name extensions)))
@@ -2853,19 +2903,21 @@
     extensions))
 
 (defn registered-extensions
-  "Native/global extensions plus the calling project's overrides, in registration order."
-  []
-  (let [registry
-        @extension-registry
+  "Native/global extensions plus a project's overrides, in registration order. Without
+   `root`, the calling project's; a nil `root` lists only the global extensions."
+  ([] (registered-extensions (workspace/cwd-root)))
+  ([root]
+   (let [registry
+         @extension-registry
 
-        local
-        (get @project-extensions (workspace/cwd-root))
+         local
+         (get @project-extensions root)
 
-        local-names
-        (set (map :ext/name local))]
+         local-names
+         (set (map :ext/name local))]
 
-    (into (into [] (comp (keep registry) (remove #(local-names (:ext/name %)))) @extension-order)
-          local)))
+     (into (into [] (comp (keep registry) (remove #(local-names (:ext/name %)))) @extension-order)
+           local))))
 
 ;; Reload hooks — the seam `/reload` uses to refresh EXTENSION-owned resource
 ;; caches (harness skills/agents discovery, …) without core knowing about the

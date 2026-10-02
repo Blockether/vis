@@ -4,6 +4,7 @@
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.extension.manifest :as manifest]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.activity.event :as activity-event]
             [com.blockether.vis.internal.activity.core :as activity]
@@ -128,6 +129,83 @@
                           (filterv #{"test.project-a" "test.project-b"}
                             (mapv :ext/name (extension/registered-extensions))))))
              (finally (extension/set-project-extensions! root []))))))
+
+(defdescribe
+  project-extension-settings-test
+  ;; #302: project extension settings reach only their project's settings.
+  (it
+    "keeps project settings in their project and rejects an id another owner holds"
+    (let [root
+          (workspace/normalize-root "target/project-settings")
+
+          setting
+          (fn [id]
+            {:id id :label "Fixture" :default false :scopes ["global" "project" "session"]})
+
+          a
+          {:ext/name "test.project-settings-a"
+           :ext/description "A"
+           :ext/toggles [(setting "project_settings_fixture")]}
+
+          failure
+          (fn [extensions]
+            (try (extension/set-project-extensions! root extensions)
+                 nil
+                 (catch clojure.lang.ExceptionInfo e
+                   [(ex-message e) (select-keys (ex-data e) [:type :owner])])))]
+
+      (try (extension/set-project-extensions! root [a])
+           (expect (nil? (toggles/toggle-spec "project_settings_fixture")))
+           (expect (= {:owner "test.project-settings-a" :scopes ["project" "session"]}
+                      (select-keys (toggles/target-toggle-spec root "project_settings_fixture")
+                                   [:owner :scopes])))
+           (expect
+             (= ["Setting id 'project_settings_fixture' already belongs to test.project-settings-b"
+                 {:type :extension/setting-collision :owner "test.project-settings-b"}]
+                (failure [a (assoc a :ext/name "test.project-settings-b")])))
+           (expect (= ["Setting id 'provider_fallback' already belongs to Vis"
+                       {:type :extension/setting-collision :owner "Vis"}]
+                      (failure [(assoc a :ext/toggles [(setting "provider_fallback")])])))
+           (expect (= "test.project-settings-a"
+                      (:owner (toggles/target-toggle-spec root "project_settings_fixture"))))
+           (finally (extension/set-project-extensions! root [])))))
+  (it
+    "replaces a global extension's settings with those of its project version"
+    (let [root
+          (workspace/normalize-root "target/project-settings-override")
+
+          global
+          {:ext/name "test.project-settings-override"
+           :ext/description "Global"
+           :ext/toggles [{:id "override_fixture_kept" :label "Global kept" :default true}
+                         {:id "override_fixture_dropped" :label "Dropped" :default true}]}
+
+          ids
+          (fn [root]
+            (set (keep #{"override_fixture_kept" "override_fixture_dropped"}
+                       (map :id (toggles/target-toggles root)))))]
+
+      (try
+        (extension/register-extension! global)
+        (extension/set-project-extensions!
+          root
+          [(assoc global
+             :ext/description "Project"
+             :ext/toggles [{:id "override_fixture_kept" :label "Project kept" :default false}])])
+        (expect (= #{"override_fixture_kept" "override_fixture_dropped"} (ids nil)))
+        (expect (= #{"override_fixture_kept"} (ids root)))
+        (expect (= "Project kept"
+                   (:label (toggles/target-toggle-spec root "override_fixture_kept"))))
+        (expect
+          (= "Setting id 'override_fixture_kept' already belongs to test.project-settings-override"
+             (try (extension/register-extension! (assoc global
+                                                   :ext/name "test.project-settings-other"))
+                  nil
+                  (catch clojure.lang.ExceptionInfo e (ex-message e)))))
+        (finally (extension/set-project-extensions! root [])
+                 (extension/deregister-extension! "test.project-settings-override")
+                 (extension/deregister-extension! "test.project-settings-other")
+                 (toggles/unregister-owner! "test.project-settings-override"))))))
 
 (defdescribe
   summary-only-activity-registration-test

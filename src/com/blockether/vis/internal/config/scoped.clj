@@ -104,7 +104,8 @@
                          str)
      :group-id (some-> group-id
                        str)
-     :root (or (:workspace-root project) pinned-root)
+     :root (some-> (or (:workspace-root project) pinned-root)
+                   workspace/normalize-root)
      :label (or (:title entity) (:name entity) "Global")}))
 
 (defn resolve-layers
@@ -128,10 +129,11 @@
         specs))
 
 (defn- raw-toggles
-  [raw]
+  "Typed values of a raw `toggles` map, read as the settings available where `root` runs."
+  [root raw]
   (into {}
         (keep (fn [[id value]]
-                (when-let [chosen (toggles/wire-value id value)]
+                (when-let [chosen (toggles/wire-value root id value)]
                   [id (:value chosen)])))
         (get raw "toggles")))
 
@@ -139,13 +141,13 @@
   "Read ancestors afresh, including memberships and project configuration."
   [db {:keys [scope target-id root group-id]}]
   (let [global
-        (merge (raw-toggles (config/load-global-yaml-config-raw))
-               (raw-toggles (config/load-global-config-raw)))
+        (merge (raw-toggles root (config/load-global-yaml-config-raw))
+               (raw-toggles root (config/load-global-config-raw)))
 
         project
         (when root
           (binding [workspace/*workspace-root* root]
-            (raw-toggles (config/load-project-tiers-raw))))]
+            (raw-toggles root (config/load-project-tiers-raw))))]
 
     (cond-> [{:scope "global" :values global}]
       root
@@ -161,11 +163,11 @@
   [db {:keys [scope target-id root]}]
   (case scope
     "global"
-    (raw-toggles (config/load-global-config-raw))
+    (raw-toggles root (config/load-global-config-raw))
 
     "project"
     (binding [workspace/*workspace-root* root]
-      (raw-toggles (config/load-project-config-raw)))
+      (raw-toggles root (config/load-project-config-raw)))
 
     (store/db-scoped-settings db scope target-id)))
 
@@ -260,14 +262,14 @@
   [db {:keys [scope root] :as target}]
   (case scope
     "global"
-    [{:scope "global" :values (raw-toggles (config/load-global-yaml-config-raw))}]
+    [{:scope "global" :values (raw-toggles root (config/load-global-yaml-config-raw))}]
 
     "project"
     (conj (vec (filter #(= "global" (:scope %)) (layers db target)))
           {:scope "project"
            :values (when root
                      (binding [workspace/*workspace-root* root]
-                       (raw-toggles (config/load-project-root-config-raw))))})
+                       (raw-toggles root (config/load-project-root-config-raw))))})
 
     (vec (remove #(= scope (:scope %)) (layers db target)))))
 
@@ -308,7 +310,7 @@
   "Effective, own and inherited values, with provenance and eligible scopes."
   [db target]
   (let [specs
-        (toggles/registered-toggles)
+        (toggles/target-toggles (:root target))
 
         own
         (own-values db target)
@@ -458,7 +460,8 @@
           (throw (ex-info "Setting id must be lower-case snake_case" {:status 400 :id id})))
 
         spec
-        (or (toggles/toggle-spec id) (throw (ex-info "Unknown setting" {:status 404 :id id})))
+        (or (toggles/target-toggle-spec (:root target) id)
+            (throw (ex-info "Unknown setting" {:status 404 :id id})))
 
         scope
         (:scope target)
@@ -490,7 +493,7 @@
               {:value (nth choices (mod (inc index) (count choices)))}))
 
           "value"
-          (toggles/wire-value id value)
+          (toggles/wire-value (:root target) id value)
 
           nil)
 

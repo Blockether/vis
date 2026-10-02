@@ -38,10 +38,10 @@
                               {:status 400 :id id})))
             {:id id :section [] :name id :value (when (= action "value") (str/trim value))})
         :else (let [spec
-                    (toggles/toggle-spec id)
+                    (toggles/target-toggle-spec (:root target) id)
 
                     chosen
-                    (when (= action "value") (toggles/wire-value id value))]
+                    (when (= action "value") (toggles/wire-value (:root target) id value))]
 
                 (when-not (and spec (some #{(:scope target)} (:scopes spec)))
                   (throw (ex-info "Setting is not available in this scope" {:status 400 :id id})))
