@@ -64,7 +64,6 @@
    provider group holds only response options, because providers are global."
   [group local?]
   (cond (and local? (= group :provider)) "Response"
-        (= group :mcp) "MCP availability"
         (= group :engines) "Extension engines"
         :else (str/capitalize (str/replace (name group) #"[-_]+" " "))))
 
@@ -131,6 +130,7 @@
         (some-> (get-in request [:query-params "channel"])
                 keyword)
 
+        ;; MCP rows stay out: every scope's MCP servers section owns each server's switch.
         rows
         (filter #(and (some #{(:scope target)} (:scopes %))
                       (case (:group %)
@@ -138,7 +138,7 @@
                         (resources (:id %))
 
                         :mcp
-                        (and (not local?) (resources (:id %)))
+                        false
 
                         true)
                       (or local? (and (not (false? (:settings? %))) (toggles/toggle-visible? %)))

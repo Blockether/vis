@@ -605,5 +605,18 @@
 
               (expect (= "Extension engines" (get titles "engines")))
               (expect (= "Response" (get titles "provider")))
-              (expect (not (contains? titles "mcp")))
-              (expect (= "MCP availability" (#'settings-api/group-title :mcp false)))))))))
+              (expect (not (contains? titles "mcp"))))))))
+  (it "leaves global MCP availability to the MCP servers section"
+      (with-empty-config
+        (let [db (h/store)]
+          (with-redefs [config/load-global-config-raw
+                        (constantly {"mcp" {"servers" {"global_fixture" {"command" "true"}}}})
+                        lp/db-info (constantly db)
+                        discovery/all-skills (constantly [])]
+
+            (let [groups (-> (#'settings-api/list-settings-handler {:query-params {}})
+                             :body
+                             json/read-json
+                             (get "groups"))]
+              (expect (some #(= "access" (get % "id")) groups))
+              (expect (not-any? #(= "mcp" (get % "id")) groups))))))))
