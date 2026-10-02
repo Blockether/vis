@@ -2238,6 +2238,24 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def post_extensions_reload(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/extensions/reload — json response."""
+        response = self._request(
+            "POST",
+            "/v1/extensions/reload",
+            path={},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
     def post_speech(
         self,
         *,

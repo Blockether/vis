@@ -553,6 +553,15 @@ def test_settings_batch_preserves_request_and_response():
         assert json.loads(calls[-1][3]) == body
 
 
+def test_extensions_reload_preserves_request_and_response():
+    body = {"scope": "project", "target_id": "example-project"}
+    reply = {"loaded": 1, "failed": 0}
+    with endpoint(lambda *_: (200, reply)) as (url, calls):
+        assert GatewayClient(url).post_extensions_reload(body=body) == reply
+        assert calls[-1][:2] == ("POST", "/v1/extensions/reload")
+        assert json.loads(calls[-1][3]) == body
+
+
 def test_dedicated_methods_cover_every_public_nonstreaming_operation():
     import inspect
 

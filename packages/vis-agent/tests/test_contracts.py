@@ -55,11 +55,11 @@ def test_gateway_routes_and_lease_policy_are_shared():
     lease = gateway["x-vis-client-lease"]
     assert 0 < lease["touch_ms"] < lease["keepalive_ms"] < lease["ttl_ms"]
     assert 0 < lease["keepalive_timeout_ms"] < lease["keepalive_ms"]
-    assert len(routes) == 137
-    assert len(operations) == 172
+    assert len(routes) == 138
+    assert len(operations) == 173
     assert Counter(operation["request"] for operation in operations) == {
         "none": 113,
-        "json": 54,
+        "json": 55,
         "binary": 5,
     }
     assert by_path["/v1/decisions/models"]["operations"]["get"] == {
@@ -99,6 +99,12 @@ def test_gateway_routes_and_lease_policy_are_shared():
         "response": "json",
         "request_schema": "settings_batch",
         "response_schema": "settings",
+    }
+    assert by_path["/v1/extensions/reload"]["operations"]["post"] == {
+        "request": "json",
+        "response": "json",
+        "request_schema": "settings_target",
+        "response_schema": "extension_reload",
     }
     assert by_path["/v1/events"]["operations"]["get"]["response"] == "sse"
 
