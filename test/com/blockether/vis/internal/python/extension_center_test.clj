@@ -450,3 +450,53 @@
               (expect (not (.exists (io/file empty-root ".vis")))
                       "An empty scope without a sync receipt creates no directory or lock")
               (expect (not (.exists (io/file empty-root "global"))))))))))))
+
+(defdescribe
+  project-open-prepares-each-package-environment-once
+  (it
+    "opening a project checks each declared package environment once"
+    (#'fixtures/with-shared-packages
+     (fn [packages]
+       (#'fixtures/with-fresh-loaded
+        {}
+        (fn [_ {:keys [ext-dir]}]
+          (let [source
+                (doto (io/file ext-dir "source") .mkdirs)
+
+                directory
+                (str (io/file ext-dir ".vis/extensions"))
+
+                checked
+                (atom [])]
+
+            (spit (io/file source "pyproject.toml")
+                  (str "[project]\nname='vis-once-fixture'\nversion='1.0.0'\n"
+                       "description='Single preparation fixture'\nrequires-python='>=3.11'\n"
+                       "dependencies=['vis-agent>=0.1.0']\n[tool.vis]\ncategory='tools'\n"))
+            (spit (io/file source "extension.py")
+                  (str "import blockether.vis.extension as vis\n"
+                       "def ping():\n    \"Answer a fixed reply.\"\n    return 'pong'\n"
+                       "vis.register_extension(vis.Extension(name='vis-once-fixture',"
+                       " description='Single preparation fixture', alias='once',"
+                       " symbols=[vis.Symbol(ping, activity=vis.Activity(label='Ping fixture',"
+                       " show_start=False))]))\n"))
+            (spit (io/file ext-dir "vis.yml") "extensions: {}\n")
+            (with-redefs [workspace/cwd
+                          (constantly (str ext-dir))
+
+                          config/config-dir
+                          (constantly (str (io/file ext-dir "global")))
+
+                          python-runtime/ensure-project!
+                          (fn [project]
+                            (swap! checked conj (.getCanonicalPath (io/file project)))
+                            packages)]
+
+              (pyx/install-package! (str source)
+                                    {:trust true :save true :project true :directory directory})
+              (reset! checked [])
+              (expect (zero? (:failed (pyx/prepare-project! (str ext-dir))))
+                      (pr-str (pyx/load-failures)))
+              ;; Sync checks the package environment; the loader reuses that result.
+              (expect (= 1 (count @checked)) (pr-str @checked))
+              (expect (some? (#'fixtures/registered "vis-once-fixture")))))))))))

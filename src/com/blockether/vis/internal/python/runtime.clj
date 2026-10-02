@@ -442,11 +442,14 @@
     (if (and parent (re-matches #"\d+\.[\w.+-]*" dir)) (str (.getName parent) " " dir) dir)))
 
 (defn- preparation-stage!
+  "Record a package's preparation stage for status. Only a failure reaches the terminal:
+   a cached, installing or ready package is not news."
   [^File project stage]
   (let [name (project-display-name project)]
     (swap! preparation assoc name {:name name :stage stage})
-    (.println config/original-stderr (str "[vis extensions] " name ": " stage))
-    (.flush config/original-stderr)))
+    (when (= "failed" stage)
+      (.println config/original-stderr (str "[vis extensions] " name ": " stage))
+      (.flush config/original-stderr))))
 
 (defn ensure-project!
   "Prepare an extension with bundled uv and the worker's embedded Python.

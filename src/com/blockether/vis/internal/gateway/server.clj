@@ -282,9 +282,11 @@
       status)))
 
 (defn- prepare-startup-extensions!
-  "Load after HTTP starts so clients can report preparation without a health timeout."
+  "Load the global catalog after HTTP starts so clients can report preparation without a
+   health timeout. The gateway has no project of its own: a session prepares its project's
+   catalog when it opens it, never the directory the gateway started in."
   []
-  (try (python-extensions/ensure-python-extensions-loaded!)
+  (try (python-extensions/ensure-python-extensions-loaded! {:global-only? true})
        (reset! extension-startup {:stage "ready"})
        (catch Throwable t
          (reset! extension-startup {:stage "failed"

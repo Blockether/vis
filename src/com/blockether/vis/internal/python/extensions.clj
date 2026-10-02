@@ -2035,7 +2035,8 @@
 
 (defn sync-packages!
   "Explicitly reconcile YAML package scopes and prepare their uv environments.
-   Never imports package entrypoints or reloads a live gateway. Dry-run is inert."
+   Never imports package entrypoints or reloads a live gateway. Dry-run is inert.
+   A prepared result names its environment's `site_packages` for the loader to reuse."
   [{:keys [trust refresh prune dry-run project global]}]
   (when (and project global) (throw (ex-info "Choose --project or --global, not both" {})))
   (let [scopes (cond->> (config/extension-package-scopes)
@@ -2051,8 +2052,10 @@
                   (let [result (assoc result "scope" scope)]
                     (if (and (not dry-run)
                              (contains? #{"installed" "updated" "cached"} (get result "status")))
-                      (try (python-runtime/ensure-project! (io/file (get result "path")))
-                           (assoc result "prepared" true)
+                      (try (let [package-dir (io/file (get result "path"))]
+                             (assoc result
+                               "prepared" true
+                               "site_packages" (str (python-runtime/ensure-project! package-dir))))
                            (catch Exception error
                              (assoc result
                                "status" "failed"
@@ -2245,16 +2248,19 @@
 
 (defn- prepare-root!
   "Snapshot sources and prepare dependencies for an admitted project catalog.
-   Unmanaged explicit-directory scans prepare missing environments only when requested."
-  [{:keys [roots dependencies project automatic? package-metadata sync-projects? project-root]}]
+   Unmanaged explicit-directory scans prepare missing environments only when requested.
+   A package environment this pass's sync already checked is reused, not checked again."
+  [{:keys [roots dependencies project automatic? package-metadata sync-projects? site-packages
+           project-root]}]
   (let [frozen (freeze-root! roots)]
     (try (let [packages (when (and project
                                    (or sync-projects?
                                        (python-runtime/project-environment-exists? project)))
-                          (str ((if (or automatic? sync-projects?)
-                                  python-runtime/ensure-project!
-                                  python-runtime/prepared-project)
-                                 project)))]
+                          (or (get site-packages (.getCanonicalPath ^File project))
+                              (str ((if (or automatic? sync-projects?)
+                                      python-runtime/ensure-project!
+                                      python-runtime/prepared-project)
+                                     project))))]
            (when (and (not project) (seq dependencies))
              (let [result (try (python-runtime/pip-install! {:target (runtime/packages-dir)
                                                              :upgrade? true}
@@ -2482,7 +2488,7 @@
 
    Returns `{:loaded n :failed n :changed? bool}`."
   ([] (load-scope! nil))
-  ([{:keys [dirs project-root sync-projects?]}]
+  ([{:keys [dirs project-root sync-projects? site-packages]}]
    (register-loader-extension!)
    (let [dirs
          (or dirs [])
@@ -2496,6 +2502,7 @@
                       [f
                        (try (assoc (extension-plan f)
                               :sync-projects? sync-projects?
+                              :site-packages site-packages
                               :project-root project-root)
                             (catch Throwable t {:error t}))])
                     files))
@@ -2646,6 +2653,32 @@
 ;; opens it.
 (defonce ^:private prepared-scopes (atom #{}))
 
+(defn- prepare-scope-packages!
+  "Sync a scope's declared packages before its catalog loads; a failed package aborts
+   the load. Returns the site-packages of each environment the sync checked, keyed by
+   package directory, so the loader does not check an environment twice."
+  [scope project-root]
+  (let [results
+        (sync-packages! (assoc (select-keys scope [:global :project]) :trust true))
+
+        failed
+        (filter #(= "failed" (get % "status")) results)]
+
+    (when (seq failed)
+      (throw (ex-info
+               "Could not prepare configured project extensions"
+               {:type ::project-setup-failed :project-root project-root :failures (vec failed)})))
+    (swap! prepared-scopes conj project-root)
+    (into {}
+          (for [result
+                results
+
+                :let [packages
+                      (get result "site_packages")]
+                :when packages]
+
+            [(.getCanonicalPath (io/file (get result "path"))) packages]))))
+
 (defn- load-scopes!
   [opts force?]
   (locking ensure-load-lock
@@ -2662,7 +2695,9 @@
                   (workspace/cwd-root)]
 
               (cond-> [{:dirs [global-dir] :global true}]
-                (not= (.getCanonicalPath ^File global-dir) (.getCanonicalPath ^File project-dir))
+                (and (not (:global-only? opts))
+                     (not= (.getCanonicalPath ^File global-dir)
+                           (.getCanonicalPath ^File project-dir)))
                 (conj {:dirs [project-dir] :project true :project-root root}))))
 
           results
@@ -2684,25 +2719,11 @@
                   {:loaded (count (scope-entries project-root))
                    :failed (count (filter #(= project-root (:project-root %)) @failures))
                    :changed? false}
-                  (do
-                    ;; Opening a configured project admits its declared extensions. Source
-                    ;; receipts retain pins; this is not a background update or prune.
-                    (when prepare?
-                      (let [results
-                            (sync-packages! (assoc (select-keys scope [:global :project])
-                                              :trust true))
-
-                            failed
-                            (filter #(= "failed" (get % "status")) results)]
-
-                        (when (seq failed)
-                          (throw (ex-info "Could not prepare configured project extensions"
-                                          {:type ::project-setup-failed
-                                           :project-root project-root
-                                           :failures (vec failed)})))
-                        (swap! prepared-scopes conj project-root)))
+                  ;; Opening a configured project admits its declared extensions. Source
+                  ;; receipts retain pins; this is not a background update or prune.
+                  (let [prepared (when prepare? (prepare-scope-packages! scope project-root))]
                     (when (or (:force? opts) pending?) (swap! last-fingerprint dissoc project-root))
-                    (let [result (load-scope! (cond-> (merge opts scope)
+                    (let [result (load-scope! (cond-> (merge opts scope {:site-packages prepared})
                                                 prepare?
                                                 (assoc :sync-projects? true)))]
                       (when (and (not initialized?) (pos? (:failed result)))
@@ -2723,7 +2744,8 @@
 
 (defn ensure-python-extensions-loaded!
   "Admit each project's configuration and extension bytes once. Session cache misses
-   and recycling reuse that project's admitted catalog; only explicit reload adopts edits."
+   and recycling reuse that project's admitted catalog; only explicit reload adopts edits.
+   `:global-only?` admits the global catalog alone, for a process with no project bound."
   ([] (ensure-python-extensions-loaded! nil))
   ([opts] (load-scopes! opts false)))
 

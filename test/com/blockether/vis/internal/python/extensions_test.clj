@@ -364,6 +364,50 @@
           (pyx/prepare-project! root)
           (expect (= 2 (count @calls))))))))
 
+(defdescribe
+  gateway-start-admits-only-the-global-catalog
+  (it "admits only the global catalog and prepares a project once when a session opens it"
+      ;; Regression: gateway start loaded its own directory as a project, so the first
+      ;; session there synced and reloaded the same catalog a second time.
+      (let [root
+            (.getCanonicalPath (temp-dir))
+
+            home
+            (temp-dir)
+
+            fingerprint
+            (atom {})
+
+            calls
+            (atom [])
+
+            loads
+            (atom [])]
+
+        (with-redefs-fn {#'pyx/last-fingerprint fingerprint
+                         #'pyx/prepared-scopes (atom #{})
+                         #'workspace/cwd (constantly (io/file root))
+                         #'pyx/default-extension-dirs (fn []
+                                                        [(io/file home "extensions")
+                                                         (io/file root ".vis/extensions")])
+                         #'pyx/sync-packages! (fn [opts]
+                                                (swap! calls conj opts)
+                                                [])
+                         #'pyx/load-scope!
+                         (fn [opts]
+                           (swap! loads conj
+                             [(:project-root opts) (boolean (:sync-projects? opts))])
+                           (swap! fingerprint assoc (:project-root opts) [::loaded])
+                           {:loaded 1 :failed 0 :changed? true})}
+          (fn []
+            (binding [workspace/*workspace-root* nil]
+              (pyx/ensure-python-extensions-loaded! {:global-only? true}))
+            (expect (= [{:global true :trust true}] @calls))
+            (expect (= [[nil true]] @loads))
+            (pyx/prepare-project! root)
+            (expect (= [{:global true :trust true} {:project true :trust true}] @calls))
+            (expect (= [[nil true] [root true]] @loads) "one prepared load, no reload"))))))
+
 (defn- write-project-package!
   "A configured extension with a real, project-specific local wheel dependency."
   [root value]

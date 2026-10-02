@@ -458,3 +458,24 @@
                    (:stage (first (filter #(= "vis-lang-python 1.5.1" (:name %))
                                           (python-runtime/preparation-status)))))
                 "sync names every live stage line, so one version cannot hide another"))))
+
+;; Regression: a gateway start printed `cached` for every package, once per check.
+(defdescribe
+  preparation-reports-only-failures-to-the-terminal
+  (it "preparation reports only failures to the terminal"
+      (let [project
+            (io/file (System/getProperty "java.io.tmpdir") "vis-quiet-preparation" "quiet-greeter")
+
+            out
+            (java.io.ByteArrayOutputStream.)]
+
+        (with-redefs [config/original-stderr (java.io.PrintStream. out true "UTF-8")]
+          (doseq [stage ["cached" "installing" "ready"]]
+            (#'python-runtime/preparation-stage! project stage))
+          (expect (= "" (.toString out "UTF-8")) "a healthy package is not news")
+          (expect (= "ready"
+                     (:stage (first (filter #(= "quiet-greeter" (:name %))
+                                            (python-runtime/preparation-status)))))
+                  "status still follows every stage")
+          (#'python-runtime/preparation-stage! project "failed")
+          (expect (= "[vis extensions] quiet-greeter: failed" (.trim (.toString out "UTF-8"))))))))

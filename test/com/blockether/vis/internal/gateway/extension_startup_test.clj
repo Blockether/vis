@@ -17,7 +17,7 @@
 (defdescribe startup-prepares-before-announcing-completion
              (it "startup prepares before announcing completion"
                  (let [stages (atom [])]
-                   (with-redefs [pyx/ensure-python-extensions-loaded! (fn []
+                   (with-redefs [pyx/ensure-python-extensions-loaded! (fn [_]
                                                                         (swap! stages conj
                                                                           :prepared)
                                                                         {:loaded 2 :failed 1})]
@@ -25,11 +25,23 @@
                      (expect (= [:prepared] @stages))
                      (expect (= {:stage "ready"} @@#'server/extension-startup))))))
 
+(defdescribe startup-admits-only-the-global-catalog
+             ;; Regression: the gateway admitted the directory it started in as a project, so
+             ;; the first session there prepared that catalog again and every package printed twice.
+             (it "startup admits only the global catalog"
+                 (let [requests (atom [])]
+                   (with-redefs [pyx/ensure-python-extensions-loaded! (fn [opts]
+                                                                        (swap! requests conj opts)
+                                                                        {:loaded 1 :failed 0})]
+                     (#'server/prepare-startup-extensions!)
+                     (expect (= [{:global-only? true}] @requests))
+                     (expect (= {:stage "ready"} @@#'server/extension-startup))))))
+
 (defdescribe
   startup-failure-is-safe-and-does-not-stop-the-server
   (it "startup failure is safe and does not stop the server"
       (with-redefs [pyx/ensure-python-extensions-loaded!
-                    (fn []
+                    (fn [_]
                       (throw (ex-info "Extension discovery failed: api_key=fixture-secret" {})))]
         (#'server/prepare-startup-extensions!)
         (expect (= {:stage "failed" :error "Extension discovery failed: api_key=[REDACTED]"}
@@ -37,15 +49,15 @@
 
 (defdescribe startup-failure-without-a-message-still-identifies-the-error
              (it "startup failure without a message still identifies the error"
-                 (with-redefs [pyx/ensure-python-extensions-loaded! (fn []
+                 (with-redefs [pyx/ensure-python-extensions-loaded! (fn [_]
                                                                       (throw
                                                                         (IllegalStateException.)))]
                    (#'server/prepare-startup-extensions!)
                    (expect (= {:stage "failed" :error "java.lang.IllegalStateException"}
                               @@#'server/extension-startup)))))
 
-(defdescribe client-reports-package-preparation-and-completion
-             (it "client reports package preparation and completion"
+(defdescribe client-keeps-healthy-cold-preparation-quiet
+             (it "client keeps healthy cold preparation quiet"
                  (let [polls
                        (atom 0)
 
@@ -63,8 +75,8 @@
                           {"extensions" {"stage" "initializing"
                                          "packages" [{"name" "greeter" "stage" "installing"}]}}))
                        (expect (= 1 @polls))
-                       (expect (str/includes? (str output) "greeter: installing"))
-                       (expect (str/includes? (str output) "1 loaded")))))))
+                       (expect (= "" (str output))
+                               "a cached, installing or ready package is not news"))))))
 
 (defdescribe admin-status-has-credential-free-preparation
              (it "admin status has credential free preparation"
@@ -118,7 +130,7 @@
                                                            response))))
                 (expect (= (if cold? 1 0) @polls))
                 (expect (= "" (str stdout)))
-                (expect (= cold? (str/includes? (str output) "preparing gateway extensions")))
+                (expect (not (str/includes? (str output) "preparing gateway extensions")))
                 (doseq
                   [detail
                    ["1 loaded, 2 failed" "/extensions/missing.py: not loaded"
@@ -135,7 +147,7 @@
   (it
     "client reports fatal preparation errors without polling a finished gateway"
     (with-redefs [pyx/ensure-python-extensions-loaded!
-                  (fn []
+                  (fn [_]
                     (throw (ex-info "Cannot scan extensions: Permission denied" {})))]
       (#'server/prepare-startup-extensions!)
       (doseq [cold? [true false]]
