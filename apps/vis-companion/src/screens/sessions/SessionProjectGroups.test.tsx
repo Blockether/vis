@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+import { MENU_WIDTH } from '../../components/Menu';
 import { STORY_FLEET_CONNS, STORY_NEWER_PROJECT } from '../../dev/story-data';
 import { GatewayError, type GatewayClient } from '../../lib/gateway';
 import {
@@ -794,6 +795,75 @@ describe('ProjectGroup groups', () => {
       'This project already has a group with that name.',
     );
     expect(field).toHaveValue('Existing');
+  });
+
+  describe('group header context menu', () => {
+    it.each(['header', 'name', 'fold', 'actions'])(
+      'opens the same group actions at the cursor from the %s',
+      async (part) => {
+        finePointer();
+        const { creation, user } = mount();
+        await band('Wallet work');
+        const fold = screen.getByRole('button', { name: 'Collapse Wallet work' });
+        const actions = screen.getByRole('button', { name: 'Actions for Wallet work' });
+        await user.click(actions);
+        const verbs = within(sheet(`Groups in ${ROOT}`)).getAllByRole('button').map((button) => button.textContent);
+        await user.click(sheet(`Groups in ${ROOT}`).parentElement!);
+        expect(screen.queryByRole('dialog')).toBeNull();
+
+        const target = part === 'header' ? fold.parentElement!
+          : part === 'name' ? within(fold).getByText('Wallet work')
+          : part === 'actions' ? actions : fold;
+        expect(fireEvent.contextMenu(target, { clientX: 40, clientY: 40 })).toBe(false);
+        const menu = sheet(`Groups in ${ROOT}`);
+        expect(within(menu).getAllByRole('button').map((button) => button.textContent)).toEqual(verbs);
+        expect(menu.style.getPropertyValue('--menu-left')).toBe('40px');
+        expect(menu.style.getPropertyValue('--menu-top')).toBe('46px');
+        expect(fold).toHaveAttribute('aria-expanded', 'true');
+        await user.click(within(menu).getByText('New session'));
+        await waitFor(() => expect(creation.start).toHaveBeenCalledWith(conn, ROOT, WALLET));
+      },
+    );
+
+    it('keeps a collapsed group folded and fits Control-click actions inside the viewport', async () => {
+      finePointer();
+      const { user } = mount();
+      await band('Wallet work');
+      await user.click(screen.getByRole('button', { name: 'Collapse Wallet work' }));
+      const fold = screen.getByRole('button', { name: 'Expand Wallet work' });
+      expect(fireEvent.contextMenu(fold, {
+        ctrlKey: true, clientX: window.innerWidth - 20, clientY: window.innerHeight - 20,
+      })).toBe(false);
+      const menu = sheet(`Groups in ${ROOT}`);
+      expect(menu.style.getPropertyValue('--menu-left')).toBe(`${window.innerWidth - 20 - MENU_WIDTH}px`);
+      expect(menu.style.getPropertyValue('--menu-bottom')).toBe('26px');
+      expect(fold).toHaveAttribute('aria-expanded', 'false');
+      await user.click(menu.parentElement!);
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(fold).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('leaves touch long-press to the platform', async () => {
+      mount();
+      await band('Wallet work');
+      const fold = screen.getByRole('button', { name: 'Collapse Wallet work' });
+      expect(fireEvent.contextMenu(fold, { clientX: 40, clientY: 40 })).toBe(true);
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(fold).toHaveAttribute('aria-expanded', 'true');
+    });
+
+    it('keeps the native editing menu while renaming a group', async () => {
+      finePointer();
+      const { client, user } = mount();
+      await band('Wallet work');
+      await user.click(screen.getByRole('button', { name: 'Actions for Wallet work' }));
+      await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('Rename group'));
+      const field = screen.getByRole('textbox', { name: 'Rename Wallet work' });
+      expect(fireEvent.contextMenu(field, { clientX: 40, clientY: 40 })).toBe(true);
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(field).toHaveFocus();
+      expect(client.updateSessionGroup).not.toHaveBeenCalled();
+    });
   });
 
   // A session joins a group from its own row, not from the group's action menu.

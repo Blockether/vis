@@ -46,7 +46,7 @@ import {
   TrashIcon,
 } from '../../components/icons';
 import { Button, IconButton, Input, TextButton } from '../../components/ui';
-import { menuPosition, type MenuPosition } from '../../lib/anchored-menu';
+import { menuPosition, pointerAnchor, type MenuPosition } from '../../lib/anchored-menu';
 import {
   draftMessageKey,
   EMPTY_DRAFT_MESSAGE,
@@ -431,14 +431,21 @@ function GroupBand({
   hasVisibleRows: boolean;
   isRenaming: boolean;
   onToggle: () => void;
-  onActions: (anchor: HTMLElement) => void;
+  onActions: (anchor: HTMLElement, point?: { x: number; y: number }) => void;
   onRename: (name: string) => Promise<void>;
   onCancelRename: () => void;
 }) {
   // The set header supplies the first top edge. A group with visible rows closes
   // its own heading; otherwise the next group or set supplies that boundary.
   return (
-    <div className={`flex items-stretch border-t-edge border-b-edge-strong bg-set-groups ${isFirst ? '' : 'border-t'} ${hasVisibleRows ? 'border-b' : ''}`}>
+    <div
+      className={`flex items-stretch border-t-edge border-b-edge-strong bg-set-groups ${isFirst ? '' : 'border-t'} ${hasVisibleRows ? 'border-b' : ''}`}
+      onContextMenu={(event) => {
+        if (!hasHardwarePointer() || event.target instanceof HTMLInputElement) return;
+        event.preventDefault();
+        onActions(event.currentTarget, { x: event.clientX, y: event.clientY });
+      }}
+    >
       {/* The band and its rows share one coloured edge, so a group reads as a place
           rather than as a caption. That rail is the ONLY place this colour is painted
           in the list: a dot beside the name repeated what the edge already says. */}
@@ -1386,8 +1393,8 @@ export const ProjectGroup = memo(function ProjectGroup({
   const [typed, setTyped] = useState('');
   const [failure, setFailure] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
-  const openMenu = useCallback((anchor: HTMLElement, step: MenuStep) => {
-    const at = menuPosition(anchor.getBoundingClientRect(), MENU_WIDTH);
+  const openMenu = useCallback((anchor: HTMLElement, step: MenuStep, point?: { x: number; y: number }) => {
+    const at = menuPosition(point ? pointerAnchor(point, MENU_WIDTH) : anchor.getBoundingClientRect(), MENU_WIDTH);
     if (!at) return;
     setFailure(null);
     setMenu({ at, step });
@@ -1878,7 +1885,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                         hasVisibleRows={isBandOpen && held.length > 0}
                         isRenaming={renamingGroupId === band.id}
                         onToggle={() => foldGroup(band.id, !isBandOpen)}
-                        onActions={(anchor) => openMenu(anchor, { kind: 'group', id: band.id })}
+                        onActions={(anchor, point) => openMenu(anchor, { kind: 'group', id: band.id }, point)}
                         onRename={async (name) => {
                           const changed = await getClient(conn).updateSessionGroup(band.id, { name });
                           setGroups((current) =>
