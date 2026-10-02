@@ -48,7 +48,6 @@ export async function runtimeFixture({
       {
         config: {
           name: 'center',
-          type: 'worker',
           compatibilityDate: '2026-02-01',
           manifest: {
             mainModule: 'worker.js',

@@ -1,5 +1,11 @@
 /** HTML shared by the Worker and browser. Every metadata value is escaped. */
-import { catalogMetadata, extensionIcon, extensionName, extensionPath } from './discovery.js';
+import {
+  catalogMetadata,
+  extensionIcon,
+  extensionName,
+  extensionPath,
+  isOfficialExtension,
+} from './discovery.js';
 import { escapeHTML } from './html.js';
 import { readmeHTML } from './readme.js';
 import { communityHTML } from './community.js';
@@ -117,6 +123,11 @@ export function categoriesHTML(items, state) {
     )
     .join('');
 }
+function officialBadgeHTML(item) {
+  return isOfficialExtension(item)
+    ? '<span class="official-badge" title="Published and maintained by the Vis team"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>Vis Official</span>'
+    : '';
+}
 export function cardsHTML(items, state) {
   const visible = visibleItems(items, state);
   if (!visible.length)
@@ -124,13 +135,13 @@ export function cardsHTML(items, state) {
   return visible
     .map(
       (item) =>
-        `<article class="extension-card" data-name="${escapeHTML(extensionName(item))}"><a class="card-main" href="${escapeHTML(extensionPath(item))}${filterURL(state).slice('/extensions/'.length)}"><div class="card-top"><span class="tag">${escapeHTML(categories[item.category])}</span><span class="version">v${escapeHTML(item.version)}</span></div><h3>${escapeHTML(extensionName(item))}</h3><p class="card-description">${escapeHTML(item.description)}</p></a>${link(item.subdirectory || item.repository, item.subdirectory ? item.source_url : item.repository_url, 'repository-link')}<div class="card-meta"><span>${escapeHTML(new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(item.stars))} stars</span><span>Updated ${dateLabel(item.updated_at)}</span></div></article>`,
+        `<article class="extension-card" data-name="${escapeHTML(extensionName(item))}"><a class="card-main" href="${escapeHTML(extensionPath(item))}${filterURL(state).slice('/extensions/'.length)}"><div class="card-top"><div class="extension-labels">${officialBadgeHTML(item)}<span class="tag">${escapeHTML(categories[item.category])}</span></div><span class="version">v${escapeHTML(item.version)}</span></div><h3>${escapeHTML(extensionName(item))}</h3><p class="card-description">${escapeHTML(item.description)}</p></a>${link(item.subdirectory || item.repository, item.subdirectory ? item.source_url : item.repository_url, 'repository-link')}<div class="card-meta"><span>${escapeHTML(new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(item.stars))} stars</span><span>Updated ${dateLabel(item.updated_at)}</span></div></article>`,
     )
     .join('');
 }
 const fact = (label, value) => `<dt>${label}</dt><dd>${escapeHTML(value)}</dd>`;
 export function previewHTML(item) {
-  return `<h3>${escapeHTML(extensionName(item))} · v${escapeHTML(item.version)}</h3><p>${escapeHTML(item.description)}</p><dl class="facts">${fact('GitHub owner', item.owner) + fact('Extension', extensionName(item)) + fact('Project folder', item.subdirectory || 'Repository root') + fact('Category', categories[item.category]) + fact('Release', item.release_tag || item.version) + fact('Commit', item.revision)}</dl><h3>Repository checks passed</h3><ul class="repository-checks"><li>Public GitHub repository owner verified and commit pinned</li><li>Published GitHub Release matches the manifest version</li><li><code>pyproject.toml</code> and <code>extension.py</code> found</li><li>Required manifest fields and <code>vis-agent</code> dependency declared</li>${item.source_paths.length ? `<li>${item.source_paths.length} source directories found</li>` : ''}${item.skills?.length ? `<li>${item.skills.length} skill directories contain <code>SKILL.md</code></li>` : ''}</ul><p class="help">These are metadata and file checks, not a code audit. The SDK validates version requirements and runtime compatibility when installing.</p><div class="actions">${link('Review source on GitHub', item.source_url)}${link('pyproject.toml', item.manifest_url)}${item.release_url ? link('GitHub Release', item.release_url) : ''}</div><h3>Dependencies</h3><p class="help">Python ${escapeHTML(item.requires_python)}</p><ul class="dependencies">${item.dependencies.map((dep) => `<li>${escapeHTML(dep)}</li>`).join('')}</ul>`;
+  return `<h3>${escapeHTML(extensionName(item))} · v${escapeHTML(item.version)}</h3>${officialBadgeHTML(item)}<p>${escapeHTML(item.description)}</p><dl class="facts">${fact('GitHub owner', item.owner) + fact('Extension', extensionName(item)) + fact('Project folder', item.subdirectory || 'Repository root') + fact('Category', categories[item.category]) + fact('Release', item.release_tag || item.version) + fact('Commit', item.revision)}</dl><h3>Repository checks passed</h3><ul class="repository-checks"><li>Public GitHub repository owner verified and commit pinned</li><li>Published GitHub Release matches the manifest version</li><li><code>pyproject.toml</code> and <code>extension.py</code> found</li><li>Required manifest fields and <code>vis-agent</code> dependency declared</li>${item.source_paths.length ? `<li>${item.source_paths.length} source directories found</li>` : ''}${item.skills?.length ? `<li>${item.skills.length} skill directories contain <code>SKILL.md</code></li>` : ''}</ul><p class="help">These are metadata and file checks, not a code audit. The SDK validates version requirements and runtime compatibility when installing.</p><div class="actions">${link('Review source on GitHub', item.source_url)}${link('pyproject.toml', item.manifest_url)}${item.release_url ? link('GitHub Release', item.release_url) : ''}</div><h3>Dependencies</h3><p class="help">Python ${escapeHTML(item.requires_python)}</p><ul class="dependencies">${item.dependencies.map((dep) => `<li>${escapeHTML(dep)}</li>`).join('')}</ul>`;
 }
 export function releaseHTML(item) {
   const releases = item.releases || [];
@@ -138,7 +149,7 @@ export function releaseHTML(item) {
   return `<form id="version-form" class="version-picker" method="get" action="${escapeHTML(extensionPath(item))}"><label for="release-version">Version</label><select id="release-version" name="version" aria-describedby="version-help">${releases.map((release) => `<option value="${escapeHTML(release.version)}"${release.version === item.version ? ' selected' : ''}>${escapeHTML(release.version)}${release.prerelease ? ' · Prerelease' : release.version === item.latest_version ? ' · Latest approved' : ''}</option>`).join('')}</select><button type="submit">View release</button></form><p id="version-help" class="help">Only approved releases are listed. Each version keeps its reviewed commit.${item.latest_version && item.version !== item.latest_version ? ' You are viewing a different version from the catalog default.' : ''}</p><details class="release-history"><summary>Approved releases (${releases.length})</summary><ol>${releases.map((release) => `<li><a data-release href="${escapeHTML(extensionPath(item))}?version=${encodeURIComponent(release.version)}">${escapeHTML(release.version)}</a>${release.prerelease ? ' <span class="tag">Prerelease</span>' : ''}<span class="help">${dateLabel(release.release_published_at || release.approved_at)}</span>${link(release.revision.slice(0, 12), release.repository_url + '/commit/' + release.revision)}${release.release_url ? link('Release notes', release.release_url) : ''}</li>`).join('')}</ol></details>`;
 }
 export function detailHTML(item) {
-  return `<div class="detail-heading"><h1 tabindex="-1">${escapeHTML(extensionName(item))}</h1><p>${escapeHTML(item.description)}</p><span class="tag">${escapeHTML(categories[item.category])}</span>${link(item.repository, item.repository_url, 'repository-link')}</div>
+  return `<div class="detail-heading"><h1 tabindex="-1">${escapeHTML(extensionName(item))}</h1><p>${escapeHTML(item.description)}</p><div class="extension-labels">${officialBadgeHTML(item)}<span class="tag">${escapeHTML(categories[item.category])}</span>${link(item.repository, item.repository_url, 'repository-link')}</div></div>
     <section class="install-section"><h2 id="install">Install</h2>${releaseHTML(item)}<p>This command selects version ${escapeHTML(item.version)} at its approved commit. It never follows a moving tag or branch.</p><label class="install-scope" for="install-scope">Install for<select id="install-scope" aria-describedby="install-scope-help"><option value="project">Project</option><option value="global">Global</option></select></label><p id="install-scope-help" class="help">${installScopeHelp()}</p><p class="security-note">Review the source first. --trust allows extension code and build backends to run with your permissions.</p><pre id="install-command" tabindex="0" aria-label="Install command"><code class="language-bash">${installCommandHTML(item)}</code></pre><button id="copy-command" type="button" class="primary" aria-describedby="copy-status">Copy install command</button><p id="copy-status" role="status"></p><p class="help">Then start Vis or use /reload. Dependencies are prepared automatically.</p><details><summary>Already installed? Check, update or roll back</summary><pre><code class="language-bash">${escapeHTML(`vis-agent extension versions ${catalogSelector(item)}
 vis-agent extension update ${catalogSelector(item)} --trust
 vis-agent extension rollback ${catalogSelector(item)} --trust`)}</code></pre><p class="help">Use the identifier shown above, not the Python package name. Add --project for a project installation. Update selects the latest approved stable version; rollback restores the previous pinned source. <a href="/extension-packages.html#check-for-updates-and-roll-back">Choose a specific version and read the lifecycle contract</a>.</p></details></section>

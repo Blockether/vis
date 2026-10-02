@@ -898,3 +898,30 @@ test('repository confirmation pins the selected release tag as well as its SHA',
   expect(body.release_tag).toBe('vis-greeter/v1.0.0');
   expect(body.revision).toBe(item.revision);
 });
+
+test('official badges survive client navigation without trusting API status flags', async () => {
+  const official = {
+    ...item,
+    repository: 'Blockether/vis-lang-python',
+    repository_url: 'https://github.com/Blockether/vis-lang-python',
+    subdirectory: '',
+    name: 'vis-lang-python',
+    official: false,
+  };
+  const community = { ...item, official: true, is_official: true };
+  setup(
+    vi.fn(async (path) => ({
+      ok: true,
+      json: async () =>
+        path === '/api/extensions' ? { extensions: [official, community] } : official,
+    })),
+  );
+  await tick();
+  expect(document.querySelectorAll('.official-badge')).toHaveLength(1);
+  const card = $('[data-name="blockether/vis-lang-python"]');
+  expect(card.querySelector('.official-badge').textContent).toBe('Vis Official');
+  card.querySelector('.card-main').click();
+  await tick();
+  expect($('#detail .official-badge').textContent).toBe('Vis Official');
+  expect($('#detail .security-note').textContent).toContain('Review the source first.');
+});

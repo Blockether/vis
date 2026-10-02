@@ -11,6 +11,28 @@ export const extensionPath = (item) =>
     .split('/')
     .map(encodeURIComponent)
     .join('/');
+// Only catalog maintainers can change this list. Submitted flags and package authors grant no status.
+const officialExtensions = [
+  { repository: 'blockether/spel', subdirectory: 'extensions/vis-spel', name: 'vis-spel' },
+  { repository: 'blockether/vis-decisions', subdirectory: '', name: 'vis-decisions' },
+  {
+    repository: 'blockether/vis-lang-clojure',
+    subdirectory: 'extension',
+    name: 'vis-lang-clojure',
+  },
+  { repository: 'blockether/vis-lang-interface', subdirectory: '', name: 'vis-lang-interface' },
+  { repository: 'blockether/vis-lang-python', subdirectory: '', name: 'vis-lang-python' },
+];
+/** Match the verified GitHub source and package, never author-controlled official flags. */
+export function isOfficialExtension(item) {
+  return officialExtensions.some(
+    ({ repository, subdirectory, name }) =>
+      item.repository?.toLowerCase() === repository &&
+      item.repository_url?.toLowerCase() === `https://github.com/${repository}` &&
+      item.subdirectory === subdirectory &&
+      item.name === name,
+  );
+}
 const escape = (value) =>
   String(value ?? '').replace(
     /[&<>"']/g,

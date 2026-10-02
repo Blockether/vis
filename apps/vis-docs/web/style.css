@@ -168,11 +168,36 @@ kbd {
 }
 .card-top {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
   color: var(--dim);
   font-size: var(--text-small);
+}
+.extension-labels {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+.official-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1875rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  color: var(--link);
+  font-size: var(--text-small);
+  font-weight: 600;
+  line-height: 1.4;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.official-badge svg {
+  flex: none;
 }
 .tag {
   color: var(--dim);
@@ -279,9 +304,6 @@ button.quiet {
 }
 .detail-heading h1:focus {
   outline: none;
-}
-.detail-heading > .tag {
-  margin-right: 1rem;
 }
 .facts {
   display: grid;

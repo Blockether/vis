@@ -15,20 +15,20 @@
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "esbuild": "0.28.2",
-    "eslint": "10.10.0",
+    "eslint": "10.11.0",
     "jsdom": "29.1.1",
-    "miniflare": "5.20260908.0-alpha",
-    "sharp": "0.35.4",
-    "vite": "8.1.5",
+    "miniflare": "5.20261001.0-alpha",
+    "sharp": "0.35.5",
+    "vite": "8.3.2",
     "vitest": "4.1.11",
-    "wrangler": "4.130.0"
+    "wrangler": "4.147.0"
   },
   "dependencies": {
-    "marked": "18.0.12",
-    "smol-toml": "1.8.0"
+    "marked": "18.0.14",
+    "smol-toml": "1.9.0"
   },
   "overrides": {
-    "sharp": "0.35.4",
+    "sharp": "0.35.5",
     "undici": "7.29.1"
   }
 }

@@ -122,6 +122,35 @@ test('root and monorepo previews use pinned GitHub metadata only', async () => {
       .every((url) => url.endsWith('?ref=' + fixture.revision)),
   ).toBe(true);
 });
+test.each(['/api/preview', '/api/submissions'])(
+  '%s rejects author-supplied official status before inspecting GitHub',
+  async (path) => {
+    for (const field of ['official', 'is_official', 'verified', 'badge']) {
+      const response = await post(path, { revision: fixture.revision, [field]: true });
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe('Supply only the fields requested by this form.');
+    }
+    expect(fixture.controls.requests).toEqual([]);
+    expect(await fixture.db.prepare('SELECT COUNT(*) FROM submissions').first('COUNT(*)')).toBe(0);
+  },
+);
+test.each(['/api/preview', '/api/submissions'])(
+  '%s rejects official claims in tool.vis',
+  async (path) => {
+    for (const field of ['official', 'is_official', 'verified', 'badge']) {
+      fixture.controls.manifest = readFileSync(
+        'examples/vis-greeter/pyproject.toml',
+        'utf8',
+      ).replace('[tool.vis]', `[tool.vis]\n${field} = true`);
+      const response = await post(path, { revision: fixture.revision });
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe(
+        'tool.vis accepts category, source_paths and skills.',
+      );
+    }
+    expect(await fixture.db.prepare('SELECT COUNT(*) FROM submissions').first('COUNT(*)')).toBe(0);
+  },
+);
 test('catalog ownership comes from the GitHub repository, not the package or submitter', async () => {
   fixture.controls.repository = {
     name: 'Extensions',
