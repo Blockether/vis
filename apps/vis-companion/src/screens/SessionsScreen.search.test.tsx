@@ -713,7 +713,7 @@ async function choose(picker: HTMLElement, option: string) {
 
 // The search scope belongs on the gateway request, not on the held list window.
 describe('explicit search locations and scopes', () => {
-  it('names each project and group and sends project and OR-group scopes', async () => {
+  it('names each project and group, offers groups only inside a project and sends OR-group scopes', async () => {
     const rows = [
       listSession({ id: 'one', title: 'Needle one', project_id: 'p1', project_name: 'Workbench', group_id: 'g1' }),
       listSession({ id: 'two', title: 'Needle two', project_id: 'p1', project_name: 'Workbench', group_id: 'g2' }),
@@ -742,6 +742,8 @@ describe('explicit search locations and scopes', () => {
     const project = await screen.findByRole('combobox', { name: 'Project' });
     // With one machine there is no machine to choose.
     expect(screen.queryByRole('combobox', { name: 'Machine' })).not.toBeInTheDocument();
+    // All projects already means all groups, so groups appear only inside a project.
+    expect(screen.queryByRole('combobox', { name: 'Groups' })).not.toBeInTheDocument();
     await choose(project, 'Workbench');
     await waitFor(() => expect(searchParams(view.requests, 'project_id').at(-1)).toBe('p1'));
     const groups = screen.getByRole('combobox', { name: 'Groups' });
@@ -754,13 +756,15 @@ describe('explicit search locations and scopes', () => {
     expect(groups).toHaveTextContent('Planning, Review');
     expect(screen.getByRole('dialog', { name: 'Search sessions' })).toBeInTheDocument();
     const oldRequest = view.requests.filter((request) => request.path.startsWith('/v1/sessions/actions/search')).at(-1)!;
-    await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    // All projects widens the search again: it drops the groups with the project, so no
+    // separate control repeats it.
+    await choose(project, 'All projects');
     await waitFor(() => expect(searchParams(view.requests, 'group_ids').at(-1)).toBeNull());
     expect(searchParams(view.requests, 'project_id').at(-1)).toBeNull();
     expect(oldRequest.signal?.aborted).toBe(true);
     expect(project).toHaveTextContent('All projects');
-    expect(groups).toHaveTextContent('All groups');
-    expect(screen.queryByRole('button', { name: 'Clear filters' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Groups' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /clear filters|search everything/i })).not.toBeInTheDocument();
   });
   it('pages the selected project and groups and preserves unfiled and empty-project scopes', async () => {
     const rows = Array.from({ length: 60 }, (_, index) => listSession({

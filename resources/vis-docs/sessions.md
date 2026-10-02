@@ -115,9 +115,8 @@ The switcher also has these keys:
 
 | Keys | What they do |
 |---|---|
-| Ctrl+P | Choose all projects, one project or No project |
-| Ctrl+G | Choose several groups, or clear the selection for all groups |
-| Ctrl+A | Clear the project and group filters |
+| Ctrl+P | Choose all projects, one project or No project. All projects also clears the groups |
+| Ctrl+G | Choose groups in the chosen project, or select none for all groups. It works only if the project has groups |
 | Ctrl+N | Start a new session |
 | Ctrl+F | Fork the selected session |
 | Ctrl+S | Star or unstar the selected session |
@@ -157,9 +156,10 @@ machine, use **Machine** to choose the machine to search. You cannot choose a ma
 does not answer.
 
 Use **Project** to choose **All projects**, one named project or **No project**.
+If the project you choose has groups, the **Groups** menu appears.
 Use **Groups** to select several groups. The list stays open while you select them.
 Choose **All groups** to clear the group selection.
-To clear the project and group filters, choose **Clear filters**. The machine does not change.
+To search all projects and groups again, choose **All projects**.
 
 When you type, the line below the menus shows the number of matches. If more results are
 available, choose **Load more results** below the last result.

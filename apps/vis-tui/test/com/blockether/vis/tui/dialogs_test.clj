@@ -3686,27 +3686,44 @@
         (expect (not (in-scope? row {:group-ids #{}})))
         (expect (not (in-scope? row {:root ""})))
         (expect (in-scope? (assoc row :project-id nil) {:root ""}))))
-  (it "sizes each scope control to its words and offers Clear filters only while filtered"
+  (it "offers groups only inside the chosen project or under No project"
+      (let [offers?
+            (var-get #'dlg/navigator-scope-group?)
+
+            filed
+            {"id" "g1" "project_id" "p1"}
+
+            unfiled
+            {"id" "g2"}]
+
+        (expect (not (offers? {} filed)))
+        (expect (not (offers? {} unfiled)))
+        (expect (offers? {:project-id "p1"} filed))
+        (expect (not (offers? {:project-id "p2"} filed)))
+        (expect (not (offers? {:project-id "p1"} unfiled)))
+        (expect (offers? {:root ""} unfiled))
+        (expect (not (offers? {:root ""} filed)))))
+  (it "sizes each scope control to its words and shows groups only when offered"
       (let [controls
             (var-get #'dlg/navigator-scope-controls)
 
-            wide
+            all
             (controls 100 "All projects" 0 false)
 
             narrow
-            (controls 72 "A very long project name indeed" 2 true)]
+            (controls 50 "A very long project name indeed" 2 true)]
 
-        (expect (= [:project :groups] (mapv :action wide)))
-        (expect (= ["C-p" "C-g"] (mapv :key wide)))
-        (expect (= ["Project: All projects" "Groups: All groups"] (mapv :label wide)))
-        (expect (= [0 28] (mapv :x wide)))
-        (expect (= [:project :groups :all] (mapv :action narrow)))
+        (expect (= [:project] (mapv :action all)))
+        (expect (= ["C-p"] (mapv :key all)))
+        (expect (= ["Project: All projects"] (mapv :label all)))
+        (expect (= [:project :groups] (mapv :action narrow)))
+        (expect (= ["C-p" "C-g"] (mapv :key narrow)))
         (expect (str/starts-with? (:label (first narrow)) "Project: A very"))
         (expect (not= "Project: A very long project name indeed" (:label (first narrow))))
-        (expect (= ["Groups: 2 selected" "Clear filters"] (mapv :label (rest narrow))))
-        (expect (<= (+ (long (:x (last narrow))) (long (:width (last narrow)))) 72))))
+        (expect (= "Groups: 2 selected" (:label (last narrow))))
+        (expect (<= (+ (long (:x (last narrow))) (long (:width (last narrow)))) 50))))
   (it
-    "reissues the same blank query for project, OR groups and everything controls"
+    "reissues the same blank query for project and OR groups, and All projects clears both"
     (let [sessions
           [{"id" "one" "title" "First scoped" "turn_count" 1 "project_id" "p1" "group_id" "g1"}
            {"id" "two" "title" "Second scoped" "turn_count" 1 "project_id" "p1" "group_id" "g2"}
@@ -3722,7 +3739,8 @@
           (future
             (with-redefs [dlg/select-dialog!
                           (fn [_screen _title choices]
-                            (some #(when (= "Workbench" (:label %)) %) choices))
+                            (let [pick (if (< (long @phase) 3) "Workbench" "All projects")]
+                              (some #(when (= pick (:label %)) %) choices)))
 
                           dlg/multi-select-dialog!
                           (fn [_screen _title choices _initial]
@@ -3753,21 +3771,26 @@
 
                     (cond
                       (= 0 @phase)
-                      (do (reset! phase 1)
+                      (do (expect (not (str/includes? text "C-g")))
+                          (reset! phase 1)
                           (.addInput terminal (KeyStroke. (Character/valueOf \p) true false false)))
                       (and (= 1 @phase)
                            (= {:project-id "p1"} scope)
                            (str/includes? text "First scoped"))
                       (do (expect (not (str/includes? text "Other project")))
+                          (expect (str/includes? text "C-g Groups: All groups"))
+                          (expect (not (str/includes? text "Clear filters")))
                           (reset! phase 2)
                           (.addInput terminal (KeyStroke. (Character/valueOf \g) true false false)))
                       (and (= 2 @phase)
                            (= #{"g1" "g2"} (:group-ids scope))
                            (str/includes? text "Second scoped"))
                       (do (reset! phase 3)
-                          (.addInput terminal (KeyStroke. (Character/valueOf \a) true false false)))
+                          (.addInput terminal (KeyStroke. (Character/valueOf \p) true false false)))
                       (and (= 3 @phase) (= {} scope) (str/includes? text "Other project"))
-                      (do (reset! phase 4) (.addInput terminal (cap/key-stroke :esc)))))))))]
+                      (do (expect (not (str/includes? text "C-g")))
+                          (reset! phase 4)
+                          (.addInput terminal (cap/key-stroke :esc)))))))))]
 
       (try (let [result (deref task 5000 ::blocked)]
              (expect (map? result))

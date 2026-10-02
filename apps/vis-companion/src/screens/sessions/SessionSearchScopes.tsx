@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
-import { Select, TextButton } from '../../components/ui';
+import { Select } from '../../components/ui';
 import { SessionRow } from '../../components/SessionList';
 import { EMPTY_DRAFT_MESSAGE, draftMessageKey } from '../../lib/draft-messages';
 import { machineKey, machineLabel, projectLabel, sessionRowKey } from '../../lib/fleet';
@@ -48,13 +48,14 @@ export function useSessionSearchScope(
   }, [isOpen, conns, getClient]);
   const projects = catalog.filter((entry) => machineScope === ALL_SCOPE || machineKey(entry.conn) === machineScope);
   const chosen = projects.find((entry) => keyFor(machineKey(entry.conn), entry.project.id) === filters.project);
-  const groups = projects.filter((entry) => filters.project === ALL_PROJECTS ||
-    (filters.project === NO_PROJECT ? entry.project.id === NO_PROJECT : entry === chosen));
-  // With one project chosen, its name is already on the project picker.
+  // All projects already means all groups: only a chosen project, or the unfiled
+  // sessions under No project, has groups to narrow to.
+  const groups = filters.project === ALL_PROJECTS ? [] : projects.filter((entry) =>
+    filters.project === NO_PROJECT ? entry.project.id === NO_PROJECT : entry === chosen);
+  // The project picker already names the project, so a group needs only its own name.
   const options = groups.flatMap((entry) => entry.groups.map((group) => ({
     value: keyFor(machineKey(entry.conn), group.id),
-    label: `${filters.project === ALL_PROJECTS ? `${entry.project.name} / ` : ''}${group.name}${
-      machineScope === ALL_SCOPE ? ` / ${machineLabel(entry.conn)}` : ''}`,
+    label: `${group.name}${machineScope === ALL_SCOPE ? ` / ${machineLabel(entry.conn)}` : ''}`,
   })));
   const wire = useMemo(() => {
     const selected = filters.project.split('\u0000');
@@ -89,10 +90,8 @@ export function useSessionSearchScope(
   return {
     wire, location,
     projects: projects.filter((entry) => entry.project.id !== NO_PROJECT), options, filters, failure,
-    isFiltered: filters.project !== ALL_PROJECTS || filters.groups.length > 0,
     setProject: (project: string) => setStored({ machineScope, project, groups: [] }),
     setGroups: (groups: string[]) => setStored({ ...filters, groups }),
-    clear: () => setStored({ machineScope, project: ALL_PROJECTS, groups: [] }),
   };
 }
 
@@ -102,11 +101,12 @@ type Choice = { value: string; label: string; disabled?: boolean };
 
 /**
  * WHERE A SEARCH LOOKS, as one row of labelled choices: the machine (when there is more
- * than one), the project and the groups. Each is the app's own picker, never the system
- * one: the project used to be a bare system select and the groups a text button that
- * unfolded checkboxes, so on a phone the band read as loose words, not as controls.
- * The line under the choices says what came back. Clearing the filters resets the
- * project and the groups; the machine is where the search runs, not a filter.
+ * than one), the project and, once a project with groups narrows the search, its groups.
+ * Each is the app's own picker, never the system one: the project used to be a bare
+ * system select and the groups a text button that unfolded checkboxes, so on a phone the
+ * band read as loose words, not as controls. All projects already means all groups, so
+ * choosing it widens the search again; no separate control repeats it. The line under
+ * the choices says what came back.
  */
 export function SessionSearchScopes({ scope, machine = null, report = null }: {
   scope: SearchScope;
@@ -147,25 +147,24 @@ export function SessionSearchScopes({ scope, machine = null, report = null }: {
             className="w-full"
           />
         </ScopeChoice>
-        <ScopeChoice id={`${id}groups`} label="Groups">
-          <Select
-            aria-labelledby={`${id}groups`}
-            values={scope.filters.groups}
-            onValuesChange={scope.setGroups}
-            noneLabel="All groups"
-            options={scope.options}
-            className="w-full"
-          />
-        </ScopeChoice>
+        {(scope.options.length > 0 || scope.filters.groups.length > 0) && (
+          <ScopeChoice id={`${id}groups`} label="Groups">
+            <Select
+              aria-labelledby={`${id}groups`}
+              values={scope.filters.groups}
+              onValuesChange={scope.setGroups}
+              noneLabel="All groups"
+              options={scope.options}
+              className="w-full"
+            />
+          </ScopeChoice>
+        )}
       </div>
-      {(report || scope.isFiltered || scope.failure) && (
+      {(report || scope.failure) && (
         <div className="flex min-h-6 min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
           {report}
           {scope.failure && (
             <p role="status" className="font-mono text-meta text-dialog-hint">{scope.failure}</p>
-          )}
-          {scope.isFiltered && (
-            <TextButton className="ml-auto" onClick={scope.clear}>Clear filters</TextButton>
           )}
         </div>
       )}

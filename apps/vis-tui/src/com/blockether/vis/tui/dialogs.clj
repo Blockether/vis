@@ -5998,24 +5998,32 @@
        (or (nil? root) (if (str/blank? root) (nil? (:project-id row)) (= root (:work-dir row))))
        (or (nil? group-ids) (contains? (set group-ids) (:session-group-id row)))))
 
+(defn- navigator-scope-group?
+  "Whether the search scope offers this group to narrow to: one of the chosen project's
+   groups, or an unfiled one under No project. All projects offers none, because it
+   already means all groups."
+  [scope group]
+  (cond (:project-id scope) (= (:project-id scope) (str (get group "project_id")))
+        (contains? scope :root) (nil? (get group "project_id"))
+        :else false))
+
 (defn- navigator-scope-controls
   "The row below the search field says where the search looks. Each control is its key
    in hint ink and its current choice in text ink, at its own width, so only a long
-   project, then a long groups label, gives up columns. Clear filters appears only
-   while a filter narrows the search."
-  [width project group-count filtered?]
+   project, then a long groups label, gives up columns. Groups appear only while the
+   chosen project has groups to narrow to."
+  [width project group-count groups?]
   (let [gap
         3
 
         controls
-        (cond-> [{:action :project :key "C-p" :text (str "Project: " project)}
-                 {:action :groups
-                  :key "C-g"
-                  :text
-                  (str "Groups: "
-                       (if (pos? (long group-count)) (str group-count " selected") "All groups"))}]
-          filtered?
-          (conj {:action :all :key "C-a" :text "Clear filters"}))
+        (cond-> [{:action :project :key "C-p" :text (str "Project: " project)}]
+          groups?
+          (conj {:action :groups
+                 :key "C-g"
+                 :text
+                 (str "Groups: "
+                      (if (pos? (long group-count)) (str group-count " selected") "All groups"))}))
 
         natural
         (mapv #(+ (count (:key %)) 1 (count (:text %))) controls)
@@ -6789,23 +6797,13 @@
                                                         @scope-projects)))]
              (change-scope! (:scope chosen) (:label chosen))))
          (choose-groups! []
-           (let [project-id
-                 (:project-id @search-scope)
-
-                 choices
+           (let [choices
                  (->> (vals @groups-index)
-                      (filter #(and (or (nil? project-id) (= project-id (str (get % "project_id"))))
-                                    (or (nil? (:root @search-scope)) (nil? (get % "project_id")))))
+                      (filter #(navigator-scope-group? @search-scope %))
                       (sort-by (juxt #(str (get % "name")) #(str (get % "id"))))
                       (mapv (fn [group]
-                              (let [project (some #(when (= (str (get group "project_id"))
-                                                            (str (get % "id")))
-                                                     %)
-                                                  @scope-projects)]
-                                {:id (str (get group "id"))
-                                 :label (str (or (get project "name") "No project")
-                                             " / " (get group "name")
-                                             " · " (short-session-id (get group "id")))}))))
+                              {:id (str (get group "id"))
+                               :label (str (get group "name") " · " (short-session-id group))})))
 
                  initial
                  (into #{}
@@ -6813,10 +6811,12 @@
                                 (:label %)))
                        choices)]
 
-             (when-let [chosen (multi-select-dialog! screen
-                                                     "Search groups (any selected; empty means all)"
-                                                     (mapv :label choices)
-                                                     initial)]
+             (when-let [chosen (and (seq choices)
+                                    (multi-select-dialog!
+                                      screen
+                                      "Search groups (any selected; empty means all)"
+                                      (mapv :label choices)
+                                      initial))]
                (let [ids
                      (into #{} (keep #(when (contains? (set chosen) (:label %)) (:id %))) choices)]
                  (change-scope! (cond-> (dissoc @search-scope :group-ids)
@@ -6830,9 +6830,6 @@
 
              :groups
              (choose-groups!)
-
-             :all
-             (when (seq @search-scope) (change-scope! {} "All projects"))
 
              nil))]
         (try
@@ -6921,7 +6918,8 @@
                   (navigator-scope-controls content-w
                                             @scope-project-label
                                             (count (:group-ids @search-scope))
-                                            (boolean (seq @search-scope)))
+                                            (boolean (some #(navigator-scope-group? @search-scope %)
+                                                           (vals @groups-index))))
 
                   block-heights
                   (navigator-block-heights visible-rows)
@@ -7054,7 +7052,6 @@
                   (cond
                     (input/ctrl-char? key \p) (do (scope-action! :project) (recur))
                     (input/ctrl-char? key \g) (do (scope-action! :groups) (recur))
-                    (input/ctrl-char? key \a) (do (scope-action! :all) (recur))
                     (and (instance? MouseAction key)
                          (= MouseActionType/CLICK_DOWN (.getActionType ^MouseAction key))
                          (= (inc (long content-top)) (.getRow (.getPosition ^MouseAction key))))
