@@ -304,26 +304,17 @@
        ;; (new network domains / filesystem roots take effect here). Done under
        ;; the lock, before the turn, so no eval races the swap.
        (when (loop-env/policy-stale? (or (get @loop-env/cache k) entry)) (loop-env/recycle-env! k))
-       ;; Re-read :environment UNDER the lock: a between-turns turn-cap recycle
-       ;; or a router/extension reseat may have swapped it since we captured
-       ;; `entry`, so the queued turn runs against the CURRENT context.
+       ;; Re-read :environment UNDER the lock: a `/reload` recycle by an earlier
+       ;; queued turn or a router/extension reseat may have swapped it since we
+       ;; captured `entry`, so the queued turn runs against the CURRENT context.
        (turn/turn! (:environment (or (get @loop-env/cache k) entry)) message-vec opts)
        (finally
-         ;; Housekeeping must NEVER strand the lock. A throw from `touch-entry!`
-         ;; or `bump-turns!` used to skip the `.unlock` below, pinning this
-         ;; session's entry as permanently "busy": `evict-if-idle!` tryLocks,
-         ;; fails forever, and the session — plus every door and namespace it
-         ;; holds — leaks for the life of the gateway. Unlock in an inner
-         ;; `finally` so it is unconditional.
-         (try (let [cur (or (get @loop-env/cache k) entry)]
-                (loop-env/touch-entry! cur)
-                (let [n (loop-env/bump-turns! cur)]
-                  ;; Recycle this session's interpreter namespace between turns so a
-                  ;; single never-idle session cannot grow it unbounded.
-                  (when (and (not (loop-env/policy-stale? cur))
-                             (pos? (long @loop-env/env-max-turns-per-ctx))
-                             (>= (long n) (long @loop-env/env-max-turns-per-ctx)))
-                    (try (loop-env/recycle-env! k) (catch Throwable _ nil)))))
+         ;; Housekeeping must NEVER strand the lock. A throw here used to skip
+         ;; the `.unlock` below, pinning this session's entry as permanently
+         ;; "busy": `evict-if-idle!` tryLocks, fails forever, and the session —
+         ;; plus every door and namespace it holds — leaks for the life of the
+         ;; gateway. Unlock in an inner `finally` so it is unconditional.
+         (try (loop-env/touch-entry! (or (get @loop-env/cache k) entry))
               (catch Throwable _ nil)
               (finally (.unlock lock)
                        ;; After unlocking: a reload racing this handoff either closes

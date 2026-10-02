@@ -165,11 +165,10 @@
   ;; per-session, so nothing is stopped here — only this session's policy is removed.
   ;; EVERY step before the sandbox is best-effort AND cannot skip it. These run
   ;; first because they need the environment intact, but not one of them is worth
-  ;; the Python worker: a throw here used to abandon that whole process, and the
-  ;; only caller that recycles between turns swallows the exception — so a single
-  ;; failing unregister leaked a worker silently every five turns. Worker teardown
-  ;; is therefore a `finally`, and a failure is LOGGED rather than dropped, because
-  ;; a leak nothing reports is one nobody can find.
+  ;; the Python worker: a throw here used to abandon that whole process, and a
+  ;; caller that swallowed the exception leaked a worker silently on every
+  ;; recycle. Worker teardown is therefore a `finally`, and a failure is LOGGED
+  ;; rather than dropped, because a leak nothing reports is one nobody can find.
   (try
     (doseq [[step run!] [[:egress-proxy
                           #(when-let [tok (:sandbox-token environment)]
@@ -720,8 +719,9 @@
 
         (reset! environment-atom env)
         (swap! state-atom assoc :environment env :session-id session-id)
-        ;; Restore the context state when resuming. Sandbox defs do NOT persist
-        ;; across turns (the `definition_*` sidecar tables were dropped).
+        ;; Restore the context state when resuming. Sandbox helpers and variables
+        ;; are not in the DB: they come back from the session snapshot file
+        ;; (`python.env/restore-session-defs!`).
         (when resolved-session-id
           ;; The latest session_turn_state.ctx (Nippy BLOB) carries the persisted
           ;; context snapshot. Cursor is iter-local so we don't restore it; the
@@ -831,14 +831,15 @@
 (def ^:private env-idle-ttl-ms
   "Idle window before a cached session env's Python session is disposed by the
    background reaper. Override with `VIS_ENV_IDLE_TTL_MS`; <= 0 disables the TTL
-   sweep. Default 3 min.
+   sweep. Default 5 min. This is the only age limit on a sandbox: a session that
+   keeps working keeps its interpreter, however many turns it runs.
 
    A `delay`, never an eager read: `native-image` initializes this namespace at
    BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
   (delay (or (some-> (System/getenv "VIS_ENV_IDLE_TTL_MS")
                      str/trim
                      parse-long)
-             (* 3 60 1000))))
+             (* 5 60 1000))))
 
 (def ^:private env-cache-max
   "Soft cap on resident session envs. After the TTL sweep, if the cache still
@@ -863,24 +864,6 @@
                      str/trim
                      parse-long)
              (* 60 1000))))
-
-(def env-max-turns-per-ctx
-  "Turns a single session's Python worker serves before the reaper recycles it
-   between turns. Override with `VIS_ENV_MAX_TURNS_PER_CTX`; <= 0 disables.
-   Default 5.
-
-   This bounds the ephemeral working set of a session that never stays idle long
-   enough for the TTL/RSS reaper. A recycle now replaces that session's whole
-   worker process — the startup cost is real, but so is releasing every imported
-   native library. `persist-session-defs!` carries module aliases, scalar
-   constants and function sources across; rebuildable data is deliberately lost.
-
-   A `delay`, never an eager read: `native-image` initializes this namespace at
-   BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
-  (delay (or (some-> (System/getenv "VIS_ENV_MAX_TURNS_PER_CTX")
-                     str/trim
-                     parse-long)
-             5)))
 
 (def ^:private env-rss-budget-mb
   "Resident-set ceiling in MB. JVM heap alone misses each interpreter worker's
@@ -1055,7 +1038,6 @@
    :lock (java.util.concurrent.locks.ReentrantLock.)
    :condemned (java.util.concurrent.atomic.AtomicBoolean. false)
    :last-active (java.util.concurrent.atomic.AtomicLong. (util/now-ms))
-   :turns (java.util.concurrent.atomic.AtomicLong. 0)
    ;; The `/reload` epoch this env was built under. `send!` recycles the entry
    ;; when a later `/reload` has bumped `policy-reload-epoch` past this stamp.
    :policy-epoch (java.util.concurrent.atomic.AtomicLong. (long @python-exec/policy-reload-epoch))})
@@ -1067,14 +1049,6 @@
   (when-let [^java.util.concurrent.atomic.AtomicLong la (:last-active entry)]
     (.set la (util/now-ms)))
   entry)
-
-(defn bump-turns!
-  "Increment `entry`'s per-context turn counter and return the new count (0 when
-   the entry carries no counter). Read by `send!` to decide a Layer-2 recycle."
-  [entry]
-  (if-let [^java.util.concurrent.atomic.AtomicLong t (:turns entry)]
-    (.incrementAndGet t)
-    0))
 
 (defn- evict-if-idle!
   "Dispose + `dissoc` cache entry `k` when its lock is free (no turn running)
@@ -1533,13 +1507,13 @@
         (get @cache k)))))
 
 (defn recycle-env!
-  "Between-turns context recycle (Layer 2): rebuild a FRESH env for session `k`
-   and swap it into the existing cache entry IN PLACE — REUSING the same
+  "`/reload` recycle: rebuild a FRESH env for session `k` under the new security
+   policy and swap it into the existing cache entry IN PLACE — REUSING the same
    `ReentrantLock` so a caller queued on the lock re-reads the fresh env — then
    dispose the OLD Python session (and its own per-env DB connection). MUST be
    called while holding the entry lock, so no turn races the swap and `old` is
-   stable. The transcript lives in the DB; `open-env!` resumes it, so the model
-   loses only its ephemeral Python globals — the point of the recycle."
+   stable. The transcript lives in the DB; `open-env!` resumes it, and the
+   session snapshot restores the helpers and variables the old sandbox saved."
   [k]
   (when-let [old (get @cache k)]
     (let [fresh-env (open-env! k {})]
@@ -1548,14 +1522,12 @@
         (assoc old
           :environment fresh-env
           :last-active (java.util.concurrent.atomic.AtomicLong. (util/now-ms))
-          :turns (java.util.concurrent.atomic.AtomicLong. 0)
           ;; Restamp to the current epoch: the fresh env carries the latest
           ;; security-policy snapshot, so it is no longer reload-stale.
           :policy-epoch (java.util.concurrent.atomic.AtomicLong.
                           (long @python-exec/policy-reload-epoch))))
-      ;; The recycle is the busiest teardown site there is — every N turns, for
-      ;; the life of every session — so a failure here is the one that compounds.
-      ;; It must not take the swap down, but it must not vanish either.
+      ;; A teardown failure must not take the swap down, but it must not vanish
+      ;; either: an unreported failure leaks a worker nobody can find.
       (try (dispose-environment! (:environment old))
            (catch Throwable t
              (tel/log! :error

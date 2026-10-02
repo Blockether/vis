@@ -1017,7 +1017,7 @@
    'gather
    "gather(*awaitables, return_exceptions=False) -> list. Run independent deferred tool calls/awaitables; results preserve input order. One list/tuple works; keep dependent calls sequential. Host batches use a bounded pool and settle every slot before failing: when a slot fails, the others still run to completion, then the first failing slot in input order raises, its message prefixed with `[index]` and followed by one `also failed:` line per other failed slot. No slot keeps running after the error. Cancelling the turn or a block timeout stops a gather instead: slots that have not started never run, running slots are interrupted, and the block gets one `KeyboardInterrupt`, which `except Exception` does not catch. A failed await returns no partial list, but the other slots already ran and had their side effects, so do not replay an entire write batch. With `return_exceptions=True`, results and exception objects occupy their original slots; host slots run serially in this mode. For per-slot recovery, use `await gather(cat(path_a), cat(path_b), return_exceptions=True)`. Inspect each slot before retrying safe failed work."
    'defs
-   "defs(name=None, *, pattern=None, limit=20, offset=0, details=False) -> str. Find, read and refine the functions this session defined. `defs()` prints an alphabetical index: matched/total/shown counts, block, source length and the first docstring line, with call hints capped at 120 characters that omit annotations and show default types (`=<str>`), never values. `pattern` is a case-sensitive regular expression over names and gists; `limit` is an integer from 1 to 100; `offset` is a nonnegative integer. `defs(name)` returns the exact source; a missing name gets a bounded search suggestion. `defs(name, details=True)` returns metadata only: origin, source SHA-256 and up to 20 source-derived global or captured names with type and presence. Those hints are advisory: liveness unknown, dynamic lookups and default/decorator expressions are not analyzed, and the digest covers source, not state. `details` requires a name and excludes listing controls. After each block Vis saves the session's definitions (best effort): redefining a name replaces its saved source, `del name` removes it, and a fresh sandbox after a gateway restart re-creates what remains, marked `(restored)`. Read before refining under the same stable name; delete explicitly after checking callers, because aliases and captured defaults may still hold older functions; never clean up by age. Imported functions and engine internals are excluded, session helpers stay absent from `apropos`, and the full docstring is the helper's `doc(name)` page. A helper proven useful across sessions belongs in an Improve proposal with its SHA-256 and verification, never in automatic promotion (`doc(\"extending\")`)."
+   "defs(name=None, *, pattern=None, limit=20, offset=0, details=False) -> str. Find, read and refine the helpers and variables this session defined. `defs()` prints an index with matched/total/shown counts: helpers alphabetically with block, source length and the first docstring line, with call hints capped at 120 characters that omit annotations and show default types (`=<str>`), never values; then variables with type, size and whether they are saved, never values. `pattern` is a case-sensitive regular expression over names, gists and variable types; `limit` is an integer from 1 to 100; `offset` is a nonnegative integer. `defs(name)` returns a helper's exact source or a variable's row; a missing name gets a bounded search suggestion. `defs(name, details=True)` returns metadata only: origin, source SHA-256 and up to 20 source-derived global or captured names with type and presence. Those hints are advisory: liveness unknown, dynamic lookups and default/decorator expressions are not analyzed, and the digest covers source, not state. `details` requires a name and excludes listing controls. After each block Vis saves the session's helpers, imports and variables (best effort). A variable is saved as a pickle of at most 1 MiB, 4 MiB for all of them; open files, handles, generators and larger values are not saved, and their rows say why. Redefining a name replaces its saved copy, and `del name` removes it and frees its memory. After an idle timeout, settings change or gateway restart, a fresh sandbox re-creates what remains, marks restored helpers `(restored)` and prints a restart notice that names what did not come back. Read before refining under the same stable name; delete explicitly after checking callers, because aliases and captured defaults may still hold older functions; never clean up by age. Imported functions and engine internals are excluded, session helpers stay absent from `apropos`, and the full docstring is the helper's `doc(name)` page. A helper proven useful across sessions belongs in an Improve proposal with its SHA-256 and verification, never in automatic promotion (`doc(\"extending\")`)."
    'fold-session
    "fold_session(key, gist=None) -> str. Collapse SETTLED steps: prior turns and the current turn only through its last completed iteration; live/future steps cannot fold. The key is a STRING: \"t2/i5\" one step · \"t2\" a whole turn · \"t2/i1-i56\" a range · \"-t2/i56\" everything through it · \"t2/i5-\" everything since it · comma-separate several, disjoint ranges included (\"t1/i61-i98, t3/i111-i135, t4\" is ONE fold); a token that is not a step key, or that matches no settled step, is refused by name. Folding changes rendering, not storage; there is no destructive unfold command, and a folded step is not re-readable inline — its GIST is what survives. With introspection on, `s = await read_session()` and filter `['transcript']['turns'][...]['iterations'][...]['blocks']`. A broader newer fold supersedes fully covered breadcrumbs; equal scope keeps newer. Partial overlaps remain separate."})
 
@@ -1361,6 +1361,12 @@
   disposed-sessions
   (atom #{}))
 
+(def ^:private restore-reports
+  "Python context -> what its restore brought back. `:notice` is the restart
+   notice the next block prints once; `:lost` maps each name the restart could not
+   bring back to the reason, for the NameError hint in [[map-python-error]]."
+  (atom {}))
+
 (defn dispose-python-context!
   "Drop `session`: its sandbox, separate trusted extension worker, host bindings
    and the right for this environment to run Python again. Gateway teardown kills
@@ -1368,6 +1374,7 @@
   [session]
   (when session
     (swap! disposed-sessions conj session)
+    (swap! restore-reports dissoc session)
     (discard-block-stdout! session)
     (python-host/forget-session! session)
     ;; Reclaim the separate trusted extension process too. The gateway registry
@@ -1730,6 +1737,15 @@
         (when (and (not host?) (not syntax?))
           (second (re-find #"name '([^']+)' is not defined" base)))
 
+        ;; A name the last restart could not bring back says WHY, and a context
+        ;; rebuilt from its snapshot says so for any other missing name: the
+        ;; transcript still shows what the old sandbox held (Blockether/vis#305).
+        restore-report
+        (when undefined-name (get @restore-reports session))
+
+        lost-reason
+        (get-in restore-report [:lost undefined-name])
+
         hint
         (cond non-ascii? (str
                            "A non-ASCII character leaked into CODE position - it is only "
@@ -1750,6 +1766,17 @@
               (str "Python is INDENTATION-sensitive: a block (after def / if / for / with / "
                    "a trailing `:`) must be indented consistently (4 spaces), and a top-level "
                    "statement must start at column 0. Re-indent that region. Original error: ")
+              lost-reason
+              (str "`"
+                   undefined-name
+                   "` did not come back when this sandbox restarted: "
+                   lost-reason
+                   ". Re-create it, and what it depends on, before you use it. Original error: ")
+              restore-report
+              (str "This sandbox restarted and was rebuilt from the session snapshot. If an "
+                   "earlier block created `" undefined-name
+                   "`, re-create it before you use it; "
+                   "`defs()` lists what this sandbox holds. Original error: ")
               :else nil)
 
         ;; CPython reports a code object's columns as UTF-8 BYTE offsets, while the
@@ -1942,24 +1969,101 @@
 (defn system-var-sym? [sym] (contains? SYSTEM_VAR_NAMES sym))
 
 (def ^:private session-defs-max-bytes
-  "Cap on ONE session's persisted helper source. Helpers are small; anything past
-   this is a runaway generator, not a toolbox, and is neither written nor read."
-  262144)
+  "Cap on ONE session's persisted snapshot: helper source plus saved variables.
+   The runtime keeps saved values to 4 MiB of pickles (about 5.4 MiB as base64)
+   and names what does not fit; anything past this cap is a runaway generator,
+   not session state, and is neither written nor read."
+  8388608)
+
+(def ^:private notice-name-limit
+  "Names a restart notice lists per kind before it counts the rest."
+  12)
+
+(defn- notice-names
+  "`names` for the restart notice: the first [[notice-name-limit]], then a count."
+  [names]
+  (let [shown
+        (take notice-name-limit names)
+
+        more
+        (- (count names) (count shown))]
+
+    (str (str/join ", " shown) (when (pos? more) (str ", +" more " more")))))
+
+(defn- restore-notice
+  "The restart notice for `report`, the runtime's `__vis_restore_report__`.
+
+   It separates what the conversation still shows from what this NEW process
+   holds: the host binds tools, `session` and workspace aliases again; helpers,
+   imports and saved variables come back from the snapshot; every other name is
+   gone, and the ones the snapshot knew of are named with their reason."
+  [report]
+  (let [kind
+        (fn [k one many]
+          (let [names (vec (get report k))]
+            (when (seq names)
+              (str (count names)
+                   " "
+                   (if (= 1 (count names)) one many)
+                   " ("
+                   (notice-names names)
+                   ")"))))
+
+        restored
+        (keep identity
+              [(kind :functions "helper" "helpers") (kind :classes "class" "classes")
+               (kind :variables "variable" "variables") (kind :imports "import" "imports")])
+
+        lost
+        (sort-by key (:lost report))]
+
+    (str "[Sandbox restarted] This Python sandbox is a new process: the previous one "
+         "stopped after an idle timeout, a settings change, a memory limit or a gateway "
+         "restart. The conversation above is unchanged. The host bound the tools, "
+         "`session` and the workspace path aliases again. "
+         (if (seq restored)
+           (str "Restored from the session snapshot: " (str/join ", " restored) ". ")
+           "Nothing was restored from the session snapshot. ")
+         (if (seq lost)
+           (str "NOT restored: "
+                (str/join "; "
+                          (map (fn [[n why]]
+                                 (str (name n) " (" why ")"))
+                               (take notice-name-limit lost)))
+                (when (> (count lost) notice-name-limit)
+                  (str "; +" (- (count lost) notice-name-limit) " more"))
+                ". Re-create these, and anything that depends on them, before you use them.")
+           (str "Every saved name is back. Open files, handles and running processes do not "
+                "survive a restart: create them again before you use them.")))))
+
+(defn take-restore-notice!
+  "The restart notice of `session`'s restore, exactly once: the first block after
+   the restore prints it, later blocks do not. Nil when there is none."
+  [session]
+  (when session
+    (let [[old _] (swap-vals! restore-reports
+                              (fn [reports]
+                                (if (get-in reports [session :notice])
+                                  (update reports session dissoc :notice)
+                                  reports)))]
+      (get-in old [session :notice]))))
 
 (def ^:private last-session-defs
   "session-id -> the snapshot last written, so an unchanged toolbox re-writes nothing."
   (atom {}))
 
 (defn persist-session-defs!
-  "Write this session's own `def`s beside the session, for a LATER process.
+  "Write this session's helpers, imports and variables beside the session, for a
+   LATER process.
 
    Globals persist across turns because the interpreter does — but the
-   interpreter dies with the PROCESS. Restart the gateway and every helper the
-   session refined is gone while the transcript still shows it, so the next call
-   is a NameError against code the model can still read. Best effort; answers the
+   interpreter dies with the PROCESS: an idle timeout, a settings change or a
+   gateway restart. Without this file every helper and variable the session
+   built is gone while the transcript still shows it, so the next call is a
+   NameError against names the model can still read. Best effort; answers the
    file when it wrote one. A disposed session is skipped: a call under its name
    would reach a fresh, empty namespace, and that empty snapshot would erase the
-   saved helpers."
+   saved state."
   [session session-id]
   (when (and session session-id (not (contains? @disposed-sessions session)))
     (try (let [src
@@ -1989,20 +2093,31 @@
   (when session-id (swap! last-session-defs dissoc session-id) nil))
 
 (defn restore-session-defs!
-  "Re-create the helper definitions an EARLIER process persisted for
-   `session-id`, answering how many are live afterwards.
+  "Re-create the helpers, imports and variables an EARLIER process persisted for
+   `session-id`, answering how many helpers are live afterwards.
 
    The restored source is registered as a real block, so `defs(\"name\")` and
    `inspect.getsource` read it back exactly like a local one, and it goes
-   through the same rewrite so it RUNS like one."
+   through the same rewrite so it RUNS like one. What came back and what did not
+   becomes the restart notice of the next block ([[take-restore-notice!]]) and the
+   hint on a NameError for a name that is gone."
   [session session-id]
   (when (and session session-id)
     (try (let [f (io/file (paths/sandbox-defs-file (str session-id)))]
            (when (and (.isFile f) (<= (.length f) (long session-defs-max-bytes)))
              (let [src (slurp f)
-                   n (guest-value session (str "__vis_restore_defs__(" (pr-str src) ")"))]
+                   n (guest-value session (str "__vis_restore_defs__(" (pr-str src) ")"))
+                   report (guest-value session "__vis_restore_report__")]
 
                (swap! last-session-defs assoc session-id src)
+               (when (map? report)
+                 (swap! restore-reports assoc
+                   session
+                   {:notice (restore-notice report)
+                    :lost (into {}
+                                (map (fn [[k v]]
+                                       [(name k) (str v)]))
+                                (:lost report))}))
                (when (number? n) (long n)))))
          (catch Throwable e
            (tel/log! {:level :debug :id ::restore-session-defs-failed :error e})

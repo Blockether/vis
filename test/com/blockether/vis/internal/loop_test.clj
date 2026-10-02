@@ -3279,10 +3279,11 @@
 
       (try
         (expect
-          (nil? (:error
-                  (python-exec/execute-code
-                    environment
-                    "def saved_helper():\n    return 'restored'\nscratch = 1\nhandle = object()"))))
+          (nil?
+            (:error
+              (python-exec/execute-code
+                environment
+                "def saved_helper():\n    return 'restored'\nscratch = 1\nhandle = (n for n in range(3))"))))
         (let [timeout
               (binding [rt/*eval-timeout-ms* 3000]
                 (python-exec/execute-code
@@ -3301,9 +3302,9 @@
             message)
           (expect (str/includes?
                     message
-                    (str "Vis restarted Python. Imports, functions, classes and small "
-                         "literal values saved from earlier blocks are restored; other "
-                         "objects, such as open files, connections and large data, are gone."))
+                    (str "Vis restarted Python. Imports, functions, classes and variables saved "
+                         "from earlier blocks are restored; open files, connections and values "
+                         "the snapshot could not save are gone"))
                   message)
           (expect (str/includes? message "The block was not run again") message)
           (expect (nil? (get-in timeout [:error :type]))))
@@ -3313,7 +3314,10 @@
                       environment
                       "print(saved_helper(), scratch, 'handle' in globals())")]
           (expect (nil? (:error after)) (pr-str after))
-          (expect (= "restored 1 False\n" (:stdout after))))
+          ;; #305: the first block in the new process opens with the restart notice.
+          (expect (str/starts-with? (str (:stdout after)) "[Sandbox restarted]") (pr-str after))
+          (expect (str/includes? (str (:stdout after)) "NOT restored: handle (") (pr-str after))
+          (expect (str/ends-with? (str (:stdout after)) "\n\nrestored 1 False\n") (pr-str after)))
         (expect (not= old-context (env/python-context environment)))
         (finally (loop-env/dispose-environment! environment)
                  (clojure.java.io/delete-file defs-file true))))))
@@ -3437,8 +3441,9 @@
             calls (atom 0)
             requests (atom [])]
 
-        (try (expect (nil? (:error (python-exec/execute-code environment
-                                                             "handle = object()\nprint('ready')"))))
+        (try (expect (nil? (:error (python-exec/execute-code
+                                     environment
+                                     "handle = (n for n in range(3))\nprint('ready')"))))
              (let [result (binding [rt/*eval-timeout-ms* 3000]
                             (with-redefs [svar/ask-code! (fn [_ opts]
                                                            (swap! requests conj (:messages opts))
@@ -3468,7 +3473,8 @@
                (expect (str/includes? (pr-str (last @requests)) "Vis restarted Python"))
                ;; A second block of the same response runs in the fresh interpreter.
                (when same-response?
-                 (expect (= "False\n" (:stdout (second forms))) (pr-str (second forms))))
+                 (expect (str/ends-with? (str (:stdout (second forms))) "\n\nFalse\n")
+                         (pr-str (second forms))))
                (expect (false? @(:python-context-retired-atom environment)))
                (expect (env/context-enterable? environment)))
              (finally (loop-env/dispose-environment! environment)))))))
@@ -9374,29 +9380,17 @@
                            (expect (true? (with-redefs [loop-env/env-rss-budget-mb (delay 1)]
                                             (memory-pressure?)))))))
 
-(def ^:private bump-turns! (deref #'loop-env/bump-turns!))
-
 (def ^:private recycle-env! (deref #'loop-env/recycle-env!))
 
 (defdescribe env-recycle-test
-             ;; Layer 2: a single long-lived (never-idle) session's Context is
-             ;; recycled between turns after `env-max-turns-per-ctx` turns — dispose
-             ;; + rebuild IN PLACE, reusing the same lock so a queued caller stays
-             ;; correct.
-             (describe "bump-turns!"
-                       (it "increments the per-context counter and returns the count"
-                           (let [entry (new-cache-entry {})]
-                             (expect (= 1 (bump-turns! entry)))
-                             (expect (= 2 (bump-turns! entry)))
-                             (expect (= 3 (bump-turns! entry)))))
-                       (it "returns 0 for an entry with no counter"
-                           (expect (= 0 (bump-turns! {})))))
+             ;; A `/reload` recycle rebuilds a session's env IN PLACE, reusing the
+             ;; same lock so a queued caller stays correct.
              (describe
                "recycle-env!"
                (it
                  "swaps a fresh env in place, reuses the lock, disposes the old"
                  (let [k
-                       "recycle-test/turn-cap"
+                       "recycle-test/reload"
 
                        old-env
                        {:marker :old}
@@ -9425,8 +9419,6 @@
                           (expect (= fresh-env (:environment e2)))
                           ;; SAME lock preserved so a queued caller stays correct
                           (expect (identical? (:lock entry) (:lock e2)))
-                          ;; turn counter reset for the fresh context
-                          (expect (= 0 (.get ^java.util.concurrent.atomic.AtomicLong (:turns e2))))
                           ;; the OLD env disposed exactly once
                           (expect (= [old-env] @disposed)))
                         (finally (swap! env-cache dissoc k)))))))
@@ -9438,10 +9430,7 @@
                 (atom {})
 
                 python-exec/policy-reload-epoch
-                (atom 0)
-
-                loop-env/env-max-turns-per-ctx
-                (delay 0)]
+                (atom 0)]
 
     (let [id
           (java.util.UUID/randomUUID)
@@ -9480,6 +9469,24 @@
                              (expect (= :finished (lp/send! id "reload")))
                              (expect (= [(:environment entry)] @disposed))
                              (expect (identical? entry (get @loop-env/cache id)))))))
+  ;; #305: a working session keeps its sandbox however many turns it runs; only
+  ;; idleness, memory pressure or a `/reload` replaces it.
+  (it "keeps one sandbox across many turns"
+      (with-reload-cache (fn [id entry disposed]
+                           (let [opened (atom 0)]
+                             (with-redefs [turn/turn! (fn [environment _ _]
+                                                        (expect (= (:environment entry)
+                                                                   environment))
+                                                        :finished)
+                                           loop-env/open-env! (fn [_ _]
+                                                                (swap! opened inc)
+                                                                {:marker :fresh})]
+
+                               (dotimes [_ 12]
+                                 (expect (= :finished (lp/send! id "work"))))
+                               (expect (zero? @opened))
+                               (expect (empty? @disposed))
+                               (expect (identical? entry (get @loop-env/cache id))))))))
   (it "closes a busy sandbox after the turn even when turn or bookkeeping fails"
       (doseq [failure [nil :turn :bookkeeping]]
         (with-reload-cache

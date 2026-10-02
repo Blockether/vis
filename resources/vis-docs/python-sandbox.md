@@ -18,6 +18,8 @@ and what the sandbox can access.
   compatibility](#tls-compatibility).
 - **The Python worker stops responding.** Look for the [hang
   evidence](#diagnosing-an-unresponsive-worker) that Vis tries to save.
+- **A helper or variable from an earlier turn is gone.** See [Sandbox state after a
+  restart](#sandbox-state-after-a-restart).
 
 To limit what the agent's commands can reach, turn on the [process jail](jail.md).
 
@@ -46,6 +48,45 @@ repaired code did what it meant.
 When the repair cannot make the block parse, the block does not run. Its error
 lists the quotes, brackets and escapes that are wrong, followed by Python's own
 error.
+
+## Sandbox state after a restart
+
+The sandbox keeps your helpers and variables while you work. You can use a result
+from an earlier turn without computing it again.
+
+The sandbox process stops only in these cases:
+
+- The session was idle for 5 minutes. Set `VIS_ENV_IDLE_TTL_MS` on the gateway to
+  change this time.
+- You changed settings that need a new sandbox, for example with `/reload`.
+- The gateway freed memory for other sessions. See [Resource
+  limits](gateway-service.md#resource-limits).
+- The gateway restarted.
+
+The number of turns does not stop the sandbox. A session that stays active keeps
+the same process.
+
+After each block, Vis saves a snapshot of the session:
+
+- The source of each helper function and class, and each `import`.
+- Each variable that Python can pickle. One value can use up to 1 MiB, and all
+  values together up to 4 MiB.
+
+The next sandbox restores this snapshot before it runs your next block. The
+output of that block starts with a `[Sandbox restarted]` notice. The notice names
+the restored helpers and variables. It also names each value that did not come
+back, with the reason.
+
+These values never survive a restart. Create them again when you need them:
+
+- Open files, sockets and other handles.
+- Generators and running processes.
+- Values that are larger than the limits.
+
+`defs()` lists your helpers and variables. A variable row shows the type and size
+of the value, and tells you if Vis saved it. `defs()` never shows values. To remove
+a helper or variable from the snapshot, delete it with `del name`. This also frees
+its memory.
 
 ## Experiment with extension declarations
 

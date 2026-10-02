@@ -573,7 +573,7 @@
         (expect (str/includes? md content) content))
       (doseq [content ["VIS_GATEWAY_URL" "VIS_GATEWAY_TOKEN" "HTTP 401" "HTTP 426"
                        "VIS_GATEWAY_MAX_CONCURRENT_TURNS" "VIS_GATEWAY_EVENT_RING_MAX"
-                       "VIS_ENV_CACHE_MAX" "VIS_ENV_MAX_TURNS_PER_CTX" "VIS_ENV_RSS_BUDGET_MB"
+                       "VIS_ENV_CACHE_MAX" "VIS_ENV_IDLE_TTL_MS" "VIS_ENV_RSS_BUDGET_MB"
                        "does not encrypt HTTP" "Stopping a busy gateway interrupts" "Amber means"]]
         (expect (not (str/includes? md content)) content)
         (expect (str/includes? (:md gateway) content) content))

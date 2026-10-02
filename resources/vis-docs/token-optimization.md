@@ -71,10 +71,13 @@ You can ask Vis to adapt a helper it already wrote:
 A one-line docstring makes a helper easier to find with `defs()`. `doc(name)` returns the whole
 docstring. Helpers do not appear in `apropos`.
 
-After each block, Vis tries to save your definitions. It can restore them after a gateway restart.
-If you define a name again, Vis replaces its saved source. `del obsolete_name` removes it. Before
-you redefine or remove a name, check aliases, captured defaults and callers. Python references do
-not update automatically, and restored resources may not be live.
+After each block, Vis saves your helpers and variables. A new sandbox restores them, for example
+after an idle timeout or a gateway restart. [Sandbox state after a
+restart](python-sandbox.md#sandbox-state-after-a-restart) gives the limits.
+
+If you define a name again, Vis replaces its saved copy. `del name` removes a helper or variable
+and frees its memory. Before you redefine or remove a name, check aliases, captured defaults and
+callers. Python references do not update automatically.
 
 ## Addresses, not copies
 
@@ -145,11 +148,13 @@ print(defs("summarize_rows", details=True))
 - `defs()` lists up to 20 helpers alphabetically, with origin, source length
   and a docstring gist. Call hints are at most 120 characters, omit annotations
   and show only a default's type (`=<int>`), not its value. Hints are not source.
-- `defs(pattern="summar|count", limit=10, offset=0)` matches names and first-line docstring gists
-  with a case-sensitive regex. `limit` is 1–100, and `offset` is nonnegative. For more results,
-  increase the offset or narrow the pattern.
-- `defs("summarize_rows")` returns unchanged source. Check it for secrets before
-  sharing. `defs("summarize_rows", details=True)` returns origin, source SHA-256
+  Your variables follow, with type, size and save status. `defs()` never shows values.
+- `defs(pattern="summar|count", limit=10, offset=0)` matches names, first-line docstring gists
+  and variable types with a case-sensitive regex. `limit` is 1–100, and `offset` is nonnegative.
+  For more results, increase the offset or narrow the pattern.
+- `defs("summarize_rows")` returns unchanged source. For a variable, it returns
+  the listing row. Check source for secrets before sharing.
+- `defs("summarize_rows", details=True)` returns origin, source SHA-256
   and up to 20 source-derived global or captured names with types and presence.
   These hints do not prove dependencies or liveness. Default and decorator
   expressions are not analyzed. The digest identifies source, not argument

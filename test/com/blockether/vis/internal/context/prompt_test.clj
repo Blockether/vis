@@ -832,7 +832,11 @@
       ;; 11.4k → 11.7k for #303: §7 states when, where and how to write progress notes, so
       ;; projects stop copying that policy into AGENTS.md, and it makes ASD-STE100 the default
       ;; prose standard unless the user or project asks for another style.
-      (expect (< (count text) 11700))
+      ;; 11.7k → 12.1k for #305: a restart silently lost every variable while the transcript
+      ;; still showed it. §2 now says helpers AND variables are saved within stated limits,
+      ;; `del` frees memory and a `[Sandbox restarted]` notice names what came back. It lands
+      ;; at 12 018.
+      (expect (< (count text) 12100))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
@@ -1618,40 +1622,51 @@
             "Non-None `hidden` overrides `is_hidden`" "gitignored entries stay excluded"]]
           (expect (str/includes? text rule) rule)))))
 
-(defdescribe core-prompt-helper-lifecycle-test
-             ;; Council report 4353: unbounded helper catalogs and versioned names hid reusable work.
-             (it "searches before creating and refines the existing binding from its source"
-                 (let [text (prompt/build-system-prompt {})]
-                   (doseq [rule ["Before a new helper, search `defs(pattern=\"...\")`"
-                                 "read `defs(name)` and refine a stable name"
-                                 "`defs(name, details=True)` lists a" "whether each is present"]]
-                     (expect (str/includes? text rule) rule))))
-             ;; User report: the goal-form rewrite left only a rule to REUSE helpers, so blocks
-             ;; retyped the same steps and `defs()` stayed empty. Keep the rule that creates one.
-             (it "factors a repeated block into a named helper on its second occurrence"
-                 (let [text (prompt/build-system-prompt {})]
-                   (doseq [rule ["Factor a repeated loop or block into a small named helper"
-                                 "on its second occurrence, then call it"
-                                 "Reuse helpers instead of retyping" "`defs()` lists them"]]
-                     (expect (str/includes? text rule) rule))))
-             ;; User report: no rule said whether redefining or deleting a helper changes the
-             ;; saved definitions, so the model had to read the host to answer that.
-             (it "states that the saved set follows redefinition and explicit deletion"
-                 (let [text (prompt/build-system-prompt {})]
-                   (doseq [rule ["mirror the namespace after each block"
-                                 "redefining replaces the saved source"
-                                 "`del obsolete_name` drops the helper from `defs()` for good"
-                                 "a restart restores only what is still defined"
-                                 "callers, aliases and captured defaults confirm it is unused"]]
-                     (expect (str/includes? text rule) rule))))
-             ;; User report: three of seven helper lines described source fingerprints and
-             ;; Improve proposals, a rare workflow paid for in every request. That contract
-             ;; stays on the `doc("defs")` page and in the token-optimization guide.
-             (it "keeps fingerprints and Improve proposals out of the per-request prompt"
-                 (let [text (prompt/build-system-prompt {})]
-                   (doseq [rule ["SHA-256" "propose to Improve" "liveness unknown"]]
-                     (expect (not (str/includes? text rule)) rule))
-                   (expect (str/includes? text "Create Python extensions only when asked")))))
+(defdescribe
+  core-prompt-helper-lifecycle-test
+  ;; Council report 4353: unbounded helper catalogs and versioned names hid reusable work.
+  (it "searches before creating and refines the existing binding from its source"
+      (let [text (prompt/build-system-prompt {})]
+        (doseq [rule ["Before a new helper, search `defs(pattern=\"...\")`"
+                      "read `defs(name)` and refine a stable name"
+                      "`defs(name, details=True)` lists a" "whether each is present"]]
+          (expect (str/includes? text rule) rule))))
+  ;; User report: the goal-form rewrite left only a rule to REUSE helpers, so blocks
+  ;; retyped the same steps and `defs()` stayed empty. Keep the rule that creates one.
+  (it "factors a repeated block into a named helper on its second occurrence"
+      (let [text (prompt/build-system-prompt {})]
+        (doseq [rule ["Factor a repeated loop or block into a small named helper"
+                      "on its second occurrence, then call it" "Reuse helpers instead of retyping"
+                      "`defs()` lists them"]]
+          (expect (str/includes? text rule) rule))))
+  ;; User report: no rule said whether redefining or deleting a helper changes the
+  ;; saved definitions, so the model had to read the host to answer that.
+  (it "states that the saved set follows redefinition and explicit deletion"
+      (let [text (prompt/build-system-prompt {})]
+        (doseq [rule ["Helpers and variables survive blocks and turns"
+                      "Redefining replaces the saved copy"
+                      "`del name` drops a helper or variable for good and frees its memory"
+                      "callers, aliases and captured defaults confirm it is unused"]]
+          (expect (str/includes? text rule) rule))))
+  ;; #305: a recycle lost every variable while the transcript still showed it,
+  ;; and nothing told the model that its sandbox had restarted.
+  (it "states what a restart keeps and how it announces itself"
+      (let [text (prompt/build-system-prompt {})]
+        (doseq [rule
+                ["up to 1 MiB each, 4 MiB in total"
+                 "`defs()` lists both and marks what it could not save"
+                 "memory limit or gateway restart, a fresh sandbox is rebuilt from the snapshot"
+                 "`[Sandbox restarted]` notice"
+                 "Open files, handles, generators and running processes never survive"]]
+          (expect (str/includes? text rule) rule))))
+  ;; User report: three of seven helper lines described source fingerprints and
+  ;; Improve proposals, a rare workflow paid for in every request. That contract
+  ;; stays on the `doc("defs")` page and in the token-optimization guide.
+  (it "keeps fingerprints and Improve proposals out of the per-request prompt"
+      (let [text (prompt/build-system-prompt {})]
+        (doseq [rule ["SHA-256" "propose to Improve" "liveness unknown"]]
+          (expect (not (str/includes? text rule)) rule))
+        (expect (str/includes? text "Create Python extensions only when asked")))))
 
 ;; Regression: name the prebound paths and lifetime of reusable helpers so blocks
 ;; do not redefine paths or helpers that the session already provides.
@@ -1684,8 +1699,9 @@
                    ;; Regression: the prompt promised a `def` only "persists for the whole
                    ;; session" — true of the interpreter, false of the PROCESS, so a restart
                    ;; silently emptied the sandbox the transcript still described.
-                   (expect (str/includes? text "survives blocks, turns and gateway restarts"))
+                   (expect (str/includes? text "Helpers and variables survive blocks and turns"))
                    (expect (str/includes? text "gateway restart"))
+                   (expect (str/includes? text "rebuilt from the snapshot"))
                    (expect (str/includes? text
                                           "rebuilt before every block, so writes to it vanish"))
                    (expect (str/includes? text "your own state lives in variables and helpers"))

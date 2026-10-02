@@ -252,7 +252,7 @@ Set these environment variables before starting the gateway:
 | `VIS_GATEWAY_MAX_CONCURRENT_TURNS` | `50` | Turns executing at once across all sessions |
 | `VIS_GATEWAY_EVENT_RING_MAX` | `2000` | Events kept per session for SSE replay |
 | `VIS_ENV_CACHE_MAX` | `8` | Idle session environments kept resident |
-| `VIS_ENV_MAX_TURNS_PER_CTX` | `5` | Turns before a Python session is recycled |
+| `VIS_ENV_IDLE_TTL_MS` | `300000` | Idle milliseconds before a session's Python sandbox stops |
 | `VIS_ENV_RSS_BUDGET_MB` | `3072` native / `5120` JVM | Process memory threshold for eviction |
 
 A value `<= 0` disables an eviction threshold.

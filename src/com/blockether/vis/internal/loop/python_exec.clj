@@ -76,9 +76,9 @@
 ;; ONE persistent interpreter per session. The Python sandbox is created ONCE
 ;; (`create-environment`) and reused across every turn, so the model's globals
 ;; (defs, imports, variables) carry across calls and turns NATURALLY, REPL-style.
-;; (Resuming a session in a FRESH process starts with an empty sandbox; durable
-;; file edits and conversation history persist, so the model recomputes what it
-;; needs.)
+;; (A FRESH process — after an idle timeout, a settings change or a gateway
+;; restart — re-creates the saved helpers, imports and variables from the
+;; session snapshot and prints a restart notice naming what did not come back.)
 
 (def ^:private INTERRUPT_UNWIND_MS
   "How long an acknowledged interrupt gets to unwind before its session worker
@@ -204,24 +204,26 @@
         "The block was waiting in native code and did not respond to the stop, so "]
 
     (cond-> {:message
-             (str "Time limit reached: Vis stopped this block after "
-                  limit
-                  ". This is the normal time limit for one python_execution block, not a fault. "
-                  "Extension calls have no time limit and do not count toward it. "
-                  (case python-state
-                    :kept
-                    "Python state is kept."
+             (str
+               "Time limit reached: Vis stopped this block after "
+               limit
+               ". This is the normal time limit for one python_execution block, not a fault. "
+               "Extension calls have no time limit and do not count toward it. "
+               (case python-state
+                 :kept
+                 "Python state is kept."
 
-                    :restarted
-                    (str
-                      no-response
-                      "Vis restarted Python. Imports, functions, classes and small literal values "
-                      "saved from earlier blocks are restored; other objects, such as open files, "
-                      "connections and large data, are gone. The block was not run again: check "
-                      "what it already did before you continue.")
+                 :restarted
+                 (str
+                   no-response
+                   "Vis restarted Python. Imports, functions, classes and variables saved from "
+                   "earlier blocks are restored; open files, connections and values the snapshot "
+                   "could not save are gone, and the next block starts with a notice that names "
+                   "them. The block was not run again: check what it already did before you "
+                   "continue.")
 
-                    :retired
-                    (str no-response "Vis shut down its Python process.")))}
+                 :retired
+                 (str no-response "Vis shut down its Python process.")))}
       (= :retired python-state)
       (assoc :type ::env/context-retired))))
 
@@ -686,10 +688,11 @@
                       :duration-ms (- (util/now-ms) start-time)
                       :timeout? false}))]
 
-        ;; Helper definitions outlive the PROCESS. The sandbox dies with the
-        ;; gateway, so this session's own `def`s are snapshotted after every block
-        ;; and re-created by `restore-session-defs!` in the next process's fresh
-        ;; sandbox. Best effort, after the outcome is in hand — never in its way.
+        ;; Session state outlives the PROCESS. The sandbox dies with an idle
+        ;; timeout, a settings change or the gateway, so this session's helpers,
+        ;; imports and variables are snapshotted after every block and re-created
+        ;; by `restore-session-defs!` in the next process's fresh sandbox. Best
+        ;; effort, after the outcome is in hand — never in its way.
         (env/persist-session-defs! python-context (:session-id environment))
         ;; Count successful operations even if their receipts were not printed or
         ;; the rest of this block failed. Summary supersession cannot erase usage.
@@ -697,10 +700,20 @@
                                               deref)
                                       "engine_fold_count")
                                  0))
-                       folds-before)]
+                       folds-before)
+              ;; The first block after a restore says what the restart kept and lost,
+              ;; BEFORE its own output: the transcript still shows every name the old
+              ;; sandbox held (Blockether/vis#305).
+              notice (env/take-restore-notice! python-context)]
+
           (cond-> exec
             (pos? folds)
-            (assoc :vis/fold-count folds)))))))
+            (assoc :vis/fold-count folds)
+
+            notice
+            (update :stdout
+                    (fn [printed]
+                      (if (str/blank? (str printed)) notice (str notice "\n\n" printed))))))))))
 
 ;; get-locals (read sandbox vars)
 

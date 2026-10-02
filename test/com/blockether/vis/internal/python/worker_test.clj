@@ -177,10 +177,7 @@ print(worker_value)"))))
                                  (atom {})
 
                                  python-exec/policy-reload-epoch
-                                 (atom 0)
-
-                                 loop-env/env-max-turns-per-ctx
-                                 (delay 0)]
+                                 (atom 0)]
 
                      (let [id
                            (java.util.UUID/randomUUID)

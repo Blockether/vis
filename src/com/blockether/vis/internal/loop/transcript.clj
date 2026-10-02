@@ -1983,7 +1983,8 @@
      "Run Python in the session sandbox — the only call. `print(...)` is the ONLY channel back: the block "
      "runs as a script, so what it prints is what returns, and it ends by printing exactly what the answer "
      "needs. Batch, filter and chain work here: "
-     "`await gather(...)` runs independent calls together. State persists; "
+     "`await gather(...)` runs independent calls together. State persists across blocks and turns; "
+     "a restarted sandbox restores saved helpers and variables and says so; "
      "project packages need a project REPL. "
      "Nothing is silent: errors surface whether the block printed or not. "
      (when (toggles/enabled? "improve")
