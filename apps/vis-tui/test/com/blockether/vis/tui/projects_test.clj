@@ -1704,7 +1704,7 @@
       (with-open [terminal (review-terminal 20 2)]
         (let [g (.newTextGraphics terminal)]
           (doseq [status ["HITL" "HITL ×2"]]
-            (#'projects/paint-session-status! g {:status status} 0 0 20)
+            (#'projects/paint-session-status! g {:status status} 0 0 20 nil)
             (expect (= theme/warning-fg (.getForegroundColor g))))))))
 
 (defdescribe saved-project-attachment-only-draft-test

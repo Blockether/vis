@@ -593,10 +593,19 @@
         (if (and (seq tail) parent) (if (= parent (first tail)) tail (into [parent] tail)) visible))
       visible)))
 
+(defn- dark-selection?
+  "Use a solid accent for focused and selected rows on dark surfaces."
+  [entry active? focused?]
+  (and (= :dark (:mode t/default-theme))
+       (or focused?
+           (:selected? entry)
+           (and active? (#{:project-session :project-input :project-unread} (:kind entry))))))
+
 (defn- row-bg
-  "Mirror the web's project, set and open-session surfaces; highlight focused and selected rows."
-  [{:keys [kind set selected?]} active? focused?]
-  (cond focused? (t/mix-color t/terminal-bg t/header-active-tab-bg 0.14)
+  "Keep resting rows subtle; give dark selections the full theme accent."
+  [{:keys [kind set selected?] :as entry} active? focused?]
+  (cond (dark-selection? entry active? focused?) t/header-active-tab-accent
+        focused? (t/mix-color t/terminal-bg t/header-active-tab-bg 0.14)
         selected? (t/mix-color t/terminal-bg t/header-active-tab-bg 0.16)
         (and active? (= :project-session kind))
         (t/mix-color t/terminal-bg t/header-active-tab-bg 0.10)
@@ -624,18 +633,19 @@
 
 (defn- paint-session-status!
   "Show session activity (and favorite) in a stable column."
-  [g entry col row available]
+  [g entry col row available selected-ink]
   (let [state
         (:status entry)
 
         ink
-        (cond (= state "LIVE") t/status-ok
-              (= state "STOPPED") t/status-bad
-              (or (str/starts-with? state "HITL")
-                  (str/starts-with? state "NEW")
-                  (#{"WAITING" "DIRTY"} state))
-              t/warning-fg
-              :else t/dialog-hint-key)
+        (or selected-ink
+            (cond (= state "LIVE") t/status-ok
+                  (= state "STOPPED") t/status-bad
+                  (or (str/starts-with? state "HITL")
+                      (str/starts-with? state "NEW")
+                      (#{"WAITING" "DIRTY"} state))
+                  t/warning-fg
+                  :else t/dialog-hint-key))
 
         label
         (str (when (:favorite? entry) "* ") state)]
@@ -645,7 +655,7 @@
 
 (defn- paint-session-meta!
   "Place activity and metadata in an adaptive second row, aligned with the title."
-  [g entry left width col row]
+  [g entry left width col row selected-ink]
   (let [left
         (long left)
 
@@ -660,9 +670,10 @@
                              entry
                              col
                              row
-                             (max 0 (- (+ left width) col (if (>= width 38) 17 5)))))
+                             (max 0 (- (+ left width) col (if (>= width 38) 17 5)))
+                             selected-ink))
     (when (>= width 38)
-      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+      (p/set-colors! g (or selected-ink t/dialog-hint-key) t/dialog-bg)
       (when (>= width 48)
         (p/put-str! g col row (p/truncate-cols (str (get-in entry [:session "id"])) 10)))
       (when (pos? (long (:turns entry)))
@@ -1083,6 +1094,7 @@
 
                                 (and (:tab-id entry) (= (:tab-id entry) (:active-tab-id db))))
                       focused? (and (:focused? sidebar) (= index (:index sidebar)))
+                      selected-ink (when (dark-selection? entry active? focused?) t/terminal-bg)
                       status (p/truncate-cols (row-status entry sidebar width) (max 0 (- width 9)))
                       status-col
                       (- (+ left width)
@@ -1098,13 +1110,16 @@
 
           (binding [t/dialog-bg (row-bg entry active? focused?)]
             (p/set-colors! g
-                           (if (and (= :project-group kind) (not focused?))
-                             (t/group-ink (:color entry))
-                             t/dialog-fg)
+                           (or selected-ink
+                               (if (and (= :project-group kind) (not focused?))
+                                 (t/group-ink (:color entry))
+                                 t/dialog-fg))
                            t/dialog-bg)
             (p/fill-rect! g (inc left) row (max 0 (- width 2)) (row-height entry))
             (p/styled g
-                      (if (or (#{:project-select :project-set} kind) active? focused?) [p/BOLD] [])
+                      (if (or (#{:project-select :project-set} kind) active? focused? selected-ink)
+                        [p/BOLD]
+                        [])
                       (p/put-str! g
                                   (inc row-left)
                                   row
@@ -1139,27 +1154,30 @@
                                                       label)
                                                  (max 0 (- name-width 2)))))
             (if alert?
-              (components/button!
-                g
-                status-col
-                row
-                status
-                kind
-                {:tint :warning :register? false :extra {:tab-id (:tab-id entry)}})
+              ;; Chips derive their ink from the dark surface, not the bright row fill.
+              (binding [t/dialog-bg (if selected-ink t/terminal-bg t/dialog-bg)]
+                (components/button!
+                  g
+                  status-col
+                  row
+                  status
+                  kind
+                  {:tint :warning :register? false :extra {:tab-id (:tab-id entry)}}))
               (do (p/set-colors! g
-                                 (cond (and (= :project-group kind) (not focused?))
-                                       (t/group-ink (:color entry))
-                                       (or (pos? (long (or (:needs-input entry) 0)))
-                                           (pos? (long (or (:unread entry) 0))))
-                                       t/warning-fg
-                                       :else t/dialog-hint-key)
+                                 (or selected-ink
+                                     (cond (and (= :project-group kind) (not focused?))
+                                           (t/group-ink (:color entry))
+                                           (or (pos? (long (or (:needs-input entry) 0)))
+                                               (pos? (long (or (:unread entry) 0))))
+                                           t/warning-fg
+                                           :else t/dialog-hint-key))
                                  t/dialog-bg)
                   (p/put-str! g status-col row status)))
             (when (= :project-session kind)
-              (when (>= width 48) (paint-session-status! g entry status-col row 14))
-              (paint-session-meta! g entry left width (+ row-left 4) (inc row)))
+              (when (>= width 48) (paint-session-status! g entry status-col row 14 selected-ink))
+              (paint-session-meta! g entry left width (+ row-left 4) (inc row) selected-ink))
             (when (= :project-group kind)
-              (p/set-colors! g (t/group-ink (:color entry)) t/dialog-bg)
+              (p/set-colors! g (or selected-ink (t/group-ink (:color entry))) t/dialog-bg)
               (p/put-str! g (inc left) row "▏")))
           (.register
             interactions/hit-map
