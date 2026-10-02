@@ -89,75 +89,6 @@
   [s ^long limit]
   (clamp (str s) limit))
 
-(def ^:private ACTIVITY_TEXT_LIMIT
-  "Bound for ONE text field inside a live Activity row (a summary, a result, a
-   diff line). Small on purpose: a row is a LINE a human reads, and the field
-   budget has to leave room for the rows beside it inside
-   `STREAM_CUMULATIVE_LIMIT`."
-  2000)
-
-(defn- clamp-activity-text
-  "`x` with every text VALUE inside it clamped to `ACTIVITY_TEXT_LIMIT`. Map keys
-   are left alone: a key is a field name, and rewriting one would rename the
-   field rather than shorten it."
-  [x]
-  (cond (map? x) (persistent! (reduce-kv (fn [m k v]
-                                           (assoc! m k (clamp-activity-text v)))
-                                         (transient {})
-                                         x))
-        (sequential? x) (mapv clamp-activity-text x)
-        (string? x) (bounded-str x ACTIVITY_TEXT_LIMIT)
-        :else x))
-
-(defn- bounded-activity
-  "`activity` snapshot bounded for the wire, the way a delta's `:cumulative` is.
-
-   The reducer's snapshot keeps the whole history of a form's observed work, so a
-   long block emitted it as ONE unbounded frame - a measured ~600KB
-   `block.activity` on a single socket write, ahead of every frame queued behind
-   it. Two cuts, in order: every text field is clamped to
-   `ACTIVITY_TEXT_LIMIT`, so no single row can be arbitrarily large, then the
-   OLDEST rows are dropped until the frame fits `STREAM_CUMULATIVE_LIMIT`.
-
-   The rows are walked NEWEST-first and clamped as they are measured, so the work
-   is proportional to the frame that ships rather than to the history behind it.
-   Walking the whole snapshot first would put the ~600KB back on every running
-   revision - O(n²) over a long block - which is the cost this is here to remove.
-
-   Dropped rows are counted into `:omitted :rows`, which is the snapshot's own
-   channel for shedding (`activity/empty-state`) and which clients already read -
-   so a bounded frame says it is bounded instead of silently losing work. The
-   NEWEST row always survives: it is the one the human is watching, and its own
-   text is already clamped. The DURABLE snapshot persisted on the form is
-   untouched; this bound is the live wire frame alone."
-  [activity]
-  (let [rows
-        (vec (:rows activity))
-
-        cost
-        (fn [row]
-          (long (count (try (wire/json-str row) (catch Throwable _ (pr-str row))))))
-
-        kept
-        (:rows (reduce (fn [acc row]
-                         (let [row (clamp-activity-text row)
-                               left (- (long (:budget acc)) (cost row))]
-                           (if (and (seq (:rows acc)) (neg? left))
-                             (reduced acc)
-                             (assoc acc :rows (cons row (:rows acc)) :budget left))))
-                       {:rows () :budget STREAM_CUMULATIVE_LIMIT}
-                       (rseq rows)))
-
-        dropped
-        (- (count rows) (count kept))]
-
-    (cond-> (clamp-activity-text (dissoc activity :rows))
-      (contains? activity :rows)
-      (assoc :rows (vec kept))
-
-      (pos? dropped)
-      (update-in [:omitted :rows] (fn [n] (+ (long (or n 0)) (long dropped)))))))
-
 ;; Live reasoning/content/prose deltas arrive per provider token. Each emitted
 ;; wire frame carries the INCREMENT since the last emit under `:text` (append
 ;; consumers, e.g. the web prose stream) PLUS the bounded FULL cumulative text
@@ -1885,19 +1816,19 @@
 
 (defn- form-activity-chunk->event
   "`block.activity` frame `[type store? payload]` carrying one full replacement of a
-   form's bounded Activity snapshot, or nil.
+   form's Activity snapshot, or nil.
 
    Running revisions are transient while the reducer is active; the explicit settled
    revision is durable. Both route on `form_index`, the position shared by the form's
    start and output frames.
 
-   Both are BOUNDED here (`bounded-activity`): the reducer's snapshot grows with
-   the work a form does, and the frame is one socket write that every frame behind
-   it waits on."
+   The snapshot ships whole. A durable block's snapshot is already a contract page
+   (`x-vis-max-page-rows`, `x-vis-page-target-bytes`) whose later rows stay reachable
+   through `history`; a second cut here would drop rows the client cannot page back."
   [{:keys [phase position activity iteration settled?]}]
   (when (and (= phase :form-activity) (map? activity))
     ["block.activity" (boolean settled?)
-     (cond-> {:form-index position :activity (bounded-activity activity)}
+     (cond-> {:form-index position :activity activity}
        (some? iteration)
        (assoc :iteration iteration))]))
 

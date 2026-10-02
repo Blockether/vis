@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.contract.activity :as activity-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.environment :as loop-env]
@@ -4003,9 +4004,11 @@
         (expect (pos? resolutions))
         (expect (= 1 (:project_count answer))))))
 
-;; Regression: the Activity snapshot grows with the work a form does, and the whole
-;; of it rode ONE `block.activity` frame - a measured ~600KB socket write, with every
-;; frame queued behind it waiting on that write.
+;; Regression, user report: a long block painted "5 steps omitted · Activity limit".
+;; The gateway cut every `block.activity` frame to 16,000 characters and every text
+;; field to 2,000, below the contract page that already bounds the frame
+;; (`x-vis-max-page-rows`, `x-vis-page-target-bytes`) and keeps later rows pageable
+;; through `history`. The rows it cut never reached the client.
 (defn- activity-of
   [rows]
   (:activity (nth (#'state/form-activity-chunk->event
@@ -4026,49 +4029,25 @@
            :presenter "command"
            :signal "observation"
            :state "succeeded"
-           :summary text
+           :summary "read one observed file"
            :resources []
            :evidence [{:kind "text" :text text}]})
         (range n)))
 
 (defdescribe
-  gateway-bounds-the-activity-frame-test
-  (it "clamps an oversized text field instead of shipping it whole"
-      (let [row (first (:rows (activity-of (activity-rows 1 (apply str (repeat 100000 "x"))))))]
-        (expect (str/ends-with? (:summary row) "…[truncated]"))
-        (expect (< (count (:summary row)) 3000))
-        (expect (< (count (:text (first (:evidence row)))) 3000))))
-  (it "drops the OLDEST rows and counts them, instead of growing without bound"
-      (let [bounded
-            (activity-of (activity-rows 400 "read one observed file"))
+  block-activity-ships-the-page-whole-test
+  (it "ships every row of a full page and omits none"
+      (let [rows
+            (activity-rows activity-contract/page-row-limit (apply str (repeat 1000 "x")))
 
-            kept
-            (:rows bounded)]
+            shipped
+            (activity-of rows)]
 
-        (expect (seq kept))
-        (expect (< (count kept) 400))
-        ;; The newest row is the one the human is watching, so it always survives.
-        (expect (= "row-399" (:id (last kept))))
-        (expect (= (- 400 (count kept)) (get-in bounded [:omitted :rows])))
-        (expect (< (count (wire/json-str bounded)) 20000))))
-  (it "leaves a snapshot that already fits exactly as it was"
-      (let [rows (activity-rows 2 "short")]
-        (expect (= rows (:rows (activity-of rows))))
-        (expect (= 0 (get-in (activity-of rows) [:omitted :rows])))))
-  ;; The rows are walked NEWEST-first and clamped as they are measured, so a row
-  ;; the frame drops is never visited at all - clamping the whole history first
-  ;; would put the ~600KB this bound removes back on every running revision. The
-  ;; oldest row here EXPLODES when anything walks into it.
-  (it "never walks into the rows it drops"
-      (let [exploding
-            (assoc (first (activity-rows 1 "oldest"))
-              :id "oldest" :resources (lazy-seq (throw (ex-info "walked a dropped row" {}))))
-
-            bounded
-            (activity-of (into [exploding] (activity-rows 400 "read one observed file")))]
-
-        (expect (= "row-399" (:id (last (:rows bounded)))))
-        (expect (pos? (long (get-in bounded [:omitted :rows])))))))
+        (expect (= rows (:rows shipped)))
+        (expect (= 0 (get-in shipped [:omitted :rows])))))
+  (it "ships evidence text the contract allows without cutting it"
+      (let [rows (activity-rows 1 (apply str (repeat activity-contract/detail-byte-limit "x")))]
+        (expect (= rows (:rows (activity-of rows)))))))
 
 ;; The bands of one project are a WALL a human keeps growing, so the list a client
 ;; paints them from is a window with a total of its own - what its pager prints.
