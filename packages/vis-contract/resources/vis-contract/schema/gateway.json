@@ -1316,6 +1316,18 @@
       "operations": {
         "post": {
           "request": "json",
+          "response": "json",
+          "request_schema": "settings_target",
+          "response_schema": "extension_reload"
+        }
+      },
+      "path": "/v1/extensions/reload"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
           "response": "json"
         }
       },
@@ -2494,6 +2506,9 @@
               "title": {
                 "type": "string"
               },
+              "extension": {
+                "$ref": "#/$defs/settings_extension"
+              },
               "toggles": {
                 "type": "array",
                 "items": {
@@ -2503,6 +2518,32 @@
             }
           }
         }
+      }
+    },
+    "settings_extension": {
+      "type": "object",
+      "required": [
+        "name",
+        "origin",
+        "status"
+      ],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "origin": { "enum": ["built_in", "global", "project"] },
+        "path": { "type": "string" },
+        "status": { "enum": ["loaded", "stale", "failed"] },
+        "error": { "type": "string" }
+      }
+    },
+    "extension_reload": {
+      "type": "object",
+      "required": [
+        "loaded",
+        "failed"
+      ],
+      "properties": {
+        "loaded": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 }
       }
     },
     "setting_write": {

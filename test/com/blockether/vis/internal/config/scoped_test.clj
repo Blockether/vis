@@ -16,6 +16,7 @@
             [com.blockether.vis.internal.foundation.mcp.core :as mcp]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.persistance.core :as store]
+            [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [lazytest.core :refer [defdescribe it expect]]))
@@ -717,6 +718,119 @@
                                nil
                                (catch clojure.lang.ExceptionInfo e (:status (ex-data e)))))))
              (finally (extension/set-project-extensions! root []))))))
+  (it
+    "shows each extension's origin and load failure"
+    ;; #302: a failed extension lost its controls without a word.
+    (with-empty-config
+      (let [db
+            (h/store)
+
+            home
+            (System/getProperty "user.home")
+
+            body
+            (fn []
+              (-> (#'settings-api/list-settings-handler {:query-params {}})
+                  :body
+                  json/read-json))
+
+            sections
+            (fn [catalog]
+              (into {} (map (juxt #(get % "id") identity)) (get catalog "groups")))]
+
+        (toggles/register-toggle! {:id "state_fixture_flag"
+                                   :label "Flag"
+                                   :default true
+                                   :owner "state-fixture"
+                                   :scopes contract/scopes})
+        (try
+          (with-redefs [lp/db-info
+                        (constantly db)
+
+                        discovery/all-skills
+                        (constantly [])
+
+                        extension/registered-extensions
+                        (constantly [{:ext/name "state-fixture"
+                                      :ext/toggles [{:id "state_fixture_flag"}]}])
+
+                        python-extensions/loaded-python-extensions
+                        (constantly {(str home "/.vis/extensions/state.py")
+                                     {:ext-name "state-fixture" :project-root nil}})
+
+                        python-extensions/load-failures
+                        (constantly [{:file (str home "/.vis/extensions/state.py")
+                                      :extension "state-fixture"
+                                      :stale? true
+                                      :error "Fixture reload failure"}
+                                     {:file (str home "/.vis/extensions/broken.py")
+                                      :stale? false
+                                      :error "Fixture syntax error"}])]
+
+            (let [catalog
+                  (body)
+
+                  groups
+                  (sections catalog)]
+
+              (expect (document/valid-json? "gateway" "settings" catalog))
+              (expect (= {"name" "state-fixture"
+                          "origin" "global"
+                          "path" "~/.vis/extensions/state.py"
+                          "status" "stale"
+                          "error" "Fixture reload failure"}
+                         (get-in groups ["extension:state-fixture" "extension"])))
+              (expect (= ["state_fixture_flag"]
+                         (mapv #(get % "id")
+                               (get-in groups ["extension:state-fixture" "toggles"]))))
+              (expect (= {"title" "broken.py"
+                          "extension" {"name" "broken.py"
+                                       "origin" "global"
+                                       "path" "~/.vis/extensions/broken.py"
+                                       "status" "failed"
+                                       "error" "Fixture syntax error"}
+                          "toggles" []}
+                         (dissoc (get groups "extension:broken.py") "id")))))
+          (finally (toggles/unregister-owner! "state-fixture"))))))
+  (it
+    "reloads extension code only on request, where the target runs"
+    (with-empty-config
+      (let [db
+            (h/store)
+
+            root
+            (workspace/normalize-root "target/project-extension-reload")
+
+            project
+            (store/db-create-project! db {:name "Extension reload" :workspace-root root})
+
+            calls
+            (atom [])
+
+            reload
+            (fn [body]
+              (let [response (#'settings-api/reload-extensions-handler
+                              {:body (io/input-stream (.getBytes ^String (json/write-json-str body)
+                                                                 "UTF-8"))})]
+                [(:status response) (json/read-json (:body response))]))]
+
+        (with-redefs [lp/db-info
+                      (constantly db)
+
+                      discovery/all-skills
+                      (constantly [])
+
+                      python-extensions/reload-python-extensions!
+                      (fn [opts]
+                        (swap! calls conj [workspace/*workspace-root* opts])
+                        {:loaded 2 :failed 1 :changed? true})]
+
+          (expect (= [200 {"loaded" 2 "failed" 1}]
+                     (reload {"scope" "project" "target_id" (str (:id project))})))
+          (expect (= [200 {"loaded" 2 "failed" 1}] (reload {"scope" "global"})))
+          (expect (= 400 (first (reload {"scope" "project"}))))
+          (#'settings-api/list-settings-handler {:query-params {}})
+          (expect (= [[root nil] [nil {:global-only? true}]] @calls))))))
   (it "leaves global MCP availability to the MCP servers section"
       (with-empty-config
         (let [db (h/store)]

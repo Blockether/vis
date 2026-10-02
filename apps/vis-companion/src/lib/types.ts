@@ -377,10 +377,29 @@ export interface Toggle {
   schema?: string;
 }
 
+/** Where an extension section comes from, and whether its last load worked. */
+export interface SettingsExtension {
+  name: string;
+  origin: 'built_in' | 'global' | 'project';
+  /** Project-relative or home-relative file path; built-in extensions have none. */
+  path?: string;
+  /** `stale`: the last reload failed and the previously loaded version still runs. */
+  status: 'loaded' | 'stale' | 'failed';
+  error?: string;
+}
+
 export interface ToggleGroup {
   id: string;
   title: string;
+  /** Present on extension sections; older gateways omit it. */
+  extension?: SettingsExtension;
   toggles: Toggle[];
+}
+
+/** Counts from one explicit extension reload. */
+export interface ExtensionReload {
+  loaded: number;
+  failed: number;
 }
 
 export interface SettingsResponse {

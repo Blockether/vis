@@ -659,6 +659,29 @@ Omit both flags to manage global servers. Project targets accept the project ID
 or its canonical root. Group and session targets use their IDs. Authentication
 and lifecycle commands remain global-only.
 
+### Extension settings
+
+Each extension with settings has its own section. The section title is the
+extension name. A project or machine extension also shows the path of its file.
+
+Opening or refreshing Settings never runs extension code. After you add, change
+or remove an extension file, use the **Extensions** section:
+
+- To read the settings list again, select **Refresh list**.
+- To run the extension files again, select **Reload extensions**.
+
+In global settings, **Reload extensions** reloads machine extensions. In project,
+group or session settings, it also reloads the extensions of that project. Vis
+then shows how many extensions loaded and how many failed.
+
+If an extension fails to load, its section stays in the list and shows the
+error. If a reload fails after an earlier load, Vis keeps using the earlier
+version. The section then says so. Your stored values do not change when an
+extension fails, goes away or loads again.
+
+If the gateway runs an older Vis, **Reload extensions** shows a message. Update
+Vis on that machine to use the action.
+
 ### Settings HTTP reference
 
 `GET /v1/settings` and `GET /v1/settings/:id` take `scope` and `target_id` query
@@ -700,6 +723,18 @@ the full catalog with its new `revision`.
 `toggle`, `cycle` or `inherit`. A `value` action also requires `value`, including
 explicit JSON `false`. Invalid values and disallowed scopes return 400. Unknown
 targets or setting IDs return 404. Inheritance removes one key, not a parent map.
+
+An extension group in the catalog includes `extension` with `name`, `origin` and
+`status`. `origin` is `built_in`, `global` or `project`. `status` is `loaded`,
+`stale` or `failed`. A `global` or `project` extension also has `path`. A `stale`
+or `failed` extension has `error`. A failed extension that never loaded has a group
+with no rows.
+
+`POST /v1/extensions/reload` runs the extension files of one settings target
+again. The body has the same `scope` and `target_id` as `GET /v1/settings`. A
+global target reloads machine extensions only. The response has the `loaded` and
+`failed` counts. Reading the catalog never runs extension code. Gateways without
+this route return 404.
 
 ## Session titling
 

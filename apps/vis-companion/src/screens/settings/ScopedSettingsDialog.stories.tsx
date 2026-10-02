@@ -52,7 +52,7 @@ export const Catalog: Story = {
     const sections = panel('Agent')?.parentElement;
     await expect(sections).toHaveClass('divide-y', 'divide-dialog-edge');
     await expect(Array.from(sections?.children ?? [])).toEqual([
-      panel('Agent'), panel('Experimental'), panel('MCP servers'),
+      panel('Agent'), panel('Experimental'), panel('Extensions'), panel('MCP servers'),
     ]);
   },
 };

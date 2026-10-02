@@ -644,6 +644,19 @@
                     (when context-session-id
                       (str "&context_session_id=" (enc (str context-session-id))))))))
 
+(defn reload-extensions!
+  "Execute trusted extension files where this target runs, then report load counts.
+   A nil target reloads machine extensions only. Reading settings never executes code."
+  ([] (reload-extensions! nil))
+  ([target]
+   (let [entry (target!)]
+     (ensure-client! entry)
+     (send-json-with-entry! entry
+                            "POST"
+                            "/v1/extensions/reload"
+                            (or target {:scope "global"})
+                            {:timeout-ms 120000}))))
+
 (defn create-session! [opts] (send-json! "POST" "/v1/sessions" opts))
 
 (defn session-slashes
@@ -2453,6 +2466,8 @@
 (def gateway-set-setting-value! set-setting-value!)
 
 (def gateway-settings settings)
+
+(def gateway-reload-extensions! reload-extensions!)
 
 (def gateway-delete-queued-turn! delete-queued-turn!)
 

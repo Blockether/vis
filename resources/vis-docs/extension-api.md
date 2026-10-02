@@ -133,7 +133,10 @@ load. The load error names that owner.
 string `choices` and a `default` from those choices.
 
 The app and the TUI show your settings in a section with your extension's name. That section also
-holds the extension's engine choice and its packaged skills.
+holds the extension's engine choice and its packaged skills. If your extension fails to load, the
+section stays and shows the error. After you change the file, select **Reload extensions** in
+Settings. Opening Settings does not run your code. See [extension
+settings](configuration.md#extension-settings).
 
 `scopes` accepts any non-empty, duplicate-free subset of `global`, `project`, `group` and `session`.
 Without it, only `global` is permitted. The backend enforces eligibility for writes and resolution,

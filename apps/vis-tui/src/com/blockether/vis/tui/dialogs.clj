@@ -3240,47 +3240,78 @@
                           (mapv #(if (= id (get % "id")) (merge % row) %) rows))))
               (or groups []))))))
 
+(defn- extension-info-rows
+  "Provenance and load failures for one extension section. Built-in extensions need neither
+   while they load, so their sections stay one line per setting."
+  [{:strs [origin path status error]}]
+  (cond-> []
+    (contains? #{"project" "global"} origin)
+    (conj {:type :info
+           :label (if (= "project" origin) "Project extension" "Machine extension")
+           :description path})
+
+    (contains? #{"failed" "stale"} status)
+    (conj {:type :info
+           :tone :bad
+           :label (if (= "stale" status)
+                    "Reload failed — using last loaded version"
+                    "Extension failed to load")
+           :description error})))
+
 (defn- catalog-toggle-rows
   "Project the gateway catalog without repeating metadata or reset actions in the list.
    Global settings are the root scope: an explicit value there overrides nothing, so only a
    scoped target marks overrides and offers their reset."
   [groups]
   (vec
-    (mapcat (fn [group]
-              (let [rows (filterv #(not= "agent_name" (get % "id")) (get group "toggles"))]
-                (when (seq rows)
-                  (cons {:type :section :label (str (get group "title"))}
-                        (mapv (fn [row]
-                                (let [type (get row "type")
-                                      id (get row "id")
-                                      override? (and *settings-target* (get row "is_override"))]
+    (mapcat
+      (fn [group]
+        (let [rows
+              (filterv #(not= "agent_name" (get % "id")) (get group "toggles"))
 
-                                  {:key (keyword (str "toggle::" id))
-                                   :type (case type
-                                           "string"
-                                           :text-setting
+              info
+              (some-> (get group "extension")
+                      extension-info-rows)]
 
-                                           "number"
-                                           :number-setting
+          (when (or (seq rows) (seq info))
+            (concat [{:type :section :label (str (get group "title"))}]
+                    info
+                    (mapv (fn [row]
+                            (let [type
+                                  (get row "type")
 
-                                           ("array" "object")
-                                           :structured-setting
+                                  id
+                                  (get row "id")
 
-                                           :registry-toggle)
-                                   :toggle-id id
-                                   :toggle-type (keyword type)
-                                   :toggle-value (if (= "boolean" type)
-                                                   (boolean (get row "enabled"))
-                                                   (get row "value"))
-                                   :setting row
-                                   :choices (vec (get row "choices"))
-                                   :experimental? (boolean (get row "is_experimental"))
-                                   :source (get row "source")
-                                   :is-override? (boolean override?)
-                                   :label (str (get row "label"))
-                                   :description (str (get row "description"))}))
-                              rows)))))
-            (or groups []))))
+                                  override?
+                                  (and *settings-target* (get row "is_override"))]
+
+                              {:key (keyword (str "toggle::" id))
+                               :type (case type
+                                       "string"
+                                       :text-setting
+
+                                       "number"
+                                       :number-setting
+
+                                       ("array" "object")
+                                       :structured-setting
+
+                                       :registry-toggle)
+                               :toggle-id id
+                               :toggle-type (keyword type)
+                               :toggle-value (if (= "boolean" type)
+                                               (boolean (get row "enabled"))
+                                               (get row "value"))
+                               :setting row
+                               :choices (vec (get row "choices"))
+                               :experimental? (boolean (get row "is_experimental"))
+                               :source (get row "source")
+                               :is-override? (boolean override?)
+                               :label (str (get row "label"))
+                               :description (str (get row "description"))}))
+                          rows)))))
+      (or groups []))))
 
 (defn- override-note
   "Explain why a more specific scope decides this catalog row for the session
@@ -3643,24 +3674,40 @@
       @catalog
       nil)))
 
-(defn- settings-rows
-  "Every setting in one flat grouped list: response and theme preferences,
-   toggles, providers, and MCP servers. Empty sections are omitted."
+(defn- extension-action-rows
+  "Refresh reads the catalog alone; reload runs trusted extension code where Settings applies."
   []
-  (if *settings-target*
-    (vec (concat (or (registry-toggle-rows) [])
-                 (when-let [error (:error @(settings-inventory-atom))]
-                   [{:type :info :tone :bad :label "Settings unavailable" :description error}])
-                 (or (mcp-settings-rows) [])))
-    (vec (concat (settings-ui-options)
-                 [{:type :section :label "Agent"}
-                  {:type :agent-name
-                   :label "Agent name"
-                   :description (or (get @agent-name-setting "error")
-                                    "Shared by all gateway clients. Overrides project names.")}]
-                 (or (registry-toggle-rows) [])
-                 (or (provider-settings-rows) [])
-                 (or (mcp-settings-rows) [])))))
+  [{:type :section :label "Extensions"}
+   {:type :action
+    :id :extensions-refresh
+    :label "Refresh list"
+    :description "Read the settings catalog again. This does not run extension code."}
+   {:type :action
+    :id :extensions-reload
+    :label "Reload extensions"
+    :description
+    (if *settings-target*
+      "Run trusted machine and project extension code again. Stored settings stay unchanged."
+      "Run trusted machine extension code again. Stored settings stay unchanged.")}])
+
+(defn- settings-rows
+  "Every setting in one flat grouped list. A failed catalog read keeps the last catalog and
+   says so; extension actions follow the catalog sections they change."
+  []
+  (vec (concat (when-not *settings-target*
+                 (concat (settings-ui-options)
+                         [{:type :section :label "Agent"}
+                          {:type :agent-name
+                           :label "Agent name"
+                           :description
+                           (or (get @agent-name-setting "error")
+                               "Shared by all gateway clients. Overrides project names.")}]))
+               (or (registry-toggle-rows) [])
+               (when-let [error (:error @(settings-inventory-atom))]
+                 [{:type :info :tone :bad :label "Settings unavailable" :description error}])
+               (extension-action-rows)
+               (when-not *settings-target* (or (provider-settings-rows) []))
+               (or (mcp-settings-rows) []))))
 
 (defn- settings-option-label
   [{:keys [label type toggle-id experimental? locked is-override?]} _values]
@@ -4465,6 +4512,40 @@
         (when-let [number (parse-double text)]
           (when (Double/isFinite (double number)) number)))))
 
+(defn- settings-extension-action!
+  "Refresh the catalog, or first run trusted extension code again, and report the result."
+  [^TerminalScreen screen g region reload?]
+  (let [region (host-band-region screen region)]
+    (band-question-frame! g region (if reload? "Reloading extensions…" "Refreshing list…") [])
+    (frame/refresh! screen)
+    (try
+      (let [{:strs [loaded failed]} (when reload?
+                                      (vis/gateway-reload-extensions! *settings-target*))
+            {:keys [status error]} (load-settings-inventory!)
+            failed (long (or failed 0))
+            counts (when reload? (str (or loaded 0) " loaded, " failed " failed."))]
+
+        (mini-note!
+          screen
+          g
+          region
+          (cond reload? "Extensions reloaded"
+                (= :error status) "List not refreshed"
+                :else "List refreshed")
+          (cond (= :error status)
+                (str/join " " (remove nil? [counts (str "Settings unavailable: " error)]))
+                reload? (str counts (when (pos? failed) " Each failed extension shows its error."))
+                :else "No extension code ran.")))
+      (catch Exception e
+        (mini-note! screen
+                    g
+                    region
+                    "Extensions not reloaded"
+                    (if (and (= 404 (:http-status (ex-data e)))
+                             (= "not-found" (get-in (ex-data e) ["error" "type"])))
+                      "This gateway does not support extension reload. Update Vis on that machine."
+                      (ex-message e)))))))
+
 (defn- activate-unlocked-row!
   [^TerminalScreen screen g region values callbacks row]
   (case (:type row)
@@ -4533,16 +4614,19 @@
           (load-settings-inventory!))))
 
     :action
-    (when-let [f (get callbacks (:id row))]
-      ;; An action gets the SAME frame handle a provider row gets, so it can
-      ;; paint its own transient band inside Settings instead of stacking a
-      ;; dialog on top of it.
-      (let [result (f {:values @values :g g :region region})]
-        ;; Adding an entry changes what every row under it says; re-read that
-        ;; inventory instead of trusting the cached one.
-        (when (= :mcp-add (:id row)) (load-mcp-inventory!))
-        (when (= :provider-add (:id row)) (load-provider-inventory!))
-        result))
+    (case (:id row)
+      :extensions-refresh
+      (settings-extension-action! screen g region false)
+
+      :extensions-reload
+      (settings-extension-action! screen g region true)
+
+      (when-let [f (get callbacks (:id row))]
+        ;; An action paints its transient in the current Settings frame.
+        (let [result (f {:values @values :g g :region region})]
+          (when (= :mcp-add (:id row)) (load-mcp-inventory!))
+          (when (= :provider-add (:id row)) (load-provider-inventory!))
+          result)))
 
     ;; An MCP row IS its verbs — start, kill, enable, disable, sign in, edit,
     ;; remove — offered as a transient band in THIS frame, each on the key

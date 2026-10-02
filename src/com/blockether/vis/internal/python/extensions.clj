@@ -1870,12 +1870,12 @@
                       :data {:listener id :error (ex-message t)}})))))
 
 (defn load-failures
-  "Load failures visible to the current project, including global extensions.
+  "Load failures visible in a project, including global extensions; the current
+   project by default, and global extensions alone for a nil `root`.
    Each row names the file, error, retained extension, stale? status,
    loaded/requested source fingerprints and readiness changes."
-  []
-  (let [root (workspace/cwd-root)]
-    (filterv #(or (nil? (:project-root %)) (= root (:project-root %))) @failures)))
+  ([] (load-failures (workspace/cwd-root)))
+  ([root] (filterv #(or (nil? (:project-root %)) (= root (:project-root %))) @failures)))
 
 (defn- failure-summary
   [{:keys [file error extension stale? loaded-fingerprint requested-fingerprint]}]
@@ -1888,23 +1888,25 @@
        ". " error))
 
 (defn loaded-python-extensions
-  "Snapshot of the effective Python extensions for the current project:
-   `{<canonical-path> {:sha ... :ext-name ...}}` (context handle elided).
-   Project declarations override global extensions with the same name."
-  []
-  (let [local
-        (scope-entries (workspace/cwd-root))
+  "Snapshot of the effective Python extensions in a project, the current one by
+   default: `{<canonical-path> {:sha ... :ext-name ...}}` (context handle elided).
+   Project declarations override global extensions with the same name. A nil
+   `root` lists global extensions alone."
+  ([] (loaded-python-extensions (workspace/cwd-root)))
+  ([root]
+   (let [local
+         (when root (scope-entries root))
 
-        local-names
-        (set (map (comp :ext-name val) local))]
+         local-names
+         (set (map (comp :ext-name val) local))]
 
-    (into {}
-          (map (fn [[_ e]]
-                 [(:path e) (dissoc e :context :ext)]))
-          (concat (remove (fn [[_ e]]
-                            (local-names (:ext-name e)))
-                    (scope-entries nil))
-                  local))))
+     (into {}
+           (map (fn [[_ e]]
+                  [(:path e) (dissoc e :context :ext)]))
+           (concat (remove (fn [[_ e]]
+                             (local-names (:ext-name e)))
+                     (scope-entries nil))
+                   local)))))
 
 (defn ^:no-doc default-extension-dirs
   []

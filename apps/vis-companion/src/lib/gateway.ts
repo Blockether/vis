@@ -82,6 +82,7 @@ import type {
   BrowseEntry,
   BrowseListing,
   SessionAlert,
+  ExtensionReload,
 } from './types';
 import { PROTOCOL_HEADERS } from './compat';
 import { withSavedAttachment } from './artifacts';
@@ -2362,6 +2363,18 @@ export class GatewayClient {
       });
     }
     return updated;
+  }
+
+  /**
+   * Run trusted extension code again where `target` runs. Machine settings reload
+   * machine extensions only. Reading the catalog with `settings` never runs extension
+   * code. Gateways without this route answer 404.
+   */
+  async reloadExtensions(target?: SettingsTarget): Promise<ExtensionReload> {
+    return await this.request<ExtensionReload>('POST', '/v1/extensions/reload', {
+      scope: target?.scope ?? 'global',
+      target_id: target?.target_id,
+    });
   }
 
   private hasSettingsCatalogRevision(data: SettingsResponse | null): data is SettingsResponse {

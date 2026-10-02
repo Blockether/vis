@@ -147,13 +147,14 @@ it.each(['session', 'group', 'project'] as const)(
     const sections = panel('Agent')?.parentElement;
     expect(sections).toHaveClass('divide-y', 'divide-dialog-edge');
     expect(Array.from(sections?.children ?? [])).toEqual([
-      panel('Agent'), panel('Experimental'), panel('MCP servers'),
+      panel('Agent'), panel('Experimental'), panel('Extensions'), panel('MCP servers'),
     ]);
 
     await user.type(screen.getByRole('searchbox', { name: 'Search settings' }), 'draft');
     expect(panel('Experimental')?.parentElement).toHaveClass('divide-y', 'divide-dialog-edge');
     expect(panel('Experimental')?.parentElement?.children).toHaveLength(1);
     expect(screen.queryByRole('heading', { name: 'Agent' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Extensions' })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'MCP servers' })).toBeNull();
   },
 );

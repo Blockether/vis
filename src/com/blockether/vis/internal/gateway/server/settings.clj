@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.gateway.server.settings
   "Settings routes, including the Improve register and its settings."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.contract.toggle :as toggle-contract]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.internal.gateway.server.settings-edit :as settings-edit]
@@ -13,6 +14,8 @@
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.gateway.server.http :as http]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.gateway.state :as state]))
 
 (defn- toggle-json
@@ -132,6 +135,44 @@
                                             (:ext/skills ext))))))
         (extension/registered-extensions (:root target))))
 
+(defn- extension-path
+  "Name an extension file for its reader: inside the project, or under `~`."
+  [root path]
+  (let [prefix (str root "/")]
+    (if (and root (str/starts-with? (str path) prefix))
+      (subs (str path) (count prefix))
+      (paths/abbreviate-home (str path)))))
+
+(defn- extension-states
+  "Origin, file and load state of each Python extension where `target` runs, by section
+   name. A file that failed before it ever loaded is named by its file."
+  [target]
+  (let [root
+        (:root target)
+
+        origin
+        #(if % "project" "global")
+
+        loaded
+        (into {}
+              (map (fn [[path {:keys [ext-name project-root]}]]
+                     [ext-name
+                      {:origin (origin project-root)
+                       :path (extension-path root path)
+                       :status "loaded"}]))
+              (python-extensions/loaded-python-extensions root))]
+
+    (reduce (fn [states {:keys [file extension error stale? project-root]}]
+              (update states
+                      (or extension (.getName (io/file (str file))))
+                      merge
+                      {:origin (origin project-root)
+                       :path (extension-path root file)
+                       :status (if stale? "stale" "failed")
+                       :error (str error)}))
+            loaded
+            (python-extensions/load-failures root))))
+
 (defn- settings-catalog
   [request target]
   (let [local?
@@ -174,10 +215,18 @@
             [:extension ext-name]
             [:vis (or (:group row) :other)]))
 
+        states
+        (extension-states target)
+
+        ;; A failed extension keeps its section, so its error shows where its controls were.
         grouped
         (sort-by (fn [[[kind group] _]]
                    [(if (= :vis kind) 0 1) (str group)])
-                 (group-by section (mark-overridden request target rows)))]
+                 (merge (into {}
+                              (keep (fn [[ext-name {:keys [status]}]]
+                                      (when (not= "loaded" status) [[:extension ext-name] []])))
+                              states)
+                        (group-by section (mark-overridden request target rows))))]
 
     {:scope (:scope target)
      :target-id (:target-id target)
@@ -203,6 +252,9 @@
                           (if (= :extension kind)
                             {:id (str "extension:" group)
                              :title (str group)
+                             :extension (merge
+                                          {:name (str group) :origin "built_in" :status "loaded"}
+                                          (get states group))
                              :toggles (mapv toggle-json (sort-by #(second (owners (:id %))) specs))}
                             {:id (name group)
                              :title (group-title group local?)
@@ -213,6 +265,28 @@
   "GET /v1/settings; typed catalog, provenance and a concurrency revision."
   [request]
   (settings-response #(http/json-response (settings-catalog request (request-target request nil)))))
+
+(defn- reload-extensions-handler
+  "POST /v1/extensions/reload; load the extension files where a settings target runs again.
+   This runs their code; reading the catalog never does. A machine target reloads global
+   extensions alone."
+  [request]
+  (settings-response (fn []
+                       (let [body
+                             (http/body-json request)
+
+                             _
+                             (when-not (document/valid-json? "gateway" "settings_target" body)
+                               (throw (ex-info "Supply a valid settings target" {:status 400})))
+
+                             root
+                             (:root (request-target request body))]
+
+                         (http/json-response (select-keys
+                                               (binding [workspace/*workspace-root* root]
+                                                 (python-extensions/reload-python-extensions!
+                                                   (when-not root {:global-only? true})))
+                                               [:loaded :failed]))))))
 
 (defn- apply-settings-handler
   "PATCH /v1/settings; apply one versioned owner batch, or write nothing."
@@ -354,6 +428,7 @@
   {[:get "/v1/settings"] list-settings-handler
    [:post "/v1/settings"] set-setting-handler
    [:patch "/v1/settings"] apply-settings-handler
+   [:post "/v1/extensions/reload"] reload-extensions-handler
    [:get "/v1/improve"] (improve-handler :list)
    [:post "/v1/improve"] (improve-handler :create)
    [:get "/v1/improve/settings"] (improve-handler :settings)

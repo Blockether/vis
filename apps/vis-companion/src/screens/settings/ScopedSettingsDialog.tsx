@@ -4,6 +4,7 @@ import type { GatewayClient } from '../../lib/gateway';
 import type { SettingValue, SettingsResponse, SettingsTarget, Toggle } from '../../lib/types';
 import { Banner, Button, CloseButton, DialogFrame, Input, Modal, Text } from '../../components/ui';
 import { McpServersPanel, SettingRow } from './MachineSettings';
+import { ExtensionNotice, ExtensionsPanel, extensionMeta, hasExtensionNotice } from './ExtensionSettings';
 import { SettingsPanel } from './SettingsLayout';
 
 type ScopedSettingsProps = {
@@ -58,6 +59,12 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
     } catch (err) { setError((err as Error).message); return false; }
     finally { saving.current = false; setPending(null); }
   };
+  // An explicit refresh replaces the catalog; a poll that started earlier must not.
+  const reread = async () => {
+    epoch.current += 1;
+    setError(null);
+    setData(await client.settings(undefined, owner));
+  };
   const needle = search.toLowerCase().trim();
   const groups = (data?.groups ?? [])
     .map((group) => ({
@@ -68,7 +75,10 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
             `${toggle.label} ${toggle.description ?? ''}`.toLowerCase().includes(needle),
           ),
     }))
-    .filter((group) => group.toggles.length);
+    // A failed extension keeps its section, with its error, even without settings.
+    .filter((group) =>
+      group.toggles.length || (hasExtensionNotice(group) && group.title.toLowerCase().includes(needle)),
+    );
   const matches = groups.reduce((count, group) => count + group.toggles.length, 0);
   const clearSearch = () => {
     setSearch('');
@@ -107,7 +117,7 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
           </div>
           {error && <div className="p-3"><Banner kind="err">{error}</Banner></div>}
           {!data && !error && <div className="p-6 text-center"><Text variant="description">Loading settings…</Text></div>}
-          {data && needle && matches === 0 && (
+          {data && needle && groups.length === 0 && (
             <div role="status" className="px-4 py-8 text-center sm:py-10">
               <SearchIcon className="mx-auto size-5 text-dialog-hint" />
               <Text as="h3" variant="section" className="mt-3 break-words">No settings match “{search.trim()}”</Text>
@@ -121,10 +131,12 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
           )}
           {(groups.length > 0 || !needle) && (
             <div className="divide-y divide-dialog-edge">
-              {groups.map((group) => <SettingsPanel key={group.id} title={group.title} headingLevel={3}>
-                <div className="divide-y divide-dialog-edge">{group.toggles.map((toggle) => <SettingRow key={toggle.id} toggle={toggle} busy={pending !== null}
-                  onToggle={() => void save(toggle, 'toggle')} onPick={(value) => save(toggle, 'value', value)} onInherit={() => void save(toggle, 'inherit')} />)}</div>
+              {groups.map((group) => <SettingsPanel key={group.id} title={group.title} meta={extensionMeta(group)} headingLevel={3}>
+                <ExtensionNotice group={group} />
+                {group.toggles.length > 0 && <div className="divide-y divide-dialog-edge">{group.toggles.map((toggle) => <SettingRow key={toggle.id} toggle={toggle} busy={pending !== null}
+                  onToggle={() => void save(toggle, 'toggle')} onPick={(value) => save(toggle, 'value', value)} onInherit={() => void save(toggle, 'inherit')} />)}</div>}
               </SettingsPanel>)}
+              {!needle && <ExtensionsPanel client={client} target={owner} onRefresh={reread} />}
               {!needle && <McpServersPanel client={client} target={owner} />}
             </div>
           )}

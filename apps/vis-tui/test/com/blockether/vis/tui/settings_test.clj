@@ -591,3 +591,82 @@
                                              {:menus menus})))
         (expect (= ["read-only" "read-write" "none"]
                    (mapv :value (get @menus "Host rules · access")))))))
+
+(defdescribe
+  extension-catalog-test
+  ;; #302: a failed extension must remain visible even without registered settings.
+  (it
+    "shows failed and stale extensions with their source and error"
+    (let [groups
+          [{"title" "broken.py"
+            "extension" {"name" "broken.py"
+                         "origin" "project"
+                         "path" ".vis/extensions/broken.py"
+                         "status" "failed"
+                         "error" "Invalid Python syntax"}
+            "toggles" []}
+           {"title" "notifier"
+            "extension" {"name" "notifier"
+                         "origin" "global"
+                         "path" "~/.vis/extensions/notifier.py"
+                         "status" "stale"
+                         "error" "Missing dependency"}
+            "toggles"
+            [{"id" "notifier_enabled" "label" "Desktop alerts" "type" "boolean" "enabled" false}]}]
+
+          rows
+          (#'dlg/catalog-toggle-rows groups)
+
+          frame
+          (cap/frame-text (capture-settings rows [:esc]))]
+
+      (expect (str/includes? frame "broken.py"))
+      (expect (str/includes? frame "Project extension"))
+      (expect (str/includes? frame "Invalid Python syntax"))
+      (expect (str/includes? frame "last loaded version"))
+      (expect (str/includes? frame "Machine extension"))
+      (expect (some #(= "Desktop alerts" (:label %)) rows))
+      (expect (empty? (#'dlg/catalog-toggle-rows
+                       [{"title" "builtin"
+                         "extension" {"name" "builtin" "origin" "built_in" "status" "loaded"}
+                         "toggles" []}])))))
+  (it "refreshes without running extension code and reloads only on request"
+      (let [target
+            {:scope :project :target-id "example-project"}
+
+            calls
+            (atom [])
+
+            notes
+            (atom [])]
+
+        (with-redefs [vis/gateway-reload-extensions! (fn [scope]
+                                                       (swap! calls conj [:reload scope])
+                                                       {"loaded" 2 "failed" 1})]
+          (with-redefs-fn {#'dlg/load-settings-inventory! (fn []
+                                                            (swap! calls conj [:catalog])
+                                                            {:status :ok})
+                           #'dlg/mini-note! (fn [_ _ _ title text]
+                                              (swap! notes conj [title text]))}
+            #(capture-settings (#'dlg/extension-action-rows)
+                               [:enter :down :enter :esc]
+                               :callbacks
+                               {:settings-target target})))
+        (expect (= [[:catalog] [:reload target] [:catalog]] @calls))
+        (expect (= [["List refreshed" "No extension code ran."]
+                    ["Extensions reloaded"
+                     "2 loaded, 1 failed. Each failed extension shows its error."]]
+                   @notes))))
+  (it "asks for a Vis update when the gateway has no reload route"
+      (let [notes (atom [])]
+        (with-redefs [vis/gateway-reload-extensions!
+                      (fn [_]
+                        (throw (ex-info "no such route"
+                                        {:http-status 404 "error" {"type" "not-found"}})))]
+          (with-redefs-fn {#'dlg/load-settings-inventory! (constantly {:status :ok})
+                           #'dlg/mini-note! (fn [_ _ _ title text]
+                                              (swap! notes conj [title text]))}
+            #(capture-settings (#'dlg/extension-action-rows) [:down :enter :esc])))
+        (expect (= [["Extensions not reloaded"
+                     "This gateway does not support extension reload. Update Vis on that machine."]]
+                   @notes)))))

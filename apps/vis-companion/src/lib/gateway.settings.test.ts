@@ -57,3 +57,24 @@ describe('settings catalog revision', () => {
     expect(client.cachedSettings(target)).toBeNull();
   });
 });
+
+describe('extension reload', () => {
+  // #302: reload sends only the settings owner; reading the catalog never runs code.
+  it('posts the settings target and returns the load counts', async () => {
+    const fetching = vi.fn(() => Promise.resolve(json({ loaded: 2, failed: 1 })));
+    const { GatewayClient } = await relaunch(fetching as unknown as typeof fetch);
+    const client = new GatewayClient(conn);
+
+    await expect(
+      client.reloadExtensions({ scope: 'project', target_id: 'p', label: 'Workspace' }),
+    ).resolves.toEqual({ loaded: 2, failed: 1 });
+    await client.reloadExtensions();
+
+    const calls = fetching.mock.calls as unknown as [RequestInfo | URL, RequestInit][];
+    const posts = calls.filter(([url]) => String(url).endsWith('/v1/extensions/reload'));
+    expect(posts.map(([, init]) => [init.method, JSON.parse(String(init.body))])).toEqual([
+      ['POST', { scope: 'project', target_id: 'p' }],
+      ['POST', { scope: 'global' }],
+    ]);
+  });
+});

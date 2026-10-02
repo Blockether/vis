@@ -292,7 +292,52 @@
              (expect (listed? {:scope "project" :root root}))
              (expect (not (listed? {:scope "global"}))))
            (finally (binding [workspace/*workspace-root* root]
-                      (pyx/reload-python-extensions! {:dirs [] :project-root root})))))))
+                      (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
+  (it "keeps a stored value while its extension fails, leaves and returns"
+      ;; #302: a reload reports failures and keeps stored overrides.
+      (let [dir
+            (temp-dir)
+
+            root
+            (.getCanonicalPath ^java.io.File dir)
+
+            target
+            {:scope "project" :root root}
+
+            catalog
+            {:dirs [(str root "/.vis/extensions")] :project-root root}
+
+            source
+            (str "import blockether.vis.extension as vis\n"
+                 "vis.register_extension(vis.Extension(name='reload-settings', "
+                 "description='Reload settings fixture', "
+                 "settings=[vis.Setting(id='reload_setting_fixture', label='Feature', "
+                 "default=False, scopes=['project'])]))\n")
+
+            row
+            (fn []
+              (some #(when (= "reload_setting_fixture" (:id %)) (select-keys % [:value :source]))
+                    (scoped/settings nil target)))]
+
+        (write-ext! dir ".vis/extensions/reload.py" source)
+        (try (binding [workspace/*workspace-root* root]
+               (pyx/ensure-python-extensions-loaded! catalog)
+               (scoped/set-setting! nil target "reload_setting_fixture" "value" true)
+               (expect (= {:value true :source "project"} (row)))
+               (write-ext! dir ".vis/extensions/reload.py" "this is not Python\n")
+               (pyx/reload-python-extensions! catalog)
+               (expect (= [["reload-settings" true]]
+                          (mapv (juxt :extension :stale?) (pyx/load-failures root))))
+               (expect (= {:value true :source "project"} (row)))
+               (io/delete-file (io/file dir ".vis/extensions/reload.py"))
+               (pyx/reload-python-extensions! catalog)
+               (expect (= [] (pyx/load-failures root)))
+               (expect (nil? (row)))
+               (write-ext! dir ".vis/extensions/reload.py" source)
+               (pyx/reload-python-extensions! catalog)
+               (expect (= {:value true :source "project"} (row))))
+             (finally (binding [workspace/*workspace-root* root]
+                        (pyx/reload-python-extensions! {:dirs [] :project-root root})))))))
 
 (defdescribe
   project-admission-retry-test
