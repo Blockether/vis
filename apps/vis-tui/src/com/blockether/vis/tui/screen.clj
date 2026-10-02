@@ -3004,6 +3004,11 @@
                (and (:human-input db)
                     (zero? (long (or (:chat-left (projects/geometry db cols 0)) 0)))))))
 
+(defn- project-sidebar-key-allowed?
+  "Keep sidebar help keys available to dismiss help while other rail actions are locked."
+  [db cols key]
+  (or (not (project-sidebar-locked? db cols)) (and (:help-open? db) (projects/help-key? db key))))
+
 (defn- paint-attachment-rail!
   [g db rail-top cols]
   (attachment-rail/draw! g
@@ -3440,11 +3445,16 @@
                           layout
                           inner-h
                           db)
-      ;; Ctrl+H / F1 shortcut overlay paints LAST, on top of everything. It
+      ;; Shortcut help paints LAST, on top of everything. It
       ;; registers its dedicated close-button click region, which commit-frame!
       ;; below publishes so the locked-overlay mouse branch can dismiss on click.
       (when (:help-open? db)
-        (let [help-geom (components/help-overlay! g cols rows (:help-scroll db))]
+        (let [help-geom (components/help-overlay! g
+                                                  cols
+                                                  rows
+                                                  (:help-scroll db)
+                                                  (and (get-in db [:project-sidebar :open?])
+                                                       (get-in db [:project-sidebar :focused?])))]
           (when (not= (:max-scroll help-geom) (:help-scroll-max db))
             (state/dispatch [:set-help-scroll-max (:max-scroll help-geom)]))))
       ;; A human-input request is a TRANSIENT band, not a modal: the band
@@ -6552,6 +6562,9 @@
     (state/dispatch [:bump-render-version]))
   (when-let [[action value detail] (projects/key-action @state/app-db key)]
     (case action
+      :help
+      (state/dispatch [:toggle-help])
+
       :toggle-session
       (state/dispatch [:project-session-select-toggle value detail])
 
@@ -7721,7 +7734,9 @@
                  (cond
                    (:shutdown? db) nil
                    (and (not @paste-buffer)
-                        (not (project-sidebar-locked? db (or (:screen-cols (:layout db)) cols)))
+                        (project-sidebar-key-allowed? db
+                                                      (or (:screen-cols (:layout db)) cols)
+                                                      physical-key)
                         (sidebar-key! physical-key))
                    (recur)
                    ;; Forms retain ordinary typing; C-x still reaches global navigation.

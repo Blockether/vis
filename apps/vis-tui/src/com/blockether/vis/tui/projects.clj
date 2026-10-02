@@ -6,6 +6,7 @@
             [com.blockether.vis.tui.header-model :as model]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.interactions :as interactions]
+            [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.paths :as paths]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t])
@@ -1245,6 +1246,21 @@
       (.commitFrame hit-map)
       cursor)))
 
+(defn help-key?
+  "Recognize sidebar help keys without taking question marks from inline fields."
+  [db ^KeyStroke key]
+  (let [sidebar (:project-sidebar db)]
+    (boolean (and key
+                  (:open? sidebar)
+                  (:focused? sidebar)
+                  (= KeyType/Character (.getKeyType key))
+                  (not (.isAltDown key))
+                  (or (and (.isCtrlDown key) (= keymap/sidebar-help-key (.getCharacter key)))
+                      (and (not (.isCtrlDown key))
+                           (= keymap/sidebar-help-alias-key (.getCharacter key))
+                           (or (:help-open? db)
+                               (not (or (:adding sidebar) (:search sidebar))))))))))
+
 (defn key-action
   "Return a sidebar action or nil to leave the event to the normal TUI dispatcher."
   [db ^KeyStroke key]
@@ -1335,6 +1351,7 @@
             (when (and (:focused? sidebar) (= MouseActionType/CLICK_DOWN (.getActionType mouse)))
               [:blur-pass])))
         (not (:focused? sidebar)) nil
+        (help-key? db key) [:help]
         (and (:adding sidebar) (.isCtrlDown key) (= \n (.getCharacter key)))
         (when-not (:saving? sidebar) [:add-folder])
         (or (.isCtrlDown key) (.isAltDown key)) nil

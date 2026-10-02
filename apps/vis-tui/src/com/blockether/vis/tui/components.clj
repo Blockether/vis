@@ -311,6 +311,26 @@
            ["Copy / paste" "Use your terminal — select to copy, its paste key"]
            ["Mouse" "Click a session in Projects · ↓ messages jumps down"]]}])
 
+(def ^:private sidebar-help-sections
+  "Shortcuts for project navigation and its inline fields."
+  [{:title "Sidebar navigation"
+    :rows [[keymap/sidebar-help-hint "Open or close sidebar help"] ["↑ · ↓" "Move between rows"]
+           ["Enter" "Open a session or fold the selected row"] ["Esc · Tab" "Return to the chat"]
+           [(keymap/label-for :switch-project) "Show or hide the sidebar"]]}
+   {:title "Sessions and groups"
+    :rows [["Space" "Toggle session selection"] ["d" "Show session details"]
+           ["g · Right-click" "Open the selected row's menu"]
+           ["+" "Add a session or group on its section row; otherwise add a project"]]}
+   {:title "Search and projects"
+    :rows [["/" "Search sessions across projects"] ["r" "Refresh projects"]]}
+   {:title "Inline search and project fields"
+    :rows [["?" "Type a question mark in the query or project path"]
+           ["Enter" "Open a search result or add the selected directory"]
+           ["Tab" "Complete the project path"]
+           ["↑ · ↓" "Move through results or directory suggestions"]
+           ["C-n" "Create a folder while adding a project"]
+           ["Esc" "Close the search or project field"]]}])
+
 ;; ── header band chrome ──────────────────────────────────────────────────────
 (defn band-rule!
   "Paint a full-width single-line horizontal rule across `cols` on `row`."
@@ -552,15 +572,18 @@
    scrollbar-lane column — and let `box-grid-lines` WRAP long descriptions
    instead of clipping them. The scroll extent is the wrapped line count, so
    scrolling always covers every visual line. Registers only its close-button
-   click region; the caller dismisses it (Ctrl+H / F1 / any key). Returns
+   click region; the caller dismisses it with C-x h, Esc or sidebar help keys. Returns
    `{:scroll :max-scroll}` so the caller can feed the clamp back, exactly like
-   `context-overlay!`."
-  [g cols rows scroll]
+   `context-overlay!`. When `sidebar?` is true, show the sidebar help card."
+  [g cols rows scroll sidebar?]
   (let [title
-        "Keyboard shortcuts"
+        (if sidebar? "Sidebar help" "Keyboard shortcuts")
+
+        sections
+        (if sidebar? sidebar-help-sections help-sections)
 
         all-rows
-        (mapcat :rows help-sections)
+        (mapcat :rows sections)
 
         key-w
         (reduce max 0 (map (comp p/display-width first) all-rows))
@@ -581,7 +604,7 @@
         (max 12 (- (long inner-w) (long key-w) 8 1))
 
         lines
-        (box-grid-lines help-sections
+        (box-grid-lines sections
                         key-w
                         desc-w
                         bd

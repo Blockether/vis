@@ -195,9 +195,19 @@
 ;; ── Structural chords (handled directly by the input dispatcher / pickers) ───
 ;; The vis-side chords that are NOT app verbs. Defined here so the dispatcher and
 ;; the pickers reference one place instead of hardcoding magic chars.
-;; Help (toggle overlay) is NOT a structural const — it's a normal C-x prefix
-;; command (C-x h) like every other vis verb, so it lives in `prefix-commands`.
+;; Global help is the C-x h verb in `prefix-commands`. The sidebar also owns
+;; shorter help keys while it has focus.
 (def ^:const quit-key "C-c — quit on an empty draft, else clear it (terminal reflex)." \c)
+
+(def ^:const sidebar-help-key "C-h — open or close help while the sidebar has focus." \h)
+
+(def ^:const sidebar-help-alias-key
+  "? — sidebar help outside an inline search or project field."
+  \?)
+
+(def sidebar-help-hint
+  "The sidebar help keys, shared by dispatch and the help card."
+  (str (chord sidebar-help-key) " / " sidebar-help-alias-key))
 
 (def ^:const abort-key
   "C-g — Emacs `keyboard-quit` (abort): cancel a running turn / close a
