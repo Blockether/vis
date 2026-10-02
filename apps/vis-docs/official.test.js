@@ -127,6 +127,23 @@ test('official badges sit beside the extension title in every view', () => {
     const badge = fragment.querySelector('.extension-title > .official-badge');
     expect(badge).not.toBeNull();
     expect(badge.previousElementSibling.matches('h1, h3')).toBe(true);
-    expect(fragment.querySelector('.card-top .official-badge')).toBeNull();
   }
+});
+
+test('cards show the repository name and badge, then owner and version, then stars', () => {
+  const card = JSDOM.fragment(cardsHTML([{ ...official, stars: 1234 }], filters())).querySelector(
+    '.extension-card',
+  );
+  expect(card.dataset.name).toBe('blockether/vis-lang-clojure');
+  expect(card.querySelector('.card-main .extension-title > h3').textContent).toBe(
+    'vis-lang-clojure',
+  );
+  expect(card.querySelector('.card-main .card-publisher').textContent).toBe(
+    `blockether · v${official.version}`,
+  );
+  expect(card.querySelector('.card-top, .version')).toBeNull();
+  const stars = card.querySelector('.card-meta > .card-stars');
+  expect(stars.textContent).toBe('1.2K stars');
+  expect(stars.querySelector('svg').getAttribute('aria-hidden')).toBe('true');
+  expect(stars.querySelector('.sr-only').textContent).toBe(' stars');
 });

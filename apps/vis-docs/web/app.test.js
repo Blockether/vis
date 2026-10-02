@@ -93,9 +93,12 @@ test('catalog opens as responsive results and filters by author-defined tags and
 test('every extension uses its GitHub owner/repository as its catalog name', async () => {
   setup();
   await tick();
-  expect(
-    [...document.querySelectorAll('.card-main h3')].map((node) => node.textContent).sort(),
-  ).toEqual(fixtures.map((entry) => entry.repository.toLowerCase()).sort());
+  for (const entry of fixtures) {
+    const [owner, repository] = entry.repository.toLowerCase().split('/');
+    const card = $(`[data-name="${owner}/${repository}"]`);
+    expect(card.querySelector('.card-main h3').textContent).toBe(repository);
+    expect(card.querySelector('.card-publisher').textContent).toBe(`${owner} · v${entry.version}`);
+  }
   expect($('#results .repository-link')).toBeNull();
   expect($('#results .tag')).toBeNull();
   $(`[data-name="${item.repository.toLowerCase()}"] .card-main`).click();

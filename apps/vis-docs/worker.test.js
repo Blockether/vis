@@ -745,9 +745,11 @@ test('every approved extension has a crawlable, server-rendered detail page', as
           '/extensions/' + item.repository + (item.subdirectory ? '/' + item.subdirectory : ''),
         canonical = 'https://vis.blockether.com' + path;
       expect(index).toContain('<loc>' + canonical + '</loc>');
-      expect(
-        catalog.window.document.querySelector('.card-main[href="' + path + '"]').textContent,
-      ).toContain(item.repository.toLowerCase());
+      const card = catalog.window.document.querySelector('.card-main[href="' + path + '"]');
+      expect(card.closest('.extension-card').dataset.name).toBe(item.repository.toLowerCase());
+      expect(card.querySelector('h3').textContent).toBe(
+        item.repository.toLowerCase().split('/')[1],
+      );
       const response = await fixture.runtime.dispatchFetch(
         'https://center.example.com' + path + '?view=list',
       );

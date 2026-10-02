@@ -146,7 +146,7 @@ export function catalogFiltersHTML(items, state) {
 }
 function officialBadgeHTML(item) {
   return isOfficialExtension(item)
-    ? '<span class="official-badge" title="Published and maintained by the Vis team"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>Official</span>'
+    ? '<span class="official-badge" title="Published and maintained by the Vis team"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="currentColor"/><path d="m7.5 12.5 3 3 6-6.5" fill="none" stroke="#fff" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"/></svg>Official</span>'
     : '';
 }
 function tagsHTML(item) {
@@ -155,15 +155,18 @@ function tagsHTML(item) {
     ? `<ul class="extension-tags" aria-label="Tags">${tags.map((tag) => `<li class="extension-tag">${escapeHTML(tag)}</li>`).join('')}</ul>`
     : '';
 }
+const starIcon =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.8L12 16.9l-5.25 2.7 1-5.8L3.5 9.7l5.9-.9z"/></svg>';
 export function cardsHTML(items, state) {
   const visible = visibleItems(items, state);
   if (!visible.length)
     return `<div class="empty"><h2>${items.length ? 'No matching extensions' : 'No repositories yet'}</h2><p>${items.length ? 'Try a different search or clear the filters.' : 'Use “Add a repository” above to submit a public GitHub project for moderation.'}</p>${items.length ? '<a id="clear-filters" href="/extensions/">Clear filters</a>' : ''}</div>`;
   return visible
-    .map(
-      (item) =>
-        `<article class="extension-card" data-name="${escapeHTML(extensionName(item))}"><a class="card-main" href="${escapeHTML(extensionPath(item))}${filterURL(state).slice('/extensions/'.length)}"><div class="card-top"><span class="version">v${escapeHTML(item.version)}</span></div><div class="extension-title"><h3>${escapeHTML(extensionName(item))}</h3>${officialBadgeHTML(item)}</div><p class="card-description">${escapeHTML(item.description)}</p></a>${tagsHTML(item)}<div class="card-meta"><span>${escapeHTML(new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(item.stars))} stars</span><span>Updated ${dateLabel(item.updated_at)}</span></div></article>`,
-    )
+    .map((item) => {
+      const name = extensionName(item);
+      const separator = name.indexOf('/');
+      return `<article class="extension-card" data-name="${escapeHTML(name)}"><a class="card-main" href="${escapeHTML(extensionPath(item))}${filterURL(state).slice('/extensions/'.length)}"><div class="extension-title"><h3>${escapeHTML(name.slice(separator + 1))}</h3>${officialBadgeHTML(item)}</div><p class="card-publisher">${escapeHTML(name.slice(0, separator))} · v${escapeHTML(item.version)}</p><p class="card-description">${escapeHTML(item.description)}</p></a>${tagsHTML(item)}<div class="card-meta"><span class="card-stars">${starIcon}${escapeHTML(new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(item.stars))}<span class="sr-only"> stars</span></span><span>Updated ${dateLabel(item.updated_at)}</span></div></article>`;
+    })
     .join('');
 }
 const fact = (label, value) => `<dt>${label}</dt><dd>${escapeHTML(value)}</dd>`;
