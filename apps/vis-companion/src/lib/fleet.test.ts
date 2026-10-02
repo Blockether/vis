@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   groupByWorkDir,
   fleetError,
-  isFleetLoaded,
+  fleetRead,
   isDraftWorkspace,
   machineCounts,
   machineKey,
   machineLabel,
+  machineRead,
   projectGroups,
   projectLabel,
   readSinceCounted,
@@ -307,12 +308,12 @@ describe('scope', () => {
     expect(fleetError(dark)).toBe('refused');
   });
 
-  it('is loaded only once every machine in scope has answered', () => {
+  it('reads as settled only once every machine in scope has answered', () => {
     const half = [machine(studio, [session('a')]), machine(tower, null)];
-    expect(isFleetLoaded(half, null)).toBe(false);
-    expect(isFleetLoaded(half, studio.url)).toBe(true);
-    expect(isFleetLoaded([machine(tower, null, 'offline')], null)).toBe(true);
-    expect(isFleetLoaded([], null)).toBe(false);
+    expect(fleetRead(half, null)).toBe('reading');
+    expect(fleetRead(half, studio.url)).toBe('settled');
+    expect(fleetRead([machine(tower, null, 'offline')], null)).toBe('down');
+    expect(fleetRead([], null)).toBe('reading');
   });
 });
 
@@ -917,20 +918,65 @@ describe('the path a session is grouped under', () => {
   });
 });
 
-// Regression: `isFleetLoaded` documented "every machine has answered (or failed)"
-// but asked whether rows were present, and a machine starts with the list this
-// device painted last time. The screen declared the fleet loaded on the first
-// frame, before one gateway of this run had been given a chance to fail.
-describe('isFleetLoaded', () => {
+// Regression: the screen answered "is this list still loading" three times over, from
+// `sessions`, from `answered` and from `error`, and the answers disagreed. Cached rows
+// read as an answer, a remembered outage read as an answer in one place and as a
+// reconnect in another, and a machine confirmed dark in this run read as still being
+// read. One value answers it now, per machine and per scope.
+describe('machineRead', () => {
+  const cached: FleetMachine = {
+    conn: studio,
+    sessions: [session('a')],
+    error: null,
+    answered: false,
+  };
+
   it('waits for the gateway to speak, not for cached rows to exist', () => {
-    const cached: FleetMachine = {
-      conn: studio,
-      sessions: [session('a')],
-      error: null,
-      answered: false,
-    };
-    expect(isFleetLoaded([cached], null)).toBe(false);
-    expect(isFleetLoaded([{ ...cached, answered: true }], null)).toBe(true);
-    expect(isFleetLoaded([{ ...cached, error: 'offline' }], null)).toBe(true);
+    expect(machineRead(cached)).toBe('reading');
+    expect(machineRead({ ...cached, answered: true })).toBe('settled');
+  });
+
+  it('separates a failure measured in this run from one this device remembered', () => {
+    expect(machineRead({ ...cached, error: 'offline' })).toBe('down');
+    expect(machineRead({ ...cached, error: 'offline', isRemembered: true })).toBe('reading');
+  });
+
+  it('is reading for a machine nobody has asked yet', () => {
+    expect(machineRead({ conn: tower, sessions: null, error: null, answered: false })).toBe(
+      'reading',
+    );
+  });
+});
+
+describe('fleetRead', () => {
+  const settled = machine(studio, [session('a')]);
+  const warm: FleetMachine = { conn: tower, sessions: [session('b')], error: null, answered: false };
+
+  it('keeps a whole fleet reading while one of its machines still is', () => {
+    expect(fleetRead([settled, warm], null)).toBe('reading');
+    expect(fleetRead([settled, { ...warm, answered: true }], null)).toBe('settled');
+  });
+
+  // `All` holds only the machines that have spoken, so asking the drained list would
+  // settle a fleet of six the moment the first of them answered.
+  it('weighs every paired machine for All, not the machines All shows', () => {
+    expect(scopedMachines([settled, warm], null)).toEqual([settled]);
+    expect(fleetRead([settled, warm], null)).toBe('reading');
+  });
+
+  it('narrows to the one machine a scope names', () => {
+    expect(fleetRead([settled, warm], studio.url)).toBe('settled');
+    expect(fleetRead([settled, warm], tower.url)).toBe('reading');
+  });
+
+  it('reads a fleet with nothing left to try as down, not as settled', () => {
+    const dark = [machine(studio, null, 'refused'), machine(tower, null, 'offline')];
+    expect(fleetRead(dark, null)).toBe('down');
+    // One machine of it still has a reconnect in flight, so the fleet is still reading.
+    expect(fleetRead([{ ...dark[0], isRemembered: true }, dark[1]], null)).toBe('reading');
+  });
+
+  it('settles when one machine answered and the rest have nothing left to try', () => {
+    expect(fleetRead([settled, machine(tower, null, 'offline')], null)).toBe('settled');
   });
 });

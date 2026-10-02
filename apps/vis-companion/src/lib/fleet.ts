@@ -214,16 +214,46 @@ export function searchFanout(
 }
 
 /**
- * True once every machine in scope has answered (or failed) at least once.
+ * How far this run has got with a machine's list, and the only loading question the
+ * screen asks about one. The footer, the skeleton, the machine tile and a machine's
+ * own section all read this value rather than each deriving a loading state of its own
+ * from `sessions`, `answered` and `error`, which is how they came to disagree.
  *
- * `sessions !== null` is NOT that question: a machine starts with the list this
- * device painted last time, so a cached row answered for a gateway that had not
- * said a word yet and the screen declared the fleet loaded on the first frame.
- * `answered` is the gateway speaking in THIS run (see `FleetMachine`).
+ * The rule, once: rows are paint, an answer is the gateway speaking in this run.
+ * `sessions` turns non-null the moment the window this device saved is seeded on mount,
+ * so a warm start paints rows that may be hours old while the machine is still
+ * `reading` — that first paint is the point of saving them, and it is why the question
+ * cannot be asked of `sessions`. A remembered outage is not an answer either: it is what
+ * the previous run wrote down and kept for up to thirty days, and `load` already has a
+ * read of that machine in flight behind it — painting it as a failure meant a laptop woken
+ * an hour ago opened the app wearing `Reconnect` before anything had been asked, which is
+ * why its tile says `Connecting…`. A machine whose read failed in this run has answered
+ * the only way it can, so it is `down` and nothing is waiting on it.
  */
-export function isFleetLoaded(machines: FleetMachine[], scope: string | null): boolean {
+export type MachineRead = 'reading' | 'settled' | 'down';
+
+export function machineRead(machine: FleetMachine): MachineRead {
+  if (machine.error) return machine.isRemembered ? 'reading' : 'down';
+  return machine.answered ? 'settled' : 'reading';
+}
+
+/**
+ * The same question about a whole scope: `reading` while any machine in it still is,
+ * `down` when every machine in it is, `settled` otherwise. One slow machine therefore
+ * keeps the scope reading without keeping the machines beside it off the screen — the
+ * rows are a separate question (see `MachineRead`).
+ *
+ * An empty scope is `reading`, not `settled`: `All` holds only the machines that have
+ * spoken (see `scopedMachines`), so it stands empty exactly while the fleet is still
+ * being tried. For that reason `All` weighs every paired machine here, not the drained
+ * list — a fleet of six is not settled because the first of them answered.
+ */
+export function fleetRead(machines: FleetMachine[], scope: string | null): MachineRead {
   const inScope = scope ? scopedMachines(machines, scope) : machines;
-  return inScope.length > 0 && inScope.every((machine) => machine.answered || !!machine.error);
+  if (inScope.length === 0) return 'reading';
+  const reads = inScope.map(machineRead);
+  if (reads.includes('reading')) return 'reading';
+  return reads.every((read) => read === 'down') ? 'down' : 'settled';
 }
 
 /**

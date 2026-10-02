@@ -203,7 +203,13 @@
    counting the sessions filed across the WHOLE wall. Their order is the human's own
    `position`, which no turn moves, so an offset names the same page
    tomorrow. Without `limit` the answer is every band, unchanged — what the TUI
-   reads."
+   reads.
+
+   Carries the same weak ETag contract as the session list and the project overview.
+   No turn moves a band: only a human renaming, filing or putting one away does, and
+   the gateway announces no frame for that — so every client painting a project
+   re-reads this wall on a timer to catch it. The validator makes that safety net a
+   304 with no body for the polls that find nothing changed."
   [request]
   (let [asked
         (not-empty (get-in request [:query-params "project"]))
@@ -230,28 +236,64 @@
                     parse-uuid)
             (some-> (when root (state/get-project-by-root owner root))
                     (get "id")
-                    parse-uuid))]
+                    parse-uuid))
+
+        validated
+        ;; ONE validator for both answers. A root the gateway holds no project for is as
+        ;; cacheable as a real wall, and a route that carries a validator down one arm and
+        ;; not the other is the odd one out this change set out to stop being.
+        (fn [payload parts]
+          (let [etag
+                (http/weak-etag parts)
+
+                base
+                {"ETag" etag "Cache-Control" "no-cache"}]
+
+            (if (= etag (get-in request [:headers "if-none-match"]))
+              {:status 304 :headers base :body nil}
+              (update (http/json-response payload) :headers merge base))))]
 
     (cond (= :invalid archived) (http/archived-400)
           (and (nil? asked) (nil? root))
           (http/error-response 400 :invalid-request "project or root is required")
-          (nil? pid) (http/json-response {:project_id nil
-                                          :groups []
-                                          :total 0
-                                          :session_total 0
-                                          :limit limit
-                                          :offset (max 0 (long (or offset 0)))
-                                          :has-more false})
-          :else (let [page (state/list-session-groups-page
-                             pid
-                             {:archived archived :limit limit :offset offset})]
-                  (http/json-response {:project_id (str pid)
-                                       :groups (:groups page)
-                                       :total (:total page)
-                                       :session_total (:session-total page)
-                                       :limit (:limit page)
-                                       :offset (:offset page)
-                                       :has-more (:has-more page)})))))
+          (nil? pid)
+          (let [payload
+                {:project_id nil
+                 :groups []
+                 :total 0
+                 :session_total 0
+                 :limit limit
+                 :offset (max 0 (long (or offset 0)))
+                 :has-more false}]
+
+            ;; Named in one fixed order, never read off the map: a key added here must
+            ;; change the validator deliberately, not by whatever order a map iterates.
+            (validated payload [nil [] 0 0 limit (:offset payload) false]))
+
+          :else
+          (let [page
+                (state/list-session-groups-page pid
+                                                {:archived archived
+                                                 :limit limit
+                                                 :offset offset})
+
+                payload
+                {:project_id (str pid)
+                 :groups (:groups page)
+                 :total (:total page)
+                 :session_total (:session-total page)
+                 :limit (:limit page)
+                 :offset (:offset page)
+                 :has-more (:has-more page)}]
+
+            ;; A vector, not the map: this names every part of the answer in one fixed
+            ;; order, so two identical walls hash alike whatever map the store built
+            ;; them in. The whole answer rides it, because the tallies beside the bands
+            ;; move on their own - a session filed under a band this page does not
+            ;; paint changes `session_total` and nothing else.
+            (validated payload
+                       [(str pid) (:groups page) (:total page) (:session-total page)
+                        (:limit page) (:offset page) (:has-more page)])))))
 
 (defn- create-session-group-handler
   "POST /v1/session-groups {name, color?, position?, project_id?|root?, owner_id?}

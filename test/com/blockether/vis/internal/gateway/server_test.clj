@@ -4129,6 +4129,38 @@
               (expect (= ["Release apps"] (mapv #(get % "name") (get body "groups"))))
               (expect (nil? (get body "limit")))
               (expect (= 1 (get body "total"))))
+            ;; THE WALL IS POLLED. No turn moves a band and the gateway announces no frame
+            ;; for one, so every client painting a project re-reads this wall on a timer to
+            ;; catch what another client did to it. Those reads are answered with a
+            ;; validator, so the ones that find nothing changed cost no body.
+            (let [answer
+                  (list-groups {:query-params {"root" "/repo" "limit" "1"}})
+
+                  etag
+                  (get-in answer [:headers "ETag"])]
+              (expect (= 200 (:status answer)))
+              ;; WEAK, like the session list's: this hashes the content a client paints
+              (expect (str/starts-with? (str etag) "W/\""))
+              (expect (= "no-cache" (get-in answer [:headers "Cache-Control"])))
+              ;; the same wall, revalidated: no body at all, and the validator again
+              (let [again (list-groups {:query-params {"root" "/repo" "limit" "1"}
+                                        :headers {"if-none-match" etag}})]
+                (expect (= 304 (:status again)))
+                (expect (nil? (:body again)))
+                (expect (= etag (get-in again [:headers "ETag"]))))
+              ;; ANOTHER WINDOW IS ANOTHER ANSWER, never this one's 304: the page a
+              ;; reader walked to is served even while the first page is unchanged
+              (let [deeper (list-groups {:query-params {"root" "/repo" "limit" "1" "offset" "1"}
+                                         :headers {"if-none-match" etag}})]
+                (expect (= 200 (:status deeper)))
+                (expect (= [] (get (wire/parse-json (:body deeper)) "groups")))
+                (expect (not= etag (get-in deeper [:headers "ETag"]))))
+              ;; a stale validator is a MISS, not an error: the wall is answered whole
+              (let [moved (list-groups {:query-params {"root" "/repo" "limit" "1"}
+                                        :headers {"if-none-match" "W/\"a-wall-ago\""}})]
+                (expect (= 200 (:status moved)))
+                (expect (= ["Release apps"]
+                           (mapv #(get % "name") (get (wire/parse-json (:body moved)) "groups"))))))
             ;; A group is put away like a session: this list answers the ACTIVE shelves
             ;; unless the reader names another view, and a reveal asks for the archive alone.
             ;; the archive view a reader names is the view the store is asked for

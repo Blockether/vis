@@ -123,6 +123,40 @@ describe('a machine that has not spoken yet says so', () => {
     expect(screen.getByText('Second')).toBeVisible();
   });
 
+  // The same rule where this device saved no rows to paint. The list had nothing to put
+  // on the glass, so it printed its empty verdict over a machine whose reconnect read was
+  // still in flight — while the footer under it, and the tile over it, both said the
+  // machine had not spoken yet. An empty list is an answer, and nobody had one.
+  it('does not declare a machine empty while its reconnect read is in flight', async () => {
+    const conns = [{ url: 'http://empty-tower.example.com', token: 't', label: 'tower' }];
+    rememberMachineOutage(conns[0].url, 'Failed to fetch');
+
+    const view = renderSessionsScreen({
+      machines: [{ label: 'tower', holdsList: true }],
+      at: conns,
+    });
+    restore = view.restore;
+
+    expect(screen.getByRole('status', { name: 'Loading sessions' })).toBeVisible();
+    expect(screen.queryByText('No projects yet')).toBeNull();
+    // All three places a reader looks agree, because they read one value.
+    expect(screen.getByText('Reading sessions...')).toBeVisible();
+    expect(strip().getByRole('button', { name: /tower/ }).textContent).toBe('towerConnecting…');
+  });
+
+  // The other half of it: an empty answer is still an answer, so nothing may claim a wait
+  // over one. A machine confirmed dark in this run has answered the only way it can too, and
+  // its tile carries the retry rather than `Connecting…` (`SessionsScreen.fleet.test`).
+  it('declares a machine empty once it has answered that way', async () => {
+    const view = renderSessionsScreen({ machines: [{ label: 'tower', sessions: [] }] });
+    restore = view.restore;
+
+    expect(await screen.findByText('No projects yet')).toBeVisible();
+    expect(screen.queryByText('Reading sessions...')).toBeNull();
+    expect(screen.queryByRole('status', { name: 'Loading sessions' })).toBeNull();
+    expect(strip().getByRole('button', { name: /tower/ }).textContent).toBe('tower');
+  });
+
   // Regression, same report: cb30d0f39 revalidated every project window on every
   // ACCEPTED snapshot, including the idle polls whose answer is the rows already on
   // screen — so a phone paid a full project prefetch every five seconds to learn

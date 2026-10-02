@@ -57,10 +57,11 @@ import { shareSummary, type SharedPayload } from '../lib/share-intake';
 import { favoriteRank, nextFavoriteRank } from '../lib/favorites';
 import {
   fleetError,
-  isFleetLoaded,
+  fleetRead,
   machineCounts,
   machineKey,
   machineLabel,
+  machineRead,
   projectGroups,
   readSinceCounted,
   searchGroups,
@@ -392,6 +393,11 @@ export function SessionsScreen({
     if (primaryKey) setScopePick(primaryKey);
   }, [primaryKey]);
   const scope = resolveScope(machines, scopePick);
+
+  // How far this run has got with the machines on screen. Everything below that has a
+  // loading state reads this one value, and a machine's own tile and section read
+  // `machineRead` of that machine; see `MachineRead` for the rule it states.
+  const fleetState = fleetRead(machines, scope);
   // Keep raw field input separate from the settled search needle; filtering, ranking
   // and network work update only once typing pauses.
   const [searchNeedle, setSearchNeedle] = useState(() => query.trim());
@@ -1125,10 +1131,7 @@ export function SessionsScreen({
     if (!viewport) return;
     // A mark that cannot fit after every machine answered names rows that are
     // gone; retrying it on later paints would fight the reader.
-    if (
-      applyListScroll(viewport, mark, (id) => rowOffset(viewport, id)) ||
-      isFleetLoaded(machines, scope)
-    ) {
+    if (applyListScroll(viewport, mark, (id) => rowOffset(viewport, id)) || fleetState !== 'reading') {
       restoredRef.current = true;
       forgetListScroll();
     }
@@ -1325,29 +1328,19 @@ export function SessionsScreen({
 
   const inScope = useMemo(() => scopedMachines(machines, scope), [machines, scope]);
 
-  // The list is only "still loading" while NOTHING has answered: one slow machine
-  // must not hold the machines beside it off the screen. A machine's SAVED window counts,
-  // because a cold start opening on the picture it closed on is the whole point of saving
-  // it (`SessionsScreen.paging.test`, `SessionsScreen.ordering.test`).
+  // What there is to paint, which is not the same question as whether the gateway has
+  // spoken. Saved rows go up in the first frame, so a cold start opens on the picture it
+  // closed on (`SessionsScreen.paging.test`, `SessionsScreen.ordering.test`), and only a
+  // scope with no rows at all and nothing answered yet has nothing to show. `null` is
+  // that state: the skeleton stands in for rows nobody has, never for rows nobody has
+  // confirmed yet. A scope that is no longer reading has its answer, empty or not.
   const sessions = useMemo(() => {
     if (machines.length === 0) return [];
     const rows = inScope.flatMap((machine) => machine.sessions ?? []);
-    return inScope.some((machine) => machine.sessions !== null) || isFleetLoaded(machines, scope)
+    return inScope.some((machine) => machine.sessions !== null) || fleetState !== 'reading'
       ? rows
       : null;
-  }, [inScope, machines, scope]);
-
-  // BUT CACHED ROWS ARE NOT AN ANSWER, AND THE LIST MUST NOT READ AS SETTLED OVER THEM.
-  // `machine.sessions` is non-null the moment the client's saved window is seeded on
-  // mount, so a list of possibly hours-old rows stood there with nothing on the screen
-  // saying a word was still being waited for. A machine confirmed down this run has
-  // answered the only way it can; it is not still being read. A REMEMBERED outage is not
-  // such an answer — `reconnectMachine` has a read of that machine in flight, which is
-  // why its tile says `Connecting…` — so the footer agrees with the tile instead of
-  // settling the saved rows under it.
-  const isReading =
-    sessions === null ||
-    inScope.some((machine) => !machine.answered && (!machine.error || machine.isRemembered));
+  }, [inScope, machines.length, fleetState]);
 
   // ROWS SKIP LAYOUT OFF SCREEN ONLY AFTER ONE FULL LAYOUT, AND ONLY WHERE THE ENGINE
   // DRAWS AHEAD (see `SessionRow`). Every row records its real height on its first layout,
@@ -1886,17 +1879,14 @@ export function SessionsScreen({
           const name = machineLabel(machine.conn);
           // A machine that is not answering cannot scope the screen to stale rows.
           // Keep its name in place; its error-toned tile retries the connection,
-          // and the transport reason remains available in the title.
-          //
-          // A REMEMBERED OUTAGE IS NOT THIS RUN'S VERDICT. It is what the run before the
-          // kill wrote down, kept for up to thirty days, and `load` already has a read of
-          // this machine in flight behind it. Painting it as a failure meant a laptop woken
-          // an hour ago opened the app wearing `Reconnect` before anything had been asked.
-          const isDown = Boolean(machine.error) && !machine.isRemembered;
-          // A cached machine has not answered this run, and neither has one whose darkness
-          // is only remembered: both are being connected to right now, and the tile says
-          // so. Cached unread activity may still tint it.
-          const isChecking = !isDown && !machine.answered;
+          // and the transport reason remains available in the title. Everything else
+          // here is `MachineRead`'s rule, which the footer and the sections read too:
+          // only a failure measured in this run earns the retry, and a machine with
+          // cached rows or a remembered outage is being connected to right now.
+          // Cached unread activity may still tint it.
+          const read = machineRead(machine);
+          const isDown = read === 'down';
+          const isChecking = read === 'reading';
           const retry = isDown ? retries.get(key) : undefined;
           return (
             <MachineTab
@@ -2034,7 +2024,9 @@ export function SessionsScreen({
         creation={projectCreation}
         note={(machine) => {
           const key = machineKey(machine.conn);
-          if (machine.sessions === null) return 'Reading sessions...';
+          // Saved rows are not an answer here either (see `MachineRead`): the dialog
+          // waits on the gateway, not on whatever this device kept from last time.
+          if (machineRead(machine) === 'reading') return 'Reading sessions...';
           if (searchUnreached.has(key)) return 'Could not reach this machine.';
           if (!searchAnswered.has(key))
             return searching ? 'Searching this machine...' : 'Reading this machine...';
@@ -2152,7 +2144,13 @@ export function SessionsScreen({
               context={rowContext}
               creation={projectCreation}
               note={(machine) =>
-                !machine.answered ? 'Reading sessions...' : 'No projects on this machine yet.'
+                ({
+                  reading: 'Reading sessions...',
+                  // A machine this run could not reach has nothing to report about
+                  // projects; its tile carries the reason and the retry.
+                  down: 'This machine is not answering.',
+                  settled: 'No projects on this machine yet.',
+                })[machineRead(machine)]
               }
             />
           )}
@@ -2162,7 +2160,7 @@ export function SessionsScreen({
             is where the filtering happens — printing "708 of 970" in a footer while
             the control that produced it said nothing was the same fact in the wrong
             place, and the third copy of it on the screen. */}
-        {isReading && (
+        {fleetState === 'reading' && (
           <footer className="hidden items-center justify-end border-t border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-meta text-dialog-hint sm:flex sm:bg-page sm:px-4">
             <span>Reading sessions...</span>
           </footer>
