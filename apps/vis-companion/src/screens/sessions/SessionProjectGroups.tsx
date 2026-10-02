@@ -502,8 +502,18 @@ export type SessionRowsContext = {
 export type ProjectGroupReading = {
   pageSize: number;
   isVisible: boolean;
-  /** Accepted machine snapshots revalidate pages even when its head rows stay unchanged. */
+  /**
+   * Snapshots of this machine that MOVED something: a page window outside the unchanged
+   * head window may have moved with them, so the pages are read again.
+   */
   revision?: number;
+  /**
+   * Every accepted snapshot of this machine, moved or not. The gateway owns the session
+   * groups and announces no frame for them, so the list's own read is the only safety net
+   * a renamed, added or removed band has. It revalidates the WALL and nothing else: the
+   * page windows beside it cost three reads a poll and are driven by `revision`.
+   */
+  reads?: number;
 };
 
 /** One project-creation lifecycle, shared so headers report the request they started. */
@@ -561,7 +571,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   const { label: project, root, sessions, tally } = group;
   const { conn, sessions: list } = machine;
   const { getClient, drafts, needle, actions: rowActions, openRow, previewId, preview } = context;
-  const { pageSize, isVisible, revision = 0 } = reading;
+  const { pageSize, isVisible, revision = 0, reads = 0 } = reading;
   const { state: creating, start: onNewSession } = creation;
   const base = useMemo(() => getClient(conn).base, [conn, getClient]);
   const pendingDeleteId =
@@ -822,16 +832,22 @@ export const ProjectGroup = memo(function ProjectGroup({
         );
         if (!live) return;
         if (answer.nextCursor) cursors.current.set(from + answer.rows.length, answer.nextCursor);
-        setPaged({
+        setPaged((held) => ({
           start,
           rows: answer.rows.slice(start - from),
           total: answer.total,
           awaiting: answer.awaiting,
-          grouped: answer.grouped,
+          // The gateway ships the shelves with the HEAD window alone. A tail read
+          // therefore answers without them, and the bands already on screen for this
+          // same view and band window stay exactly as the head painted them.
+          grouped:
+            after === '' || held?.view !== archived || held?.bandOffset !== bandWindow.offset
+              ? answer.grouped
+              : held.grouped,
           bandOffset: bandWindow.offset,
           view: archived,
           read: groupsRead,
-        });
+        }));
         noteRefresh('page', groupsRead);
         // Behind the answer, never beside it: the reader's own page is never waiting on
         // a read taken for a page they have not asked for. A project that has ended
@@ -1125,7 +1141,8 @@ export const ProjectGroup = memo(function ProjectGroup({
   // exists here is a band every client of the machine paints. Read as soon as the
   // project is on screen, so a project that opens paints its bands already named.
   // The gateway owns the groups and their archive stamps, not this device.
-  // Revalidate on fleet changes and accepted snapshots, including an unchanged head window.
+  // Revalidate on fleet changes and on every accepted snapshot of this machine, including
+  // one whose head window did not move: that read is this wall's only safety net.
   useEffect(() => {
     if (!isVisible) return;
     const control = new AbortController();
@@ -1154,7 +1171,7 @@ export const ProjectGroup = memo(function ProjectGroup({
       live = false;
       control.abort();
     };
-  }, [conn, root, isVisible, groupArchived, bandWindow, list, getClient, groupsRead, revision, noteRefresh]);
+  }, [conn, root, isVisible, groupArchived, bandWindow, getClient, groupsRead, reads, noteRefresh]);
   useEffect(() => {
     if (
       groupsReady?.view !== groupArchived ||

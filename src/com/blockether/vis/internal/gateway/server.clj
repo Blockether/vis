@@ -75,6 +75,7 @@
            [java.nio.file.attribute FileAttribute PosixFilePermissions]
            [java.security MessageDigest]
            [java.util.concurrent ArrayBlockingQueue TimeUnit]
+           [java.util.zip GZIPOutputStream]
            [org.eclipse.jetty.server ConnectionFactory HttpConfiguration HttpConnectionFactory
             Server ServerConnector]
            [org.eclipse.jetty.server.handler.gzip GzipHandler]))
@@ -536,6 +537,65 @@
   "Sentinel queued to unpark a pump parked in `.poll`; never written to a socket."
   ::sse-wake)
 
+(def ^:private SSE_GZIP_BUFFER_BYTES
+  "Deflate buffer for ONE compressed event stream. Small on purpose: every frame
+   is flushed, so the buffer only has to hold the largest single frame's
+   compressed output, and one of these is allocated per connected client."
+  8192)
+
+(defn- sse-gzip?
+  "Does this client want the event stream COMPRESSED?
+
+   SSE is the gateway's largest payload by far and the most redundant one — the
+   same block ids, types and key names on every frame. A real capture of one
+   session's stream compressed 16.1x (3,791,664 -> 236,162 bytes), which a phone
+   on a metered or distant link pays directly.
+
+   Strictly OPT-IN by `Accept-Encoding`, never a default: `GzipHandler` cannot do
+   this (its deflater buffers, so a compressed SSE body stops arriving as it
+   happens, which is why `text/event-stream` stays in its exclusions), and the
+   stream below is only prompt because it SYNC-flushes per frame. A client that
+   does not advertise `gzip` — the Clojure `client.clj` reader disables
+   compression on its own side — gets exactly the bytes it gets today.
+
+   Read as TOKENS rather than as a substring, because `gzip;q=0` is a client
+   REFUSING gzip: serving it compressed anyway would hand a live view bytes it
+   has already said it cannot inflate, which reads as a dead stream."
+  [request]
+  (->> (-> (get-in request [:headers "accept-encoding"])
+           str
+           str/lower-case
+           (str/split #","))
+       (some (fn [token]
+               (let [[coding & params]
+                     (map str/trim (str/split (str/trim token) #";"))]
+
+                 (and (= "gzip" coding)
+                      (not-any? #(re-matches #"q=0(\.0{1,3})?" %) params)))))
+       boolean))
+
+(defn- sse-stream
+  "The stream ONE SSE body writes every frame to: the socket stream, or a gzip
+   stream over it when the client asked for compression.
+
+   `syncFlush` is the whole contract: with it, `.flush` ends the deflate block
+   with an empty stored block, so the client's inflater can emit every byte
+   written so far. Each frame and each heartbeat is already followed by a
+   `.flush`, so compressed frames arrive exactly as promptly as plain ones.
+   Closing this stream finishes the gzip member and closes the socket stream
+   under it, which is what the bodies' `finally` already does."
+  ^OutputStream [^OutputStream out gzip?]
+  (if gzip? (GZIPOutputStream. out (int SSE_GZIP_BUFFER_BYTES) true) out))
+
+(defn- sse-encoding-headers
+  "`sse/sse-headers` plus the content negotiation a compressed stream needs.
+   `Vary` keeps a cache or proxy from handing a compressed body to a client that
+   never asked for one."
+  [gzip?]
+  (cond-> sse/sse-headers
+    gzip?
+    (assoc "Content-Encoding" "gzip" "Vary" "Accept-Encoding")))
+
 (defn- sse-closer
   "Zero-arg terminator for ONE SSE connection: mark it dead, unsubscribe, close
    the socket, and unpark the writer. The wake sentinel is the point - a pump
@@ -576,13 +636,40 @@
               :else (write! event)))
       (recur))))
 
+(def ^:private SSE_PROXY_PAD_BYTES
+  "Bytes an edge proxy must see before it stops buffering a streaming body."
+  8192)
+
+(def ^:private sse-proxy-pad-filler
+  "Filler for the proxy pad, as one string per encoding.
+
+   Spaces for a plain stream. For a COMPRESSED one they are useless: 8KB of
+   spaces deflates to a few dozen bytes, and it is the bytes ON THE WIRE that an
+   edge proxy counts, so the pad would silently stop doing its job the moment a
+   client asked for gzip. The compressed pad is therefore random characters over
+   a 64-symbol alphabet, which deflate cannot do better than ~6 bits each, so
+   `2 * SSE_PROXY_PAD_BYTES` of them clear the threshold compressed. Built once
+   per image — the pad is a fixed number of bytes, not a secret."
+  (let [alphabet
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-"
+
+        random
+        (java.util.Random. 1)]
+
+    {:plain (apply str (repeat SSE_PROXY_PAD_BYTES " "))
+     :gzip (apply str
+             (repeatedly (* 2 SSE_PROXY_PAD_BYTES)
+                         #(.charAt alphabet (.nextInt random (count alphabet)))))}))
+
 (defn- sse-proxy-pad!
-  "8KB SSE comment pad, written to a PROXIED connection only. Edge proxies
+  "SSE comment pad, written to a PROXIED connection only. Edge proxies
    (Cloudflare tunnels, nginx) buffer a streaming body until a byte threshold,
    so without it the first real frames sit in the edge buffer and live streaming
    reads as dead. Direct clients shouldn't pay the bytes."
-  [^OutputStream out]
-  (.write out (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n") StandardCharsets/UTF_8))
+  [^OutputStream out gzip?]
+  (.write out
+          (.getBytes (str ": " (get sse-proxy-pad-filler (if gzip? :gzip :plain)) "\n\n")
+                     StandardCharsets/UTF_8))
   (.flush out))
 
 (defn- resolve-sse-cursor
@@ -751,12 +838,12 @@
    Replays each session past its cursor in `replay` mode (see [[sse-replay]];
    default `:settled`), then drains live and heartbeats; a
    dead client unsubscribes every feed."
-  [sid+cursors proxied? owner-pid & [include-fleet? replay]]
+  [sid+cursors proxied? owner-pid & [include-fleet? replay gzip?]]
   (reify
     ring-protocols/StreamableResponseBody
       (write-body-to-stream [_ _ output-stream]
         (let [^OutputStream out
-              output-stream
+              (sse-stream output-stream gzip?)
 
               outbound
               without-settled-picture
@@ -802,7 +889,7 @@
                                              (assoc :saw-client? true)
                                              (assoc-in [:sse-clients sub-id]
                                                        {:pid owner-pid :close! close!}))))
-          (try (when proxied? (sse-proxy-pad! out))
+          (try (when proxied? (sse-proxy-pad! out gzip?))
                (doseq [[sid requested-cursor] sid+cursors]
                  (let [cursor (when (state/soul sid) (resolve-sse-cursor sid requested-cursor))
                        replay (when (some? cursor)
@@ -851,12 +938,12 @@
    stays as the COLD read — first paint, reconnect, foreground — and is also the
    only resync: this stream has no replay and no cursor, so a gap heals with one
    ordinary read instead of a rewind."
-  [proxied? owner-pid]
+  [proxied? owner-pid gzip?]
   (reify
     ring-protocols/StreamableResponseBody
       (write-body-to-stream [_ _ output-stream]
         (let [^OutputStream out
-              output-stream
+              (sse-stream output-stream gzip?)
 
               sub-id
               (str (java.util.UUID/randomUUID))
@@ -888,7 +975,7 @@
                                              (assoc-in [:sse-clients sub-id]
                                                        {:pid owner-pid :close! close!}))))
           (try
-            (when proxied? (sse-proxy-pad! out))
+            (when proxied? (sse-proxy-pad! out gzip?))
             ;; Attach before ready: the client's resync must overlap an active
             ;; subscription, otherwise a transition between its read and this
             ;; registration disappears. The queue keeps ready first on the wire.
@@ -922,18 +1009,22 @@
         (= "both" scope)
 
         sid+cursors
-        (parse-multi-sids request)]
+        (parse-multi-sids request)
+
+        gzip?
+        (sse-gzip? request)]
 
     (cond fleet? {:status 200
-                  :headers sse/sse-headers
-                  :body (fleet-sse-body proxied? (request-client-pid request))}
+                  :headers (sse-encoding-headers gzip?)
+                  :body (fleet-sse-body proxied? (request-client-pid request) gzip?)}
           (seq sid+cursors) {:status 200
-                             :headers sse/sse-headers
+                             :headers (sse-encoding-headers gzip?)
                              :body (multi-sse-body sid+cursors
                                                    proxied?
                                                    (request-client-pid request)
                                                    combined?
-                                                   (sse-replay request))}
+                                                   (sse-replay request)
+                                                   gzip?)}
           :else (http/error-response 400 :bad-request "no valid sids"))))
 
 ;; /metrics (§6.5)
@@ -1752,13 +1843,16 @@
    the `stdout` inside it alone compresses 7.2x. A phone on Tailscale pays that
    difference directly.
 
-   `text/event-stream` MUST NOT be compressed. Jetty already ships it in
-   `excludedMimeTypes`, but the exclusion is re-stated here because it is a
+   `text/event-stream` MUST NOT be compressed HERE. Jetty already ships it in
+   `excludedMimeTypes`, but the exclusion is re-stated because it is a
    correctness invariant of the live surface rather than a tuning preference: the
    deflater buffers, and a buffered SSE body is one that stops arriving as it
-   happens — `client.clj` disables compression on its own side for exactly this
-   reason. Re-stating it costs nothing and keeps a Jetty default change from
+   happens. Re-stating it costs nothing and keeps a Jetty default change from
    silently freezing every live view.
+
+   The event stream compresses ITSELF instead, per connection and only when the
+   client advertises `gzip` ([[sse-gzip?]], [[sse-stream]]), because that stream
+   SYNC-flushes every frame and this handler cannot.
 
    Note this also enables REQUEST inflation for `Content-Encoding: gzip` uploads,
    which the gateway simply did not accept before."

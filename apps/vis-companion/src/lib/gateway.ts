@@ -729,9 +729,83 @@ registerMemorySource('gateway snapshots', function* (): Iterable<MemoryCell> {
   }
 });
 
+// ── Replay cursors, one per gateway and session ─────────────────────
+//
+// WHERE THIS DEVICE'S EVENT STREAM GOT TO, kept across launches.
+//
+// A cursor used to live only in the subscription hub's in-memory Map, so a cold
+// start had none and asked for `-1` on every watched session at once. `-1` is
+// NOT a cheap live-only subscribe: the gateway reads it as REWIND
+// (`gateway/server.clj resolve-sse-cursor`) and answers with the running turn's
+// whole `turn.started`-to-now replay. Measured against three running turns on one
+// machine: 6,062,080 bytes on connect, where resuming from an in-range cursor
+// costs 98,304 bytes over the same window — and the app asks for up to
+// `MAX_SUBSCRIBED_SESSIONS` of them, on a phone, every time it is reopened.
+//
+// Remembering the cursors is what turns a relaunch back into a resume. An
+// unusable one needs no check here: the gateway clamps a cursor above its
+// high-water mark or below its ring floor to the same rewind, so a daemon that
+// restarted or a ring that moved past us still heals in one connect.
+const SESSION_CURSORS_KEY = 'vis.sessionCursors.v1';
+
+// One entry per watched session per paired machine, each a small integer. The
+// bound is what stops an install that has opened thousands of sessions from
+// keeping a row for every one of them; eviction costs a single rewind.
+const MAX_PERSISTED_CURSORS = 256;
+
+// Cursors advance on nearly every streamed frame, so the writes are coalesced.
+// Losing the last couple of seconds to an OS kill costs a few seconds of replay.
+const CURSOR_FLUSH_MS = 2_000;
+
+function hydrateSessionCursors(): Array<[string, number]> {
+  try {
+    const raw = (globalThis.localStorage ?? null)?.getItem(SESSION_CURSORS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+    return Object.entries(parsed as Record<string, unknown>)
+      .filter(
+        (entry): entry is [string, number] =>
+          Number.isSafeInteger(entry[1]) && (entry[1] as number) >= 0,
+      )
+      .slice(-MAX_PERSISTED_CURSORS);
+  } catch {
+    // Private mode, a blocked store or a corrupt blob: a rewind is slow, never broken.
+    return [];
+  }
+}
+
+const sessionCursors = new Map<string, number>(hydrateSessionCursors());
+
+let cursorFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Write the replay cursors now. Safe to call from a teardown handler. */
+function flushSessionCursors(): void {
+  if (cursorFlushTimer !== null) {
+    clearTimeout(cursorFlushTimer);
+    cursorFlushTimer = null;
+  }
+  try {
+    const store = globalThis.localStorage ?? null;
+    if (!store) return;
+    store.setItem(SESSION_CURSORS_KEY, JSON.stringify(Object.fromEntries(sessionCursors)));
+  } catch {
+    // Out of quota or a hostile embedder: persistence is an optimisation.
+  }
+}
+
+function scheduleCursorFlush(): void {
+  if (cursorFlushTimer !== null) return;
+  cursorFlushTimer = setTimeout(() => {
+    cursorFlushTimer = null;
+    flushSessionCursors();
+  }, CURSOR_FLUSH_MS);
+}
+
 /** Persist the caches NOW — used when the app is being torn down. */
 export function persistGatewayCaches(): void {
   flushSnapshots(snapshotStores);
+  flushSessionCursors();
 }
 
 function readSnapshot<T>(key: string): T | null {
@@ -909,20 +983,45 @@ function sessionGoalFromWire(raw: unknown): SessionGoal | null {
   return g as unknown as SessionGoal;
 }
 
+/**
+ * Facts the LIST row establishes that a SINGLE-session payload cannot carry.
+ *
+ * `GET /v1/sessions/:sid` answers a lean row. Measured against a live gateway,
+ * every row it serves omits exactly these three keys, which only the list and
+ * the project pages carry. Taking such a row wholesale into the cache DELETED
+ * them — and a row with no `workspace` groups under the empty path, so the
+ * project it belongs to grew a second, nameless header beside the real one.
+ *
+ * Only these keys are held. Every OTHER key a payload omits is the gateway
+ * saying the field is not set, and must still be allowed to clear the cache.
+ */
+const LIST_ONLY_SESSION_KEYS = ['workspace', 'is_unread', 'unread_answers'] as const;
+
+/** Keep what a lean payload cannot carry; everything it does carry still wins. */
+function withHeldListFacts(previous: Session | null, next: Session): Session {
+  if (!previous) return next;
+  const held = LIST_ONLY_SESSION_KEYS.filter((key) => !(key in next) && key in previous);
+  if (held.length === 0) return next;
+  const merged: Record<string, unknown> = { ...next };
+  for (const key of held) merged[key] = (previous as Record<string, unknown>)[key];
+  return merged as Session;
+}
+
 function reconcileSession(
   previous: Session | null,
   next: Session,
   pending?: SessionGoal | null,
 ): Session {
+  const incoming = withHeldListFacts(previous, next);
   const oldGoal = sessionGoalFromWire(previous?.goal);
   const goal = pending && pending.revision > (oldGoal?.revision ?? 0) ? pending : oldGoal;
-  const nextGoal = sessionGoalFromWire(next.goal);
+  const nextGoal = sessionGoalFromWire(incoming.goal);
   const row =
     goal && goal.revision > (nextGoal?.revision ?? 0)
-      ? { ...next, goal }
-      : next.goal == null
-        ? next
-        : { ...next, goal: nextGoal };
+      ? { ...incoming, goal }
+      : incoming.goal == null
+        ? incoming
+        : { ...incoming, goal: nextGoal };
   return reconcileRow(previous, row);
 }
 
@@ -1190,6 +1289,44 @@ export class GatewayClient {
         entries: sent.length,
       };
     }
+  }
+
+  /**
+   * The replay cursor this device was last served for one session, or `null`
+   * when it has never streamed that session from this gateway.
+   */
+  cachedSessionCursor(sid: string): number | null {
+    return sessionCursors.get(this.snapshotKey('cursor', sid)) ?? null;
+  }
+
+  /** Remember how far one session's stream has been delivered. */
+  private rememberSessionCursor(sid: string, cursor: number): void {
+    if (!Number.isSafeInteger(cursor) || cursor < 0) return;
+    const key = this.snapshotKey('cursor', sid);
+    if (sessionCursors.get(key) === cursor) return;
+    // Re-insert so Map order IS the LRU order the bound below is applied along.
+    sessionCursors.delete(key);
+    sessionCursors.set(key, cursor);
+    for (const oldest of Array.from(sessionCursors.keys()).slice(
+      0,
+      Math.max(0, sessionCursors.size - MAX_PERSISTED_CURSORS),
+    )) {
+      sessionCursors.delete(oldest);
+    }
+    scheduleCursorFlush();
+  }
+
+  /**
+   * The cursor to ASK this gateway for, for one subscribed session.
+   *
+   * A caller that holds no cursor passes the rewind sentinel, which is the only
+   * honest thing it can say about a session it has not streamed yet. This is
+   * where "I have no cursor" becomes "resume where this device left off": the
+   * remembered cursor, or the sentinel when there is none to use.
+   */
+  private resumeCursor(sid: string, requested: number): number {
+    if (requested >= 0) return requested;
+    return this.cachedSessionCursor(sid) ?? requested;
   }
 
   /** Cache key for one of this gateway's snapshot-able payloads. */
@@ -2969,6 +3106,20 @@ export class GatewayClient {
     return this.isSessionDeleted(sid) ? null : readSnapshot<Session>(this.snapshotKey('session', sid));
   }
 
+  /**
+   * The fullest row this device holds for one session: its own snapshot, else
+   * its row in the list window.
+   *
+   * A lean payload is reconciled against THIS, not against the per-session
+   * snapshot alone. On a cold start that snapshot does not exist yet, so opening
+   * a session took the lean row as the whole truth and the facts only the list
+   * carries (`LIST_ONLY_SESSION_KEYS`) were missing from the cached row until
+   * the next list read landed.
+   */
+  private heldSessionRow(sid: string): Session | null {
+    return this.cachedSession(sid) ?? this.cachedSessions()?.find((row) => row.id === sid) ?? null;
+  }
+
   /** Last transcript seen for ONE session. Reading it renews its LRU position. */
   cachedTranscript(sid: string): TranscriptTurn[] | null {
     return this.isSessionDeleted(sid)
@@ -3212,6 +3363,8 @@ export class GatewayClient {
     snapshots.delete(this.snapshotKey('queued', sid));
     snapshots.delete(this.snapshotKey('running-turn', sid));
     snapshots.delete(this.snapshotKey('model', sid));
+    // A session nothing holds any more has no stream left to resume either.
+    if (sessionCursors.delete(this.snapshotKey('cursor', sid))) scheduleCursorFlush();
     for (const key of Array.from(this.sentAttachments.keys())) {
       if (key.startsWith(`${sid}\u0000`)) this.sentAttachments.delete(key);
     }
@@ -3468,7 +3621,13 @@ export class GatewayClient {
     // page that only gained a title does not re-render every row on it.
     const rows = reconcileRows(pin?.page.rows ?? null, res.data?.sessions ?? []);
     const awaiting = reconcileRows(pin?.page.awaiting ?? null, res.data?.awaiting ?? []);
-    const grouped = reconcileRows(pin?.page.grouped ?? null, res.data?.grouped ?? []);
+    // The shelves ride with the HEAD window alone, so a tail answer OMITS the key.
+    // Absent means "unchanged here"; an empty array means the project really has no
+    // bands. Collapsing the two wiped the shelves as soon as a reader paged.
+    const shelved = res.data?.grouped;
+    const grouped = shelved
+      ? reconcileRows(pin?.page.grouped ?? null, shelved)
+      : (pin?.page.grouped ?? []);
     // Every row names the model it runs on, so opening any of them paints the right
     // chip on the FIRST frame instead of after a per-session round trip.
     this.seedSessionModels(rows);
@@ -3690,7 +3849,7 @@ export class GatewayClient {
       throw new Error('Gateway response omitted queued_turns');
     }
     const merged = reconcileSession(
-      this.cachedSession(sid),
+      this.heldSessionRow(sid),
       row as Session,
       readSnapshot<SessionGoal>(this.snapshotKey('goal', sid)),
     );
@@ -3799,7 +3958,7 @@ export class GatewayClient {
    */
   private absorbSessionRow(sid: string, row: Session): Session {
     const merged = reconcileSession(
-      this.cachedSession(sid),
+      this.heldSessionRow(sid),
       row,
       readSnapshot<SessionGoal>(this.snapshotKey('goal', sid)),
     );
@@ -4926,8 +5085,13 @@ export class GatewayClient {
   // Capacitor webview (native EventSource can't attach the bearer header).
 
   /**
-   * Multiplex many watched sessions over one SSE connection. A cursor of -1
-   * requests live-only delivery; reconnects resume each session independently.
+   * Multiplex many watched sessions over one SSE connection. Reconnects resume
+   * each session independently from the cursor it carries.
+   *
+   * A NEGATIVE cursor is the gateway's REWIND request, not live-only delivery:
+   * it resolves to the running turn's first frame, so that whole turn replays.
+   * It therefore means "this device has no cursor" — and `resumeCursor` answers
+   * it with the one this gateway last served, so a relaunch resumes in range.
    * When requested, fleet status shares this connection but never its cursors.
    */
   streamSessionEvents(
@@ -4982,7 +5146,10 @@ export class GatewayClient {
         };
         try {
           armStall(SSE_CONNECT_TIMEOUT_MS);
-          const spec = Array.from(cursors, ([sid, cursor]) => `${sid}:${cursor}`).join(',');
+          const spec = Array.from(
+            cursors,
+            ([sid, cursor]) => `${sid}:${this.resumeCursor(sid, cursor)}`,
+          ).join(',');
           // An older gateway ignores scope=both and still serves sessions. Fleet
           // stays unready, so the list keeps its existing polling safety net.
           const scope = opts.includeFleet ? '&scope=both' : '';
@@ -5035,8 +5202,11 @@ export class GatewayClient {
                       typeof event.cursor === 'number'
                     ) {
                       cursors.set(sid, event.cursor);
+                      this.rememberSessionCursor(sid, event.cursor);
                     } else if (sid && cursors.has(sid) && typeof event.seq === 'number') {
-                      cursors.set(sid, Math.max(cursors.get(sid) ?? -1, event.seq));
+                      const advanced = Math.max(cursors.get(sid) ?? -1, event.seq);
+                      cursors.set(sid, advanced);
+                      this.rememberSessionCursor(sid, advanced);
                     }
                   }
                 } catch {

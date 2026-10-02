@@ -1693,6 +1693,43 @@ describe('ProjectGroup groups', () => {
     expect(within(steps).getByText('Page 2 of 3')).toBeInTheDocument();
   });
 
+  // Regression: the gateway ships the shelves with the HEAD window alone, because
+  // re-sending the whole filed fleet under every cursor cost 184KB for a second page of
+  // five sessions. A tail answer therefore carries no shelves, and a page turn that read
+  // that absence as "this project has no bands" emptied every band on page two.
+  it('keeps the group shelves when the Sessions page turns', async () => {
+    const filed: Session = {
+      ...STORY_NEWER_PROJECT.rows[0],
+      id: 'filed-only',
+      title: 'Filed only',
+      group_id: WALLET,
+    };
+    // The row is reachable through the SHELF alone: the machine's own window holds the
+    // loose rows, so a band that forgets its shelf has nothing left to paint.
+    const loose = STORY_NEWER_PROJECT.rows;
+    const head = { rows: loose, total: 24, awaiting: [], grouped: [filed], nextCursor: 'after-10' };
+    const tail = { rows: loose, total: 24, awaiting: [], grouped: [], nextCursor: '' };
+    const listProjectPage = vi.fn(async (_root: string, _limit: number, after: string) =>
+      after ? tail : head,
+    );
+    const client = machine({ heldProjectPage: () => head, listProjectPage });
+    const { user } = mount(client, undefined, '', loose);
+    const wallet = await band('Wallet work');
+    expect(wallet.querySelector('[data-session-id="filed-only"]')).toBeInTheDocument();
+
+    const sessions = (await screen.findByText('Sessions')).parentElement as HTMLElement;
+    const steps = within(sessions).getByRole('navigation', {
+      name: `Pages of ${STORY_NEWER_PROJECT.name} sessions`,
+    });
+    await user.click(within(steps).getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(within(steps).getByText('Page 2 of 3')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(listProjectPage.mock.calls.some((call) => call[2] === 'after-10')).toBe(true),
+    );
+    const still = await band('Wallet work');
+    expect(still.querySelector('[data-session-id="filed-only"]')).toBeInTheDocument();
+  });
+
   it('keeps the Groups page when the Sessions archive opens', async () => {
     const client = shelves();
     const { user } = mount(client, undefined, '', STORY_NEWER_PROJECT.rows);

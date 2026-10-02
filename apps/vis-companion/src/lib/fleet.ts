@@ -213,12 +213,17 @@ export function searchFanout(
   };
 }
 
-/** True once every machine in scope has answered (or failed) at least once. */
+/**
+ * True once every machine in scope has answered (or failed) at least once.
+ *
+ * `sessions !== null` is NOT that question: a machine starts with the list this
+ * device painted last time, so a cached row answered for a gateway that had not
+ * said a word yet and the screen declared the fleet loaded on the first frame.
+ * `answered` is the gateway speaking in THIS run (see `FleetMachine`).
+ */
 export function isFleetLoaded(machines: FleetMachine[], scope: string | null): boolean {
   const inScope = scope ? scopedMachines(machines, scope) : machines;
-  return (
-    inScope.length > 0 && inScope.every((machine) => machine.sessions !== null || !!machine.error)
-  );
+  return inScope.length > 0 && inScope.every((machine) => machine.answered || !!machine.error);
 }
 
 /**
@@ -493,15 +498,20 @@ export function isDraftWorkspace(session: Session): boolean {
 }
 
 /**
- * The path a session is grouped under: its working directory. Drafts use their
- * repository root so the draft clone does not become a second group.
+ * The path a session is grouped under: THE GATEWAY'S OWN RULE, which is its
+ * workspace `repo_root` when it has one, else its `root`
+ * (`gateway/state.clj session-project-root`).
+ *
+ * Every row follows that rule, drafts included. Branching on `is_draft` here
+ * disagreed with the machine for an ordinary session opened in a SUBDIRECTORY of
+ * its repository: the gateway counts it under the repository, this device filed
+ * it under the subdirectory, and the project got a second header holding the
+ * rows the first one was still counting.
  */
 export function projectPath(session: Session): string {
   const workspace = session.workspace;
   if (!workspace) return '';
-  const path = isDraftWorkspace(session)
-    ? workspace.repo_root || workspace.root
-    : workspace.root || workspace.repo_root;
+  const path = workspace.repo_root || workspace.root;
   return path?.replace(/\/+$/, '') || '';
 }
 
@@ -537,9 +547,17 @@ export function projectLabel(sessions: Session[]): string {
  * Roots use stable canonical root order, never activity.
  */
 export function groupByWorkDir(sessions: Session[]): Array<[string, Session[]]> {
+  return groupByRoot(sessions, projectPath);
+}
+
+/** `groupByWorkDir` over a caller's own choice of root for each row. */
+function groupByRoot(
+  sessions: Session[],
+  rootOf: (session: Session) => string,
+): Array<[string, Session[]]> {
   const groups = new Map<string, Session[]>();
   for (const session of sessions) {
-    const key = projectPath(session);
+    const key = rootOf(session);
     const group = groups.get(key) ?? [];
     group.push(session);
     groups.set(key, group);
@@ -639,9 +657,22 @@ export function projectGroups(
   isUnread: (session: Session) => boolean = () => false,
   isReadSince: (session: Session) => boolean = () => false,
 ): ProjectGroupView[] {
-  const held = groupByWorkDir(rows);
-  const byRoot = new Map(held);
   const tallied = overview?.projects ?? [];
+  // A row NAMES its project with `project_id`; its path is only how a client
+  // guesses when nothing named it. So a row that claims a counted project is
+  // filed under that project's root whatever its own path says — otherwise a row
+  // whose path and project disagree minted a second header for a project the
+  // overview was already counting it in.
+  const rootById = new Map<string, string>();
+  for (const project of tallied) {
+    if (project.project_id) rootById.set(project.project_id, project.root);
+  }
+  const held = groupByRoot(
+    rows,
+    (session) =>
+      (session.project_id ? rootById.get(session.project_id) : undefined) ?? projectPath(session),
+  );
+  const byRoot = new Map(held);
   const groups: ProjectGroupView[] = tallied.map((project) => {
     const sessions = byRoot.get(project.root) ?? NO_SESSIONS;
     return {
@@ -658,11 +689,20 @@ export function projectGroups(
     };
   });
   const counted = new Set(tallied.map((project) => project.root));
+  // A name a COUNTED project already wears is that project's name. A leftover
+  // root whose rows carry it would print the same header twice — same word, two
+  // places — so such a group is named after its own folder instead. Only groups
+  // minted here are guarded: `searchGroups` has no overview to disagree with, and
+  // its rows' `project_name` is the only name it will ever have.
+  const takenLabels = new Set(groups.map((group) => group.label));
   return groups
     .concat(
       held
         .filter(([root]) => !counted.has(root))
-        .map(([root, sessions]) => localGroup(root, sessions, isUnread)),
+        .map(([root, sessions]) => {
+          const group = localGroup(root, sessions, isUnread);
+          return takenLabels.has(group.label) ? { ...group, label: rootLabel(root) } : group;
+        }),
     )
     .sort((left, right) => (left.root < right.root ? -1 : left.root > right.root ? 1 : 0));
 }

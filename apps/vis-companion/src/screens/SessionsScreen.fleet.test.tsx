@@ -221,7 +221,7 @@ describe('a machine that misses one read is not an outage', () => {
 // timeout, and the error should then be RED, say something like 'Unable to connect',
 // and be shown for at most 3 seconds"): the press inherited the transport's own 30s
 // budget — and a list read can page, so a machine that was blackholed rather than
-// refused wore `reconnecting...` for longer still — then printed "no answer" in the
+// refused wore `Reconnecting…` for longer still — then printed "no answer" in the
 // strip's own hint ink and kept it there for as long as the screen stayed open.
 describe('a retry answers on its own clock', () => {
   beforeEach(() => {
@@ -256,11 +256,11 @@ describe('a retry answers on its own clock', () => {
 
   it('gives up on a machine that never answers, five seconds in', async () => {
     const tile = await pressRetry({ label: 'beta', down: true, hangs: true });
-    expect(note(tile())).toBe('reconnecting...');
+    expect(note(tile())).toBe('Reconnecting…');
 
     // Four seconds of silence is still a retry in flight, not a verdict.
     await settle(4_000);
-    expect(note(tile())).toBe('reconnecting...');
+    expect(note(tile())).toBe('Reconnecting…');
 
     await settle(1_500);
     expect(note(tile())).toBe('Unable to connect');
@@ -448,6 +448,11 @@ describe('what this device found dark outlives the app', () => {
     expect(machineOutage(view.conns[0].url)).toBeNull();
   });
 
+  // A MEMORY DRAINS THE MACHINE; IT DOES NOT CONDEMN IT. The saved verdict still keeps the
+  // machine out of the list on the first frame, which is the whole point of writing it
+  // down. What it must not do is paint this run's answer before this run has one: a laptop
+  // woken an hour ago opened the app wearing `Unable to connect` over a tile offering a
+  // retry, while the read that would have cleared it was already in flight behind it.
   it('starts that machine drained in the FIRST frame of the next launch', async () => {
     const conns = [
       { url: 'http://relaunch-alpha.example.com', token: 't', label: 'alpha' },
@@ -457,18 +462,26 @@ describe('what this device found dark outlives the app', () => {
     rememberMachineOutage(conns[1].url, 'Failed to fetch');
 
     const view = renderSessionsScreen({
-      machines: [fleet()[0], { label: 'beta', down: true, hangs: true }],
+      machines: [fleet()[0], { label: 'beta', down: true }],
       at: conns,
     });
     restore = view.restore;
 
-    // Nothing has been probed yet in this app: the tile is the retry, not a place to go.
-    expect(strip().getByRole('button', { name: /^Reconnect to beta/ })).toBeVisible();
-    expect(strip().queryByRole('button', { name: /^beta$/ })).toBeNull();
+    // Nothing has been probed yet in this app: no section, no rows, and not the scope.
     expect(screen.queryByLabelText('beta projects')).toBeNull();
+    const beta = strip().getByRole('button', { name: /beta/ });
+    expect(beta.getAttribute('aria-pressed')).toBe('false');
+    // The tile says what is actually happening, and says it where a finger is.
+    expect(beta.textContent).toBe('betaConnecting…');
+    expect(beta.querySelector('.text-err')).toBeNull();
+    expect(strip().queryByRole('button', { name: /^Reconnect to beta/ })).toBeNull();
 
     await screen.findByText('First');
-    expect(strip().getByRole('button', { name: /^Reconnect to beta/ })).toBeVisible();
+    // THIS run's own read is what turns the memory into a verdict and earns the retry.
+    await waitFor(() =>
+      expect(strip().getByRole('button', { name: /^Reconnect to beta/ })).toBeVisible(),
+    );
+    expect(screen.queryByLabelText('beta projects')).toBeNull();
   });
 
   // A memory is not a blackout: the shell's offline screen belongs to a fleet that has RUN OUT

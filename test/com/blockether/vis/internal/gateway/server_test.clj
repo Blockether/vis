@@ -2508,7 +2508,9 @@
                                                        queue)]
                                  (write! event)))}
               (fn []
-                (ring-protocols/write-body-to-stream ((rv 'fleet-sse-body) false nil) {} out)
+                (ring-protocols/write-body-to-stream ((rv 'fleet-sse-body) false nil false)
+                                                     {}
+                                                     out)
                 (expect (= [true true] @writes))
                 (expect (= ["subscription.ready" "session.status"]
                            (mapv #(get % "type") (sse-jobs (.toString out "UTF-8")))))
@@ -6848,3 +6850,195 @@
                      (:status (#'sessions-api/mark-session-read-handler
                                (merge {:path-params {:sid (str (java.util.UUID/randomUUID))}}
                                       (json-body {}))))))))))
+
+;; The event stream is the gateway's largest payload and its most redundant one -
+;; the same block ids, types and key names on every frame. A real capture of one
+;; session compressed 16.1x (3,791,664 -> 236,162 bytes), which a phone on a
+;; metered or distant link pays directly. `GzipHandler` cannot serve it: its
+;; deflater buffers, so the stream compresses ITSELF, per connection, sync-flushed
+;; per frame, and only when the client advertises `gzip`.
+(defn- gzip-wire-sizes
+  "Bytes that reach the SOCKET after each of `n` identical frames, for a stream
+   built by `sse-stream` with `gzip?`."
+  [gzip? n frame]
+  (let [socket
+        (java.io.ByteArrayOutputStream.)
+
+        out
+        ((rv 'sse-stream) socket gzip?)]
+
+    (into []
+          (map (fn [_]
+                 (.write out (.getBytes ^String frame "UTF-8"))
+                 (.flush out)
+                 (.size socket)))
+          (range n))))
+
+(defn- gunzip
+  [^bytes bytes]
+  (slurp (java.util.zip.GZIPInputStream. (java.io.ByteArrayInputStream. bytes))))
+
+(defdescribe
+  sse-stream-compresses-only-when-the-client-asks-test
+  (it "reads the client's Accept-Encoding, and nothing else"
+      (let [gzip? (rv 'sse-gzip?)]
+        (expect (gzip? {:headers {"accept-encoding" "gzip, deflate, br"}}))
+        (expect (gzip? {:headers {"accept-encoding" "GZIP"}}))
+        (expect (not (gzip? {:headers {"accept-encoding" "br"}})))
+        (expect (not (gzip? {:headers {}})))
+        (expect (not (gzip? {})))
+        ;; What the Clojure reader actually sends for a stream (`client.clj`).
+        (expect (not (gzip? {:headers {"accept-encoding" "identity"}})))
+        ;; `q=0` is a REFUSAL, so a substring match would compress a stream the
+        ;; client has already said it cannot inflate.
+        (expect (not (gzip? {:headers {"accept-encoding" "gzip;q=0"}})))
+        (expect (not (gzip? {:headers {"accept-encoding" "identity, gzip;q=0.000"}})))
+        (expect (gzip? {:headers {"accept-encoding" "gzip;q=1.0, identity;q=0.5"}}))
+        ;; A coding that merely CONTAINS the token is not the token.
+        (expect (not (gzip? {:headers {"accept-encoding" "x-gzip-maybe"}})))))
+  (it "declares the encoding it used, and varies on the request header"
+      (let [headers (rv 'sse-encoding-headers)]
+        (expect (= "text/event-stream" (get (headers false) "Content-Type")))
+        (expect (not (contains? (headers false) "Content-Encoding")))
+        (expect (= "gzip" (get (headers true) "Content-Encoding")))
+        (expect (= "Accept-Encoding" (get (headers true) "Vary")))
+        ;; The anti-buffering headers survive compression.
+        (expect (= "no" (get (headers true) "X-Accel-Buffering")))))
+  ;; This is the whole reason `GzipHandler` is not allowed near the live surface:
+  ;; without a SYNC flush the deflater holds every frame until the stream closes.
+  (it "puts every flushed frame on the wire instead of buffering the stream"
+      (let [frame
+            (str "id: 1\nevent: content.delta\ndata: " (apply str (repeat 400 "a")) "\n\n")
+
+            sizes
+            (gzip-wire-sizes true 10 frame)]
+
+        ;; The first frame is already out, and every frame after it moves the wire.
+        (expect (pos? (long (first sizes))))
+        (expect (= sizes (sort sizes)))
+        (expect (apply distinct? sizes))
+        ;; …and it is genuinely smaller than what a plain stream would have sent.
+        (expect (< (long (last sizes)) (* 10 (count frame))))))
+  (it "hands the client back exactly the frames it was written"
+      (let [socket
+            (java.io.ByteArrayOutputStream.)
+
+            out
+            ((rv 'sse-stream) socket true)
+
+            frames
+            (str (sse/sse-frame {"seq" 1 "type" "turn.started"})
+                 ": ping\n\n"
+                 (sse/sse-frame {"seq" 2 "type" "content.delta"}))]
+
+        (.write out (.getBytes frames "UTF-8"))
+        (.flush out)
+        (.close out)
+        (expect (= frames (gunzip (.toByteArray socket))))
+        ;; A heartbeat comment between two frames survives the round trip too.
+        (expect (= ["turn.started" "content.delta"]
+                   (mapv #(get % "type") (sse-jobs (gunzip (.toByteArray socket))))))))
+  (it "leaves an uncompressed stream as the socket stream itself"
+      (let [socket (java.io.ByteArrayOutputStream.)]
+        (expect (identical? socket ((rv 'sse-stream) socket false)))))
+  ;; The pad exists to push an edge proxy past its buffering threshold, and it is
+  ;; the bytes ON THE WIRE that it counts: 8KB of spaces deflates to a few dozen,
+  ;; so a compressed pad has to be incompressible to keep doing its job.
+  (it "keeps the proxy pad above the buffering threshold under compression"
+      (let [pad
+            (rv 'sse-proxy-pad!)
+
+            threshold
+            (long @(rv 'SSE_PROXY_PAD_BYTES))
+
+            wire-bytes
+            (fn [gzip?]
+              (let [socket (java.io.ByteArrayOutputStream.)]
+                (pad ((rv 'sse-stream) socket gzip?) gzip?)
+                (.size socket)))]
+
+        (expect (> (long (wire-bytes false)) threshold))
+        (expect (> (long (wire-bytes true)) threshold)))))
+
+(defdescribe
+  sse-body-serves-a-compressed-stream-test
+  (it "gunzips to the same frames the plain body writes"
+      (with-server-state!
+        {}
+        (fn []
+          (let [status
+                {"schema" 1
+                 "type" "session.status"
+                 "session_id" "fleet-session"
+                 "seq" 1
+                 "is_live" true}
+
+                body-bytes
+                (fn [gzip?]
+                  (let [socket (java.io.ByteArrayOutputStream.)]
+                    (ring-protocols/write-body-to-stream ((rv 'fleet-sse-body) false nil gzip?)
+                                                         {}
+                                                         socket)
+                    (.toByteArray socket)))]
+
+            (with-redefs-fn {#'server/stop! (constantly nil)
+                             #'state/subscribe-fleet! (fn [_ sink]
+                                                        (sink status))
+                             #'state/unsubscribe-fleet! (constantly nil)
+                             (rv 'pump-sse!)
+                             (fn [_ queue _ write!]
+                               (when-let [event (.poll ^java.util.concurrent.ArrayBlockingQueue
+                                                       queue)]
+                                 (write! event)))}
+              (fn []
+                (let [plain
+                      (String. ^bytes (body-bytes false) "UTF-8")
+
+                      compressed
+                      (body-bytes true)
+
+                      decoded
+                      (gunzip compressed)]
+
+                  ;; A real gzip member, not a plain body with a lying header.
+                  (expect (= [0x1f 0x8b]
+                             (mapv #(bit-and (long %) 0xff) (take 2 (seq compressed)))))
+                  (expect (< (alength ^bytes compressed) (count plain)))
+                  ;; The frames the client ends up holding are the frames the plain
+                  ;; body writes. Only `subscription.ready`'s own clock differs
+                  ;; between the two reads, so the comparison is on the frames.
+                  (expect (= ["subscription.ready" "session.status"]
+                             (mapv #(get % "type") (sse-jobs plain))))
+                  (expect (= (mapv #(dissoc % "ts") (sse-jobs plain))
+                             (mapv #(dissoc % "ts") (sse-jobs decoded))))
+                  (expect (= (str/replace plain #"\"ts\":\d+" "")
+                             (str/replace decoded #"\"ts\":\d+" ""))))))))))
+  ;; Negotiation is the route's job, so the handler must agree with the body it built.
+  (it "answers the gzip header only for a client that advertised gzip"
+      (with-server-state!
+        {}
+        (fn []
+          (with-redefs-fn {#'server/stop! (constantly nil)
+                           #'state/soul (constantly {"id" "exists"})}
+            (fn []
+              (let [handler
+                    (rv 'multi-events-handler)
+
+                    sid
+                    (str (java.util.UUID/randomUUID))
+
+                    response
+                    (fn [headers]
+                      (handler {:query-params {"sids" sid} :headers headers}))]
+
+                (expect (= 200 (:status (response {}))))
+                (expect (nil? (get-in (response {}) [:headers "Content-Encoding"])))
+                (expect (= "gzip"
+                           (get-in (response {"accept-encoding" "gzip"})
+                                   [:headers "Content-Encoding"])))
+                ;; What a browser and a phone actually send.
+                (expect (= "gzip"
+                           (get-in (response {"accept-encoding" "gzip, deflate, br"})
+                                   [:headers "Content-Encoding"])))
+                (expect (nil? (get-in (response {"accept-encoding" "identity"})
+                                      [:headers "Content-Encoding"]))))))))))

@@ -2841,7 +2841,7 @@
                                   #'bus/waiting-requests (constantly {"a" [] "c" [] "d" []})
                                   #'state/resolve-workspace (fn [_ sid]
                                                               {:root (get roots sid)})
-                                  #'state/session-summary-extras (fn [rows _ _ _]
+                                  #'state/session-summary-extras (fn [rows _ _]
                                                                    rows)
                                   #'config/agent-name (fn [workspace-root]
                                                         (swap! calls conj workspace-root)
@@ -3834,7 +3834,241 @@
         (expect (= [] (mapv #(get % "id") (:grouped got))))
         ;; A filed session is out of the page whether or not its band is on screen.
         (expect (= ["loose1"] (mapv #(get % "id") (:sessions got))))
-        (expect (= 2 (:total got))))))
+        (expect (= 2 (:total got)))))
+  ;; A shelf is a whole band, so it does not PAGE: re-shipping it under every
+  ;; cursor sent the entire filed fleet again with each tail window - measured
+  ;; 184KB for a second page of five sessions, 19KB without it.
+  (it "ships the shelves on the HEAD window alone"
+      (let [head
+            (grouped-fleet-window {:limit 1 :grouped "aside"})
+
+            tail
+            (grouped-fleet-window {:limit 1 :grouped "aside" :after (:next-cursor head)})]
+
+        (expect (= ["filed1" "filed2"] (mapv #(get % "id") (:grouped head))))
+        ;; ABSENT on the tail, never an empty vector: a reader that cannot tell
+        ;; "not shipped on this window" from "this project has no bands" wipes the
+        ;; shelves the head already painted the moment it turns to page two.
+        (expect (not (contains? tail :grouped)))
+        ;; The loose cut, the total and the cursor do not move with it.
+        (expect (= ["loose2"] (mapv #(get % "id") (:sessions tail))))
+        (expect (= 2 (:total tail)))
+        (expect (not (:has-more tail))))))
+
+;; Regression: a SINGLE-session payload (`GET`/`PATCH /v1/sessions/:sid`, `PUT
+;; /v1/sessions/:sid/group`) carried `project_id`/`project_name` and no path at all,
+;; because only the LIST path attached the lean `workspace`. A client keys a row to
+;; its project BY PATH, so that row keyed to the empty path and painted a SECOND
+;; project header beside the one the session was already under.
+(defn- with-pathed-fleet
+  "Run `f` over a two-session fleet whose workspaces `resolve` answers."
+  [resolve f]
+  (let [records
+        [{:id "a" :title "A" :channel :api :created-at 1000}
+         {:id "b" :title "B" :channel :api :created-at 900}]]
+
+    (with-redefs-fn {#'lp/db-info (constantly ::db)
+                     #'lp/projects (constantly [])
+                     #'lp/by-channel (constantly records)
+                     #'lp/by-id (into {} (map (juxt :id identity)) records)
+                     #'persistance/db-session-turn-stats (constantly {})
+                     #'bus/live-turns (constantly {})
+                     #'bus/live-turn-id (constantly nil)
+                     #'bus/waiting-requests (constantly {})
+                     #'bus/session-waiting? (constantly false)
+                     #'state/resolve-workspace (fn [_db sid]
+                                                 (resolve sid))
+                     #'workspace/draft? (constantly false)
+                     #'config/agent-name (constantly "vis")}
+      f)))
+
+(defn- repo-workspace
+  [sid]
+  {:root (str "/repo/" sid) :repo-root "/repo" :label (str "L" sid) :fork-ms 7})
+
+(defdescribe
+  gateway-every-session-payload-carries-its-path-test
+  (it "carries the lean workspace on a single-session soul"
+      (with-pathed-fleet repo-workspace
+                         (fn []
+                           (let [ws (get (state/soul "a") "workspace")]
+                             (expect (map? ws))
+                             (expect (= "/repo/a" (get ws "root")))
+                             (expect (= "/repo" (get ws "repo_root")))
+                             (expect (= "La" (get ws "label")))
+                             (expect (= 7 (get ws "fork_ms")))
+                             (expect (false? (get ws "is_draft")))))))
+  (it "answers the SAME workspace value in a list row and in a single read"
+      (with-pathed-fleet repo-workspace
+                         (fn []
+                           (let [rows (:sessions (state/list-sessions-page :all {:limit 2}))]
+                             (expect (= 2 (count rows)))
+                             (doseq [row rows]
+                               (expect (contains? row "workspace"))
+                               (expect (= (get (state/soul (get row "id")) "workspace")
+                                          (get row "workspace"))))))))
+  ;; An unresolvable workspace must leave the key OUT, never ship an empty path:
+  ;; an empty path is the `No project` bucket, which is the wrong header again.
+  (it "omits the key when the workspace cannot be resolved"
+      (with-pathed-fleet (constantly nil)
+                         (fn []
+                           (expect (not (contains? (state/soul "a") "workspace")))
+                           (let [row (first (:sessions (state/list-sessions-page :all
+                                                                                {:limit 1})))]
+                             (expect (not (contains? row "workspace"))))))))
+
+;; The overview is embedded in every HEAD read of the session list, and grouping it
+;; costs one workspace resolution PER SESSION: measured 0.30-0.36s over 1899
+;; sessions, which made a `limit=1` head read cost 0.59-0.65s against 0.19s for a
+;; tail page. It is cached - and a cached COUNT would be a bug, so the fingerprint
+;; holds every fact the tally reads.
+(defn- counted-overview
+  "`projects-overview` over a fleet whose facts the caller supplies, beside the
+   number of workspace resolutions that answer paid for."
+  [{:keys [records live waiting marks roots]}]
+  (let [resolutions
+        (atom 0)]
+
+    (with-redefs-fn {#'lp/db-info (constantly ::db)
+                     #'lp/projects (constantly [])
+                     #'persistance/db-session-turn-stats (constantly {})
+                     #'lp/by-channel (constantly records)
+                     #'lp/session-read-marks (constantly (or marks {}))
+                     #'bus/live-turns (constantly (or live {}))
+                     #'bus/waiting-requests (constantly (or waiting {}))
+                     #'state/resolve-workspace (fn [_db sid]
+                                                 (swap! resolutions inc)
+                                                 {:root (get roots sid) :repo-root (get roots sid)})}
+      (fn []
+        [(state/projects-overview) @resolutions]))))
+
+(def ^:private two-project-fleet
+  {:records [{:id "a" :title "A" :created-at 300} {:id "b" :title "B" :created-at 200}]
+   :roots {"a" "/repo/a" "b" "/repo/b"}})
+
+(defdescribe
+  gateway-caches-the-projects-overview-test
+  (it "answers the same counts twice and resolves no workspace the second time"
+      (let [[first-answer first-resolutions]
+            (counted-overview two-project-fleet)
+
+            [second-answer second-resolutions]
+            (counted-overview two-project-fleet)]
+
+        (expect (= 2 (:project_count first-answer)))
+        (expect (= 2 (:session_count first-answer)))
+        (expect (pos? first-resolutions))
+        (expect (zero? second-resolutions))
+        (expect (= (dissoc first-answer :server_time_ms) (dissoc second-answer :server_time_ms)))))
+  ;; The clock is the one field that must NOT come back cached.
+  (it "stamps every answer with its own server clock"
+      (let [[primed _] (counted-overview two-project-fleet)
+            [cached resolutions] (counted-overview two-project-fleet)]
+        (expect (zero? resolutions))
+        (expect (number? (:server_time_ms cached)))
+        (expect (<= (long (:server_time_ms primed)) (long (:server_time_ms cached))))))
+  (it "recounts when a session starts running"
+      (let [[_ _] (counted-overview two-project-fleet)
+            [answer resolutions] (counted-overview (assoc two-project-fleet :live {"a" "t1"}))]
+        (expect (pos? resolutions))
+        (expect (= 1 (:live_count answer)))
+        (expect (= 1
+                   (->> (:projects answer)
+                        (filter #(= "/repo/a" (get % "root")))
+                        first
+                        (#(get % "live_count")))))))
+  (it "recounts when a session parks on a human"
+      (let [[_ _] (counted-overview two-project-fleet)
+            [answer resolutions]
+            (counted-overview (assoc two-project-fleet :waiting {"b" [:req]}))]
+        (expect (pos? resolutions))
+        (expect (= 1 (:awaiting_count answer)))))
+  (it "recounts when a session joins the fleet"
+      (let [[_ _] (counted-overview two-project-fleet)
+            [answer resolutions]
+            (counted-overview (-> two-project-fleet
+                                  (update :records conj {:id "c" :title "C" :created-at 100})
+                                  (assoc-in [:roots "c"] "/repo/a")))]
+        (expect (pos? resolutions))
+        (expect (= 3 (:session_count answer)))))
+  ;; A root MOVE is the one fact the fingerprint cannot see, so `change-root!`
+  ;; invalidates the cache by hand.
+  (it "recounts after a session's root moves under it"
+      (let [[_ _] (counted-overview two-project-fleet)
+            [answer resolutions]
+            (with-redefs-fn {#'lp/db-info (constantly nil)}
+              (fn []
+                (state/change-root! "a" "/repo/b")
+                (counted-overview (assoc-in two-project-fleet [:roots "a"] "/repo/b"))))]
+        (expect (pos? resolutions))
+        (expect (= 1 (:project_count answer))))))
+
+;; Regression: the Activity snapshot grows with the work a form does, and the whole
+;; of it rode ONE `block.activity` frame - a measured ~600KB socket write, with every
+;; frame queued behind it waiting on that write.
+(defn- activity-of
+  [rows]
+  (:activity (nth (#'state/form-activity-chunk->event
+                    {:phase :form-activity
+                     :position 0
+                     :activity {:state "running"
+                                :counts {:running 1}
+                                :omitted {:rows 0 :by-classification {}}
+                                :rows rows}})
+                  2)))
+
+(defn- activity-rows
+  [n text]
+  (mapv (fn [i]
+          {:id (str "row-" i)
+           :sequence i
+           :operation "shell.run"
+           :presenter "command"
+           :signal "observation"
+           :state "succeeded"
+           :summary text
+           :resources []
+           :evidence [{:kind "text" :text text}]})
+        (range n)))
+
+(defdescribe
+  gateway-bounds-the-activity-frame-test
+  (it "clamps an oversized text field instead of shipping it whole"
+      (let [row (first (:rows (activity-of (activity-rows 1 (apply str (repeat 100000 "x"))))))]
+        (expect (str/ends-with? (:summary row) "…[truncated]"))
+        (expect (< (count (:summary row)) 3000))
+        (expect (< (count (:text (first (:evidence row)))) 3000))))
+  (it "drops the OLDEST rows and counts them, instead of growing without bound"
+      (let [bounded
+            (activity-of (activity-rows 400 "read one observed file"))
+
+            kept
+            (:rows bounded)]
+
+        (expect (seq kept))
+        (expect (< (count kept) 400))
+        ;; The newest row is the one the human is watching, so it always survives.
+        (expect (= "row-399" (:id (last kept))))
+        (expect (= (- 400 (count kept)) (get-in bounded [:omitted :rows])))
+        (expect (< (count (wire/json-str bounded)) 20000))))
+  (it "leaves a snapshot that already fits exactly as it was"
+      (let [rows (activity-rows 2 "short")]
+        (expect (= rows (:rows (activity-of rows))))
+        (expect (= 0 (get-in (activity-of rows) [:omitted :rows])))))
+  ;; The rows are walked NEWEST-first and clamped as they are measured, so a row
+  ;; the frame drops is never visited at all - clamping the whole history first
+  ;; would put the ~600KB this bound removes back on every running revision. The
+  ;; oldest row here EXPLODES when anything walks into it.
+  (it "never walks into the rows it drops"
+      (let [exploding
+            (assoc (first (activity-rows 1 "oldest"))
+              :id "oldest" :resources (lazy-seq (throw (ex-info "walked a dropped row" {}))))
+
+            bounded
+            (activity-of (into [exploding] (activity-rows 400 "read one observed file")))]
+
+        (expect (= "row-399" (:id (last (:rows bounded)))))
+        (expect (pos? (long (get-in bounded [:omitted :rows])))))))
 
 ;; The bands of one project are a WALL a human keeps growing, so the list a client
 ;; paints them from is a window with a total of its own - what its pager prints.

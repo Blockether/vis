@@ -17,6 +17,7 @@ import {
   scopedMachines,
   scopedConns,
   searchFanout,
+  searchGroups,
   searchTally,
   scopedSessions,
   sessionInputCount,
@@ -805,5 +806,131 @@ describe('the NEW a header counts', () => {
     const overview = overviewOf();
     expect(projectGroups(overview, woken(), isUnread)[0]?.tally.unread).toBe(1);
     expect(machineCounts(held(woken(), overview), sessionIsLive, isUnread).unread).toBe(1);
+  });
+});
+
+// Regression, duplicate project header: a group is keyed by a path, but a row
+// NAMES its project with `project_id`. A row whose path disagreed with the
+// project it claims minted a second header for a project the overview was
+// already counting it in — the same project, twice, one of them nameless.
+describe('a row that names its project', () => {
+  const overview: GatewayOverview = {
+    projects: [
+      {
+        root: '/Users/me/vis',
+        project_id: 'p-vis',
+        name: 'vis',
+        session_count: 3,
+        live_count: 0,
+        awaiting_count: 0,
+        last_activity_ms: 10,
+      },
+    ],
+    project_count: 1,
+    session_count: 3,
+    live_count: 0,
+    awaiting_count: 0,
+  };
+
+  it('paints under that project whatever its own path says', () => {
+    const stray = session('s1', {
+      project_id: 'p-vis',
+      project_name: 'vis',
+      workspace: { root: '/Users/me/vis/apps/vis-companion' },
+    });
+    const groups = projectGroups(overview, [stray]);
+
+    expect(groups.map((group) => group.root)).toEqual(['/Users/me/vis']);
+    expect(groups[0]?.sessions).toEqual([stray]);
+  });
+
+  it('still falls back to its path when it claims nothing the overview counts', () => {
+    const elsewhere = session('s2', {
+      project_id: 'p-gone',
+      workspace: { root: '/Users/me/other' },
+    });
+    const groups = projectGroups(overview, [elsewhere]);
+
+    expect(groups.map((group) => group.root)).toEqual(['/Users/me/other', '/Users/me/vis']);
+    expect(groups[0]?.sessions).toEqual([elsewhere]);
+  });
+
+  // A row with no project id at all keys by the GATEWAY's rule, so a leftover
+  // group may still appear — but it must not wear the counted project's name.
+  it('never gives a leftover group the counted project name', () => {
+    const groups = projectGroups(overview, [
+      session('s3', { project_name: 'vis', workspace: { root: '/Users/me/vis-sandbox' } }),
+    ]);
+
+    expect(groups.map((group) => [group.root, group.label])).toEqual([
+      ['/Users/me/vis', 'vis'],
+      ['/Users/me/vis-sandbox', 'vis-sandbox'],
+    ]);
+  });
+
+  // `searchGroups` has no overview to disagree with: the rows' own name is the
+  // only name that group will ever have.
+  it('leaves a search group named by its rows', () => {
+    const groups = searchGroups([
+      session('s4', { project_name: 'vis', workspace: { root: '/Users/me/vis-sandbox' } }),
+    ]);
+
+    expect(groups.map((group) => group.label)).toEqual(['vis']);
+  });
+});
+
+// Regression, duplicate project header: the gateway files EVERY session under its
+// workspace `repo_root` when it has one (`state/session-project-root`). Branching
+// on `is_draft` here filed an ordinary session opened in a subdirectory of its
+// repository under that subdirectory, so the project got a second header holding
+// rows the first one was still counting.
+describe('the path a session is grouped under', () => {
+  it('is the repository root for an ordinary session in a subdirectory', () => {
+    const inSubdir = session('s1', {
+      workspace: { root: '/Users/me/vis/apps/vis-companion', repo_root: '/Users/me/vis' },
+    });
+    const atRoot = session('s2', {
+      workspace: { root: '/Users/me/vis', repo_root: '/Users/me/vis' },
+    });
+
+    expect(groupByWorkDir([inSubdir, atRoot])).toEqual([
+      ['/Users/me/vis', [inSubdir, atRoot]],
+    ]);
+  });
+
+  it('is still the repository root for a draft clone', () => {
+    const draft = session('s3', {
+      workspace: {
+        root: '/Users/me/.vis/drafts/vis/wire',
+        repo_root: '/Users/me/vis',
+        is_draft: true,
+      },
+    });
+
+    expect(groupByWorkDir([draft])).toEqual([['/Users/me/vis', [draft]]]);
+  });
+
+  it('is the working directory when no repository was resolved', () => {
+    const loose = session('s4', { workspace: { root: '/Users/me/scratch/' } });
+
+    expect(groupByWorkDir([loose])).toEqual([['/Users/me/scratch', [loose]]]);
+  });
+});
+
+// Regression: `isFleetLoaded` documented "every machine has answered (or failed)"
+// but asked whether rows were present, and a machine starts with the list this
+// device painted last time. The screen declared the fleet loaded on the first
+// frame, before one gateway of this run had been given a chance to fail.
+describe('isFleetLoaded', () => {
+  it('waits for the gateway to speak, not for cached rows to exist', () => {
+    const cached: FleetMachine = {
+      conn: studio,
+      sessions: [session('a')],
+      error: null,
+      answered: false,
+    };
+    expect(isFleetLoaded([cached], null)).toBe(false);
+    expect(isFleetLoaded([{ ...cached, answered: true }], null)).toBe(true);
+    expect(isFleetLoaded([{ ...cached, error: 'offline' }], null)).toBe(true);
   });
 });

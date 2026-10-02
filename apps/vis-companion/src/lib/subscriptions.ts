@@ -12,6 +12,14 @@ type ConnectionListener = (connected: boolean) => void;
 
 const MAX_BUFFERED_EVENTS = 2_048;
 
+// A session the hub has not streamed yet. On the wire a negative cursor is the
+// gateway's REWIND request — it resolves to the running turn's first frame and
+// replays that whole turn — so this is the honest answer to "where did I get
+// to?" and never a cheap live-only subscribe. `GatewayClient` turns it into the
+// cursor it last served this device, and `subscription.ready` echoes the cursor
+// the gateway actually resumed from before any normal event arrives.
+const NO_CURSOR = -1;
+
 // The frames that END a turn. After one of these the turn's story is told by the
 // transcript, never by the event buffer.
 const TURN_TERMINAL_EVENTS = new Set(['turn.completed', 'turn.failed', 'turn.cancelled']);
@@ -97,9 +105,7 @@ export class SessionSubscriptionHub {
         continue;
       }
       this.watched.add(sid);
-      // -1 is the gateway's efficient live-only sentinel. subscription.ready
-      // replaces it with the effective cursor before normal events arrive.
-      this.cursors.set(sid, -1);
+      this.cursors.set(sid, NO_CURSOR);
       changed = true;
     }
     for (const sid of this.watched) {

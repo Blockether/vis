@@ -186,7 +186,7 @@ const NO_SEARCH: SearchAnswers = {
 // A RETRY IS A GESTURE, so it answers on a gesture's clock. The transport gives every
 // request 30s (`REQUEST_TIMEOUT_MS`) and a list read can page, so a tile pressed on a
 // machine that is blackholed rather than refused — a closed laptop does not refuse a
-// socket — wore `reconnecting...` for half a minute or more. Five seconds of silence IS
+// socket — wore `Reconnecting…` for half a minute or more. Five seconds of silence IS
 // the answer: the probe is cancelled and the tile says so.
 const RETRY_TIMEOUT_MS = 5_000;
 
@@ -370,8 +370,15 @@ export function SessionsScreen({
   // returning to this tab repaints the previous frame instantly; the effects
   // below revalidate each machine independently and reconcile on top.
   const [machines, setMachines] = useState<FleetMachine[]>(() => hydrateMachines(conns, []));
-  // A fresh machine snapshot also revalidates project windows outside its unchanged head.
+  // EVERY ACCEPTED SNAPSHOT OF A MACHINE, whether it moved anything or not. The gateway
+  // owns the session groups and sends no fleet frame when one is renamed, so this list's
+  // own read is the only thing that revalidates the wall of a project already on screen.
   const [machineReads, setMachineReads] = useState<ReadonlyMap<string, number>>(() => new Map());
+  // ONLY THE SNAPSHOTS THAT MOVED SOMETHING, which is what a project's deeper page
+  // windows are revalidated from. An idle poll that answers with the rows already on
+  // screen is not news (see `settle`), and it must not charge the machine a full prefetch
+  // of every project on screen to learn that.
+  const [machineMoves, setMachineMoves] = useState<ReadonlyMap<string, number>>(() => new Map());
   // A visit is local truth before the transcript's gateway read mark reaches this list.
   const [readFloors, setReadFloors] = useState<ReadonlyMap<string, number>>(() => new Map());
   const readFloorsRef = useRef(readFloors);
@@ -639,6 +646,7 @@ export function SessionsScreen({
             countedUnread === held.countedUnread
           )
             return;
+          setMachineMoves((current) => new Map(current).set(key, (current.get(key) ?? 0) + 1));
           patchMachine(key, (machine) => ({
             ...machine,
             sessions: merged,
@@ -1318,7 +1326,9 @@ export function SessionsScreen({
   const inScope = useMemo(() => scopedMachines(machines, scope), [machines, scope]);
 
   // The list is only "still loading" while NOTHING has answered: one slow machine
-  // must not hold the machines beside it off the screen.
+  // must not hold the machines beside it off the screen. A machine's SAVED window counts,
+  // because a cold start opening on the picture it closed on is the whole point of saving
+  // it (`SessionsScreen.paging.test`, `SessionsScreen.ordering.test`).
   const sessions = useMemo(() => {
     if (machines.length === 0) return [];
     const rows = inScope.flatMap((machine) => machine.sessions ?? []);
@@ -1326,6 +1336,18 @@ export function SessionsScreen({
       ? rows
       : null;
   }, [inScope, machines, scope]);
+
+  // BUT CACHED ROWS ARE NOT AN ANSWER, AND THE LIST MUST NOT READ AS SETTLED OVER THEM.
+  // `machine.sessions` is non-null the moment the client's saved window is seeded on
+  // mount, so a list of possibly hours-old rows stood there with nothing on the screen
+  // saying a word was still being waited for. A machine confirmed down this run has
+  // answered the only way it can; it is not still being read. A REMEMBERED outage is not
+  // such an answer — `reconnectMachine` has a read of that machine in flight, which is
+  // why its tile says `Connecting…` — so the footer agrees with the tile instead of
+  // settling the saved rows under it.
+  const isReading =
+    sessions === null ||
+    inScope.some((machine) => !machine.answered && (!machine.error || machine.isRemembered));
 
   // ROWS SKIP LAYOUT OFF SCREEN ONLY AFTER ONE FULL LAYOUT, AND ONLY WHERE THE ENGINE
   // DRAWS AHEAD (see `SessionRow`). Every row records its real height on its first layout,
@@ -1708,7 +1730,8 @@ export function SessionsScreen({
         reading: {
           pageSize,
           isVisible,
-          revision: machineReads.get(machineKey(entry.machine.conn)) ?? 0,
+          revision: machineMoves.get(machineKey(entry.machine.conn)) ?? 0,
+          reads: machineReads.get(machineKey(entry.machine.conn)) ?? 0,
         },
         // Keep canonical gateway paths for identity and creation; shorten only for paint.
         groups: projectGroups(
@@ -1718,7 +1741,7 @@ export function SessionsScreen({
           readSinceCounted(entry.machine, (session) => isRowSeen(entry.machine.conn, session)),
         ),
       })),
-    [listed, pageSize, isVisible, isRowUnread, isRowSeen, machineReads],
+    [listed, pageSize, isVisible, isRowUnread, isRowSeen, machineMoves, machineReads],
   );
   const foundSections = useMemo(
     () =>
@@ -1864,9 +1887,15 @@ export function SessionsScreen({
           // A machine that is not answering cannot scope the screen to stale rows.
           // Keep its name in place; its error-toned tile retries the connection,
           // and the transport reason remains available in the title.
-          const isDown = Boolean(machine.error);
-          // A cached machine has not answered this run. Keep its pending state in
-          // the title; cached unread activity may still tint the tile.
+          //
+          // A REMEMBERED OUTAGE IS NOT THIS RUN'S VERDICT. It is what the run before the
+          // kill wrote down, kept for up to thirty days, and `load` already has a read of
+          // this machine in flight behind it. Painting it as a failure meant a laptop woken
+          // an hour ago opened the app wearing `Reconnect` before anything had been asked.
+          const isDown = Boolean(machine.error) && !machine.isRemembered;
+          // A cached machine has not answered this run, and neither has one whose darkness
+          // is only remembered: both are being connected to right now, and the tile says
+          // so. Cached unread activity may still tint it.
           const isChecking = !isDown && !machine.answered;
           const retry = isDown ? retries.get(key) : undefined;
           return (
@@ -1875,13 +1904,19 @@ export function SessionsScreen({
               isOn={scope === key}
               hasUnread={!isDown && (tally?.unread ?? 0) > 0}
               isDown={isDown}
+              // WHILE CONNECTING, SAY SO — in the tile, where a finger is. The pending
+              // state used to live in `title=` alone, an attribute that does not exist on
+              // touch, so a phone showed a bare machine name for as long as the read took.
               note={
                 retry === 'busy'
-                  ? 'reconnecting...'
+                  ? 'Reconnecting…'
                   : retry === 'failed'
                     ? 'Unable to connect'
-                    : null
+                    : isChecking
+                      ? 'Connecting…'
+                      : null
               }
+              // Only the FAILURE is error ink: connecting is not a failure.
               isNoteError={retry === 'failed'}
               label={isDown ? `Reconnect to ${name}` : undefined}
               title={
@@ -2117,7 +2152,7 @@ export function SessionsScreen({
               context={rowContext}
               creation={projectCreation}
               note={(machine) =>
-                machine.sessions === null ? 'Reading sessions...' : 'No projects on this machine yet.'
+                !machine.answered ? 'Reading sessions...' : 'No projects on this machine yet.'
               }
             />
           )}
@@ -2127,7 +2162,7 @@ export function SessionsScreen({
             is where the filtering happens — printing "708 of 970" in a footer while
             the control that produced it said nothing was the same fact in the wrong
             place, and the third copy of it on the screen. */}
-        {sessions === null && (
+        {isReading && (
           <footer className="hidden items-center justify-end border-t border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-meta text-dialog-hint sm:flex sm:bg-page sm:px-4">
             <span>Reading sessions...</span>
           </footer>

@@ -89,6 +89,75 @@
   [s ^long limit]
   (clamp (str s) limit))
 
+(def ^:private ACTIVITY_TEXT_LIMIT
+  "Bound for ONE text field inside a live Activity row (a summary, a result, a
+   diff line). Small on purpose: a row is a LINE a human reads, and the field
+   budget has to leave room for the rows beside it inside
+   `STREAM_CUMULATIVE_LIMIT`."
+  2000)
+
+(defn- clamp-activity-text
+  "`x` with every text VALUE inside it clamped to `ACTIVITY_TEXT_LIMIT`. Map keys
+   are left alone: a key is a field name, and rewriting one would rename the
+   field rather than shorten it."
+  [x]
+  (cond (map? x) (persistent! (reduce-kv (fn [m k v]
+                                           (assoc! m k (clamp-activity-text v)))
+                                         (transient {})
+                                         x))
+        (sequential? x) (mapv clamp-activity-text x)
+        (string? x) (bounded-str x ACTIVITY_TEXT_LIMIT)
+        :else x))
+
+(defn- bounded-activity
+  "`activity` snapshot bounded for the wire, the way a delta's `:cumulative` is.
+
+   The reducer's snapshot keeps the whole history of a form's observed work, so a
+   long block emitted it as ONE unbounded frame - a measured ~600KB
+   `block.activity` on a single socket write, ahead of every frame queued behind
+   it. Two cuts, in order: every text field is clamped to
+   `ACTIVITY_TEXT_LIMIT`, so no single row can be arbitrarily large, then the
+   OLDEST rows are dropped until the frame fits `STREAM_CUMULATIVE_LIMIT`.
+
+   The rows are walked NEWEST-first and clamped as they are measured, so the work
+   is proportional to the frame that ships rather than to the history behind it.
+   Walking the whole snapshot first would put the ~600KB back on every running
+   revision - O(n²) over a long block - which is the cost this is here to remove.
+
+   Dropped rows are counted into `:omitted :rows`, which is the snapshot's own
+   channel for shedding (`activity/empty-state`) and which clients already read -
+   so a bounded frame says it is bounded instead of silently losing work. The
+   NEWEST row always survives: it is the one the human is watching, and its own
+   text is already clamped. The DURABLE snapshot persisted on the form is
+   untouched; this bound is the live wire frame alone."
+  [activity]
+  (let [rows
+        (vec (:rows activity))
+
+        cost
+        (fn [row]
+          (long (count (try (wire/json-str row) (catch Throwable _ (pr-str row))))))
+
+        kept
+        (:rows (reduce (fn [acc row]
+                         (let [row (clamp-activity-text row)
+                               left (- (long (:budget acc)) (cost row))]
+                           (if (and (seq (:rows acc)) (neg? left))
+                             (reduced acc)
+                             (assoc acc :rows (cons row (:rows acc)) :budget left))))
+                       {:rows () :budget STREAM_CUMULATIVE_LIMIT}
+                       (rseq rows)))
+
+        dropped
+        (- (count rows) (count kept))]
+
+    (cond-> (clamp-activity-text (dissoc activity :rows))
+      (contains? activity :rows)
+      (assoc :rows (vec kept))
+
+      (pos? dropped)
+      (update-in [:omitted :rows] (fn [n] (+ (long (or n 0)) (long dropped)))))))
+
 ;; Live reasoning/content/prose deltas arrive per provider token. Each emitted
 ;; wire frame carries the INCREMENT since the last emit under `:text` (append
 ;; consumers, e.g. the web prose stream) PLUS the bounded FULL cumulative text
@@ -1291,6 +1360,32 @@
       (some->> (:workspace/id (live-env sid))
                (persistance/db-workspace-get db))))
 
+(defn- lean-workspace
+  "The lean `workspace` map a session payload carries - `{root repo_root label
+   fork_ms is_draft}` - or nil when the session's workspace cannot be resolved.
+
+   Deliberately NO git status: that stays in the per-session
+   `session-workspace-info`. It belongs to `soul`, so a LIST row and a
+   SINGLE-session answer (`GET`/`PATCH /v1/sessions/:sid`, `PUT
+   /v1/sessions/:sid/group`) carry the SAME key. They did not: only the list path
+   attached it, so a detail row arrived carrying `project_name` and no path at
+   all. A client keys a row to its project BY PATH, so that row keyed to the empty
+   path and painted a SECOND project header beside the one it was already under.
+
+   A DRAFT is a per-session clone under ~/.vis/drafts/<repo>/<label>; without
+   `is_draft` a client cannot tell its `root` from a real project root and groups
+   every draft as its own project. Clients group by `repo_root`, badge on
+   `is_draft`."
+  [sid]
+  (try (when-let [db (lp/db-info)]
+         (when-let [w (resolve-workspace db sid)]
+           (wire/canonical {:root (:root w)
+                            :repo-root (:repo-root w)
+                            :label (:label w)
+                            :fork-ms (:fork-ms w)
+                            :is-draft (boolean (workspace/draft? w))})))
+       (catch Throwable _ nil)))
+
 (def ^:dynamic ^:private *agent-name-for-root*
   "Request-local resolver, shared by page and awaiting rows; nil outside listings."
   nil)
@@ -1514,6 +1609,14 @@
                                  (usage-percent reused reusable)))))))
        (catch Throwable _ nil)))
 
+(defonce ^:private projects-overview-epoch
+  ;; Invalidation counter for the `projects-overview` cache, and the ONE fact that
+  ;; cache cannot fingerprint: a session's WORKSPACE root. The overview groups
+  ;; sessions by `session-project-root`, so moving a root re-draws a header while
+  ;; every session fact beside it - project id, recency, liveness, unread - stands
+  ;; still. It lives beside `change-root!` because that is the write.
+  (atom 0))
+
 (defn change-root!
   "Repoint the session pinned to `sid` at `path` as its PRIMARY root, then return
    the refreshed `session-workspace-info` (whose `:id` is the newly pinned
@@ -1522,6 +1625,8 @@
   (when-let [db (lp/db-info)]
     (when-let [state-id (resolve-state-id db sid)]
       (workspace/change-root! db state-id path)))
+  ;; The project HEADERS are grouped by this root; see `projects-overview-epoch`.
+  (swap! projects-overview-epoch inc)
   (session-workspace-info sid))
 
 ;; Chunk -> event translation (§8)
@@ -1784,11 +1889,15 @@
 
    Running revisions are transient while the reducer is active; the explicit settled
    revision is durable. Both route on `form_index`, the position shared by the form's
-   start and output frames."
+   start and output frames.
+
+   Both are BOUNDED here (`bounded-activity`): the reducer's snapshot grows with
+   the work a form does, and the frame is one socket write that every frame behind
+   it waits on."
   [{:keys [phase position activity iteration settled?]}]
   (when (and (= phase :form-activity) (map? activity))
     ["block.activity" (boolean settled?)
-     (cond-> {:form-index position :activity activity}
+     (cond-> {:form-index position :activity (bounded-activity activity)}
        (some? iteration)
        (assoc :iteration iteration))]))
 
@@ -5081,6 +5190,11 @@
           stats (try (some-> (lp/db-info)
                              (persistance/db-session-turn-stats sid))
                      (catch Throwable _ nil))
+          ;; EVERY payload a session reaches a client in carries its path, so no
+          ;; answer can produce a row a client cannot key to its project
+          ;; (`lean-workspace`). Resolved once here, which is also why the list
+          ;; rows no longer resolve it a second time in `session-summary-extras`.
+          lean-ws (lean-workspace sid)
           ;; The session's MODEL PIN, from the same `session_soul` row `by-id` just
           ;; read — no extra query, so every list row carries it and a client never
           ;; has to follow up with `GET /v1/sessions/:sid/model` to name the model it
@@ -5150,6 +5264,9 @@
                  :server_time_ms server-time-ms}
           model-pref
           (assoc :model_pref model-pref)
+
+          lean-ws
+          (assoc :workspace lean-ws)
 
           (:latest-turn-at stats)
           (assoc :modified_at (:latest-turn-at stats))
@@ -5523,14 +5640,14 @@
 (defn- session-summary-extras
   "Bulk summary decorations for `list-sessions`: per-session `turn_count` +
    `modified_at` (from the ONE grouped `db-session-turn-stats` query `stats`
-   already holds for the whole store) and a lean `workspace` map
-   ({root repo_root label fork_ms is_draft}) — facts the TUI session picker
-   previously fetched with TWO HTTP round-trips PER session (109 sequential
-   calls / ~7.5s at 54 sessions). Deliberately NO git status here: that stays in
-   the per-session `session-workspace-info`.
+   already holds for the whole store) — facts the TUI session picker previously
+   fetched with TWO HTTP round-trips PER session (109 sequential calls / ~7.5s at
+   54 sessions). The lean `workspace` map rides `soul` itself
+   (`lean-workspace`), so every payload carries it and this decoration does not
+   resolve it a second time per row.
 
-   `db`, `stats` and `marks` are passed IN because the caller has already paid
-   for all three: this runs over a PAGE, and re-querying per page would put the
+   `stats` and `marks` are passed IN because the caller has already paid for
+   both: this runs over a PAGE, and re-querying per page would put the
    whole-store scan back on every window.
 
    `marks` is the asking reader's watermarks (`{id seen-answers}`), so every row
@@ -5538,26 +5655,11 @@
    something-new question ONCE, instead of every surface keeping a private copy
    of the count it last saw and disagreeing about a session it never happened
    to list."
-  [souls db stats marks]
+  [souls stats marks]
   (mapv
     (fn [s]
       (let [st
             (get stats (str (get s "id")))
-
-            ws
-            (when db
-              (try (when-let [w (resolve-workspace db (get s "id"))]
-                     (wire/canonical {:root (:root w)
-                                      :repo-root (:repo-root w)
-                                      :label (:label w)
-                                      :fork-ms (:fork-ms w)
-                                      ;; A DRAFT is a per-session clone under
-                                      ;; ~/.vis/drafts/<repo>/<label>; without this flag a
-                                      ;; client cannot tell its `root` from a real project
-                                      ;; root and groups every draft as its own project.
-                                      ;; Clients group by `repo_root`, badge on `is_draft`.
-                                      :is-draft (boolean (workspace/draft? w))}))
-                   (catch Throwable _ nil)))
 
             answers
             (long (or (:answer-count st) 0))
@@ -5579,10 +5681,7 @@
                   "was_interrupted" (boolean (:latest-turn-interrupted? st))
                   "was_failed" (boolean (:latest-turn-failed? st)))
           (:latest-turn-at st)
-          (assoc "modified_at" (:latest-turn-at st))
-
-          ws
-          (assoc "workspace" ws))))
+          (assoc "modified_at" (:latest-turn-at st)))))
     souls))
 
 ;; Times reach this namespace as ms longs, `Instant`s or legacy `java.util.Date`s
@@ -5902,6 +6001,13 @@
    over the sessions set is counting. Without the option nothing moves and
    `:grouped` is empty.
 
+   The shelves ride the HEAD window ONLY: a read carrying `:after` answers
+   `:grouped` empty. A shelf does not page, so shipping it again under every
+   cursor sent the whole filed fleet with each tail window (184KB for a second
+   page of five sessions, 19KB without). The loose cut, `total` and the cursor are
+   unaffected - a filed session is out of the page on every window, head or tail -
+   so a client paints the shelves from the head it already read.
+
    `:group-ids` narrows those shelves to the bands a client is PAINTING - one page
    of groups (`list-session-groups-page`), never a whole wall of them. An empty
    collection answers no shelf at all; `nil` - no band window asked for - answers
@@ -6084,7 +6190,7 @@
 
          rows
          (-> (into [] (comp (map :id) (keep page-soul)) window)
-             (session-summary-extras db stats marks)
+             (session-summary-extras stats marks)
              (order-by-ranking window))
 
          ;; Sessions PARKED on an unanswered human-input request, beside the window
@@ -6098,29 +6204,41 @@
          awaiting
          (let [listed (into #{} (map :id) ranked)]
            (-> (into [] (comp (filter listed) (keep page-soul)) (keys (bus/waiting-requests)))
-               (session-summary-extras db stats marks)
+               (session-summary-extras stats marks)
                order-session-summaries))
 
-         ;; The group shelves, complete and in the listing's own order.
+         ;; The group shelves, complete and in the listing's own order - on the
+         ;; HEAD window ALONE. A shelf is the whole band however deep its rows
+         ;; sit, so it does not page, and re-shipping it under every cursor made
+         ;; each tail window carry the entire filed fleet again: measured 184KB
+         ;; for a second page of five sessions, 19KB without it. A client walks
+         ;; the loose pages after painting the shelves the head gave it.
          grouped-rows
-         (-> (into [] (comp (map :id) (keep page-soul)) filed)
-             (session-summary-extras db stats marks)
-             (order-by-ranking filed))]
+         (when-not cursor
+           (-> (into [] (comp (map :id) (keep page-soul)) filed)
+               (session-summary-extras stats marks)
+               (order-by-ranking filed)))]
 
      ;; Every row this answer SHOWS is a row this reader has now met, so the NEXT
      ;; answer any of them produces reads as NEW - including the shelved ones the
      ;; window never held.
      (seed-first-sights! reader-id marks (into (into rows awaiting) grouped-rows))
-     {:sessions rows
-      :awaiting awaiting
-      :grouped grouped-rows
-      :total total
-      :limit (some-> limit
-                     long)
-      ;; The cursor of the LAST row in this window - what a client asks for next.
-      ;; Absent when there is nothing left, so a walk ends on the answer itself.
-      :next-cursor (when (< (count window) (count tail)) (->session-cursor (peek window)))
-      :has-more (< (count window) (count tail))})))
+     (cond-> {:sessions rows
+              :awaiting awaiting
+              :total total
+              :limit (some-> limit
+                             long)
+              ;; The cursor of the LAST row in this window - what a client asks for
+              ;; next. Absent when there is nothing left, so a walk ends on the
+              ;; answer itself.
+              :next-cursor (when (< (count window) (count tail)) (->session-cursor (peek window)))
+              :has-more (< (count window) (count tail))}
+
+       ;; OMITTED on a tail window, never an empty vector: the shelves belong to the
+       ;; head answer, and a reader that cannot tell "not shipped here" from "this
+       ;; project has no bands" wipes the shelves it already painted on page two.
+       grouped-rows
+       (assoc :grouped grouped-rows)))))
 
 (defn session-ids
   "Every persisted session id of `channel` as STRINGS, unfiltered and undecorated.
@@ -6132,6 +6250,39 @@
    resolution, just the ids."
   ([] (session-ids :all))
   ([channel] (into [] (map #(str (:id %))) (lp/by-channel channel))))
+
+(defonce ^:private projects-overview-cache
+  ;; The last `projects-overview` answer beside the fingerprint it was computed
+  ;; from: `{:fingerprint … :answer …}`, or nil before the first read. ONE entry -
+  ;; a gateway answers one navigator, and a second channel or `dirty` set simply
+  ;; misses and replaces it.
+  (atom nil))
+
+(defn- projects-overview-fingerprint
+  "Everything `projects-overview` counts, as ONE comparable value: the channel,
+   the asking device's unsent ids, the per-session facts the tally reads (project
+   id, recency, liveness, a parked request, an unread answer) and the persisted
+   project names.
+
+   This is what makes the cache safe to keep. A cached COUNT is a bug, so the key
+   is not a timestamp and not a session total: it is the inputs themselves, cheap
+   to build because `projects-overview` has already read all of them before it
+   resolves a single workspace. The workspace grouping is the expensive part and
+   the only part the cache actually saves, and the epoch above covers the one way
+   a workspace moves while these facts stand still."
+  [channel unsent ranked live waiting named unread?]
+  [@projects-overview-epoch
+   (str channel)
+   unsent
+   (mapv (fn [row]
+           [(:id row) (:project-id row) (:recency-ms row) (contains? live (:id row))
+            (contains? waiting (:id row)) (boolean (unread? (:id row)))])
+         ranked)
+   (mapv (fn [[root project]]
+           [root
+            (str (:id project))
+            (str (:name project))])
+         (sort-by key named))])
 
 (defn projects-overview
   "ONE answer for the navigator's header row: every PROJECT this gateway holds
@@ -6164,7 +6315,15 @@
    client happens to hold - a client tallying its own rows reads it low.
 
    Projects are ordered by canonical root, ascending. Activity, liveness and
-   demand update counts only; they never move project headers."
+   demand update counts only; they never move project headers.
+
+   The answer is CACHED behind `projects-overview-fingerprint`, because it is
+   embedded in every head read of the session list and the grouping costs one
+   workspace resolution PER SESSION: measured 0.30-0.36s over 1899 sessions,
+   which made a `limit=1` head read cost 0.59-0.65s against 0.19s for a tail
+   page. Nothing it counts is cached - the fingerprint holds every one of those
+   facts, so a changed project, status, parked request, read mark or recency
+   misses the cache instead of being answered stale."
   ([] (projects-overview :all nil))
   ([channel] (projects-overview channel nil))
   ([channel dirty]
@@ -6207,64 +6366,82 @@
                          [r p])))
                (try (lp/projects {}) (catch Throwable _ nil)))
 
-         empty-counts
-         {:session-count 0 :live-count 0 :awaiting-count 0 :unread-count 0 :last-activity-ms 0}
+         fingerprint
+         (projects-overview-fingerprint channel unsent ranked live waiting named unread?)
 
-         groups
-         (reduce (fn [acc row]
-                   (let [sid
-                         (:id row)
+         cached
+         (let [entry @projects-overview-cache]
+           (when (= fingerprint (:fingerprint entry)) (:answer entry)))]
 
-                         root
-                         (or (when db (session-project-root db sid)) "")
+     ;; The clock is sampled per ANSWER, never cached: remote channels derive one
+     ;; elapsed baseline from it instead of trusting their device wall clock.
+     (if cached
+       (assoc cached :server_time_ms (util/now-ms))
+       (let [empty-counts
+             {:session-count 0
+              :live-count 0
+              :awaiting-count 0
+              :unread-count 0
+              :last-activity-ms 0}
 
-                         g
-                         (get acc root empty-counts)]
+             groups
+             (reduce (fn [acc row]
+                       (let [sid
+                             (:id row)
 
-                     (assoc acc
-                       root {:session-count (inc (long (:session-count g)))
-                             :live-count (cond-> (long (:live-count g))
-                                           (contains? live sid)
-                                           inc)
-                             :awaiting-count (cond-> (long (:awaiting-count g))
-                                               (contains? waiting sid)
+                             root
+                             (or (when db (session-project-root db sid)) "")
+
+                             g
+                             (get acc root empty-counts)]
+
+                         (assoc acc
+                           root {:session-count (inc (long (:session-count g)))
+                                 :live-count (cond-> (long (:live-count g))
+                                               (contains? live sid)
                                                inc)
-                             :unread-count (cond-> (long (:unread-count g))
-                                             (unread? sid)
-                                             inc)
-                             :last-activity-ms (max (long (:last-activity-ms g))
-                                                    (long (:recency-ms row)))})))
-                 (into {}
-                       (map (fn [root]
-                              [root empty-counts]))
-                       (keys named))
-                 ranked)
+                                 :awaiting-count (cond-> (long (:awaiting-count g))
+                                                   (contains? waiting sid)
+                                                   inc)
+                                 :unread-count (cond-> (long (:unread-count g))
+                                                 (unread? sid)
+                                                 inc)
+                                 :last-activity-ms (max (long (:last-activity-ms g))
+                                                        (long (:recency-ms row)))})))
+                     (into {}
+                           (map (fn [root]
+                                  [root empty-counts]))
+                           (keys named))
+                     ranked)
 
-         projects
-         (->> groups
-              (mapv (fn [[root g]]
-                      (wire/canonical {:root root
-                                       :project_id (some-> (get-in named [root :id])
-                                                           str)
-                                       :name (str (get-in named [root :name] ""))
-                                       :session_count (long (:session-count g))
-                                       :live_count (long (:live-count g))
-                                       :awaiting_count (long (:awaiting-count g))
-                                       :unread_count (long (:unread-count g))
-                                       :last_activity_ms (long (:last-activity-ms g))})))
-              (sort-by #(str (get % "root")))
-              vec)
+             projects
+             (->> groups
+                  (mapv (fn [[root g]]
+                          (wire/canonical {:root root
+                                           :project_id (some-> (get-in named [root :id])
+                                                               str)
+                                           :name (str (get-in named [root :name] ""))
+                                           :session_count (long (:session-count g))
+                                           :live_count (long (:live-count g))
+                                           :awaiting_count (long (:awaiting-count g))
+                                           :unread_count (long (:unread-count g))
+                                           :last_activity_ms (long (:last-activity-ms g))})))
+                  (sort-by #(str (get % "root")))
+                  vec)
 
-         listed
-         (into #{} (map :id) ranked)]
+             listed
+             (into #{} (map :id) ranked)
 
-     {:projects projects
-      :project_count (count projects)
-      :session_count (count ranked)
-      :live_count (count (filterv listed (keys live)))
-      :awaiting_count (count (filterv listed waiting))
-      :unread_count (count (filterv unread? (map :id ranked)))
-      :server_time_ms (util/now-ms)})))
+             answer
+             {:projects projects
+              :project_count (count projects)
+              :session_count (count ranked)
+              :live_count (count (filterv listed (keys live)))
+              :awaiting_count (count (filterv listed waiting))
+              :unread_count (count (filterv unread? (map :id ranked)))}]
+
+         (reset! projects-overview-cache {:fingerprint fingerprint :answer answer})
+         (assoc answer :server_time_ms (util/now-ms)))))))
 
 (defn search-session-matches
   "The sessions whose TITLE or TRANSCRIPT matches `query`, each TAGGED with WHERE it

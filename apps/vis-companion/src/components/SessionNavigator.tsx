@@ -666,7 +666,11 @@ export function MachineTab({
   hasUnread?: boolean;
   /** Not answering: retry instead of selecting; an error-toned name replaces the removed mark. */
   isDown?: boolean;
-  /** The word this tile earned by being pressed, and only then. */
+  /**
+   * What this machine is doing, beside its name: connecting, reconnecting after a press,
+   * or the failure that press came back with. It is the ONLY place a touch device can
+   * read that — `title` is a pointer affordance and does not exist under a finger.
+   */
   note?: string | null;
   /** That word is a FAILURE: error ink, because a quiet failure reads as chrome. */
   isNoteError?: boolean;
@@ -682,7 +686,7 @@ export function MachineTab({
       aria-pressed={isDown ? undefined : isOn}
       aria-label={label}
       title={title}
-      // The tile answers its own press, so it is the live region: `reconnecting...`
+      // The tile answers its own press, so it is the live region: `Reconnecting…`
       // and what came back are read out where the finger already is.
       aria-live={isDown ? 'polite' : undefined}
       onClick={onClick}
