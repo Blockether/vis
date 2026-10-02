@@ -1078,19 +1078,9 @@ export const ProjectGroup = memo(function ProjectGroup({
     // rule as the page above, on the other list.
     if (groupPage > groupPageCount) setGroupPage(1);
   }, [groupPage, groupPageCount]);
-  // A star PINS its row to the top of the project, and the top of the project is
-  // PAGE ONE — so a row starred from any other page LEFT the page under the thumb
-  // that starred it. Nothing was broken about the mark: the row carrying it was two
-  // pages away, which is why it only ever turned up after the screen was left and
-  // re-entered on page one.
-  // Regression, user report: after starring, no star appeared on the session row
-  // until the session was opened and closed again.
-  // The group FOLLOWS the row it moved — page one is where the list puts it, and the
-  // row is brought back under the eye that starred it.
-  //
-  // The flip is read off the ROWS ON SCREEN, and only for a row that was on the page
-  // before and after: a page TURN takes every starred row off the page at once, and
-  // reading that as an unstar would have snapped the reader straight back to page one.
+  // Stars change the mark, not recency or paging. Keep the changed row visible
+  // on its current page, including when it is starred from a later page.
+  // Observe only rows present before and after: turning a page is not an unstar.
   const marks = useMemo(
     () => new Map(rows.map((session) => [session.id, isFavorite(session)])),
     [rows],
@@ -1098,13 +1088,11 @@ export const ProjectGroup = memo(function ProjectGroup({
   const wasMarked = useRef(marks);
   const rowsRef = useRef<HTMLDivElement>(null);
   const following = useRef<string | null>(null);
-  // Before paint: the reader must never see a frame of the page the row just left.
+  // Observe the mark before paint so the changed row can stay under the eye.
   useLayoutEffect(() => {
     const before = wasMarked.current;
     wasMarked.current = marks;
-    // One tap flips one row. UNSTARRING moves a row just as far — down, out of the
-    // pinned band — so it is followed the same way instead of being dropped
-    // wherever the ordering sends it.
+    // One tap flips one visible row; keep its page and recover its visibility.
     let flipped: string | null = null;
     for (const [id, marked] of marks) {
       const was = before.get(id);
@@ -1112,26 +1100,10 @@ export const ProjectGroup = memo(function ProjectGroup({
     }
     if (!flipped) return;
     following.current = flipped;
-    setFirst(0);
   }, [marks]);
-  // The row may land on the page already shown (starred from page one) or on the
-  // one this group just walked to; either way it is placed back under the eye on the
-  // commit that paints it.
-  //
-  // THE PIN IS A PLACE, NEVER AN ANIMATION — the same rule the drawer's way home
-  // already lives by (`SwipeActions`). `scrollIntoView` walks EVERY scrollable
-  // ancestor, and the FIRST one it meets is the row's own swipe track: the mandatory
-  // snap track the verb that fired this pin has just sent home, in this same commit.
-  //
-  // Regression, user report on iOS (paraphrased: slide the LAST row open, tap the
-  // star, the row moves up wearing no mark, and the next slide shows the mark and the
-  // strip saying two different things): an animated scroll inside a mandatory snap
-  // track is what WebKit is free to swallow, and a drawer left standing over its row
-  // hides the row's LEADING edge — which is exactly where the mark that tap just left
-  // sits. Measured in WebKit on this screen at 390px, same track, same call: an open
-  // track (216px) was still at 163px 150ms after `behavior: 'smooth'` was asked for
-  // and only reached home ~900ms later, against home in the SAME FRAME for
-  // `behavior: 'auto'`.
+  // Bring the row into view on its current page without an animation.
+  // scrollIntoView also reaches the row's mandatory swipe track. On iOS, a smooth
+  // scroll can leave that drawer covering the mark after Star has sent it home.
   useEffect(() => {
     const id = following.current;
     if (!id || !rows.some((session) => session.id === id)) return;

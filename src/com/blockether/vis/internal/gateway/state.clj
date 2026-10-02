@@ -5142,6 +5142,7 @@
                  :goal (:goal session)
                  :model (:model session) ; the state's ROOT model, NOT the pin below
                  :created_at (:created-at session)
+                 :last_opened_at (:last-opened-at session)
                  :project_id (some-> (:project-id session)
                                      str)
                  :project_name (:project-name session)
@@ -5625,24 +5626,17 @@
         :else 0))
 
 (defn- session-recency-ms
-  "How fresh a DECORATED session is, for ORDERING only.
-
-   Two clocks reach a client and only one of them is content: `modified_at` is the
-   last turn, `created_at` never moves. The registry's `:last-active` stamp is a
-   TOUCH (`append-event!`, `set-session-model!`, a registry hydrated at daemon
-   start) and never leaves this process, because reading it would let merely
-   opening a session - or restarting the gateway, which re-stamps the whole fleet
-   with one hydration time - reorder the navigator under the reader's finger."
+  "Last conversation activity or explicit opening, for ordering only.
+   Registry touches and gateway hydration never advance either durable clock."
   [session]
-  (->epoch-ms (or (get session "modified_at") (get session "created_at"))))
+  (max (->epoch-ms (or (get session "modified_at") (get session "created_at")))
+       (->epoch-ms (get session "last_opened_at"))))
 
 (defn- record-recency-ms
-  "`session-recency-ms` for an UNDECORATED session: the same two sources
-   (`latest-turn-at` from the grouped stats, the record's `created-at`) that
-   `soul` copies into `modified_at`/`created_at`, read straight from the cheap
-   facts."
+  "`session-recency-ms` from the cheap record and grouped turn stats."
   ^long [record st]
-  (->epoch-ms (or (:latest-turn-at st) (:created-at record))))
+  (max (->epoch-ms (or (:latest-turn-at st) (:created-at record)))
+       (->epoch-ms (:last-opened-at record))))
 
 (def ^:private favorite-band
   "Starred. The one piece of ordering a HUMAN typed in themselves, so it outranks
@@ -5657,13 +5651,12 @@
    fact."
   1)
 
-(def ^:private live-band "Running sessions, newest content first." 2)
+(def ^:private live-band "Running sessions, most recent first." 2)
 
-(def ^:private rest-band "Idle sessions, newest content first." 3)
+(def ^:private rest-band "Idle sessions, most recent first." 3)
 
 (def ^:private recent-band
-  "The ONE band of the content-time order (`recency-ranking`): the recents and a
-   search key every row by its content time alone."
+  "The one band of recency order: content activity or an explicit session opening."
   0)
 
 (defn- session-listed?
@@ -5750,7 +5743,7 @@
        vec))
 
 (defn- recency-ranking
-  "`session-ranking` rows keyed by CONTENT TIME alone - the order of the recents and
+  "`session-ranking` rows keyed by RECENCY alone - the order of the recents and
    of a search (`:order :recent` of `list-sessions-page`). Every cut and fact of the
    navigator ranking stays; only the key changes, to ONE band, the negated recency and
    the id, so `->session-cursor` still names any row. Stars, unsent words and running
@@ -5813,7 +5806,7 @@
   (pos? (compare [(:band row) (:sort-key row) (:id row)] cursor)))
 
 (defn- order-session-summaries
-  "Freshest content first for DECORATED sessions, the id breaking every tie so
+  "Most recent first for DECORATED sessions, the id breaking every tie so
    repeated polls are deterministic. The order of the `awaiting` strip beside a
    window; the window itself keeps the ranking's own bands (`order-by-ranking`)."
   [sessions]
@@ -5985,7 +5978,7 @@
    stamp is set or when the GROUP holding it is archived: archiving a group never stamps
    its members, so unarchiving one brings back exactly the set that was visible before.
 
-   `:order :recent` keys the same list by content time ALONE (`recency-ranking`) - the
+   `:order :recent` keys the same list by recency ALONE (`recency-ranking`) - the
    order the recents and a search answer in (`search-sessions`). Stars, unsent words
    and running turns stay on their rows instead of lifting them, and the cursor still
    names a row, so a client walks those answers with the same keyset. Without it the
@@ -6423,8 +6416,8 @@
   "THE session search every surface asks, in one answer shape:
    `{:query q :sessions rows :total n :limit l :next-cursor s :has-more bool}`.
 
-   A BLANK query answers the RECENTS: every session the navigator lists, freshest
-   content first, so a search that opens empty already shows the latest work. A query
+   A BLANK query answers the RECENTS: every session the navigator lists, most
+   recent first, so a search that opens empty already shows the latest work. A query
    answers the listed sessions whose title or transcript matches it
    (`search-session-matches`), in that SAME freshest-first order: typing filters the
    list the reader was looking at and never reshuffles it. A matched row carries
@@ -6798,6 +6791,12 @@
    session exists."
   [sid is-favorite]
   (when (lp/by-id sid) (lp/set-favorite! sid is-favorite) (soul sid)))
+
+(defn mark-session-opened!
+  "Record a person's explicit selection, not a background read. Return the refreshed
+   soul with `last_opened_at`, or nil if the session no longer exists."
+  [sid]
+  (when (persistance/db-mark-session-opened! (lp/db-info) sid) (soul sid)))
 
 (defn set-archived!
   "Archive (`true`) or unarchive (`false`) `sid`. Returns the refreshed soul (its

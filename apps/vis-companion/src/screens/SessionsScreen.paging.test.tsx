@@ -164,7 +164,7 @@ describe('gateway-backed project pages', () => {
       // complete beside it, so a group is never cut by the pager (BLO-167). The band window
       // rides with it too — these rows are the ones filed under the page of bands on screen.
       expect(first[0]).toBe(
-        '/v1/sessions?root=/Users/dev/alpha&limit=15&grouped=aside&group_limit=10&group_offset=0',
+        '/v1/sessions?order=recent&root=/Users/dev/alpha&limit=15&grouped=aside&group_limit=10&group_offset=0',
       );
       expect(first.slice(1).every((read) => read.includes('&after='))).toBe(true);
       expect(first.every((read) => read.includes('limit=15'))).toBe(true);

@@ -124,7 +124,7 @@ describe('the order the reader is looking at', () => {
     expect(screen.queryByRole('button', { name: /newer session/ })).toBeNull();
   });
 
-  it('promotes live sessions and restores recency order when they stop', async () => {
+  it('keeps recency order when sessions start or stop running', async () => {
     const recent = row('recent', 12);
     const older = row('older', 10);
     const view = renderSessionsScreen({ machines: [{ sessions: [recent, older] }] });
@@ -134,7 +134,7 @@ describe('the order the reader is looking at', () => {
 
     view.setRows(0, [{ ...older, live: true }, recent]);
     await settle(10_000);
-    expect(rowOrder()).toEqual(['older', 'recent']);
+    expect(rowOrder()).toEqual(['recent', 'older']);
 
     view.setRows(0, [recent, older]);
     await settle(10_000);

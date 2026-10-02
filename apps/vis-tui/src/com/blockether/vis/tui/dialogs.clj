@@ -5747,13 +5747,15 @@
 
 (defn- session-dialog-sort-key
   [session]
-  [(- (long (or (date->millis (get session "modified_at")) 0)))
-   (- (long (or (date->millis (get session "created_at")) 0)))])
+  [(- (max (long (or (date->millis (get session "modified_at"))
+                     (date->millis (get session "created_at"))
+                     0))
+           (long (or (date->millis (get session "last_opened_at")) 0)))) (str (get session "id"))])
 
 (defn session-dialog-items
   "Build table rows for existing sessions only. New/fork stay dialog
    options via the N/F shortcuts and command palette; they are not fake table
-   data rows. Rows are sorted by Modified at desc, then Created at desc."
+   data rows. Rows are sorted by conversation or opening recency, then id."
   ([sessions active-id] (session-dialog-items sessions active-id session-dialog-content-w))
   ([sessions active-id body-w]
    (mapv (fn [session]
@@ -6173,10 +6175,7 @@
                      (not= (str (get % "id"))
                            (some-> active-session-id
                                    str))))
-       (sort-by (juxt
-                  #(or (date->millis (get % "modified_at")) (date->millis (get % "created_at")) 0)
-                  #(str (get % "id")))
-                #(compare %2 %1))
+       (sort-by session-dialog-sort-key)
        (mapv #(navigator-session-row active-session-id groups %))))
 
 (def ^:private navigator-page-slack

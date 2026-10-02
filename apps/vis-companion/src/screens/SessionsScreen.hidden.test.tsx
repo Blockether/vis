@@ -88,7 +88,7 @@ describe('a sessions list that is not on the glass', () => {
   });
 
   it.each([false, true])(
-    'adopts hidden draft changes on return (initially dirty: %s)',
+    'adopts hidden draft changes without changing recency (initially dirty: %s)',
     async (initiallyDirty) => {
       const view = renderSessionsScreen({ machines: fleet() });
       const key = draftMessageKey(view.conns[0].url, 's2');
@@ -106,18 +106,18 @@ describe('a sessions list that is not on the glass', () => {
         await waitFor(() => expect(order()).toEqual(['s1', 's2']));
         if (initiallyDirty) {
           await save('Unsent words');
-          await waitFor(() => expect(order()).toEqual(['s2', 's1']));
+          await waitFor(() => expect(order()).toEqual(['s1', 's2']));
         }
         view.setVisible(false);
         const before = view.requests.filter(isListRead).length;
         await save(initiallyDirty ? '' : 'Unsent words');
-        // A hidden shell render must not consume the pending order change.
+        // A hidden shell render must not consume the pending draft change.
         view.setVisible(false);
         await settle();
         expect(view.requests.filter(isListRead)).toHaveLength(before);
 
         view.setVisible(true);
-        await waitFor(() => expect(order()).toEqual(initiallyDirty ? ['s1', 's2'] : ['s2', 's1']));
+        await waitFor(() => expect(order()).toEqual(['s1', 's2']));
         expect(view.requests.filter(isListRead)).toHaveLength(before + 1);
       } finally {
         view.unmount();

@@ -485,6 +485,7 @@ export function App() {
     setOpenTarget({ conn, sid, fresh });
     void rememberSubscribedSession(conn.url, sid).catch(() => undefined);
     void rememberOpenSession(conn.url, sid).catch(() => undefined);
+    void new GatewayClient(conn).markSessionOpened(sid).catch(() => undefined);
   }, []);
 
   // Opening a session from the LIST is the moment a parked share gets its

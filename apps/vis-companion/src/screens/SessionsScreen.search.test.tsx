@@ -674,14 +674,14 @@ describe('the search starts on the session the reader is in', () => {
     restore = view.restore;
     view.setOpenSession({ conn: view.conns[0], sid: 'in-use' });
 
-    await waitFor(() => expect(rowOrder('Recent sessions')).toEqual(['in-use', 'fresh']));
+    await waitFor(() => expect(rowOrder('Recent sessions')).toEqual(['fresh', 'in-use']));
     const results = within(screen.getByRole('region', { name: 'Recent sessions' }));
     expect(results.getByText('Project: zulu')).toBeVisible();
     expect(results.getByText('Project: alpha')).toBeVisible();
     expect(row('Recent sessions', 'in-use')).toHaveAttribute('aria-current', 'page');
   });
 
-  it('previews it when the query matches it, ahead of a fresher match', async () => {
+  it('previews the current session when matched without pinning it above newer work', async () => {
     const view = renderSessionsScreen({
       machines: holding([hit(fresh, 'Fresh **work** today'), hit(inUse, 'The **work** I am in')]),
     });
@@ -690,7 +690,7 @@ describe('the search starts on the session the reader is in', () => {
     await screen.findByText('Fresh work');
 
     view.setQuery('work');
-    await waitFor(() => expect(rowOrder()).toEqual(['in-use', 'fresh']));
+    await waitFor(() => expect(rowOrder()).toEqual(['fresh', 'in-use']));
     expect(within(pane()).getByRole('heading')).toHaveTextContent('Work in use');
     expect(row('Matching sessions', 'in-use')).toHaveAttribute('aria-current', 'page');
     expect(row('Matching sessions', 'fresh')).not.toHaveAttribute('aria-current');

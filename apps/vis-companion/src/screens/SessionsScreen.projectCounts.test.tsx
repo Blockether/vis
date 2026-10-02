@@ -175,7 +175,10 @@ describe('the live count on a project band', () => {
             ...Array.from({ length: 120 }, (_, index) =>
               listSession({ id: `quiet-${index}`, title: `Quiet ${index}` }),
             ),
-            listSession({ id: 'deep-live', title: 'Deep live run', live: true }),
+            listSession({
+              id: 'deep-live', title: 'Deep live run', live: true,
+              modified_at: '2024-05-01T09:00:00Z',
+            }),
           ],
         },
       ],
@@ -211,7 +214,7 @@ describe('the live count on a project band', () => {
     const view = renderSessionsScreen({
       machines: [
         {
-          // A starred older run leads the list, but is not the newest live run.
+          // An older starred run is not the newest live run.
           sessions: [
             listSession({
               id: 'settled',

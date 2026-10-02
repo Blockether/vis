@@ -50,6 +50,35 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('GatewayClient explicit session opening', () => {
+  it('echoes opening recency into the cache without changing conversation time', async () => {
+    const row = { ...sessions[0], modified_at: '2026-01-01T00:00:00Z', last_opened_at: null };
+    const opened = { ...row, last_opened_at: Date.parse('2026-01-02T00:00:00Z') };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sessions: [row], total: 1 })))
+      .mockResolvedValueOnce(new Response(JSON.stringify(opened)))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ...row, queued_turns: [], queue_paused: null,
+      })));
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+    await client.listSessions();
+    expect(String(fetchMock.mock.calls[0]![0])).toContain('order=recent');
+    const result = await client.markSessionOpened('session-1');
+    const [url, init] = fetchMock.mock.calls[1]!;
+    expect(String(url)).toContain('/v1/sessions/session-1');
+    expect(init).toMatchObject({ method: 'PATCH', body: JSON.stringify({ opened: true }) });
+    expect(result.last_opened_at).toBe(opened.last_opened_at);
+    expect(result.modified_at).toBe(row.modified_at);
+    expect(client.cachedSessions()![0]!.last_opened_at).toBe(opened.last_opened_at);
+    // An older detail response that was in flight must not undo the explicit opening.
+    await client.session('session-1', undefined, true);
+    expect(client.cachedSession('session-1')!.last_opened_at).toBe(opened.last_opened_at);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});
+
 // Regression, issue vis_session_id#3d6dc388-a21c-4005-b498-87c02668cb34: after an
 // iPhone changed networks, WebKit ignored AbortSignal and one pending SSE fetch kept the
 // open session on "Reconnecting" until the whole app was killed.

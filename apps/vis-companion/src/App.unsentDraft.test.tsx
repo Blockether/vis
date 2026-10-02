@@ -71,7 +71,7 @@ const fleet = () => [
 // this device — has news about still arrives in its place from the gateway. The
 // device says WHAT it holds (`dirty=`), never WHERE the row goes.
 describe('a session holding unsent words', () => {
-  it("comes back in the gateway's dirty band, with nothing reordered here", async () => {
+  it('comes back most recently opened, with nothing reordered here', async () => {
     const view = renderApp({ machines: fleet() });
     restore = view.restore;
     await screen.findByText('Alpha one');

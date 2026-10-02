@@ -13,12 +13,8 @@ const rowOrder = () =>
     row.getAttribute('data-session-id'),
   );
 
-// Regression, user report ("the colour is the same as rename, and after I star it I
-// don't see the star until I click on the session"): the swipe strip painted Star in
-// the same neutral ink as Rename, and starring PINS the row to the top of its project
-// — measured on a 390px viewport, the tapped row travelled from y=619 to y=325 — so
-// the row left the spot it was tapped in and an unstarred neighbour slid under the
-// thumb. Nothing changed where the user was looking until the list was rebuilt.
+// Regression, user report: the star must be visible as soon as it changes.
+// Updating the mark must not reorder sessions or change the current page.
 describe('starring a session', () => {
   const machines = [
     {
@@ -50,7 +46,7 @@ describe('starring a session', () => {
     await userEvent.click(cell().querySelector('button[aria-label="Star"]')!);
   });
 
-  it('pins the starred row to the top and brings it back into view', async () => {
+  it('keeps recency order and brings the starred row back into view', async () => {
     const view = renderSessionsScreen({ machines });
     restore = view.restore;
     await screen.findByText('Older session');
@@ -70,10 +66,14 @@ describe('starring a session', () => {
         .querySelector('button[aria-label="Star"]')!;
       await userEvent.click(star);
 
-      // The pin moved the row the thumb was on — and the LIST is what moves it. The
-      // star is the gateway's own fact, so the tap is answered by a read of the list
-      // it owns, never by this device re-sorting rows behind the reader.
-      await waitFor(() => expect(rowOrder()).toEqual([last, before[0]]));
+      // The star changes its mark, not its position in the gateway's recency order.
+      await waitFor(() =>
+        expect(
+          screen.getByRole('group', { name: `${title} actions` })
+            .querySelector('button[aria-label="Unstar"]'),
+        ).toBeInTheDocument(),
+      );
+      expect(rowOrder()).toEqual(before);
     } finally {
       Element.prototype.scrollIntoView = scrollIntoView;
     }
@@ -185,19 +185,14 @@ describe('starring a session', () => {
       Element.prototype.scrollTo = scrollTo;
     }
 
-    // Home in the same frame the star was tapped — there is no animation left to be
-    // dropped by the re-order that same tap starts.
+    // Home in the same frame the star was tapped, with no animation that could
+    // cover the changed mark.
     expect(home).toEqual([{ left: 0, behavior: 'auto' }]);
     expect(row.parentElement!.querySelector("svg[fill='currentColor']")).toBeInTheDocument();
   });
 
-  // Regression, user report ("the star is not showing on the session row ... as long
-  // as I don't drag to open the session or come back"): a project is PAGED at fifteen
-  // rows, and a star pins its row to the top of the project — which is page one. A
-  // row starred on page two therefore left the page the user was looking at, so the
-  // mark they had just asked for was two pages away and only turned up when the
-  // screen was left and re-entered on page one.
-  it('follows the starred row to the page its own pin moved it to', async () => {
+  // Regression: a row starred on a later page must keep its mark visible there.
+  it('keeps a starred row on its current page', async () => {
     const many = Array.from({ length: 17 }, (_, index) =>
       listSession({
         id: `s${String(index + 1).padStart(2, '0')}`,
@@ -220,32 +215,28 @@ describe('starring a session', () => {
         .querySelector('button[aria-label="Star"]')!,
     );
 
-    // The row the thumb was on is still on screen, wearing its mark — on page one,
-    // where the pin put it, and at the top of its project. The gateway is what put
-    // it there: the tap is answered by a read of the list it owns.
-    await waitFor(() => expect(rowOrder()[0]).toBe('s17'));
-    expect(screen.getByRole('textbox', { name: 'Current page' })).toHaveValue('1');
+    // The row stays on page two wearing its mark; starring does not change recency.
+    await waitFor(() =>
+      expect(
+        screen.getByRole('group', { name: 'Session 17 actions' })
+          .querySelector('button[aria-label="Unstar"]'),
+      ).toBeInTheDocument(),
+    );
+    expect(rowOrder()).toEqual(['s16', 's17']);
+    expect(screen.getByRole('textbox', { name: 'Current page' })).toHaveValue('2');
     const row = document.querySelector('[data-session-id="s17"]')?.parentElement ?? null;
     expect(row).toBeVisible();
     expect(row!.querySelector("svg[fill='currentColor']")).toBeInTheDocument();
   });
-  // Regression, user report on iOS (paraphrased: slide the LAST row open, tap the
-  // star, the row moves up wearing no mark, and only the next slide shows it — with
-  // the mark and the strip then saying two different things): the pin brought the row
-  // back with an ANIMATED `scrollIntoView`, and that call walks EVERY scrollable
-  // ancestor, so the FIRST scroller it moves is the row's own mandatory snap track —
-  // the drawer a verb has just sent home, in the very commit that moves its node.
-  // Measured in WebKit at 390px on this screen, same track, same call: an open track
-  // (216px) was still at 163px 150ms after `behavior: "smooth"` was asked for and only
-  // reached home ~900ms later, against home in the SAME FRAME for `behavior: "auto"`.
-  // A drawer left standing hides the row's LEADING edge, which is where the mark sits.
-  it('places the pinned row in the same frame, never on an animation', async () => {
+  // Regression on iOS: animated scrolling can cover a newly changed star.
+  // Place the row and close its swipe strip in the same frame.
+  it('places the starred row in the same frame, never on an animation', async () => {
     const view = renderSessionsScreen({ machines });
     restore = view.restore;
     await screen.findByText('Older session');
-    // The row the pin MOVES: the one not already at the top of its project.
-    const moved = rowOrder()[1]!;
-    const title = moved === 'older' ? 'Older session' : 'Newer session';
+    // Mark the row not already at the top of its project.
+    const marked = rowOrder()[1]!;
+    const title = marked === 'older' ? 'Older session' : 'Newer session';
 
     const asked: (ScrollIntoViewOptions | undefined)[] = [];
     const scrollIntoView = Element.prototype.scrollIntoView;

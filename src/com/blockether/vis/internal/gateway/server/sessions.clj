@@ -415,10 +415,9 @@
       (http/session-404 (get-in request [:path-params :sid])))))
 
 (defn- patch-session-handler
-  "PATCH /v1/sessions/:sid - star (`{is_favorite}`), archive (`{archived}`),
-   rename (`{title}`) OR change project membership (`{project_id}`, null to
-   remove from project). The star is checked first, then the archive, then
-   membership."
+  "PATCH /v1/sessions/:sid - record an explicit opening (`{opened: true}`),
+   star (`{is_favorite}`), archive (`{archived}`), rename (`{title}`) OR change
+   project membership (`{project_id}`, null to remove from project)."
   [request]
   (let [sid
         (http/path-sid request)
@@ -427,6 +426,12 @@
         (http/body-json request)]
 
     (cond (not sid) (http/session-404 (get-in request [:path-params :sid]))
+          (contains? body "opened")
+          (if (true? (get body "opened"))
+            (if-let [soul (state/mark-session-opened! sid)]
+              (http/json-response soul)
+              (http/session-404 (get-in request [:path-params :sid])))
+            (http/error-response 400 :invalid-request "opened must be true"))
           ;; The star is a STATE the human sets, not an event: the request carries
           ;; the intent (`is_favorite`) and the soul that comes back carries the
           ;; `favorite_rank` the gateway allocated for it. Backend-owned, so the

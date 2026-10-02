@@ -1013,7 +1013,11 @@ function reconcileSession(
   next: Session,
   pending?: SessionGoal | null,
 ): Session {
-  const incoming = withHeldListFacts(previous, next);
+  let incoming = withHeldListFacts(previous, next);
+  // A GET started before the opening PATCH must not rewind the echoed recency.
+  if ((previous?.last_opened_at ?? 0) > (incoming.last_opened_at ?? 0)) {
+    incoming = { ...incoming, last_opened_at: previous!.last_opened_at };
+  }
   const oldGoal = sessionGoalFromWire(previous?.goal);
   const goal = pending && pending.revision > (oldGoal?.revision ?? 0) ? pending : oldGoal;
   const nextGoal = sessionGoalFromWire(incoming.goal);
@@ -3464,7 +3468,7 @@ export class GatewayClient {
         overview?: GatewayOverview;
       }>(
         'GET',
-        `/v1/sessions?limit=${SESSIONS_PAGE}${
+        `/v1/sessions?order=recent&limit=${SESSIONS_PAGE}${
           after ? `&after=${encodeURIComponent(after)}` : ''
         }${overlay ? `&dirty=${encodeURIComponent(overlay)}` : ''}`,
         undefined,
@@ -3592,7 +3596,7 @@ export class GatewayClient {
       next_cursor?: string | null;
     }>(
       'GET',
-      `/v1/sessions?root=${encodeURIComponent(root)}&limit=${limit}${
+      `/v1/sessions?order=recent&root=${encodeURIComponent(root)}&limit=${limit}${
         after ? `&after=${encodeURIComponent(after)}` : ''
       }${overlay ? `&dirty=${encodeURIComponent(overlay)}` : ''}${
         archived === 'exclude' ? '' : `&archived=${archived}`
@@ -3992,6 +3996,16 @@ export class GatewayClient {
     return this.absorbSessionRow(
       sid,
       await this.request<Session>('PATCH', `/v1/sessions/${encodeURIComponent(sid)}`, { title }),
+    );
+  }
+
+  /** Record a person's explicit selection, not transcript loading or a background refresh. */
+  async markSessionOpened(sid: string): Promise<Session> {
+    return this.absorbSessionRow(
+      sid,
+      await this.request<Session>('PATCH', `/v1/sessions/${encodeURIComponent(sid)}`, {
+        opened: true,
+      }),
     );
   }
 

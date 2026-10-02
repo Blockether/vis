@@ -181,6 +181,7 @@ describe('a desk keeps the list beside the conversation', () => {
   });
 
   it('still hands a phone the whole screen and a way back', async () => {
+    window.location.hash = '';
     const view = renderApp({ machines: fleet() });
     restore = view.restore;
     await screen.findByText('Alpha one');

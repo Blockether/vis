@@ -481,9 +481,7 @@ export const SessionRow = memo(function SessionRow({
   // `favorite_rank`, straight off this session. No device-side store can disagree
   // with it — which is what used to leave one screen starred and another plain.
   const isStarred = isFavorite(session);
-  // Where the row GOES when this flips — the pinned band at the top of the project,
-  // on page one — belongs to the group that pages it, so `ProjectGroup` owns the
-  // follow. This is only the mark and the strip's verb.
+  // A star changes only the mark and the strip's verb, not recency or paging.
   const toggleFavorite = useCallback(
     () => commands.toggleStar(session, conn),
     [commands, session, conn],

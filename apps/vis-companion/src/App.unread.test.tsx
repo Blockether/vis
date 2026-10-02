@@ -73,7 +73,7 @@ describe('reading a session on a phone', () => {
     );
     expect(marks).toContain(undefined);
     expect(row.is_unread).toBe(false);
-    expect(screen.getByText('Unread session')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Sessions' })).toHaveTextContent('Unread session');
     await waitFor(() =>
       expect(screen.queryByText(/^NEW(?: ×\d+)?$/)).not.toBeInTheDocument(),
     );

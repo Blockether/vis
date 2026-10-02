@@ -138,7 +138,7 @@ describe('a session list carried by the fleet stream', () => {
     expect(screen.queryByText('First')).toBeNull();
   });
 
-  it('refreshes canonical order when a known session becomes live', async () => {
+  it('refreshes live status without overriding recency order', async () => {
     const fleet = fleetHub();
     const recent = listSession({
       id: 'recent', title: 'Recent', modified_at: new Date(6000).toISOString(),
@@ -168,7 +168,7 @@ describe('a session list carried by the fleet stream', () => {
     });
     await settle(200);
     expect(listReads(view.requests)).toBe(read + 1);
-    expect(rowOrder()).toEqual(['older', 'recent']);
+    expect(rowOrder()).toEqual(['recent', 'older']);
 
     // Another status for the same live run only changes its badges, not its rank.
     await fleet.emit({

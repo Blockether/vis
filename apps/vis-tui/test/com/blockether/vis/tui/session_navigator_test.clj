@@ -80,29 +80,42 @@
 (defdescribe
   session-navigator-presentation-test
   ;; Regression: C-x s changed its layout with the query and pinned/grouped older rows.
-  (describe "one recency list"
-            (it "orders across projects, groups, stars and the current session by latest activity"
-                (let [rows
-                      (#'dlg/navigator-all-rows {:sessions sessions :active-session-id "current"})
+  (describe
+    "one recency list"
+    (it "orders across projects, groups, stars and the current session by latest activity"
+        (let [rows
+              (#'dlg/navigator-all-rows {:sessions sessions :active-session-id "current"})
 
-                      visible
-                      (#'dlg/navigator-visible-rows rows "" {})]
+              visible
+              (#'dlg/navigator-visible-rows rows "" {})]
 
-                  (expect (= ["newest" "middle" "current" "star"]
-                             (mapv (comp :id :target) visible)))
-                  (expect (not-any? :group-start? visible))))
-            (it "keeps recency order during search instead of lifting title matches"
-                (let [rows
-                      (#'dlg/navigator-all-rows {:sessions sessions})
+          (expect (= ["newest" "middle" "current" "star"] (mapv (comp :id :target) visible)))
+          (expect (not-any? :group-start? visible))))
+    (it "puts the last explicitly opened session first on the next opening"
+        (let [opened
+              (mapv #(cond-> % (= "current" (get % "id")) (assoc "last_opened_at" 5000)) sessions)
 
-                      matches
-                      {"newest" {:rank 2 :kind :reply :reply-snippet "needle"}
-                       "star" {:rank 0 :kind :title}}
+              rows
+              (#'dlg/navigator-all-rows {:sessions opened})]
 
-                      visible
-                      (#'dlg/navigator-visible-rows rows "needle" matches)]
+          (expect (= ["current" "newest" "middle" "star"] (mapv (comp :id :target) rows)))))
+    (it "uses session ids to break equal-recency ties consistently"
+        (let [rows (#'dlg/navigator-all-rows
+                    {:sessions [{"id" "a" "title" "A" "turn_count" 1 "modified_at" 2000}
+                                {"id" "b" "title" "B" "turn_count" 1 "modified_at" 2000}]})]
+          (expect (= ["a" "b"] (mapv (comp :id :target) rows)))))
+    (it "keeps recency order during search instead of lifting title matches"
+        (let [rows
+              (#'dlg/navigator-all-rows {:sessions sessions})
 
-                  (expect (= ["newest" "star"] (mapv (comp :id :target) visible))))))
+              matches
+              {"newest" {:rank 2 :kind :reply :reply-snippet "needle"}
+               "star" {:rank 0 :kind :title}}
+
+              visible
+              (#'dlg/navigator-visible-rows rows "needle" matches)]
+
+          (expect (= ["newest" "star"] (mapv (comp :id :target) visible))))))
   (describe "compact rows"
             (it "paints a neutral date, uppercase status, title and explicit location on two lines"
                 (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)]
@@ -302,3 +315,13 @@
                                {:sessions sessions :active-session-id "current"}
                                [(KeyStroke. (Character/valueOf \s) true false false)])]
         (expect (= {:action :favorite :id "current" :favorite? true} choice)))))
+
+(defdescribe session-opening-client-test
+             (it "records an explicit opening without using a background read endpoint"
+                 (let [asked (atom [])]
+                   (with-redefs-fn {#'vis/send-json! (fn [& args]
+                                                       (swap! asked conj (vec args))
+                                                       {"id" "current" "last_opened_at" 5000})}
+                     (fn []
+                       (expect (= 5000 (get (vis/mark-session-opened! "current") "last_opened_at")))
+                       (expect (= [["PATCH" "/v1/sessions/current" {:opened true}]] @asked)))))))

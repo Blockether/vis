@@ -114,9 +114,9 @@ function bandOf(row: Session, dirty: ReadonlySet<string>): number {
 /** Where a row sits inside its band: the rank it was starred with, else its recency. */
 function sortKey(row: Session, band: number): number {
   if (band === FAVORITE_BAND) return row.favorite_rank ?? 0;
-  const stamp = row.modified_at ?? row.created_at ?? null;
-  const millis = stamp ? Date.parse(String(stamp)) : 0;
-  return -(Number.isFinite(millis) ? millis : 0);
+  const stamp = Date.parse(row.modified_at ?? row.created_at ?? '');
+  const opened = row.last_opened_at ?? 0;
+  return -Math.max(Number.isFinite(stamp) ? stamp : 0, Number.isFinite(opened) ? opened : 0);
 }
 
 /**
@@ -147,9 +147,9 @@ export function rankSessions(rows: Session[], dirty: ReadonlySet<string>): Sessi
  * (`state/->session-cursor`). A window is asked for with the cursor of the last
  * row a client holds, never with an offset.
  */
-function listCursor(row: Session, dirty: ReadonlySet<string>): string {
-  const band = bandOf(row, dirty);
-  return `${band}:${sortKey(row, band)}:${row.id}`;
+function listCursor(row: Session, dirty: ReadonlySet<string>, recent = false): string {
+  const band = recent ? FAVORITE_BAND : bandOf(row, dirty);
+  return `${band}:${sortKey(row, recent ? REST_BAND : band)}:${row.id}`;
 }
 
 /**
@@ -208,7 +208,13 @@ export function sessionsWindow(
   const view = url.searchParams.get('archived') ?? 'exclude';
   const standing =
     view === 'include' ? rows : rows.filter((row) => sessionIsArchived(row) === (view === 'only'));
-  const ranked = rankSessions(standing, dirty);
+  const recent = url.searchParams.get('order') === 'recent';
+  const ranked = recent
+    ? [...standing].sort((a, b) => {
+      const recency = sortKey(a, REST_BAND) - sortKey(b, REST_BAND);
+      return recency || (a.id === b.id ? 0 : a.id < b.id ? -1 : 1);
+    })
+    : rankSessions(standing, dirty);
   const root = url.searchParams.get('root');
   const inProject = root ? ranked.filter((row) => projectPath(row) === root) : ranked;
   const aside = root !== null && url.searchParams.get('grouped') === 'aside';
@@ -224,7 +230,7 @@ export function sessionsWindow(
   // the same page however much the fleet moved meanwhile.
   const limit = Number(url.searchParams.get('limit') ?? listed.length);
   const after = url.searchParams.get('after');
-  const from = after ? listed.findIndex((row) => listCursor(row, dirty) === after) + 1 : 0;
+  const from = after ? listed.findIndex((row) => listCursor(row, dirty, recent) === after) + 1 : 0;
   const window = after && from === 0 ? [] : listed.slice(from, from + (limit || listed.length));
   const last = window[window.length - 1];
   const hasMore = from + window.length < listed.length;
@@ -232,7 +238,7 @@ export function sessionsWindow(
     sessions: window,
     total: listed.length,
     has_more: hasMore,
-    next_cursor: hasMore && last ? listCursor(last, dirty) : null,
+    next_cursor: hasMore && last ? listCursor(last, dirty, recent) : null,
     // The real gateway answers parked runs BESIDE every window it cuts, complete
     // however deep they sit and narrowed to the same project as the listing; the
     // stable project totals ride only beside the head.

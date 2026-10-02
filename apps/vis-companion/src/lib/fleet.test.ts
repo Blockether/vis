@@ -492,68 +492,24 @@ describe('timeLabel', () => {
 // disappeared an hour later, and a session merely waiting for human input went
 // with it. Age may only ever hide a session that is idle, answered and read.
 
-// Unsent work lives on THIS device only, and the session holding it is usually
-// empty, so it sorts below everything else there is. So it is pinned to the top
-// of the list instead, or you never see it again. A STAR is stronger still: it is
-// the one piece of ordering the human typed in themselves, so it outranks live,
-// unread, unsent and age, and the starred band must come out the same way
-// however many stars there are, however the gateway happened to list them, and
-// whether or not the engine's sort is stable.
 describe('sessionOrder', () => {
-  const order = (
-    rows: Session[],
-    stars: Record<string, number> = {},
-    dirty: Set<string> = new Set<string>(),
-  ): string[] =>
-    sessionOrder(rows, {
-      favoriteRank: (row) => stars[row.id] ?? null,
-      hasDraftMessage: (row) => dirty.has(row.id),
-    }).map((row) => row.id);
-
-  it('floats the rows holding unsent work, keeping the gateway order inside each half', () => {
-    const rows = [session('a'), session('b'), session('c'), session('d')];
-    expect(order(rows, {}, new Set(['b', 'd']))).toEqual(['b', 'd', 'a', 'c']);
+  it('puts a recently opened older conversation above newer content and stars', () => {
+    const newer = session('newer', { modified_at: '2026-01-02T00:00:00Z', favorite_rank: 1 });
+    const opened = session('opened', {
+      modified_at: '2026-01-01T00:00:00Z', last_opened_at: Date.parse('2026-01-03T00:00:00Z'),
+    });
+    expect(sessionOrder([newer, opened]).map((row) => row.id)).toEqual(['opened', 'newer']);
   });
 
-  it('leaves a list with nothing starred and nothing unsent exactly as it came', () => {
+  it('keeps an already ordered list by identity without mutating its rows', () => {
     const rows = [session('a'), session('b')];
-    expect(sessionOrder(rows, { favoriteRank: () => null, hasDraftMessage: () => false })).toBe(
-      rows,
-    );
+    expect(sessionOrder(rows)).toBe(rows);
   });
 
-  it('pins the stars above unsent work, in the order they were starred', () => {
-    const rows = [session('a'), session('b'), session('c'), session('d')];
-    expect(order(rows, { d: 1, b: 2 }, new Set(['c']))).toEqual(['d', 'b', 'c', 'a']);
-  });
-
-  it('orders the starred band identically however the gateway listed it', () => {
-    const rows = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => session(id));
-    const stars = { e: 3, a: 1, c: 2 };
-    expect(order(rows, stars)).toEqual(['a', 'c', 'e', 'b', 'd', 'f']);
-    expect(order([...rows].reverse(), stars).slice(0, 3)).toEqual(['a', 'c', 'e']);
-  });
-
-  it('never reshuffles the stars already there when one more is added', () => {
-    const rows = Array.from({ length: 12 }, (_, i) => session(`s${i}`));
-    const stars: Record<string, number> = {};
-    const bands: string[][] = [];
-    for (const [rank, id] of ['s7', 's2', 's9', 's0', 's5'].entries()) {
-      stars[id] = rank + 1;
-      bands.push(order(rows, stars).slice(0, rank + 1));
-    }
-    expect(bands).toEqual([
-      ['s7'],
-      ['s7', 's2'],
-      ['s7', 's2', 's9'],
-      ['s7', 's2', 's9', 's0'],
-      ['s7', 's2', 's9', 's0', 's5'],
-    ]);
-  });
-
-  it('breaks a shared rank by id, so two runs can never disagree', () => {
+  it('uses the same id tie-break regardless of incoming order', () => {
     const rows = [session('b'), session('a')];
-    expect(order(rows, { a: 4, b: 4 })).toEqual(['a', 'b']);
+    expect(sessionOrder(rows).map((row) => row.id)).toEqual(['a', 'b']);
+    expect(rows.map((row) => row.id)).toEqual(['b', 'a']);
   });
 });
 

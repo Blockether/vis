@@ -156,6 +156,8 @@ export interface Session {
   unread_answers?: number;
   created_at?: string;
   modified_at?: string;
+  /** Last explicit opening on any client; background reads do not change this time. */
+  last_opened_at?: number | null;
   workspace?: {
     root?: string;
     repo_root?: string;

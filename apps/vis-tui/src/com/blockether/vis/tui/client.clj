@@ -983,6 +983,12 @@
   [sid gid]
   (send-json! "PUT" (str "/v1/sessions/" (enc sid) "/group") {:group_id (when gid (str gid))}))
 
+(defn mark-session-opened!
+  "PATCH /v1/sessions/:sid - record an explicit selection for shared recency.
+   Background session reads must not call this operation. Returns the refreshed soul."
+  [sid]
+  (send-json! "PATCH" (str "/v1/sessions/" (enc sid)) {:opened true}))
+
 (defn mark-session-read!
   "PUT /v1/sessions/:sid/read - report that every answer this session has
    produced has been seen. The gateway keeps the mark, so the same read

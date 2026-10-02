@@ -1412,18 +1412,22 @@ export function SessionsScreen({
   // happens INSIDE each machine: two checkouts of the same repo on two machines are two
   // projects, and a folder name never merges them.
   //
-  // THE SESSION IN USE LEADS ITS MACHINE'S ANSWER, as the terminal switcher keeps the
-  // session it was opened from on its first row. Regression, user report (paraphrased:
-  // the search should start on the session I am in, not on the first result): the
-  // dialog started on the freshest row, and the open session could sit pages down or
-  // be missing from the recents altogether.
+  // Explicit openings participate in the same recency order as conversation activity.
+  // Keep the open row available when it falls outside the gateway's recent window,
+  // but do not pin it ahead of genuinely newer work.
   const found = useMemo(() => {
+    if (!isSearchOpen) return [];
     const needle = searchNeedle.toLowerCase();
     return inScope.filter((machine) => searchFilter.accepts(machineKey(machine.conn))).map((machine) => {
       const api = clientFor(machine.conn);
-      const answered = (searchRows.get(machineKey(machine.conn)) ?? []).filter(
-        (session) => !api.isSessionDeleted(session.id),
-      );
+      const answered = (searchRows.get(machineKey(machine.conn)) ?? [])
+        .filter((session) => !api.isSessionDeleted(session.id))
+        .map((session) => {
+          const opened = api.cachedSession(session.id)?.last_opened_at ?? 0;
+          return opened > (session.last_opened_at ?? 0)
+            ? { ...session, last_opened_at: opened }
+            : session;
+        });
       const isOpen = (session: Session) => sessionRowKey(machine.conn, session.id) === openRow;
       // The recents are painted as the gateway answered them: freshest first. Newer work
       // can push the open session out of their window; the row this device holds for it
@@ -1436,12 +1440,15 @@ export function SessionsScreen({
           !api.isSessionDeleted(openSid)
             ? (machine.sessions?.find(isOpen) ?? api.cachedSession(openSid))
             : null);
-        return { machine, sessions: openFirst(answered, open && searchFilter.includes(machine.conn, open) ? open : null) };
+        const rows = open && searchFilter.includes(machine.conn, open)
+          ? [open, ...answered.filter((session) => session.id !== open.id)]
+          : answered;
+        return { machine, sessions: sessionOrder(rows) };
       }
       const draftFor = (session: Session) => draftMessages[draftMessageKey(api.base, session.id)];
       // The one thing no gateway can match: the words and file names waiting in THIS
       // device's composer. A loaded row whose unsent draft holds the query joins the
-      // answer, behind it.
+      // answer, in the same recency order.
       const answeredIds = new Set(answered.map((session) => session.id));
       const drafted = (machine.sessions ?? []).filter(
         (session) =>
@@ -1450,14 +1457,9 @@ export function SessionsScreen({
           searchFilter.includes(machine.conn, session) &&
           draftSearchText(draftFor(session)).includes(needle),
       );
-      const ordered = sessionOrder([...answered, ...drafted], {
-        favoriteRank,
-        hasDraftMessage: (session) => draftMessageHasUnsent(draftFor(session)),
-      });
-      // A query that matched the session in use answers with it on top.
-      return { machine, sessions: openFirst(ordered, ordered.find(isOpen)) };
+      return { machine, sessions: sessionOrder([...answered, ...drafted]) };
     });
-  }, [inScope, searchNeedle, searchRows, draftMessages, openRow, openSid, searchFilter]);
+  }, [isSearchOpen, inScope, searchNeedle, searchRows, draftMessages, openRow, openSid, searchFilter]);
 
   // A search is a FLEET question: it runs on every machine in scope, so the dialog
   // reports what came back and from how many of them.
@@ -1742,11 +1744,6 @@ export function SessionsScreen({
         const groups = searchGroups(entry.sessions, (session) =>
           isRowUnread(entry.machine.conn, session),
         );
-        // The session in use leads its machine's answer, and its project leads the
-        // projects, as in the terminal switcher: the row the search starts on is in view.
-        const open = groups.findIndex((group) =>
-          group.sessions.some((session) => sessionRowKey(entry.machine.conn, session.id) === openRow),
-        );
         return {
           machine: entry.machine,
           searchSessions: entry.sessions,
@@ -1755,10 +1752,10 @@ export function SessionsScreen({
             pageSize,
             isVisible: true,
           },
-          groups: open > 0 ? [groups[open], ...groups.filter((_, index) => index !== open)] : groups,
+          groups,
         };
       }),
-    [found, pageSize, isRowUnread, openRow],
+    [found, pageSize, isRowUnread],
   );
 
   // THE ROW THE SEARCH PANE SHOWS: the one the reader last pressed while it is still a
@@ -2264,11 +2261,6 @@ export function SessionsScreen({
       )}
     </section>
   );
-}
-
-/** `rows` led by `open`, the session in use, and otherwise in their own order. */
-function openFirst(rows: Session[], open: Session | null | undefined): Session[] {
-  return open ? [open, ...rows.filter((session) => session.id !== open.id)] : rows;
 }
 
 /**

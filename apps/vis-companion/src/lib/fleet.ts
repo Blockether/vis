@@ -405,72 +405,28 @@ export function sessionWasStopped(session: Session): boolean {
   return session.was_interrupted === true || session.was_failed === true;
 }
 
-/** Bands of the list order, best first. Every row is in exactly one. */
-const FAVORITE_BAND = 0;
-const DIRTY_BAND = 1;
-const REST_BAND = 2;
-
-/**
- * Starred work FIRST, then unsent work, then the order the gateway sent.
- *
- * Only a SEARCH answer needs this now: the navigator list arrives already
- * banded from the gateway, which owns it. A search is a COMPLETE match set in
- * the gateway's own order, so re-banding it here is honest arithmetic.
- *
- * A star is the one piece of ordering the human typed in themselves, so it wins
- * outright: a favorite sits on top whether it is live, unread, or a year cold.
- *
- * A draft message lives on THIS device only: the fleet cannot remind you about
- * it from another machine, and the session holding it is usually empty, so it
- * sorts to the bottom of every timestamp order there is. So it goes above the
- * rest.
- *
- * The order is TOTAL and does not lean on `Array#sort` being stable: favorites
- * compare by the rank they were starred with, then by id, and everything else
- * by its incoming position. So the same sessions always paint in the same
- * order, however many stars there are, whatever order the gateway listed them
- * in, and whichever engine runs the sort.
- */
-export function sessionOrder(
-  sessions: Session[],
-  rank: {
-    favoriteRank: (session: Session) => number | null;
-    hasDraftMessage: (session: Session) => boolean;
-  },
-): Session[] {
-  const rows = sessions.map((session, index) => {
-    const pin = rank.favoriteRank(session);
-    const band =
-      pin !== null ? FAVORITE_BAND : rank.hasDraftMessage(session) ? DIRTY_BAND : REST_BAND;
-    return { session, index, band, pin: pin ?? 0 };
+/** Newest conversation activity or explicit opening first, with a stable id tie-break. */
+export function sessionOrder(sessions: Session[]): Session[] {
+  const ordered = [...sessions].sort((a, b) => {
+    const recency = sessionMillis(b) - sessionMillis(a);
+    if (recency !== 0) return recency;
+    return a.id === b.id ? 0 : a.id < b.id ? -1 : 1;
   });
-  if (rows.every((row) => row.band === REST_BAND)) return sessions;
-  rows.sort((a, b) => {
-    if (a.band !== b.band) return a.band - b.band;
-    if (a.band === FAVORITE_BAND) {
-      if (a.pin !== b.pin) return a.pin - b.pin;
-      if (a.session.id !== b.session.id) return a.session.id < b.session.id ? -1 : 1;
-    }
-    return a.index - b.index;
-  });
-  return rows.map((row) => row.session);
+  return ordered.every((row, index) => row === sessions[index]) ? sessions : ordered;
 }
 
-function dateMillis(value?: string): number {
+function dateMillis(value?: string | number): number {
   if (!value) return 0;
   const millis = new Date(value).getTime();
   return Number.isFinite(millis) ? millis : 0;
 }
 
-/**
- * When a row last moved, for ORDERING: content time only.
- *
- * A TOUCH clock never reaches this ranking. The gateway keeps its own `:last-active`
- * stamp (any event, a model switch, a daemon start re-stamping the whole fleet) to
- * itself, because ranking by it made merely opening a session the freshest thing.
- */
+/** Last conversation activity or explicit opening, never a background registry touch. */
 export function sessionMillis(session: Session): number {
-  return dateMillis(session.modified_at ?? session.created_at);
+  return Math.max(
+    dateMillis(session.modified_at ?? session.created_at),
+    dateMillis(session.last_opened_at ?? undefined),
+  );
 }
 
 // Building an `Intl` formatter resolves locale data, which costs far more than
