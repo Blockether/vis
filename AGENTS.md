@@ -1,214 +1,191 @@
 # Vis repository guidance
 
-Keep only repository-specific decisions here. General engineering practice is assumed.
-Read area contracts relevant to the task. Keep API documentation in its namespace and
-enforceable invariants in tests; do not duplicate them here.
+This file has only repository-specific decisions. General engineering practice applies. Read the
+area contracts that your task touches. Keep API documentation in its namespace and invariants in
+tests; do not copy them here.
 
-## Scope and completion
+## Simplified English
 
-Continue in-scope local edits, verification and fixes without asking at each step. Finish the
-requested behavior, not just a first implementation. If blocked, report the concrete blocker and
-what remains; do not substitute an adjacent fix or claim an unverified result.
+Write prompts, rules, descriptions, docs and commits in Simplified English, so that readers with
+basic English and translation tools get the same meaning. Use the
+[ASD-STE100](https://www.asd-ste100.org/) writing rules, not its dictionary:
 
-Choose verification for the changed files and behavior. Code changes need affected tests, formatting and lint
-(including reflection for Clojure); documentation-only changes need content, link and diff checks,
-not a full application build. Reproduce reported bugs before fixing them; reference the issue in
-regression-test comments when an issue exists. Use existing test infrastructure, not ad-hoc demos.
+- Write one instruction in each sentence, in the imperative and active voice, with any condition first.
+- Use at most 20 words in an instruction, 25 in a description, 6 sentences in a paragraph and 3 words in a noun cluster.
+- Give each paragraph one topic and each term one meaning. Use the most common word: "use", not "utilize".
+- Use vertical lists for steps and conditions. In a warning, give the command first, then the risk.
+- Keep names, code, paths, examples, limits, links, anchors and test-pinned phrases exact. Simplify the words, not the meaning or the rules.
 
-Read with a budget: every tool print is resent to the model on every later request of the session.
-Use `cat(path, start, end)` windows around the region you will edit, not whole files; scope `grep`
-to the directories that can hold the symbol and keep its default context; batch reads per edit
-target, not per repository. Read a file whole only when a rule requires it or you will rewrite it.
+## Work and verification
 
-An unrelated full-build failure does not by itself block delivery when affected tests and checks pass
-and the failure is demonstrably outside the scoped diff; report that failure separately. If affected
-verification, hooks or a safe push are blocked, report the exact blocker and the remaining action;
-never bypass checks or hooks.
+- Continue in-scope local edits, checks and fixes without asking at each step.
+- Finish the requested behavior, not only a first implementation.
+- If you are blocked, report the blocker and the remaining work. Do not substitute an adjacent fix or claim an unverified result.
+- Choose checks for the changed files and behavior. Code needs the affected tests, formatting and lint, with reflection for Clojure. Documentation-only changes need content, link and diff checks, not a full application build.
+- Reproduce a reported bug before you fix it. If an issue exists, reference it in the regression-test comment.
+- Use the existing test infrastructure, not ad-hoc demos.
+- If a full build fails outside your diff, you can still deliver when the affected tests and checks pass. Report that failure separately.
+- If affected checks, hooks or a safe push are blocked, report the blocker and the remaining action. Never bypass checks or hooks.
 
-For simple, unambiguous change requests, including regression fixes, this repository grants standing
-authorization to verify, commit only the task's changes and push to `main` without asking again.
-An analysis-only, diff-preview, local-only or no-commit/push request overrides this default.
-Required checks must pass, and the scoped changes must be safely separable from other work.
-This does not authorize unrelated changes, releases, deployments, live service restarts or history
-rewrites. For other tasks, commit and push only when explicitly requested.
+## Reading budget
 
-A task requested end to end is authorized to completion, including commits and pushes in every
-repository it touches, the `deps.edn` pin bump for a changed sibling repository and, when that
-repository's native libraries change, its release. Decide those steps yourself; only a Vis product
-release still needs its own explicit request. Report every commit, push and release in the final reply.
+Each tool print goes to the model again on every later request of the session.
 
-For issue fixes, always inform the reporter and other users on the issue after the verified fix
-is pushed: post a concise summary of the user-visible change, verification and commit. Ensure
-the issue is closed when fully resolved; a closing commit may do this automatically. Leave
-partial or blocked fixes open and state what remains. Issue-fix requests authorize this closeout;
-local-only or no-remote requests override it. Also report the fix and issue status in the final reply.
+- Read a window around the region that you edit with `cat(path, start, end)`, not the whole file.
+- Limit `grep` to the directories that can hold the symbol, and keep its default context.
+- Batch reads for each edit target, not for each repository.
+- Read a whole file only if a rule tells you to or you rewrite the file.
 
-When handling a Git request, capture its intended changes before verification or staging.
-For `add all`, scope is the staged, unstaged and untracked content captured at the start, not
-later work by other sessions. Recheck before staging and committing; preserve out-of-scope changes.
-If concurrent edits overlap that scope and cannot be separated safely, pause the Git operation
-and report the conflict.
+## Authorization
 
-When committing, use the configured human identity,
-not `root`, and a conventional `type(scope): imperative summary` under 72 characters, with
-`Vis-Session: <bare-uuid>` as a trailer. For issue-related work, always include the issue number
-(for example, `#191`) in the commit subject. Use `Fixes #191` in the body when the commit fully
-resolves that issue. Keep any other body text to the reason the diff cannot explain.
+Simple, clear change requests, including regression fixes, have standing authorization: verify,
+commit only the task's changes and push to `main` without asking again. The required checks must
+pass, and the task's changes must separate safely from other work. An analysis-only, diff-preview,
+local-only or no-commit/push request cancels this default. It never covers unrelated changes,
+releases, deployments, live service restarts or history rewrites. For other tasks, commit and push
+only when the user asks.
+
+A task requested end to end is authorized to completion. This includes commits and pushes in every
+repository that it touches. It also includes the `deps.edn` pin bump for a changed sibling repository,
+and its release when its native libraries change. Decide these steps yourself. Only a Vis product release needs its
+own explicit request. Report every commit, push and release in the final reply.
+
+## Issue fixes
+
+- After you push the verified fix, always inform the reporter and other users on the issue. Summarize the user-visible change, the verification and the commit.
+- Close the issue when the fix fully resolves it; a closing commit can do this. Leave a partial or blocked fix open, and state what remains.
+- An issue-fix request authorizes this closeout. A local-only or no-remote request cancels it.
+- Report the fix and the issue status in the final reply.
+
+## Git requests and commits
+
+- Record the intended changes of a Git request before verification or staging.
+- For `add all`, the scope is the staged, unstaged and untracked content at the start, not later work of other sessions.
+- Check again before you stage and commit. Keep out-of-scope changes.
+- If concurrent edits overlap the scope and you cannot separate them safely, pause the Git operation and report the conflict.
+- Commit as the configured human identity, not `root`.
+- Use a conventional subject, `type(scope): imperative summary`, under 72 characters, and a `Vis-Session: <bare-uuid>` trailer.
+- For issue work, always put the issue number (for example, `#191`) in the subject. Write `Fixes #191` in the body when the commit fully resolves the issue.
+- Limit other body text to the reason that the diff cannot show.
 
 ## Repository decisions
 
-- No profanity or vulgarity in tracked content, including documentation, examples, activity copy,
-  quoted reports, fixtures and commit text. Paraphrase reports instead; do not copy a user's wording
-  into documentation. Keep terminology consistent across extension guides and executable examples.
-- Every observed tool binding owns an explicit Activity presentation, including each exported Python
-  object method. Activities are for human consumption: use understandable English and capitalized
-  natural-language labels ("Run tests", "Search files"), not code identifiers or all-caps sentences.
-  Choose start visibility at the binding: quick local reads, patches and lookups use end-only
-  presentation (`show_start=False` in Python, `:show-start false` in Clojure); slow work keeps running
-  progress. Internal lifecycle tracking always preserves timing, failures and cancellation.
-  Preserve errors, meaningful counts and diffs; never substitute a generic result preview.
-  Follow `resources/vis-docs/extension-api.md#activity-presentation` and cover
-  registration plus running, success, failure and empty states in tests.
-- This repository is public. Private deployment details and credentials belong in `infrastructure`,
-  never here. Examples use `127.0.0.1`, `10.0.0.5`, `gateway.example.com` and `visgw`.
-- No compatibility layers or migrations for obsolete APIs: update consumers and remove old paths.
-- One engine/package, organized by domain under `src/com/blockether/vis/internal/`; mirror tests
-  under `test/`. Add to an existing owner rather than another flat namespace or extension jar.
-  Registration order is the explicit vector in `resources/META-INF/vis/manifest.edn`, not classpath
-  discovery. `build.clj` AOT-compiles every namespace; the manifest drives registration at runtime.
-- Shared leaf primitives belong to `internal.util`; one-caller helpers stay local. Production outbound
-  Clojure HTTP uses `babashka.http-client`. Do not introduce Clojure `declare`.
-- Clojure formatting uses `.zprint.edn` and the Vis formatter: one blank line between top-level forms,
-  attached comments preserved, one final newline. `.clj-kondo/imports/` is tracked source, not cache.
+### Content
 
-### Documentation audience and style
+- Keep profanity and vulgarity out of tracked content: documentation, examples, activity text, quoted reports, fixtures and commit text.
+- Paraphrase reports. Do not copy a user's words into documentation.
+- Use the same terms in extension guides and executable examples.
+- This repository is public. Put private deployment details and credentials in `infrastructure`, never here.
+- In examples, use `127.0.0.1`, `10.0.0.5`, `gateway.example.com` and `visgw`.
 
-The README and `resources/vis-docs/` are written for people. Serving the manual through
-`doc()` does not make it an agent instruction sheet. User guides address people using Vis;
-extension guides and API reference address developers building with it.
+### Activity presentation
 
-- Start with the reader's goal: what the feature does, when to use it and how to get a useful
-  result. Show ordinary chat or UI workflows before internal calls when those workflows exist.
-- Lead each feature page with use cases: its `When to use` section states the problems readers
-  bring, in their words, links each to the section that solves it and names the better-fitting
-  page for nearby problems. Describe the reader's situation, not the feature's capabilities.
-- Address the reader as "you". Use plain words, active voice, short paragraphs and a clear,
-  conversational but professional tone. Be direct and literal; avoid unexplained jargon,
-  metaphors, slogans, rhetorical filler and forced friendliness.
-- Write Simplified Technical English (ASD-STE100), so that readers with basic English and
-  translation tools get the same meaning. Follow its writing rules, not its dictionary: choose the
-  most common word and give each term one meaning. Write one instruction per sentence, in the
-  imperative, with any condition first, and keep instructions to 20 words. Keep noun clusters to
-  three words. The page contract in `docs/core.clj` enforces the sentence, paragraph and semicolon
-  limits.
-- Do not use apologetic or defensive prose, AI/generated-content disclaimers, or commentary
-  about how the text or screenshots were produced. State facts, actions and limitations directly;
-  retain provenance only when it affects how the reader uses or verifies the information.
-- Organize guides around tasks, with realistic examples and expected results. Explain relevant
-  prerequisites, costs, permissions and destructive consequences before the reader acts.
-- Keep tutorials, task guides, explanations and API reference distinct. Put low-level protocol
-  details in clearly labeled reference sections rather than leading with them. Do not copy
-  agent prompts or operating checklists into user guides; explain their user-visible effects.
-- Preserve exact API names, runnable examples, documented limits and stable links/anchors.
-  Friendlier wording must not weaken a contract or imply capabilities Vis does not have.
-- Review headings, introductions, navigation labels and page descriptions as well as body text.
-  A new reader should understand the purpose and next step without knowing Vis internals.
+- Give every observed tool binding an explicit Activity presentation, including each exported Python object method.
+- Write activities for people: capitalized natural-language labels in clear English ("Run tests", "Search files"), not code identifiers or all-caps sentences.
+- Set start visibility at the binding. Quick local reads, patches and lookups show only the end (`show_start=False` in Python, `:show-start false` in Clojure). Slow work shows running progress.
+- Internal lifecycle tracking always keeps timing, failures and cancellation.
+- Keep errors, meaningful counts and diffs. Never replace them with a generic result preview.
+- Follow `resources/vis-docs/extension-api.md#activity-presentation`. Test registration and the running, success, failure and empty states.
 
-Apply these writing guides within the repository's rules:
+### Code
 
-- [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/) — short sentences, one meaning per word and one instruction per step.
-- [Google: tone and style](https://developers.google.com/style/tone) — clear, direct and conversational.
-- [Microsoft: simple and human](https://learn.microsoft.com/en-us/style-guide/brand-voice-above-all-simple-human) — everyday words and the reader's task first.
-- [Diátaxis: how-to guides](https://diataxis.fr/how-to-guides/) — goal-focused instructions, separate from explanation and reference.
+- Do not add compatibility layers or migrations for obsolete APIs. Update the consumers and remove the old paths.
+- Keep one engine and package, organized by domain under `src/com/blockether/vis/internal/`, with tests mirrored under `test/`.
+- Add code to an existing owner, not to a new flat namespace or extension jar.
+- The explicit vector in `resources/META-INF/vis/manifest.edn` sets the registration order, not classpath discovery. `build.clj` AOT-compiles every namespace; the manifest controls registration at runtime.
+- Put shared leaf primitives in `internal.util`. Keep a helper with one caller local.
+- Use `babashka.http-client` for outbound Clojure HTTP in production.
+- Do not add Clojure `declare`.
+- Format Clojure with `.zprint.edn` and the Vis formatter: one blank line between top-level forms, attached comments kept, one final newline.
+- Treat `.clj-kondo/imports/` as tracked source, not a cache.
 
-### Computer-use automation
+## Documentation
 
-Agents may use available computer-use automation (CUA) to interact with macOS
-applications, including Xcode, and websites for a user-authorized task. Inspect
-the current UI before acting and verify the result. This permission does not
-make unavailable tools available or authorize unrelated account changes. Keep
-passwords, private keys and recovery codes out of transcripts and tracked files;
-use private human input for authentication when required.
+The README and `resources/vis-docs/` are for people, also when `doc()` serves them; they are not
+instructions for agents. User guides address people who use Vis. Extension guides and the API
+reference address developers who build with Vis.
 
-## Read only for the area being changed
+- Start with the reader's goal: what the feature does, when to use it and how to get a useful result. If a chat or UI workflow exists, show it before internal calls.
+- Start each feature page with a `When to use` section. State the readers' problems in their words, link each to the section that solves it and name the better page for nearby problems. Describe the reader's situation, not the feature's capabilities.
+- Address the reader as "you", in a clear, conversational and professional tone. Be direct and literal: no unexplained jargon, metaphors, slogans, filler or forced friendliness.
+- The page contract in `docs/core.clj` enforces the sentence, paragraph and semicolon limits.
+- Do not write apologies, defensive text, AI or generated-content disclaimers, or notes on how text or screenshots were made. State facts, actions and limitations directly. Give provenance only when it changes how the reader uses or verifies the information.
+- Organize guides around tasks, with realistic examples and expected results. Before the reader acts, explain prerequisites, costs, permissions and destructive effects.
+- Keep tutorials, task guides, explanations and API reference separate. Put low-level protocol details in labeled reference sections, not at the start. Do not copy agent prompts or operating checklists into user guides; explain their user-visible effects.
+- Review headings, introductions, navigation labels and page descriptions, not only body text. A new reader must understand the purpose and the next step without knowledge of Vis internals.
+- Also follow [Google: tone and style](https://developers.google.com/style/tone), [Microsoft: simple and human](https://learn.microsoft.com/en-us/style-guide/brand-voice-above-all-simple-human) and [Diátaxis: how-to guides](https://diataxis.fr/how-to-guides/) within these rules.
 
-Paths below are relative to this repository. Internal namespace paths begin at
-`src/com/blockether/vis/internal/`.
+## Computer-use automation
 
-| Area | Canonical owner and non-obvious boundary |
+- For a user-authorized task, you can use the available computer-use automation (CUA) with macOS applications, including Xcode, and with websites.
+- Inspect the current UI before you act, and verify the result.
+- This permission does not make unavailable tools available. It does not authorize unrelated account changes.
+- Keep passwords, private keys and recovery codes out of transcripts and tracked files. When authentication is necessary, use private human input.
+
+## Area owners
+
+Read a row only when you change that area. Paths are relative to this repository. Internal
+namespace paths start at `src/com/blockether/vis/internal/`.
+
+| Area | Owner and boundary |
 |---|---|
-| Python host API | `packages/vis-agent/src/blockether/vis/extension.py` is also executed by the engine; never mirror it. |
-| Sandbox | `sandbox/` defines host policy and process integration; `python/` implements host execution. Interpreter, handles, descriptor limits and guest runtime Python belong in `vis-python-runtime`; read that repo's `AGENTS.md` before changing it. Keep host-call shims in `resources/vis-shims/` and host guest modules in `resources/vis-guest/`; do not copy runtime code. |
-| Shims | `attach` and `ls` expose host functions; they do not replace Python packages. Python docstrings in `resources/vis-shims/` generate apropos resources; `apropos-resource-test/regenerate!` updates them. |
-| Contracts | `packages/vis-contract/resources/vis-contract/schema/` owns canonical JSON Schemas; Skjema validates portable shapes. Derive vocabulary and bounds from schemas, never paired catalogs. Callbacks, IO and mutable state remain local. |
-| Tool declarations | `extension/core.clj` and its mirrored test own description/result/params, requiredness and wire keys. |
-| Gateway transport | `packages/vis-contract/src/com/blockether/vis/contract/wire.clj` defines snake_case wire keys, kebab-case engine keys and total JSON encoding. Use `wire/->wire` and `wire/json-str`; transport encoding failures can break event replay. |
-| Config | `config/` owns merged configuration; toggle IDs are snake_case strings and reload from merged config. |
-| Docs | `resources/vis-docs/` serves both the site and `doc()`. `resources/META-INF/vis/apropos/docs.edn` is the catalog; `resources/vis-docs/site.edn` alone owns titles and navigation. The `docs/core.clj` namespace docstring defines the page contract that `docs-page-canon-test` enforces. |
-| Extension Center | The catalog lives in `apps/vis-docs/`, not `resources/vis-docs/`: `worker.js` owns `/extensions/` and `/api/*` over D1 (`schema.sql`), `web/render.js` renders catalog pages in both the Worker and the browser, and `web/style.css` adds catalog-only layout over the shared `resources/vis-docs/assets/theme.css`. The catalog is public-site-only; it is never a `doc()` page. |
-| UI | Companion controls are in `apps/vis-companion/src/components/ui.tsx`; TUI rendering is in `apps/vis-tui/`. |
-| Companion relay | `apps/vis-companion-relay/` is the push Worker: it holds the APNs/FCM keys, seals delivery grants (`apps/vis-companion-relay/src/seal.ts`) and keeps no device-token store, database or OAuth callback. `gateway/relay.clj` pushes through a grant, `gateway/push.clj` pushes directly with a self-hosted APNs key, and `apps/vis-companion/src/lib/relay.ts` registers the grant with its gateway. |
-| Licensing | `audit/README.md` is generated by `bb scripts/gen-audit.bb` (network required), never hand-edited. `audit_inventory_test` checks dependency pins against it. |
+| Python host API | The engine also runs `packages/vis-agent/src/blockether/vis/extension.py`. Never mirror it. |
+| Sandbox | `sandbox/` defines host policy and process integration; `python/` implements host execution. The interpreter, handles, descriptor limits and guest runtime Python belong in `vis-python-runtime`; read its `AGENTS.md` before you change it. Host-call shims go in `resources/vis-shims/`, host guest modules in `resources/vis-guest/`. Do not copy runtime code. |
+| Shims | `attach` and `ls` expose host functions; they do not replace Python packages. The Python docstrings in `resources/vis-shims/` generate the apropos resources; `apropos-resource-test/regenerate!` updates them. |
+| Contracts | `packages/vis-contract/resources/vis-contract/schema/` owns the canonical JSON Schemas; Skjema validates portable shapes. Derive vocabulary and bounds from the schemas, never from paired catalogs. Callbacks, IO and mutable state stay local. |
+| Tool declarations | `extension/core.clj` and its mirrored test own description, result, params, requiredness and wire keys. |
+| Gateway transport | `packages/vis-contract/src/com/blockether/vis/contract/wire.clj` defines snake_case wire keys, kebab-case engine keys and total JSON encoding. Use `wire/->wire` and `wire/json-str`; a transport encoding failure can break event replay. |
+| Config | `config/` owns the merged configuration. Toggle IDs are snake_case strings and reload from it. |
+| Docs | `resources/vis-docs/` serves the site and `doc()`. `resources/META-INF/vis/apropos/docs.edn` is the catalog; only `resources/vis-docs/site.edn` owns titles and navigation. The `docs/core.clj` namespace docstring defines the page contract that `docs-page-canon-test` enforces. |
+| Extension Center | The catalog is in `apps/vis-docs/`, not `resources/vis-docs/`. `worker.js` owns `/extensions/` and `/api/*` over D1 (`schema.sql`); `web/render.js` renders catalog pages in the Worker and the browser; `web/style.css` adds the catalog layout over the shared `resources/vis-docs/assets/theme.css`. The catalog is on the public site only, never a `doc()` page. |
+| UI | Companion controls: `apps/vis-companion/src/components/ui.tsx`. TUI rendering: `apps/vis-tui/`. |
+| Companion relay | `apps/vis-companion-relay/` is the push Worker. It holds the APNs/FCM keys, seals delivery grants (`apps/vis-companion-relay/src/seal.ts`) and keeps no device-token store, database or OAuth callback. `gateway/relay.clj` pushes through a grant; `gateway/push.clj` pushes directly with a self-hosted APNs key; `apps/vis-companion/src/lib/relay.ts` registers the grant with its gateway. |
+| Licensing | `bb scripts/gen-audit.bb` generates `audit/README.md` (network required); never edit it by hand. `audit_inventory_test` checks the dependency pins against it. |
 
-### Gateway diagnostics
+## Gateway diagnostics
 
-Every agent-initiated gateway request uses the canonical Clojure client, including health checks:
+Send every gateway request that an agent starts through the canonical Clojure client, health checks
+included:
 
 ```clojure
 (require '[com.blockether.vis.internal.gateway.client :as gateway-client])
 (gateway-client/request! :get "/healthz")
 ```
 
-Use the route's actual method/path and optional `{:body … :headers … :timeout-ms …}`. The client
-resolves or starts the daemon, acquires a lease and supplies authentication. Do not read the gateway
-registry, copy secrets or hand-build curl/httpx authentication. Responses are non-throwing maps;
-4xx/5xx are data in `:status`. Print only fields needed for the diagnosis, never secret-bearing bodies.
+- Use the method and path of the route, and the optional `{:body … :headers … :timeout-ms …}`.
+- The client finds or starts the daemon, gets a lease and supplies authentication.
+- Do not read the gateway registry, copy secrets or build curl/httpx authentication by hand.
+- Responses are maps and do not throw. A 4xx or 5xx response is data in `:status`.
+- Print only the fields that the diagnosis needs. Never print a body that contains secrets.
 
-### Tests and native builds
+## Tests and native builds
 
-Vis tests use Lazytest's own API: `[lazytest.core :refer [defdescribe describe it expect]]`.
-`clojure.test` (silently undiscovered here) and Lazytest's experimental interfaces, including
-`lazytest.experimental.interfaces.clojure-test`, are not allowed; `lazytest_policy_test` enforces this.
-Group cases with `describe`: an `it` inside another `it` never runs. Use `lazytest.core/set-ns-context!`
-and `around-each` instead of `use-fixtures`.
+- Write Vis tests with Lazytest's own API: `[lazytest.core :refer [defdescribe describe it expect]]`.
+- Do not use `clojure.test`: the runner does not find it and gives no warning. Do not use Lazytest's experimental interfaces, including `lazytest.experimental.interfaces.clojure-test`. `lazytest_policy_test` enforces this.
+- Group cases with `describe`; an `it` inside another `it` never runs.
+- Use `lazytest.core/set-ns-context!` and `around-each`, not `use-fixtures`.
+- Run the affected namespaces in a clean JVM with `clojure -M:test`, optionally with `--namespace my.ns-test` or `--var my.ns-test/my-test`.
+- Passing JVM tests or a successful native build do not prove that the binary runs. Interop changes need the relevant `test-native/` coverage against the built image (`-M:test-native`).
+- Reachability metadata is inside jars under `META-INF/native-image/`; `native_reachability_test` pins the engine metadata.
+- Read `.graalvm-version` before you change the locked GraalVM CE pin, and use `bin/require-graalvm` for setup. Never substitute Oracle GraalVM. Companion Android Gradle uses stock JDK 21.
+- `e2e/run.py` makes paid model calls. Use it for editing tools and workflows, not for routine docs.
+- Delimiter (Parinfer) repair fixes syntax only.
+- A host, bootstrap or extension boundary change needs coverage across that boundary. Do not drop required keys or validation because one consumer ignores them.
 
-Run the affected namespaces in a clean JVM with `clojure -M:test`, optionally
-`--namespace my.ns-test` or `--var my.ns-test/my-test`.
+## Skills and plans
 
-Passing JVM tests or a successful native build do not prove the binary runs. Interop changes need the relevant
-`test-native/` coverage against the built image (`-M:test-native`); reachability metadata lives inside
-jars under `META-INF/native-image/`. The engine metadata is pinned by `native_reachability_test`.
-Read `.graalvm-version` before changing the locked GraalVM CE pin; use `bin/require-graalvm` for setup.
-Never substitute Oracle GraalVM. Companion Android Gradle uses stock JDK 21 instead.
+- Keep upstream skills verbatim. Do not fork them silently.
+- Load a skill only when the user asks for it or for its specific workflow. Ordinary coding does not activate a skill.
+- A skill's style, persistence, test shortcuts and publishing recipes do not override repository contracts or the user's scope.
+- Never infer authorization for remote actions from a skill.
+- Use `PLAN.md` only for work that needs a maintained plan with many phases, not for every edit. Update it with the work that it tracks.
+- A `PLAN.md` has a title, a phrase and context: current paths, problem and rejected alternatives. Then come numbered phases with Rationale / Data / Acceptance criteria / Unknowns, and the plan state.
 
-`e2e/run.py` makes paid model calls: use it for editing tools and workflows, not routine docs.
-Delimiter/Parinfer repair is syntax-only. A host/bootstrap/extension boundary change needs coverage
-across that boundary; do not drop required keys or validation just because one consumer ignores them.
+## Releases (only when the user asks)
 
-### Skills and plans
-
-Keep upstream skills verbatim rather than silently forking them.
-
-Load a skill only when the user explicitly requests it or its specific workflow: ordinary
-coding does not activate a skill. A skill's style, persistence, test shortcuts and publishing
-recipes do not override repository contracts or the user's scope. Never infer authorization
-for remote actions from a skill.
-
-Use `PLAN.md` for work that needs a maintained multi-phase plan, not every edit. When used, it has:
-title, phrase, context (current paths, problem and rejected alternatives), numbered phases with
-Rationale / Data / Acceptance criteria / Unknowns, then plan state. Update it with the work it tracks.
-
-### Releases (only when requested)
-
-`VIS_VERSION` is the version source. `npm run sync:version` in `apps/vis-companion` mirrors it to
-package manifests and the SDK pyproject file; do not hand-edit those version fields. Product releases
-bump, mirror, commit as `chore(release): vX.Y.Z`, push main, then push the annotated `v<VIS_VERSION>`
-tag. Tag, version and current main must agree. Never move published tags; publish a new version instead.
-
-App-only rebuilds keep the version and use the git commit count as build number. Choose either
-`npm run release:ios:store` / `release:android:store`, or `npm run release:mobile`; only the latter
-creates `companion-v<version>-build.<N>`. Never hand-tag it or submit the same build both ways.
-
-The root `CHANGELOG.md` is hand-authored: each product release commit adds its dated
-`## [vX.Y.Z] - YYYY-MM-DD` section. CI does not edit it; the release workflow drafts the GitHub
-Release with generated notes.
+- `VIS_VERSION` is the version source. `npm run sync:version` in `apps/vis-companion` copies it to the package manifests and the SDK pyproject file; do not edit those version fields by hand.
+- A product release bumps, mirrors, commits as `chore(release): vX.Y.Z`, pushes `main`, then pushes the annotated `v<VIS_VERSION>` tag. The tag, the version and the current `main` must agree.
+- Never move a published tag. Publish a new version instead.
+- An app-only rebuild keeps the version and uses the git commit count as the build number.
+- Use `npm run release:ios:store` / `release:android:store` or `npm run release:mobile`, not both. Only `release:mobile` creates `companion-v<version>-build.<N>`. Never create that tag by hand or submit the same build both ways.
+- Write the root `CHANGELOG.md` by hand: each product release commit adds its dated `## [vX.Y.Z] - YYYY-MM-DD` section. CI does not edit it; the release workflow drafts the GitHub Release with generated notes.
