@@ -129,7 +129,7 @@ test('sidebar puts official publishing and counted custom tags above legacy docu
     'python',
     'vis-official',
   ]);
-  expect(sidebar.querySelectorAll('[data-catalog-filter]')[1].textContent).toBe('Vis Official1');
+  expect(sidebar.querySelectorAll('[data-catalog-filter]')[1].textContent).toBe('Official1');
   expect(sidebar.querySelector('[data-category],.tagline,[aria-label="Documentation"]')).toBeNull();
   expect(sidebar.textContent).not.toMatch(
     /Tools|Providers|Workflows|Writing extensions|Getting started/,

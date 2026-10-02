@@ -95,7 +95,7 @@ export function catalogMetadata({ item, error, detailError } = {}) {
     title: (item ? extensionName(item) : 'Extension Center') + ' · Vis · Blockether',
     description:
       item?.description ||
-      'Browse public GitHub extensions for Vis by Blockether. Filter by custom tags or Vis Official, review the source and install an approved release.',
+      'Browse public GitHub extensions for Vis by Blockether. Filter by custom tags or Official, review the source and install an approved release.',
     path: item ? extensionPath(item) : '/extensions/',
     type: item ? 'WebPage' : 'CollectionPage',
     mainEntity: item

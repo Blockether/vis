@@ -108,11 +108,25 @@ test('the same accessible badge appears on cards, detail pages and verified prev
     const fragment = JSDOM.fragment(html);
     expect(fragment.querySelectorAll('.official-badge')).toHaveLength(1);
     const badge = fragment.querySelector('.official-badge');
-    expect(badge.textContent).toBe('Vis Official');
+    expect(badge.textContent).toBe('Official');
     expect(badge.title).toBe('Published and maintained by the Vis team');
     expect(badge.querySelector('svg').getAttribute('aria-hidden')).toBe('true');
   }
   expect(
     JSDOM.fragment(detailHTML(official)).querySelector('.security-note').textContent,
   ).toContain('--trust allows extension code and build backends to run with your permissions.');
+});
+
+test('official badges sit beside the extension title in every view', () => {
+  for (const html of [
+    cardsHTML([official], filters()),
+    detailHTML(official),
+    previewHTML(official),
+  ]) {
+    const fragment = JSDOM.fragment(html);
+    const badge = fragment.querySelector('.extension-title > .official-badge');
+    expect(badge).not.toBeNull();
+    expect(badge.previousElementSibling.matches('h1, h3')).toBe(true);
+    expect(fragment.querySelector('.card-top .official-badge')).toBeNull();
+  }
 });

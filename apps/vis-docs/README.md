@@ -175,9 +175,9 @@ Project folders distinguish multiple packages in a monorepo. The API's `name`
 remains the Python package identifier used by installation and release tags;
 `repository` and `owner` carry the inspected GitHub identity.
 
-The catalog sidebar shows **All extensions**, **Vis Official** and author-defined
+The catalog sidebar shows **All extensions**, **Official** and author-defined
 **Tags**. Each count shows how many extensions match that choice and the current
-search. Tag counts also respect the official filter. Select a tag or **Vis Official**
+search. Tag counts also respect the official filter. Select a tag or **Official**
 again to remove that filter. **All extensions** clears both filters and keeps your search.
 Links preserve sorting and work without JavaScript.
 

@@ -516,10 +516,10 @@ Choose tags that describe what your extension helps people do, such as `browser`
 Tags appear on catalog cards and extension pages.
 
 In the catalog sidebar, select a tag to filter extensions.
-Select **Vis Official** to show extensions maintained by the Vis team.
+Select **Official** to show extensions maintained by the Vis team.
 You can combine these filters with search. The counters show matching extensions.
 
-You can use your own tags. Tags do not grant the “Vis Official” badge.
+You can use your own tags. Tags do not grant the “Official” badge.
 Publish a new release to change an approved extension's tags.
 
 Keep the implementation under the selected package directory. Do not put a PEP 723

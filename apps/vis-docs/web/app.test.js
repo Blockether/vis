@@ -301,7 +301,9 @@ test('extension detail spacing overrides prose margins without changing README t
   document.body.append(style);
   const css = (selector) => window.getComputedStyle($(selector));
   expect(css('.back-button').display).toBe('inline-flex');
-  expect(css('.detail-heading h1').marginBottom).toBe('1rem');
+  expect(css('.detail-heading .extension-title').display).toBe('flex');
+  expect(css('.detail-heading .extension-title').marginBottom).toBe('1rem');
+  expect(css('.detail-heading h1').marginBottom).toBe('0px');
   expect(css('.install-section').gap).toBe('1rem');
   expect(css('.install-section > h2').marginTop).toBe('0px');
   expect(css('#version-help').marginTop).toBe('0px');
@@ -917,10 +919,10 @@ test('official badges survive client navigation without trusting API status flag
   await tick();
   expect(document.querySelectorAll('.official-badge')).toHaveLength(1);
   const card = $('[data-name="blockether/vis-lang-python"]');
-  expect(card.querySelector('.official-badge').textContent).toBe('Vis Official');
+  expect(card.querySelector('.extension-title > .official-badge').textContent).toBe('Official');
   card.querySelector('.card-main').click();
   await tick();
-  expect($('#detail .official-badge').textContent).toBe('Vis Official');
+  expect($('#detail .extension-title > .official-badge').textContent).toBe('Official');
   expect($('#detail .security-note').textContent).toContain('Review the source first.');
 });
 
