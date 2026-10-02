@@ -29,29 +29,36 @@ const WALLET_GROUP: SessionGroup = {
   session_count: 2,
 };
 
-/** The steps over a project's wall of bands move this many at a time (`GROUPS_PAGE`). */
-const GROUPS_PAGE = 10;
-/** The window the project stands on when it opens: the first page of the wall. */
-const BANDS: BandWindow = { limit: GROUPS_PAGE, offset: 0 };
+/** The steps over a project's ARCHIVED bands move this many at a time. Live bands have none. */
+const ARCHIVED_GROUPS_PAGE = 15;
+/** The window the archive stands on when it opens: its first page. The live wall has none. */
+const ARCHIVED_BANDS: BandWindow = { limit: ARCHIVED_GROUPS_PAGE, offset: 0 };
+/** When the bands of `shelves` were put away: the archive view answers them archived. */
+const PUT_AWAY = 1730000000;
 
 /**
  * What `GET /v1/session-groups` answers: ONE PAGE of the wall, and the WHOLE wall's own
  * tallies beside it — how many bands the project has, and how many sessions are filed
  * across all of them.
  */
-function wall(groups: SessionGroup[], total = groups.length, offset = 0) {
+function wall(
+  groups: SessionGroup[],
+  total = groups.length,
+  offset = 0,
+  limit: number | null = null,
+) {
   return {
     project_id: STORY_NEWER_PROJECT.projectId,
     groups,
     total,
     session_total: groups.reduce((sum, group) => sum + group.session_count, 0),
-    limit: GROUPS_PAGE,
+    limit,
     offset,
     has_more: offset + groups.length < total,
   };
 }
 
-/** A wall deeper than one page of it: 24 bands, and no session filed under any of them. */
+/** 24 bands, deeper than one page of the archive, and no session filed under any of them. */
 const WIDE_WALL: SessionGroup[] = Array.from({ length: 24 }, (_, index) => ({
   ...WALLET_GROUP,
   id: `group-${String(index).padStart(2, '0')}`,
@@ -61,8 +68,8 @@ const WIDE_WALL: SessionGroup[] = Array.from({ length: 24 }, (_, index) => ({
 }));
 
 /**
- * A machine holding that wall, cut to whatever window a read asks for, over rows that name
- * none of its bands: the WALL is the list these tests page.
+ * A machine holding that wall, live and archived alike, cut to whatever window a read asks
+ * for, over rows that name none of its bands: the ARCHIVED WALL is the list these tests page.
  */
 function shelves() {
   const loose = {
@@ -76,10 +83,12 @@ function shelves() {
     heldProjectPage: () => loose,
     listProjectPage: vi.fn(async () => loose),
     listSessionGroups: vi.fn(
-      async (_root: string, _signal?: AbortSignal, _view?: ArchiveView, bands?: BandWindow) => {
+      async (_root: string, _signal?: AbortSignal, view?: ArchiveView, bands?: BandWindow) => {
         const offset = bands?.offset ?? 0;
         const limit = bands?.limit ?? WIDE_WALL.length;
-        return wall(WIDE_WALL.slice(offset, offset + limit), WIDE_WALL.length, offset);
+        const shown =
+          view === 'only' ? WIDE_WALL.map((group) => ({ ...group, archived_at: PUT_AWAY })) : WIDE_WALL;
+        return wall(shown.slice(offset, offset + limit), WIDE_WALL.length, offset, bands?.limit ?? null);
       },
     ),
   });
@@ -1251,19 +1260,22 @@ describe('ProjectGroup groups', () => {
     },
   );
 
-  it('drops a Control selection when the visible Groups page changes', async () => {
+  it('drops a Control selection when the visible archived Groups page changes', async () => {
     finePointer();
     vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('Win32');
     const { user } = mount(shelves(), undefined, '', STORY_NEWER_PROJECT.rows);
     await band('Band 00');
-    fireEvent.click(surface(ROWS[0].id), { ctrlKey: true });
-    fireEvent.click(surface(ROWS[2].id), { ctrlKey: true });
+    await user.click(screen.getByRole('button', { name: `Actions for groups in ${ROOT}` }));
+    await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('Show archived groups'));
     const groups = (await screen.findByText('Groups')).parentElement as HTMLElement;
-    const steps = within(groups).getByRole('navigation', {
+    const steps = await within(groups).findByRole('navigation', {
       name: `Pages of ${STORY_NEWER_PROJECT.name} groups`,
     });
+    fireEvent.click(surface(ROWS[0].id), { ctrlKey: true });
+    fireEvent.click(surface(ROWS[2].id), { ctrlKey: true });
+    expect(surface(ROWS[0].id)).toHaveAttribute('aria-pressed', 'true');
     await user.click(within(steps).getByRole('button', { name: 'Next page' }));
-    await waitFor(() => expect(within(steps).getByText('Page 2 of 3')).toBeInTheDocument());
+    await waitFor(() => expect(within(steps).getByText('Page 2 of 2')).toBeInTheDocument());
     expect(surface(ROWS[0].id)).toHaveAttribute('aria-pressed', 'false');
     expect(surface(ROWS[2].id)).toHaveAttribute('aria-pressed', 'false');
     fireEvent.click(surface(ROWS[3].id), { ctrlKey: true });
@@ -1592,11 +1604,12 @@ describe('ProjectGroup groups', () => {
     expect(client.assignSessionGroup).not.toHaveBeenCalled();
   });
 
-  // THE WALL OF BANDS IS A LIST OF ITS OWN. A reader can keep making groups, so the wall is
-  // paged the way the sessions under it are — and the steps stand on the `Groups` header,
-  // over the set they move.
-  it('pages the wall of bands from the header over it', async () => {
-    mount(shelves(), undefined, '', STORY_NEWER_PROJECT.rows);
+  // Regression, user report (paraphrased: "groups gather sessions, so every live group must
+  // always show; only archived groups, which pile up, may be paged, the same in the app and
+  // the TUI"). The live wall is one list with no steps over it, read whole from the gateway.
+  it('shows every live band with no steps over them', async () => {
+    const client = shelves();
+    mount(client, undefined, '', STORY_NEWER_PROJECT.rows);
 
     const groups = (await screen.findByText('Groups')).parentElement as HTMLElement;
     const emptyFirst = (await screen.findByRole('button', { name: 'Collapse Band 00' })).parentElement!;
@@ -1606,64 +1619,83 @@ describe('ProjectGroup groups', () => {
     expect(emptyFirst).not.toHaveClass('border-b');
     expect(emptyNext).toHaveClass('border-t');
     expect(emptyNext).not.toHaveClass('border-b');
-    // Removing the visible tally does not change the underlying number of group pages.
+    expect(await screen.findByRole('button', { name: 'Collapse Band 23' })).toBeInTheDocument();
     expect(within(groups).queryByText('24 groups')).toBeNull();
-    const steps = within(groups).getByRole('navigation', {
-      name: `Pages of ${STORY_NEWER_PROJECT.name} groups`,
-    });
-    expect(within(steps).getByText('Page 1 of 3')).toBeInTheDocument();
+    expect(within(groups).queryByRole('navigation')).toBeNull();
+    // Neither read carries a window of bands: the gateway answers the whole live wall.
+    expect(client.listSessionGroups).toHaveBeenLastCalledWith(
+      ROOT,
+      expect.any(AbortSignal),
+      'exclude',
+      undefined,
+    );
+    expect(client.listProjectPage).toHaveBeenLastCalledWith(
+      ROOT, 10, '', expect.any(Map), expect.any(AbortSignal), true, 'exclude', undefined,
+    );
     // One page of sessions is one page: that set has nothing to step through.
     const sessions = screen.getByText('Sessions').parentElement as HTMLElement;
     expect(within(sessions).queryByRole('navigation')).toBeNull();
   });
 
-  // ONE WINDOW, BOTH READS. The rows are asked for with the window that cut the bands, so
-  // the sessions under this page of shelves are the ones the gateway files there.
-  it('asks both reads for the page of bands the reader stepped to', async () => {
+  // THE ARCHIVE IS THE WALL THAT GROWS. Put-away bands pile up, so that wall alone is paged,
+  // ARCHIVED_GROUPS_PAGE bands at a time, from the `Groups` header over the set it moves. Both
+  // reads carry the window that cut the bands, so the sessions under this page of shelves are
+  // the ones the gateway files there.
+  it('pages the archived wall of bands from the header over it', async () => {
     const client = shelves();
     const { user } = mount(client, undefined, '', STORY_NEWER_PROJECT.rows);
+    await band('Band 00');
+    await user.click(screen.getByRole('button', { name: `Actions for groups in ${ROOT}` }));
+    await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('Show archived groups'));
+
     const groups = (await screen.findByText('Groups')).parentElement as HTMLElement;
+    const steps = await within(groups).findByRole('navigation', {
+      name: `Pages of ${STORY_NEWER_PROJECT.name} groups`,
+    });
+    await waitFor(() => expect(screen.queryByText('Band 15')).toBeNull());
+    expect(screen.getByText('Band 14')).toBeInTheDocument();
+    expect(within(steps).getByText('Page 1 of 2')).toBeInTheDocument();
     expect(client.listSessionGroups).toHaveBeenLastCalledWith(
       ROOT,
       expect.any(AbortSignal),
-      'exclude',
-      BANDS,
+      'only',
+      ARCHIVED_BANDS,
     );
 
-    await user.click(within(groups).getByRole('button', { name: 'Next page' }));
+    await user.click(within(steps).getByRole('button', { name: 'Next page' }));
 
-    await screen.findByText('Band 10');
+    await screen.findByText('Band 15');
     expect(screen.queryByText('Band 00')).toBeNull();
-    const turned = { limit: GROUPS_PAGE, offset: GROUPS_PAGE };
+    expect(within(steps).getByText('Page 2 of 2')).toBeInTheDocument();
+    const turned = { limit: ARCHIVED_GROUPS_PAGE, offset: ARCHIVED_GROUPS_PAGE };
     expect(client.listSessionGroups).toHaveBeenLastCalledWith(
       ROOT,
       expect.any(AbortSignal),
-      'exclude',
+      'only',
       turned,
     );
-    expect(client.listProjectPage).toHaveBeenLastCalledWith(
-      ROOT,
-      10,
-      '',
-      expect.any(Map),
-      expect.any(AbortSignal),
-      true,
-      'exclude',
-      turned,
+    // The loose sessions stay live; the shelves under the archived bands come from the archive.
+    expect(client.listProjectPage).toHaveBeenCalledWith(
+      ROOT, 10, '', expect.any(Map), expect.any(AbortSignal), true, 'exclude', turned,
+    );
+    expect(client.listProjectPage).toHaveBeenCalledWith(
+      ROOT, 1, '', expect.any(Map), expect.any(AbortSignal), false, 'only', turned,
     );
   });
 
   // Regression, user report: switching Groups pages changed the sessions under their bands
   // while the two gateway reads were still arriving. Neither answer is a page on its own.
+  // Only the archived wall is paged, so that is where the two reads race.
   it.each(['bands', 'sessions'] as const)(
-    'keeps the current group shelves while %s arrive last',
+    'keeps the current archived group shelves while %s arrive last',
     async (last) => {
-      const names = WIDE_WALL.slice(0, 11).map((group, index) => ({
+      const names = WIDE_WALL.slice(0, ARCHIVED_GROUPS_PAGE + 1).map((group, index) => ({
         ...group,
-        session_count: index === 0 || index === 10 ? 1 : 0,
+        archived_at: PUT_AWAY,
+        session_count: index === 0 || index === ARCHIVED_GROUPS_PAGE ? 1 : 0,
       }));
       const firstRow = { ...ROWS[0], group_id: names[0].id };
-      const nextRow = { ...ROWS[1], group_id: names[10].id };
+      const nextRow = { ...ROWS[1], group_id: names[ARCHIVED_GROUPS_PAGE].id };
       const page = (grouped: Session[]) => ({
         rows: [],
         total: 0,
@@ -1671,6 +1703,7 @@ describe('ProjectGroup groups', () => {
         grouped,
         nextCursor: '',
       });
+      const turned = { limit: ARCHIVED_GROUPS_PAGE, offset: ARCHIVED_GROUPS_PAGE };
       let release!: () => void;
       const held = new Promise<void>((resolve) => {
         release = resolve;
@@ -1680,21 +1713,31 @@ describe('ProjectGroup groups', () => {
         listProjectPage: vi.fn(
           async (
             _root: string, _limit: number, _after: string, _pins: unknown, _signal: AbortSignal,
-            _persist: boolean, _view: ArchiveView, bands?: BandWindow,
+            _persist: boolean, view: ArchiveView, bands?: BandWindow,
           ) => {
-            if (bands?.offset === GROUPS_PAGE && last === 'sessions') await held;
-            return page(bands?.offset === GROUPS_PAGE ? [nextRow] : [firstRow]);
+            // Every band here is archived: the live reads file nothing under any of them.
+            if (view !== 'only') return page([]);
+            if (bands?.offset === turned.offset && last === 'sessions') await held;
+            return page(bands?.offset === turned.offset ? [nextRow] : [firstRow]);
           },
         ),
         listSessionGroups: vi.fn(
-          async (_root: string, _signal?: AbortSignal, _view?: ArchiveView, bands?: BandWindow) => {
-            if (bands?.offset === GROUPS_PAGE && last === 'bands') await held;
+          async (_root: string, _signal?: AbortSignal, view?: ArchiveView, bands?: BandWindow) => {
+            if (view !== 'only') return wall([]);
+            if (bands?.offset === turned.offset && last === 'bands') await held;
             const offset = bands?.offset ?? 0;
-            return wall(names.slice(offset, offset + GROUPS_PAGE), names.length, offset);
+            return wall(
+              names.slice(offset, offset + ARCHIVED_GROUPS_PAGE),
+              names.length,
+              offset,
+              ARCHIVED_GROUPS_PAGE,
+            );
           },
         ),
       });
       const { user } = mount(client, undefined, '', []);
+      await user.click(await screen.findByRole('button', { name: `Actions for groups in ${ROOT}` }));
+      await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('Show archived groups'));
       const firstBand = await band(names[0].name);
       await waitFor(() =>
         expect(firstBand.querySelector(`[data-session-id="${firstRow.id}"]`)).toBeInTheDocument(),
@@ -1707,23 +1750,23 @@ describe('ProjectGroup groups', () => {
         expect(client.listSessionGroups).toHaveBeenCalledWith(
           ROOT,
           expect.any(AbortSignal),
-          'exclude',
-          { limit: GROUPS_PAGE, offset: GROUPS_PAGE },
+          'only',
+          turned,
         );
         expect(client.listProjectPage).toHaveBeenCalledWith(
-          ROOT, 10, '', expect.any(Map), expect.any(AbortSignal), true, 'exclude',
-          { limit: GROUPS_PAGE, offset: GROUPS_PAGE },
+          ROOT, 1, '', expect.any(Map), expect.any(AbortSignal), false, 'only', turned,
         );
       });
+      const nextName = names[ARCHIVED_GROUPS_PAGE].name;
       expect(screen.getByRole('button', { name: `Collapse ${names[0].name}` })).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: `Collapse ${names[10].name}` })).toBeNull();
+      expect(screen.queryByRole('button', { name: `Collapse ${nextName}` })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Collapse Group' })).toBeNull();
       expect(within(steps).getByText('Page 1 of 2')).toBeInTheDocument();
 
       await act(async () => {
         release();
       });
-      const nextBand = await band(names[10].name);
+      const nextBand = await band(nextName);
       expect(nextBand.querySelector(`[data-session-id="${nextRow.id}"]`)).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: `Collapse ${names[0].name}` })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Collapse Group' })).toBeNull();
@@ -1734,7 +1777,7 @@ describe('ProjectGroup groups', () => {
       await waitFor(() =>
         expect(restored.querySelector(`[data-session-id="${firstRow.id}"]`)).toBeInTheDocument(),
       );
-      expect(screen.queryByRole('button', { name: `Collapse ${names[10].name}` })).toBeNull();
+      expect(screen.queryByRole('button', { name: `Collapse ${nextName}` })).toBeNull();
       expect(within(steps).getByText('Page 1 of 2')).toBeInTheDocument();
     },
   );
@@ -1754,7 +1797,7 @@ describe('ProjectGroup groups', () => {
     await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('Show archived groups'));
     await waitFor(() =>
       expect(client.listSessionGroups).toHaveBeenLastCalledWith(
-        ROOT, expect.any(AbortSignal), 'only', BANDS,
+        ROOT, expect.any(AbortSignal), 'only', ARCHIVED_BANDS,
       ),
     );
     expect(within((await screen.findByText('Groups')).parentElement!).getByText('Archived')).toHaveClass(
@@ -1800,24 +1843,30 @@ describe('ProjectGroup groups', () => {
     expect(still.querySelector('[data-session-id="filed-only"]')).toBeInTheDocument();
   });
 
-  it('keeps the Groups page when the Sessions archive opens', async () => {
+  it('keeps the archived Groups page when the Sessions archive opens', async () => {
     const client = shelves();
     const { user } = mount(client, undefined, '', STORY_NEWER_PROJECT.rows);
+    await band('Band 00');
+    await user.click(screen.getByRole('button', { name: `Actions for groups in ${ROOT}` }));
+    await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('Show archived groups'));
     const groups = (await screen.findByText('Groups')).parentElement as HTMLElement;
-    const steps = within(groups).getByRole('navigation', {
+    const steps = await within(groups).findByRole('navigation', {
       name: `Pages of ${STORY_NEWER_PROJECT.name} groups`,
     });
     await user.click(within(steps).getByRole('button', { name: 'Next page' }));
-    await screen.findByText('Band 10');
+    await screen.findByText('Band 15');
 
     await user.click(screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` }));
     await user.click(within(sheet(`Sessions in ${ROOT}`)).getByText('Show archived sessions'));
-    await waitFor(() => expect(within(steps).getByText('Page 2 of 3')).toBeInTheDocument());
+    await waitFor(() => expect(within(steps).getByText('Page 2 of 2')).toBeInTheDocument());
     expect(within((await screen.findByText('Sessions')).parentElement!).getByText('Archived')).toHaveClass(
       'font-mono', 'text-ui', 'text-white',
     );
     expect(client.listSessionGroups).toHaveBeenLastCalledWith(
-      ROOT, expect.any(AbortSignal), 'exclude', { limit: GROUPS_PAGE, offset: GROUPS_PAGE },
+      ROOT,
+      expect.any(AbortSignal),
+      'only',
+      { limit: ARCHIVED_GROUPS_PAGE, offset: ARCHIVED_GROUPS_PAGE },
     );
   });
 
@@ -1875,7 +1924,7 @@ describe('ProjectGroup groups', () => {
     expect([...wallet.querySelectorAll('[data-session-id]')].map((row) =>
       row.getAttribute('data-session-id'),
     )).toEqual([ROWS[0].id, ROWS[1].id]);
-    expect(client.heldSessionGroups).toHaveBeenCalledWith(ROOT, 'exclude', BANDS);
+    expect(client.heldSessionGroups).toHaveBeenCalledWith(ROOT, 'exclude', undefined);
   });
 
   it('asks again once for a group the wall it read does not hold', async () => {

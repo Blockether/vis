@@ -80,7 +80,7 @@ import {
   writeProjectFold,
 } from '../../lib/project-fold';
 import { SESSION_DRAG_MIME, useSessionDropTarget } from '../../lib/session-drag';
-import type { ArchiveView, GatewayConn, Session, SessionGroup } from '../../lib/types';
+import type { ArchiveView, BandWindow, GatewayConn, Session, SessionGroup } from '../../lib/types';
 
 /** Where inside the group sheet the reader is standing (`ProjectGroup`). */
 type MenuStep =
@@ -409,8 +409,8 @@ function GroupNameField({
  *
  * A level quieter than the project header above it, and deliberately so: the project owns
  * the boundary rule, while a group owns its name, its colour and its own fold. A band is
- * never paged from the INSIDE — it is a shelf a reader reads whole — but the WALL of bands
- * is paged, and those steps stand on the `Groups` header over them.
+ * never paged from the INSIDE — it is a shelf a reader reads whole. Live bands are never
+ * paged at all; only the ARCHIVED wall is, and its steps stand on the `Groups` header.
  */
 function GroupBand({
   name,
@@ -547,13 +547,13 @@ const NO_GROUPS: SessionGroup[] = [];
 const PAGES_AHEAD = 2;
 
 /**
- * How many of a project's GROUPS stand on one page of them.
+ * How many of a project's ARCHIVED groups stand on one page of them.
  *
- * A band is not a row: it carries its own name, its count and the shelf of sessions
- * under it, so ten of them is already a screen. This step is therefore the wall's own,
- * not the one the screen measured for rows (`useSessionsPerPage`).
+ * Live groups are never paged: a group gathers sessions, and a band off the page hides
+ * them, so the live wall is read whole. The archive keeps growing as groups are put away,
+ * so it alone is cut into pages, at the TUI's step (`state/archived-groups-page-size`).
  */
-const GROUPS_PAGE = 10;
+const ARCHIVED_GROUPS_PAGE = 15;
 
 // Memoised: a 5.5s poll that changes nothing returns the SAME row objects
 // (`reconcileSessions`), so an unchanged group must not re-render its rows.
@@ -605,18 +605,38 @@ export const ProjectGroup = memo(function ProjectGroup({
   // page one through the clamp below.
   const [first, setFirst] = useState(0);
   const page = Math.floor(first / pageSize) + 1;
-  // THE WALL OF BANDS IS PAGED TOO, and by a NUMBER rather than a cursor: the human's own
-  // `position` orders the groups and no turn moves one, so the third page of them names
-  // the same shelves tomorrow (`state/list-session-groups-page`).
-  const [groupPage, setGroupPage] = useState(1);
-  // ONE WINDOW OVER THE WALL, ASKED FOR BY BOTH READS. The bands on this page and the
-  // sessions filed under them are two halves of one answer, so the session read carries
-  // the same window: `grouped` then holds those bands' rows and nothing from a shelf that
-  // is off the page (`listProjectPage`).
-  const bandWindow = useMemo(
-    () => ({ limit: GROUPS_PAGE, offset: (groupPage - 1) * GROUPS_PAGE }),
-    [groupPage],
+  // Each set remembers its own archive view. A search shows every matching row without
+  // changing either saved choice; clearing it restores both views.
+  const groupRevealKey = projectRevealKey(machineKey(conn), root, 'groups');
+  const sessionRevealKey = projectRevealKey(machineKey(conn), root, 'sessions');
+  const [isGroupRevealed, setIsGroupRevealed] = useState(
+    () => readProjectFold(groupRevealKey) ?? false,
   );
+  const [isSessionRevealed, setIsSessionRevealed] = useState(
+    () => readProjectFold(sessionRevealKey) ?? false,
+  );
+  const isGroupRevealing = isGroupRevealed && needle === '';
+  const isSessionRevealing = isSessionRevealed && needle === '';
+  const archived: ArchiveView = isSessionRevealing ? 'only' : 'exclude';
+  const groupArchived: ArchiveView = isGroupRevealing ? 'only' : 'exclude';
+  // ONLY THE ARCHIVED WALL OF BANDS IS PAGED, and by a NUMBER rather than a cursor: the
+  // human's own `position` orders the groups and no turn moves one, so the third page of
+  // them names the same shelves tomorrow (`state/list-session-groups-page`). The live wall
+  // is never paged: every live group is read, with every session filed under it.
+  const [groupPage, setGroupPage] = useState(1);
+  // ONE WINDOW OVER THE ARCHIVED WALL, ASKED FOR BY BOTH READS. The bands on this page and
+  // the sessions filed under them are two halves of one answer, so the session read carries
+  // the same window: `grouped` then holds those bands' rows and nothing from a shelf that
+  // is off the page (`listProjectPage`). The live wall has no window at all.
+  const bandWindow = useMemo<BandWindow | undefined>(
+    () =>
+      groupArchived === 'only'
+        ? { limit: ARCHIVED_GROUPS_PAGE, offset: (groupPage - 1) * ARCHIVED_GROUPS_PAGE }
+        : undefined,
+    [groupArchived, groupPage],
+  );
+  // Where that window starts: `0` for the live wall, which no window cuts.
+  const bandOffset = bandWindow?.offset ?? 0;
   // The page that index FALLS IN, from its first row: the reader keeps a ROW, and
   // the page is the grid that row lands on at the step the screen now holds.
   const start = (page - 1) * pageSize;
@@ -654,7 +674,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           total: held.total,
           awaiting: held.awaiting,
           grouped: held.grouped ?? NO_ROWS,
-          bandOffset: bandWindow.offset,
+          bandOffset,
           view: 'exclude',
           read: 0,
         }
@@ -671,20 +691,6 @@ export const ProjectGroup = memo(function ProjectGroup({
     writeProjectFold(foldKey, open);
     setIsOpen(open);
   };
-  // Each set remembers its own archive view. A search shows every matching row without
-  // changing either saved choice; clearing it restores both views.
-  const groupRevealKey = projectRevealKey(machineKey(conn), root, 'groups');
-  const sessionRevealKey = projectRevealKey(machineKey(conn), root, 'sessions');
-  const [isGroupRevealed, setIsGroupRevealed] = useState(
-    () => readProjectFold(groupRevealKey) ?? false,
-  );
-  const [isSessionRevealed, setIsSessionRevealed] = useState(
-    () => readProjectFold(sessionRevealKey) ?? false,
-  );
-  const isGroupRevealing = isGroupRevealed && needle === '';
-  const isSessionRevealing = isSessionRevealed && needle === '';
-  const archived: ArchiveView = isSessionRevealing ? 'only' : 'exclude';
-  const groupArchived: ArchiveView = isGroupRevealing ? 'only' : 'exclude';
   // THE WALL THIS READER WAS SHOWN LAST TIME, held by the client beside the project's head:
   // a cold start names its bands from it on the first frame instead of after a round trip,
   // and the read below confirms or replaces it (`heldSessionGroups`).
@@ -715,10 +721,10 @@ export const ProjectGroup = memo(function ProjectGroup({
     heldWall
       ? {
           view: groupArchived,
-          offset: bandWindow.offset,
+          offset: bandOffset,
           groups: heldWall.groups,
           rows:
-            paged?.view === groupArchived && paged.bandOffset === bandWindow.offset
+            paged?.view === groupArchived && paged.bandOffset === bandOffset
               ? paged.grouped
               : NO_ROWS,
         }
@@ -809,7 +815,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     // page must not repaint it from a validator that is about to be revalidated anyway.
     // The window over the BANDS is part of that question: the shelves are the other half
     // of this answer, so turning their page repaints from the page held for it.
-    const question = `${limit}\u0000${after}\u0000${bandWindow.offset}`;
+    const question = `${limit}\u0000${after}\u0000${bandWindow ? bandOffset : ''}`;
     if (question !== asked.current) {
       asked.current = question;
       const held = api.heldProjectPage(root, limit, after, pins.current, archived, bandWindow);
@@ -820,7 +826,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           total: held.total,
           awaiting: held.awaiting,
           grouped: held.grouped ?? NO_ROWS,
-          bandOffset: bandWindow.offset,
+          bandOffset,
           view: archived,
           read: groupsRead,
         });
@@ -848,10 +854,10 @@ export const ProjectGroup = memo(function ProjectGroup({
           // therefore answers without them, and the bands already on screen for this
           // same view and band window stay exactly as the head painted them.
           grouped:
-            after === '' || held?.view !== archived || held?.bandOffset !== bandWindow.offset
+            after === '' || held?.view !== archived || held?.bandOffset !== bandOffset
               ? answer.grouped
               : held.grouped,
-          bandOffset: bandWindow.offset,
+          bandOffset,
           view: archived,
           read: groupsRead,
         }));
@@ -888,8 +894,8 @@ export const ProjectGroup = memo(function ProjectGroup({
       control.abort();
     };
   }, [
-    conn, root, start, pageSize, isVisible, isShowing, searching, archived, bandWindow, list,
-    getClient, groupsRead, revision, noteRefresh,
+    conn, root, start, pageSize, isVisible, isShowing, searching, archived, bandWindow,
+    bandOffset, list, getClient, groupsRead, revision, noteRefresh,
   ]);
   // The gateway applies one archive filter to both sides of a project page. When the
   // two sets differ, read the grouped sidecar in its own view; the limit of one only
@@ -910,7 +916,7 @@ export const ProjectGroup = memo(function ProjectGroup({
         if (!live) return;
         setGroupedPage({
           view: groupArchived,
-          offset: bandWindow.offset,
+          offset: bandOffset,
           rows: answer.grouped,
           read: groupsRead,
         });
@@ -924,8 +930,8 @@ export const ProjectGroup = memo(function ProjectGroup({
       control.abort();
     };
   }, [
-    conn, root, isVisible, isShowing, searching, groupArchived, archived, bandWindow, list,
-    getClient, groupsRead, revision, noteRefresh,
+    conn, root, isVisible, isShowing, searching, groupArchived, archived, bandWindow,
+    bandOffset, list, getClient, groupsRead, revision, noteRefresh,
   ]);
   // The count under the header and the pages beside it are ONE number — the
   // project's own total, as the gateway counted it. Under a query the complete
@@ -935,12 +941,15 @@ export const ProjectGroup = memo(function ProjectGroup({
   const shownPage = searching
     ? Math.min(page, pageCount)
     : Math.min(paged ? Math.floor(paged.start / pageSize) + 1 : 1, pageCount);
-  // The bands are paged out of the wall's own total, the same way: the steps over them
-  // print how many pages of GROUPS this project has, not how many are on screen.
-  const groupPageCount = Math.max(1, Math.ceil(Math.max(groupTotal, 1) / GROUPS_PAGE));
+  // The archived bands are paged out of the archive's own total, the same way: the steps
+  // over them print how many pages of ARCHIVED GROUPS this project has, not how many are
+  // on screen. The live wall is never paged, so it is always one page.
+  const groupPageCount = bandWindow
+    ? Math.max(1, Math.ceil(Math.max(groupTotal, 1) / ARCHIVED_GROUPS_PAGE))
+    : 1;
   const shownGroupPage = Math.min(
     presentedGroups?.view === groupArchived
-      ? Math.floor(presentedGroups.offset / GROUPS_PAGE) + 1
+      ? Math.floor(presentedGroups.offset / ARCHIVED_GROUPS_PAGE) + 1
       : 1,
     groupPageCount,
   );
@@ -1024,12 +1033,12 @@ export const ProjectGroup = memo(function ProjectGroup({
   const matchedRows =
     groupArchived === archived
       ? paged?.view === groupArchived &&
-        paged.bandOffset === bandWindow.offset &&
+        paged.bandOffset === bandOffset &&
         paged.read === groupsRead
         ? paged.grouped
         : null
       : groupedPage?.view === groupArchived &&
-          groupedPage.offset === bandWindow.offset &&
+          groupedPage.offset === bandOffset &&
           groupedPage.read === groupsRead
         ? groupedPage.rows
         : null;
@@ -1038,8 +1047,8 @@ export const ProjectGroup = memo(function ProjectGroup({
   // group is a shelf a reader reads whole: bands cut from the current page printed a name
   // with `none on this page` under it while its sessions sat four pages down, and a
   // session filed from the sheet left the very band that had just taken it. What IS paged
-  // is the wall of bands itself, and a shelf off that page is not painted here at all
-  // (`&group_limit=`).
+  // is the ARCHIVED wall of bands, and a shelf off that page is not painted here at all
+  // (`&group_limit=`). The live wall is never paged, so every live shelf is painted.
   //
   // AND A FILED ROW NEVER FALLS BETWEEN TWO READS. The page and its shelves are one answer,
   // but the shelves are painted only once the groups read that names them has landed too:
@@ -1053,7 +1062,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     if (presentedGroups?.view !== groupArchived) return NO_ROWS;
     const shown = new Set(presentedGroups.rows.map((session) => session.id));
     const landed =
-      matchedRows !== null && presentedGroups.offset === bandWindow.offset
+      matchedRows !== null && presentedGroups.offset === bandOffset
         ? matchedRows.filter((session) => !shown.has(session.id))
         : NO_ROWS;
     return [...presentedGroups.rows, ...landed]
@@ -1061,7 +1070,7 @@ export const ProjectGroup = memo(function ProjectGroup({
       .map((session) => settled(session, local, refiled))
       .filter(paints);
   }, [
-    searching, presentedGroups, groupArchived, matchedRows, bandWindow, local, refiled, paints,
+    searching, presentedGroups, groupArchived, matchedRows, bandOffset, local, refiled, paints,
     getClient, conn,
   ]);
   // Every row this project is painting: the shelves, and the page under them. A verb
@@ -1138,7 +1147,7 @@ export const ProjectGroup = memo(function ProjectGroup({
         setGroups(answer?.groups ?? []);
         setGroupTotal(answer?.total ?? 0);
         setGroupSessionTotal(answer?.session_total ?? 0);
-        setGroupsReady({ view: groupArchived, offset: bandWindow.offset, read: groupsRead });
+        setGroupsReady({ view: groupArchived, offset: bandOffset, read: groupsRead });
         noteRefresh('groups', groupsRead);
       } catch {
         // A project whose groups cannot be read paints as an ungrouped one. Nothing
@@ -1150,23 +1159,26 @@ export const ProjectGroup = memo(function ProjectGroup({
       live = false;
       control.abort();
     };
-  }, [conn, root, isVisible, groupArchived, bandWindow, getClient, groupsRead, reads, noteRefresh]);
+  }, [
+    conn, root, isVisible, groupArchived, bandWindow, bandOffset, getClient, groupsRead, reads,
+    noteRefresh,
+  ]);
   useEffect(() => {
     if (
       groupsReady?.view !== groupArchived ||
-      groupsReady.offset !== bandWindow.offset ||
+      groupsReady.offset !== bandOffset ||
       groupsReady.read !== groupsRead ||
       matchedRows === null
     ) return;
     setPresentedGroups((current) =>
       current?.view === groupArchived &&
-      current.offset === bandWindow.offset &&
+      current.offset === bandOffset &&
       current.groups === groups &&
       current.rows === matchedRows
         ? current
-        : { view: groupArchived, offset: bandWindow.offset, groups, rows: matchedRows },
+        : { view: groupArchived, offset: bandOffset, groups, rows: matchedRows },
     );
-  }, [groupsReady, groupsRead, groupArchived, bandWindow, groups, matchedRows]);
+  }, [groupsReady, groupsRead, groupArchived, bandOffset, groups, matchedRows]);
   // A band for every group on this page of the wall. A group only a ROW names is not
   // painted under a stand-in name while this device reads it: the row waits for the
   // band that names it (`askedForGroup` below).
@@ -1233,7 +1245,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   const askedForGroup = useRef(new Set<string>());
   const isPictured =
     groupsReady?.view === groupArchived &&
-    groupsReady.offset === bandWindow.offset &&
+    groupsReady.offset === bandOffset &&
     groupsReady.read === groupsRead &&
     presentedGroups?.groups === groups &&
     presentedGroups.rows === matchedRows;
@@ -1635,8 +1647,8 @@ export const ProjectGroup = memo(function ProjectGroup({
       />
     ) : null;
 
-  // The bands' own steps, over the set they move. A project whose wall fits on one page
-  // shows none of this (`Pager`).
+  // The archived bands' own steps, over the set they move. The live wall, and an archive
+  // that fits on one page, show none of this (`Pager`).
   const groupPager =
     groupPageCount > 1 ? (
       <Pager
@@ -1771,7 +1783,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   const emptyGroups =
     isGroupRevealing &&
     groupsReady?.view === groupArchived &&
-    groupsReady.offset === bandWindow.offset &&
+    groupsReady.offset === bandOffset &&
     groupTotal === 0 &&
     !hasGroups;
   const emptySessions = isSessionRevealing && paged !== null && listed.length === 0;

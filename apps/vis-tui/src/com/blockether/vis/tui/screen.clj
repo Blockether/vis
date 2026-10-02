@@ -5793,7 +5793,8 @@
     (projects/focused-index db changes)))
 
 (defn- load-project-page!
-  "Read one saved-session window and one group window, never preallocating local views."
+  "Read one saved-session window and the project's groups, never preallocating local views.
+  Every live group comes back whole; only archived groups come one page at a time."
   [pid & [automatic?]]
   (let [request-id
         (str (java.util.UUID/randomUUID))
@@ -5814,9 +5815,6 @@
         limit
         (project-page-size)
 
-        offset
-        (long (or (:group-offset page) 0))
-
         session-archive?
         (true? (get-in @state/app-db [:project-sidebar :session-archived? pid]))
 
@@ -5828,6 +5826,14 @@
 
         group-archive
         (if group-archive? :only :exclude)
+
+        ;; Live groups are never paged: without a window the gateway answers every live
+        ;; group and the sessions filed under it. Only the archive steps through pages.
+        group-limit
+        (when group-archive? state/archived-groups-page-size)
+
+        group-offset
+        (when group-archive? (long (or (:group-offset page) 0)))
 
         request-page
         (assoc page
@@ -5844,7 +5850,7 @@
         (try
           (let [groups
                 (vis/gateway-list-session-groups-page
-                  {:project-id pid :archived group-archive :limit limit :offset offset})
+                  {:project-id pid :archived group-archive :limit group-limit :offset group-offset})
 
                 sessions
                 (vis/gateway-list-sessions-page {:project-id pid
@@ -5853,8 +5859,8 @@
                                                  :after (:after page)
                                                  :archived session-archive
                                                  :grouped :aside
-                                                 :group-limit limit
-                                                 :group-offset offset})
+                                                 :group-limit group-limit
+                                                 :group-offset group-offset})
 
                 ;; The two sets switch archives independently. Read the group's
                 ;; members with the group view when the loose window differs.
@@ -5866,8 +5872,8 @@
                                                              :limit 1
                                                              :archived group-archive
                                                              :grouped :aside
-                                                             :group-limit limit
-                                                             :group-offset offset})))
+                                                             :group-limit group-limit
+                                                             :group-offset group-offset})))
 
                 active-id
                 (when (= pid (:active-project-id @state/app-db))
@@ -5886,7 +5892,6 @@
                 page-data
                 (assoc sessions
                   :grouped grouped
-                  :group-size limit
                   :current current)
 
                 db

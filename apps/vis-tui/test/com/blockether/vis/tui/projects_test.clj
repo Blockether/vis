@@ -2955,7 +2955,6 @@
                          :next-cursor "next"
                          :has-more true
                          :total 90
-                         :group-size 2
                          :group-offset 0}))
 
           entries
@@ -3003,11 +3002,10 @@
                                                              3
                                                              (TerminalPosition. (int col)
                                                                                 (int row))))))))
-      (expect (some #(= [:group-page "a" :next] (:action %)) entries))
+      ;; Live groups are never paged, whatever total the gateway reports beside them.
+      (expect (not-any? #(= :project-group-page (:kind %)) entries))
       (with-redefs [state/app-db (atom db)]
         (state/dispatch [:project-group-turn "a" :next])
-        (expect (= 2 (get-in @state/app-db [:project-sidebar :pages "a" :group-offset])))
-        (state/dispatch [:project-group-turn "a" :previous])
         (expect (= 0 (get-in @state/app-db [:project-sidebar :pages "a" :group-offset])))
         (state/dispatch [:project-page-turn "a" :next])
         (expect (= "next" (get-in @state/app-db [:project-sidebar :pages "a" :after])))
@@ -3031,7 +3029,6 @@
               (assoc-in [:project-sidebar :pages "a"]
                         {:sessions [{"id" "loose" "title" "Loose"}]
                          :grouped [{"id" "filed-active" "group_id" "g1"}]
-                         :group-size 2
                          :group-offset 2
                          :request-id "old"})
               (assoc-in [:project-sidebar :groups "a"] [group-release])
@@ -3098,6 +3095,95 @@
                          {:groups [] :total 0}])
         (expect (some #(= "No archived groups" (:label %))
                       (projects/sidebar-entries @state/app-db)))))))
+
+;; Regression, user report (paraphrased: "groups gather sessions, so every live group must
+;; always show; only archived groups, which pile up, may be paged, the same in the app and
+;; the TUI").
+(defdescribe
+  live-groups-are-never-paged-test
+  (it
+    "reads every live group whole and pages only the archive"
+    (let [requests
+          (atom [])
+
+          wall
+          (mapv #(hash-map "id" (str "g" %) "name" (str "Group " %) "session_count" 0) (range 40))
+
+          windows
+          (fn [kind]
+            (->> @requests
+                 (keep (fn [[asked opts]]
+                         (case asked
+                           :groups
+                           (when (= :groups kind) [(:limit opts) (:offset opts)])
+
+                           :sessions
+                           (when (and (= :sessions kind) (= :aside (:grouped opts)))
+                             [(:group-limit opts) (:group-offset opts)]))))
+                 vec))
+
+          entries
+          (fn [kind]
+            (filter #(= kind (:kind %)) (projects/sidebar-entries @state/app-db)))
+
+          db
+          (-> (fixture-db)
+              (assoc-in [:project-sidebar :expanded] #{"a"})
+              (assoc-in [:project-sidebar :pages "a"] {:sessions [] :grouped [] :group-offset 0}))]
+
+      (with-redefs [state/app-db
+                    (atom db)
+
+                    vis/worker-future
+                    (fn [_ f]
+                      (f))
+
+                    vis/gateway-list-session-groups-page
+                    (fn [{:keys [archived limit offset] :as opts}]
+                      (swap! requests conj [:groups opts])
+                      (let [from
+                            (long (or offset 0))
+
+                            to
+                            (if limit (min (count wall) (+ from (long limit))) (count wall))
+
+                            shown
+                            (subvec wall from to)]
+
+                        {:groups
+                         (if (= :only archived) (mapv #(assoc % "archived_at" "today") shown) shown)
+                         :total (count wall)}))
+
+                    vis/gateway-list-sessions-page
+                    (fn [opts]
+                      (swap! requests conj [:sessions opts])
+                      {:sessions [] :grouped []})]
+
+        (#'screen/load-project-page! "a")
+        (expect (= 40 (count (entries :project-group))))
+        (expect (empty? (entries :project-group-page)))
+        (expect (= [[nil nil]] (windows :groups)))
+        (expect (= [[nil nil]] (windows :sessions)))
+        (state/dispatch [:project-group-turn "a" :next])
+        (expect (= 0 (get-in @state/app-db [:project-sidebar :pages "a" :group-offset])))
+        (reset! requests [])
+        (state/dispatch [:project-group-archive-toggle "a"])
+        (#'screen/load-project-page! "a")
+        (expect (= state/archived-groups-page-size (count (entries :project-group))))
+        (expect (= [[:group-page "a" :next]] (mapv :action (entries :project-group-page))))
+        (expect (= [[15 0]] (windows :groups)))
+        (expect (= [[15 0] [15 0]] (windows :sessions)))
+        (reset! requests [])
+        (state/dispatch [:project-group-turn "a" :next])
+        (#'screen/load-project-page! "a")
+        (expect (= [[15 15]] (windows :groups)))
+        (expect (= [[15 15] [15 15]] (windows :sessions)))
+        (expect (= [[:group-page "a" :previous] [:group-page "a" :next]]
+                   (mapv :action (entries :project-group-page))))
+        (state/dispatch [:project-group-turn "a" :next])
+        (#'screen/load-project-page! "a")
+        (expect (= 10 (count (entries :project-group))))
+        (expect (= [[:group-page "a" :previous]] (mapv :action (entries :project-group-page))))))))
 
 (defdescribe
   group-archive-and-delete-actions-keep-failures-visible-test

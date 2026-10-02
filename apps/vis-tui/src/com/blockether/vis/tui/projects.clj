@@ -269,13 +269,15 @@
                                           (map #(assoc (session-row %) :nested? true)
                                                (get by-group gid))))))
                               groups)
-                      (when (pos? (long (or (:group-offset page) 0)))
+                      ;; Only the archive is paged: live groups always show whole.
+                      (when (and groups-archived? (pos? (long (or (:group-offset page) 0))))
                         [{:kind :project-group-page
                           :project project
                           :label "← Previous groups"
                           :action [:group-page pid :previous]}])
-                      (when (< (+ (long (or (:group-offset page) 0)) (count groups))
-                               (long (or (get-in sidebar [:group-total pid]) 0)))
+                      (when (and groups-archived?
+                                 (< (+ (long (or (:group-offset page) 0)) (count groups))
+                                    (long (or (get-in sidebar [:group-total pid]) 0))))
                         [{:kind :project-group-page
                           :project project
                           :label "More groups →"

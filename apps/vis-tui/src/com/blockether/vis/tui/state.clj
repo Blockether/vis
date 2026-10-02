@@ -3227,31 +3227,40 @@
 
                     db))))
 
+(def archived-groups-page-size
+  "How many archived groups one sidebar page holds. Live groups are never paged: a group
+  gathers sessions, so every live group stays on screen. Only the archive, which keeps
+  growing, steps through pages. The Companion app pages its archive by the same size."
+  15)
+
 (reg-event-db :project-group-turn
               (fn [db [_ pid direction]]
-                (let [path
-                      [:project-sidebar :pages pid :group-offset]
+                (if-not (true? (get-in db [:project-sidebar :group-archived? pid]))
+                  ;; Live groups are never paged, so there is no page to turn.
+                  db
+                  (let [path
+                        [:project-sidebar :pages pid :group-offset]
 
-                      offset
-                      (long (or (get-in db path) 0))
+                        offset
+                        (long (or (get-in db path) 0))
 
-                      size
-                      (long (or (get-in db [:project-sidebar :pages pid :group-size]) 20))
+                        size
+                        (long archived-groups-page-size)
 
-                      total
-                      (long (or (get-in db [:project-sidebar :group-total pid]) 0))
+                        total
+                        (long (or (get-in db [:project-sidebar :group-total pid]) 0))
 
-                      next-offset
-                      (case direction
-                        :previous
-                        (max 0 (- offset size))
+                        next-offset
+                        (case direction
+                          :previous
+                          (max 0 (- offset size))
 
-                        :next
-                        (if (< (+ offset size) total) (+ offset size) offset)
+                          :next
+                          (if (< (+ offset size) total) (+ offset size) offset)
 
-                        offset)]
+                          offset)]
 
-                  (assoc-in db path next-offset))))
+                    (assoc-in db path next-offset)))))
 
 (reg-event-fx :select-project
               ;; Switching is ONLY a view change: no close, cancel, release or queue effects.

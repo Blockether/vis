@@ -202,8 +202,8 @@
    and `total`/`has_more` are what a pager over them prints, with `session_total`
    counting the sessions filed across the WHOLE wall. Their order is the human's own
    `position`, which no turn moves, so an offset names the same page
-   tomorrow. Without `limit` the answer is every band, unchanged — what the TUI
-   reads.
+   tomorrow. Without `limit` the answer is every band. Clients read live groups
+   that way and page only the archive (`archived=only`).
 
    Carries the same weak ETag contract as the session list and the project overview.
    No turn moves a band: only a human renaming, filing or putting one away does, and

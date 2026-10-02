@@ -826,10 +826,10 @@ export interface SessionGroup {
 /**
  * A WINDOW over a project's WALL OF BANDS: `limit` groups starting at `offset`.
  *
- * A project's groups are a list of their own, and a human can keep making more, so a
- * reader pages them the way it pages anything else. A session read carrying the same
- * window is answered with the rows filed under the bands that window paints, and no
- * others.
+ * Only the ARCHIVED groups are paged: they keep growing as a human puts groups away. Live
+ * groups are never paged, because a group gathers sessions and a band off the page hides
+ * them. A session read carrying the same window is answered with the rows filed under
+ * the bands that window paints, and no others.
  */
 export interface BandWindow {
   limit: number;

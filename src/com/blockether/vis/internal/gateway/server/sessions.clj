@@ -163,9 +163,9 @@
 
    `group_limit`/`group_offset` name the PAGE OF BANDS a client is painting — the
    same window `/v1/session-groups` cuts — and the shelves under `grouped` follow
-   it. A project with a wall of groups is then a bounded first paint, and the two
-   reads agree by construction instead of by timing. Without them every filed
-   session comes back, as before.
+   it, so the two reads agree by construction instead of by timing. Clients send
+   them only while archived groups are on screen: live groups are never paged.
+   Without them every filed session comes back, as before.
 
    `group_id` cuts the same list to ONE group's sessions: with `archived=only` it
    answers the rows a human archived INSIDE a group that is still active, which is

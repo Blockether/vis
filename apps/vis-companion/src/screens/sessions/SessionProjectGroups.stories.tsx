@@ -8,7 +8,7 @@ import {
   storyFleetFetch,
 } from '../../dev/story-data';
 import { machineKey } from '../../lib/fleet';
-import { projectFoldKey, writeProjectFold } from '../../lib/project-fold';
+import { projectFoldKey, projectRevealKey, writeProjectFold } from '../../lib/project-fold';
 import { THEMES } from '../../lib/themes.generated';
 import type { SessionGroup } from '../../lib/types';
 import { ProjectGroup } from './SessionProjectGroups';
@@ -550,7 +550,8 @@ export const ExpandedHeaderAcrossThemesPhone: Story = {
   globals: { viewport: { value: 'phoneSmall', isRotated: false } },
 };
 
-// Long project and group names with a three-digit pager total still fit the 320px rail.
+// Long project and group names still fit the 320px rail. Live bands stand whole with no pager;
+// only the archived wall, the one that keeps growing, steps through pages in the same header.
 const LONG_GROUPS: SessionGroup[] = [
   { ...GROUPED_BANDS[0], name: 'Wallet work: archived transactions and reconciliation' },
   ...GROUPED_BANDS.slice(1),
@@ -560,6 +561,7 @@ const LONG_GROUPS: SessionGroup[] = [
     name: `Record group ${index}`,
     position: index + 2,
     session_count: 0,
+    archived_at: 1730000000,
   })),
 ];
 
@@ -567,10 +569,14 @@ export const NarrowSectionHeaders: Story = {
   ...PagingBelowGroups,
   beforeEach: () => {
     const previous = globalThis.fetch;
+    const revealed = projectRevealKey(machineKey(conn), fixture.root, 'groups');
     globalThis.fetch = storyFleetFetch([{ ...fixture, rows: SCROLL_ROWS, groups: LONG_GROUPS }]);
     writeProjectFold(projectFoldKey(machineKey(conn), fixture.root), true);
+    // The play opens the archive, and that choice is saved: start and end on the live bands.
+    writeProjectFold(revealed, false);
     return () => {
       globalThis.fetch = previous;
+      writeProjectFold(revealed, false);
     };
   },
   args: {
@@ -589,14 +595,20 @@ export const NarrowSectionHeaders: Story = {
   ),
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
+    const sheets = within(canvasElement.ownerDocument.body);
     const longBand = await page.findByRole('button', { name: /Collapse Wallet work: archived/ });
     const groups = page.getByText('Groups').parentElement!;
     const sessions = page.getByText('Sessions').parentElement!;
-    await expect(within(groups).queryByText('123 groups')).toBeNull();
     await expect(longBand).toBeVisible();
-    const groupPager = within(groups).getByRole('navigation');
+    // Live bands are never paged: the Groups header carries no steps over them.
+    await expect(within(groups).queryByRole('navigation')).toBeNull();
+    await userEvent.click(page.getByRole('button', { name: `Actions for groups in ${fixture.root}` }));
+    await userEvent.click(
+      within(sheets.getByRole('dialog', { name: /^Groups in / })).getByText('Show archived groups'),
+    );
+    const groupPager = await within(groups).findByRole('navigation');
     await userEvent.click(within(groupPager).getByRole('button', { name: 'Next page' }));
-    await within(groupPager).findByText('Page 2 of 13');
+    await within(groupPager).findByText('Page 2 of 9');
     const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     await frame();
     await frame();

@@ -14,8 +14,11 @@ const ROOT = STORY_NEWER_PROJECT.root;
 const MENU = `Groups in ${ROOT}`;
 const SESSIONS_MENU = `Sessions in ${ROOT}`;
 
-/** The project reads the wall of bands a page at a time, standing on its first page. */
-const BANDS: BandWindow = { limit: 10, offset: 0 };
+/**
+ * The project reads its ARCHIVED wall of bands fifteen at a time, standing on its first
+ * page. The live wall is never paged, so a read in the live view carries no window.
+ */
+const ARCHIVED_BANDS: BandWindow = { limit: 15, offset: 0 };
 
 /** Still active, and it holds one active session and one a reader archived inside it. */
 const WALLET: SessionGroup = {
@@ -112,7 +115,7 @@ function machine(archive: Page = ARCHIVE_PAGE, archivedBands: SessionGroup[] = [
         _root: string,
         _signal?: AbortSignal,
         view: ArchiveView = 'exclude',
-        _bands?: BandWindow,
+        bands?: BandWindow,
       ) => {
         const groups = view === 'only' ? archivedBands : [WALLET];
         return {
@@ -120,8 +123,8 @@ function machine(archive: Page = ARCHIVE_PAGE, archivedBands: SessionGroup[] = [
           groups,
           total: groups.length,
           session_total: groups.reduce((sum, group) => sum + group.session_count, 0),
-          limit: BANDS.limit,
-          offset: BANDS.offset,
+          limit: bands?.limit ?? null,
+          offset: bands?.offset ?? 0,
           has_more: false,
         };
       },
@@ -155,6 +158,7 @@ function archivableMachine() {
       _root: string,
       _signal?: AbortSignal,
       view: ArchiveView = 'exclude',
+      bands?: BandWindow,
     ) => {
       const groups = (view === 'only') === archived
         ? [{ ...WALLET, session_count: 1, archived_at: archived ? 1730000400 : null }]
@@ -164,8 +168,8 @@ function archivableMachine() {
         groups,
         total: groups.length,
         session_total: groups.length,
-        limit: BANDS.limit,
-        offset: BANDS.offset,
+        limit: bands?.limit ?? null,
+        offset: bands?.offset ?? 0,
         has_more: false,
       };
     }),
@@ -269,7 +273,7 @@ describe('a project shows the sessions it archived', () => {
       ROOT,
       expect.any(AbortSignal),
       'only',
-      BANDS,
+      ARCHIVED_BANDS,
     );
 
     await press(user, 'Show archived sessions', 'sessions');
@@ -298,7 +302,7 @@ describe('a project shows the sessions it archived', () => {
       expect.any(AbortSignal),
       true,
       'exclude',
-      BANDS,
+      ARCHIVED_BANDS,
     );
     expect(again.client.listProjectPage).toHaveBeenCalledWith(
       ROOT,
@@ -308,7 +312,7 @@ describe('a project shows the sessions it archived', () => {
       expect.any(AbortSignal),
       false,
       'only',
-      BANDS,
+      ARCHIVED_BANDS,
     );
   });
 
@@ -347,7 +351,7 @@ describe('a project shows the sessions it archived', () => {
       expect.any(AbortSignal),
       false,
       'exclude',
-      BANDS,
+      undefined,
     );
   });
 
@@ -369,13 +373,13 @@ describe('a project shows the sessions it archived', () => {
       expect.any(AbortSignal),
       true,
       'only',
-      BANDS,
+      ARCHIVED_BANDS,
     );
     expect(client.listSessionGroups).toHaveBeenLastCalledWith(
       ROOT,
       expect.any(AbortSignal),
       'only',
-      BANDS,
+      ARCHIVED_BANDS,
     );
   });
 
@@ -525,7 +529,7 @@ describe('a project shows the sessions it archived', () => {
       expect.any(AbortSignal),
       true,
       'only',
-      BANDS,
+      ARCHIVED_BANDS,
     );
   });
 
