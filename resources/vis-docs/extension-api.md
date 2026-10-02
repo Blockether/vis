@@ -778,6 +778,13 @@ reason as a tool failure. With `phase="after"`, `fn` receives `{"op", "args",
 "result"}` and its return value is ignored. Ordinary tool-hook errors are
 logged and do not block the operation. An after hook cannot undo its effects.
 
+For `"patch"`, a before hook also receives `preview`: `{"path", "before",
+"after"}`. It holds the text of the file now and after every edit. Use it to
+check the result before anything is written. `preview` is absent when the patch
+would be refused anyway, for example for a stale anchor. Give
+`vis.block(reason, hint=...)` a `hint` to tell the model what to do next.
+Without a hint, the failure tells the model to ask the user before a retry.
+
 For `"python_execution"`, `args` is `[{"code": <Python source>}]`. The before
 hook runs before the block. The after hook runs when evaluation returns.
 `result` is the execution result map, including captured `stdout`, evaluated

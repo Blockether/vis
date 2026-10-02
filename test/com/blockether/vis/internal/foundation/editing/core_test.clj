@@ -1886,6 +1886,41 @@
         (expect (string/includes? out "→ deleted")))))
 
 (defdescribe
+  patch-preview-test
+  (it "shows what one call would write and leaves the file as it was"
+      (let [rel
+            (write-temp! "patch/preview.txt" "alpha\nbeta\n")
+
+            preview
+            ((private-fn "patch-preview")
+              [rel [{"from" (hashline/line-anchor 2 "beta") "replace" "BETA"}]])]
+
+        (expect (= {:path rel :before "alpha\nbeta\n" :after "alpha\nBETA\n"} preview))
+        (expect (= "alpha\nbeta\n" (slurp rel)))))
+  (it "is nil for a call that the write would refuse"
+      (let [rel
+            (write-temp! "patch/preview-stale.txt" "alpha\nbeta\n")
+
+            preview
+            (private-fn "patch-preview")]
+
+        (expect (nil? (preview [rel [{"from" (hashline/line-anchor 2 "stale") "replace" "BETA"}]])))
+        (expect (nil? (preview [(str rel ".missing") [{"from" "1:000" "replace" "x"}]])))
+        (expect (= "alpha\nbeta\n" (slurp rel)))))
+  (it "reaches the op's around hooks through the env that the before-fn returns"
+      (let [rel
+            (write-temp! "patch/preview-env.txt" "alpha\n")
+
+            out
+            ((:ext.symbol/before-fn (private-fn "patch-symbol"))
+              {:extensions (atom [])}
+              (constantly :ok)
+              [rel [{"from" (hashline/line-anchor 1 "alpha") "replace" "ALPHA"}]])]
+
+        (expect (= {:path rel :before "alpha\n" :after "ALPHA\n"}
+                   ((get-in out [:env :op/preview]) (:args out)))))))
+
+(defdescribe
   grep-returns-anchored-text-test
   (it "line 1 summarizes and every content row carries an anchor"
       (let [d

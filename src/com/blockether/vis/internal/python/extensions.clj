@@ -1193,27 +1193,53 @@
                          (assoc :slash/data (get res "data")))
             :else {:slash/status :ok :slash/title (pr-str res)}))))
 
+(defn- op-preview
+  "What the call would write, when its op can say so before it runs (`patch` puts
+   `:op/preview` in the env), or nil. A preview that fails is left out: the hook
+   still decides, and the op itself reports what is wrong with the call."
+  [env op-kw args]
+  (when-let [preview (:op/preview env)]
+    (try (preview args)
+         (catch Throwable t
+           (tel/log! {:level :warn :id ::op-preview-failed :data {:op op-kw :error (ex-message t)}})
+           nil))))
+
 (defn- guard-adapter
   "Python `phase='before'` hook -> a host :around op hook. The callable
-   receives `{'op', 'args'}`; returning `vis.block(reason)` refuses the
-   op with a failure envelope the model reads, returning None allows it.
+   receives `{'op', 'args'}`, plus `'preview'` (`{'path', 'before', 'after'}`)
+   when the op can show what it would write. Returning `vis.block(reason)`
+   refuses the op with a failure envelope the model reads; its `hint`, when
+   given, replaces the advice to ask the user. Returning None allows it.
    A hook error fails OPEN (op runs) — a broken guard must not brick the
    loop."
   [ext-name ctx pyfn]
   (fn [env op-kw args next-fn]
-    (let [res (try (call-py-ext ext-name env ctx pyfn [(op-hook-payload op-kw args)])
-                   (catch Throwable t
-                     (tel/log! {:level :warn
-                                :id ::op-hook-failed
-                                :data {:extension ext-name :op op-kw :error (ex-message t)}})
-                     nil))]
+    (let [preview
+          (op-preview env op-kw args)
+
+          payload
+          (cond-> (op-hook-payload op-kw args)
+            preview
+            (assoc "preview" (stringify-deep preview)))
+
+          res
+          (try (call-py-ext ext-name env ctx pyfn [payload])
+               (catch Throwable t
+                 (tel/log! {:level :warn
+                            :id ::op-hook-failed
+                            :data {:extension ext-name :op op-kw :error (ex-message t)}})
+                 nil))]
+
       (if (and (map? res) (= "block" (get res "marker")))
-        (extension/failure
-          {:result nil
-           :error {:message (str (or (get res "reason") "Blocked by a Python extension hook"))
-                   :hint (str "Blocked by the '"
-                              ext-name
-                              "' Python extension. Ask the user before retrying.")}})
+        (let [hint (get res "hint")]
+          (extension/failure
+            {:result nil
+             :error {:message (str (or (get res "reason") "Blocked by a Python extension hook"))
+                     :hint (if (util/non-blank-string? hint)
+                             (str hint " Blocked by the '" ext-name "' Python extension.")
+                             (str "Blocked by the '"
+                                  ext-name
+                                  "' Python extension. Ask the user before retrying."))}}))
         (next-fn args)))))
 
 (defn- gate-adapter

@@ -3969,15 +3969,11 @@
                 ".")]
           (str "patch refused — edits " i " and " j " overlap; nothing was written."))))))
 
-(defn- patch-file!
-  "Every anchored edit for ONE file, resolved against ONE read and applied in ONE
-   write. Atomic for the FILE: every span resolves and every shape is checked
-   BEFORE anything reaches disk, so a refusal — a stale anchor, an overlap —
-   leaves the file exactly as the caller
-   last read it. The splice runs from the END of the file backwards, so the order
-   the edits arrive in is irrelevant and no anchor from the caller's own read can
-   go stale mid-batch. The answer is the status line and one row per edit, carrying
-   the anchors that are live AFTER the write."
+(defn- patch-plan
+  "Resolve every anchored edit of ONE `patch` call against ONE read of its file,
+   and write nothing. A stale anchor or an overlap throws the same refusal the
+   write would. Answers `{:file :rel :total :original :resolved :updated}`:
+   `patch-file!` writes `:updated`, and `patch-preview` shows it to a hook first."
   [path edits]
   (let [^File f
         (ensure-existing-file! (safe-path (positional-only! :patch path)))
@@ -4026,7 +4022,43 @@
         (reduce (fn [^String acc {:keys [start end replacement]}]
                   (str (subs acc 0 (long start)) replacement (subs acc (long end))))
                 original
-                (sort-by :start #(compare %2 %1) resolved))
+                (sort-by :start #(compare %2 %1) resolved))]
+
+    {:file f :rel rel :total total :original original :resolved resolved :updated updated}))
+
+(defn- patch-preview
+  "What ONE `patch` call would write, for an op hook that decides before the write:
+   `{:path :before :after}` with the file's text now and after every edit. Nil when
+   the write would refuse the call anyway (a missing file, a stale anchor, an
+   overlap), because that refusal then speaks for itself and nothing is written."
+  [[path edits]]
+  (try (let [{:keys [rel original updated]} (patch-plan path edits)]
+         {:path rel :before original :after updated})
+       (catch Exception _ nil)))
+
+(defn- previewing-before-fn
+  "`before-fn` that also hands the op's around hooks `:op/preview` in the env: a fn
+   from the call's args to what the call would write, computed at most once per
+   call. A `before-fn` that answers on its own keeps that answer."
+  [before-fn preview]
+  (fn [env f args]
+    (let [out (before-fn env f args)]
+      (if (contains? out :result)
+        out
+        (assoc out :env (assoc (get out :env env) :op/preview (memoize preview)))))))
+
+(defn- patch-file!
+  "Every anchored edit for ONE file, resolved against ONE read and applied in ONE
+   write. Atomic for the FILE: every span resolves and every shape is checked
+   BEFORE anything reaches disk, so a refusal — a stale anchor, an overlap —
+   leaves the file exactly as the caller
+   last read it. The splice runs from the END of the file backwards, so the order
+   the edits arrive in is irrelevant and no anchor from the caller's own read can
+   go stale mid-batch. The answer is the status line and one row per edit, carrying
+   the anchors that are live AFTER the write."
+  [path edits]
+  (let [{^File f :file :keys [rel total original resolved updated]}
+        (patch-plan path edits)
 
         ;; Where each edit ENDED UP: walk the spans in file order carrying the line
         ;; delta every earlier edit already applied, so every anchor reported below is
@@ -4191,7 +4223,8 @@
        "The write is atomic: a stale anchor or an overlap refuses the WHOLE batch and writes "
        "NOTHING. The refusal names the edit and gives its current anchor or range.")
      :call {:pos ["path" "edits"]}
-     :before-fn (fs-access-before-fn :patch :file "file-write" read-arg-paths)
+     :before-fn (previewing-before-fn (fs-access-before-fn :patch :file "file-write" read-arg-paths)
+                                      patch-preview)
      :tag :mutation
      :presenter :patch
      :on-error-fn (tool-failure-on-error :patch :file)}))

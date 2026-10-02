@@ -2169,6 +2169,53 @@ vis.register_extension(vis.Extension(
                        (fn [_]
                          :ran)))))))))
 
+(def ^:private preview-guard-py
+  "import blockether.vis.extension as vis
+
+
+def _guard(call):
+    preview = call.get(\"preview\")
+    if preview and \"BROKEN\" in preview[\"after\"]:
+        return vis.block(\"breaks \" + preview[\"path\"], hint=\"Fix the edit first.\")
+    return None
+
+
+vis.register_extension(vis.Extension(
+    name=\"preview-guard\",
+    description=\"Preview guard fixture extension.\",
+    kind=\"guard\",
+    op_hooks=[vis.OpHook([\"patch\"], _guard, phase=\"before\")],
+))
+")
+
+(defdescribe
+  op-hook-preview-test
+  (it "a 'before' hook reads the op's preview, and its block hint replaces the default advice"
+      (with-loaded {"preview_guard.py" preview-guard-py}
+                   (fn [_ _]
+                     (let [hook
+                           (first (:ext/op-hooks (registered "preview-guard")))
+
+                           env
+                           {:op/preview (fn [[path text]]
+                                          {:path path :before "fine" :after text})}
+
+                           ran
+                           (fn [_]
+                             :ran)
+
+                           res
+                           ((:fn hook) env :patch ["a.clj" "BROKEN"] ran)]
+
+                       (expect (extension/envelope-failure? res))
+                       (expect (= "breaks a.clj" (get-in res [:error :message])))
+                       (expect
+                         (= "Fix the edit first. Blocked by the 'preview-guard' Python extension."
+                            (get-in res [:error :hint])))
+                       (expect (= :ran ((:fn hook) env :patch ["a.clj" "fine"] ran)))
+                       ;; Without a preview in the env the hook sees none, so it allows the call.
+                       (expect (= :ran ((:fn hook) {} :patch ["a.clj" "BROKEN"] ran))))))))
+
 (def ^:private execution-hook-py
   "import blockether.vis.extension as vis
 

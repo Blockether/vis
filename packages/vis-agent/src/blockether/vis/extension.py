@@ -2948,8 +2948,16 @@ def err(title, body=None, data=None):
     }
 
 
-def block(reason):
-    return {"marker": "block", "reason": str(reason)}
+def block(reason, hint=None):
+    """Refuse the call a `before` op hook is deciding.
+
+    The model reads `reason` as the tool failure. `hint` tells it what to do next;
+    without one, the failure advises asking the user before a retry.
+    """
+    refusal = {"marker": "block", "reason": str(reason)}
+    if hint is not None:
+        refusal["hint"] = str(hint)
+    return refusal
 
 
 def strings_of(value):
