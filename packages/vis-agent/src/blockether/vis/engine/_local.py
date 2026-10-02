@@ -1,7 +1,8 @@
 """Owned local Vis subprocess, with the same session API and no HTTP listener.
 
 You select the executable explicitly. There is no download, gateway discovery or
-user-server shutdown. Each engine gets a temporary database, and closing discards it.
+user-server shutdown. Each engine gets a temporary database and stderr log, and closing
+discards them.
 Supports Linux and macOS. Instances use one calling thread, like GatewayClient.
 """
 
@@ -33,6 +34,9 @@ from ._client import (
     _PollingEvents,
     _SessionPollingEvents,
 )
+
+# Errors quote at most this much of the engine's stderr, starting at a line.
+_STDERR_TAIL = 4096
 
 
 class _Reply(io.BytesIO):
@@ -77,7 +81,9 @@ class LocalEngine(ExecutionLayer):
     A pipe timeout stops the process: a late reply must never be mistaken for the
     next request's answer. This differs from a `blockether.vis.engine.Turn.wait`
     deadline, which does not itself request cancellation. Startup, protocol and
-    transport failures propagate as the corresponding engine exception.
+    transport failures propagate as the corresponding engine exception. When the
+    engine exited by itself or wrote to stderr, the message ends with that exit
+    status and the last 4 KiB of its stderr.
     """
 
     def __init__(
@@ -100,6 +106,8 @@ class LocalEngine(ExecutionLayer):
         self._process = None
         self._home = None
         self._buffer = b""
+        self._exit_status = None
+        self._stderr_tail = ""
         self._cleanup_complete = False
 
     def session_options(self, project=".") -> dict:
@@ -123,6 +131,12 @@ class LocalEngine(ExecutionLayer):
                 raise VisTimeout("local engine response timed out")
             chunk = os.read(self._process.stdout.fileno(), 65536)
             if not chunk:
+                # Stdout closes as the engine exits; let the exit land so the
+                # error can report the status the engine chose.
+                try:
+                    self._process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    pass
                 raise TransportError("local engine closed its output")
             self._buffer += chunk
             if len(self._buffer) > 67108864:
@@ -150,15 +164,18 @@ class LocalEngine(ExecutionLayer):
             "VIS_DB_PATH": str(Path(self._home.name) / "sessions.sqlite"),
         }
         try:
-            self._process = subprocess.Popen(
-                [*self._command, "stdio"],
-                cwd=self._root,
-                env=env,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
+            # A file, not a pipe: nobody drains a pipe, and a full one would block
+            # the engine. Failures quote its end before the directory is removed.
+            with open(Path(self._home.name) / "stderr.log", "wb") as stderr:
+                self._process = subprocess.Popen(
+                    [*self._command, "stdio"],
+                    cwd=self._root,
+                    env=env,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=stderr,
+                    start_new_session=True,
+                )
             os.set_blocking(self._process.stdin.fileno(), False)
             hello = self._read_line(time.monotonic() + self._startup_timeout)
             if (
@@ -171,7 +188,9 @@ class LocalEngine(ExecutionLayer):
         except BaseException as error:
             self.close()
             if isinstance(error, OSError):
-                raise TransportError("could not start local engine") from None
+                raise TransportError(f"could not start local engine: {error}") from None
+            if isinstance(error, TransportError):
+                raise self._explained(error) from None
             raise
 
     def _open(
@@ -213,13 +232,14 @@ class LocalEngine(ExecutionLayer):
             ):
                 raise ProtocolError("malformed local response envelope")
             decoded = base64.b64decode(response["content"], validate=True)
-        except (TransportError, ProtocolError):
+        except (TransportError, ProtocolError) as error:
             self.close()
-            raise
+            raise self._explained(error) from None
         except (OSError, ValueError, TypeError, KeyError):
             self.close()
-            raise ProtocolError(
-                "malformed local engine exchange; process was closed"
+            # A write to an engine that already died lands here as a broken pipe.
+            raise self._explained(
+                ProtocolError("malformed local engine exchange; process was closed")
             ) from None
         if response["status"] >= 400:
             raise _gateway_error(response["status"], decoded[:65536])
@@ -247,6 +267,8 @@ class LocalEngine(ExecutionLayer):
             stream.close()
         process = self._process
         if process is not None:
+            # Before stdin closes: only an exit the engine chose explains a failure.
+            self._exit_status = process.poll()
             if process.stdin:
                 process.stdin.close()
 
@@ -274,8 +296,37 @@ class LocalEngine(ExecutionLayer):
             if process.stdout:
                 process.stdout.close()
         if self._home is not None:
+            self._stderr_tail = self._stderr_end()
             self._home.cleanup()
         self._cleanup_complete = True
+
+    def _stderr_end(self):
+        """Return the end of the engine's stderr log, from a line start."""
+        try:
+            with open(Path(self._home.name) / "stderr.log", "rb") as stream:
+                size = stream.seek(0, os.SEEK_END)
+                stream.seek(max(0, size - _STDERR_TAIL))
+                end = stream.read()
+        except OSError:
+            return ""
+        if size > _STDERR_TAIL:
+            _, newline, rest = end.partition(b"\n")
+            end = rest if newline else end
+        return end.decode("utf-8", "replace").strip()
+
+    def _explained(self, error):
+        """Return `error` with the engine's own exit status and stderr end."""
+        message = str(error)
+        status = self._exit_status
+        if status is not None:
+            message += (
+                f"; the engine exited with status {status}"
+                if status >= 0
+                else f"; the engine was stopped by signal {-status}"
+            )
+        if self._stderr_tail:
+            message += "\nEngine stderr:\n" + self._stderr_tail
+        return error if message == str(error) else type(error)(message)
 
 
 class _LocalSession(Session):

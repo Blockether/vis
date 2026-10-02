@@ -12,7 +12,9 @@ _PROTOCOL = definition("gateway", "handshake")["properties"]["protocol"]["const"
 
 def test_missing_executable_is_reported_without_a_live_process(tmp_path):
     engine = LocalEngine(executable=str(tmp_path / "missing"), root=tmp_path)
-    with pytest.raises(TransportError):
+    with pytest.raises(
+        TransportError, match="could not start local engine: .*No such file"
+    ):
         engine.connect()
     engine.close()
 
@@ -107,6 +109,86 @@ def test_startup_failure_closes_owned_process(tmp_path, code, error):
         engine.connect()
     assert engine._process.poll() is not None
     assert not os.path.exists(engine._home.name)
+
+
+def test_startup_failure_reports_the_engine_exit_and_stderr(tmp_path):
+    import sys
+
+    # A launcher that cannot boot explains why only on stderr.
+    code = (
+        "import sys; sys.stderr.write('Execution error: stdio (No such file)\\n'); "
+        "sys.exit(3)"
+    )
+    engine = LocalEngine(executable=[sys.executable, "-c", code], root=tmp_path)
+    with pytest.raises(TransportError) as failure:
+        engine.connect()
+    message = str(failure.value)
+    assert type(failure.value) is TransportError
+    assert "local engine closed its output" in message
+    assert "the engine exited with status 3" in message
+    assert message.endswith("Execution error: stdio (No such file)")
+    assert not os.path.exists(engine._home.name)
+
+
+def test_engine_crash_reports_its_stderr(tmp_path):
+    import json
+    import sys
+
+    hello = json.dumps({"protocol": _PROTOCOL})
+    code = (
+        f"import sys; print({hello!r}, flush=True); sys.stdin.readline(); "
+        "sys.stderr.write('fatal: worker pool exhausted\\n'); sys.exit(5)"
+    )
+    with LocalEngine(executable=[sys.executable, "-c", code], root=tmp_path) as engine:
+        with pytest.raises(TransportError) as failure:
+            engine.get_capabilities()
+        message = str(failure.value)
+        assert "the engine exited with status 5" in message
+        assert message.endswith("fatal: worker pool exhausted")
+
+
+def test_engine_that_died_while_idle_reports_why(tmp_path):
+    import json
+    import sys
+
+    from blockether.vis.engine import ProtocolError
+
+    hello = json.dumps({"protocol": _PROTOCOL})
+    code = (
+        f"import sys; print({hello!r}, flush=True); "
+        "sys.stderr.write('fatal: idle crash\\n'); sys.exit(9)"
+    )
+    with LocalEngine(executable=[sys.executable, "-c", code], root=tmp_path) as engine:
+        engine._process.wait(timeout=5)
+        # The next request writes into a closed pipe before any reply is read.
+        with pytest.raises(ProtocolError) as failure:
+            engine.get_capabilities()
+        message = str(failure.value)
+        assert "the engine exited with status 9" in message
+        assert message.endswith("fatal: idle crash")
+
+
+def test_engine_stderr_never_blocks_and_errors_quote_only_its_end(tmp_path):
+    import json
+    import sys
+
+    hello = json.dumps({"protocol": _PROTOCOL})
+    # More than a pipe buffer before the handshake: an undrained pipe would hang boot.
+    code = (
+        "import sys; sys.stderr.write('x' * 1048576 + '\\nlast words\\n'); "
+        f"sys.stderr.flush(); print({hello!r}, flush=True); "
+        "sys.stdin.readline(); sys.exit(7)"
+    )
+    with LocalEngine(
+        executable=[sys.executable, "-c", code], root=tmp_path, startup_timeout=10
+    ) as engine:
+        with pytest.raises(TransportError) as failure:
+            engine.get_capabilities()
+    message = str(failure.value)
+    assert message.endswith(
+        "the engine exited with status 7\nEngine stderr:\nlast words"
+    )
+    assert len(message) < 4500
 
 
 @pytest.mark.parametrize("ignore_term", [False, True], ids=["term", "kill"])

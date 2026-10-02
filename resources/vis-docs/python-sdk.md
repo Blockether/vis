@@ -200,7 +200,10 @@ with LocalEngine(executable="vis-agent", root=".") as layer:
 ```
 
 `LocalEngine` appends `stdio` to the executable command. It sets `VIS_DB_PATH` to an isolated
-temporary SQLite database. When its context closes, it stops its process and removes that database.
+temporary SQLite database. It writes the engine's standard error to a file next to that database.
+When its context closes, it stops its process and removes both files. If the engine fails, the
+error message shows the engine's exit status and the end of its standard error.
+
 Running a task can cost provider charges, and it gives the engine access to project files. If the
 executable is not on `PATH`, pass its absolute launcher path to `executable`.
 
@@ -518,7 +521,7 @@ never assigns engine IDs, sequence numbers, timeouts or terminal outcomes.
 | --- | --- |
 | `ProtocolError` | SDK and gateway protocols disagree. Install compatible versions |
 | `GatewayError` | Inspect `status` and `code` for authentication, permissions or request errors |
-| `TransportError` | Check the executable or gateway, network and TLS setup |
+| `TransportError` | Read the engine's exit status and standard error in the message, if present. Then check the executable or gateway, network and TLS setup |
 | `VisTimeout` from `run()` or `turn.wait()` | The wait ended, but the turn can still be running. Inspect it or call `turn.cancel()` |
 | `StructuredOutputError` from `run()` | No valid structured result. Read its `errors` and `attempts` |
 | A record whose `status` is not `completed` | The task did not complete normally. Inspect its content and input requirements |
