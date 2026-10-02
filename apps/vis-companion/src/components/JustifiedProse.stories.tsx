@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import type { ComponentProps } from 'react';
 import { useState } from 'react';
 import { expect, userEvent, waitFor, within } from 'storybook/test';
-import { Markdown } from './ChatContent';
+import { Markdown, ThinkingBand, UserMessage } from './ChatContent';
 import { MarkdownArtifact } from './MarkdownArtifact';
 
 const paragraph =
@@ -121,6 +121,78 @@ export const ResponsiveParagraphs: Story = {
     await waitFor(() => expect(item).toHaveAttribute('data-justice'));
     await waitFor(() => expectFitted(item));
     expectSelection(item, paragraph);
+  },
+};
+
+const spokenRequest = Array(30)
+  .fill(
+    'I want to review the request,  keep the original words and check that a long recording remains easy to read.',
+  )
+  .join(' ');
+const longReasoning = spokenRequest.replaceAll('  ', ' ');
+
+/** Native prose fills the column without stretching its final line or changing copied text. */
+function expectNativeFitted(prose: HTMLElement) {
+  expect(prose).not.toHaveAttribute('data-justice');
+  expect(getComputedStyle(prose).textAlign).toBe('justify');
+  const column = prose.getBoundingClientRect();
+  // Measure words rather than hanging spaces, and include generated hyphen glyphs.
+  const text = prose.firstChild!;
+  const range = document.createRange();
+  const bounds = new Map<number, { left: number; right: number }>();
+  for (const word of text.textContent!.matchAll(/\S+/g)) {
+    range.setStart(text, word.index);
+    range.setEnd(text, word.index + word[0].length);
+    for (const rect of range.getClientRects()) {
+      if (!rect.width) continue;
+      const line = bounds.get(rect.top) ?? { left: rect.left, right: rect.right };
+      line.left = Math.min(line.left, rect.left);
+      line.right = Math.max(line.right, rect.right);
+      bounds.set(rect.top, line);
+    }
+  }
+  const lines = [...bounds.values()];
+  expect(lines.length).toBeGreaterThan(1);
+  for (const line of lines.slice(0, -1)) {
+    expect(Math.abs(line.left - column.left)).toBeLessThan(1);
+    expect(Math.abs(line.right - column.right)).toBeLessThan(1);
+  }
+  expect(lines.at(-1)!.right).toBeLessThanOrEqual(column.right + 1);
+}
+
+export const LongSpokenRequest: Story = {
+  // jsdom cannot check text alignment or selection; play this story in the browser.
+  tags: ['!test'],
+  globals: { theme: 'blockether-dark' },
+  render: () => (
+    <div className="w-full max-w-4xl p-3 text-body text-white">
+      <div data-spoken-request>
+        <UserMessage>{spokenRequest}</UserMessage>
+      </div>
+      <div data-long-thinking>
+        <ThinkingBand>{longReasoning}</ThinkingBand>
+      </div>
+      <div data-literal-request>
+        <UserMessage>{'  git  status\ngit\tstatus\n```sh\ngit  status\n```'}</UserMessage>
+      </div>
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    await document.fonts.ready;
+    const request = canvasElement.querySelector<HTMLElement>('[data-spoken-request] p')!;
+    expectNativeFitted(request);
+    expectSelection(request, spokenRequest);
+    const thinking = canvasElement.querySelector<HTMLElement>('[data-long-thinking]')!;
+    thinking.scrollIntoView({ block: 'center' });
+    const disclosure = within(thinking).queryByRole('button');
+    if (disclosure?.getAttribute('aria-expanded') === 'false') await userEvent.click(disclosure);
+    const reasoning = thinking.querySelector<HTMLElement>('p')!;
+    expectNativeFitted(reasoning);
+    expectSelection(reasoning, longReasoning);
+    for (const line of canvasElement.querySelectorAll('[data-literal-request] p')) {
+      expect(getComputedStyle(line).textAlign).toBe('left');
+      expect(getComputedStyle(line).whiteSpace).toBe('pre-wrap');
+    }
   },
 };
 

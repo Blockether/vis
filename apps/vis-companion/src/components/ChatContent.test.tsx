@@ -533,7 +533,7 @@ describe('Markdown tool card body', () => {
     for (const element of view.container.querySelectorAll('p, li')) {
       expect(element).toHaveClass('text-pretty');
       expect(element).not.toHaveClass('text-meta');
-      expect(element).not.toHaveClass('text-justify');
+      expect(element).toHaveClass('text-justify');
     }
   });
 
@@ -2011,9 +2011,8 @@ describe('a markdown table', () => {
     expect(text(markup)).toContain('manifest.edn');
   });
 
-  // Regression, user request: the transcript is NOT a justified column. Prose reads
-  // flush left with a ragged right edge, and every code surface stays left-aligned.
-  it('leaves Markdown prose ragged-right while every code surface stays left-aligned', () => {
+  // Prose stays justified when Justice cannot compose it; code never inherits that alignment.
+  it('justifies native Markdown prose while every code surface stays left-aligned', () => {
     const markdown = renderToStaticMarkup(
       <Markdown>
         {
@@ -2029,7 +2028,7 @@ describe('a markdown table', () => {
       expect(/<code class="[^"]*inline-block/.test(markup)).toBe(true);
       expect(/<code class="[^"]*text-left/.test(markup)).toBe(true);
     }
-    expect(/<p class="[^"]*text-justify/.test(markdown)).toBe(false);
+    expect(/<p class="[^"]*text-justify/.test(markdown)).toBe(true);
     expect(/<p class="[^"]*text-pretty/.test(markdown)).toBe(true);
     expect(/<code class="[^"]*break-all/.test(markdown)).toBe(true);
     expect(/<pre class="[^"]*text-left/.test(markdown)).toBe(true);

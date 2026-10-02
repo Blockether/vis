@@ -127,6 +127,58 @@ describe('Justice prose', () => {
     expect(prose?.textContent).toBe(request);
   });
 
+  // Regression, user report: a 585-word speech transcript lost justification at
+  // Justice's 400-word limit and at doubled spaces within a sentence.
+  it.each(['request', 'reasoning', 'answer', 'list'] as const)(
+    'keeps long %s prose justified without exceeding the solver budget',
+    async (kind) => {
+      const text = Array(585).fill('rozwiązanie').join(' ');
+      const view = render(
+        kind === 'request' ? (
+          <UserMessage>{text}</UserMessage>
+        ) : kind === 'reasoning' ? (
+          <ThinkingBand>{text}</ThinkingBand>
+        ) : (
+          <Markdown>{kind === 'list' ? `- ${text}` : text}</Markdown>
+        ),
+      );
+      await settle();
+      const prose = view.container.querySelector(kind === 'list' ? 'li' : 'p');
+      expect(prose).not.toHaveAttribute('data-justice');
+      expect(prose).toHaveClass('text-justify');
+      expect(prose?.textContent).toBe(text);
+      expect(wordMeasurements()).toBe(0);
+    },
+  );
+
+  it.each([20, 585])(
+    'justifies a %i-word spoken request with doubled spaces inside a sentence',
+    async (words) => {
+      const text = ['Omawiamy, ', ...Array(words - 1).fill('rozwiązanie')].join(' ');
+      const view = render(<UserMessage>{text}</UserMessage>);
+      await settle();
+      const prose = view.container.querySelector('article p');
+      expect(prose).toHaveClass('text-justify', 'whitespace-pre-wrap');
+      expect(prose?.textContent).toBe(text);
+    },
+  );
+
+  it('keeps tabs and indented commands left-aligned', async () => {
+    const text = `${paragraph}
+  git  status
+git\tstatus`;
+    const view = render(<UserMessage>{text}</UserMessage>);
+    await settle();
+    const lines = [...view.container.querySelectorAll('article p')];
+    expect(lines[0]).toHaveClass('text-justify');
+    for (const line of lines.slice(1)) {
+      expect(line).toHaveClass('text-left', 'whitespace-pre-wrap');
+      expect(line).not.toHaveClass('text-justify');
+      expect(line).not.toHaveAttribute('data-justice');
+    }
+    expect(lines.map((line) => line.textContent)).toEqual(text.split('\n'));
+  });
+
   it('composes a single reasoning paragraph from the chat band', async () => {
     const reasoning =
       'I am looking at how the Python and Clojure extensions report activity — specifically the detail shown during REPL status/connect/start that repeats the summary, and how linting activity could be improved.';
@@ -191,6 +243,10 @@ describe('Justice prose', () => {
       false,
       true,
     ]);
+    for (const line of lines.slice(1, 4)) {
+      expect(line).toHaveClass('text-left', 'whitespace-pre-wrap');
+      expect(line).not.toHaveClass('text-justify');
+    }
   });
 
   it('justifies request prose around a collapsed paste without opening its literal body', async () => {

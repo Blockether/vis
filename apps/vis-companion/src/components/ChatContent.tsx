@@ -4051,9 +4051,9 @@ const councilKindLabel: Record<CouncilRequest['kind'], string> = {
 };
 
 function UserRequestText({ text }: { text: string }) {
-  // Keep authored breaks and literal spacing. Speech transcripts also put two spaces
-  // after a sentence; those are ordinary prose, not a command that needs pre-wrap.
-  // Justice retains the original text for copying while the browser collapses that gap.
+  // Keep authored breaks and literal spacing. Justice composes ordinary lines;
+  // native justification keeps other prose aligned without collapsing its spaces.
+  // Indentation, tabs and fences mark literal lines, which stay left-aligned.
   let fence = '';
   return text.split(/\r?\n/).map((line, index) => {
     const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line);
@@ -4069,15 +4069,17 @@ function UserRequestText({ text }: { text: string }) {
         fence = '';
       }
     }
-    const ordinarySpacing = !/[ \t]{2}|\t|\r/.test(
-      line.replace(/([.!?…]["')\]]?) {2,}/gu, '$1 '),
-    );
-    return line && !literal && line.trim() === line && ordinarySpacing ? (
-      <JustifiedProse key={index} className="whitespace-normal break-words">
+    const ordinarySpacing = !/[ \t]{2}|\t|\r/.test(line.replace(/([.!?…]["')\]]?) {2,}/gu, '$1 '));
+    const prose = line && !literal && line.trim() === line && !/[\t\r]/.test(line);
+    return prose && ordinarySpacing ? (
+      <JustifiedProse key={index} className={`${PROSE} whitespace-normal break-words`}>
         {line}
       </JustifiedProse>
     ) : (
-      <p key={index} className="min-h-[1lh] whitespace-pre-wrap break-words">
+      <p
+        key={index}
+        className={`min-h-[1lh] whitespace-pre-wrap break-words ${prose ? PROSE : 'text-left'}`}
+      >
         {line}
       </p>
     );
