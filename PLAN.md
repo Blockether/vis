@@ -97,6 +97,8 @@ Unknowns: broader failures are classified against the scoped diff, never bypasse
   `native-tui-resize-test` and the docs page canon tests pass.
 - CI follow-ups: the Python SDK client gained `patch_settings` (c42e507ef), and the edit
   namespace moved to `gateway.server.settings-edit` to keep the config layer below services.
+  The TUI settings text editor now handles arrows, Backspace, Delete and Enter and starts
+  after the current text; the agent-name TUI tests drive the staged draft (1bf1b2471).
 - Unrelated: the Storybook `IterationTrace` "Joined Activity" story fails at the base
   (it expects "2 checks"; `ActivityPanel` shows "verifications"). Reported in Council #7500.
 - No product release, live restart or store submission is part of this task.
