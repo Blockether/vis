@@ -3516,8 +3516,6 @@
 
         (try (with-redefs-fn {#'dlg/load-mcp-inventory! (fn []
                                                           nil)
-                              #'dlg/load-agent-name! (fn []
-                                                       nil)
                               #'dlg/load-provider-inventory! (fn []
                                                                nil)
                               #'vis/gateway-settings (fn [_ target context]

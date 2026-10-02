@@ -114,7 +114,35 @@
 
                   (expect (= 1 (count @calls)))
                   (expect (some #(str/includes? (cap/frame-text %) "Your draft is kept")
-                                (:frames result)))))))
+                                (:frames result))))))
+  (describe "text editing"
+            (it "starts after the current text and supports movement, deletion and new lines"
+                (let [calls
+                      (atom [])
+
+                      text-row
+                      {"id" "note"
+                       "type" "string"
+                       "value" "abc"
+                       "label" "Note"
+                       "source" "default"
+                       "scope" "session"
+                       "is_override" false
+                       "inherited_value" "abc"
+                       "inherited_source" "default"
+                       "applies" "next_request"}]
+
+                  (capture-editor [:enter :left :left :backspace :end \d :enter \e :up :home :delete
+                                   :f2 :f2 :down :f2 :esc]
+                                  calls
+                                  {:read! (fn [& _]
+                                            (assoc catalog
+                                              "groups" [{"id" "response"
+                                                         "title" "Planning"
+                                                         "toggles" [text-row]}]))})
+                  (expect (= [[:patch "initial" [{"id" "note" "action" "value" "value" "cd\ne"}]
+                               {:scope "session" :target-id "selected"} :tui "context"]]
+                             @calls))))))
 
 (defdescribe
   typed-settings-drafts

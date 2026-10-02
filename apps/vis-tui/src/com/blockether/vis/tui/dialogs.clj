@@ -3602,13 +3602,6 @@
                   :label "Add MCP server…"
                   :description "Register a new one with the gateway"}])))))
 
-(defonce ^:private agent-name-setting (atom nil))
-
-(defn- load-agent-name!
-  []
-  (reset! agent-name-setting (try (vis/setting "agent_name")
-                                  (catch Exception e {"error" (ex-message e)}))))
-
 (defn- mark-inventories-loading!
   "Arm every gateway-backed inventory for a refresh WITHOUT clearing what they
    already hold: a re-opened Settings shows the fleet it last read and refreshes
@@ -3620,8 +3613,8 @@
   (swap! (settings-inventory-atom) assoc :status :loading))
 
 (defn- load-inventories!
-  "Read the gateway name, settings catalog, MCP inventory and provider fleet in
-   parallel. Called only AFTER the settings frame is on the terminal."
+  "Read the settings catalog, MCP inventory and provider fleet in parallel.
+   Called only AFTER the settings frame is on the terminal."
   []
   (if *settings-target*
     (do (load-settings-inventory!) (load-mcp-inventory!))
@@ -3631,9 +3624,7 @@
           catalog
           (vis/worker-future "vis-tui-settings-catalog" (bound-fn* load-settings-inventory!))]
 
-      (let [agent (vis/worker-future "vis-tui-settings-agent-name" load-agent-name!)]
-        (load-provider-inventory!)
-        @agent)
+      (load-provider-inventory!)
       @mcp
       @catalog
       nil)))
@@ -3688,9 +3679,6 @@
   [{:keys [key type choices toggle-id toggle-type toggle-value set-key item-id inline-description
            description]} values]
   (case type
-    :agent-name
-    (or (get @agent-name-setting "value") "Unavailable")
-
     :choice
     (name (or (get values key) (first choices)))
 
@@ -3752,9 +3740,6 @@
 
       :env-var
       [" " t/dialog-fg]
-
-      :agent-name
-      val
 
       :choice
       val
@@ -4042,7 +4027,8 @@
       (and (= KeyType/Character (key-type key)) (.isCtrlDown key) (= \s (key-character key)))))
 
 (defn- settings-text-editor!
-  "Edit real multiline text. F2 accepts it, and Escape protects unsaved text."
+  "Edit real multiline text from its end; read-only text opens at the top.
+   F2 accepts it, and Escape protects unsaved text."
   [screen title initial {:keys [read-only? changed? submit-label]}]
   (let [initial
         (or initial "")
@@ -4053,7 +4039,11 @@
 
     (run-modal!
       screen
-      {:init {:editor {:lines (vec (str/split initial #"\n" -1)) :crow 0 :ccol 0} :scroll 0}
+      {:init {:editor (let [lines (vec (str/split initial #"\n" -1))]
+                        (if read-only?
+                          {:lines lines :crow 0 :ccol 0}
+                          {:lines lines :crow (dec (count lines)) :ccol (count (peek lines))}))
+              :scroll 0}
        :measure (fn [_ cols rows]
                   (let [content-w
                         (default-content-width cols)
@@ -4127,35 +4117,18 @@
                                                   "The edited text has not been staged."))
                            {::done nil}
                            state)
-                         :else (let [edit (case type
-                                            KeyType/ArrowUp
-                                            input/move-up
-
-                                            KeyType/ArrowDown
-                                            input/move-down
-
-                                            KeyType/ArrowLeft
-                                            input/move-left
-
-                                            KeyType/ArrowRight
-                                            input/move-right
-
-                                            KeyType/Home
-                                            input/move-line-start
-
-                                            KeyType/End
-                                            input/move-line-end
-
-                                            KeyType/Backspace
-                                            (when-not read-only? input/delete-backward)
-
-                                            KeyType/Delete
-                                            (when-not read-only? input/delete-forward)
-
-                                            KeyType/Enter
-                                            (when-not read-only? input/insert-newline)
-
-                                            nil)]
+                         :else (let [edit
+                                     (condp = type
+                                       KeyType/ArrowUp input/move-up
+                                       KeyType/ArrowDown input/move-down
+                                       KeyType/ArrowLeft input/move-left
+                                       KeyType/ArrowRight input/move-right
+                                       KeyType/Home input/move-line-start
+                                       KeyType/End input/move-line-end
+                                       KeyType/Backspace (when-not read-only? input/delete-backward)
+                                       KeyType/Delete (when-not read-only? input/delete-forward)
+                                       KeyType/Enter (when-not read-only? input/insert-newline)
+                                       nil)]
                                  (cond edit (update state :editor edit)
                                        (and (= type KeyType/Character) (not read-only?))
                                        (assoc state :editor (:state (input/handle-key key editor)))
@@ -4907,10 +4880,8 @@
   (vec (concat (when-some [value (settings-option-value row values)]
                  [(str "Value: " value)])
                [(str "Source: "
-                     (or (:source row)
-                         (when (= :agent-name (:type row)) "gateway")
-                         (when (:toggle-id row) "unavailable")
-                         "this terminal")) "" (:description row)]
+                     (or (:source row) (when (:toggle-id row) "unavailable") "this terminal")) ""
+                (:description row)]
                (when (:is-override? row) ["" "This scope overrides the inherited value."])
                (when-let [note (:override-warning row)]
                  ["" note]))))
