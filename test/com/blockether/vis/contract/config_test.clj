@@ -55,3 +55,16 @@
         (expect (not (config/definition-valid? "workspaceWhen" {"os" ["unknown"]})))
         (expect (= (set (keys (get-in schema ["$defs" "jail" "properties"])))
                    (config/definition-property-names "jail"))))))
+
+(defdescribe access-alias-contract-test
+             (it "keeps access aliases and canonical choices in the configuration schema"
+                 (doseq [definition ["workspaceEntry" "networkRule"]]
+                   (let [property (get-in (document/schema-document "config")
+                                          ["$defs" definition "properties" "access"])
+                         accepted (set (get property "enum"))
+                         aliases (get property "x-vis-enum-aliases")]
+
+                     (expect (seq aliases))
+                     (expect (every? accepted (keys aliases)))
+                     (expect (every? accepted (vals aliases)))
+                     (expect (not-any? aliases (vals aliases)))))))

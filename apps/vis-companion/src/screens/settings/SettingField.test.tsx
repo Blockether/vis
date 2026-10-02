@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SettingValue, Toggle } from '../../lib/types';
 import { SettingField } from './SettingField';
@@ -159,4 +160,62 @@ it('directs unsupported settings to the configuration file instead of a JSON edi
   expect(screen.queryByRole('textbox')).toBeNull();
   expect(onChange).not.toHaveBeenCalled();
   expect(onRawChange).not.toHaveBeenCalled();
+});
+
+const accessAliases: [string, string][] = [
+  ['read-only', 'read-only'],
+  ['readonly', 'read-only'],
+  ['ro', 'read-only'],
+  ['read-write', 'read-write'],
+  ['readwrite', 'read-write'],
+  ['rw', 'read-write'],
+];
+
+it.each(accessAliases)('shows unique workspace access choices for %s', async (access, canonical) => {
+  const entry = { id: 'docs', path: '~/docs', access };
+  const { onChange } = renderField(
+    { id: 'workspaces', label: 'Workspace roots', type: 'array', editor: 'paths' },
+    [entry],
+  );
+  const select = screen.getByRole('combobox', { name: 'Root access 1' });
+  expect(select).toHaveTextContent(canonical);
+  expect(onChange).not.toHaveBeenCalled();
+  await userEvent.click(select);
+  expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+    'read-only',
+    'read-write',
+  ]);
+  const next = canonical === 'read-only' ? 'read-write' : 'read-only';
+  await userEvent.click(screen.getByRole('option', { name: next }));
+  expect(onChange).toHaveBeenLastCalledWith([{ ...entry, access: next }]);
+});
+
+it.each([
+  ...accessAliases,
+  ['full', 'read-write'],
+  ['all', 'read-write'],
+  ['none', 'none'],
+  ['deny', 'none'],
+  ['closed', 'none'],
+])('shows unique network access choices for %s', async (access, canonical) => {
+  const entry = { host: 'gateway.example.com', access };
+  const { onChange } = renderField(
+    { id: 'network', label: 'Network', type: 'object', editor: 'network' },
+    { allowed_domains: ['gateway.example.com'], rules: [entry] },
+  );
+  const select = screen.getByRole('combobox', { name: 'Rule access 1' });
+  expect(select).toHaveTextContent(canonical);
+  expect(onChange).not.toHaveBeenCalled();
+  await userEvent.click(select);
+  expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+    'read-only',
+    'read-write',
+    'none',
+  ]);
+  const next = canonical === 'read-only' ? 'read-write' : 'read-only';
+  await userEvent.click(screen.getByRole('option', { name: next }));
+  expect(onChange).toHaveBeenLastCalledWith({
+    allowed_domains: ['gateway.example.com'],
+    rules: [{ ...entry, access: next }],
+  });
 });

@@ -4063,6 +4063,15 @@
   [definition property]
   (get-in (document/schema-document "config") ["$defs" definition "properties" property]))
 
+(defn- settings-enum-items
+  "One choice per canonical value, using the property's schema aliases."
+  [property]
+  (let [aliases (get property "x-vis-enum-aliases" {})]
+    (->> (get property "enum")
+         (map #(get aliases % %))
+         distinct
+         (mapv #(hash-map :label % :value %)))))
+
 (defn- settings-save-key?
   [^KeyStroke key]
   (or (= KeyType/F2 (key-type key))
@@ -4240,11 +4249,9 @@
                                         (#{"access" "draft"} field)
                                         (settings-pick! screen
                                                         (str "Workspace " field)
-                                                        (mapv #(hash-map :label % :value %)
-                                                              (get (settings-config-property
-                                                                     "workspaceEntry"
-                                                                     field)
-                                                                   "enum")))
+                                                        (settings-enum-items
+                                                          (settings-config-property "workspaceEntry"
+                                                                                    field)))
                                         :else (mini-read! screen
                                                           g
                                                           region
@@ -4303,8 +4310,7 @@
                       (cond
                         (get property "enum") (settings-pick! screen
                                                               (str label " · " field)
-                                                              (mapv #(hash-map :label % :value %)
-                                                                    (get property "enum")))
+                                                              (settings-enum-items property))
                         (= field "allow") (settings-records-editor!
                                             screen
                                             g

@@ -461,7 +461,7 @@
                                    :f2 :esc]))))))
 
 (defn- scripted-structured-edit
-  [row picks reads & [{:keys [lists notes]}]]
+  [row picks reads & [{:keys [lists notes menus]}]]
   (let [picks
         (atom picks)
 
@@ -477,8 +477,9 @@
             (swap! queue rest)
             value))]
 
-    (with-redefs-fn {#'dlg/settings-pick! (fn [_ _ items]
+    (with-redefs-fn {#'dlg/settings-pick! (fn [_ title items]
                                             (expect (not-any? #(= :advanced (:value %)) items))
+                                            (when menus (swap! menus assoc title items))
                                             (take! picks))
                      #'dlg/mini-read! (fn [& _]
                                         (take! reads))
@@ -557,3 +558,36 @@
                                                        ["gateway.example.com"]
                                                        {:lists [["70000"]] :notes notes})))
                   (expect (= [["Invalid ports" "Use one valid integer port per line."]] @notes))))))
+
+(defdescribe
+  unique-access-choices-test
+  (it "shows two workspace access choices and saves a canonical value"
+      (let [menus
+            (atom {})
+
+            entry
+            {"id" "docs" "path" "~/docs" "access" "ro"}]
+
+        (expect (= [(assoc entry "access" "read-write")]
+                   (scripted-structured-edit
+                     {:label "Workspace roots" :setting {"editor" "paths"} :toggle-value [entry]}
+                     [0 "access" "read-write" :done]
+                     []
+                     {:menus menus})))
+        (expect (= ["read-only" "read-write"] (mapv :value (get @menus "Workspace access"))))))
+  (it "shows three network access choices and preserves the deny option"
+      (let [menus
+            (atom {})
+
+            entry
+            {"host" "gateway.example.com" "access" "closed"}]
+
+        (expect (= {"rules" [(assoc entry "access" "none")]}
+                   (scripted-structured-edit {:label "Network"
+                                              :setting {"editor" "network"}
+                                              :toggle-value {"rules" [entry]}}
+                                             ["rules" 0 "access" "none" :done :done]
+                                             []
+                                             {:menus menus})))
+        (expect (= ["read-only" "read-write" "none"]
+                   (mapv :value (get @menus "Host rules · access")))))))

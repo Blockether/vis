@@ -15,6 +15,16 @@ const objectValue = (value: SettingValue): ObjectValue =>
   !Array.isArray(value) && typeof value === 'object' ? value : {};
 const workspaceProperties = configSchema.$defs.workspaceEntry.properties;
 const networkRuleProperties = configSchema.$defs.networkRule.properties;
+type EnumSchema = { enum: string[]; 'x-vis-enum-aliases'?: Record<string, string> };
+function enumValue(schema: EnumSchema, value: string): string {
+  return schema['x-vis-enum-aliases']?.[value] ?? value;
+}
+function enumOptions(schema: EnumSchema, value: string) {
+  return [...new Set([...schema.enum, value].map((option) => enumValue(schema, option)))].map(
+    (value) => ({ value, label: value }),
+  );
+}
+
 type NumericSchema = { type?: string; minimum?: number; maximum?: number };
 function numericSchema(pointer?: string): NumericSchema {
   let node: unknown = configSchema;
@@ -113,10 +123,8 @@ function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
               />
               <Select
                 aria-label={`Root access ${index + 1}`}
-                value={String(row.access ?? 'read-write')}
-                options={[
-                  ...new Set([...workspaceProperties.access.enum, String(row.access ?? 'read-write')]),
-                ].map((value) => ({ value, label: value }))}
+                value={enumValue(workspaceProperties.access, String(row.access ?? 'read-write'))}
+                options={enumOptions(workspaceProperties.access, String(row.access ?? 'read-write'))}
                 onValueChange={(next) => update(index, 'access', next)}
               />
               <Input
@@ -268,10 +276,8 @@ function NetworkRules({
             />
             <Select
               aria-label={`Rule access ${index + 1}`}
-              value={String(row.access ?? 'read-write')}
-              options={[
-                ...new Set([...networkRuleProperties.access.enum, String(row.access ?? 'read-write')]),
-              ].map((value) => ({ value, label: value }))}
+              value={enumValue(networkRuleProperties.access, String(row.access ?? 'read-write'))}
+              options={enumOptions(networkRuleProperties.access, String(row.access ?? 'read-write'))}
               onValueChange={(next) => update(index, 'access', next)}
             />
             <StringList

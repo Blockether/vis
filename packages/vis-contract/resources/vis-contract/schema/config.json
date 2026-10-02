@@ -473,7 +473,13 @@
             "read-write",
             "readwrite",
             "rw"
-          ]
+          ],
+          "x-vis-enum-aliases": {
+            "readonly": "read-only",
+            "ro": "read-only",
+            "readwrite": "read-write",
+            "rw": "read-write"
+          }
         },
         "search": {
           "type": "boolean"
@@ -575,7 +581,17 @@
             "none",
             "deny",
             "closed"
-          ]
+          ],
+          "x-vis-enum-aliases": {
+            "readonly": "read-only",
+            "ro": "read-only",
+            "readwrite": "read-write",
+            "rw": "read-write",
+            "full": "read-write",
+            "all": "read-write",
+            "deny": "none",
+            "closed": "none"
+          }
         },
         "methods": {
           "type": "array",
