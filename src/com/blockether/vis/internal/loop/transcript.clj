@@ -1960,13 +1960,13 @@
 
        fs-part
        (if (:fs? caps)
-         "FS: see `session[\"access\"][\"filesystem\"]` for effective roots and modes; prefer `ls`/`grep` over shell."
-         "FS: unavailable.")
+         "Files: see `session[\"access\"][\"filesystem\"]` for the roots and modes. Use `ls` and `grep`, not a shell."
+         "Files: not available.")
 
        net-part
        (cond (not net-on?) "Network: off."
-             allowed (str "Network: on, reachable hosts: " (str/join ", " allowed) ".")
-             star? "Network: on (any host except blocked defaults)."
+             allowed (str "Network: on, only for these hosts: " (str/join ", " allowed) ".")
+             star? "Network: on for all hosts except the blocked defaults."
              :else "Network: on; see `session[\"access\"][\"network\"]`.")]
 
       (str fs-part " " net-part))))
@@ -1980,30 +1980,25 @@
   {:name "python_execution"
    :description
    (str
-     "Run Python in the session sandbox — the only call. `print(...)` is the ONLY channel back: the block "
-     "runs as a script, so what it prints is what returns, and it ends by printing exactly what the answer "
-     "needs. Batch, filter and chain work here: "
-     "`await gather(...)` runs independent calls together. State persists across blocks and turns; "
-     "a restarted sandbox restores saved helpers and variables and says so; "
-     "project packages need a project REPL. "
-     "Nothing is silent: errors surface whether the block printed or not. "
+     "Run Python in the session sandbox. This is the only tool. `print(...)` is the only channel back: "
+     "the block runs as a script, and you get only what it prints. End the block with a print of exactly "
+     "what the answer needs. Batch, filter and chain work in the block; `await gather(...)` runs "
+     "independent calls together. Project packages need a project REPL. "
+     "Errors always show, also when the block printed nothing. "
      (when (toggles/enabled? "improve")
        (str
-         "Each failed python_execution is automatically saved in Improve as complain from autocomplain, "
-         "with its session and turn/iteration/form; it never auto-pings peers. "
-         "The failure reports those coordinates and its entry ID. "))
-     "Every capability is a plain Python "
-     "name here, so a result is an ordinary value you keep in a variable, and printing is what carries it "
-     "into the transcript. A shell is WATCHED here: `sh = await shell(...)`, then a BOUNDED "
-     "loop that calls `sh.logs()` on the handle it got back and breaks on what it read (an error line, "
-     "a parsed port); `sh.wait(secs)` is that loop already written — no tool "
-     "waits for you. A file or socket you drop is closed for you; close what you KEEP "
-     "(`with open(...)`, `sh.stop()`) — the sandbox refuses an open past its descriptor "
-     "ceiling (`VIS_PY_MAX_OPEN_FILES`), because a full table stops `shell` children spawning."
+         "Improve saves each failed python_execution as a complaint from autocomplain, with its session "
+         "and turn/iteration/form. It never pings peers. The failure shows those coordinates and its entry ID. "))
+     "Each capability is a plain Python name, so a result is a normal value that you keep in a variable. "
+     "Only what you print goes into the transcript. Watch a shell: `sh = await shell(...)`, then a bounded "
+     "loop that calls `sh.logs()` on that handle and stops on what it reads (an error line, a parsed port). "
+     "`sh.wait(secs)` is that loop. No tool waits for you. Vis closes a file or socket that you drop. "
+     "Close what you keep (`with open(...)`, `sh.stop()`). The sandbox refuses an open past its descriptor "
+     "limit (`VIS_PY_MAX_OPEN_FILES`). A full descriptor table stops `shell` from starting processes."
      (when-let [cap (python-execution-capability-line caps)]
        (str " " cap)))
    :result
-   "Exactly captured `print(...)` output (empty string when the block printed nothing — an unprinted value does not come back); evaluation failures are failed tool results, not result objects."
+   "The exact `print(...)` output. A block that printed nothing gives an empty string; an unprinted value does not come back. An evaluation failure is a failed tool result, not a result object."
    :schema {:type "object"
             :properties {"code" {:type "string" :description "Python source."}}
             :required ["code"]

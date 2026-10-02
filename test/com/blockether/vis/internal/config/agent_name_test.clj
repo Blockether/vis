@@ -82,7 +82,7 @@
                 (expect (str/includes? (:body response) "\"agent_name\":\"Ada\"")))
               (expect (str/starts-with? (prompt/build-system-prompt {:workspace-root (.getPath
                                                                                        project)})
-                                        "You are Ada. Complete the task autonomously."))
+                                        "You are Ada. Complete the task on your own."))
               (.mkdirs (io/file project ".vis"))
               (spit (io/file project ".vis/config.yml") "agent_name: Overlay\n")
               (expect (= "Overlay" (state/session-agent-name sid)))

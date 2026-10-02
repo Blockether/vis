@@ -7906,24 +7906,24 @@
                              :required ["code"]
                              :additionalProperties false}
                             (:schema tool)))
-                 (doseq [fact ["project packages need a project REPL" "plain Python"
-                               "errors surface"
+                 (doseq [fact ["Project packages need a project REPL" "plain Python"
+                               "Errors always show"
                                ;; The sandbox has ONE success channel. The runtime used to hand a
                                ;; bare trailing expression's value back as a second result, so the
                                ;; one tool the model is given has to say that print is all there is.
-                               "`print(...)` is the ONLY channel back"
-                               "the block runs as a script, so what it prints is what returns"
+                               "`print(...)` is the only channel back"
+                               "the block runs as a script, and you get only what it prints"
                                ;; With no result store left, the description states the one rule that
                                ;; replaces it: what you print is what the transcript keeps.
-                               "printing is what carries it into the transcript"
+                               "Only what you print goes into the transcript"
                                ;; The sleep/poll prohibition lives HERE and nowhere else: the core
                                ;; prompt deliberately dropped its duplicate copy.
-                               "`sh.logs()`" "no tool waits for you"
+                               "`sh.logs()`" "No tool waits for you"
                                ;; Dropping a handle closes it — that is the interpreter's job, not
                                ;; ours. What still bites is what the block HOLDS: the descriptor
                                ;; table is the whole process's, and filling it stops `shell` from
                                ;; spawning at all, so the ceiling and its escape hatch are named.
-                               "close what you KEEP" "VIS_PY_MAX_OPEN_FILES"]]
+                               "Close what you keep" "VIS_PY_MAX_OPEN_FILES"]]
                    (expect (str/includes? (:description tool) fact))))))
 
 ;; ── post-refresh propagation backoff (gateway-wide OAuth-401 storm guard) ──

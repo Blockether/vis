@@ -83,7 +83,7 @@
                 "draft_discard()` without asking" "Do not discard an active task"
                 "Confirm destructive discard only when unapproved changes or unmerged commits would be lost"
                 "If drafts are unavailable or blocked, report the blocker"
-                "never silently fall back to shared-checkout edits"]]
+                "Never silently fall back to shared-checkout edits"]]
               (expect (str/includes? prompt required) (str backend ": " required))))))))
   (it "omits the workflow by default, removes it when switched off and restores it on opt-in"
       (let [value-of toggles/value-of]

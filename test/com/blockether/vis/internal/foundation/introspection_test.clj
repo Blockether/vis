@@ -565,7 +565,7 @@
            ["Read session history only when the answer changes with what a past session says"
             "session diagnostics" "evidence from a referenced conversation"
             "context another session holds" "is a reference, not a reason"
-            "One search round settles it" "ends the lookup"
+            "One search round settles it" "end the lookup"
             "A session or turn start, and `/reload`, keep the conversation intact: continue from it."]]
           (expect (str/includes? text required)))
         (expect (not (str/includes? text "Call `await read_session()` once."))))))
@@ -578,7 +578,7 @@
         (let [text (#'foundation/combined-prompt {})]
           (doseq [required ["THIS session's conversation is already in front of you"
                             "never undoes a fold, whatever `fold_count` says"
-                            "naming that fact and its `tN/iK` scope first"
+                            "name that fact and its `tN/iK` scope"
                             "Reuse the result unless newer evidence is needed."
                             "tool rows overlap, so read each on its own"
                             "transcript/turns/iterations/blocks" "await list_sessions(search="

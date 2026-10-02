@@ -160,11 +160,10 @@
       (str/join
         "\n"
         (cons
-          (str
-            "Harness SKILLS available — `doc(\"name\")` prints one whole SKILL.md, `apropos(pattern)`"
-            " filters their names; reading one has no session effect"
-            " (a `[project]` tag names the nested project that OWNS a skill — work under that"
-            " directory when you use it):")
+          (str "Available harness skills. `doc(\"name\")` prints one whole SKILL.md, and"
+               " `apropos(pattern)` filters their names. Reading a skill has no session effect. A"
+               " `[project]` tag names the nested project that owns a skill; work in that directory"
+               " when you use it:")
           (for [s ss]
             (str "  "
                  (:name s)

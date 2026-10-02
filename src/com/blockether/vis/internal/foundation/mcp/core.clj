@@ -1385,13 +1385,13 @@
    at `linear.save_issue(...)` - a NameError, because a server is not a module
    and a tool name is not an attribute. Naming the verb here costs one line per
    request and saves the iterations that guessing burns."
-  (str "MCP servers are reachable through ONE sandbox verb: `await "
+  (str "Call MCP servers through ONE sandbox verb: `await "
        sandbox-verb
-       "(server, tool, args)`, where `server` and `tool` are STRINGS from"
-       " `session[\"env\"][\"mcp\"][\"servers\"]` - never attributes, modules or a per-server"
-       " namespace. With `server` alone it answers that server's tools with their input"
-       " schemas; result text is `content[i][\"text\"]`. `doc(\"<server>/<tool>\")` reads one"
-       " tool's description without a call."))
+       "(server, tool, args)`. `server` and `tool` are STRINGS from"
+       " `session[\"env\"][\"mcp\"][\"servers\"]`, never attributes, modules or a per-server"
+       " namespace. With only `server`, it returns that server's tools and their input"
+       " schemas. The result text is `content[i][\"text\"]`. `doc(\"<server>/<tool>\")` reads"
+       " one tool's description without a call."))
 
 (def vis-extension
   (ext/extension

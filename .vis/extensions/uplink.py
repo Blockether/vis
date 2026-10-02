@@ -707,11 +707,11 @@ class Uplink:
 uplink = Uplink()
 
 PROMPT = """uplink surface active — one administered server over SSH:
-  uplink.run(command, timeout_s=60)        execute a remote shell command
+  uplink.run(command, timeout_s=60)        run a remote shell command
   uplink.service(unit)                     systemd unit state
   uplink.health(port, path="/healthz")     loopback HTTP from the server itself
   uplink.info()                            host, uptime, memory
-  uplink.put(local, remote) / uplink.get(remote, local)   file copies
+  uplink.put(local, remote) / uplink.get(remote, local)   copy files
 Results are typed frozen objects (CommandResult, ServiceStatus, ...)."""
 
 

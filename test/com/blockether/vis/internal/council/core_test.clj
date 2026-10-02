@@ -888,10 +888,10 @@
              (it "wake continuation guidance"
                  (with-council
                    (let [prompt (council 'prompt nil)]
-                     (expect (str/includes? prompt "Continue the existing user-authorized task"))
+                     (expect (str/includes? prompt "If that task is clear and safe, continue it"))
                      (expect (str/includes? prompt
-                                            "When a peer declines ownership the task stays yours"))
-                     (expect (str/includes? prompt "existing authorization carries over"))))))
+                                            "When a peer declines ownership, the task stays yours"))
+                     (expect (str/includes? prompt "its authorization carries over"))))))
 
 (defdescribe
   independent-store-and-reopen-test

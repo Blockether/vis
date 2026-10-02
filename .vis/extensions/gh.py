@@ -2043,13 +2043,13 @@ gh = Gh()
 
 
 PROMPT = """gh surface active — GitHub through the gh CLI:
-  gh.login(hostname="github.com")          authenticate through private human input
+  gh.login(hostname="github.com")          sign in through private human input
   gh.runs(repo=None, limit=10)             recent Actions runs, newest first
   gh.watch(run=None, repo=None, pr=None)   one run or PR checks, live, until failure or completion
-Every answer is a typed frozen object (Account, RunSummary, WatchOutcome). A watch opens a live view
-the human can watch and stop; its WatchOutcome carries every job, step and failed-log tail once. Use
-gh.watch() instead of a shell polling loop or a loop around gh.watch(): it signs in by itself when
-needed and follows a newer run that replaces the one it watches."""
+Each answer is a typed frozen object (Account, RunSummary, WatchOutcome). A watch opens a live view
+that the human can watch and stop. Its WatchOutcome holds every job, step and failed-log tail, once.
+Use gh.watch(), not a shell polling loop or a loop around gh.watch(). It signs in when needed and
+follows a newer run that replaces the watched run."""
 
 
 vis.register_extension(
