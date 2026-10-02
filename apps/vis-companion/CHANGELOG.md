@@ -2,6 +2,21 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.29 (7094) — 2026-10-02
+<!-- commit: 68db8a2a663192461075a39ad82a5a9b2dceb288 -->
+
+- Stabilize delete rows and remove double borders
+- Deduplicate access mode choices
+- Remove advanced JSON editors
+- Make session switches fast and flicker-free
+- Remove No project, load on scroll and always split
+- Open group actions on header right-click
+- Drop inheritance controls from global settings
+- Offer groups only inside a chosen project
+- Restore the per-machine settings layout
+- Show session search filters as app dropdowns
+- Record companion build 7075
+
 ## 0.2.29 (7075) — 2026-10-02
 <!-- commit: ae87d583ca7a0a3f75e8b580dd686a664419293a -->
 
