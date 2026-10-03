@@ -565,15 +565,18 @@
 
              ;; A closed digest paints a subset of its open steps, plus its own row and gap.
              ;; Files stay visible, so their steps keep the full charge. Other steps keep
-             ;; their failures. Recaps and fallback notes lose the slack of the hidden code,
-             ;; so they get their own rows.
+             ;; their failures, but not an interruption. Recaps and fallback notes lose the
+             ;; slack of the hidden code, so they get their own rows.
              closed-step-rows
              (fn ^long [it]
                (let [forms
                      (:forms it)
 
                      shown-rows
-                     (if (seq (:attachments it)) form-rows-of (comp error-rows :error))]
+                     (if (seq (:attachments it))
+                       form-rows-of
+                       (fn [{:keys [error]}]
+                         (if (render/interrupted-error? error) 0 (error-rows error))))]
 
                  (+ (long (error-rows (:error it)))
                     (* 3 (+ (count (:recaps it)) (count (:provider-fallbacks it))))

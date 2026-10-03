@@ -1180,6 +1180,34 @@
         (expect (= 2 (count @events)))
         (expect (true? (:cancelled (second @events))))
         (expect (nil? (:failed (second @events))))))
+  ;; Regression: the shell and editing error hooks turn a user interrupt into a failure
+  ;; envelope, and every Activity summary counted the killed call as failed.
+  (it "classifies an interrupted failure envelope as cancellation"
+      (let [events
+            (atom [])
+
+            interrupted
+            (fn [_err _env _f _args]
+              {:result (extension/failure {:result nil
+                                           :metadata {:interrupted? true :status :interrupted}
+                                           :error {:message "probe interrupted while running"}})})
+
+            sym
+            (extension/symbol #'activity-cancel-probe {:tag :observation :on-error-fn interrupted})
+
+            ext
+            {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}
+
+            message
+            (try (binding [extension/*tool-event-sink* #(swap! events conj %)]
+                   (extension/invoke-symbol-wrapper ext sym [{}] {}))
+                 nil
+                 (catch Throwable t (ex-message t)))]
+
+        (expect (= "probe interrupted while running" message))
+        (expect (= [:start :terminal] (mapv :phase @events)))
+        (expect (true? (:cancelled (second @events))))
+        (expect (nil? (:failed (second @events))))))
   ;; Regression, issue td-e72bfd: the generic live ticker truncated a path at 64
   ;; characters before the width-aware Activity row could use available columns.
   (it "preserves the primary path until the bounded Activity event boundary"

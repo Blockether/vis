@@ -2672,8 +2672,9 @@ function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
 /**
  * THE ROW THAT STANDS FOR THE STEPS UNDER A NOTE. It counts the steps, then the calls that
  * are running, failed or cancelled, and it shows their measured time on the right. A
- * failure colors the chevron. A closed row also holds the live control of its steps.
- * Opening the row shows the thinking, code and Activity of the steps. Mirrors the TUI
+ * failure colors the chevron. A cancelled call or an interrupted step does not, because a
+ * stop is not a failure. A closed row also holds the live control of its steps. Opening the
+ * row shows the thinking, code and Activity of the steps. Mirrors the TUI
  * (`render/step-digest-entries`).
  */
 function StepDigest({
@@ -2701,7 +2702,7 @@ function StepDigest({
         ? [
             {
               text: `${activity.counts[state]} ${state}`,
-              tone: state === 'running' ? '' : 'text-err-ink',
+              tone: state === 'failed' ? 'text-err-ink' : '',
             },
           ]
         : [],
@@ -2715,7 +2716,6 @@ function StepDigest({
   const duration = measured > 0 ? formatDuration(measured) : null;
   const failed =
     activity.counts.failed > 0 ||
-    activity.counts.cancelled > 0 ||
     forms.some((form) => form.error != null && !interruptedPython(form));
   return (
     <div className="flex min-w-0 items-center gap-2">
@@ -2782,14 +2782,18 @@ function DigestLive({
 }
 
 /**
- * WHAT A CLOSED DIGEST KEEPS IN VIEW: the failures that its open steps show. Its live views
- * are one control on the digest row, and files stay in the attachment rail of the segment.
+ * WHAT A CLOSED DIGEST KEEPS IN VIEW: the failures that its open steps show. A stop is not a
+ * failure: the row counts its cancelled calls, and the turn tells who stopped it. Its live
+ * views are one control on the digest row, and files stay in the attachment rail of the
+ * segment.
  */
 function ClosedDigest({ chunks, showCode }: { chunks: Chunk[]; showCode: boolean }) {
   // Hidden Python code hides its failures too, as in the open steps.
-  const failures = chunks.flatMap((chunk) =>
-    chunk.kind === 'cards' ? chunk.cards : showCode || !chunk.isPython ? chunk.forms : [],
-  );
+  const failures = chunks
+    .flatMap((chunk) =>
+      chunk.kind === 'cards' ? chunk.cards : showCode || !chunk.isPython ? chunk.forms : [],
+    )
+    .filter((form) => !interruptedPython(form));
   return <FailedCards cards={failures} />;
 }
 

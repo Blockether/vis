@@ -10951,6 +10951,34 @@ print(paths)"
         (let [open (render steps (open-digests "s" "t"))]
           (expect (str/includes? (text open) "Build · 3 lines"))
           (expect (nil? (get-in (digest-row open) [:meta :digest-live]))))))
+    ;; Regression, user screenshot: a stopped step colored its closed digest red and kept the
+    ;; interruption under the row, as if the step had failed.
+    (it "keeps a stopped step neutral and off a closed digest"
+        (let [stopped
+              (assoc (forms 0)
+                :success? false
+                :error {:type "vis/interrupted" :message "Python execution was interrupted"}
+                :activity (assoc-in (:activity (forms 0)) [:rows 0 :state] "cancelled"))
+
+              entries
+              (#'render/trace-render-entries
+               {:iterations [{:iteration-id "i1" :assistant-prose note :forms [stopped]}]
+                :live? false
+                :content-w 76
+                :session-id "s"
+                :session-turn-id "t"
+                :settings {:summarize-steps true}})
+
+              row
+              (first (filter digest? entries))
+
+              text
+              (str/join "\n" (map :line entries))]
+
+          (expect (str/includes? (:line row) "1 cancelled"))
+          (expect (nil? (get-in row [:meta :status-tone])))
+          (expect (not (str/includes? text "FAILED")))
+          (expect (not (str/includes? text "interrupted")))))
     ;; Real turns split here: a step that produced an artifact or failed a check opened
     ;; its own Activity between the same two notes.
     (it

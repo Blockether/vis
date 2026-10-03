@@ -49,7 +49,8 @@ waits in a queue. You can also cancel the running turn or quit the session.
 ### Follow progress
 
 Vis adds short notes while it works. Under each note, one digest row gives a summary of the steps after the note.
-The row shows the number of steps, any running or failed calls and the time that the steps took.
+The row shows the number of steps, any running, failed or cancelled calls and the time that the steps took.
+When you stop a turn, its running call counts as cancelled, not failed.
 Open the digest to see the thinking, code and Activity of these steps. Failures, files and images stay visible when the digest is closed.
 
 When the steps open live views, a closed row also shows a live button. Select it to open the newest running live view, or else the newest recording.

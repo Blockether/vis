@@ -1268,6 +1268,44 @@ describe('a Python evaluation without detected Activity', () => {
     expect(painted.container.querySelector('[data-code-result]')).toBeNull();
   });
 
+  // Regression, user screenshot: a stopped step showed "1 failed" in red on its closed
+  // digest row, and an Interrupted card stood under the row.
+  it('keeps a stopped step neutral and off its closed digest row', () => {
+    const painted = render(
+      <AssistantMessage
+        turn={turnWith({
+          source: 'run_suite()',
+          error: { type: 'vis/interrupted', message: 'Python execution was interrupted' },
+          duration_ms: 1237,
+          activity: {
+            state: 'cancelled',
+            counts: { running: 0, succeeded: 0, failed: 0, cancelled: 1 },
+            rows: [
+              {
+                id: 'shell-1',
+                sequence: 1,
+                operation: 'shell',
+                state: 'cancelled',
+                summary: 'python3 suite.py',
+                resources: [],
+                evidence: [],
+              },
+            ],
+            omitted: { rows: 0, by_classification: {} },
+          },
+        })}
+      />,
+    );
+    const digest = painted.container.querySelector<HTMLElement>('[data-step-digest]')!;
+    expect(digest).toHaveAttribute('aria-label', 'Expand steps: 1 step · 1 cancelled');
+    expect(digest).not.toHaveClass('text-err-ink!');
+    expect(digest.querySelector('.text-err-ink')).toBeNull();
+    expect(digest.parentElement).toHaveTextContent('1.2s');
+    expect(painted.container.textContent).not.toContain('Interrupted');
+    fireEvent.click(digest);
+    expect(announcedStates(painted.container)).toContain('Interrupted');
+  });
+
   it('enhances the same receipt when semantic activity arrives', () => {
     const runningTurn = turnWith({ source: 'answer = search()' }, 'running');
     const painted = renderOpenSteps(<AssistantMessage turn={runningTurn} streaming />);

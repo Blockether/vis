@@ -5408,6 +5408,12 @@
 
     :idle))
 
+(defn interrupted-error?
+  "True when a step error only records a stop: someone interrupted the Python execution.
+   A stop is not a failure."
+  [error]
+  (contains? #{:vis/interrupted "vis/interrupted"} (:type error)))
+
 (defn- activity-row-glyph
   "ONE MARK FOR EVERY STEP - the COLOUR is the state.
 
@@ -7930,7 +7936,8 @@
             ;; keeps only failures and files, and its row opens the live views.
             (vec (concat (inset-entries
                            (if digest-closed?
-                             inline-error-message-lines
+                             ;; The digest row and the turn tell a stop, so only failures stay.
+                             (when-not (interrupted-error? error) inline-error-message-lines)
                              (concat comment-block code-block execution-details activity-surface)))
                          artifact-block
                          (when-not (or activity-run digest-closed?) generic-run-entries)))))
@@ -8453,8 +8460,9 @@
 (defn- step-digest-entries
   "One DIGEST row for the steps after a note. It counts the steps and their running, failed
    and cancelled calls, and shows their measured time on the right. A failed step colors it
-   red, and a running step colors it yellow. A closed row also has a live button. It opens
-   the newest running live view of the steps, or else their newest recording."
+   red, and a running step colors it yellow. A cancelled call or an interrupted step keeps
+   the plain color, because a stop is not a failure. A closed row also has a live button. It
+   opens the newest running live view of the steps, or else their newest recording."
   [{:keys [forms node-id open? steps lives]} content-w session-id]
   (let [states
         (frequencies (map activity-row-state (mapcat :rows (keep :activity forms))))
@@ -8508,8 +8516,9 @@
 
         tone
         (cond (or (:failed states)
-                  (:cancelled states)
-                  (some #(or (:error %) (false? (:success? %))) forms))
+                  (some #(and (or (:error %) (false? (:success? %)))
+                              (not (interrupted-error? (:error %))))
+                        forms))
               :error
               (or (:running states) (seq running-lives)) :running
               :else nil)]
