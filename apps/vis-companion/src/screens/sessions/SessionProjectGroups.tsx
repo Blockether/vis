@@ -527,7 +527,7 @@ function GroupBand({
                   {statuses.map((item) => item.description).join(' ')}
                 </span>
                 {statuses.map((item, index) => (
-                  <span key={item.label} aria-hidden="true" className="inline-flex items-center gap-2 whitespace-nowrap">
+                  <span key={item.label} aria-hidden="true" className="inline-flex items-center gap-1 whitespace-nowrap mouse:gap-2">
                     {index > 0 && <span aria-hidden="true">·</span>}
                     <span className={`font-semibold ${sessionStatusTone(item.label)}`}>
                       {item.count} {item.label}
@@ -1836,7 +1836,7 @@ export const ProjectGroup = memo(function ProjectGroup({
         unit="session"
       />
       {isGroupRevealing || isSessionRevealing ? (
-        <span className="inline-flex items-center gap-2 whitespace-nowrap">
+        <span className="inline-flex items-center gap-1 whitespace-nowrap mouse:gap-2">
           <span aria-hidden="true">|</span>
           <span className="font-bold">
             {isGroupRevealing && isSessionRevealing ? 'ARCHIVED' : 'MIXED VIEWS'}
@@ -1850,7 +1850,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           isAfterTotal
           renderLive={(label) => (
             <TextButton
-              isCaption
+              isTally
               className="pointer-events-auto relative shrink-0 whitespace-nowrap"
               aria-label={
                 running === 1

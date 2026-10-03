@@ -22,6 +22,11 @@ const groups = ['Wallet work', 'Receipts'].map((name, index) => ({
 const rows = Array.from({ length: 54 }, (_, index) => ({
   ...base.rows[3], id: 'sticky-row-' + index, title: 'Session ' + index,
   group_id: index < 36 ? groups[Math.floor(index / 18)].id : null,
+  live: index < 36 && index % 18 < 12,
+  is_awaiting_input: index < 36 && index % 18 < 3,
+  awaiting_input_count: index < 36 && index % 18 < 3 ? 1 : 0,
+  is_unread: index < 36,
+  unread_answers: index < 36 ? 1 : 0,
 }));
 const projects = [
   { ...base, rows, groups },
@@ -45,7 +50,7 @@ createRoot(document.getElementById('root')!).render(
     <div className="min-h-0 flex-1 overflow-y-auto" data-testid="scroll-pane">
       {projects.map(project => <ProjectGroup key={project.root}
         group={{ root: project.root, label: project.name, projectId: project.projectId,
-          tally: { count: 1934, live: 2, awaiting: 0, unread: 28 }, sessions: project.rows }}
+          tally: { count: 1934, live: 12, awaiting: 3, unread: 28 }, sessions: project.rows }}
         machine={{ conn, sessions: project.rows }} context={context}
         reading={{ pageSize: 20, isVisible: true }}
         creation={{ state: null, start: async () => {} }} initiallyOpen />)}
@@ -90,6 +95,29 @@ async function box(locator) {
   });
 }
 
+async function expectSingleLineCounts(counts, name, actions) {
+  const metrics = await counts.evaluate(element => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    const items = [...element.children].filter(child => !child.classList.contains('sr-only'));
+    return {
+      left: rect.left, right: rect.right, height: rect.height,
+      lineHeight: parseFloat(style.lineHeight),
+      tops: items.map(child => child.getBoundingClientRect().top),
+      widths: items.map(child => ({ width: child.clientWidth, content: child.scrollWidth })),
+      fontSizes: [...element.querySelectorAll('span.font-bold, span.font-semibold')].map(child => getComputedStyle(child).fontSize),
+    };
+  });
+  expect(metrics.height, 'counts must stay on one line').toBeLessThanOrEqual(metrics.lineHeight);
+  expect(Math.max(...metrics.tops) - Math.min(...metrics.tops)).toBeLessThanOrEqual(1);
+  for (const item of metrics.widths) expect(item.content).toBeLessThanOrEqual(item.width + 1);
+  const nameBox = await name.boundingBox();
+  expect(nameBox.width, 'leave room for the project or group name').toBeGreaterThanOrEqual(24);
+  expect(nameBox.x + nameBox.width).toBeLessThanOrEqual(metrics.left + 1);
+  expect(metrics.right).toBeLessThanOrEqual((await actions.boundingBox()).x + 1);
+  expect(new Set(metrics.fontSizes)).toEqual(new Set(['8px']));
+}
+
 // Regression: keep project → Groups → current group together throughout a phone scroll.
 for (const [engine, device] of [[chromium, 'Pixel 7'], [webkit, 'iPhone 13']]) {
   it.runIf(process.env.CI)(`stacks mobile session headings without gaps in ${engine.name()}`, async () => {
@@ -119,6 +147,10 @@ for (const [engine, device] of [[chromium, 'Pixel 7'], [webkit, 'iPhone 13']]) {
       for (const viewport of [{ width: 393, height: 852 }, { width: 320, height: 568 }, { width: 852, height: 393 }]) {
         await page.setViewportSize(viewport);
         await frame(page);
+        // Regression: project and group statuses must not wrap on narrow phones.
+        const projectCounts = header.getByText('1934 sessions', { exact: true }).locator('..');
+        await expectSingleLineCounts(projectCounts, header.getByTitle('/CryptoSafe', { exact: true }),
+          header.getByRole('button', { name: 'Actions for /CryptoSafe', exact: true }));
         for (const [name, rowId] of [['Wallet work', 5], ['Receipts', 23]]) {
           await scrollTo(page, project.locator(`[data-session-id="sticky-row-${rowId}"]`), 220);
           const projectBox = await box(header);
@@ -127,6 +159,10 @@ for (const [engine, device] of [[chromium, 'Pixel 7'], [webkit, 'iPhone 13']]) {
           expect(projectBox.top).toBe(48);
           expect(Math.abs(groupsBox.top - projectBox.bottom), 'project / Groups gap').toBeLessThanOrEqual(1);
           expect(Math.abs(groupBox.top - groupsBox.bottom), 'Groups / current group gap').toBeLessThanOrEqual(1);
+          const disclosure = project.getByRole('button', { name: 'Collapse ' + name, exact: true });
+          const groupCounts = disclosure.getByText('3 HITL', { exact: true }).locator('../..');
+          await expectSingleLineCounts(groupCounts, disclosure.getByTitle(name, { exact: true }),
+            project.getByRole('button', { name: 'Actions for ' + name, exact: true }));
         }
       }
 

@@ -720,7 +720,7 @@ describe('ProjectGroup groups', () => {
     const total = within(header).getByText(`${ROWS.length} sessions`);
     expect(total).not.toHaveClass('font-bold');
     expect(within(header).getByTitle(ROOT)).not.toContainElement(total);
-    expect(total.parentElement).toHaveClass('text-ui', 'mouse:text-chip');
+    expect(total.parentElement).toHaveClass('text-chip', 'whitespace-nowrap');
     const wallet = await band('Wallet work');
     expect(within(wallet).queryByText('2 sessions')).toBeNull();
   });

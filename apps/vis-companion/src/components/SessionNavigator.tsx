@@ -85,9 +85,9 @@ export const HEADER_TRAIL =
 /** Machine and project headers align their identity and disclosure marks. */
 export const LIST_MARK = 'grid size-3.5 shrink-0 place-items-center';
 
-/** Compact counts stay right of the name and wrap only within their own column. */
+/** Keep compact project and group counts on one line beside the name. */
 export const HEADER_COUNTS =
-  'flex min-w-0 max-w-[60%] shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-0.5 font-mono text-ui text-dialog-hint mouse:text-chip';
+  'flex shrink-0 items-center justify-end gap-1 whitespace-nowrap font-mono text-chip text-dialog-hint mouse:gap-2';
 
 /**
  * One heading, standing in the band that carries the boundary (`HEADER_BAND`).
@@ -119,7 +119,7 @@ export function SectionHeader({
     const header = headerRef.current;
     const project = header?.closest<HTMLElement>('[data-project-root]');
     if (!header || !project) return;
-    // Wrapped counts must not leave sticky set headings under the project heading.
+    // Keep sticky set headings below the project's measured height.
     const measure = () => project.style.setProperty('--project-header-height', `${header.offsetHeight}px`);
     measure();
     const observer = new ResizeObserver(measure);
@@ -638,7 +638,7 @@ export function ProjectStatusCounts({
       </span>
     );
     return (
-      <span key={status.label} className="inline-flex items-center gap-2 whitespace-nowrap">
+      <span key={status.label} className="inline-flex items-center gap-1 whitespace-nowrap mouse:gap-2">
         {(index > 0 || isAfterTotal) && (
           <span aria-hidden="true">{index === 0 ? '|' : '·'}</span>
         )}
