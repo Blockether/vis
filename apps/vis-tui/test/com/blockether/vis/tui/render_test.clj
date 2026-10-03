@@ -10957,32 +10957,35 @@ print(paths)"
         (let [open (render steps (open-digests "s" "t"))]
           (expect (str/includes? (text open) "Build · 3 lines"))
           (expect (nil? (get-in (digest-row open) [:meta :digest-live]))))))
-    ;; Regression, user screenshot: a stopped step colored its closed digest red and kept the
-    ;; interruption under the row, as if the step had failed.
-    (it "keeps a stopped step neutral and off a closed digest"
-        (let [stopped
-              (assoc (forms 0)
-                :success? false
-                :error {:type "vis/interrupted" :message "Python execution was interrupted"}
-                :activity (assoc-in (:activity (forms 0)) [:rows 0 :state] "cancelled"))
+    ;; Regression, user report: a stop is a failure too. The digest row counts the stopped call
+    ;; and turns red, but the interruption stays inside the closed digest.
+    (it "counts a stopped step as a failure and keeps it inside a closed digest"
+        (doseq [state
+                ["failed" "cancelled"]
 
-              entries
-              (#'render/trace-render-entries
-               {:iterations [{:iteration-id "i1" :assistant-prose note :forms [stopped]}]
-                :live? false
-                :content-w 76
-                :session-id "s"
-                :session-turn-id "t"
-                :settings {:summarize-steps true}})
+                :let [stopped
+                      (assoc (forms 0)
+                        :success? false
+                        :error {:type "vis/interrupted" :message "Python execution was interrupted"}
+                        :activity (assoc-in (:activity (forms 0)) [:rows 0 :state] state))
 
-              row
-              (first (filter digest? entries))
+                      entries
+                      (#'render/trace-render-entries
+                       {:iterations [{:iteration-id "i1" :assistant-prose note :forms [stopped]}]
+                        :live? false
+                        :content-w 76
+                        :session-id "s"
+                        :session-turn-id "t"
+                        :settings {:summarize-steps true}})
 
-              text
-              (str/join "\n" (map :line entries))]
+                      row
+                      (first (filter digest? entries))
 
-          (expect (str/includes? (:line row) "1 cancelled"))
-          (expect (nil? (get-in row [:meta :status-tone])))
+                      text
+                      (str/join "\n" (map :line entries))]]
+
+          (expect (str/includes? (:line row) (str "1 " state)))
+          (expect (= :error (get-in row [:meta :status-tone])))
           (expect (not (str/includes? text "FAILED")))
           (expect (not (str/includes? text "interrupted")))))
     ;; Real turns split here: a step that produced an artifact or failed a check opened

@@ -1180,9 +1180,9 @@
         (expect (= 2 (count @events)))
         (expect (true? (:cancelled (second @events))))
         (expect (nil? (:failed (second @events))))))
-  ;; Regression: the shell and editing error hooks turn a user interrupt into a failure
-  ;; envelope, and every Activity summary counted the killed call as failed.
-  (it "classifies an interrupted failure envelope as cancellation"
+  ;; Regression, user report: a stop is a failure too. The shell and editing error hooks turn
+  ;; a user interrupt into a failure envelope, and Activity counts the stopped call as failed.
+  (it "counts an interrupted failure envelope as a failed call"
       (let [events
             (atom [])
 
@@ -1206,8 +1206,8 @@
 
         (expect (= "probe interrupted while running" message))
         (expect (= [:start :terminal] (mapv :phase @events)))
-        (expect (true? (:cancelled (second @events))))
-        (expect (nil? (:failed (second @events))))))
+        (expect (true? (:failed (second @events))))
+        (expect (nil? (:cancelled (second @events))))))
   ;; Regression, issue td-e72bfd: the generic live ticker truncated a path at 64
   ;; characters before the width-aware Activity row could use available columns.
   (it "preserves the primary path until the bounded Activity event boundary"

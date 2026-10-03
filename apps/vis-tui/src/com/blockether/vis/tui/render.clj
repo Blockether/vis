@@ -5409,8 +5409,8 @@
     :idle))
 
 (defn interrupted-error?
-  "True when a step error only records a stop: someone interrupted the Python execution.
-   A stop is not a failure."
+  "True when a step error records a stop: someone interrupted the Python execution. A stop
+   is a failure too, but a closed digest shows it only on its row."
   [error]
   (contains? #{:vis/interrupted "vis/interrupted"} (:type error)))
 
@@ -7936,7 +7936,7 @@
             ;; keeps only failures and files, and its row opens the live views.
             (vec (concat (inset-entries
                            (if digest-closed?
-                             ;; The digest row and the turn tell a stop, so only failures stay.
+                             ;; The row counts a stop as a failure. Its message stays in the steps.
                              (when-not (interrupted-error? error) inline-error-message-lines)
                              (concat comment-block code-block execution-details activity-surface)))
                          artifact-block
@@ -8461,8 +8461,8 @@
   "One DIGEST row for the steps after a note. It counts the steps, then what their calls did
    (`activity-cost-text`), then their running, failed and cancelled calls. It shows their
    measured time on the right. A failed step colors it red, and a running step colors it
-   yellow. A cancelled call or an interrupted step keeps the plain color, because a stop is
-   not a failure. A closed row also has a live button. It opens the newest running live view
+   yellow. A stop is a failure too, so a cancelled call or an interrupted step also colors it
+   red. A closed row also has a live button. It opens the newest running live view
    of the steps, or else their newest recording."
   [{:keys [forms node-id open? steps lives]} content-w session-id]
   (let [activities
@@ -8528,9 +8528,8 @@
 
         tone
         (cond (or (:failed states)
-                  (some #(and (or (:error %) (false? (:success? %)))
-                              (not (interrupted-error? (:error %))))
-                        forms))
+                  (:cancelled states)
+                  (some #(or (:error %) (false? (:success? %))) forms))
               :error
               (or (:running states) (seq running-lives)) :running
               :else nil)]

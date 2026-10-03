@@ -2119,11 +2119,7 @@
                :label (tool-start-label args)
                :phrase (tool-start-phrase sym-entry env args)
                :args args
-               :workspace-root (workspace/workspace-root env)}
-
-              ;; The canonical envelope that crosses to Python, also when it is a failure.
-              envelope
-              (volatile! nil)]
+               :workspace-root (workspace/workspace-root env)}]
 
           (record-tool-event! (activity-event/start-event ctx invocation details))
           (binding [*tool-event-context*
@@ -2137,8 +2133,13 @@
                       (record-tool-event!
                         (activity-event/content-event ctx invocation details blocks)))]
 
-            (try (let [value (binding [*tool-result-observer* #(vreset! envelope %)]
-                               (invoke-symbol-wrapper* ext sym-entry args env))]
+            (try (let [envelope
+                       (volatile! nil)
+
+                       value
+                       (binding [*tool-result-observer* #(vreset! envelope %)]
+                         (invoke-symbol-wrapper* ext sym-entry args env))]
+
                    (record-tool-event! (activity-event/terminal-event ctx
                                                                       invocation
                                                                       (assoc details
@@ -2155,12 +2156,7 @@
                                          (assoc details
                                            :started-at-ms started-at-ms
                                            :outcome
-                                           ;; An error hook can turn an interrupt into a failure
-                                           ;; envelope. Its call was cancelled, not failed.
-                                           (if (or (cancellation/cancellation? t)
-                                                   (get-in @envelope [:metadata :interrupted?]))
-                                             :cancelled
-                                             :failed)
+                                           (if (cancellation/cancellation? t) :cancelled :failed)
                                            :error t)))
                    (throw t)))))))))
 
