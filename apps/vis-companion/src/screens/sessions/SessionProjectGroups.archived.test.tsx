@@ -503,12 +503,11 @@ describe('a project shows the sessions it archived', () => {
 
     // The loose archived row plus the band's own session, and none of the live states: a
     // session that was put away is not running.
-    await waitFor(() =>
-      expect(screen.getByText('2 sessions').parentElement?.textContent).toBe(
-        // The separator's own span carries the space as margin, the way the live states do.
-        '2 sessions\u00b7Archived',
-      ),
-    );
+    await waitFor(() => {
+      const counts = screen.getByText('2 sessions').parentElement!;
+      expect(within(counts).getByText('ARCHIVED')).toBeVisible();
+      expect(counts).not.toHaveTextContent(/HITL|LIVE|NEW/);
+    });
   });
 
   it('keeps the reveal on this device, so the project opens where it was left', async () => {

@@ -51,8 +51,10 @@ describe('what a project header counts', () => {
 
     // One row is on screen; the header still says what the project holds.
     expect(await screen.findByText('400 sessions')).toBeVisible();
-    expect(screen.getAllByText(/2 live/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/1 needs input/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/2 LIVE/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/1 HITL/).length).toBeGreaterThan(0);
+    const header = screen.getByRole('button', { name: 'Collapse project' }).closest('header')!;
+    expect(header.querySelector('.animate-pulse')).toBeNull();
     // One list read, and a project's own page is the only other (`listProjectPage`).
     expect(
       view.requests.filter(
@@ -113,7 +115,8 @@ describe('what a project header names', () => {
       expect(within(header).getAllByText(name)).toHaveLength(1);
       const detail = header.querySelector('[title]');
       expect(detail).toHaveAttribute('title', root);
-      expect(detail?.textContent).toBe(`${qualifier ? `${qualifier} ·` : ''}1 session`);
+      expect(detail?.textContent).toBe(`${name}${qualifier}`);
+      expect(detail).not.toContainElement(within(header).getByText('1 session'));
     },
   );
 });
@@ -201,7 +204,7 @@ describe('the live count on a project band', () => {
     restore = view.restore;
 
     const live = await screen.findByRole('button', { name: 'Open the live session' });
-    expect(live.textContent).toMatch(/^1 live$/);
+    expect(live.textContent).toMatch(/^1 LIVE$/);
     fireEvent.click(live);
     expect(opened).toEqual(['s1']);
 
@@ -244,7 +247,7 @@ describe('the live count on a project band', () => {
     const live = await screen.findByRole('button', {
       name: 'Open the newest of 2 live sessions',
     });
-    expect(live.textContent).toMatch(/^2 live$/);
+    expect(live.textContent).toMatch(/^2 LIVE$/);
     fireEvent.click(live);
     expect(opened).toEqual(['newer']);
   });
@@ -267,7 +270,7 @@ describe('the live count on a project band', () => {
     // The band counts runs this device could watch, so the parked one — still
     // waiting on its human — is not what the tap walks into.
     const live = await screen.findByRole('button', { name: 'Open the live session' });
-    expect(live.textContent).toMatch(/^1 live$/);
+    expect(live.textContent).toMatch(/^1 LIVE$/);
     fireEvent.click(live);
     expect(opened).toEqual(['working']);
     expect(within(row('Parked')).getByText('HITL')).toBeInTheDocument();

@@ -72,14 +72,15 @@ export const NewerSession: Story = {};
 
 export const Collapsed: Story = { args: { initiallyOpen: false } };
 
-/** A path-derived project name appears once; the second line carries only counts. */
+/** A path-derived project name appears once, with counts on its right. */
 export const ProjectPathName: Story = {
   play: async ({ canvasElement, args }) => {
     const page = within(canvasElement);
     const heading = page.getByRole('button', { name: `Collapse ${args.group.label}` });
     const header = heading.closest('header')!;
     await expect(within(header).getAllByText(args.group.label)).toHaveLength(1);
-    await expect(header.querySelector('[title]')?.textContent).toBe('4 sessions');
+    await expect(header.querySelector('[title]')?.textContent).toBe(args.group.label);
+    await expect(within(header).getByText('4 sessions')).toBeVisible();
     await userEvent.click(heading);
     await expect(page.getByRole('button', { name: `Expand ${args.group.label}` })).toBeVisible();
     await expect(canvasElement.querySelector('[data-session-id]')).toBeNull();
@@ -643,9 +644,9 @@ export const LiveCountOpensTheRun: Story = {
     const heading = page.getByRole('button', { name: `Collapse ${args.group.label}` });
     const header = heading.closest('header')!;
     const live = within(header).getByRole('button', { name: 'Open the live session' });
-    await expect(live.textContent).toMatch(/^1 live$/);
-    // The caption keeps the total and running count on one line.
-    await expect(live.parentElement).toHaveTextContent(`${args.group.tally.count} sessions·1 live`);
+    await expect(live.textContent).toMatch(/^1 LIVE$/);
+    // The total and live action share the right-hand count column.
+    await expect(within(live.parentElement!).getByText(`${args.group.tally.count} sessions`)).toBeVisible();
     await userEvent.click(live);
     await expect(args.context.actions.commands.open).toHaveBeenCalledWith(conn, 'live-run');
     await expect(heading).toHaveAttribute('aria-expanded', 'true');

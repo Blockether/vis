@@ -172,18 +172,18 @@ describe("the project header's NEW count", () => {
     });
     restore = view.restore;
 
-    expect(await screen.findByText('2 new')).toBeVisible();
+    expect(await screen.findByText('2 NEW')).toBeVisible();
   });
 
   it('takes a visit off the count once, before and after the read mark returns', async () => {
     const rows = [unread('n1'), ...woken(19), unread('n2')];
     const view = renderSessionsScreen({ machines: [{ sessions: rows }] });
     restore = view.restore;
-    expect(await screen.findByText('2 new')).toBeVisible();
+    expect(await screen.findByText('2 NEW')).toBeVisible();
 
     view.holdList();
     act(() => view.setOpenSession({ conn: view.conns[0], sid: 'n1' }));
-    expect(screen.getByText('1 new')).toBeVisible();
+    expect(screen.getByText('1 NEW')).toBeVisible();
 
     // The gateway's next answer no longer counts n1: the visit is not taken off twice.
     const read = { ...unread('n1'), title: 'Read loaded', is_unread: false, unread_answers: 0 };
@@ -192,6 +192,6 @@ describe("the project header's NEW count", () => {
     act(() => view.setVisible(true));
     act(() => view.releaseList());
     expect(await screen.findByText('Read loaded')).toBeVisible();
-    expect(screen.getByText('1 new')).toBeVisible();
+    expect(screen.getByText('1 NEW')).toBeVisible();
   });
 });

@@ -117,7 +117,8 @@ describe('where "New session" lives', () => {
     // name is not printed under it; the canonical root stays on the element itself.
     const qualifier = screen.getByTitle('/Users/dev/project');
     expect(qualifier.textContent).not.toContain('~/project');
-    expect(qualifier.textContent).toContain('1 session');
+    expect(qualifier.textContent).toBe('project');
+    expect(screen.getByText('1 session')).toBeVisible();
 
     view.requests.length = 0;
     await startSession();

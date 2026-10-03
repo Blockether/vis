@@ -26,6 +26,7 @@ import {
   EditableNameField,
   HeaderActions,
   HeaderTally,
+  HEADER_COUNTS,
   LIST_MARK,
   Pager,
   ProjectCrumb,
@@ -494,16 +495,18 @@ function GroupBand({
           <ChevronIcon open={isOpen} className="size-3 -translate-x-1.5 text-dialog-hint" />
         </span>
         {!isRenaming && (
-          <span className="min-w-0 flex-1">
-            <span className="block truncate font-mono text-body font-medium text-white">{name}</span>
+          <span className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="min-w-0 flex-1 truncate font-mono text-body font-medium text-white" title={name}>
+              {name}
+            </span>
             {statuses.length > 0 && (
-              <span className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 font-mono text-ui font-semibold">
+              <span className={HEADER_COUNTS}>
                 <span id={statusId} className="sr-only">
                   {statuses.map((item) => item.description).join(' ')}
                 </span>
                 {statuses.map((item) => (
-                  <span key={item.label} aria-hidden="true" className={`whitespace-nowrap ${item.tone}`}>
-                    {item.label} {item.count}
+                  <span key={item.label} aria-hidden="true" className={`whitespace-nowrap font-semibold ${item.tone}`}>
+                    {item.count} {item.label}
                   </span>
                 ))}
               </span>
@@ -1773,50 +1776,21 @@ export const ProjectGroup = memo(function ProjectGroup({
     }
   };
 
-  const qualifier = (
-    <span className="flex max-w-full min-w-0 items-center gap-2">
-      {qualifierPath && (
-        <span className="min-w-0 shrink-[8] truncate @max-md:hidden">
-          {qualifierPath}
-          <span aria-hidden> ·</span>
+  const counts = (
+    <>
+      {/* Archive choices can differ; count the two sets currently in view. */}
+      <HeaderTally
+        count={isGroupRevealing || isSessionRevealing ? visibleCount : tally.count}
+        unit="session"
+      />
+      {isGroupRevealing || isSessionRevealing ? (
+        <span className="whitespace-nowrap font-bold">
+          {isGroupRevealing && isSessionRevealing ? 'ARCHIVED' : 'MIXED VIEWS'}
         </span>
-      )}
-      {/* THE COUNT GIVES WAY, NOT WHAT STANDS BESIDE IT. On the narrowest phone a
-        paged project's caption is fuller than its column, and a clipped `1 new` is an
-        arrival the reader cannot reach; the total ellipsises instead and keeps it whole.
-
-        AN ARRIVAL STANDS AFTER THE STATES IT INTERRUPTS. Reported over this band
-        (paraphrased: the count of sessions that just landed belongs to the RIGHT of
-        live, not its left): the caption read `1662 sessions | 2 new · 4 live`, so the
-        one thing on the line that is a VERB sat between the total and the states that
-        qualify it, and the reader's eye had to cross it to reach `4 live`. */}
-      <span className="flex min-w-0 items-center">
-        {/* THE TOTAL AND THE STATES ARE ONE RUN OF TEXT, and what can TAP stands beside
-            that run. `text-overflow` elides TEXT and drops an atomic box whole, so this
-            is what lets the smallest phone shorten `1464 sessions · 2 needs input` and
-            still hold the whole of the live count and the arrival. */}
-        <span className="min-w-0 truncate">
-          {/* The two archive choices can differ; the count describes the two sets in view. */}
-          <HeaderTally
-            count={isGroupRevealing || isSessionRevealing ? visibleCount : tally.count}
-            unit="session"
-          />
-          {isGroupRevealing || isSessionRevealing ? (
-            <>
-              <span aria-hidden className="mx-2 @max-md:mx-1">·</span>
-              <span className="whitespace-nowrap font-bold">
-                {isGroupRevealing && isSessionRevealing ? 'Archived' : 'Mixed views'}
-              </span>
-            </>
-          ) : (
-            <ProjectStatusCounts live={0} awaiting={tally.awaiting} unread={tally.unread} />
-          )}
-        </span>
-        {!isGroupRevealing && !isSessionRevealing && running > 0 && (
-          <>
-            <span aria-hidden className="mx-2 shrink-0 @max-md:mx-1">
-              ·
-            </span>
+      ) : (
+        <>
+          <ProjectStatusCounts live={0} awaiting={tally.awaiting} />
+          {running > 0 && (
             <TextButton
               isCaption
               className="pointer-events-auto relative shrink-0 whitespace-nowrap"
@@ -1829,16 +1803,13 @@ export const ProjectGroup = memo(function ProjectGroup({
               aria-busy={isOpeningLive}
               onClick={() => void openLive()}
             >
-              <span
-                aria-hidden="true"
-                className="mr-1 inline-block size-1.5 animate-pulse bg-ok align-[0.05em] motion-reduce:animate-none"
-              />
-              {running} live
+              {running} LIVE
             </TextButton>
-          </>
-        )}
-      </span>
-    </span>
+          )}
+          <ProjectStatusCounts live={0} unread={tally.unread} />
+        </>
+      )}
+    </>
   );
 
   // The project paints two sets: groups and loose sessions. Each keeps its own
@@ -1868,7 +1839,8 @@ export const ProjectGroup = memo(function ProjectGroup({
         <SectionHeader isExpanded={isShowing}>
           <ProjectCrumb
             name={project}
-            qualifier={qualifier}
+            qualifier={qualifierPath || undefined}
+            counts={counts}
             qualifierTitle={root}
             disclosure={{
               isOpen: isShowing,

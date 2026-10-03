@@ -215,9 +215,11 @@ describe('ProjectStatusCounts', () => {
   it('separates all actionable states and does not double-count waiting as live', () => {
     const { container } = render(<ProjectStatusCounts live={5} awaiting={2} unread={3} />);
 
-    expect(container).toHaveTextContent('3 live');
-    expect(container).toHaveTextContent('2 needs input');
-    expect(container).toHaveTextContent('3 new');
+    expect(container).toHaveTextContent('2 HITL');
+    expect(container).toHaveTextContent('3 LIVE');
+    expect(container).toHaveTextContent('3 NEW');
+    expect(container.querySelector('[aria-hidden]')).toBeNull();
+    expect(container.querySelector('.animate-pulse')).toBeNull();
   });
 
   it('renders no separators when there is no status to report', () => {

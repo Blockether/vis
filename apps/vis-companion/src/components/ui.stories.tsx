@@ -937,6 +937,12 @@ export const Bands: Story = {
           name={STORY_SESSION.project}
           qualifier={STORY_SESSION.where}
           qualifierTitle={STORY_SESSION.where}
+          counts={(
+            <>
+              <HeaderTally count={1928} unit="session" />
+              <ProjectStatusCounts live={5} unread={28} />
+            </>
+          )}
           disclosure={{ isOpen: true, onToggle: noop, label: 'Collapse vis' }}
         />
       </Group>
@@ -947,8 +953,10 @@ export const Bands: Story = {
         </HeaderMeta>
       </Group>
       <Group of="States a project can be in, told apart">
-        <ProjectStatusCounts live={3} awaiting={1} unread={4} />
-        <ProjectStatusCounts live={0} />
+        <HeaderMeta>
+          <ProjectStatusCounts live={3} awaiting={1} unread={4} />
+          <ProjectStatusCounts live={0} />
+        </HeaderMeta>
       </Group>
       <Group of="The trailing cluster of a row">
         <HeaderActions>

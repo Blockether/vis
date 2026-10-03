@@ -107,8 +107,8 @@ function heading(name = NAME, expanded = false) {
 function expectCounts(input: number, live: number, unread: number, name = NAME, expanded = false) {
   const scope = within(heading(name, expanded));
   for (const [label, count] of [['HITL', input], ['LIVE', live], ['NEW', unread]] as const) {
-    if (count > 0) expect(scope.getByText(`${label} ${count}`)).toBeVisible();
-    else expect(scope.queryByText(new RegExp(`^${label} [0-9]+$`))).toBeNull();
+    if (count > 0) expect(scope.getByText(`${count} ${label}`)).toBeVisible();
+    else expect(scope.queryByText(new RegExp(`^[0-9]+ ${label}$`))).toBeNull();
   }
 }
 
@@ -123,13 +123,13 @@ describe('session group status counts', () => {
     expectCounts(0, 1, 0, 'Other work');
     expectCounts(0, 0, 0, 'Empty work');
     expect(document.querySelector('[data-session-id="input-a"]')).toBeNull();
-    expect(heading()).toHaveTextContent(/HITL 2.*LIVE 1.*NEW 2/);
+    expect(heading()).toHaveTextContent(/2 HITL.*1 LIVE.*2 NEW/);
     expect(heading()).toHaveAccessibleDescription('2 sessions need input. 1 live session. 2 sessions with new answers.');
     expect(client.prefetchTranscript).not.toHaveBeenCalled();
 
     fireEvent.click(heading());
     expectCounts(2, 1, 2, NAME, true);
-    expect(document.querySelector('[data-session-id="input-a"]')).not.toBeNull();
+    expect(document.querySelector('[data-session-id="input-a"]')).toHaveAttribute('data-session-id', 'input-a');
     fireEvent.click(heading(NAME, true));
     expectCounts(2, 1, 2);
   });

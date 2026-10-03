@@ -3,7 +3,6 @@
  * not to the app-wide control vocabulary in `ui.tsx`.
  */
 import {
-  Fragment,
   forwardRef,
   useRef,
   useState,
@@ -83,6 +82,10 @@ export const HEADER_TRAIL =
 
 /** Machine and project headers align their identity and disclosure marks. */
 export const LIST_MARK = 'grid size-3.5 shrink-0 place-items-center';
+
+/** Compact counts stay right of the name and wrap only within their own column. */
+export const HEADER_COUNTS =
+  'flex min-w-0 max-w-[60%] shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-0.5 font-mono text-ui text-dialog-hint mouse:text-chip';
 
 /**
  * One heading, standing in the band that carries the boundary (`HEADER_BAND`).
@@ -299,19 +302,18 @@ export function HeaderTitle({
   );
 }
 
-/**
- * A project's name and counts share a stable two-line band.
- * Pagination lives outside this identity block so it cannot stretch either line.
- */
+/** Keep the project name left and its counts right. Show a distinct path below the name. */
 export function ProjectCrumb({
   name,
   qualifier,
   qualifierTitle,
+  counts,
   disclosure,
 }: {
   name: ReactNode;
   qualifier?: ReactNode;
   qualifierTitle?: string;
+  counts?: ReactNode;
   /** The fold to expose, or null when this project has no session list. */
   disclosure: {
     isOpen: boolean;
@@ -321,38 +323,34 @@ export function ProjectCrumb({
   } | null;
 }) {
   return (
-    <span
-      className="grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-0 pl-4"
-    >
+    <span className="relative flex min-w-0 flex-1 items-center py-1.5 pl-4 pr-2 mouse:pr-2.5">
       {disclosure && (
         <button
           type="button"
           aria-expanded={disclosure.isOpen}
           aria-label={disclosure.label}
           onClick={disclosure.onToggle}
-          className="col-span-2 col-start-1 row-span-2 row-start-1 -ml-4 self-stretch focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white"
+          className="absolute inset-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white"
         />
       )}
-      {/* The mark belongs in the left gutter; the reserved slot still aligns project and machine names. */}
-      <span className={`pointer-events-none col-start-1 row-span-2 row-start-1 ${LIST_MARK}`}>
+      <span className={`pointer-events-none relative ${LIST_MARK}`}>
         {disclosure && (
           <ChevronIcon open={disclosure.isOpen} className="size-3.5 -translate-x-1.5 text-dialog-hint" />
         )}
       </span>
-      <span
-        className={`pointer-events-none col-start-2 row-start-1 min-w-0 truncate self-end font-bold text-white ${HEADER_TYPE}`}
-      >
-        {name}
+      <span className="pointer-events-none relative min-w-0 flex-1" title={qualifierTitle}>
+        <span className={`block truncate font-bold text-white ${HEADER_TYPE}`}>
+          {name}
+        </span>
+        {qualifier && (
+          <span className="block truncate font-mono text-ui text-dialog-hint mouse:text-chip">
+            {qualifier}
+          </span>
+        )}
       </span>
-      {qualifier && (
-        // ONE LEVEL UP, THE SAME QUIET VOICE: under a pointer this caption stands at the
-        // step a group band counts in, so a project's own total reads as a caption under
-        // its name (reported from the sessions list: it was bold and a step too large).
-        <span
-          className="pointer-events-none col-start-2 row-start-2 min-w-0 truncate self-start font-mono text-ui text-dialog-hint mouse:text-chip"
-          title={qualifierTitle}
-        >
-          {qualifier}
+      {counts && (
+        <span className={`pointer-events-none relative ml-2 ${HEADER_COUNTS}`}>
+          {counts}
         </span>
       )}
     </span>
@@ -585,10 +583,7 @@ export function HeaderTally({
   );
 }
 
-/**
- * Actionable project states, separated from the total and from one another.
- * Waiting-for-input is removed from LIVE because one session cannot claim two states.
- */
+/** Count sessions with each status. A session waiting for input does not also count as LIVE. */
 export function ProjectStatusCounts({
   live,
   awaiting = 0,
@@ -600,45 +595,15 @@ export function ProjectStatusCounts({
 }) {
   const running = Math.max(0, live - awaiting);
   const statuses = [
-    running > 0
-      ? {
-          label: `${running} live`,
-          tone: 'text-white',
-          dot: 'animate-pulse bg-ok motion-reduce:animate-none',
-        }
-      : null,
-    awaiting > 0
-      ? {
-          label: `${awaiting} needs input`,
-          // Neutral ink stays readable on both the project band and its hover.
-          // The colored dot and label preserve the status distinction.
-          tone: 'text-white',
-          dot: 'animate-pulse bg-warn-strong motion-reduce:animate-none',
-        }
-      : null,
-    unread > 0 ? { label: `${unread} new`, tone: 'text-accent-ink', dot: 'bg-accent' } : null,
+    awaiting > 0 ? { label: `${awaiting} HITL`, tone: 'text-warn' } : null,
+    running > 0 ? { label: `${running} LIVE`, tone: 'text-ok' } : null,
+    unread > 0 ? { label: `${unread} NEW`, tone: 'text-accent-ink' } : null,
   ].filter((status): status is NonNullable<typeof status> => status !== null);
 
-  // INLINE, NOT `inline-flex`: the qualifier line ellipsizes when a phone's band
-  // runs out of room, and `text-overflow` only elides TEXT — an atomic inline box
-  // is dropped whole, so a status built as one painted `1 live ·▪` and no ellipsis.
   return statuses.map((status) => (
-    <Fragment key={status.label}>
-      {/* On a list under 28rem the dots close up: the phone's band holds the count,
-          the live pulse and the amber demand beside a pager and a verb, and at 440px
-          those three facts wanted 250px of the 238px left — `1 needs input` lost
-          its last word to an ellipsis. Eight pixels a side was the difference. */}
-      <span aria-hidden className="mx-2 @max-md:mx-1">
-        ·
-      </span>
-      <span className={`whitespace-nowrap font-bold ${status.tone}`}>
-        <span
-          className={`mr-1 inline-block size-1.5 align-[0.05em] ${status.dot}`}
-          aria-hidden="true"
-        />
-        {status.label}
-      </span>
-    </Fragment>
+    <span key={status.label} className={`whitespace-nowrap font-bold ${status.tone}`}>
+      {status.label}
+    </span>
   ));
 }
 

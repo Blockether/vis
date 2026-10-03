@@ -640,15 +640,13 @@ describe('ProjectGroup groups', () => {
     expect(header.className).not.toContain('before:');
   });
 
-  // The project total remains a quiet caption when the bands stop repeating counts.
-  it('keeps the project total in its quiet caption', async () => {
+  it('keeps the project total beside the name in quiet type', async () => {
     mount();
     const header = screen.getByText(STORY_NEWER_PROJECT.name).closest('header') as HTMLElement;
     const total = within(header).getByText(`${ROWS.length} sessions`);
     expect(total).not.toHaveClass('font-bold');
-    const caption = total.closest(`[title="${ROOT}"]`) as HTMLElement;
-    expect(caption).toHaveClass('mouse:text-chip');
-    expect(caption).not.toHaveClass('mouse:text-meta');
+    expect(within(header).getByTitle(ROOT)).not.toContainElement(total);
+    expect(total.parentElement).toHaveClass('text-ui', 'mouse:text-chip');
     const wallet = await band('Wallet work');
     expect(within(wallet).queryByText('2 sessions')).toBeNull();
   });

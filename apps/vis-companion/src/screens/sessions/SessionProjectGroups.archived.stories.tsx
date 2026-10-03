@@ -158,7 +158,7 @@ export const ShowsWhatItArchived: Story = {
     await expect(page.queryByRole('button', { name: 'Collapse Wallet work' })).toBeNull();
 
     const header = canvasElement.querySelector('header')!;
-    await expect(within(header).getByText('Archived')).toBeVisible();
+    await expect(within(header).getByText('ARCHIVED')).toBeVisible();
     await expect(within(header).getByText('2 sessions')).toBeVisible();
   },
 };

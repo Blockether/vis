@@ -115,37 +115,47 @@ export const GroupStatuses: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
     const toggle = await page.findByRole('button', { name: `Expand ${STATUS_NAME}` });
-    const badges = await Promise.all(['HITL 12', 'LIVE 11', 'NEW 13'].map((text) =>
+    const badges = await Promise.all(['12 HITL', '11 LIVE', '13 NEW'].map((text) =>
       within(toggle).findByText(text),
     ));
     await expect(toggle).toHaveAccessibleDescription(
       '12 sessions need input. 11 live sessions. 13 sessions with new answers.',
     );
     await expect(canvasElement.querySelector('[data-session-id="group-status-0"]')).toBeNull();
+    const header = page.getByRole('button', { name: 'Collapse Status checks' }).closest('header')!;
+    const projectCounts = ['36 sessions', '12 HITL', '11 LIVE', '13 NEW'].map((text) => within(header).getByText(text));
+    const namesAndCounts = [
+      { name: within(toggle).getByText(STATUS_NAME), counts: badges, parent: toggle },
+      { name: within(header).getByText('Status checks'), counts: projectCounts, parent: header },
+    ];
     const screen = page.getByRole('region', { name: 'Sessions' });
     const doc = canvasElement.ownerDocument;
     const previousFontSize = doc.documentElement.style.fontSize;
     const previousWidth = screen.style.width;
-    const typeSteps = ['--text-ui', '--text-ui--line-height', '--text-body', '--text-body--line-height'];
+    const typeSteps = ['--text-ui', '--text-ui--line-height', '--text-body', '--text-body--line-height', '--text-chip', '--text-chip--line-height'];
     const previousSteps = typeSteps.map((name) => ({ name, value: screen.style.getPropertyValue(name) }));
     try {
       for (const scale of [1, 1.3]) {
         doc.documentElement.style.fontSize = `${16 * scale}px`;
         // The app uses pixel type steps. Scale their tokens, not only rem spacing.
-        for (const [index, size] of [11, 16, 12, 18].entries()) {
+        for (const [index, size] of [11, 16, 12, 18, 8, 14].entries()) {
           screen.style.setProperty(typeSteps[index], `${size * scale}px`);
         }
-        for (const width of [320, 375, 393]) {
+        for (const width of [320, 375, 393, 626]) {
           screen.style.width = `${width}px`;
-          const bounds = toggle.getBoundingClientRect();
-          // jsdom checks behavior; the browser also checks actual layout.
-          if (bounds.width === 0) continue;
-          for (const badge of badges) {
-            const box = badge.getBoundingClientRect();
-            await expect(box.width).toBeGreaterThan(0);
-            await expect(box.left).toBeGreaterThanOrEqual(bounds.left);
-            await expect(box.right).toBeLessThanOrEqual(bounds.right);
-            await expect(box.bottom).toBeLessThanOrEqual(bounds.bottom);
+          for (const { name, counts, parent } of namesAndCounts) {
+            const bounds = parent.getBoundingClientRect();
+            // jsdom checks behavior; the browser also checks actual layout.
+            if (bounds.width === 0) continue;
+            const nameBox = name.getBoundingClientRect();
+            await expect(nameBox.width).toBeGreaterThan(0);
+            for (const count of counts) {
+              const box = count.getBoundingClientRect();
+              await expect(box.width).toBeGreaterThan(0);
+              await expect(box.left).toBeGreaterThanOrEqual(nameBox.right);
+              await expect(box.right).toBeLessThanOrEqual(bounds.right);
+              await expect(box.bottom).toBeLessThanOrEqual(bounds.bottom);
+            }
           }
         }
       }
@@ -159,11 +169,11 @@ export const GroupStatuses: Story = {
     }
     await userEvent.click(toggle);
     const expanded = page.getByRole('button', { name: `Collapse ${STATUS_NAME}` });
-    await expect(expanded).toHaveTextContent(/HITL 12.*LIVE 11.*NEW 13/);
-    await expect(canvasElement.querySelector('[data-session-id="group-status-0"]')).not.toBeNull();
+    await expect(expanded).toHaveTextContent(/12 HITL.*11 LIVE.*13 NEW/);
+    await expect(canvasElement.querySelector('[data-session-id="group-status-0"]')).toHaveAttribute('data-session-id', 'group-status-0');
     await userEvent.click(expanded);
     await expect(page.getByRole('button', { name: `Expand ${STATUS_NAME}` })).toHaveTextContent(
-      /HITL 12.*LIVE 11.*NEW 13/,
+      /12 HITL.*11 LIVE.*13 NEW/,
     );
   },
 };

@@ -2085,6 +2085,7 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
       session_count: project.rows.length,
       live_count: project.rows.filter(isLive).length,
       awaiting_count: project.rows.filter(isAwaiting).length,
+      unread_count: project.rows.filter((row) => row.is_unread).length,
       last_activity_ms: STORY_FLEET_NOW,
     })),
     project_count: projects.length,
