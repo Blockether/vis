@@ -1,72 +1,150 @@
-# Settings layout restored in the Companion and TUI
+# Simplified English for Vis prompts, guidance and docs
 
-Keep the per-machine Settings layout, and save each change where you make it.
+Write every prompt, rule set and guide in Simplified Technical English: same rules, clearer text, fewer tokens.
 
 ## Context
 
-b272eefd8 replaced the Companion machine settings with one editor: an "Editing: Machine" header,
-a scope picker, a draft with review and apply, and profiles with import and export. The TUI got
-the same staged flow. On a phone, this put several controls above every setting and removed the
-per-machine sections. The earlier layout lists each connected machine, opens its settings under
-it, keeps Application settings separate and saves a change when you make it.
+Karpathy recommends ASD-STE100 for model output (quoted by Theo, x.com/theo/status/2106088065781612941).
+The attached overview sets these limits:
 
-This task restores that layout from b272eefd8^ and keeps the typed values that b272eefd8 added:
-numbers, lists and objects with their guided path, network, list and JSON editors.
-Companion code is in `apps/vis-companion/src/screens/SettingsScreen.tsx` and
-`apps/vis-companion/src/screens/settings/`. TUI code is in
-`apps/vis-tui/src/com/blockether/vis/tui/dialogs.clj` and its client. The gateway keeps the typed
-catalog, its `revision` and `PATCH /v1/settings`, which the Python SDK `patch_settings` uses.
+- Write one instruction in each sentence. Use the imperative and the active voice.
+- Use a maximum of 20 words in an instruction and 25 words in a description.
+- Use a maximum of 6 sentences in a paragraph, with one topic in each paragraph.
+- Use a maximum of 3 words in a noun cluster.
+- Use one word for one thing. Use simple words: "use", not "utilize"; "before", not "prior to".
+- Use vertical lists for complex text. In a warning, give the command first, then the risk.
 
-Rejected alternatives: hide the editor controls only on small screens (two layouts to maintain);
-revert b272eefd8 completely (removes typed values, gateway validation and the SDK route); keep
-client-side profiles without the editor (no owner for review, import and export).
+The core prompt tells the model to write in Simplified English, but the prompt itself does not.
+The same is true for the built-in rules, the extension prompts, the tool descriptions, the
+AGENTS.md files and parts of the docs. Long text costs tokens on every request.
 
-## 1. Companion layout
+Base commits: vis 3af0912a0, vis-lang-interface af10c5f (v2.6.1), vis-lang-clojure e41abb4
+(v1.9.1), vis-lang-python 49cbd97 (v1.6.1), spel 8a6fef0b401 (vis-spel/v0.1.11).
 
-Rationale: settings belong under the machine that owns them.
+Owners of the text:
 
-Data: SettingsScreen, MachineSettings, ScopedSettingsDialog, SettingsLayout, SettingField,
-`lib/gateway.ts`, `lib/types.ts`, their stories and tests.
+- Core prompt: `src/com/blockether/vis/internal/context/prompt.clj` and the process rule in
+  `python/env.clj`.
+- Built-in rules: `foundation/introspection.clj`, `council/core.clj`, `foundation/drafts.clj`,
+  the agents prompt, `foundation/mcp/core.clj` and `foundation/harness/core.clj`.
+- Tool declaration of `python_execution`, and the shim docstrings in `resources/vis-shims/`.
+- Project extensions: `.vis/extensions/gh.py` and `.vis/extensions/uplink.py`.
+- Sibling extensions: the shared toolchain prompt in vis-lang-interface, vis-lang-clojure,
+  vis-lang-python and spel `extensions/vis-spel`.
+- Guidance: `AGENTS.md` in vis and in each sibling repository that this task changes.
+- Docs: `resources/vis-docs/` (29 pages, about 68,000 words).
 
-Acceptance criteria: machine sections and the Application fold work as before b272eefd8.
-Switches and choices save immediately. Number, list and object rows edit in place with Save,
-Cancel and inline errors. No draft, review, profile, import or export controls remain. A row
-that a more specific scope decides is locked and names that scope.
+Rejected alternatives:
+
+- Add only one more rule that asks for Simplified English. The prompt stays long and hard to read.
+- Rewrite all 68,000 words of docs by hand. The docs contract already limits sentences, so a scan
+  for unapproved words and long sentences finds the remaining problems faster.
+- Use the full STE dictionary. It would rename API names; these stay as technical names.
+
+## 1. Baseline and rule set
+
+Rationale: a size claim needs a measured baseline. One rule set keeps all rewrites the same.
+
+Data: the rendered text of each prompt part at the base commits; Svar token counts with the
+tokenizer of the context breakdown.
+
+Acceptance criteria: a baseline table with characters, words and tokens for each part. The vis
+AGENTS.md has a short Simplified English rule set for prompts, guidance and docs.
+
+Unknowns: none.
+
+## 2. Core prompt
+
+Rationale: the model reads the core prompt on every request.
+
+Data: `CORE_SYSTEM_PROMPT`, the planning rules, the autonomous CLI rules, the project
+instructions header, the sandbox block and the process rule.
+
+Acceptance criteria: every rule stays, with the same meaning. Each sentence follows the rule set.
+The token count decreases. `prompt_test` and the affected suites pass.
+
+Unknowns: which tests pin the old wording.
+
+## 3. Built-in rules, tool declaration and shims
+
+Rationale: these parts load with the core prompt or answer `doc()`.
+
+Data: the introspection, Council, drafts, agents, MCP and harness prompts; the `python_execution`
+description; `attach.py` and `ls.py` docstrings and their generated apropos resources.
+
+Acceptance criteria: same rules, shorter text; the affected tests and the apropos resource test
+pass.
 
 Unknowns: none.
 
-## 2. TUI dialog
+## 4. Project and sibling extensions
 
-Rationale: the TUI follows the same model as the Companion.
+Rationale: extension prompts load in every session that enables them.
 
-Data: `dialogs.clj`, `client.clj`, `state.clj`, `screen.clj` and their tests.
+Data: `gh.py`, `uplink.py`, vis-lang-interface, vis-lang-clojure, vis-lang-python and vis-spel.
 
-Acceptance criteria: the pre-b272eefd8 dialog returns. Text, number, list and object rows save
-when their editor confirms. The guided editors and the text-editor key fix (1bf1b2471) stay.
+Acceptance criteria: each repository passes its tests, format and lint. Each changed extension
+has a new version, tag and GitHub Release, and Extension Center lists it. `vis.yml` pins the
+new versions.
+
+Unknowns: the publish path for vis-spel.
+
+## 5. AGENTS.md files
+
+Rationale: AGENTS.md is a rule set for agents; it loads on every request in its repository.
+
+Data: vis AGENTS.md and the AGENTS.md of each changed sibling repository.
+
+Acceptance criteria: each rule is a short imperative sentence in a clear group. No rule is lost.
 
 Unknowns: none.
 
-## 3. Contract, documentation and verification
+## 6. Docs
 
-Rationale: schemas and guides describe only behavior that exists.
+Rationale: `doc()` serves the same pages to the model and to people.
 
-Data: `gateway.json`, `configuration.md`, `index.md`, `site.edn`, `docs.edn`, this plan.
+Data: `resources/vis-docs/*.md`; a scan for unapproved words, long sentences and passive voice.
 
-Acceptance criteria: the settings profile schemas and the Settings guide are removed.
-Configuration describes locked rows again. Affected Companion and Lazytest suites, format and
-lint pass. Unrelated failures are reported, never bypassed.
+Acceptance criteria: the scan finds no unapproved words, and the docs canon test passes.
+Anchors, API names and examples do not change.
 
-Unknowns: none.
+Unknowns: the number of findings.
+
+## 7. Verification and release
+
+Rationale: shorter rules must keep the same agent behavior.
+
+Data: affected Lazytest and pytest suites, format and lint, the e2e scenarios on Mikrus with a
+native image built from the pushed commit.
+
+Acceptance criteria: all affected checks pass. The e2e scenarios pass, or each failure has a
+fix that is pushed and tested again. The final reply has a before and after table. There is no
+Vis product release.
+
+Unknowns: e2e provider limits on Mikrus.
 
 ## Plan state
 
-- Phases 1-3 are complete and verified.
-- Companion: typecheck, React compiler lint (542 files) and the full Vitest run pass: 3948 unit
-  and Storybook tests. The one failure is outside this diff: the Storybook `IterationTrace`
-  "Joined Activity" story fails at the base, as recorded for the previous plan.
-- TUI: the full Lazytest suite passes (2644 cases), and clj format and lint are clean. Typed rows
-  save immediately. List editing keeps the 1bf1b2471 key handling. Both are covered in
-  `settings_test.clj`.
-- Contract and docs: gateway contract, OpenAPI, JSON Schema, docs, manifest and assets tests pass.
-- Unchanged: the gateway `PATCH /v1/settings`, the Python SDK and `native_settings_test`.
-- No product release, live restart or store submission is part of this task.
+- Phase 1 is done: the base texts and counts are recorded.
+- Phase 2 is done: core prompt, sandbox block, process rule, planning, CLI and project rules.
+- Phase 3 is done: tool declaration, introspection, Council, drafts, agents, MCP and harness.
+- Phase 4 is done for vis-lang-interface 2.6.2, vis-lang-clojure 1.9.2, vis-lang-python 1.6.2,
+  `gh.py` and `uplink.py`. `vis.yml` pins the new versions.
+- Phase 4 blocker: vis-spel 0.1.12 waits for green spel CI. example.org removed its `h1`, so 22
+  spel tests fail on Linux and macOS. They need local fixture pages instead of the live site.
+- Phase 5 is done: vis AGENTS.md has a Simplified English rule set. Four sibling files changed.
+- Phase 6 is done: six hard words are fixed, and `test-prose/simpler-words` enforces the rule.
+- Phase 7 is done. The full local suite passes (6327 cases), and clj format and lint are clean.
+- CI passes the main suite on Linux and macOS. The standalone TUI suite fails one test, "session
+  picker coalesces wheel floods and moves selection". It failed before this work too (83dba5bc8).
+  CI then skips Beta Native, so the Mikrus e2e runs use the JVM source gateway.
+- Mikrus e2e at b39cc06cd: 24 of 39 scenarios pass. A 60-second usage query timeout of the JVM
+  gateway fails 5 of them. Mikrus tool setup fails 3. 4 give the correct result with one model
+  code error. 3 fail on behavior; `ls-source-root-discovery` then passed 3 of 3.
+- A/B on `extension-contract-discovery`, counting runs clean apart from the usage timeout: base
+  6 of 7, rewrite 4 of 8 with 3 `dict(record)` errors, final 3 of 5 with none.
+  `extension-schema-discovery` fails 3 of 3 at the base and after the rewrite.
+- f04ae9b1c restores "Skip discovery.". 6f8f3f921 adds the `dataclasses.asdict(r)` rule and sets
+  the core prompt limit to 11 650 characters.
+- The `attach` and `ls` shim docs did not change. `apropos_resource_test` applies the same prose
+  rules to them, and it passes.
