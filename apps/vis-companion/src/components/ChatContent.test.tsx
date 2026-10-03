@@ -1298,7 +1298,6 @@ describe('a Python evaluation without detected Activity', () => {
                   evidence: [],
                 },
               ],
-              omitted: { rows: 0, by_classification: {} },
             },
           })}
         />,
@@ -1343,7 +1342,6 @@ describe('a Python evaluation without detected Activity', () => {
                   evidence: [],
                 },
               ],
-              omitted: { rows: 0, by_classification: {} },
             },
           },
           'running',
@@ -1368,7 +1366,6 @@ describe('a Python evaluation without detected Activity', () => {
             state: 'succeeded',
             counts: { running: 0, succeeded: 0, failed: 0, cancelled: 0 },
             rows: [],
-            omitted: { rows: 0, by_classification: {} },
           },
         })}
       />,
@@ -1413,7 +1410,6 @@ describe('Activity follows the combined Python source', () => {
     state: 'running',
     counts: { running: 1, succeeded: 1, failed: 0, cancelled: 0 },
     rows,
-    omitted: { rows: 0, by_classification: {} },
   };
   const turnOf = (forms: Record<string, unknown>[]): TranscriptTurn =>
     ({
@@ -1787,7 +1783,6 @@ describe('Activity follows the combined Python source', () => {
                 state: 'failed',
                 counts: { running: 0, succeeded: 5, failed: 1, cancelled: 0 },
                 rows: [],
-                omitted: { rows: 6, by_classification: { observation: 6 } },
               },
             },
           ])}
@@ -1795,10 +1790,9 @@ describe('Activity follows the combined Python source', () => {
       ),
     );
 
-    // The dropped rows still count where the count is the margin's own: the
-    // axis's tail names the number of omitted steps without inventing their details.
+    // Activity has no step limit, so no tail invents an omission count.
     expect(rendered).not.toContain('FAILED');
-    expect(rendered).toContain('6 steps omitted · Activity limit');
+    expect(rendered).not.toContain('omitted');
     expect(rendered).not.toContain('finished 6/');
   });
 
@@ -2471,7 +2465,6 @@ describe('steps between progress notes', () => {
         evidence: [],
       },
     ],
-    omitted: { rows: 0, by_classification: {} },
   };
 
   it('combines the steps between notes into one Activity and one reasoning band', () => {

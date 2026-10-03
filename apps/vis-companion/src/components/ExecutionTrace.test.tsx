@@ -29,7 +29,6 @@ const activity = (state: ActivityProjection['state'], label: string): ActivityPr
       evidence: [],
     },
   ],
-  omitted: { rows: 0, by_classification: {} },
 });
 const iterations = (forms: TranscriptForm[]): TranscriptIteration[] => [
   { id: 'one', position: 1, forms },

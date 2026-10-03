@@ -480,8 +480,8 @@ handle is scoped to its extension and Python form, so it is not a session-wide i
 Python extension example, see [Link receipts for one
 operation](extension-api.md#link-receipts-for-one-operation).
 
-A receipt can be one page of history: check `history` and `omitted` before
-treating it as complete.
+A receipt can be one page of history. Check `history` before you treat the receipt
+as complete.
 
 `event.view` decodes view lifecycle events. The records describe input forms, live
 interfaces, patches and closure results. They are not Python UI widgets. To create

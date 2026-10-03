@@ -549,7 +549,7 @@ describe('joined Activity operation groups', () => {
       '1 failed',
     );
   });
-  it('bounds a collapsed receipt while keeping omitted operations explicit', () => {
+  it('keeps every operation in a collapsed receipt, without an omission count', () => {
     const activity = reads();
     const rows = Array.from({ length: 10 }, (_, index) => ({
       ...activity.rows[0],
@@ -562,13 +562,12 @@ describe('joined Activity operation groups', () => {
         activity={{
           ...activity,
           rows,
-          omitted: { rows: 7, by_classification: { observation: 7 } },
         }}
       />,
     );
     const receipt = screen.getByRole('button', { name: 'Expand Activity' });
-    expect(receipt.textContent).toContain('0 mutations · 17 observations');
-    expect(receipt.textContent).toContain('7 omitted');
+    expect(receipt.textContent).toContain('0 mutations · 10 observations');
+    expect(receipt.textContent).not.toContain('omitted');
   });
 
   it('updates commands by snapshot identity, not by parsing identical command strings', () => {
@@ -831,37 +830,18 @@ describe('what the iteration cost', () => {
     ).toEqual(['1 mutation', '1 verification']);
   });
 
-  // The ENGINE's own bound is what drops rows, so the cost covers the whole run:
-  // a chronology that shows four of ten calls must not report the cost of four,
-  // and its tail can say `+6 more` but never what the six WERE.
-  it('counts the rows the engine dropped, so a bounded axis cannot under-report', () => {
-    const projection = activityProjection();
-
-    expect(
-      activityCostParts({
-        ...projection,
-        rows: [],
-        omitted: {
-          rows: 6,
-          by_classification: { mutation: 6, observation: 2, verification: 2 },
-        },
-      }).map((part) => part.text),
-    ).toEqual(['6 mutations', '2 observations', '2 verifications']);
-  });
-
-  it('counts the calls that reached outside the machine, dropped rows included', () => {
+  it('counts the calls that reached outside the machine', () => {
     const projection = activityProjection();
     const [first, ...rest] = projection.rows;
     const parts = activityCostParts({
       ...projection,
       rows: [{ ...first, signal: 'external' as const }, ...rest],
-      omitted: { rows: 1, by_classification: { external: 1 } },
     });
 
     expect(parts.map((part) => part.text)).toEqual([
       '0 mutations',
       '1 verification',
-      '2 external actions',
+      '1 external action',
     ]);
     expect(parts.at(-1)?.tone).toBe('text-code-syntax-special');
   });
@@ -872,8 +852,7 @@ describe('what the iteration cost', () => {
     const [first, ...rest] = projection.rows;
     const activity = {
       ...projection,
-      rows: [{ ...first, signal: 'external' as const }, ...rest],
-      omitted: { rows: 1, by_classification: { observation: 1 } },
+      rows: [first, ...rest, { ...first, id: 'call-3', sequence: 3, signal: 'external' as const }],
     };
     expect(activityCostParts(activity).map((part) => part.short)).toEqual([
       '0 mut',
@@ -1444,18 +1423,6 @@ describe('what the axis does while the work is still moving', () => {
     expect(screen.queryByText('Details truncated')).toBeNull();
     expect(document.querySelector(`[data-activity-row="0:${row.id}"] button`)).toBeNull();
     expect(screen.getByText('2 matches')).toBeVisible();
-  });
-
-  it('labels discarded steps as unavailable, not as a show-more control', () => {
-    paintActivity({
-      activity: {
-        ...activityProjection(),
-        omitted: { rows: 6, by_classification: { observation: 6 } },
-      },
-    });
-    const tail = screen.getByText('6 steps omitted · Activity limit');
-    expect(tail.closest('button')).toBeNull();
-    expect(screen.queryByRole('button', { name: /6 more steps/i })).toBeNull();
   });
 });
 

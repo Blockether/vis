@@ -3102,8 +3102,7 @@
                       :activity
                       {:state "running"
                        :counts {:running 1 :succeeded 0 :failed 0 :cancelled 0}
-                       :rows [{:id "one" :operation "status" :summary "--json" :state "running"}]
-                       :omitted {:rows 0 :by-classification {}}}}]
+                       :rows [{:id "one" :operation "status" :summary "--json" :state "running"}]}}]
              :activity :tool-call}
 
             lines
@@ -3243,8 +3242,7 @@
                                          :operation "grep"
                                          :signal "observation"
                                          :summary "18 matches"
-                                         :state "succeeded"}]
-                                 :omitted {:rows 0 :by-classification {}}}}]}
+                                         :state "succeeded"}]}}]}
 
             payload
             (render/progress->lines-data {:iterations [iter]}
@@ -6389,8 +6387,7 @@
                                          :operation "grep"
                                          :signal "observation"
                                          :summary "source"
-                                         :state "succeeded"}]
-                                 :omitted {:rows 0 :by-classification {}}}}]})
+                                         :state "succeeded"}]}}]})
 
           render-text
           (fn [detail-expansions]
@@ -6419,40 +6416,38 @@
 
 (defdescribe
   activity-copy-header-test
-  (it
-    "copies the full retained Activity independently of disclosure and code"
-    (let [entry
-          {:forms [{:code "answer = search()"
-                    :success? true
-                    :activity {:state "succeeded"
-                               :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
-                               :rows [{:id "grep-1"
-                                       :sequence 0
-                                       :operation "grep"
-                                       :summary "source"
-                                       :state "succeeded"
-                                       :result-summary "one match beyond the folded row"}]
-                               :omitted {:rows 0 :by-classification {}}}}]}
+  (it "copies the full retained Activity independently of disclosure and code"
+      (let [entry
+            {:forms [{:code "answer = search()"
+                      :success? true
+                      :activity {:state "succeeded"
+                                 :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+                                 :rows [{:id "grep-1"
+                                         :sequence 0
+                                         :operation "grep"
+                                         :summary "source"
+                                         :state "succeeded"
+                                         :result-summary "one match beyond the folded row"}]}}]}
 
-          headers
-          (for [expanded? [false true]]
-            (->> (format-iteration-entry-entries entry
-                                                 40
-                                                 1
-                                                 {:session-id "s1"
-                                                  :session-turn-id "t1"
-                                                  :detail-expansions
-                                                  {:vis.channel-tui/expand-all-details? expanded?}})
-                 (filter #(= :activity-header (get-in % [:meta :kind])))
-                 first))]
+            headers
+            (for [expanded? [false true]]
+              (->> (format-iteration-entry-entries
+                     entry
+                     40
+                     1
+                     {:session-id "s1"
+                      :session-turn-id "t1"
+                      :detail-expansions {:vis.channel-tui/expand-all-details? expanded?}})
+                   (filter #(= :activity-header (get-in % [:meta :kind])))
+                   first))]
 
-      (doseq [header headers]
-        (expect (str/includes? (:line header) "COPY"))
-        (expect (= 6 (get-in header [:meta :copy-width])))
-        (expect (str/includes? (str (get-in header [:meta :copy-text]))
-                               "one match beyond the folded row"))
-        (expect (not (str/includes? (str (get-in header [:meta :copy-text])) "answer ="))))
-      (expect (apply = (map #(get-in % [:meta :copy-text]) headers))))))
+        (doseq [header headers]
+          (expect (str/includes? (:line header) "COPY"))
+          (expect (= 6 (get-in header [:meta :copy-width])))
+          (expect (str/includes? (str (get-in header [:meta :copy-text]))
+                                 "one match beyond the folded row"))
+          (expect (not (str/includes? (str (get-in header [:meta :copy-text])) "answer ="))))
+        (expect (apply = (map #(get-in % [:meta :copy-text]) headers))))))
 
 (defdescribe
   python-code-disclosure-is-a-header-test
@@ -7199,16 +7194,16 @@ h = 8"
     "collapses tool source with its details and opens the evidence hierarchy"
     (render/invalidate-cache!)
     (let [trace
-          [{:forms
-            [{:code "grep({...})"
-              :stdout "18 matches"
-              :activity
-              {:state "running"
-               :counts {:running 1 :succeeded 1 :failed 0 :cancelled 0}
-               :rows
-               [{:id "one" :operation "grep" :summary "18 matches" :state "succeeded"}
-                {:id "two" :operation "test evidence" :summary "companion suite" :state "running"}]
-               :omitted {:rows 0 :by-classification {}}}}]}]
+          [{:forms [{:code "grep({...})"
+                     :stdout "18 matches"
+                     :activity
+                     {:state "running"
+                      :counts {:running 1 :succeeded 1 :failed 0 :cancelled 0}
+                      :rows [{:id "one" :operation "grep" :summary "18 matches" :state "succeeded"}
+                             {:id "two"
+                              :operation "test evidence"
+                              :summary "companion suite"
+                              :state "running"}]}}]}]
 
           render-row
           (fn [width detail-expansions]
@@ -7300,8 +7295,7 @@ h = 8"
                                                :operation (if (zero? (long n)) "suite" "grep")
                                                :summary (str "operation " (inc (long n)))
                                                :state "succeeded"})
-                                            (range 6))
-                                :omitted {:rows 0 :by-classification {}}}}]}]
+                                            (range 6))}}]}]
 
           render-row
           (fn [detail-expansions]
@@ -7374,8 +7368,7 @@ h = 8"
                      :operation "suite"
                      :signal "verification"
                      :summary ""
-                     :state "succeeded"}]
-                   :omitted {:rows 2 :by-classification {:observation 2}}}}]}]
+                     :state "succeeded"}]}}]}]
               160
               nil
               nil
@@ -7387,15 +7380,15 @@ h = 8"
             strip-ansi
             strip-sentinels)]
       ;; The closed header retains totals without exposing individual operations.
-      (expect (str/includes? receipt "2 omitted"))
+      ;; Activity has no step limit, so the header never reports omitted steps.
+      (expect (not (str/includes? receipt "omitted")))
       (doseq [label ["Patched" "Searched" "Ran tests"]]
         (expect (not (str/includes? receipt label))))
       (expect (str/includes? receipt "ACTIVITY"))))
-  (it "counts the calls that reached outside the machine, dropped rows included"
+  (it "counts the calls that reached outside the machine"
       (let [cost @#'render/activity-cost-text]
-        (expect (= "0 mutations · 1 observation · 2 external actions"
-                   (cost {:rows [{:signal "observation"} {:signal "external"}]
-                          :omitted {:rows 1 :by-classification {:external 1}}})))
+        (expect (= "0 mutations · 1 observation · 1 external action"
+                   (cost {:rows [{:signal "observation"} {:signal "external"}]})))
         (expect (= "1 mutation" (cost {:rows [{:signal "mutation"} {:signal "generic"}]})))))
   (it "counts verifications without adding their verdicts to the summary"
       (let [cost @#'render/activity-cost-text]
@@ -7403,9 +7396,7 @@ h = 8"
           (expect (= "0 mutations · 2 ver"
                      (cost {:rows [{:signal "verification" :presentation {:verdict verdict}}
                                    {:signal "verification" :presentation {:verdict verdict}}]}))))
-        (expect (= "0 mutations · 1 ver" (cost {:rows [{:signal "verification"}]})))
-        (expect (= "0 mutations · 2 ver"
-                   (cost {:rows [] :omitted {:rows 2 :by-classification {:verification 2}}})))))
+        (expect (= "0 mutations · 1 ver" (cost {:rows [{:signal "verification"}]})))))
   ;; Regression, issue td-132d91: expanded Activity receipts were detached into one
   ;; shared rail, so only the newest receipt could show its detail.
   (it "keeps combined results between their program and attached Activity"
@@ -7415,8 +7406,7 @@ h = 8"
               {:state "running"
                :counts {:running 1 :succeeded 1 :failed 0 :cancelled 0}
                :rows [{:id label :operation (str label " OPERATION") :summary "" :state "running"}
-                      {:id (str label "-2") :operation "grep" :summary "" :state "succeeded"}]
-               :omitted {:rows 0 :by-classification {}}})
+                      {:id (str label "-2") :operation "grep" :summary "" :state "succeeded"}]})
 
             trace
             [{:forms [{:code "first()" :stdout "FIRST RESULT" :activity (activity "FIRST")}
@@ -7479,7 +7469,6 @@ h = 8"
           activity
           {:state "succeeded"
            :counts {:running 0 :succeeded 3 :failed 0 :cancelled 0}
-           :omitted {:rows 0}
            :rows [{:id "shell-1"
                    :sequence 1
                    :operation "shell"
@@ -7637,7 +7626,6 @@ h = 8"
     (let [activity
           {:state "succeeded"
            :counts {:running 0 :succeeded 3 :failed 0 :cancelled 0}
-           :omitted {:rows 0}
            :rows [{:id "group-1"
                    :sequence 1
                    :operation "change"
@@ -7724,7 +7712,6 @@ h = 8"
   (let [activity
         {:state "succeeded"
          :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
-         :omitted {:rows 0}
          :rows [{:id "patch-1"
                  :sequence 1
                  :operation "patch"
@@ -8058,7 +8045,6 @@ h = 8"
   (let [activity
         {:state "succeeded"
          :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
-         :omitted {:rows 0}
          :rows [{:id "grep-1"
                  :sequence 1
                  :operation "grep"
@@ -8184,7 +8170,6 @@ h = 8"
   (let [activity
         {:state "succeeded"
          :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
-         :omitted {:rows 0}
          :rows [{:id "grep-1"
                  :sequence 1
                  :operation "grep"
@@ -8283,7 +8268,6 @@ h = 8"
         activity
         {:state "running"
          :counts {:running 1 :succeeded 1 :failed 1 :cancelled 0}
-         :omitted {:rows 0}
          :rows [(step 1 "grep" "3 files" "succeeded") (step 2 "patch" "3 hunks" "failed")
                 (step 3 "shell" "npm test" "running")]}
 
@@ -8365,10 +8349,7 @@ h = 8"
               (range 7))
 
         activity
-        {:state "running"
-         :counts {:running 1 :succeeded 6 :failed 0 :cancelled 0}
-         :rows rows
-         :omitted {:rows 0 :by-classification {}}}
+        {:state "running" :counts {:running 1 :succeeded 6 :failed 0 :cancelled 0} :rows rows}
 
         paint
         (fn [value expansions]
@@ -8423,18 +8404,6 @@ h = 8"
         (.commitFrame interactions/hit-map)
         (expect (not-any? #(str/ends-with? (str (:node-id %)) ":#steps")
                           (.current interactions/hit-map)))))
-    (it "distinguishes permanently omitted steps even when none were retained"
-        (let [payload
-              (paint (assoc activity
-                       :rows []
-                       :omitted {:rows 6})
-                     {})
-
-              omission
-              (first (filter #(= :activity-more (:kind %)) (:line-meta payload)))]
-
-          (expect (str/includes? (str (:label omission)) "6 steps omitted"))
-          (expect (nil? (:node-id omission)))))
     (it "shows available details without truncation notices"
         (let [partial
               (assoc activity
@@ -8620,8 +8589,7 @@ h = 8"
                                                :resources [{:type "file"
                                                             :id (str "source-" idx "-" n)}]
                                                :evidence []})
-                                            (range 1 (inc (if history? (min 2 total) total))))
-                                :omitted {:rows 0}}
+                                            (range 1 (inc (if history? (min 2 total) total))))}
                          history?
                          (assoc :history
                            {:id (str "history-" idx)
@@ -9144,8 +9112,7 @@ h = 8"
                      :sequence 1
                      :state "succeeded"
                      :operation "grep"
-                     :children [{:id "child" :sequence 1}]}]
-             :omitted {:rows 2 :by-classification {:observation 2}}}
+                     :children [{:id "child" :sequence 1}]}]}
 
             form
             {:code "first()" :success? true :duration-ms 700 :activity activity}
@@ -9157,8 +9124,6 @@ h = 8"
         (expect (= ["0:same" "1:same"] (mapv :id (get-in grouped [:activity :rows]))))
         (expect (= "1:child" (get-in grouped [:activity :rows 1 :children 0 :id])))
         (expect (= 2 (get-in grouped [:activity :counts :succeeded])))
-        (expect (= 4 (get-in grouped [:activity :omitted :rows])))
-        (expect (= 4 (get-in grouped [:activity :omitted :by-classification :observation])))
         (expect (= 1400 (:duration-ms grouped)))))
   (it "preserves every failure and keeps a live member running"
       (let [forms
@@ -9726,7 +9691,6 @@ print(paths)"
                          :activity {:state "succeeded"
                                     :counts
                                     {:running 0 :succeeded (count rows) :failed 0 :cancelled 0}
-                                    :omitted {:rows 0}
                                     :rows rows}}]}]
               80
               {:show-iterations true}
@@ -9830,8 +9794,7 @@ print(paths)"
                                                         :summary "Recording ready"
                                                         :content [{:type "video"
                                                                    :attachment-id "clip"
-                                                                   :label "Recording"}]}}]
-                                 :omitted {:rows 0 :by-classification {}}}}]})
+                                                                   :label "Recording"}]}}]}}]})
 
           entries
           (format-iteration-entry-entries entry
@@ -10834,14 +10797,14 @@ print(paths)"
     (it "names and colors a digest by the state of its steps"
         (doseq [[state tone label] [["running" :running "1 running"] ["failed" :error "1 failed"]
                                     ["succeeded" nil "1 mutation"]]]
-          (let [form
-                {:code "run()"
-                 :success? (not= "failed" state)
-                 :activity
-                 {:state state
-                  :rows
-                  [{:id "a" :operation "shell" :signal "mutation" :summary "npm test" :state state}]
-                  :omitted {:rows 0 :by-classification {}}}}
+          (let [form {:code "run()"
+                      :success? (not= "failed" state)
+                      :activity {:state state
+                                 :rows [{:id "a"
+                                         :operation "shell"
+                                         :signal "mutation"
+                                         :summary "npm test"
+                                         :state state}]}}
                 digest (first (filter digest?
                                       (#'render/trace-render-entries
                                        {:iterations [{:forms [form]}]

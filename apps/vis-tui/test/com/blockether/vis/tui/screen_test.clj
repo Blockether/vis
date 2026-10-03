@@ -3349,8 +3349,7 @@ therapy line 2"
           {:state "succeeded"
            :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
            :rows
-           [{:id "op-1" :operation "Inspect source" :summary "Polling the run" :state "succeeded"}]
-           :omitted {:rows 0 :by-classification {}}}
+           [{:id "op-1" :operation "Inspect source" :summary "Polling the run" :state "succeeded"}]}
 
           db
           {:config nil
@@ -3576,8 +3575,7 @@ therapy line 2"
                                             :operation "grep"
                                             :state status
                                             :summary "source"
-                                            :result-summary result}]
-                                    :omitted {:rows 2 :by-classification {:generic 2}}}}]}]
+                                            :result-summary result}]}}]}]
               (- 80 (long render/MESSAGE_SIDE_PAD))
               {:show-thinking true :show-iterations true}
               nil
@@ -3608,7 +3606,7 @@ therapy line 2"
         (expect (some? copy))
         (expect (= 6 (:width copy)))
         (expect (str/includes? (:text copy) result))
-        (expect (str/includes? (:text copy) "2 steps omitted"))
+        (expect (not (str/includes? (:text copy) "omitted")))
         (expect (not (str/includes? (:text copy) "search()")))
         (doseq [x (range col (+ col 6))]
           (expect (= (:text copy) (:text (bubble-copy-hit {:row row :col x} regions))))
@@ -3721,7 +3719,6 @@ therapy line 2"
                                           :summary "source"
                                           :resources []
                                           :evidence []}]
-                                  :omitted {:rows 0}
                                   :history {:id "0f3f2a1e-0000-4000-8000-000000000001"
                                             :revision 4
                                             :total 274
@@ -3780,8 +3777,7 @@ therapy line 2"
                                                :state "succeeded"
                                                :summary (str "source-" idx)
                                                :resources []
-                                               :evidence []}]
-                                       :omitted {:rows 0}}
+                                               :evidence []}]}
                                 retained?
                                 (assoc :history
                                   {:id (str "history-" idx) :revision 4 :total 2 :after 0}))})

@@ -383,17 +383,12 @@ export interface ActivityProjection {
   state: ActivityState;
   counts: Record<'running' | 'succeeded' | 'failed' | 'cancelled', number>;
   rows: ActivityRow[];
-  omitted: {
-    rows: number;
-    by_classification: Record<string, number>;
-  };
 }
 
 /** Merge display receipts without replacing their source histories or mutating wire data. */
 export function mergeActivity(activities: readonly ActivityProjection[]): ActivityProjection {
   // Scope even the first receipt: appending another form must not change its row IDs.
   const counts = { running: 0, succeeded: 0, failed: 0, cancelled: 0 };
-  const omitted: ActivityProjection['omitted'] = { rows: 0, by_classification: {} };
   const rows: ActivityRow[] = [];
   const scopedRow = (row: ActivityRow, scope: number): ActivityRow => ({
     ...row,
@@ -403,10 +398,6 @@ export function mergeActivity(activities: readonly ActivityProjection[]): Activi
   activities.forEach((activity, index) => {
     for (const key of Object.keys(counts) as Array<keyof typeof counts>)
       counts[key] += activity.counts[key];
-    omitted.rows += activity.omitted.rows;
-    for (const [signal, count] of Object.entries(activity.omitted.by_classification)) {
-      omitted.by_classification[signal] = (omitted.by_classification[signal] ?? 0) + count;
-    }
     for (const row of [...activity.rows].sort((a, b) => a.sequence - b.sequence)) {
       rows.push({ ...scopedRow(row, index), sequence: rows.length });
     }
@@ -415,7 +406,7 @@ export function mergeActivity(activities: readonly ActivityProjection[]): Activi
     (['running', 'failed', 'cancelled', 'succeeded'] as const).find((state) =>
       activities.some((activity) => activity.state === state),
     ) ?? 'idle';
-  return { state, counts, rows, omitted };
+  return { state, counts, rows };
 }
 
 /**
@@ -493,10 +484,6 @@ export function activityCopyText(activity: ActivityProjection): string {
     'ACTIVITY',
     ...[...activity.rows].sort((a, b) => a.sequence - b.sequence).map((row) => rowText(row, 0)),
   ];
-  if (activity.omitted.rows)
-    blocks.push(
-      `${activity.omitted.rows} ${activity.omitted.rows === 1 ? 'step' : 'steps'} omitted · Activity limit`,
-    );
   return blocks.join('\n\n');
 }
 
@@ -764,7 +751,7 @@ function activityLeafCount(rows: readonly ActivityRow[]): number {
 
 export function activityProjectionFromWire(value: unknown): ActivityProjection | null {
   const raw = record(value);
-  if (!raw || !hasExactKeys(raw, ['state', 'counts', 'rows', 'omitted'], ['history'])) return null;
+  if (!raw || !hasExactKeys(raw, ['state', 'counts', 'rows'], ['history'])) return null;
   const history = raw.history === undefined ? undefined : record(raw.history);
   if (
     raw.history !== undefined &&
@@ -782,15 +769,10 @@ export function activityProjectionFromWire(value: unknown): ActivityProjection |
     return null;
   const state = activityEnum(raw.state, ACTIVITY_STATES);
   const countsRaw = record(raw.counts);
-  const omittedRaw = record(raw.omitted);
-  const omittedBy = record(omittedRaw?.by_classification);
   if (
     !state ||
     !countsRaw ||
     !hasExactKeys(countsRaw, ['running', 'succeeded', 'failed', 'cancelled']) ||
-    !omittedRaw ||
-    !hasExactKeys(omittedRaw, ['rows', 'by_classification']) ||
-    !omittedBy ||
     !Array.isArray(raw.rows)
   ) {
     return null;
@@ -801,19 +783,11 @@ export function activityProjectionFromWire(value: unknown): ActivityProjection |
     failed: activityCount(countsRaw.failed),
     cancelled: activityCount(countsRaw.cancelled),
   };
-  const omittedRows = activityCount(omittedRaw.rows);
-  const omittedEntries = Object.entries(omittedBy);
   const parsedRows = raw.rows.map((row) => activityRowFromWire(row));
   const rows = parsedRows as ActivityRow[];
   const ids = parsedRows.some((row) => row === null) ? [] : activityRowIds(rows);
   if (
     Object.values(counts).some((amount) => amount === null) ||
-    omittedRows === null ||
-    omittedEntries.some(
-      ([classification, amount]) =>
-        !ACTIVITY_SIGNALS.includes(classification as ActivitySignal) ||
-        activityCount(amount) === null,
-    ) ||
     parsedRows.some((row) => row === null) ||
     new Set(ids).size !== ids.length ||
     (history !== undefined &&
@@ -828,9 +802,5 @@ export function activityProjectionFromWire(value: unknown): ActivityProjection |
     state,
     counts: counts as ActivityProjection['counts'],
     rows,
-    omitted: {
-      rows: omittedRows,
-      by_classification: Object.fromEntries(omittedEntries) as Record<string, number>,
-    },
   };
 }

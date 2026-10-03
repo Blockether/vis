@@ -521,30 +521,6 @@
         "cancelled"
       ]
     },
-    "omitted": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "rows": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "by_classification": {
-          "type": "object",
-          "propertyNames": {
-            "$ref": "#/$defs/signal"
-          },
-          "additionalProperties": {
-            "type": "integer",
-            "minimum": 0
-          }
-        }
-      },
-      "required": [
-        "rows",
-        "by_classification"
-      ]
-    },
     "projection": {
       "type": "object",
       "additionalProperties": false,
@@ -560,9 +536,6 @@
           "items": {
             "$ref": "#/$defs/row"
           }
-        },
-        "omitted": {
-          "$ref": "#/$defs/omitted"
         },
         "history": {
           "type": "object",
@@ -606,8 +579,7 @@
       "required": [
         "state",
         "counts",
-        "rows",
-        "omitted"
+        "rows"
       ],
       "x-vis-max-event-bytes": 262144
     },

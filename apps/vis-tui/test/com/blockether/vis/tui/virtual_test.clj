@@ -1485,10 +1485,9 @@
             message (fn [rs]
                       (assoc (trace-assistant-msg 1 1 (str/join "\n" (repeat 30 "Answer")))
                         :session-turn-id "activity-turn"
-                        :traces [{:forms [{:code "run()"
-                                           :stdout ""
-                                           :success? true
-                                           :activity {:rows rs :omitted {:rows 0}}}]}]))
+                        :traces
+                        [{:forms
+                          [{:code "run()" :stdout "" :success? true :activity {:rows rs}}]}]))
             opts {:session-id "activity-session"
                   :detail-expansions {:vis.channel-tui/expand-all-details? true}}
             environment (fn [m]
@@ -1580,10 +1579,8 @@
             (fn [rs]
               (assoc (trace-assistant-msg 1 1 "")
                 :session-turn-id "boundary-turn"
-                :traces [{:forms [{:code "run()"
-                                   :stdout ""
-                                   :success? true
-                                   :activity {:rows rs :omitted {:rows 0}}}]}]))
+                :traces [{:forms
+                          [{:code "run()" :stdout "" :success? true :activity {:rows rs}}]}]))
 
             before
             (into [(message rows)] (map #(user-msg (str "Neighbour " %)) (range 8)))
@@ -1729,7 +1726,7 @@
               :traces [{:forms [{:code "run()"
                                  :stdout (str/join "\n" (map #(str "Output line " %) (range 2200)))
                                  :success? true
-                                 :activity {:rows rs :omitted {:rows 0}}}]}]))
+                                 :activity {:rows rs}}]}]))
 
           before
           (message rows)

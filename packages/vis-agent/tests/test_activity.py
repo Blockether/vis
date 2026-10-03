@@ -373,7 +373,6 @@ def _history_projection(count, *, paged):
     ]
     fixture["state"] = "succeeded"
     fixture["counts"] = {"running": 0, "succeeded": count, "failed": 0, "cancelled": 0}
-    fixture["omitted"] = {"rows": 0, "by_classification": {}}
     if paged:
         fixture["history"] = {
             "id": "00000000-0000-4000-8000-000000000212",

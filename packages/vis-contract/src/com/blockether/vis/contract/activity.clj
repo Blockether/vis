@@ -218,13 +218,6 @@
 
 (defn copy-text
   "Copy retained invocations from an engine-spelled projection, independent of grouping,
-   disclosure and viewport. Include bounded evidence and omissions, never identity keys."
-  [{:keys [rows omitted]}]
-  (str/join "\n\n"
-            (concat ["ACTIVITY"]
-                    (map #(row-copy-text % 0) (sort-by :sequence rows))
-                    (when (pos? (long (or (:rows omitted) 0)))
-                      [(str (:rows omitted)
-                            " step"
-                            (when (not= 1 (:rows omitted)) "s")
-                            " omitted · Activity limit")]))))
+   disclosure and viewport. Include bounded evidence, never identity keys."
+  [{:keys [rows]}]
+  (str/join "\n\n" (concat ["ACTIVITY"] (map #(row-copy-text % 0) (sort-by :sequence rows)))))

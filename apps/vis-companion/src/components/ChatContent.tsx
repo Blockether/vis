@@ -1661,7 +1661,6 @@ function formStep(
   const detected = Boolean(
     activity &&
       (activity.rows.length > 0 ||
-        activity.omitted.rows > 0 ||
         Object.values(activity.counts).some((count) => count > 0)),
   );
   const settled = activity != null && activity.state !== 'running' && activity.state !== 'idle';

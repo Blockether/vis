@@ -139,8 +139,7 @@
                         (expect (nil? (:error result)))
                         (expect (= "done\n" (:stdout result)))
                         (expect (= 160 (count rows)))
-                        (expect (= 160 (get-in page [:counts :succeeded])))
-                        (expect (zero? (get-in page [:omitted :rows]))))))))
+                        (expect (= 160 (get-in page [:counts :succeeded]))))))))
 
 (defdescribe
   shell-receipt-integration-test

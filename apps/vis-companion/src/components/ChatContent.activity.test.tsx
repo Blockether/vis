@@ -50,7 +50,6 @@ function snapshot(state: 'running' | Outcome, revision?: number): ActivityProjec
         },
       },
     ],
-    omitted: { rows: 0, by_classification: {} },
   };
 }
 

@@ -141,6 +141,28 @@
             (expect (= (name outcome) (:state row)))
             (expect (some #(= "error" (:kind %)) (:evidence row))))))))
 
+(defdescribe summary-only-search-test
+             (it "keeps only the search summary line, without arguments, matches or result evidence"
+                 (let [text
+                       (str "grep 'greeting'  2 hits · 2 files\n"
+                            "src/greeting.clj  (1)\n"
+                            "  12:abc│ (defn greeting [name]")
+
+                       row
+                       (get-in (result-fixture [[:grep "greeting" text nil]]) ["rows" 0])]
+
+                   (expect (= {"headline" "Searched"
+                               "summary" "grep 'greeting'  2 hits · 2 files"
+                               "content" []}
+                              (get row "presentation")))
+                   (expect (empty? (get row "evidence")))
+                   (expect (not (contains? row "result_summary")))
+                   (expect (not (str/includes? (pr-str row) "defn greeting")))))
+             (it "declares a summary-only search that still shows its running start"
+                 (let [declared (presenter/for-tool :grep)]
+                   (expect (true? (:summary-only declared)))
+                   (expect (true? (:show-start declared))))))
+
 (defdescribe
   compact-built-in-results-test
   (it

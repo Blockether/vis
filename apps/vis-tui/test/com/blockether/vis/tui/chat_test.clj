@@ -1154,7 +1154,6 @@
             "summary" "Search files"
             "resources" []
             "evidence" []}]
-   "omitted" {"rows" 0 "by_classification" {}}
    "history" {"id" "6f1c9c9e-6f6b-4a3a-9b3e-3f9a0a1b2c3d"
               "revision" 4
               "total" 274

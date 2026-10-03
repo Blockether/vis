@@ -189,7 +189,6 @@
       (expect (every? #(<= (activity/byte-size %) 1048576) pages))
       (expect (every? #(= 300 (get-in % [:history :total])) pages))
       (expect (every? #(= 900 (get-in % [:history :revision])) pages))
-      (expect (every? #(zero? (get-in % [:omitted :rows])) pages))
       (expect (every? #(> (count (get-in % [:presentation "content" 0 "text"])) 4000) rows))
       (expect (= ["failed" "cancelled"] (mapv :state (take-last 2 rows))))
       (expect (nil? (db/db-activity-page store (random-uuid) aid {})))

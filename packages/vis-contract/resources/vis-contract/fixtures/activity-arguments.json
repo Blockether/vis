@@ -113,11 +113,7 @@
           "evidence": [],
           "result_summary": "Unkeyed result two"
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     },
     "groups": [
       {
@@ -253,11 +249,7 @@
           "result_summary": "First search: 2 matches",
           "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     },
     "groups": [
       {
@@ -381,11 +373,7 @@
           ],
           "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     },
     "groups": [
       {

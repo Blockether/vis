@@ -159,7 +159,6 @@
         (expect (= (mapv :invocation-id (take-nth 2 events)) (mapv :id (:rows projection))))
         (expect (= (mapv :result-summary (:rows state)) (mapv :result-summary (:rows projection))))
         (expect (= ["failed" "cancelled"] (mapv :state (take-last 2 (:rows projection)))))
-        (expect (zero? (get-in projection [:omitted :rows])))
         (expect (> (activity/byte-size projection) 65536))
         (expect (contract/valid-projection? projection)))))
 
@@ -193,7 +192,6 @@
           (expect (= 1 (count (:rows running))))
           (expect (empty? (:rows visible)))
           (expect (= 1 (get-in visible [:counts :running])))
-          (expect (= 0 (get-in visible [:omitted :rows])))
           (expect (= [(name outcome)] (mapv :state (:rows settled))))
           (expect (contract/valid-projection? settled)))))
   (it "does not infer visibility from the operation name"
@@ -392,7 +390,8 @@
             (first (:rows presentation))]
 
         ;; Activity does not know its owner: no version, no anchor, no parent ids.
-        (expect (= #{:state :counts :rows :omitted} (set (keys presentation))))
+        ;; Activity has no step limit, so it has no omission count.
+        (expect (= #{:state :counts :rows} (set (keys presentation))))
         (expect (= "patch" (:presenter row)))
         (expect (= "mutation" (:signal row)))
         (expect (= "succeeded" (:state row)))
@@ -757,7 +756,6 @@
 
       (expect (> (activity/byte-size state) 65536))
       (expect (= 20 (count (:rows projection))))
-      (expect (zero? (get-in projection [:omitted :rows])))
       (expect (= (mapv :result-summary (:rows state)) (mapv :result-summary (:rows projection))))
       (expect (every? #(= content (:presentation %)) (:rows projection)))
       (expect (not-any? :is-truncated (:rows projection)))
@@ -805,7 +803,6 @@
                                (= (apply str (repeat 2000 "x")) (get block "text")))
                              (get-in % [:presentation "content"]))
                       (:children group)))
-      (expect (zero? (get-in projection [:omitted :rows])))
       (expect (> (activity/byte-size projection) 65536))
       (expect (contract/valid-projection? projection)))))
 
@@ -837,7 +834,6 @@
 
         (expect (= 12 (count (:children (first (:rows projection))))))
         (expect (= (:invocation-id running) (:id (last (:rows projection)))))
-        (expect (zero? (get-in projection [:omitted :rows])))
         (expect (= {:running 1 :succeeded 12 :failed 0 :cancelled 0} (:counts projection)))
         (expect (contract/valid-projection? projection))))
   (it "retains past and current content without trimming either"
@@ -866,7 +862,6 @@
             (activity/presentation state)]
 
         (expect (= 4 (count (:rows projection))))
-        (expect (zero? (get-in projection [:omitted :rows])))
         (expect (not-any? :is-truncated (:rows projection)))
         (expect (every? #(= blocks (get-in % [:presentation "content"])) (:rows projection)))
         (expect (every? #(= "Matches" (get-in % [:presentation "summary"])) (:rows projection)))

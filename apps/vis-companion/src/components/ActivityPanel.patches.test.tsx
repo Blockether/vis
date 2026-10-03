@@ -46,7 +46,6 @@ function projection(rows = [patchRow(1), patchRow(2)]): ActivityProjection {
     state: 'succeeded',
     rows,
     counts: { succeeded: rows.length, running: 0, failed: 0, cancelled: 0 },
-    omitted: { rows: 0, by_classification: {} },
   };
 }
 

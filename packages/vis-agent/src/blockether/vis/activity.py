@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Any
 
 from blockether.vis._contracts import definition, validate
@@ -205,14 +204,6 @@ class ActivityCounts:
 
 
 @dataclass(frozen=True, slots=True)
-class ActivityOmitted:
-    """Rows omitted from this projection, with counts by omission classification."""
-
-    rows: int
-    by_classification: Mapping[str, int]
-
-
-@dataclass(frozen=True, slots=True)
 class ActivityProjection:
     """One form's Activity receipt, optionally a page of its durable history.
 
@@ -224,7 +215,6 @@ class ActivityProjection:
     state: str
     counts: ActivityCounts
     rows: tuple[ActivityRow, ...]
-    omitted: ActivityOmitted
     history: Mapping[str, Any] | None = None
 
     @property
@@ -324,10 +314,6 @@ class ActivityProjection:
             value["state"],
             ActivityCounts(**value["counts"]),
             tuple(ActivityRow._from_validated(row) for row in value["rows"]),
-            ActivityOmitted(
-                value["omitted"]["rows"],
-                MappingProxyType(dict(value["omitted"]["by_classification"])),
-            ),
             freeze(value["history"]) if "history" in value else None,
         )
 

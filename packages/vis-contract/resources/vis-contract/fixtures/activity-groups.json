@@ -9,10 +9,6 @@
         "failed": 0,
         "cancelled": 0
       },
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      },
       "rows": [
         {
           "id": "call-1",
@@ -131,10 +127,6 @@
         "failed": 0,
         "cancelled": 0
       },
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      },
       "rows": [
         {
           "id": "call-1",
@@ -211,10 +203,6 @@
         "failed": 0,
         "cancelled": 0
       },
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      },
       "rows": []
     },
     "groups": []
@@ -228,10 +216,6 @@
         "succeeded": 10,
         "failed": 0,
         "cancelled": 0
-      },
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
       },
       "rows": [
         {
@@ -399,10 +383,6 @@
         "failed": 0,
         "cancelled": 0
       },
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      },
       "rows": [
         {
           "id": "call-7",
@@ -520,10 +500,6 @@
         "succeeded": 5,
         "failed": 1,
         "cancelled": 0
-      },
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
       },
       "rows": [
         {
@@ -649,10 +625,6 @@
         "failed": 0,
         "cancelled": 0
       },
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      },
       "rows": [
         {
           "id": "call-1",
@@ -686,10 +658,6 @@
         "succeeded": 2,
         "failed": 0,
         "cancelled": 0
-      },
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
       },
       "rows": [
         {
@@ -1074,11 +1042,7 @@
           "resources": [],
           "evidence": []
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     },
     "groups": [
       {
@@ -1139,10 +1103,6 @@
         "succeeded": 5,
         "failed": 1,
         "cancelled": 0
-      },
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
       },
       "rows": [
         {
@@ -1304,10 +1264,6 @@
         "succeeded": 8,
         "failed": 0,
         "cancelled": 0
-      },
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
       },
       "rows": [
         {

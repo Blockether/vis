@@ -514,8 +514,7 @@ do not count as invocations.
 
 `GET /v1/sessions/:sid/activity/:aid/export` streams the unfiltered history as text. Optional
 `revision` pins either request to the version you read. A changed revision returns 409. An export
-interrupted by a concurrent change is marked incomplete and must be retried. Old receipts that
-already lost records keep their original omission warning. The missing data cannot be reconstructed.
+interrupted by a concurrent change is marked incomplete and must be retried.
 
 ### Report checks and outside effects
 

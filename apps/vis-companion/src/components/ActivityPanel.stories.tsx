@@ -128,7 +128,7 @@ export const ExecutionResults: Story = {
   },
 };
 
-/** Read links to the file; other steps disclose their retained results. */
+/** Read and search show only their summary; other steps disclose their retained results. */
 export const ResultFirst: Story = {
   args: { activity: ACTIVITY_RESULTS },
   play: async ({ canvasElement }) => {
@@ -138,14 +138,14 @@ export const ResultFirst: Story = {
     const expected = [
       'lines 12–13',
       '"Hi "',
-      'greeting_test.clj',
+      "grep 'greeting'",
       'opens the file',
       'one disclosure',
       'one disclosure',
     ];
     await expect(rows).toHaveLength(expected.length);
     for (const [index, row] of rows.entries()) {
-      if (index === 0) {
+      if (index === 0 || index === 2) {
         await expect(within(row).queryByRole('button')).not.toBeInTheDocument();
         await expect(row.querySelector('[data-activity-content]')).toBeNull();
       } else {

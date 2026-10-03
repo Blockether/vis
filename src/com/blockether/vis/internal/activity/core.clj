@@ -11,10 +11,7 @@
 
    Ownerless: the form that contains this snapshot is its only identity, so no
    interaction, iteration, form, tool-call or view coordinate appears inside it."
-  {:state :idle
-   :rows []
-   :counts {:running 0 :succeeded 0 :failed 0 :cancelled 0}
-   :omitted {:rows 0 :by-classification {}}})
+  {:state :idle :rows [] :counts {:running 0 :succeeded 0 :failed 0 :cancelled 0}})
 
 (defn- terminal-state
   [event]
@@ -195,9 +192,7 @@
    A form that ran no tool carries no `:activity` at all — an empty panel is not
    the same statement as a form that did nothing."
   [state]
-  (boolean (or (seq (:rows state))
-               (pos? (long (get-in state [:omitted :rows] 0)))
-               (some #(pos? (long %)) (vals (:counts state))))))
+  (boolean (or (seq (:rows state)) (some #(pos? (long %)) (vals (:counts state))))))
 
 (defn replay
   "Reduce a lifecycle event stream into one deterministic snapshot."
@@ -506,5 +501,4 @@
   (let [state (snapshot state)]
     {:state (enum-name (:state state))
      :counts (:counts state)
-     :rows (mapv presentation-row (:rows state))
-     :omitted (:omitted state)}))
+     :rows (mapv presentation-row (:rows state))}))

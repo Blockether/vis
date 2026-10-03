@@ -9,7 +9,6 @@ export function activityHistoryPage(after = 0, q = ''): ActivityProjection {
   return {
     state: 'succeeded',
     counts: { running: 0, succeeded: 158, failed: 1, cancelled: 1 },
-    omitted: { rows: 0, by_classification: {} },
     history: {
       id: '12345678-1234-1234-1234-123456789012',
       revision: 1,
@@ -76,7 +75,6 @@ export function groupedActivityHistoryPage(id: string, after = 0, query = ''): A
   return {
     state: 'succeeded',
     counts: { running: 0, succeeded: total, failed: 0, cancelled: 0 },
-    omitted: { rows: 0, by_classification: {} },
     history: {
       id,
       revision: 1,

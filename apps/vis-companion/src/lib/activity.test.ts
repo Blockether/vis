@@ -82,7 +82,6 @@ const activityProjection = (
       evidence: [{ kind: 'arguments', text: 'suite' }],
     },
   ],
-  omitted: { rows: 0, by_classification: {} },
 });
 
 describe('canonical Activity admission across SDK, engine and surfaces', () => {
@@ -234,11 +233,9 @@ describe("one form's Activity read off the wire", () => {
         counts: { ...projection.counts, total: 1 },
       }),
     ).toBeNull();
+    // The projection has no omission count: every step stays in the chronology.
     expect(
-      activityProjectionFromWire({
-        ...projection,
-        omitted: { ...projection.omitted, total: 0 },
-      }),
+      activityProjectionFromWire({ ...projection, omitted: { rows: 0, by_classification: {} } }),
     ).toBeNull();
     expect(activityProjectionFromWire({ ...projection, rows: [row, { ...row }] })).toBeNull();
     expect(
@@ -594,7 +591,6 @@ describe('settling a snapshot its form outlived', () => {
     state: 'running',
     counts: { running: 2, succeeded: 1, failed: 0, cancelled: 0 },
     rows: [row('done', 'succeeded'), row('group', 'running', [row('child', 'running')])],
-    omitted: { rows: 0, by_classification: {} },
   };
 
   const outcomes = ['failed', 'cancelled'] as const;

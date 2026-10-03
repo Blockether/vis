@@ -1180,8 +1180,7 @@
                    :summary "suite"
                    :result-summary "24 passed"
                    :resources []
-                   :evidence [{:kind :arguments :text "suite"}]}]
-           :omitted {:rows 0 :by-classification {}}}
+                   :evidence [{:kind :arguments :text "suite"}]}]}
 
           file
           (io/resource "vis-contract/fixtures/activity.json")

@@ -102,8 +102,7 @@
          (merge {:state "running"
                  :rows rows
                  :counts (merge {:running 0 :succeeded 0 :failed 0 :cancelled 0}
-                                (frequencies (map (comp keyword :state) rows)))
-                 :omitted {:rows 0 :by-classification {}}}
+                                (frequencies (map (comp keyword :state) rows)))}
                 projection-extra)
 
          rendered
@@ -342,9 +341,9 @@
             (expect (= 2 (count (re-seq #"presenter\.clj" (str/join "\n" (:lines painted)))))))
           (doseq [[row expected disclosure?] (map vector
                                                   rows
-                                                  ["presenter.clj" "Hi" "greeting_test.clj"
+                                                  ["presenter.clj" "Hi" "grep 'greeting'"
                                                    "retained result" "disclosure" "disclosure"]
-                                                  [false true true true true true])]
+                                                  [false true false true true true])]
             (paint-activity-review! hs rows opened)
             (let [step (first (filter #(str/ends-with? (str (:node-id %)) (str ":" (:id row)))
                                       (.current interactions/hit-map)))

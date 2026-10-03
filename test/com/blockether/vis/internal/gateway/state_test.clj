@@ -984,8 +984,7 @@
       (let [snapshot
             {:state :running
              :counts {:running 1 :succeeded 0 :failed 0 :cancelled 0}
-             :rows [{:id "call-1" :sequence 1 :operation "grep" :state :running}]
-             :omitted {:rows 0 :by-classification {}}}
+             :rows [{:id "call-1" :sequence 1 :operation "grep" :state :running}]}
 
             [type store? payload]
             (#'state/chunk->event
@@ -998,8 +997,7 @@
       (let [snapshot
             {:state :succeeded
              :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
-             :rows [{:id "call-1" :sequence 1 :operation "grep" :state :succeeded}]
-             :omitted {:rows 0 :by-classification {}}}
+             :rows [{:id "call-1" :sequence 1 :operation "grep" :state :succeeded}]}
 
             [type store? activity-payload]
             (#'state/chunk->event
@@ -4125,7 +4123,7 @@
         (expect (pos? resolutions))
         (expect (= 1 (:project_count answer))))))
 
-;; Regression, user report: a long block painted "5 steps omitted · Activity limit".
+;; Regression, user report: a long block lost most of its Activity steps.
 ;; The gateway cut every `block.activity` frame to 16,000 characters and every text
 ;; field to 2,000, below the contract page that already bounds the frame
 ;; (`x-vis-max-page-rows`, `x-vis-page-target-bytes`) and keeps later rows pageable
@@ -4133,12 +4131,9 @@
 (defn- activity-of
   [rows]
   (:activity (nth (#'state/form-activity-chunk->event
-                    {:phase :form-activity
-                     :position 0
-                     :activity {:state "running"
-                                :counts {:running 1}
-                                :omitted {:rows 0 :by-classification {}}
-                                :rows rows}})
+                   {:phase :form-activity
+                    :position 0
+                    :activity {:state "running" :counts {:running 1} :rows rows}})
                   2)))
 
 (defn- activity-rows
@@ -4164,8 +4159,7 @@
             shipped
             (activity-of rows)]
 
-        (expect (= rows (:rows shipped)))
-        (expect (= 0 (get-in shipped [:omitted :rows])))))
+        (expect (= rows (:rows shipped)))))
   (it "ships evidence text the contract allows without cutting it"
       (let [rows (activity-rows 1 (apply str (repeat activity-contract/detail-byte-limit "x")))]
         (expect (= rows (:rows (activity-of rows)))))))

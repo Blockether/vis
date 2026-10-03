@@ -111,10 +111,7 @@
             :text (if finding? "src/orders.py:18: nesting 4 exceeds 3" "No nesting findings.")}]}}
 
         projection
-        {:state "succeeded"
-         :rows [row]
-         :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
-         :omitted {:rows 0 :by-classification {}}}]
+        {:state "succeeded" :rows [row] :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}}]
 
     (cap/capture!
       {:cols 80

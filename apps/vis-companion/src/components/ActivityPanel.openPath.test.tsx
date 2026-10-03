@@ -46,7 +46,6 @@ function projection(): ActivityProjection {
     state: 'succeeded',
     rows: [patchRow()],
     counts: { succeeded: 1, running: 0, failed: 0, cancelled: 0 },
-    omitted: { rows: 0, by_classification: {} },
   };
 }
 
@@ -193,7 +192,6 @@ function listingProjection(): ActivityProjection {
       },
     ],
     counts: { succeeded: 1, running: 0, failed: 0, cancelled: 0 },
-    omitted: { rows: 0, by_classification: {} },
   };
 }
 

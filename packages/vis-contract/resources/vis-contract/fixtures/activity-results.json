@@ -79,7 +79,6 @@
       "resources": []
     },
     {
-      "result_summary": "\"grep 'greeting'  2 hits · 2 files\\nsrc/greeting.clj  (1)\\n  12:abc│ (defn greeting [name]\\ntest/greeting_test.clj  (1)\\n  8:def│ (is (= \\\"Hello Ada\\\" (greeting \\\"Ada\\\")))\"",
       "id": "result-2",
       "summary": "greeting",
       "signal": "observation",
@@ -88,26 +87,12 @@
       "presentation": {
         "headline": "Searched",
         "summary": "grep 'greeting'  2 hits · 2 files",
-        "content": [
-          {
-            "type": "code",
-            "text": "grep 'greeting'  2 hits · 2 files\nsrc/greeting.clj  (1)\n  12 │ (defn greeting [name]\ntest/greeting_test.clj  (1)\n  8 │ (is (= \"Hello Ada\" (greeting \"Ada\")))"
-          }
-        ]
+        "content": []
       },
       "presenter": "generic",
       "duration_ms": 0,
       "state": "succeeded",
-      "evidence": [
-        {
-          "kind": "arguments",
-          "text": "[\"greeting\"]"
-        },
-        {
-          "kind": "result",
-          "text": "\"grep 'greeting'  2 hits · 2 files\\nsrc/greeting.clj  (1)\\n  12:abc│ (defn greeting [name]\\ntest/greeting_test.clj  (1)\\n  8:def│ (is (= \\\"Hello Ada\\\" (greeting \\\"Ada\\\")))\""
-        }
-      ],
+      "evidence": [],
       "resources": []
     },
     {
@@ -206,9 +191,5 @@
       ],
       "resources": []
     }
-  ],
-  "omitted": {
-    "rows": 0,
-    "by_classification": {}
-  }
+  ]
 }

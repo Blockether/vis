@@ -16,7 +16,6 @@ const activity: ActivityProjection = {
   },
   state: 'running',
   counts: { running: 1, succeeded: 0, failed: 0, cancelled: 0 },
-  omitted: { rows: 0, by_classification: {} },
   rows: [
     {
       id: '22222222-2222-2222-2222-222222222222',

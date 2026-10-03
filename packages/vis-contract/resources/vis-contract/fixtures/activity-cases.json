@@ -49,11 +49,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -113,11 +109,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -172,11 +164,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -230,10 +218,6 @@
           ]
         }
       ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      },
       "schema_version": 1
     }
   },
@@ -288,10 +272,6 @@
           ]
         }
       ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      },
       "anchor": 1
     }
   },
@@ -346,10 +326,6 @@
           ]
         }
       ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      },
       "view_id": 1
     }
   },
@@ -402,11 +378,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -459,11 +431,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -537,11 +505,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -594,11 +558,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -651,11 +611,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -709,70 +665,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
-    }
-  },
-  {
-    "name": "unknown omitted classification",
-    "valid": false,
-    "projection": {
-      "state": "running",
-      "counts": {
-        "running": 1,
-        "succeeded": 1,
-        "failed": 0,
-        "cancelled": 0
-      },
-      "rows": [
-        {
-          "id": "call-1",
-          "sequence": 1,
-          "operation": "grep",
-          "presenter": "observation",
-          "signal": "observation",
-          "state": "succeeded",
-          "summary": "18 matches",
-          "duration_ms": 41,
-          "resources": [],
-          "evidence": [
-            {
-              "kind": "arguments",
-              "text": "[{query: needle}]"
-            },
-            {
-              "kind": "result",
-              "text": "18 matches"
-            }
-          ]
-        },
-        {
-          "id": "call-2",
-          "sequence": 2,
-          "operation": "suite",
-          "presenter": "tests",
-          "signal": "verification",
-          "state": "running",
-          "summary": "suite",
-          "result_summary": "24 passed",
-          "resources": [],
-          "evidence": [
-            {
-              "kind": "arguments",
-              "text": "suite"
-            }
-          ]
-        }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {
-          "read": 1
-        }
-      }
+      ]
     }
   },
   {
@@ -826,11 +719,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -884,11 +773,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -937,11 +822,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -1028,11 +909,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -1096,11 +973,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -1163,11 +1036,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -1232,11 +1101,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -1318,11 +1183,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -1380,11 +1241,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -1466,11 +1323,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -1553,11 +1406,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -1616,11 +1465,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -1709,11 +1554,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -1795,11 +1636,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -1998,11 +1835,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -2055,11 +1888,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -2086,11 +1915,7 @@
           "evidence": [],
           "argument_key": null
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -2130,11 +1955,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -2187,11 +2008,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -2223,13 +2040,7 @@
             }
           ]
         }
-      ],
-      "omitted": {
-        "rows": 1,
-        "by_classification": {
-          "external": 1
-        }
-      }
+      ]
     }
   },
   {
@@ -2262,11 +2073,7 @@
             "verdict": "failed"
           }
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -2299,11 +2106,7 @@
             "verdict": "flaky"
           }
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   },
   {
@@ -2343,11 +2146,7 @@
             ]
           }
         }
-      ],
-      "omitted": {
-        "rows": 0,
-        "by_classification": {}
-      }
+      ]
     }
   }
 ]

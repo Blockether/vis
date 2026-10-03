@@ -116,7 +116,6 @@ export const ACTIVITY_LONG_RUNNING = projection({
     resources: [],
     evidence: [],
   })),
-  omitted: { rows: 0, by_classification: {} },
 });
 
 /** Every operation group stays visible, including settled groups beyond the old preview. */
@@ -139,7 +138,6 @@ export const ACTIVITY_ALL_GROUPS = projection({
     presentation: { headline, summary, content: [{ type: 'text', text }] },
     state: 'succeeded',
   })),
-  omitted: { rows: 0, by_classification: {} },
 });
 
 /** The same form, settled — what the panel looks like when nothing is moving. */
@@ -200,7 +198,6 @@ export const ACTIVITY_SETTLED = projection({
       evidence: [{ kind: 'result', text: '285 passed, 0 failed' }],
     },
   ],
-  omitted: { rows: 0, by_classification: {} },
 });
 
 /** Long labels retain their full values while sharing a row with timing and controls. */
@@ -256,8 +253,7 @@ export const ACTIVITY_LONG_LABELS = projection({
 /**
  * A TURN OF REAL WORK, which is what the axis is FOR: reads that answered a
  * question, a patch the repository REFUSED, the patch that landed, a check that
- * failed and a step still moving — plus the two rows the engine's own bound
- * dropped, because a chronology that hides its ceiling lies about what it shows.
+ * failed and a step still moving.
  *
  * Every shape the axis can draw is here on purpose: a summary sentence, a list
  * of paths with their kinds, a diff's `+7 −3`, and two errors that open
@@ -407,7 +403,6 @@ export const ACTIVITY_CHRONOLOGY = projection({
       evidence: [],
     },
   ],
-  omitted: { rows: 2, by_classification: { observation: 2 } },
 });
 
 /** The state a panel must not swallow: one row failed and says why. */
@@ -446,7 +441,6 @@ export const ACTIVITY_FAILED = projection({
       ],
     },
   ],
-  omitted: { rows: 2, by_classification: { observation: 2 } },
 });
 
 /**
@@ -634,7 +628,6 @@ export const ACTIVITY_TREE_CHANGES = projection({
       ],
     },
   ],
-  omitted: { rows: 0, by_classification: {} },
 });
 /**
  * A `vis-table` fence exactly as `attach` emits it: five header lines, then the
@@ -1591,7 +1584,6 @@ export const STORY_LISTING: TranscriptIteration[] = [
         activity: {
           state: 'succeeded',
           counts: { running: 0, succeeded: 1, failed: 0, cancelled: 0 },
-          omitted: { rows: 0, by_classification: {} },
           rows: [
             {
               id: 'ls-1',
@@ -2327,7 +2319,6 @@ function joinedActivity(state: 'running' | 'succeeded' | 'failed'): ActivityProj
       failed: state === 'failed' ? 1 : 0,
       cancelled: 0,
     },
-    omitted: { rows: 0, by_classification: {} },
     rows: [
       ...Array.from({ length: 8 }, (_, index) => ({
         id: `read-${index}`,

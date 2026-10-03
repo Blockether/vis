@@ -116,20 +116,13 @@ export interface ActivityCostPart {
  * Verification counters count calls, not individual tests. Their results stay
  * in the steps rather than adding a failure count to this summary.
  *
- * The rows the engine's own bound DROPPED are counted here from
- * `omitted.by_classification`: this line covers the whole run, a chronology that
- * shows four of ten calls must not report the cost of four, and the axis tail
- * can say `+6 more` but never what the six WERE.
- *
  * Colour repeats each noun and never carries it — mutations in the accent, reads
  * in the theme's cool ink, checks in the margin's own, external actions in the
  * theme's special ink — so a reader who cannot separate two hues loses nothing.
  */
 export function activityCostParts(activity?: ActivityProjection): readonly ActivityCostPart[] {
-  const dropped: Record<string, number> = activity?.omitted.by_classification ?? {};
   const rows = activity?.rows ?? [];
-  const tally = (signal: string) =>
-    rows.filter((row) => row.signal === signal).length + (dropped[signal] ?? 0);
+  const tally = (signal: string) => rows.filter((row) => row.signal === signal).length;
   const noun = (amount: number, word: string) => `${amount} ${word}${amount === 1 ? '' : 's'}`;
   const observations = tally('observation');
   const verifications = tally('verification');
@@ -209,9 +202,8 @@ export function activityReceiptText(activity?: ActivityProjection, durationMs?: 
   const state = activity?.state ?? 'idle';
   const live = state === 'running' || state === 'idle';
   const rows = activity?.rows ?? [];
-  const omitted = Math.max(0, activity?.omitted.rows ?? 0);
   const shown = rows.slice(0, 3);
-  const left = rows.length - shown.length + omitted;
+  const left = rows.length - shown.length;
   const subject = rows.length === 1 && left === 0 ? activityStepObject(rows[0]) : '';
   const names = [...shown.map((row) => row.operation.toUpperCase()), subject]
     .filter(Boolean)
@@ -1221,17 +1213,11 @@ function ActivityGroup({
 /** Show every operation group; only individual group contents are disclosed. */
 function ActivityThread({ activity }: { activity?: ActivityProjection }) {
   const groups = operationGroups(activity?.rows ?? []);
-  const omitted = activity?.omitted.rows ?? 0;
   return (
     <ol aria-label="Operation groups" data-activity-chronology className="min-w-0 pb-1">
       {groups.map((group) => (
         <ActivityGroup key={group.id} group={group} />
       ))}
-      {omitted > 0 && (
-        <li className="text-meta text-dialog-hint">
-          {omitted} {omitted === 1 ? 'step' : 'steps'} omitted · Activity limit
-        </li>
-      )}
     </ol>
   );
 }
@@ -1251,7 +1237,7 @@ export const ActivityHistoryContext = createContext<ActivityHistorySource | null
 function operationCount(activity: ActivityProjection): number {
   return Math.max(
     activity.history?.total ?? 0,
-    activity.rows.length + activity.omitted.rows,
+    activity.rows.length,
     Object.values(activity.counts).reduce((sum, count) => sum + count, 0),
   );
 }
@@ -1396,9 +1382,6 @@ export function ActivityPanel({
       ? [{ text: `${total} ${total === 1 ? 'operation' : 'operations'}`, tone: '' }]
       : activityCostParts(activity)),
     ...states.map((text) => ({ text, tone: '' })),
-    ...(!open && activity.omitted.rows
-      ? [{ text: `${activity.omitted.rows} omitted`, tone: '' }]
-      : []),
   ];
   return (
     <section className="isolate min-w-0" aria-live="off" data-activity-axis>

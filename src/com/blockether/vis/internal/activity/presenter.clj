@@ -302,7 +302,7 @@
 
 (def ^:private summary-only-results
   "Built-ins whose successful Activity carries only a summary, not argument or result bodies."
-  #{"cat"})
+  #{"cat" "grep"})
 
 (def ^:private tool-headlines
   "Each built-in owns its start headline, settled headline and start visibility."
@@ -875,8 +875,6 @@
                 (and (contains? #{"doc" "main_agent_instructions"} op) text) [{"type" "markdown"
                                                                                "text" text}]
                 (and (= op "defs") text) [{"type" "code" "language" "python" "text" text}]
-                (and (= op "grep") text)
-                [{"type" "code" "text" (str/replace text #"(?m)^(\s*\d+):[0-9a-f]+│ ?" "$1 │ ")}]
                 (contains? #{"draft_status" "draft_create" "draft_discard" "draft_diff"} op) []
                 :else (result-blocks (visible-result
                                        (let [public

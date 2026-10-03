@@ -47,8 +47,7 @@
                                      :rows [{:id (:invocation-id owner)
                                              :operation "Run tests"
                                              :summary "Checking the build"
-                                             :state "running"}]
-                                     :omitted {:rows 0 :by-classification {}}}}]}]})
+                                             :state "running"}]}}]}]})
 
 (defn review-payload
   ([pane width] (review-payload pane width {}))

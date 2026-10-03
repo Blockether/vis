@@ -5539,12 +5539,12 @@
    how many are left, because past three the line stops being a glance and the
    chronology below is the whole list anyway. A lone call also prints its own
    subject, which is the only place a name like SHELL is too thin on its own."
-  ^String [rows omitted]
+  ^String [rows]
   (let [shown
         (into [] (take 3) rows)
 
         left
-        (+ (max 0 (- (count rows) (count shown))) (max 0 (long (or omitted 0))))
+        (max 0 (- (count rows) (count shown)))
 
         names
         (mapv #(str/upper-case (str (:operation %))) shown)
@@ -5570,9 +5570,7 @@
 
    `0 mutations` always prints. Whether this iteration changed anything is the one
    question a receipt is asked, and it is about the rows that are NOT there, so no row
-   on the axis can answer it; the other kinds speak only when they happened. Rows
-   the ENGINE dropped still count, or a receipt showing four of ten calls would report
-   the cost of four.
+   on the axis can answer it; the other kinds speak only when they happened.
 
    Verification counters use `ver` and count calls, not individual tests.
    Their results stay in the steps, without a failure count in this summary."
@@ -5580,15 +5578,9 @@
   (let [rows
         (vec (:rows activity))
 
-        dropped
-        (reduce-kv (fn [acc classification amount]
-                     (assoc acc (name classification) (long amount)))
-                   {}
-                   (or (get-in activity [:omitted :by-classification]) {}))
-
         tally
         (fn [signal]
-          (+ (count (filter #(= signal (str (:signal %))) rows)) (long (get dropped signal 0))))
+          (count (filter #(= signal (str (:signal %))) rows)))
 
         noun
         (fn [amount word]
@@ -5625,9 +5617,6 @@
         running
         (count (filter #(= :running (activity-row-state %)) rows))
 
-        omitted
-        (max 0 (long (get-in activity [:omitted :rows] 0)))
-
         terminal?
         (or failed?
             (some? success?)
@@ -5643,7 +5632,7 @@
         (when (contains? #{"FAILED" "CANCELLED"} state) state)
 
         ops
-        (activity-ops-copy rows omitted)]
+        (activity-ops-copy rows)]
 
     (str/join " · "
               (remove str/blank? [trouble (or ops (when-not terminal? "running activity"))]))))
@@ -5668,8 +5657,7 @@
    `apps/vis-companion/src/components/ui.tsx`) and the two surfaces spell it the
    same way.
 
-   A rule that can be PRESSED says `show …`; one that only reports what the engine
-   already dropped says the bare count. Below five columns of room the rule is
+   A rule that can be PRESSED says `show …`. Below five columns of room the rule is
    dropped and the words are kept - a rule with no line in it is noise."
   ^String [label ^long width]
   (let [text
@@ -6315,8 +6303,8 @@
 (defn- activity-detail-entries
   "A joined Activity band, closed until the reader explicitly opens it.
    Disclosure choices inside the band remain independent of its outer fold."
-  [{:keys [node-id activity-rows activity-expanded? activity-omitted activity-artifacts
-           activity-histories activity-sources activity-fetch]} max-w session-id]
+  [{:keys [node-id activity-rows activity-expanded? activity-artifacts activity-histories
+           activity-sources activity-fetch]} max-w session-id]
   (let [rows
         (activity-operation-rows activity-rows)
 
@@ -6795,9 +6783,7 @@
 
         ;; A PAGE IS NOT A LIMIT. Rows outside the window are still on the record,
         ;; so the rule under the band can be PRESSED and says what the next press
-        ;; brings. A legacy omitted count is the other thing entirely — those rows
-        ;; were dropped before anything durable held them — so it keeps the bare
-        ;; count `more-rule` reserves for what is genuinely gone.
+        ;; brings.
         ;; The rule already SAYS its words: `more-rule` stands them in the gap it
         ;; cuts in the line. The hint-colored overlay is there to recolor THAT copy,
         ;; so it has to land on the column the words actually start at - painted at
@@ -6922,22 +6908,9 @@
                           (or next-after (pos? after) (seq query))
                           (conj search-rule)))))
             (range)
-            histories))
+            histories))]
 
-        ;; Records the engine dropped before retention: unavailable bytes, not a
-        ;; window. It reports, it cannot be pressed.
-        omitted-entry
-        (when (pos? (long (or activity-omitted 0)))
-          (let [label (str activity-omitted
-                           " step"
-                           (when (not= 1 activity-omitted) "s")
-                           " omitted · Activity limit")]
-            {:line (str activity-marker (ellipsize-cols label width))
-             :meta
-             (merge meta-base
-                    {:kind :activity-more :item-id "omitted" :mark "" :label label :mark-col 0})}))]
-
-    (when (or (seq rows) (seq histories) (pos? (long (or activity-omitted 0))))
+    (when (or (seq rows) (seq histories))
       (let [states
             (frequencies (map activity-row-state activity-rows))
 
@@ -6958,10 +6931,10 @@
             retained
             (reduce +
                     0
-                    (map (fn [{:keys [history rows counts omitted]}]
+                    (map (fn [{:keys [history rows counts]}]
                            (max (long (or (:total history) 0))
                                 (long (reduce + 0 (vals counts)))
-                                (+ (operation-count rows) (long (or (:rows omitted) 0)))))
+                                (operation-count rows)))
                          sources))
 
             ;; One search reads the whole record, so the band says what it is
@@ -6989,11 +6962,7 @@
                     :else (activity-cost-text {:rows activity-rows})))
 
             suffix
-            (str/join " · "
-                      (remove str/blank?
-                        [status summary
-                         (when (and (not band-open?) (pos? (long (or activity-omitted 0))))
-                           (str activity-omitted " omitted"))]))
+            (str/join " · " (remove str/blank? [status summary]))
 
             prefix
             (str (band-label "ACTIVITY") " " (if band-open? "▾" "▸"))
@@ -7016,8 +6985,7 @@
                            :right-inset 2
                            :node-id (str node-id ":#band")
                            :item-id "#band"
-                           :copy-text (activity-contract/copy-text
-                                        {:rows activity-rows :omitted {:rows activity-omitted}})
+                           :copy-text (activity-contract/copy-text {:rows activity-rows})
                            ;; Copy every source in order, including receipts without
                            ;; retained history between the gateway-backed records.
                            :copy-history (when (seq histories)
@@ -7036,7 +7004,6 @@
         (vec (concat [header]
                      (when band-open? (cons blank (mapcat row-entry rows)))
                      (when band-open? page-entries)
-                     (when (and band-open? omitted-entry) [omitted-entry])
                      [blank]))))))
 
 (defn- run-row-entries
@@ -7182,24 +7149,20 @@
        :duration-ms (when (every? #(some? (vis/format-duration (:duration-ms %))) forms)
                       (reduce + 0 (map :duration-ms forms)))
        :runs (vec (mapcat :runs forms))
-       :activity
-       {:state (name state)
-        :counts (apply merge-with
-                  +
-                  {:running 0 :succeeded 0 :failed 0 :cancelled 0}
-                  (map :counts activities))
-        :rows rows
-        :omitted
-        {:rows (reduce + 0 (keep #(get-in % [:omitted :rows]) activities))
-         :by-classification
-         (apply merge-with + {} (keep #(get-in % [:omitted :by-classification]) activities))}
-        ;; Each joined run keeps its OWN durable record and its own cursor. One
-        ;; cursor could only ever address one of them, so the band carries them
-        ;; all and pages whichever the reader presses.
-        :histories (vec (keep :history activities))
-        ;; Totals and copying also include the inline sources, in their original order.
-        :sources (vec activities)
-        :vis.channel-tui/fetch (apply merge {} (keep :vis.channel-tui/fetch activities))}})))
+       :activity {:state (name state)
+                  :counts (apply merge-with
+                            +
+                            {:running 0 :succeeded 0 :failed 0 :cancelled 0}
+                            (map :counts activities))
+                  :rows rows
+                  ;; Each joined run keeps its OWN durable record and its own cursor. One
+                  ;; cursor could only ever address one of them, so the band carries them
+                  ;; all and pages whichever the reader presses.
+                  :histories (vec (keep :history activities))
+                  ;; Totals and copying also include the inline sources, in their original order.
+                  :sources (vec activities)
+                  :vis.channel-tui/fetch
+                  (apply merge {} (keep :vis.channel-tui/fetch activities))}})))
 
 (defn- execution-groups
   "One source and activity per adjacent Python run; comments and other languages are boundaries."
@@ -7487,8 +7450,7 @@
                                (some #(and (attach/live-artifact? %)
                                            (owns-live-view? activity (:owner %)))
                                      form-artifacts)
-                               (seq (:rows activity))
-                               (pos? (long (get-in activity [:omitted :rows] 0)))))
+                               (seq (:rows activity))))
                   (detail-node-id {:session-turn-id session-turn-id
                                    :iteration-number iteration-number
                                    :block-number block-number
@@ -7518,7 +7480,6 @@
                                                                       iteration-id))
                                                :index (or (::index artifact) index)}])))
                                        (filter #(= "tool" (get % "source")) attachments)))
-                   :activity-omitted (get-in activity [:omitted :rows] 0)
                    :activity-histories (vec (or (seq (:histories activity))
                                                 (when-let [history (:history activity)]
                                                   [history])))
@@ -8502,9 +8463,6 @@
         states
         (frequencies (map activity-row-state rows))
 
-        omitted
-        (apply merge-with + {} (keep #(get-in % [:omitted :by-classification]) activities))
-
         running-lives
         (filterv :running? lives)
 
@@ -8521,8 +8479,7 @@
         summary
         (str (if open? "▾ " "▸ ")
              (str/join " · "
-                       (concat [(activity-cost-text {:rows rows
-                                                     :omitted {:by-classification omitted}})]
+                       (concat [(activity-cost-text {:rows rows})]
                                (for [state
                                      [:running :failed :cancelled]
 
