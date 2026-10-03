@@ -11,8 +11,11 @@
    wiring live."
   (:require [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.council.rooms :as rooms]
+            [com.blockether.vis.internal.automation.runner :as automation-runner]
             [com.blockether.vis.internal.gateway.bus :as bus]
+            [com.blockether.vis.internal.gateway.push :as push]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.python.env :as python-env]
@@ -31,6 +34,15 @@
                             #'state/council-wake-eligible?
                             #'state/council-wake!)
     (agents/install-runtime! state/agent-runtime)
+    ;; Automations start turns through the gateway and alert through Push. Their
+    ;; own alert replaces the ordinary turn alert.
+    (automation-runner/install-runtime! {:submit! #'state/submit-turn-sync!
+                                         :create-session! #'state/create-session!
+                                         :delete-session! #'state/close-session!
+                                         :session? (fn [sid]
+                                                     (some? (lp/by-id sid)))
+                                         :notify! #'push/notify-automation-run!})
+    (push/set-quiet-filter! #'automation-runner/quiet-turn?)
     ;; A live View a human stops after its block returned has no collector left;
     ;; the gateway owns the database, so it files the late artifact.
     (view/set-late-artifact-filer! #'state/append-iteration-attachment!)

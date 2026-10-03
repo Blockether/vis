@@ -94,8 +94,9 @@
   store-backend-test
   "SQLite is the one backend: every store value, and nil for no store, forwards
    to it, and it implements every `Store` op or does not compile."
-  (it "implements every Store op"
-      (expect (= (set (keys (:sigs persistance/Store)))
+  (it "implements every Store and AutomationStore op"
+      (expect (= (set (concat (keys (:sigs persistance/Store))
+                              (keys (:sigs persistance/AutomationStore))))
                  (set (keys (:implementation sqlite/backend)))))
       (expect (every? fn? (vals (:implementation sqlite/backend)))))
   (it "opens and disposes an in-memory store"

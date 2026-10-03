@@ -6711,6 +6711,149 @@
         (improve-review-current! still-current?)
         {:records (mapv #(db-improve-get tx %) changed)}))))
 
+;; Automations
+
+(defn- update-count [result] (long (or (:next.jdbc/update-count (first result)) 0)))
+
+(defn- automation-row
+  [row]
+  (when row
+    (-> row
+        (update :enabled #(= 1 (long %)))
+        (update :definition <-json))))
+
+(defn db-automation-list
+  [db]
+  (mapv automation-row (query! db {:select [:*] :from [:automation] :order-by [:created_at :id]})))
+
+(defn db-automation-get
+  [db id]
+  (automation-row (query-one! db {:select [:*] :from [:automation] :where [:= :id id]})))
+
+(defn db-automation-put!
+  [db row]
+  (let [values (-> row
+                   (select-keys [:id :name :enabled :definition :webhook_secret :callback_secret
+                                 :created_at :updated_at])
+                   (update :enabled #(if % 1 0))
+                   (update :definition ->json))]
+    (sqlite-write-tx! db
+                      (fn [tx]
+                        (execute! tx
+                                  {:insert-into :automation
+                                   :values [values]
+                                   :on-conflict [:id]
+                                   :do-update-set (vec (remove #{:id :created_at}
+                                                         (keys values)))})))
+    (db-automation-get db (:id row))))
+
+(defn db-automation-delete!
+  [db id]
+  (pos? (update-count (sqlite-write-tx!
+                        db
+                        (fn [tx]
+                          (execute! tx {:delete-from :automation :where [:= :id id]}))))))
+
+(defn- run-row [row] (when row (update row :is_silent #(= 1 (long %)))))
+
+(defn- run-values
+  [attrs]
+  (cond-> attrs
+    (contains? attrs :is_silent)
+    (update :is_silent #(if % 1 0))))
+
+(defn db-automation-run
+  [db id]
+  (run-row (query-one! db {:select [:*] :from [:automation_run] :where [:= :id id]})))
+
+(defn db-automation-claim-run!
+  [db row]
+  (when (pos? (update-count (sqlite-write-tx! db
+                                              (fn [tx]
+                                                (execute! tx
+                                                          {:insert-into :automation_run
+                                                           :values [(run-values row)]
+                                                           :on-conflict [:automation_id
+                                                                         :trigger_key]
+                                                           :do-nothing true})))))
+    (db-automation-run db (:id row))))
+
+(defn db-automation-runs
+  "Runs newest first. Filter by `:automation-id`, `:statuses` and `:session-id`."
+  [db {:keys [automation-id statuses session-id limit]}]
+  (let [clauses (cond-> []
+                  automation-id
+                  (conj [:= :automation_id automation-id])
+
+                  (seq statuses)
+                  (conj [:in :status (vec statuses)])
+
+                  session-id
+                  (conj [:= :session_id session-id]))]
+    (mapv run-row
+          (query! db
+                  (cond-> {:select [:*]
+                           :from [:automation_run]
+                           :order-by [[:created_at :desc] [:id :desc]]
+                           :limit (or limit 50)}
+                    (seq clauses)
+                    (assoc :where (into [:and] clauses)))))))
+
+(defn db-automation-update-run!
+  [db id statuses attrs]
+  (when (pos? (update-count (sqlite-write-tx! db
+                                              (fn [tx]
+                                                (execute! tx
+                                                          {:update :automation_run
+                                                           :set (run-values attrs)
+                                                           :where (cond-> [:and [:= :id id]]
+                                                                    (seq statuses)
+                                                                    (conj [:in :status
+                                                                           (vec statuses)]))})))))
+    (db-automation-run db id)))
+
+(defn db-automation-prune-runs!
+  [db automation-id limit]
+  (update-count (sqlite-write-tx! db
+                                  (fn [tx]
+                                    (execute! tx
+                                              {:delete-from :automation_run
+                                               :where [:and [:= :automation_id automation-id]
+                                                       [:not-in :status ["queued" "running"]]
+                                                       [:not-in :id
+                                                        {:select [:id]
+                                                         :from [:automation_run]
+                                                         :where [:= :automation_id automation-id]
+                                                         :order-by [[:created_at :desc] [:id :desc]]
+                                                         :limit limit}]]})))))
+
+(defn db-automation-enqueue-delivery!
+  [db row]
+  (pos? (update-count (sqlite-write-tx! db
+                                        (fn [tx]
+                                          (execute! tx
+                                                    {:insert-into :automation_delivery
+                                                     :values [row]
+                                                     :on-conflict [:run_id :event]
+                                                     :do-nothing true}))))))
+
+(defn db-automation-due-deliveries
+  [db now limit]
+  (query! db
+          {:select [:*]
+           :from [:automation_delivery]
+           :where [:and [:= :status "pending"] [:<= :next_attempt_at now]]
+           :order-by [:next_attempt_at :id]
+           :limit limit}))
+
+(defn db-automation-update-delivery!
+  [db id attrs]
+  (pos? (update-count
+          (sqlite-write-tx!
+            db
+            (fn [tx]
+              (execute! tx {:update :automation_delivery :set attrs :where [:= :id id]}))))))
+
 ;; Backend
 
 (def backend

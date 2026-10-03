@@ -241,15 +241,35 @@
   (db-activity-settle! [db-info aid outcome summary])
   (db-activity-page [db-info sid aid opts]))
 
+(defprotocol AutomationStore
+  "Automation operations of a persistence backend, with the `Store` dispatch. They
+   are a separate protocol because one protocol with every op exceeds the JVM limit
+   for the size of one method. Rows keep column names. A definition is canonical
+   JSON with string keys."
+  (db-automation-list [db-info])
+  (db-automation-get [db-info id])
+  (db-automation-put! [db-info row])
+  (db-automation-delete! [db-info id])
+  (db-automation-claim-run! [db-info row]
+    "Insert a run unless its trigger key exists. Answer the inserted row or nil.")
+  (db-automation-run [db-info id])
+  (db-automation-runs [db-info opts])
+  (db-automation-update-run! [db-info id statuses attrs]
+    "Change a run only while its status is in `statuses`. Answer the new row or nil.")
+  (db-automation-prune-runs! [db-info automation-id limit])
+  (db-automation-enqueue-delivery! [db-info row])
+  (db-automation-due-deliveries [db-info now limit])
+  (db-automation-update-delivery! [db-info id attrs]))
+
 (defmacro store-implementation
-  "Expand, inside a backend namespace, to its `Store` op map: every op keyed to
-   the backend's own fn of the same name. A backend missing an op fails to
-   compile instead of failing at its first call."
+  "Expand, inside a backend namespace, to its op map for `Store` and
+   `AutomationStore`: every op keyed to the backend's own fn of the same name. A
+   backend missing an op fails to compile instead of failing at its first call."
   []
   (into {}
         (map (fn [op]
                [op (symbol (name op))]))
-        (keys (:sigs Store))))
+        (keys (merge (:sigs Store) (:sigs AutomationStore)))))
 
 ;; Turn outcome
 
@@ -373,15 +393,23 @@
     (fn [db-info session-turn-id opts]
       ((backend-op :db-update-session-turn!) db-info session-turn-id (bound-turn-outcome opts)))))
 
+(def ^:private automation-ops
+  "Every `AutomationStore` op forwarded to the backend."
+  (into {} (map (juxt identity forward)) (keys (:sigs AutomationStore))))
+
 ;; Extended once, while this namespace loads: re-exports copy the protocol fns,
 ;; and a later `extend` would rebind them behind those copies.
 (extend nil
   Store
-    store-ops)
+    store-ops
+    AutomationStore
+    automation-ops)
 
 (extend Object
   Store
-    store-ops)
+    store-ops
+    AutomationStore
+    automation-ops)
 
 ;; Connection lifecycle
 

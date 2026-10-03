@@ -12,6 +12,7 @@ if not _DATA.is_dir():
 _SCHEMA_NAMES = (
     "activity",
     "agents",
+    "automations",
     "common",
     "config",
     "content",

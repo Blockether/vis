@@ -337,6 +337,21 @@
                    (expect (= 426 (:status (handler {:uri "/v1/sessions" :headers {}}))))
                    (expect (= 2 @calls)))))
 
+(defdescribe webhook-route-is-open-without-the-gateway-token
+             (it "lets a webhook through without the gateway token and the protocol headers"
+                 (with-server-state!
+                   {:require-token? true :token "secret"}
+                   (fn []
+                     (let [gated ((rv 'wrap-auth) (constantly {:status 200}) "secret" [])]
+                       (expect (= 200 (:status (gated {:uri "/v1/hooks/a1" :headers {}}))))
+                       (expect (= 401 (:status (gated {:uri "/v1/automations" :headers {}})))))))
+                 (let [handler ((rv 'wrap-protocol)
+                                 (fn [_]
+                                   {:status 204})
+                                 [])]
+                   (expect (= 204 (:status (handler {:uri "/v1/hooks/a1" :headers {}}))))
+                   (expect (= 426 (:status (handler {:uri "/v1/automations" :headers {}})))))))
+
 (defdescribe gateway-stops-runtimes-owned-by-route-contributions
              (it "gateway stops runtimes owned by route contributions"
                  (let [stopped (atom [])]

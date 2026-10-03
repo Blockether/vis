@@ -1070,3 +1070,57 @@ CREATE TABLE group_setting (
   value TEXT NOT NULL,
   PRIMARY KEY (owner_id, setting_id)
 );
+
+-- Automations start turns from schedules, manual runs and signed webhooks.
+-- The definition is canonical contract JSON. Secrets never leave the gateway after creation.
+CREATE TABLE automation (
+  id TEXT PRIMARY KEY NOT NULL,
+  name TEXT NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 512),
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+  definition TEXT NOT NULL,
+  webhook_secret TEXT,
+  callback_secret TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+-- One row claims one trigger occurrence at most once. A queued or running row of a
+-- stopped gateway becomes unknown and never runs again.
+CREATE TABLE automation_run (
+  id TEXT PRIMARY KEY NOT NULL,
+  automation_id TEXT NOT NULL REFERENCES automation(id) ON DELETE CASCADE,
+  trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('cron', 'every', 'once', 'webhook', 'manual')),
+  trigger_key TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled', 'skipped', 'unknown')),
+  reason TEXT,
+  request TEXT,
+  scheduled_at INTEGER,
+  created_at INTEGER NOT NULL,
+  started_at INTEGER,
+  finished_at INTEGER,
+  session_id TEXT,
+  turn_id TEXT,
+  answer TEXT,
+  error TEXT,
+  is_silent INTEGER NOT NULL DEFAULT 0 CHECK (is_silent IN (0, 1)),
+  owner_pid INTEGER,
+  UNIQUE (automation_id, trigger_key)
+);
+CREATE INDEX idx_automation_run_automation ON automation_run(automation_id, created_at);
+CREATE INDEX idx_automation_run_status ON automation_run(status, created_at);
+
+-- Callback events wait here until delivery succeeds or the attempts end.
+CREATE TABLE automation_delivery (
+  id TEXT PRIMARY KEY NOT NULL,
+  run_id TEXT NOT NULL REFERENCES automation_run(id) ON DELETE CASCADE,
+  event TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'failed')),
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  next_attempt_at INTEGER NOT NULL,
+  last_error TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE (run_id, event)
+);
+CREATE INDEX idx_automation_delivery_due ON automation_delivery(status, next_attempt_at);

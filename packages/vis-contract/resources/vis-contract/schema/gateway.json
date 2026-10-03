@@ -1636,6 +1636,101 @@
           "response_schema": "rooms_ok"
         }
       }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/automations",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json",
+          "response_schema": "automations_list"
+        },
+        "post": {
+          "request": "json",
+          "response": "json",
+          "response_schema": "automations_automation",
+          "request_schema": "automations_input"
+        }
+      }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/automations/runs",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json",
+          "response_schema": "automations_run_list"
+        }
+      }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/automations/runs/:run-id",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json",
+          "response_schema": "automations_run"
+        }
+      }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/automations/:automation-id",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json",
+          "response_schema": "automations_automation"
+        },
+        "patch": {
+          "request": "json",
+          "response": "json",
+          "response_schema": "automations_automation",
+          "request_schema": "automations_patch"
+        },
+        "delete": {
+          "request": "none",
+          "response": "json",
+          "response_schema": "automations_deleted"
+        }
+      }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/automations/:automation-id/run",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "json",
+          "response_schema": "automations_run"
+        }
+      }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/automations/:automation-id/secrets",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json",
+          "response_schema": "automations_secret_created",
+          "request_schema": "automations_secret_request"
+        }
+      }
+    },
+    {
+      "audience": "public",
+      "path": "/v1/hooks/:automation-id",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json",
+          "response_schema": "automations_webhook_result"
+        }
+      }
     }
   ],
   "x-vis-client-lease": {
@@ -2898,6 +2993,39 @@
     },
     "rooms_membership_list": {
       "$ref": "rooms.json#/$defs/membership_list"
+    },
+    "automations_list": {
+      "$ref": "automations.json#/$defs/automation_list"
+    },
+    "automations_automation": {
+      "$ref": "automations.json#/$defs/automation"
+    },
+    "automations_input": {
+      "$ref": "automations.json#/$defs/automation_input"
+    },
+    "automations_patch": {
+      "$ref": "automations.json#/$defs/automation_patch"
+    },
+    "automations_deleted": {
+      "$ref": "automations.json#/$defs/automation_deleted"
+    },
+    "automations_run": {
+      "$ref": "automations.json#/$defs/run"
+    },
+    "automations_run_list": {
+      "$ref": "automations.json#/$defs/run_list"
+    },
+    "automations_secret_request": {
+      "$ref": "automations.json#/$defs/secret_request"
+    },
+    "automations_secret_created": {
+      "$ref": "automations.json#/$defs/secret_created"
+    },
+    "automations_webhook_result": {
+      "$ref": "automations.json#/$defs/webhook_result"
+    },
+    "automations_run_event": {
+      "$ref": "automations.json#/$defs/run_event"
     }
   }
 }

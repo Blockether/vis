@@ -37,7 +37,7 @@
     (or (get @validators cache-key)
         (let [source (schema-document document-name)
               schema-id (get source "$id")
-              dependencies (map schema-document ["toggle" "council" "rooms"])
+              dependencies (map schema-document ["toggle" "council" "rooms" "automations"])
               target (if definition
                        (-> (select-keys source ["$schema" "$id" "$defs"])
                            (assoc "$ref" (str "#/$defs/" definition)))

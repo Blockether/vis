@@ -2347,6 +2347,139 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def get_automations(
+        self, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/automations — json response."""
+        response = self._request(
+            "GET", "/v1/automations", path={}, query=query, timeout=timeout
+        )
+        return response.json()
+
+    def post_automations(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/automations — json response."""
+        response = self._request(
+            "POST", "/v1/automations", path={}, query=query, timeout=timeout, body=body
+        )
+        return response.json()
+
+    def get_automation_runs(
+        self, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/automations/runs — json response."""
+        response = self._request(
+            "GET", "/v1/automations/runs", path={}, query=query, timeout=timeout
+        )
+        return response.json()
+
+    def get_automation_run(
+        self, run_id: str, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/automations/runs/:run-id — json response."""
+        response = self._request(
+            "GET",
+            "/v1/automations/runs/:run-id",
+            path={"run-id": run_id},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
+    def get_automation(
+        self,
+        automation_id: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+    ) -> JSONValue:
+        """GET /v1/automations/:automation-id — json response."""
+        response = self._request(
+            "GET",
+            "/v1/automations/:automation-id",
+            path={"automation-id": automation_id},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
+    def patch_automation(
+        self,
+        automation_id: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """PATCH /v1/automations/:automation-id — json response."""
+        response = self._request(
+            "PATCH",
+            "/v1/automations/:automation-id",
+            path={"automation-id": automation_id},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
+    def delete_automation(
+        self,
+        automation_id: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+    ) -> JSONValue:
+        """DELETE /v1/automations/:automation-id — json response."""
+        response = self._request(
+            "DELETE",
+            "/v1/automations/:automation-id",
+            path={"automation-id": automation_id},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
+    def post_automation_run(
+        self,
+        automation_id: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+    ) -> JSONValue:
+        """POST /v1/automations/:automation-id/run — json response."""
+        response = self._request(
+            "POST",
+            "/v1/automations/:automation-id/run",
+            path={"automation-id": automation_id},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
+    def post_automation_secrets(
+        self,
+        automation_id: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/automations/:automation-id/secrets — json response."""
+        response = self._request(
+            "POST",
+            "/v1/automations/:automation-id/secrets",
+            path={"automation-id": automation_id},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
     def get_settings(
         self, *, query: Query | None = None, timeout: float | None = None
     ) -> JSONValue:

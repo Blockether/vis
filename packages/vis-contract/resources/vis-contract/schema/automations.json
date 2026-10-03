@@ -1,0 +1,868 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contract.blockether.com/vis/schema/automations.json",
+  "$ref": "#/$defs/automation",
+  "$comment": "Automations start turns from schedules, manual runs and signed webhooks. All times are Unix milliseconds. The gateway shows a secret only once, when it creates or rotates the secret. The server checks UTF-8 budgets, cron syntax and time zones separately.",
+  "x-vis-limits": {
+    "automations": 256,
+    "triggers": 8,
+    "prompt_bytes": 16384,
+    "every_seconds_min": 60,
+    "runs_kept": 200,
+    "concurrent_runs": 4,
+    "queued_runs": 8,
+    "webhook_body_bytes": 1048576,
+    "webhook_requests_per_minute": 30,
+    "webhook_skew_seconds": 300,
+    "webhook_value_bytes": 4000,
+    "callback_attempts": 6,
+    "callback_timeout_ms": 10000
+  },
+  "$defs": {
+    "automation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "timestamp": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "name": {
+      "allOf": [
+        {
+          "$ref": "common.json#/$defs/non_blank_string"
+        }
+      ],
+      "maxLength": 128
+    },
+    "prompt": {
+      "allOf": [
+        {
+          "$ref": "common.json#/$defs/non_blank_string"
+        }
+      ],
+      "maxLength": 16384
+    },
+    "cron_trigger": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "cron"
+        },
+        "expression": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "kind",
+        "expression"
+      ],
+      "additionalProperties": false,
+      "description": "Five cron fields or a macro such as @daily. Without a time zone, the gateway uses its system time zone."
+    },
+    "every_trigger": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "every"
+        },
+        "seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 31536000
+        }
+      },
+      "required": [
+        "kind",
+        "seconds"
+      ],
+      "additionalProperties": false,
+      "description": "A fixed interval from the creation time of the automation."
+    },
+    "once_trigger": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "once"
+        },
+        "at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      },
+      "required": [
+        "kind",
+        "at"
+      ],
+      "additionalProperties": false,
+      "description": "One run at a time. A run that the gateway missed starts late, but not more than one day late."
+    },
+    "webhook_filter": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "equals": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "contains": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "in": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          }
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "minProperties": 2,
+      "maxProperties": 2,
+      "additionalProperties": false,
+      "description": "One test on a dot path of the JSON payload. Give exactly one of equals, contains or in."
+    },
+    "webhook_trigger": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "webhook"
+        },
+        "signature": {
+          "enum": [
+            "github",
+            "standard",
+            "generic",
+            "token"
+          ]
+        },
+        "events": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "filters": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/webhook_filter"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "signature"
+      ],
+      "additionalProperties": false,
+      "description": "A signed POST to /v1/hooks/{automation_id}. github checks X-Hub-Signature-256. standard checks webhook-id, webhook-timestamp and webhook-signature. generic checks X-Webhook-Timestamp and X-Webhook-Signature-V2. token compares X-Gitlab-Token, X-Webhook-Token or a bearer token. An empty events list accepts every event."
+    },
+    "trigger": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/cron_trigger"
+        },
+        {
+          "$ref": "#/$defs/every_trigger"
+        },
+        {
+          "$ref": "#/$defs/once_trigger"
+        },
+        {
+          "$ref": "#/$defs/webhook_trigger"
+        }
+      ]
+    },
+    "session_target": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "const": "session"
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "mode",
+        "session_id"
+      ],
+      "additionalProperties": false,
+      "description": "Run in one existing session."
+    },
+    "new_target": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "const": "new"
+        },
+        "root": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "group_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "additionalProperties": false,
+      "description": "Start a new session for each run and keep it."
+    },
+    "temporary_target": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "const": "temporary"
+        },
+        "root": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "additionalProperties": false,
+      "description": "Start a new session for each run and delete it after the run. The run keeps the answer."
+    },
+    "target": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/session_target"
+        },
+        {
+          "$ref": "#/$defs/new_target"
+        },
+        {
+          "$ref": "#/$defs/temporary_target"
+        }
+      ]
+    },
+    "run_event_type": {
+      "enum": [
+        "run.completed",
+        "run.failed",
+        "run.cancelled",
+        "run.skipped",
+        "run.unknown"
+      ]
+    },
+    "callback": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 2048,
+          "pattern": "^https?://"
+        },
+        "events": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/run_event_type"
+          }
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "additionalProperties": false,
+      "description": "POST each run event to this URL, signed as Standard Webhooks with the callback secret. Without events, all events are sent."
+    },
+    "delivery": {
+      "type": "object",
+      "properties": {
+        "push": {
+          "type": "boolean"
+        },
+        "callback": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/callback"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "description": "Push sends a phone alert for each run. An answer that starts with [SILENT] suppresses the alert and the callback for a completed run."
+    },
+    "model_pin": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "additionalProperties": false
+    },
+    "automation_input": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "triggers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/trigger"
+          }
+        },
+        "prompt": {
+          "$ref": "#/$defs/prompt"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "delivery": {
+          "$ref": "#/$defs/delivery"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/model_pin"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "deliver_only": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "triggers",
+        "prompt",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "automation_patch": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "triggers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/trigger"
+          }
+        },
+        "prompt": {
+          "$ref": "#/$defs/prompt"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "delivery": {
+          "$ref": "#/$defs/delivery"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/model_pin"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "deliver_only": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "Replace only the given fields. Triggers, target and delivery are replaced as a whole."
+    },
+    "secrets_state": {
+      "type": "object",
+      "properties": {
+        "webhook": {
+          "type": "boolean"
+        },
+        "callback": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "webhook",
+        "callback"
+      ],
+      "additionalProperties": false
+    },
+    "webhook_endpoint": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false,
+      "description": "The gateway path that receives webhook POSTs for this automation."
+    },
+    "run_trigger_kind": {
+      "enum": [
+        "cron",
+        "every",
+        "once",
+        "webhook",
+        "manual"
+      ]
+    },
+    "run_status": {
+      "enum": [
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "skipped",
+        "unknown"
+      ]
+    },
+    "run": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/automation_id"
+        },
+        "automation_id": {
+          "$ref": "#/$defs/automation_id"
+        },
+        "automation_name": {
+          "$ref": "#/$defs/name"
+        },
+        "trigger": {
+          "$ref": "#/$defs/run_trigger_kind"
+        },
+        "status": {
+          "$ref": "#/$defs/run_status"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 1024
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scheduled_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "turn_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "answer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "is_silent": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "automation_id",
+        "automation_name",
+        "trigger",
+        "status",
+        "reason",
+        "scheduled_at",
+        "created_at",
+        "started_at",
+        "finished_at",
+        "session_id",
+        "turn_id",
+        "answer",
+        "error",
+        "is_silent"
+      ],
+      "additionalProperties": false,
+      "description": "One claimed trigger. A run that was queued or running when its gateway stopped becomes unknown and never runs again."
+    },
+    "automation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/automation_id"
+        },
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "triggers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/trigger"
+          }
+        },
+        "prompt": {
+          "$ref": "#/$defs/prompt"
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "delivery": {
+          "$ref": "#/$defs/delivery"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/model_pin"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "deliver_only": {
+          "type": "boolean"
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "next_run_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "webhook": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/webhook_endpoint"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "secrets": {
+          "$ref": "#/$defs/secrets_state"
+        },
+        "last_run": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/run"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "enabled",
+        "triggers",
+        "prompt",
+        "target",
+        "delivery",
+        "model",
+        "deliver_only",
+        "created_at",
+        "updated_at",
+        "next_run_at",
+        "webhook",
+        "secrets",
+        "last_run"
+      ],
+      "additionalProperties": false
+    },
+    "automation_list": {
+      "type": "object",
+      "properties": {
+        "automations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/automation"
+          }
+        },
+        "is_enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "automations",
+        "is_enabled"
+      ],
+      "additionalProperties": false,
+      "description": "is_enabled is the global automations setting. A session or group can still allow runs when no ancestor denies them."
+    },
+    "run_list": {
+      "type": "object",
+      "properties": {
+        "runs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/run"
+          }
+        }
+      },
+      "required": [
+        "runs"
+      ],
+      "additionalProperties": false
+    },
+    "automation_deleted": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/automation_id"
+        },
+        "is_deleted": {
+          "const": true
+        }
+      },
+      "required": [
+        "id",
+        "is_deleted"
+      ],
+      "additionalProperties": false
+    },
+    "secret_request": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "webhook",
+            "callback"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "secret_created": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "webhook",
+            "callback"
+          ]
+        },
+        "secret": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "kind",
+        "secret"
+      ],
+      "additionalProperties": false
+    },
+    "run_event": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/run_event_type"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "data": {
+          "$ref": "#/$defs/run"
+        }
+      },
+      "required": [
+        "type",
+        "timestamp",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": "The callback body. Its timestamp is the time of the event."
+    },
+    "webhook_result": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "accepted",
+            "duplicate",
+            "ignored"
+          ]
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/automation_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "run_id",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

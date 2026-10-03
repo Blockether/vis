@@ -709,6 +709,42 @@ def test_improve_operations_preserve_path_query_and_payload(
         )
 
 
+@pytest.mark.parametrize(
+    "operation,args,method,route,has_body",
+    [
+        ("get_automations", (), "GET", "/v1/automations", False),
+        ("post_automations", (), "POST", "/v1/automations", True),
+        ("get_automation_runs", (), "GET", "/v1/automations/runs", False),
+        ("get_automation_run", ("r1",), "GET", "/v1/automations/runs/r1", False),
+        ("get_automation", ("a1",), "GET", "/v1/automations/a1", False),
+        ("patch_automation", ("a1",), "PATCH", "/v1/automations/a1", True),
+        ("delete_automation", ("a1",), "DELETE", "/v1/automations/a1", False),
+        ("post_automation_run", ("a1",), "POST", "/v1/automations/a1/run", False),
+        (
+            "post_automation_secrets",
+            ("a1",),
+            "POST",
+            "/v1/automations/a1/secrets",
+            True,
+        ),
+    ],
+)
+def test_automation_operations_preserve_path_query_and_payload(
+    operation, args, method, route, has_body
+):
+    payload = {"name": "Morning report"}
+    with endpoint(lambda *_: (200, {"id": "a1"})) as (url, calls):
+        options = {"query": {"limit": 5}, "timeout": 7}
+        if has_body:
+            options["body"] = payload
+        result = getattr(GatewayClient(url), operation)(*args, **options)
+        assert result == {"id": "a1"}
+        assert calls[-1][:2] == (method, route + "?limit=5")
+        assert (json.loads(calls[-1][3]) if has_body else calls[-1][3]) == (
+            payload if has_body else b""
+        )
+
+
 def test_lease_is_renewed_while_idle_and_thread_stops(monkeypatch):
     monkeypatch.setitem(_LEASE_POLICY, "keepalive_ms", 20)
     renewed = threading.Event()

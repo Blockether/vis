@@ -35,6 +35,8 @@
     [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
     [com.blockether.vis.internal.gateway.server.council :as council-api]
     [com.blockether.vis.internal.gateway.server.rooms :as rooms-api]
+    [com.blockether.vis.internal.gateway.server.automations :as automations-api]
+    [com.blockether.vis.internal.automation.runner :as automation-runner]
     [com.blockether.vis.internal.council.rooms :as rooms]
     [com.blockether.vis.internal.gateway.server.decisions :as decisions-api]
     [com.blockether.vis.internal.gateway.server.devices :as devices-api]
@@ -1366,6 +1368,9 @@
                         ;; pages) — viewable on the tunnel without the token.
                         (= "/docs" uri)
                         (str/starts-with? uri "/docs/")
+                        ;; A webhook sender cannot hold the gateway token. The
+                        ;; automation's own webhook secret authenticates it.
+                        (str/starts-with? uri "/v1/hooks/")
                         ;; The API description is public for the same reason: a
                         ;; client is GENERATED against a gateway before it holds
                         ;; a token.
@@ -1413,7 +1418,10 @@
           browser-uri?
           (some #(contains? (or (:protocol-open-uris %) #{}) uri) contribs)]
 
-      (if (or (contains? protocol-open-uris uri) (str/starts-with? uri "/docs") browser-uri?)
+      (if (or (contains? protocol-open-uris uri)
+              (str/starts-with? uri "/docs")
+              (str/starts-with? uri "/v1/hooks/")
+              browser-uri?)
         (handler request)
         (let [v (protocol/gateway-verdict request)]
           (if (:is-compatible v)
@@ -1520,10 +1528,10 @@
 (def ^:private route-handlers
   "Every handler map the built-in router binds. Each operation in
    [[gateway-contract/route-table]] belongs to exactly one of them."
-  [server-handlers council-api/handlers rooms-api/handlers decisions-api/handlers
-   devices-api/handlers fs-api/handlers mcp-api/handlers projects-api/handlers
-   providers-api/handlers sessions-api/handlers settings-api/handlers speech-api/handlers
-   transcripts-api/handlers turns-api/handlers views-api/handlers])
+  [server-handlers council-api/handlers rooms-api/handlers automations-api/handlers
+   decisions-api/handlers devices-api/handlers fs-api/handlers mcp-api/handlers
+   projects-api/handlers providers-api/handlers sessions-api/handlers settings-api/handlers
+   speech-api/handlers transcripts-api/handlers turns-api/handlers views-api/handlers])
 
 (defn- route-precedence
   "Sort key for a route path. At the first segment where two paths differ, a fixed
@@ -2087,7 +2095,8 @@
             (tel/log! :warn ["gateway: registry self-registration failed" (ex-message t)])))
      (swap! instance/server-state assoc
        :stop-improve! (improve-review/start! db)
-       :stop-rooms! (rooms/start! db))
+       :stop-rooms! (rooms/start! db)
+       :stop-automations! (automation-runner/start! db))
      (when managed? (ensure-idle-reaper!))
      (tel/log! :info
                ["gateway: listening" (str host ":" port)
@@ -2121,7 +2130,9 @@
 (defn stop!
   "Stop the gateway server if running. Idempotent."
   []
-  (when-let [{:keys [^Server server db stop-improve! stop-rooms!]} @instance/server-state]
+  (when-let [{:keys [^Server server db stop-improve! stop-rooms! stop-automations!]}
+             @instance/server-state]
+    (when stop-automations! (stop-automations!))
     (when stop-rooms! (stop-rooms!))
     (when stop-improve! (stop-improve!))
     ;; Release the listening socket FIRST so a successor daemon racing this

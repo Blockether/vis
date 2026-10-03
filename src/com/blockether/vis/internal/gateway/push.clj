@@ -551,6 +551,19 @@
                                (fn [_ _]
                                  nil))))
 
+(defonce ^:private quiet-turn?
+  ;; [sid event] -> true for a turn whose owner sends its own alert, such as an
+  ;; automation run. Injected so this ns stays free of the automation runner.
+  (atom (fn [_sid _event]
+          false)))
+
+(defn set-quiet-filter!
+  "Install the fn that marks a finished turn as quiet: no turn alert."
+  [f]
+  (reset! quiet-turn? (or f
+                          (fn [_ _]
+                            false))))
+
 (defonce ^:private gateway-id
   ;; This gateway's own instance id — injected by the server, same value
   ;; `/healthz` reports. A phone can be paired with several machines and a
@@ -685,7 +698,8 @@
              terminal?
              (and (#{"turn.completed" "turn.failed"} event-type)
                   (not= "council" (get event "request_kind"))
-                  (not (true? (get event "subagent"))))]
+                  (not (true? (get event "subagent")))
+                  (not (@quiet-turn? sid event)))]
 
          (when (and (or input? terminal?) (pos? (device-count)) (any-configured?))
            (future (broadcast! (if input?
@@ -693,6 +707,35 @@
                                  (turn-notification sid event))))))
        (catch Throwable t
          (tel/log! {:level :warn :id ::push-tap-failed :data {:error (ex-message t)}})))
+  nil)
+
+(defn notify-automation-run!
+  "Alert every device about one finished automation run. Never throws."
+  [{:keys [automation-name run]}]
+  (when (and (pos? (device-count)) (any-configured?))
+    (let [status
+          (get run "status")
+
+          session-id
+          (get run "session_id")]
+
+      (future
+        (try (broadcast! (merge
+                           (answer-alert
+                             {:title automation-name
+                              :answer (or (get run "answer") (get run "error") (get run "reason"))
+                              :is-failed (contains? #{"failed" "cancelled" "unknown"} status)})
+                           {:thread-id (str "automation:" (get run "automation_id"))
+                            :collapse-id (str "automation:" (get run "id"))
+                            :data (with-gateway (cond-> {:type "automation.run"
+                                                         :automation_id (get run "automation_id")
+                                                         :run_id (get run "id")
+                                                         :status status}
+                                                  session-id
+                                                  (assoc :session_id session-id)))}))
+             (catch Throwable t
+               (tel/log!
+                 {:level :warn :id ::automation-push-failed :data {:error (ex-message t)}}))))))
   nil)
 
 (defn status
