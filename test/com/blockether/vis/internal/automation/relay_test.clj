@@ -39,10 +39,10 @@
                 (filterv #(not (contains? (set ids) (get % "id"))) requests)))))
 
 (defn- fake-relay
-  "A relay with one inbox. Its `:state` atom holds :requests, :acked, :creates and :lost?."
+  "A relay with one inbox. Its `:state` atom holds :requests, :acked, :creates, :polls and :lost?."
   []
   (let [state
-        (atom {:requests [] :acked [] :creates 0 :lost? false})
+        (atom {:requests [] :acked [] :creates 0 :polls 0 :lost? false})
 
         server
         (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
@@ -67,7 +67,8 @@
                     (not authorized?)
                     (respond! exchange 401 {"error" {"code" "unauthorized" "message" "no"}})
                     (= "/v1/hooks/inbox" path)
-                    (respond! exchange 200 {"requests" (:requests @state)})
+                    (do (swap! state update :polls inc)
+                        (respond! exchange 200 {"requests" (:requests @state)}))
                     :else (let [ids (get (wire/parse-json (slurp (.getRequestBody exchange)))
                                          "ids")]
                             (swap! state acknowledge ids)
@@ -125,6 +126,16 @@
 (defn- run-count
   [db automation-id]
   (count (ps/db-automation-runs db {:automation-id automation-id :limit 10})))
+
+(defn- eventually
+  "True when `f` answers true within two seconds."
+  [f]
+  (let [deadline (+ (System/currentTimeMillis) 2000)]
+    (loop []
+
+      (cond (f) true
+            (< (System/currentTimeMillis) deadline) (do (Thread/sleep 10) (recur))
+            :else false))))
 
 (defn- stored
   [request-id automation-id received-at headers ^String text]
@@ -260,5 +271,45 @@
 
                           (expect (= {"path" (str "/v1/hooks/" id) "url" (str base "/" id)}
                                      (get described "webhook")))
-                          (expect
-                            (document/valid-json? "automations" "automation" described)))))))))
+                          (expect (document/valid-json? "automations" "automation" described))))))))
+  (it "polls again soon when a new webhook secret wakes the idle poller"
+      ;; Found by native-automations-test: a wake kept the one-minute idle wait, so the
+      ;; first request through the relay waited up to one minute.
+      (with-home
+        (fn [_]
+          (with-store
+            (fn [db]
+              (with-relay
+                (fn [relay-server]
+                  (let [published
+                        (atom 0)
+
+                        publish
+                        automation/set-relay-base!]
+
+                    (with-redefs-fn {#'ps/db-shared-connection! (constantly db)
+                                     #'relay/min-wait-ms 50
+                                     #'automation/set-relay-base! (fn [base]
+                                                                    (swap! published inc)
+                                                                    (publish base))}
+                      (fn []
+                        (let [stop (relay/start! :memory (constantly (:url relay-server)))]
+                          (try
+                            ;; Without a webhook secret, the first step only publishes the address.
+                            (expect (eventually #(pos? @published)))
+                            (let [id (create! db "token")
+                                  secret (get (automation/rotate-secret! db id "webhook" 1)
+                                              "secret")]
+
+                              (relay/refresh! db)
+                              (expect (eventually #(pos? (:polls @(:state relay-server)))))
+                              (swap! (:state relay-server) assoc
+                                :requests
+                                [(stored "r00000000000000000004a"
+                                         id
+                                         (System/currentTimeMillis)
+                                         {"x-webhook-token" secret}
+                                         "{\"action\":\"opened\"}")])
+                              (expect (eventually #(= 1 (run-count db id)))
+                                      "The next poll comes after the short wait"))
+                            (finally (stop)))))))))))))))

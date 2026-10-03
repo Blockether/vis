@@ -25,7 +25,8 @@
 (set! *warn-on-reflection* true)
 
 (def ^:private min-wait-ms
-  "The wait after a page with requests. The poller collects a full page at once."
+  "The wait after a page with requests, and the start of the backoff after a wake. The
+   poller collects a full page at once."
   5000)
 
 (def ^:private max-wait-ms "The longest wait between two polls, also after a failure." 60000)
@@ -262,12 +263,14 @@
                                          (tel/log! {:level :warn
                                                     :id ::step-failed
                                                     :data {:error (ex-message t)}})
-                                         max-wait-ms))]
-                         (when (pos? next)
-                           (try (.poll wake next TimeUnit/MILLISECONDS)
-                                (catch InterruptedException _ nil)))
+                                         max-wait-ms))
+                             woken (when (pos? next)
+                                     (try (.poll wake next TimeUnit/MILLISECONDS)
+                                          (catch InterruptedException _ nil)))]
+
                          (.clear wake)
-                         (recur next)))))
+                         ;; After a wake, a request can arrive soon, so the backoff starts again.
+                         (recur (if woken min-wait-ms next))))))
                  "vis-automation-relay")]
 
     (reset! runtime {:relay-url relay-url :wake wake})
