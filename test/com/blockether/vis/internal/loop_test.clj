@@ -4836,6 +4836,37 @@
           (expect (= :cancelled (:status result)))
           (expect (zero? @title-requests)))))))
 
+;; Regression, issue #216: a completed or blocked goal still launched the deferred LLM title request.
+(defdescribe
+  resolved-goal-titling-test
+  (doseq [[label status expected]
+          [["launches the deferred LLM title after a turn without a goal" nil 1]
+           ["does not launch an LLM title request after the goal completes" "complete" 0]
+           ["does not launch an LLM title request after the goal is blocked" "blocked" 0]]]
+    (it label
+        (let [title-requests (atom 0)
+              env (loop-env/create-environment ::router {:db :memory})]
+
+          (try (when status
+                 (goals/set-goal! (:db-info env) (:session-id env) "Verify the titling boundary" 4))
+               (with-redefs [iteration/iteration-loop
+                             (fn [env _ _]
+                               (when-let [goal (goals/check-goal env)]
+                                 (goals/update-goal env
+                                                    (get goal "id")
+                                                    (get goal "version")
+                                                    status
+                                                    "Verified the titling boundary."))
+                               {:status :success :iteration-count 1 :duration-ms 0})
+                             titling/maybe-auto-title! (fn [& _]
+                                                         nil)
+                             titling/after-turn-auto-title! (fn [& _]
+                                                              (swap! title-requests inc))]
+
+                 (expect (= :success (:status (run-normal-turn! env "verify the goal" {}))))
+                 (expect (= expected @title-requests)))
+               (finally (loop-env/dispose-environment! env)))))))
+
 (defdescribe
   responses-output-budget-loop-test
   ;; Issue #296: Svar owns the larger-budget re-send. Vis answers its canonical

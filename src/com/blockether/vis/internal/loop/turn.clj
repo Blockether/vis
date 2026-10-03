@@ -345,12 +345,13 @@
                (throw t)))
 
         ;; Deferred auto-title: only a successful foreground turn earns a cosmetic
-        ;; provider call. Cancellation and failure must stay terminal without
-        ;; starting new provider work. The call remains deferred so it cannot take
-        ;; a rate-limited gateway's slot away from the user's request
-        ;; (Blockether/vis#71). A no-op unless `titling.mode` is `llm`.
+        ;; provider call. Cancellation, failure and a halted, complete or blocked goal
+        ;; must stay terminal without new provider work (Blockether/vis#216). The call
+        ;; remains deferred so it cannot take a rate-limited gateway's slot away from
+        ;; the user's request (Blockether/vis#71). A no-op unless `titling.mode` is `llm`.
         _
-        (when (and (= :success (:status result)) (nil? (goals/halt-result env goal-at-turn-start)))
+        (when (and (= :success (:status result))
+                   (nil? (goals/turn-halt-result env goal-at-turn-start)))
           (titling/after-turn-auto-title! env user-request))
 
         ;; `prior_outcome` is a CHECKed column (`complete`/`cancelled`/`error`). A goal

@@ -223,6 +223,13 @@
                  (not= (get started-goal "version") (get goal "version"))))
         {:status :cancelled :answer "Goal stopped by the user."}))))
 
+(defn- resolution-result
+  "Return the recorded reply when `started-goal` was completed or blocked, else nil."
+  [started-goal goal]
+  (when (and (= (get started-goal "id") (get goal "id"))
+             (contains? #{"complete" "blocked"} (get goal "status")))
+    {:status :success :answer (str "Goal " (get goal "status") ": " (get goal "reason"))}))
+
 (defn request-halt-result
   "Stop resolved goals and enforce iteration budgets after the previous tools finish.
    Completion/blocking returns its recorded evidence without another model request,
@@ -241,11 +248,14 @@
                               "reason"
                               "Iteration budget reached; no further model request may start.")
                             goal)))]
-      (or (halt-result env started-goal)
-          (when (and (= (get started-goal "id") (get goal "id"))
-                     (contains? #{"complete" "blocked"} (get goal "status")))
-            {:status :success
-             :answer (str "Goal " (get goal "status") ": " (get goal "reason"))})))))
+      (or (halt-result env started-goal) (resolution-result started-goal goal)))))
+
+(defn turn-halt-result
+  "Read-only stop check after a turn. Return the halt, completion or blocker of the goal
+   that the turn started with. A stopped goal starts no more provider work, also no title."
+  [env started-goal]
+  (when (= "active" (get started-goal "status"))
+    (or (halt-result env started-goal) (resolution-result started-goal (check-goal env)))))
 
 (def ^:private blocker-audit-prompt
   "Before declaring blocked, audit the entire objective against current evidence. For each
