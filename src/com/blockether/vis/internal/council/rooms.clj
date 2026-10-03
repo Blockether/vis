@@ -299,6 +299,23 @@
     (when (#{:delete :remove} operation) (status!))
     result))
 
+(defn delete-machine!
+  "Delete this machine from the relay, then forget its credential. A relay failure keeps the credential."
+  []
+  (locking state-lock
+    (when-let [state (read-state)]
+      (try (transport/call! state
+                            :delete
+                            "/v1/rooms/machines/{machine_id}"
+                            {:machine_id (:machine_id state)}
+                            nil
+                            {})
+           (catch clojure.lang.ExceptionInfo e (when-not (= 401 (:status (ex-data e))) (throw e))))
+      (Files/deleteIfExists (state-path))))
+  (reset! presence-cache {})
+  (register-settings! [])
+  {:configured false :rooms []})
+
 (defn- fleet
   [db]
   (let [active

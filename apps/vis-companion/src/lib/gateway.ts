@@ -2463,6 +2463,10 @@ export class GatewayClient {
     return this.request('GET', '/v1/council/rooms', undefined, signal);
   }
 
+  disconnectRooms(): Promise<RoomsStatus> {
+    return this.request('DELETE', '/v1/council/rooms');
+  }
+
   joinRoom(invite_url: string, machine_name: string): Promise<unknown> {
     return this.request('POST', '/v1/council/rooms/join', { invite_url, machine_name });
   }

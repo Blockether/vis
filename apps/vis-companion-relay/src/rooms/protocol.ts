@@ -8,6 +8,8 @@ export const definitions = schema.$defs;
 export const councilDefinitions = council.$defs;
 export type Data = Record<string, any>;
 export type Database = D1DatabaseSession;
+/** A deleted machine keeps no credential. Its record stays only for history in other rooms. */
+export const deletedMachine = "credential_hash LIKE 'deleted:%'";
 
 export class RoomError extends Error {
   constructor(

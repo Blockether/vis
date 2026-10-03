@@ -1549,6 +1549,11 @@
           "response": "json",
           "response_schema": "rooms_room",
           "request_schema": "rooms_gateway_create"
+        },
+        "delete": {
+          "request": "none",
+          "response": "json",
+          "response_schema": "rooms_gateway_status"
         }
       }
     },

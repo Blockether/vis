@@ -85,6 +85,9 @@
                         "/v1/rooms"
                         [@room]
 
+                        "/v1/rooms/machines/{machine_id}"
+                        {:machine_id (:machine_id state) :deleted_rooms 1 :retained_history false}
+
                         "/v1/rooms/{room_id}/presence"
                         {:expires_at 1000}
 
@@ -151,32 +154,60 @@
                     (expect (= gid (council/default-group db sid)))
                     (store/db-set-scoped-setting! db "group" gid (rooms/access-id room-id) nil)
                     (expect (= room-id (council/default-group db sid)))))))
-  (describe "private durable state"
-            (it "uses private permissions and preserves separate cursor keys across reloads"
-                (with-room (fn [{:keys [home sid room-id]}]
-                             (rooms/advance! room-id sid :wake 7)
-                             (rooms/advance! room-id sid :input 3)
-                             (rooms/advance! room-id sid :wake 2)
-                             (expect (= 7 (rooms/cursor room-id sid :wake)))
-                             (expect (= 3 (rooms/cursor room-id sid :input)))
-                             (expect (= 0 (rooms/cursor room-id (str (random-uuid)) :wake)))
-                             (expect (= "rw-------"
-                                        (PosixFilePermissions/toString
-                                          (Files/getPosixFilePermissions
-                                            (.resolve home "rooms/identity.json")
-                                            (make-array java.nio.file.LinkOption 0)))))
-                             (let [status (rooms/status!)]
-                               (expect (document/valid? "rooms" "gateway_status" status))
-                               (expect (not (contains? status :credential)))
-                               (expect (not (contains? status :cursors)))))))
-            (it "rejects secret-bearing malformed links without echoing them"
-                (doseq [value ["https://user:secret@gateway.example.com/rooms/join#invite=bad"
-                               "https://gateway.example.com/rooms/join#private-fragment"
-                               "http://gateway.example.com/rooms/join#invite=secret"]]
-                  (expect (= "Council Rooms request failed"
-                             (try (transport/invite-parts value)
-                                  nil
-                                  (catch Exception e (ex-message e))))))))
+  (describe
+    "private durable state"
+    (it "uses private permissions and preserves separate cursor keys across reloads"
+        (with-room (fn [{:keys [home sid room-id]}]
+                     (rooms/advance! room-id sid :wake 7)
+                     (rooms/advance! room-id sid :input 3)
+                     (rooms/advance! room-id sid :wake 2)
+                     (expect (= 7 (rooms/cursor room-id sid :wake)))
+                     (expect (= 3 (rooms/cursor room-id sid :input)))
+                     (expect (= 0 (rooms/cursor room-id (str (random-uuid)) :wake)))
+                     (expect (= "rw-------"
+                                (PosixFilePermissions/toString
+                                  (Files/getPosixFilePermissions
+                                    (.resolve home "rooms/identity.json")
+                                    (make-array java.nio.file.LinkOption 0)))))
+                     (let [status (rooms/status!)]
+                       (expect (document/valid? "rooms" "gateway_status" status))
+                       (expect (not (contains? status :credential)))
+                       (expect (not (contains? status :cursors)))))))
+    (it "deletes the relay machine before it forgets the local credential"
+        (with-room (fn [{:keys [home calls]}]
+                     (let [identity-file (.resolve home "rooms/identity.json")]
+                       (expect (= {:configured false :rooms []} (rooms/delete-machine!)))
+                       (expect (= {:method :delete :path "/v1/rooms/machines/{machine_id}"}
+                                  (select-keys (last @calls) [:method :path])))
+                       (expect (not (Files/exists identity-file
+                                                  (make-array java.nio.file.LinkOption 0))))
+                       (expect (= {:configured false :rooms []} (rooms/status!)))
+                       (expect (= {:configured false :rooms []} (rooms/delete-machine!)))))))
+    (it "keeps the credential when the relay cannot delete the machine"
+        (with-room (fn [{:keys [home]}]
+                     (with-redefs [transport/call! (fn [& _]
+                                                     (transport/fail! 503 "unavailable"))]
+                       (expect (= 503
+                                  (try (rooms/delete-machine!)
+                                       nil
+                                       (catch clojure.lang.ExceptionInfo e
+                                         (:status (ex-data e)))))))
+                     (expect (Files/exists (.resolve home "rooms/identity.json")
+                                           (make-array java.nio.file.LinkOption 0))))))
+    (it "forgets a credential that the relay already deleted"
+        (with-room (fn [{:keys [home]}]
+                     (with-redefs [transport/call! (fn [& _]
+                                                     (transport/fail! 401 "unauthorized"))]
+                       (expect (= {:configured false :rooms []} (rooms/delete-machine!))))
+                     (expect (not (Files/exists (.resolve home "rooms/identity.json")
+                                                (make-array java.nio.file.LinkOption 0)))))))
+    (it "rejects secret-bearing malformed links without echoing them"
+        (doseq [value ["https://user:secret@gateway.example.com/rooms/join#invite=bad"
+                       "https://gateway.example.com/rooms/join#private-fragment"
+                       "http://gateway.example.com/rooms/join#invite=secret"]]
+          (expect (=
+                    "Council Rooms request failed"
+                    (try (transport/invite-parts value) nil (catch Exception e (ex-message e))))))))
   (describe "canonical boundaries"
             (it "resolves Council references and rejects unknown publication fields"
                 (let [value {:session_id (str (random-uuid))

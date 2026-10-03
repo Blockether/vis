@@ -2221,6 +2221,15 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def delete_council_rooms(
+        self, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """DELETE /v1/council/rooms — json response."""
+        response = self._request(
+            "DELETE", "/v1/council/rooms", path={}, query=query, timeout=timeout
+        )
+        return response.json()
+
     def post_council_rooms_register(
         self,
         *,

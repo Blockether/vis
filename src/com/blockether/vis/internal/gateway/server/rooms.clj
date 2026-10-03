@@ -28,6 +28,9 @@
                  :create
                  (rooms/create! body)
 
+                 :disconnect
+                 (rooms/delete-machine!)
+
                  (rooms/manage! operation
                                 (:room-id params)
                                 (or (:machine-id params) (:invite-id params))
@@ -44,6 +47,7 @@
 (def handlers
   {[:get "/v1/council/rooms"] (handler :status)
    [:post "/v1/council/rooms"] (handler :create)
+   [:delete "/v1/council/rooms"] (handler :disconnect)
    [:post "/v1/council/rooms/register"] (handler :register)
    [:post "/v1/council/rooms/join"] (handler :join)
    [:delete "/v1/council/rooms/:room-id"] (handler :delete)

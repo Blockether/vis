@@ -656,6 +656,225 @@ describe.sequential("Rooms through the real relay router and D1", () => {
     expect(limited.status).toBe(429);
   });
 
+  it("deletes rooms and machines without orphaned history", async () => {
+    const db = env.ROOMS_DB!;
+    const count = async (sql: string, ...values: string[]) =>
+      (
+        await db
+          .prepare(sql)
+          .bind(...values)
+          .first<{ total: number }>()
+      )?.total;
+    const host = {
+      machine_id: uuid(),
+      name: "Host",
+      credential: secret(),
+      can_create_rooms: true,
+    };
+    const visitor = {
+      machine_id: uuid(),
+      name: "Visitor",
+      credential: secret(),
+    };
+    const hostSession = uuid();
+    const visitorSession = uuid();
+    const hostRoom = uuid();
+    const spareRoom = uuid();
+    expect((await call("POST", "/v1/rooms/machines", admin, host)).status).toBe(
+      200,
+    );
+    for (const [id, name] of [
+      [hostRoom, "Host room"],
+      [spareRoom, "Spare room"],
+    ]) {
+      expect(
+        (
+          await call("POST", "/v1/rooms", host.credential, {
+            room_id: id,
+            name,
+            owner_machine_id: host.machine_id,
+          })
+        ).status,
+      ).toBe(200);
+    }
+    const token = secret();
+    expect(
+      (
+        await call("POST", `/v1/rooms/${hostRoom}/invites`, host.credential, {
+          invite_id: uuid(),
+          token,
+          expires_at: now + 60000,
+          max_uses: 1,
+        })
+      ).status,
+    ).toBe(200);
+    for (const inviteToken of [token, (await invite()).token]) {
+      expect(
+        (
+          await call("POST", "/v1/rooms/join", visitor.credential, {
+            request_id: uuid(),
+            invite_token: inviteToken,
+            machine_id: visitor.machine_id,
+            machine_name: visitor.name,
+          })
+        ).status,
+      ).toBe(200);
+    }
+    await advertise(owner, ownerSession);
+    const speakers = [
+      [hostRoom, host, hostSession],
+      [hostRoom, visitor, visitorSession],
+      [roomId, visitor, visitorSession],
+    ] as const;
+    const published: number[] = [];
+    for (const [room, actor, sid] of speakers) {
+      expect(
+        (
+          await call("POST", `/v1/rooms/${room}/presence`, actor.credential, {
+            sessions: [
+              {
+                session_id: sid,
+                title: actor.name,
+                state: "running",
+                wake_allowed: false,
+              },
+            ],
+          })
+        ).status,
+      ).toBe(200);
+      const sent = await call(
+        "POST",
+        `/v1/rooms/${room}/entries`,
+        actor.credential,
+        {
+          session_id: sid,
+          publication: { kind: "informational", content: `${actor.name} note` },
+        },
+      );
+      expect(sent.status, JSON.stringify(sent.data)).toBe(200);
+      published.push(sent.data.entry_id);
+    }
+    const question = await call(
+      "POST",
+      `/v1/rooms/${roomId}/entries`,
+      owner.credential,
+      {
+        session_id: ownerSession,
+        publication: {
+          kind: "coordination",
+          content: "Still there?",
+          ping: [visitorSession],
+          reply_required: true,
+        },
+      },
+    );
+    expect(question.data.replies[0].state).toBe("pending");
+
+    expect(
+      (await call("DELETE", `/v1/rooms/${hostRoom}`, host.credential)).data,
+    ).toEqual({ ok: true });
+    expect((await call("DELETE", `/v1/rooms/${hostRoom}`, admin)).status).toBe(
+      404,
+    );
+    expect(
+      await count(
+        `SELECT (SELECT COUNT(*) FROM council_rooms WHERE room_id = ?)
+          + (SELECT COUNT(*) FROM room_entries WHERE room_id = ?)
+          + (SELECT COUNT(*) FROM room_invites WHERE room_id = ?)
+          + (SELECT COUNT(*) FROM room_memberships WHERE room_id = ?)
+          + (SELECT COUNT(*) FROM room_presence WHERE room_id = ?) AS total`,
+        hostRoom,
+        hostRoom,
+        hostRoom,
+        hostRoom,
+        hostRoom,
+      ),
+    ).toBe(0);
+
+    expect(
+      (
+        await call(
+          "DELETE",
+          `/v1/rooms/machines/${owner.machine_id}`,
+          guest.credential,
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await call(
+          "DELETE",
+          `/v1/rooms/machines/${visitor.machine_id}`,
+          visitor.credential,
+        )
+      ).data,
+    ).toEqual({
+      machine_id: visitor.machine_id,
+      deleted_rooms: 0,
+      retained_history: true,
+    });
+    expect(
+      (await call("GET", "/v1/rooms/machine", visitor.credential)).status,
+    ).toBe(401);
+    expect(
+      (
+        await call("PATCH", `/v1/rooms/machines/${visitor.machine_id}`, admin, {
+          can_create_rooms: true,
+        })
+      ).status,
+    ).toBe(404);
+    expect(
+      (await call("DELETE", `/v1/rooms/machines/${visitor.machine_id}`, admin))
+        .status,
+    ).toBe(404);
+    expect(
+      (await call("GET", `/v1/rooms/${roomId}/entries/${published[2]}`)).status,
+    ).toBe(200);
+    expect(
+      await count(
+        `SELECT COUNT(*) AS total FROM room_deliveries
+          WHERE session_id = ? AND state != 'unavailable'`,
+        visitorSession,
+      ),
+    ).toBe(0);
+    expect(
+      await count(
+        `SELECT (SELECT COUNT(*) FROM room_memberships WHERE machine_id = ?)
+          + (SELECT COUNT(*) FROM room_presence WHERE session_id = ?) AS total`,
+        visitor.machine_id,
+        visitorSession,
+      ),
+    ).toBe(0);
+
+    expect(
+      (await call("DELETE", `/v1/rooms/machines/${host.machine_id}`, admin))
+        .data,
+    ).toEqual({
+      machine_id: host.machine_id,
+      deleted_rooms: 1,
+      retained_history: false,
+    });
+    expect(
+      await count(
+        `SELECT (SELECT COUNT(*) FROM room_machines WHERE machine_id = ?)
+          + (SELECT COUNT(*) FROM room_sessions WHERE machine_id = ?)
+          + (SELECT COUNT(*) FROM council_rooms WHERE room_id = ?) AS total`,
+        host.machine_id,
+        host.machine_id,
+        spareRoom,
+      ),
+    ).toBe(0);
+
+    expect((await call("DELETE", `/v1/rooms/${roomId}`)).status).toBe(200);
+    expect(
+      await count(
+        `SELECT (SELECT COUNT(*) FROM room_machines WHERE machine_id = ?)
+          + (SELECT COUNT(*) FROM room_sessions WHERE machine_id = ?) AS total`,
+        visitor.machine_id,
+        visitor.machine_id,
+      ),
+    ).toBe(0);
+  });
   it("covers every declared Rooms HTTP operation with canonical response validation", () => {
     expect([...observed].sort()).toEqual(
       schema["x-vis-http"]

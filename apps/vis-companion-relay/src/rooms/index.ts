@@ -3,6 +3,7 @@ import schema from "../../../../packages/vis-contract/resources/vis-contract/sch
 import {
   RoomError,
   definitions,
+  deletedMachine,
   digest,
   fail,
   headers,
@@ -18,6 +19,8 @@ import type { Data } from "./protocol";
 import {
   createInvite,
   createRoom,
+  deleteMachine,
+  deleteRoom,
   join,
   presence,
   register,
@@ -111,7 +114,10 @@ async function route(
     fail(403, "forbidden", "Rooms administrator is required");
   if (!isAdmin && !actor && found.auth !== "machine-or-new")
     fail(401, "unauthorized", "Rooms credential is not registered");
-  if (isAdmin && !["admin", "creator", "owner"].includes(found.auth))
+  if (
+    isAdmin &&
+    !["admin", "admin-or-self", "creator", "owner"].includes(found.auth)
+  )
     fail(403, "forbidden", "Use a room machine credential");
   const params = found.pattern.exec(path)?.groups ?? {};
   for (const [name, value] of Object.entries(params)) {
@@ -119,6 +125,17 @@ async function route(
       if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)))
         fail(400, "invalid_request", "Invalid entry ID");
     } else validate("id", value);
+  }
+  if (
+    found.auth === "admin-or-self" &&
+    !isAdmin &&
+    params.machine_id !== actor!.machine_id
+  ) {
+    fail(
+      403,
+      "forbidden",
+      "Rooms administrator or the same machine is required",
+    );
   }
   if (
     url.search &&
@@ -182,7 +199,7 @@ async function route(
     case "PATCH /v1/rooms/machines/{machine_id}": {
       const updated = await db
         .prepare(
-          "UPDATE room_machines SET can_create_rooms = ? WHERE machine_id = ? RETURNING *",
+          `UPDATE room_machines SET can_create_rooms = ? WHERE machine_id = ? AND NOT ${deletedMachine} RETURNING *`,
         )
         .bind(body.can_create_rooms ? 1 : 0, params.machine_id)
         .first<Data>();
@@ -190,6 +207,9 @@ async function route(
       result = machine(updated);
       break;
     }
+    case "DELETE /v1/rooms/machines/{machine_id}":
+      result = await deleteMachine(db, params.machine_id);
+      break;
     case "GET /v1/rooms/machine":
       result = machine(actor!);
       break;
@@ -210,10 +230,7 @@ async function route(
       result = await join(db, body, token, now);
       break;
     case "DELETE /v1/rooms/{room_id}":
-      await db
-        .prepare("UPDATE council_rooms SET deleted_at = ? WHERE room_id = ?")
-        .bind(now, roomId)
-        .run();
+      await deleteRoom(db, roomId);
       result = { ok: true };
       break;
     case "POST /v1/rooms/{room_id}/invites":

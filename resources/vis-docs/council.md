@@ -150,9 +150,15 @@ A registered creator can create rooms. A room owner can create invitations, revo
 The interface creates invitations with one use and a one-day expiry.
 The protocol permits up to 100 uses and a seven-day expiry.
 
-**Leave room** removes this machine's membership. **Delete room** removes an owned room for everyone.
+**Leave room** removes this machine's membership. **Delete room** removes an owned room and its messages for everyone.
 Both actions require confirmation. Neither action deletes local sessions.
 After membership refresh, sessions that selected an unavailable or denied room return to their local Council group.
+
+**Disconnect this machine** deletes this machine from the relay, together with every room that it owns.
+Vis then removes the machine credential from this computer. Local sessions stay.
+Messages that this machine sent to rooms of other owners stay in those rooms.
+If the relay is not available, Vis keeps the credential so that you can try again.
+To use rooms again, register this machine or join a room with a new invitation.
 
 ### Room limits and recovery
 

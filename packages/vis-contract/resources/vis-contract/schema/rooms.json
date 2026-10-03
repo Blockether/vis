@@ -31,6 +31,15 @@
       "query": null
     },
     {
+      "method": "DELETE",
+      "path": "/v1/rooms/machines/{machine_id}",
+      "auth": "admin-or-self",
+      "request": null,
+      "response": "machine_deleted",
+      "error": "error",
+      "query": null
+    },
+    {
       "method": "GET",
       "path": "/v1/rooms/machine",
       "auth": "machine",
@@ -276,6 +285,29 @@
       },
       "required": [
         "can_create_rooms"
+      ],
+      "additionalProperties": false
+    },
+    "machine_deleted": {
+      "$comment": "Deletion removes the credential, memberships and owned rooms. Entries in other rooms keep a credential-free machine record.",
+      "type": "object",
+      "properties": {
+        "machine_id": {
+          "$ref": "#/$defs/id"
+        },
+        "deleted_rooms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "retained_history": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "machine_id",
+        "deleted_rooms",
+        "retained_history"
       ],
       "additionalProperties": false
     },

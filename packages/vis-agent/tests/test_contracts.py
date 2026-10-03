@@ -56,9 +56,9 @@ def test_gateway_routes_and_lease_policy_are_shared():
     assert 0 < lease["touch_ms"] < lease["keepalive_ms"] < lease["ttl_ms"]
     assert 0 < lease["keepalive_timeout_ms"] < lease["keepalive_ms"]
     assert len(routes) == 146
-    assert len(operations) == 182
+    assert len(operations) == 183
     assert Counter(operation["request"] for operation in operations) == {
-        "none": 118,
+        "none": 119,
         "json": 59,
         "binary": 5,
     }

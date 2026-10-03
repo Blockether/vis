@@ -11,7 +11,8 @@ function fixture() {
   const status = { configured: true, machine: { machine_id: 'machine', name: 'Laptop', can_create_rooms: true },
     rooms: [{ room_id: 'room', name: 'Builds', owner_machine_id: 'machine', created_at: 1 }] };
   const client = { rooms: vi.fn().mockResolvedValue(status), joinRoom: vi.fn().mockResolvedValue({}),
-    deleteRoom: vi.fn().mockResolvedValue({}), setSetting: vi.fn() };
+    deleteRoom: vi.fn().mockResolvedValue({}), disconnectRooms: vi.fn().mockResolvedValue({ configured: false, rooms: [] }),
+    setSetting: vi.fn() };
   render(<RoomsPanel client={client as unknown as GatewayClient} onChanged={vi.fn()} />);
   return client;
 }
@@ -49,6 +50,15 @@ describe('Council room Settings', () => {
     expect(client.deleteRoom).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Confirm removal' }));
     await waitFor(() => expect(client.deleteRoom).toHaveBeenCalledWith('room'));
+  });
+
+  it('requires confirmation before disconnecting this machine', async () => {
+    const client = fixture();
+    fireEvent.click(await screen.findByRole('button', { name: 'Disconnect this machine' }));
+    expect(screen.getByText(/^Disconnect Laptop and delete the rooms that it owns\?/)).toBeVisible();
+    expect(client.disconnectRooms).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm removal' }));
+    await waitFor(() => expect(client.disconnectRooms).toHaveBeenCalledWith());
   });
 
   it('explains a group denial even when this session stores an ineffective override', () => {

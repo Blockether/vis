@@ -67,6 +67,10 @@ export function RoomsPanel({ client, onChanged }: { client: GatewayClient; onCha
         </Text>
         {error && <Banner kind="err">{error}</Banner>}
         {status?.machine && <Text as="p" variant="meta">{status.machine.name} · {status.relay_url}</Text>}
+        {status?.configured && <Button density="panel" variant="secondary" disabled={busy} onClick={() => setRemoval({
+          label: `Disconnect ${status.machine?.name ?? 'this machine'} and delete the rooms that it owns`,
+          run: () => client.disconnectRooms(),
+        })}>Disconnect this machine</Button>}
         <FormLabel label="Machine name">
           <Input aria-label="Room machine name" value={machineName} maxLength={100} onChange={(event) => { setMachineName(event.target.value); setReview(null); }} />
         </FormLabel>

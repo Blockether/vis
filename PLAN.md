@@ -132,7 +132,6 @@ Acceptance criteria:
 - Record the tested revisions, checks, commits and deployment outcome without secrets.
 
 Unknowns: none for the deployment. Relay CI cannot deploy until its Cloudflare token gets D1 write access (error 7403).
-The protocol has no machine deletion. Each live run leaves two inactive machine records without credentials.
 
 ## 6. Scheduled tasks (crontab)
 
@@ -224,6 +223,11 @@ Unknowns: no alternate backend or AWS deployment is authorized in the current Ro
 - Physical verification: a macOS native gateway and a Linux JVM gateway used the deployed relay. The guest joined without sharing and answered a required question.
 - The same run checked that a global denial overrides a session opt-in, and that member removal returns the guest to its local group. The test deleted its room.
 - The live fixture is `*deployment*` in `test-native/com/blockether/vis/native_rooms_test.clj`.
+- Machine deletion: the relay route `DELETE /v1/rooms/machines/{machine_id}` and the gateway route `DELETE /v1/council/rooms` delete a machine and the rooms that it owns.
+- Settings, the Python SDK and the native suite use machine deletion. The native suite deletes its machines also after a failure.
+- Machine deletion checks: 50 Worker tests, the JVM Rooms and contract tests, 101 SDK tests and the Companion Rooms panel tests pass.
+- The Worker with machine deletion is deployed. The live-test machines and their room are deleted from production D1. Only the six configured limits remain.
+- Native CI installs the relay packages before the native suite, in `1d7c01342`. A start failure now shows the relay or gateway log.
 - Open: Relay CI deployment needs D1 write access on its Cloudflare token.
 - No live gateway was restarted. No Vis product release occurred.
 - Cron, webhooks and alternate hosting remain deferred.

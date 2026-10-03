@@ -153,13 +153,17 @@ Create a room, then share an invitation with another machine.
 See the [Council guide](../../resources/vis-docs/council.md#connect-machines-with-a-room) for scoped access and wake settings.
 
 `rooms.json` is the [canonical protocol](../../packages/vis-contract/resources/vis-contract/schema/rooms.json).
-Its route catalog defines authentication, requests, queries, responses and errors for all 21 operations.
+Its route catalog defines authentication, requests, queries, responses and errors for all 22 operations.
 `npm run contracts` compiles standalone Worker validators and generates database limits from that contract.
 `npm test` rejects stale generated files. Rooms caps JSON bodies at 256 KiB without changing Push's 16 KiB cap.
 
 Opening `/rooms/join#invite=...` does not redeem an invitation. Explicit redemption is atomic and replay-safe.
 The database stores credential and invitation hashes, not their secrets.
 Presence expires, while membership and messages remain until explicitly removed.
+Deleting a room removes its messages, invitations and memberships in one transaction.
+A machine can delete itself, and the administrator can delete any machine.
+That deletion also removes the rooms that the machine owns.
+Messages that it sent to other rooms keep a machine record without a credential.
 
 `npm run dev` uses `--remote` because local workerd lacks the HTTP/2 support
 required by APNs.

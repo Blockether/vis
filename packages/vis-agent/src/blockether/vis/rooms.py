@@ -99,6 +99,13 @@ class Machine:
 
 
 @dataclass(frozen=True, slots=True)
+class MachineDeletion:
+    machine_id: str
+    deleted_rooms: int
+    retained_history: bool
+
+
+@dataclass(frozen=True, slots=True)
 class Room:
     room_id: str
     name: str
@@ -252,6 +259,17 @@ class RoomsClient:
             )
         )
 
+    def delete_machine(self, machine_id: str) -> MachineDeletion:
+        """Delete a machine and the rooms that it owns.
+
+        Use the machine's own credential or the Rooms administrator token. Entries
+        in other rooms stay, but the machine credential stops working.
+        """
+        validate("rooms", "id", machine_id)
+        return MachineDeletion(
+            **self._request("DELETE", f"/v1/rooms/machines/{machine_id}")
+        )
+
     def machine(self) -> Machine:
         return Machine(**self._request("GET", "/v1/rooms/machine"))
 
@@ -274,7 +292,7 @@ class RoomsClient:
         )
 
     def delete_room(self, room_id: str) -> None:
-        """Delete a room. All members lose access to its messages."""
+        """Delete a room with its messages. All members lose access."""
         self._request("DELETE", self._path(room_id))
 
     def create_invite(

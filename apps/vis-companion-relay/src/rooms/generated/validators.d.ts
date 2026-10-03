@@ -4,6 +4,7 @@ export function secret(data: unknown): boolean;
 export function machine(data: unknown): boolean;
 export function machine_registration(data: unknown): boolean;
 export function machine_update(data: unknown): boolean;
+export function machine_deleted(data: unknown): boolean;
 export function room(data: unknown): boolean;
 export function room_create(data: unknown): boolean;
 export function room_list(data: unknown): boolean;

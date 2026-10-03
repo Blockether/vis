@@ -178,8 +178,8 @@
           processes
           (atom [])
 
-          room-cleanup
-          (atom nil)
+          machines
+          (atom [])
 
           provider
           (provider!)
@@ -238,6 +238,9 @@
               (:port guest)
 
               _
+              (swap! machines conj a)
+
+              _
               (ok! a
                    :post
                    "/v1/council/rooms/register"
@@ -249,11 +252,11 @@
               rid
               (get room "room_id")
 
-              _
-              (reset! room-cleanup [a rid])
-
               invite
               (ok! a :post (str "/v1/council/rooms/" rid "/invites") {})
+
+              _
+              (swap! machines conj b)
 
               joined
               (ok! b
@@ -336,10 +339,13 @@
           (expect (= [] (get (ok! b :get "/v1/council/rooms" nil) "rooms")))
           (expect (not= rid (get (ok! b :get cb nil) "default_group_id")))
           (ok! a :delete (str "/v1/council/rooms/" rid) nil)
-          (reset! room-cleanup nil))
-        (finally (try (when-let [[port room-id] @room-cleanup]
-                        (ok! port :delete (str "/v1/council/rooms/" room-id) nil))
-                      (finally ((:stop! provider))
-                               (doseq [process (reverse @processes)]
-                                 (#'binary/kill-tree! process))
-                               (#'binary/delete-tree! dir))))))))
+          (doseq [port [a b]]
+            (expect (false? (get (ok! port :delete "/v1/council/rooms" nil) "configured")))
+            (expect (false? (get (ok! port :get "/v1/council/rooms" nil) "configured"))))
+          (reset! machines []))
+        (finally (doseq [port @machines]
+                   (try (request! port :delete "/v1/council/rooms" nil) (catch Exception _ nil)))
+                 ((:stop! provider))
+                 (doseq [process (reverse @processes)]
+                   (#'binary/kill-tree! process))
+                 (#'binary/delete-tree! dir))))))

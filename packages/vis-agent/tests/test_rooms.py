@@ -96,6 +96,24 @@ def test_inbox_and_wake_use_the_canonical_protocol():
         client.inbox(room, sid, after=-1)
 
 
+def test_machine_deletion_uses_the_canonical_protocol():
+    machine = identity()
+    client = RoomsClient("https://gateway.example.com", machine.credential)
+    client._opener = Responses(
+        {"machine_id": machine.machine_id, "deleted_rooms": 2, "retained_history": True}
+    )
+    result = client.delete_machine(machine.machine_id)
+    assert (result.deleted_rooms, result.retained_history) == (2, True)
+    request = client._opener.requests[0]
+    assert (request.get_method(), request.full_url, request.data) == (
+        "DELETE",
+        f"https://gateway.example.com/v1/rooms/machines/{machine.machine_id}",
+        None,
+    )
+    with pytest.raises(ValueError):
+        client.delete_machine("not-a-machine")
+
+
 def test_unknown_fields_invalid_responses_and_redirects_fail_closed():
     machine = identity()
     room, sid = str(uuid4()), str(uuid4())

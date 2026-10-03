@@ -1,4 +1,13 @@
-import { digest, fail, machine, member, room, rows, limits } from "./protocol";
+import {
+  deletedMachine,
+  digest,
+  fail,
+  machine,
+  member,
+  room,
+  rows,
+  limits,
+} from "./protocol";
 import type { Data, Database } from "./protocol";
 
 export async function register(
@@ -47,7 +56,9 @@ export async function createRoom(
     );
   }
   const owner = await db
-    .prepare("SELECT machine_id FROM room_machines WHERE machine_id = ?")
+    .prepare(
+      `SELECT machine_id FROM room_machines WHERE machine_id = ? AND NOT ${deletedMachine}`,
+    )
     .bind(body.owner_machine_id)
     .first();
   if (!owner) fail(404, "not_found", "Owner machine does not exist");
@@ -271,4 +282,104 @@ export async function presence(
   );
   await db.batch(statements);
   return { expires_at: expires };
+}
+
+/** Delete children before parents, so that each statement keeps foreign keys valid. */
+function purge(
+  db: Database,
+  rooms: string,
+  value: string,
+): D1PreparedStatement[] {
+  const scoped = (sql: string) => db.prepare(sql).bind(value);
+  return [
+    scoped(
+      `DELETE FROM room_deliveries WHERE entry_id IN (SELECT entry_id FROM room_entries WHERE room_id IN (${rooms}))`,
+    ),
+    scoped(`DELETE FROM room_entries WHERE room_id IN (${rooms})`),
+    scoped(`DELETE FROM room_presence WHERE room_id IN (${rooms})`),
+    scoped(
+      `DELETE FROM room_redemptions WHERE invite_id IN (SELECT invite_id FROM room_invites WHERE room_id IN (${rooms}))`,
+    ),
+    scoped(`DELETE FROM room_invites WHERE room_id IN (${rooms})`),
+    scoped(`DELETE FROM room_memberships WHERE room_id IN (${rooms})`),
+    scoped(
+      `DELETE FROM council_rooms WHERE room_id IN (${rooms}) RETURNING room_id`,
+    ),
+  ];
+}
+
+/** Remove deleted machines and their sessions when no history uses them. */
+function collect(db: Database): D1PreparedStatement[] {
+  return [
+    db.prepare(
+      `DELETE FROM room_sessions WHERE machine_id IN (SELECT machine_id FROM room_machines WHERE ${deletedMachine})
+    AND session_id NOT IN (SELECT author_session_id FROM room_entries)
+    AND session_id NOT IN (SELECT session_id FROM room_deliveries)
+    AND session_id NOT IN (SELECT session_id FROM room_presence)`,
+    ),
+    db.prepare(
+      `DELETE FROM room_machines WHERE ${deletedMachine}
+    AND machine_id NOT IN (SELECT machine_id FROM room_sessions)
+    AND machine_id NOT IN (SELECT machine_id FROM room_memberships)
+    AND machine_id NOT IN (SELECT machine_id FROM room_redemptions)
+    AND machine_id NOT IN (SELECT owner_machine_id FROM council_rooms)`,
+    ),
+  ];
+}
+
+export async function deleteRoom(db: Database, roomId: string): Promise<void> {
+  await db.batch([...purge(db, "?", roomId), ...collect(db)]);
+}
+
+/** Delete a credential and its rooms. Entries in other rooms keep their author. */
+export async function deleteMachine(
+  db: Database,
+  machineId: string,
+): Promise<Data> {
+  const found = await db
+    .prepare(
+      `SELECT machine_id FROM room_machines WHERE machine_id = ? AND NOT ${deletedMachine}`,
+    )
+    .bind(machineId)
+    .first();
+  if (!found) fail(404, "not_found", "Machine does not exist");
+  const sessions = "SELECT session_id FROM room_sessions WHERE machine_id = ?";
+  const owned = purge(
+    db,
+    "SELECT room_id FROM council_rooms WHERE owner_machine_id = ?",
+    machineId,
+  );
+  const results = await db.batch<Data>([
+    ...owned,
+    db
+      .prepare(`DELETE FROM room_presence WHERE session_id IN (${sessions})`)
+      .bind(machineId),
+    db
+      .prepare("DELETE FROM room_memberships WHERE machine_id = ?")
+      .bind(machineId),
+    db
+      .prepare("DELETE FROM room_redemptions WHERE machine_id = ?")
+      .bind(machineId),
+    db
+      .prepare(
+        `UPDATE room_deliveries SET state = 'unavailable' WHERE state IN ('pending', 'delivered')
+    AND session_id IN (${sessions})`,
+      )
+      .bind(machineId),
+    db
+      .prepare(
+        `UPDATE room_machines SET name = 'Deleted machine', credential_hash = 'deleted:' || machine_id,
+    can_create_rooms = 0 WHERE machine_id = ?`,
+      )
+      .bind(machineId),
+    ...collect(db),
+    db
+      .prepare("SELECT machine_id FROM room_machines WHERE machine_id = ?")
+      .bind(machineId),
+  ]);
+  return {
+    machine_id: machineId,
+    deleted_rooms: results[owned.length - 1].results.length,
+    retained_history: results[results.length - 1].results.length > 0,
+  };
 }
