@@ -109,6 +109,7 @@ describe('gateway streams across native backgrounding', () => {
   it('retires them before suspension and opens fresh streams after resume', async () => {
     const { SessionSubscriptionHub } = await import('./subscriptions');
     const { state, client } = fakeClient();
+    const stream = vi.spyOn(client, 'streamSessionEvents');
     const hub = new SessionSubscriptionHub(client);
     hub.watchSessions(['session-1']);
     hub.subscribeFleet(() => {});
@@ -131,6 +132,7 @@ describe('gateway streams across native backgrounding', () => {
     native.get('appStateChange')?.({ isActive: true });
     await vi.advanceTimersByTimeAsync(250);
     expect(state.sessionOpened).toBe(3);
+    expect(stream.mock.calls.at(-1)?.[2]?.reason).toBe('wake');
     expect(state.fleetOpened).toBe(0);
 
     hub.dispose();

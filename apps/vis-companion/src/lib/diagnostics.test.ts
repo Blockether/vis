@@ -113,6 +113,36 @@ describe('persistent app diagnostics', () => {
     expect(serialized).not.toContain('label-private');
   });
 
+  it('keeps stream reasons and heartbeat timing in durable records', async () => {
+    const { flushDiagnostics, startGatewayRequestDiagnostic } = await diagnostics();
+    const request = startGatewayRequestDiagnostic({
+      gateway: 'https://gateway.example.com',
+      method: 'GET',
+      path: '/v1/events',
+      transport: 'sse',
+      stream: 'sessions',
+      reason: 'stream_stall',
+    });
+    request.finish('error', {
+      outcome: 'timeout',
+      status: 200,
+      stream_phase: 'read',
+      last_byte_age_ms: 45_000,
+      last_heartbeat_age_ms: null,
+    });
+    await flushDiagnostics();
+    const records = appendFile.mock.calls.map(([call]) => JSON.parse(call.data));
+    expect(records.find((record) => record.event === 'request_started').details).toMatchObject({
+      reason: 'stream_stall',
+    });
+    expect(records.find((record) => record.event === 'request_finished').details).toMatchObject({
+      reason: 'stream_stall',
+      stream_phase: 'read',
+      last_byte_age_ms: 45_000,
+      last_heartbeat_age_ms: null,
+    });
+  });
+
   it('correlates session requests across a background freeze and resume', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-03-10T12:00:00.000Z'));

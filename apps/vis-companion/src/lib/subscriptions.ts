@@ -1,3 +1,4 @@
+import type { GatewayStreamReason } from './diagnostics';
 import type { GatewayClient } from './gateway';
 import { approxBytes, registerMemoryOwner, type MemoryCell } from './perf';
 import { bufferStreamEvent } from './session-stream';
@@ -85,12 +86,12 @@ export class SessionSubscriptionHub {
     // dies while the app is away leaves WebKit sockets that can block every later
     // request. Wake then opens fresh streams and catches up from their cursors.
     this.stopAway = onAway(() => this.suspend());
-    this.stopWake = onWake(() => this.resync());
+    this.stopWake = onWake(() => this.resync('wake'));
     // Second safety net, for the case wake events cannot cover: the app stays
     // in the foreground on one session and the stream dies anyway.
     this.supervisor = setInterval(() => {
-      this.ensureStream();
-      this.ensureFleetStream();
+      this.ensureStream('supervisor');
+      this.ensureFleetStream('supervisor');
     }, SUPERVISOR_INTERVAL_MS);
   }
 
@@ -119,7 +120,7 @@ export class SessionSubscriptionHub {
       this.ended.delete(sid);
       changed = true;
     }
-    if (changed) this.restart();
+    if (changed) this.restart({ reason: 'watch_changed' });
     else this.ensureStream();
   }
 
@@ -188,7 +189,7 @@ export class SessionSubscriptionHub {
   subscribeFleet(listener: FleetListener): () => void {
     this.fleetListeners.add(listener);
     if (this.cursors.size > 0) {
-      if (this.fleetListeners.size === 1) this.restart({ graceful: true });
+      if (this.fleetListeners.size === 1) this.restart({ graceful: true, reason: 'watch_changed' });
     } else {
       this.ensureFleetStream();
     }
@@ -196,7 +197,7 @@ export class SessionSubscriptionHub {
       this.fleetListeners.delete(listener);
       if (this.fleetListeners.size === 0) {
         this.stopFleet();
-        if (this.cursors.size > 0) this.restart({ graceful: true });
+        if (this.cursors.size > 0) this.restart({ graceful: true, reason: 'watch_changed' });
       }
     };
   }
@@ -224,7 +225,7 @@ export class SessionSubscriptionHub {
    * a fetch-body reader can silently park on wake with no error firing, so a
    * visibility/online/pageshow handler calls this to guarantee catch-up.
    */
-  resync(): void {
+  resync(reason: GatewayStreamReason = 'resync'): void {
     if (this.disposed) return;
     this.suspended = false;
     const now = Date.now();
@@ -233,11 +234,11 @@ export class SessionSubscriptionHub {
     // Reconnect the active transport once: a combined session/fleet stream
     // resubscribes both feeds, while a fleet-only stream refreshes its window.
     if (this.cursors.size === 0) {
-      this.restartFleet();
+      this.restartFleet(reason);
       return;
     }
     // Graceful: this is a precaution, not an observed failure — do not paint one.
-    this.restart({ graceful: true });
+    this.restart({ graceful: true, reason });
   }
 
   /** Retire transports before the native webview itself is suspended. */
@@ -280,12 +281,15 @@ export class SessionSubscriptionHub {
    * hub owns liveness: `stopStream` is nulled the moment the retry loop exits,
    * so a dead stream is always detectable instead of looking connected.
    */
-  private ensureStream(): void {
+  private ensureStream(reason: GatewayStreamReason = 'subscribe'): void {
     if (this.disposed || this.suspended || this.stopStream || this.cursors.size === 0) return;
-    this.restart();
+    this.restart({ reason });
   }
 
-  private restart({ graceful = false }: { graceful?: boolean } = {}): void {
+  private restart({
+    graceful = false,
+    reason = 'subscribe',
+  }: { graceful?: boolean; reason?: GatewayStreamReason } = {}): void {
     if (this.disposed || this.suspended) return;
     this.stopStream?.();
     this.stopStream = null;
@@ -300,7 +304,7 @@ export class SessionSubscriptionHub {
     }
     if (this.cursors.size === 0) {
       this.setFleetStreaming(false);
-      this.ensureFleetStream();
+      this.ensureFleetStream(reason);
       return;
     }
     const includeFleet = this.fleetListeners.size > 0;
@@ -318,6 +322,7 @@ export class SessionSubscriptionHub {
       },
       {
         includeFleet,
+        reason,
         onOpen: () => this.setConnected(true),
         onError: () => {
           this.setConnected(false);
@@ -343,7 +348,7 @@ export class SessionSubscriptionHub {
    * nulled the moment the retry loop exits, so a dead stream is detectable instead
    * of looking connected.
    */
-  private ensureFleetStream(): void {
+  private ensureFleetStream(reason: GatewayStreamReason = 'subscribe'): void {
     if (
       this.disposed ||
       this.suspended ||
@@ -359,6 +364,7 @@ export class SessionSubscriptionHub {
         else for (const listener of [...this.fleetListeners]) listener(event);
       },
       {
+        reason,
         onOpen: () => this.setFleetStreaming(true),
         onError: () => this.setFleetStreaming(false),
         onClosed: () => {
@@ -378,10 +384,10 @@ export class SessionSubscriptionHub {
     this.setFleetStreaming(false);
   }
 
-  private restartFleet(): void {
+  private restartFleet(reason: GatewayStreamReason): void {
     if (this.fleetListeners.size === 0) return;
     this.stopFleet();
-    this.ensureFleetStream();
+    this.ensureFleetStream(reason);
   }
 
   private setFleetStreaming(streaming: boolean): void {

@@ -128,6 +128,7 @@ describe('gateway request diagnostics', () => {
         transport: 'sse',
         stream: 'sessions',
         attempt: 1,
+        reason: 'subscribe',
         session_ids: ['session-one', 'session-two'],
       }),
     );

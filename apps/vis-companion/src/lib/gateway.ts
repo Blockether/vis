@@ -108,6 +108,7 @@ import {
   type GatewayRequestDiagnostic,
   type GatewayRequestDiagnosticFinish,
   type GatewayRequestDiagnosticStart,
+  type GatewayStreamReason,
 } from './diagnostics';
 
 export class GatewayError extends Error {
@@ -443,6 +444,7 @@ async function readSseFrames(
   onData: (json: string, event: string | null) => void,
   onChunk?: () => void,
   signal?: AbortSignal,
+  onHeartbeat?: () => void,
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -452,14 +454,15 @@ async function readSseFrames(
     // A reader retired during a network handoff can wake after its replacement.
     // Its bytes belong to the old attempt and must never enter the current cursor.
     if (signal?.aborted) break;
-    onChunk?.();
     if (done) break;
+    if (value?.byteLength) onChunk?.();
     buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
     let boundary: number;
     while ((boundary = buffer.indexOf('\n\n')) >= 0) {
       const frame = buffer.slice(0, boundary);
       buffer = buffer.slice(boundary + 2);
       const lines = frame.split('\n').map((line) => line.trimStart());
+      if (lines.some((line) => line.startsWith(':'))) onHeartbeat?.();
       const named = lines.find((line) => line.startsWith('event:'));
       const event = named ? named.slice(6).trim() || null : null;
       for (const line of lines) {
@@ -469,6 +472,37 @@ async function readSseFrames(
       }
     }
   }
+}
+
+/** Track stream timing without keeping event data or heartbeat text. */
+function trackSseActivity() {
+  let phase: 'connect' | 'read' = 'connect';
+  let lastByteAt: number | null = null;
+  let lastHeartbeatAt: number | null = null;
+  return {
+    opened() {
+      phase = 'read';
+    },
+    chunk() {
+      lastByteAt = Date.now();
+    },
+    heartbeat() {
+      lastHeartbeatAt = Date.now();
+    },
+    snapshot() {
+      const now = Date.now();
+      return {
+        stream_phase: phase,
+        last_byte_age_ms: lastByteAt === null ? null : Math.max(0, now - lastByteAt),
+        last_heartbeat_age_ms: lastHeartbeatAt === null ? null : Math.max(0, now - lastHeartbeatAt),
+      };
+    },
+    retryReason(status: number, stalled: boolean, closed: boolean): GatewayStreamReason {
+      if (stalled) return phase === 'connect' ? 'connect_timeout' : 'stream_stall';
+      if (closed) return 'eof';
+      return status >= 400 ? 'http_error' : 'network_error';
+    },
+  };
 }
 
 /** The gateway's canonical `error.message`, or the bare status when it sent none. */
@@ -1145,6 +1179,10 @@ type FinishRequestDiagnosticOptions = {
   signal?: AbortSignal;
   timedOut?: boolean;
   outcome?: GatewayRequestDiagnosticFinish['outcome'];
+  stream?: Pick<
+    GatewayRequestDiagnosticFinish,
+    'stream_phase' | 'last_byte_age_ms' | 'last_heartbeat_age_ms'
+  >;
 };
 
 function finishRequestDiagnostic(
@@ -1155,6 +1193,7 @@ function finishRequestDiagnostic(
     signal,
     timedOut = false,
     outcome: explicitOutcome,
+    stream,
   }: FinishRequestDiagnosticOptions,
 ): void {
   const outcome =
@@ -1186,6 +1225,7 @@ function finishRequestDiagnostic(
     status,
     outcome,
     ...(diagnosticError ? { error: diagnosticError } : {}),
+    ...stream,
   });
 }
 
@@ -5109,6 +5149,7 @@ export class GatewayClient {
     opts: {
       signal?: AbortSignal;
       includeFleet?: boolean;
+      reason?: GatewayStreamReason;
       onOpen?: () => void;
       onError?: (error: unknown) => void;
       /** Fired once the retry loop has ENDED — the stream is no longer running. */
@@ -5124,6 +5165,7 @@ export class GatewayClient {
     void (async () => {
       let retryMs = 400;
       let attemptNumber = 0;
+      let reason: GatewayStreamReason = opts.reason ?? 'subscribe';
       while (!signal.aborted && cursors.size > 0) {
         // Per-attempt controller: the stall watchdog aborts only THIS
         // connection attempt, so the outer loop reconnects with up-to-date
@@ -5136,7 +5178,9 @@ export class GatewayClient {
           stream: 'sessions',
           attempt: ++attemptNumber,
           session_ids: [...cursors.keys()],
+          reason,
         });
+        const activity = trackSseActivity();
         let status = 0;
         let failure: { cause: unknown } | undefined;
         let stallExpired = false;
@@ -5174,6 +5218,7 @@ export class GatewayClient {
             throw new GatewayError(response.status, `SSE HTTP ${response.status}`);
           }
 
+          activity.opened();
           opts.onOpen?.();
           retryMs = 400;
           // Stall watchdog: the gateway sends a heartbeat every 15 s. If we
@@ -5222,8 +5267,12 @@ export class GatewayClient {
                   // Ignore one malformed frame without ending sibling sessions.
                 }
               },
-              () => armStall(SSE_STALL_TIMEOUT_MS),
+              () => {
+                activity.chunk();
+                armStall(SSE_STALL_TIMEOUT_MS);
+              },
               attemptSignal,
+              activity.heartbeat,
             ),
             attemptSignal,
           );
@@ -5251,10 +5300,12 @@ export class GatewayClient {
             signal,
             timedOut: stallExpired && !signal.aborted,
             ...(closed ? { outcome: 'closed' as const } : {}),
+            stream: activity.snapshot(),
           });
           if (stallTimer) clearTimeout(stallTimer);
           attempt.abort();
         }
+        reason = activity.retryReason(status, stallExpired, closed);
         if (retryAfterMs > 0) await abortableDelay(retryAfterMs, signal);
       }
       opts.onClosed?.();
@@ -5279,6 +5330,7 @@ export class GatewayClient {
     onEvent: (event: SseEvent) => void,
     opts: {
       signal?: AbortSignal;
+      reason?: GatewayStreamReason;
       onOpen?: () => void;
       onError?: (error: unknown) => void;
       /** Fired once the retry loop has ENDED — the stream is no longer running. */
@@ -5294,6 +5346,7 @@ export class GatewayClient {
     void (async () => {
       let retryMs = 400;
       let attemptNumber = 0;
+      let reason: GatewayStreamReason = opts.reason ?? 'subscribe';
       while (!signal.aborted) {
         // Per-attempt controller, exactly as the multiplexed stream: the stall
         // watchdog aborts only THIS attempt and the outer loop reconnects.
@@ -5304,7 +5357,9 @@ export class GatewayClient {
           transport: 'sse',
           stream: 'fleet',
           attempt: ++attemptNumber,
+          reason,
         });
+        const activity = trackSseActivity();
         let status = 0;
         let failure: { cause: unknown } | undefined;
         let stallExpired = false;
@@ -5332,6 +5387,7 @@ export class GatewayClient {
             throw new GatewayError(response.status, `SSE HTTP ${response.status}`);
           }
 
+          activity.opened();
           opts.onOpen?.();
           retryMs = 400;
           armStall(SSE_STALL_TIMEOUT_MS);
@@ -5349,8 +5405,12 @@ export class GatewayClient {
                   // One malformed frame must not end the list's only push channel.
                 }
               },
-              () => armStall(SSE_STALL_TIMEOUT_MS),
+              () => {
+                activity.chunk();
+                armStall(SSE_STALL_TIMEOUT_MS);
+              },
               attemptSignal,
+              activity.heartbeat,
             ),
             attemptSignal,
           );
@@ -5373,10 +5433,12 @@ export class GatewayClient {
             signal,
             timedOut: stallExpired && !signal.aborted,
             ...(closed ? { outcome: 'closed' as const } : {}),
+            stream: activity.snapshot(),
           });
           if (stallTimer) clearTimeout(stallTimer);
           attempt.abort();
         }
+        reason = activity.retryReason(status, stallExpired, closed);
         if (retryAfterMs > 0) await abortableDelay(retryAfterMs, signal);
       }
       opts.onClosed?.();

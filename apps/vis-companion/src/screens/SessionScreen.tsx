@@ -201,16 +201,8 @@ const SETTLE_RETRY_MS = [70, 150, 300, 600];
 // directly. Long enough that a healthy terminal frame always wins the race.
 const TURN_LIVENESS_IDLE_MS = 10000;
 const TURN_LIVENESS_PROBE_INTERVAL_MS = 5000;
-// Long tool calls can be silent. Reconnect only after two missed gateway heartbeats,
-// and at most once per timeout window.
-const TURN_STREAM_STALL_MS = 30_000;
-// …and never on a SINGLE verdict. One probe can be wrong in both directions (a
-// heartbeat racing the read, a registry row not yet visible), and every wrong
-// verdict costs a stream teardown the user sees. So a suspicious answer only
-// arms the watchdog: it must be RE-CHECKED on the next probe and agree with
-// itself before anything is torn down. Two agreeing probes 5s apart cost one
-// extra tick of latency and remove every single-sample false positive.
-const TURN_STALL_CONFIRMATIONS = 2;
+// A missing registry row can be temporary. Require two agreeing probes before replaying the stream.
+const TURN_UNKNOWN_CONFIRMATIONS = 2;
 const TURN_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 const INITIAL_VISIBLE_TURNS = 8;
 // Assistant turns can contain thousands of syntax-highlighted nodes. Twenty-four
@@ -2048,7 +2040,7 @@ export function SessionScreen({
     };
     const stopWake = onWake(({ awayMs }) => {
       inflightSince = null;
-      subscriptions.resync();
+      subscriptions.resync('wake');
       reconcileWakeGeometry();
       // Native resume can precede WebKit's final viewport restoration by one paint.
       // Measure once more after that paint rather than trusting the suspended box.
@@ -2744,15 +2736,9 @@ export function SessionScreen({
 
     flushRunningTurnEventsBeforeRotationRestoreRef.current = flushEvents;
 
-    // Liveness watchdog — the transport-independent twin of the TUI's
-    // `:turn-liveness-tick`. A terminal registry verdict uses the SAME `settle`
-    // path as a real frame. If the turn is still live, the stream has probably
-    // been frozen (notably by WKWebView), so reconnect and replay it instead.
+    // Recover lost terminal events from the registry. A running turn can stay quiet
+    // during a tool call. Only the transport watchdog checks bytes and heartbeats.
     let lastEventAt = Date.now();
-    let lastStallResyncAt = 0;
-    // Consecutive probes that agreed on a suspicious verdict. Reset by ANY
-    // reassuring answer, so only a persistent fault ever reaches a reconnect.
-    let stallStrikes = 0;
     let unknownStrikes = 0;
     let probing = false;
     const livenessTimer = window.setInterval(() => {
@@ -2762,7 +2748,6 @@ export function SessionScreen({
       const silentFor = Date.now() - quietSince;
       if (silentFor < TURN_LIVENESS_IDLE_MS) {
         // Frames are flowing: whatever the last probe suspected is disproved.
-        stallStrikes = 0;
         unknownStrikes = 0;
         return;
       }
@@ -2773,36 +2758,21 @@ export function SessionScreen({
           const current = runningTurnRef.current;
           if (!current || current.status !== 'running' || current.id !== probedTurn.id) return;
           if (turn && !TURN_TERMINAL_STATUSES.has(String(turn.status ?? ''))) {
-            // The gateway CONFIRMS the turn is still working, so the transport is
-            // not the suspect: a long tool call is simply quiet. Leave the stream
-            // alone until the silence outlasts the stall bound — and even then,
-            // only once a SECOND probe has re-checked and still sees no frames.
+            // A confirmed running turn does not prove a transport failure.
             unknownStrikes = 0;
-            if (silentFor < TURN_STREAM_STALL_MS) {
-              stallStrikes = 0;
-              return;
-            }
-            stallStrikes += 1;
-            if (stallStrikes < TURN_STALL_CONFIRMATIONS) return;
-            if (Date.now() - lastStallResyncAt < TURN_STREAM_STALL_MS) return;
-            lastStallResyncAt = Date.now();
-            stallStrikes = 0;
-            subscriptions.resync();
             return;
           }
           if (!turn) {
             // "No such turn" is the one answer that cannot be trusted on sight:
             // a row can be momentarily unreadable (a restarting gateway, a proxy
             // hiccup) while the turn is perfectly alive. Re-check before acting.
-            stallStrikes = 0;
             unknownStrikes += 1;
-            if (unknownStrikes < TURN_STALL_CONFIRMATIONS) return;
+            if (unknownStrikes < TURN_UNKNOWN_CONFIRMATIONS) return;
             unknownStrikes = 0;
             lastEventAt = Date.now();
-            subscriptions.resync();
+            subscriptions.resync('turn_unknown');
             return;
           }
-          stallStrikes = 0;
           unknownStrikes = 0;
           const type =
             turn.status === 'failed'

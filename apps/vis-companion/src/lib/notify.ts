@@ -94,15 +94,20 @@ export async function syncFleetPush(
       result.unchanged.push(conn.url);
       continue;
     }
+    if (!isProbeDue(conn.url)) {
+      result.failed.push(conn.url);
+      continue;
+    }
     let state: MachinePush;
     try {
       state = await fleet.read(conn);
       // A machine too old for the route, or one whose answer carries no list at
       // all, has told us nothing about what it is holding.
       if (!Array.isArray(state.devices)) throw new Error('no device list');
+      noteReachable(conn.url);
     } catch {
-      // Unreachable, or unreadable: this machine keeps the verdict it last
-      // settled on, and the next launch or wake asks it again.
+      // Keep the last verdict and wait for the retry window or a network change.
+      if (!isCancelled()) noteUnreachable(conn.url);
       result.failed.push(conn.url);
       continue;
     }
@@ -132,6 +137,8 @@ export async function syncFleetPush(
   return result;
 }
 
+const revocationsInFlight = new Set<string>();
+
 /**
  * Take this device off every machine it was FORGOTTEN on.
  *
@@ -157,17 +164,22 @@ export async function drainPushRevocations(
     // A machine that has been silent keeps its entry, but not the retry: this
     // list is drained on every launch and wake, and a forgotten machine is
     // usually forgotten because it is gone. See `lib/reachability.ts`.
-    if (!isProbeDue(conn.url)) continue;
+    if (!isProbeDue(conn.url) || revocationsInFlight.has(conn.url)) continue;
+    revocationsInFlight.add(conn.url);
     try {
-      await unregister(conn, token);
-    } catch {
-      // Still holding this device. Kept, and asked again next time.
-      noteUnreachable(conn.url);
-      continue;
+      try {
+        await unregister(conn, token);
+      } catch {
+        // Keep the debt until the machine accepts it.
+        if (!isCancelled()) noteUnreachable(conn.url);
+        continue;
+      }
+      noteReachable(conn.url);
+      await clearRevocation(conn.url);
+      revoked.push(conn.url);
+    } finally {
+      revocationsInFlight.delete(conn.url);
     }
-    noteReachable(conn.url);
-    await clearRevocation(conn.url);
-    revoked.push(conn.url);
   }
   return revoked;
 }

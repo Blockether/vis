@@ -9,6 +9,19 @@ import { onAway, onWake } from './wake';
 
 export type DiagnosticLevel = 'debug' | 'info' | 'warn' | 'error';
 
+export type GatewayStreamReason =
+  | 'subscribe'
+  | 'watch_changed'
+  | 'wake'
+  | 'turn_unknown'
+  | 'resync'
+  | 'supervisor'
+  | 'connect_timeout'
+  | 'stream_stall'
+  | 'http_error'
+  | 'network_error'
+  | 'eof';
+
 export type GatewayRequestDiagnosticStart = {
   gateway: string;
   method: string;
@@ -18,6 +31,7 @@ export type GatewayRequestDiagnosticStart = {
   session_ids?: readonly string[];
   stream?: 'fleet' | 'session' | 'sessions' | 'tui' | 'voice_job';
   attempt?: number;
+  reason?: GatewayStreamReason;
 };
 
 export type GatewayRequestDiagnosticFinish = {
@@ -31,6 +45,9 @@ export type GatewayRequestDiagnosticFinish = {
     | 'closed';
   status: number;
   error?: string;
+  stream_phase?: 'connect' | 'read';
+  last_byte_age_ms?: number | null;
+  last_heartbeat_age_ms?: number | null;
 };
 
 export type GatewayRequestDiagnostic = {

@@ -252,6 +252,26 @@ describe('syncFleetPush', () => {
     expect(calls.registered).toEqual([BUILDBOX]);
   });
 
+  // Regression: repeated wakes retried dead addresses without the reachability delay.
+  it('backs off failed device reads without delaying reachable machines', async () => {
+    const { fleet } = fleetOf();
+    const read = vi.fn(async (conn: GatewayConn) => {
+      if (conn.url === BUILDBOX) throw new Error('machine unreachable');
+      return { devices: [] };
+    });
+    fleet.read = read;
+    await syncFleetPush(paired, fleet, ['mine'], false);
+    const again = await syncFleetPush(paired, fleet, ['mine'], false);
+    expect(again.failed).toEqual([BUILDBOX]);
+    expect(read.mock.calls.map(([conn]) => conn.url)).toEqual([LAPTOP, BUILDBOX, LAPTOP]);
+    afterGap(60_001);
+    await syncFleetPush(paired, fleet, ['mine'], false);
+    expect(read.mock.calls.filter(([conn]) => conn.url === BUILDBOX)).toHaveLength(2);
+    forgetUnreachableAddresses();
+    await syncFleetPush(paired, fleet, ['mine'], false);
+    expect(read.mock.calls.filter(([conn]) => conn.url === BUILDBOX)).toHaveLength(3);
+  });
+
   it('sweeps each machine once and stops when the app tears the sweep down', async () => {
     await setGatewayNotify(LAPTOP, true);
     await setGatewayNotify(BUILDBOX, true);
@@ -368,6 +388,25 @@ describe('forgetting a machine', () => {
     afterGap(2 * 60_000);
     await drainPushRevocations('tok', silent);
     expect(asked).toEqual([BUILDBOX, BUILDBOX]);
+  });
+
+  // Regression: a second wake duplicated a revocation while its first request was pending.
+  it('does not repeat an unfinished revocation on a second wake', async () => {
+    await saveConnections(paired);
+    await removeConnection(BUILDBOX);
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const unregister = vi.fn(() => pending);
+    const first = drainPushRevocations('tok', unregister);
+    await vi.waitFor(() => expect(unregister).toHaveBeenCalledTimes(1));
+    const second = drainPushRevocations('tok', unregister);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    finish();
+    await Promise.all([first, second]);
+    expect(unregister).toHaveBeenCalledTimes(1);
+    expect(await pendingRevocations()).toEqual([]);
   });
 
   it('owes nothing for a machine that was paired again', async () => {
