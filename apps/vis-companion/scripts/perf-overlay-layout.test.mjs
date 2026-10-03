@@ -23,6 +23,10 @@ async function touchTarget(locator) {
     return {
       x: left, y: top, width: right - left, height: bottom - top,
       reachable: points.every(([x, y]) => element.contains(document.elementFromPoint(x, y))),
+      framed: ['Top', 'Right', 'Bottom', 'Left'].some((side) =>
+        px(style[`border${side}Width`]) > 0
+        && style[`border${side}Style`] !== 'none'
+        && style[`border${side}Color`] !== 'rgba(0, 0, 0, 0)'),
     };
   });
 }
@@ -74,6 +78,7 @@ it.runIf(process.env.CI)('keeps memory controls tappable inside every safe area'
           expect(box.height).toBeGreaterThanOrEqual(44);
           expect(box.width).toBeGreaterThanOrEqual(44);
           expect(box.reachable).toBe(true);
+          expect(box.framed).toBe(false);
         }
       };
       await insideSafeArea(panel);

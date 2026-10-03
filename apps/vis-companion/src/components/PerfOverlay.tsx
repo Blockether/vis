@@ -180,7 +180,7 @@ export function PerfOverlay({
         {/* Keep the same button mounted so one tap cannot collapse and reopen it. */}
         <Button
           type="button"
-          variant="secondary"
+          variant="quiet"
           density="compact"
           className="inline-flex max-w-full items-center justify-center mouse:order-last"
           aria-label={open ? 'Minimize memory overlay' : undefined}
@@ -201,12 +201,12 @@ export function PerfOverlay({
         </Button>
         {open ? (
           <div className="flex w-full flex-wrap gap-3 mouse:w-auto mouse:gap-2">
-            <Button type="button" variant="secondary" density="compact" onClick={() => setMetric(metric === 'bytes' ? 'entries' : 'bytes')}>
+            <Button type="button" variant="quiet" density="compact" onClick={() => setMetric(metric === 'bytes' ? 'entries' : 'bytes')}>
               {metric === 'bytes' ? 'Show items' : 'Show bytes'}
             </Button>
             <Button
               type="button"
-              variant="secondary"
+              variant="quiet"
               density="compact"
               onClick={() =>
                 setBaseline({
@@ -221,7 +221,7 @@ export function PerfOverlay({
             </Button>
             <Button
               type="button"
-              variant="secondary"
+              variant="quiet"
               density="compact"
               onClick={() => {
                 void navigator.clipboard?.writeText(JSON.stringify(read(), null, 2)).then(() => setCopied(true));
