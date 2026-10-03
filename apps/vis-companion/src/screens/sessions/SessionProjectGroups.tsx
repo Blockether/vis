@@ -1784,13 +1784,19 @@ export const ProjectGroup = memo(function ProjectGroup({
         unit="session"
       />
       {isGroupRevealing || isSessionRevealing ? (
-        <span className="whitespace-nowrap font-bold">
-          {isGroupRevealing && isSessionRevealing ? 'ARCHIVED' : 'MIXED VIEWS'}
+        <span className="inline-flex items-center gap-2 whitespace-nowrap">
+          <span aria-hidden="true">|</span>
+          <span className="font-bold">
+            {isGroupRevealing && isSessionRevealing ? 'ARCHIVED' : 'MIXED VIEWS'}
+          </span>
         </span>
       ) : (
-        <>
-          <ProjectStatusCounts live={0} awaiting={tally.awaiting} />
-          {running > 0 && (
+        <ProjectStatusCounts
+          live={tally.live}
+          awaiting={tally.awaiting}
+          unread={tally.unread}
+          isAfterTotal
+          liveAction={(
             <TextButton
               isCaption
               className="pointer-events-auto relative shrink-0 whitespace-nowrap"
@@ -1806,8 +1812,7 @@ export const ProjectGroup = memo(function ProjectGroup({
               {running} LIVE
             </TextButton>
           )}
-          <ProjectStatusCounts live={0} unread={tally.unread} />
-        </>
+        />
       )}
     </>
   );

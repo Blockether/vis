@@ -646,7 +646,8 @@ export const LiveCountOpensTheRun: Story = {
     const live = within(header).getByRole('button', { name: 'Open the live session' });
     await expect(live.textContent).toMatch(/^1 LIVE$/);
     // The total and live action share the right-hand count column.
-    await expect(within(live.parentElement!).getByText(`${args.group.tally.count} sessions`)).toBeVisible();
+    await expect(within(live.parentElement!.parentElement!).getByText(`${args.group.tally.count} sessions`)).toBeVisible();
+    await expect(within(live.parentElement!).getByText('|')).toHaveAttribute('aria-hidden', 'true');
     await userEvent.click(live);
     await expect(args.context.actions.commands.open).toHaveBeenCalledWith(conn, 'live-run');
     await expect(heading).toHaveAttribute('aria-expanded', 'true');

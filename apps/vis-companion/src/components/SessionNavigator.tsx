@@ -23,7 +23,7 @@ const HEADER_TYPE = 'text-title';
  * Session rows draw only their internal separators, so the closing edge is never doubled.
  */
 const HEADER_BAND =
-  'min-h-13 items-stretch mouse:min-h-12 z-10 border-y border-project-header-border [--dialog-hint:var(--footer-strong)]';
+  'min-h-11 items-stretch mouse:min-h-10 z-10 border-y border-project-header-border [--dialog-hint:var(--footer-strong)]';
 
 /**
  * The session list's pull gesture takes over the app bar with the action a release would take.
@@ -323,7 +323,7 @@ export function ProjectCrumb({
   } | null;
 }) {
   return (
-    <span className="relative flex min-w-0 flex-1 items-center py-1.5 pl-4 pr-2 mouse:pr-2.5">
+    <span className="relative flex min-w-0 flex-1 items-center py-1 pl-4 pr-2 mouse:pr-2.5">
       {disclosure && (
         <button
           type="button"
@@ -339,7 +339,7 @@ export function ProjectCrumb({
         )}
       </span>
       <span className="pointer-events-none relative min-w-0 flex-1" title={qualifierTitle}>
-        <span className={`block truncate font-bold text-white ${HEADER_TYPE}`}>
+        <span className="block truncate text-body font-bold text-white">
           {name}
         </span>
         {qualifier && (
@@ -588,21 +588,32 @@ export function ProjectStatusCounts({
   live,
   awaiting = 0,
   unread = 0,
+  isAfterTotal = false,
+  liveAction,
 }: {
   live: number;
   awaiting?: number;
   unread?: number;
+  isAfterTotal?: boolean;
+  liveAction?: ReactNode;
 }) {
   const running = Math.max(0, live - awaiting);
   const statuses = [
-    awaiting > 0 ? { label: `${awaiting} HITL`, tone: 'text-warn' } : null,
-    running > 0 ? { label: `${running} LIVE`, tone: 'text-ok' } : null,
-    unread > 0 ? { label: `${unread} NEW`, tone: 'text-accent-ink' } : null,
-  ].filter((status): status is NonNullable<typeof status> => status !== null);
+    { label: 'HITL', count: awaiting, tone: 'text-warn' },
+    { label: 'LIVE', count: running, tone: 'text-ok' },
+    { label: 'NEW', count: unread, tone: 'text-accent-ink' },
+  ].filter((status) => status.count > 0);
 
-  return statuses.map((status) => (
-    <span key={status.label} className={`whitespace-nowrap font-bold ${status.tone}`}>
-      {status.label}
+  return statuses.map((status, index) => (
+    <span key={status.label} className="inline-flex items-center gap-2 whitespace-nowrap">
+      {(index > 0 || isAfterTotal) && (
+        <span aria-hidden="true">{index === 0 ? '|' : '·'}</span>
+      )}
+      {status.label === 'LIVE' && liveAction ? liveAction : (
+        <span className={`font-bold ${status.tone}`}>
+          {status.count} {status.label}
+        </span>
+      )}
     </span>
   ));
 }

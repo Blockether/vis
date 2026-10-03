@@ -218,13 +218,24 @@ describe('ProjectStatusCounts', () => {
     expect(container).toHaveTextContent('2 HITL');
     expect(container).toHaveTextContent('3 LIVE');
     expect(container).toHaveTextContent('3 NEW');
-    expect(container.querySelector('[aria-hidden]')).toBeNull();
+    expect(Array.from(container.querySelectorAll('[aria-hidden]'), (node) => node.textContent)).toEqual(['·', '·']);
     expect(container.querySelector('.animate-pulse')).toBeNull();
   });
 
-  it('renders no separators when there is no status to report', () => {
-    const { container } = render(<ProjectStatusCounts live={0} />);
-    expect(container).toBeEmptyDOMElement();
+  it.each([
+    { live: 0, awaiting: 0, unread: 0, expected: '' },
+    { live: 2, awaiting: 2, unread: 0, expected: '|2 HITL' },
+    { live: 2, awaiting: 0, unread: 0, expected: '|2 LIVE' },
+    { live: 0, awaiting: 0, unread: 3, expected: '|3 NEW' },
+    { live: 2, awaiting: 0, unread: 3, expected: '|2 LIVE·3 NEW' },
+    { live: 2, awaiting: 2, unread: 3, expected: '|2 HITL·3 NEW' },
+    { live: 5, awaiting: 2, unread: 3, expected: '|2 HITL·3 LIVE·3 NEW' },
+  ])('separates counts after the total: "$expected"', ({ live, awaiting, unread, expected }) => {
+    const { container } = render(
+      <ProjectStatusCounts live={live} awaiting={awaiting} unread={unread} isAfterTotal />,
+    );
+    expect(container.textContent).toBe(expected);
+    expect(container.querySelector('.animate-pulse')).toBeNull();
   });
 });
 

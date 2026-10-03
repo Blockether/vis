@@ -940,7 +940,7 @@ export const Bands: Story = {
           counts={(
             <>
               <HeaderTally count={1928} unit="session" />
-              <ProjectStatusCounts live={5} unread={28} />
+              <ProjectStatusCounts live={5} unread={28} isAfterTotal />
             </>
           )}
           disclosure={{ isOpen: true, onToggle: noop, label: 'Collapse vis' }}

@@ -124,6 +124,7 @@ export const GroupStatuses: Story = {
     await expect(canvasElement.querySelector('[data-session-id="group-status-0"]')).toBeNull();
     const header = page.getByRole('button', { name: 'Collapse Status checks' }).closest('header')!;
     const projectCounts = ['36 sessions', '12 HITL', '11 LIVE', '13 NEW'].map((text) => within(header).getByText(text));
+    await expect(Array.from(header.querySelectorAll('span[aria-hidden="true"]'), (node) => node.textContent)).toEqual(['|', '·', '·']);
     const namesAndCounts = [
       { name: within(toggle).getByText(STATUS_NAME), counts: badges, parent: toggle },
       { name: within(header).getByText('Status checks'), counts: projectCounts, parent: header },
@@ -143,6 +144,12 @@ export const GroupStatuses: Story = {
         }
         for (const width of [320, 375, 393, 626]) {
           screen.style.width = `${width}px`;
+          if (scale === 1 && width === 626) {
+            await expect(header.getBoundingClientRect().height).toBeLessThan(48);
+            await expect(getComputedStyle(namesAndCounts[1].name).fontSize).toBe(
+              getComputedStyle(namesAndCounts[0].name).fontSize,
+            );
+          }
           for (const { name, counts, parent } of namesAndCounts) {
             const bounds = parent.getBoundingClientRect();
             // jsdom checks behavior; the browser also checks actual layout.
