@@ -49,10 +49,9 @@ describe('the vocabulary stays closed', () => {
     }
   });
 
-  // One shadow: the floating-layer offset `shadow-float` that index.css defines
-  // from the TUI's dialog-shadow token. The QR viewfinder spreads a box-shadow as
-  // a camera scrim, which is a mask rather than elevation.
-  it('casts only the one floating-layer offset', () => {
+  // Floating layers use shadow-float. Only the project header owns shadow-project.
+  // The QR viewfinder uses box-shadow as a camera mask, not elevation.
+  it('limits shadows to floating layers and the project header', () => {
     for (const [path, source] of production) {
       if (path.endsWith('/QrScanner.tsx')) continue;
       const shadows = [
@@ -61,7 +60,7 @@ describe('the vocabulary stays closed', () => {
       expect(
         shadows.map(([shadow]) => shadow).filter((shadow) => !shadow.endsWith('shadow-float')),
         path,
-      ).toEqual([]);
+      ).toEqual(path === './SessionNavigator.tsx' ? ['shadow-project'] : []);
     }
   });
 
