@@ -2194,6 +2194,150 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def get_council_rooms(
+        self, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/council/rooms — json response."""
+        response = self._request(
+            "GET", "/v1/council/rooms", path={}, query=query, timeout=timeout
+        )
+        return response.json()
+
+    def post_council_rooms(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/council/rooms — json response."""
+        response = self._request(
+            "POST",
+            "/v1/council/rooms",
+            path={},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
+    def post_council_rooms_register(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/council/rooms/register — json response."""
+        response = self._request(
+            "POST",
+            "/v1/council/rooms/register",
+            path={},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
+    def post_council_rooms_join(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/council/rooms/join — json response."""
+        response = self._request(
+            "POST",
+            "/v1/council/rooms/join",
+            path={},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
+    def delete_council_room(
+        self, room_id: str, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """DELETE /v1/council/rooms/:room-id — json response."""
+        response = self._request(
+            "DELETE",
+            "/v1/council/rooms/:room-id",
+            path={"room-id": room_id},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
+    def post_council_room_invites(
+        self,
+        room_id: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/council/rooms/:room-id/invites — json response."""
+        response = self._request(
+            "POST",
+            "/v1/council/rooms/:room-id/invites",
+            path={"room-id": room_id},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
+    def delete_council_room_invite(
+        self,
+        room_id: str,
+        invite_id: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+    ) -> JSONValue:
+        """DELETE /v1/council/rooms/:room-id/invites/:invite-id — json response."""
+        response = self._request(
+            "DELETE",
+            "/v1/council/rooms/:room-id/invites/:invite-id",
+            path={"room-id": room_id, "invite-id": invite_id},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
+    def get_council_room_members(
+        self, room_id: str, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/council/rooms/:room-id/members — json response."""
+        response = self._request(
+            "GET",
+            "/v1/council/rooms/:room-id/members",
+            path={"room-id": room_id},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
+    def delete_council_room_member(
+        self,
+        room_id: str,
+        machine_id: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+    ) -> JSONValue:
+        """DELETE /v1/council/rooms/:room-id/members/:machine-id — json response."""
+        response = self._request(
+            "DELETE",
+            "/v1/council/rooms/:room-id/members/:machine-id",
+            path={"room-id": room_id, "machine-id": machine_id},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
     def get_settings(
         self, *, query: Query | None = None, timeout: float | None = None
     ) -> JSONValue:
