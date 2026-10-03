@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.29 (7177) — 2026-10-03
+<!-- commit: 16bdb1baf267897ab2850898e933ae39e9a87d3e -->
+
+- Show step time and live views on the digest row
+- Add the Automations screen
+- Compact TTS engine choices
+- Fold steps between progress notes into one digest
+- Check shared status tones in session stories
+- Check the inherited draft status color
+- Use shared status colors in both navigators
+- Delete machines and the rooms that they own
+- Compact project headers and separate counts
+- Align header counts beside project and group names
+- Validate Rooms deployment and Settings previews
+- Show group HITL, LIVE and NEW counts
+- Connect scoped rooms through the companion relay
+- Bound large session switch payloads
+- Keep grouped NEW answers ready before opening
+- Use the current verification label
+- Fit swipe actions within the row width
+- Prefetch NEW answers before opening sessions
+- Remove trailing gap from swipe actions
+- Compact image and artifact headers
+
 ## 0.2.29 (7094) — 2026-10-02
 <!-- commit: 68db8a2a663192461075a39ad82a5a9b2dceb288 -->
 
