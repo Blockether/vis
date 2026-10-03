@@ -33,6 +33,7 @@ import {
   ActivityPanel,
   ActivityAttachmentContext,
   ActivityTally,
+  activityCostParts,
 } from './ActivityPanel';
 import {
   mergeActivity,
@@ -2670,12 +2671,12 @@ function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
 }
 
 /**
- * THE ROW THAT STANDS FOR THE STEPS UNDER A NOTE. It counts the steps, then the calls that
- * are running, failed or cancelled, and it shows their measured time on the right. A
- * failure colors the chevron. A cancelled call or an interrupted step does not, because a
- * stop is not a failure. A closed row also holds the live control of its steps. Opening the
- * row shows the thinking, code and Activity of the steps. Mirrors the TUI
- * (`render/step-digest-entries`).
+ * THE ROW THAT STANDS FOR THE STEPS UNDER A NOTE. It counts the steps, then what their calls
+ * did (`activityCostParts`), then the calls that are running, failed or cancelled. It shows
+ * their measured time on the right. A failure colors the chevron. A cancelled call or an
+ * interrupted step does not, because a stop is not a failure. A closed row also holds the
+ * live control of its steps. Opening the row shows the thinking, code and Activity of the
+ * steps. Mirrors the TUI (`render/step-digest-entries`).
  */
 function StepDigest({
   chunks,
@@ -2697,6 +2698,7 @@ function StepDigest({
   const activity = mergeActivity(forms.flatMap((form) => formActivity(form, live) ?? []));
   const parts = [
     { text: `${steps} ${steps === 1 ? 'step' : 'steps'}`, tone: '' },
+    ...activityCostParts(activity),
     ...(['running', 'failed', 'cancelled'] as const).flatMap((state) =>
       activity.counts[state]
         ? [

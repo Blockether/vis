@@ -10775,7 +10775,9 @@ print(paths)"
                 text
                 (str/join "\n" (map :line entries))]
 
-            (expect (= ["▸ 2 steps" "▸ 1 step"] (digests entries)))
+            (expect (= ["▸ 2 steps · 1 mutation · 3 observations"
+                        "▸ 1 step · 0 mutations · 3 observations"]
+                       (digests entries)))
             (expect (= {:kind :toggle-details
                         :session-id "s"
                         :node-id "iteration:tt:i1:digest"
@@ -10794,7 +10796,9 @@ print(paths)"
                 text (str/join "\n" (map :line entries))
                 at #(.indexOf ^String text ^String %)]
 
-            (expect (= ["▾ 2 steps" "▾ 1 step"] (digests entries)))
+            (expect (= ["▾ 2 steps · 1 mutation · 3 observations"
+                        "▾ 1 step · 0 mutations · 3 observations"]
+                       (digests entries)))
             (expect (= ["1 mutation · 3 observations" "0 mutations · 3 observations"]
                        (operations entries)))
             (expect (= 1 (count (reasoning entries))))
@@ -10891,7 +10895,8 @@ print(paths)"
                         :session-turn-id "t"
                         :settings {}}))]
 
-          (expect (= ["▸ 2 steps" "▸ 1 step"]
+          (expect (= ["▸ 2 steps · 1 mutation · 3 observations"
+                      "▸ 1 step · 0 mutations · 3 observations"]
                      (map #(first (str/split (subs (:line %) 1) #"\s{2,}")) rows)))
           (expect (= ["2.0s" "500ms"] (map #(peek (str/split (str/trim (:line %)) #"\s+")) rows)))
           (expect (every? #(= 75 (count (subs (:line %) 1))) rows))))
@@ -10938,7 +10943,8 @@ print(paths)"
         (expect (= {:view-id "build" :label " 1 live running "}
                    (select-keys (get-in (digest-row closed) [:meta :digest-live])
                                 [:view-id :label :artifact])))
-        (expect (str/includes? (:line (digest-row closed)) "▸ 2 steps   1 live running "))
+        (expect (str/includes? (:line (digest-row closed))
+                               "▸ 2 steps · 1 mutation · 3 observations   1 live running "))
         (expect (= :running (get-in (digest-row closed) [:meta :status-tone])))
         (expect (not (str/includes? (text closed) "Build · 3 lines")))
         (expect (not (str/includes? (text closed) "LIVE Release")))

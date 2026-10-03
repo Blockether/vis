@@ -49,8 +49,14 @@ waits in a queue. You can also cancel the running turn or quit the session.
 ### Follow progress
 
 Vis adds short notes while it works. Under each note, one digest row gives a summary of the steps after the note.
-The row shows the number of steps, any running, failed or cancelled calls and the time that the steps took.
+The row shows the number of steps and what their calls did, for example `2 steps · 1 mutation · 3 observations`.
+It also shows any running, failed or cancelled calls and the time that the steps took.
 When you stop a turn, its running call counts as cancelled, not failed.
+
+A mutation changes something, for example a file. An observation only reads.
+A verification checks the work, for example with tests. An external action reaches outside the computer that runs Vis.
+The mutation count always shows, also when it is 0, so you can see at once if the steps changed anything.
+
 Open the digest to see the thinking, code and Activity of these steps. Failures, files and images stay visible when the digest is closed.
 
 When the steps open live views, a closed row also shows a live button. Select it to open the newest running live view, or else the newest recording.

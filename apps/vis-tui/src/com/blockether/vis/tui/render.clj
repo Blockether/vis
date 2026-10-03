@@ -8458,14 +8458,24 @@
             {:artifact artifact :running? false}))))
 
 (defn- step-digest-entries
-  "One DIGEST row for the steps after a note. It counts the steps and their running, failed
-   and cancelled calls, and shows their measured time on the right. A failed step colors it
-   red, and a running step colors it yellow. A cancelled call or an interrupted step keeps
-   the plain color, because a stop is not a failure. A closed row also has a live button. It
-   opens the newest running live view of the steps, or else their newest recording."
+  "One DIGEST row for the steps after a note. It counts the steps, then what their calls did
+   (`activity-cost-text`), then their running, failed and cancelled calls. It shows their
+   measured time on the right. A failed step colors it red, and a running step colors it
+   yellow. A cancelled call or an interrupted step keeps the plain color, because a stop is
+   not a failure. A closed row also has a live button. It opens the newest running live view
+   of the steps, or else their newest recording."
   [{:keys [forms node-id open? steps lives]} content-w session-id]
-  (let [states
-        (frequencies (map activity-row-state (mapcat :rows (keep :activity forms))))
+  (let [activities
+        (keep :activity forms)
+
+        rows
+        (into [] (mapcat :rows) activities)
+
+        states
+        (frequencies (map activity-row-state rows))
+
+        omitted
+        (apply merge-with + {} (keep #(get-in % [:omitted :by-classification]) activities))
 
         steps
         (long (or steps 0))
@@ -8491,13 +8501,15 @@
         summary
         (str (if open? "▾ " "▸ ")
              (str/join " · "
-                       (cons (str steps (if (= 1 steps) " step" " steps"))
-                             (for [state
-                                   [:running :failed :cancelled]
+                       (concat [(str steps (if (= 1 steps) " step" " steps"))
+                                (activity-cost-text {:rows rows
+                                                     :omitted {:by-classification omitted}})]
+                               (for [state
+                                     [:running :failed :cancelled]
 
-                                   :when (get states state)]
+                                     :when (get states state)]
 
-                               (str (get states state) " " (name state))))))
+                                 (str (get states state) " " (name state))))))
 
         max-w
         (max 1 (dec (long content-w)))

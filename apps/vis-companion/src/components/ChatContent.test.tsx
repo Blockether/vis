@@ -1297,7 +1297,10 @@ describe('a Python evaluation without detected Activity', () => {
       />,
     );
     const digest = painted.container.querySelector<HTMLElement>('[data-step-digest]')!;
-    expect(digest).toHaveAttribute('aria-label', 'Expand steps: 1 step · 1 cancelled');
+    expect(digest).toHaveAttribute(
+      'aria-label',
+      'Expand steps: 1 step · 0 mutations · 1 cancelled',
+    );
     expect(digest).not.toHaveClass('text-err-ink!');
     expect(digest.querySelector('.text-err-ink')).toBeNull();
     expect(digest.parentElement).toHaveTextContent('1.2s');
@@ -2495,8 +2498,8 @@ describe('steps between progress notes', () => {
     const [first, second] = digests(painted.container);
     const noted = painted.getByText(note);
     expect(digests(painted.container).map((row) => row.getAttribute('aria-label'))).toEqual([
-      'Expand steps: 2 steps',
-      'Expand steps: 1 step',
+      'Expand steps: 2 steps · 0 mutations',
+      'Expand steps: 1 step · 0 mutations',
     ]);
     // The measured time of the steps stands on the right of each row.
     expect(digests(painted.container).map((row) => row.nextElementSibling?.textContent)).toEqual([
@@ -2518,12 +2521,18 @@ describe('steps between progress notes', () => {
     );
     const painted = render(<IterationTrace whole showCode iterations={observed} />);
     const [first, second] = digests(painted.container);
-    expect(first).toHaveAttribute('aria-label', 'Expand steps: 2 steps');
+    expect(first).toHaveAttribute(
+      'aria-label',
+      'Expand steps: 2 steps · 0 mutations · 1 observation',
+    );
     fireEvent.click(first);
     const [band] = painted.container.querySelectorAll('.bg-thinking-surface');
     const [opened] = traces(painted.container);
     expect(first).toHaveAttribute('aria-expanded', 'true');
-    expect(first).toHaveAttribute('aria-label', 'Collapse steps: 2 steps');
+    expect(first).toHaveAttribute(
+      'aria-label',
+      'Collapse steps: 2 steps · 0 mutations · 1 observation',
+    );
     expect(second).toHaveAttribute('aria-expanded', 'false');
     expect(bands(painted.container)).toEqual([['Read the sources first.', 'One more source.']]);
     expect(traces(painted.container)).toHaveLength(1);
