@@ -195,7 +195,11 @@
     "instruction model consistency"
     (with-redefs [toggles/enabled? (constantly true)]
       (let [publication (second host/symbols)
-            tool-doc (extension/symbol-doc-text publication)
+            ;; `doc(name)` prints the raw result on its own line above the prose, and a
+            ;; model reads both, so the tool doc here is both.
+            tool-doc (str (extension/symbol-result-line publication)
+                          "\n\n"
+                          (extension/symbol-doc-text publication))
             prompt (council/prompt {})
             manual (slurp (io/resource "vis-docs/council.md"))]
 
