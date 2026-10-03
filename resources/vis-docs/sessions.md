@@ -49,9 +49,12 @@ waits in a queue. You can also cancel the running turn or quit the session.
 ### Follow progress
 
 Vis adds short notes while it works. Under each note, one digest row gives a summary of the steps after the note.
-Open the digest to see the thinking, code and Activity of these steps. Failures, files, images and live views stay visible when the digest is closed.
+The row shows the number of steps, any running or failed calls and the time that the steps took.
+Open the digest to see the thinking, code and Activity of these steps. Failures, files and images stay visible when the digest is closed.
 
-To see each step as a separate Activity, turn off **Summarize steps between notes** in Settings, under **Responses**.
+When the steps open live views, a closed row also shows a live button. Select it to open the newest running live view, or else the newest recording.
+
+To see each step as a separate Activity, turn off **Compact mode** in Settings, under **Responses**.
 The terminal and each app keep their own choice.
 
 ### Queue a message

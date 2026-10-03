@@ -1715,12 +1715,15 @@ describe('Activity follows the combined Python source', () => {
         ])}
       />,
     );
+    // The digest row totals its steps; within the execution, one band prints the time.
+    const digest = painted.container.querySelector('[data-step-digest]')!.parentElement!;
     const elapsed = () => (painted.container.textContent?.match(/12\.6s/g) ?? []).length;
 
-    expect(elapsed()).toBe(1);
+    expect(digest).toHaveTextContent('12.6s');
+    expect(elapsed()).toBe(2);
     fireEvent.click(painted.getByRole('button', { name: 'Expand code' }));
     expect(painted.container.textContent).toContain('RESULT');
-    expect(elapsed()).toBe(1);
+    expect(elapsed()).toBe(2);
   });
   it('uses only the actual terminal Activity count after settlement', () => {
     const rendered = text(
@@ -2275,7 +2278,11 @@ describe('compact execution groups', () => {
     );
     expect(painted.container.querySelector('[data-execution-code]')).toBeNull();
     expect(painted.container.textContent).not.toContain('CODE');
-    expect(painted.container.textContent).not.toContain('30ms');
+    // Only the digest row totals the time of the hidden steps.
+    expect(painted.container.textContent?.match(/30ms/g)).toHaveLength(1);
+    expect(painted.container.querySelector('[data-step-digest]')!.parentElement).toHaveTextContent(
+      '30ms',
+    );
     expect(painted.container.textContent).not.toContain('value = 42');
     expect(painted.queryByRole('button', { name: 'Expand code' })).toBeNull();
     expect(painted.container.querySelector('[data-execution-activity]')).toBeNull();
@@ -2390,7 +2397,14 @@ describe('steps between progress notes', () => {
     media_type: 'application/pdf',
     size: 2048,
   };
-  // One settled read: the digest counts it, and its open steps show it as Activity.
+  const release: IterationAttachment = {
+    index: 1,
+    iteration_id: 'step-2',
+    filename: 'Release.live.ndjson',
+    media_type: 'application/vnd.vis.live+ndjson',
+    size: 2048,
+  };
+  // One settled read: its open steps show it as Activity, and the digest row does not count it.
   const read: ActivityProjection = {
     state: 'succeeded',
     counts: { running: 0, succeeded: 1, failed: 0, cancelled: 0 },
@@ -2443,8 +2457,13 @@ describe('steps between progress notes', () => {
     const [first, second] = digests(painted.container);
     const noted = painted.getByText(note);
     expect(digests(painted.container).map((row) => row.getAttribute('aria-label'))).toEqual([
-      'Expand steps: 0 mutations',
-      'Expand steps: 0 mutations',
+      'Expand steps: 2 steps',
+      'Expand steps: 1 step',
+    ]);
+    // The measured time of the steps stands on the right of each row.
+    expect(digests(painted.container).map((row) => row.nextElementSibling?.textContent)).toEqual([
+      '20ms',
+      '20ms',
     ]);
     expect(follows(first, noted)).toBe(true);
     expect(follows(noted, second)).toBe(true);
@@ -2461,12 +2480,12 @@ describe('steps between progress notes', () => {
     );
     const painted = render(<IterationTrace whole showCode iterations={observed} />);
     const [first, second] = digests(painted.container);
-    expect(first).toHaveAttribute('aria-label', 'Expand steps: 0 mutations · 1 observation');
+    expect(first).toHaveAttribute('aria-label', 'Expand steps: 2 steps');
     fireEvent.click(first);
     const [band] = painted.container.querySelectorAll('.bg-thinking-surface');
     const [opened] = traces(painted.container);
     expect(first).toHaveAttribute('aria-expanded', 'true');
-    expect(first).toHaveAttribute('aria-label', 'Collapse steps: 0 mutations · 1 observation');
+    expect(first).toHaveAttribute('aria-label', 'Collapse steps: 2 steps');
     expect(second).toHaveAttribute('aria-expanded', 'false');
     expect(bands(painted.container)).toEqual([['Read the sources first.', 'One more source.']]);
     expect(traces(painted.container)).toHaveLength(1);
@@ -2506,6 +2525,25 @@ describe('steps between progress notes', () => {
     expect(painted.getByText('report.pdf')).toBeInTheDocument();
     expect(traces(painted.container)).toHaveLength(0);
     expect(painted.container.textContent).not.toContain('read_second()');
+  });
+
+  // The live views of the steps fold into one control on the row of a closed digest.
+  it('opens the recorded run of its steps from the row of a closed digest', () => {
+    const recorded = iterations.map((step) =>
+      step.id === 'step-2' ? { ...step, attachments: [release] } : step,
+    );
+    const painted = render(
+      <IterationTrace whole showCode iterations={recorded} client={client} sid="s1" />,
+    );
+    const control = painted.getByRole('button', { name: 'Open 1 live: Release' });
+    expect(control).toHaveTextContent('1 live');
+    expect(painted.queryByRole('button', { name: 'Open run Release' })).toBeNull();
+    fireEvent.click(control);
+    fireEvent.click(painted.getByRole('button', { name: 'Close Release' }));
+    expect(painted.queryByRole('button', { name: 'Close Release' })).toBeNull();
+    fireEvent.click(digests(painted.container)[0]);
+    expect(painted.queryByRole('button', { name: 'Open 1 live: Release' })).toBeNull();
+    expect(painted.getByRole('button', { name: 'Open run Release' })).toBeInTheDocument();
   });
 
   it('shows Activity and reasoning for each step when summarizing is off', () => {

@@ -299,16 +299,16 @@ export function SettingsDialog({
                 <div className="flex items-center justify-between gap-4 px-3 py-3 sm:px-4">
                   <div className="min-w-0 space-y-1">
                     <Text as="p" variant="label">
-                      Summarize steps between notes
+                      Compact mode
                     </Text>
                     <Text as="p" variant="description">
-                      Fold the steps between progress notes into one digest, during and after a
-                      turn. Open a digest to see its thinking, code and Activity. Turn off to
-                      show Activity for each step.
+                      Fold the steps between progress notes into one row with their state, live
+                      views and time. Open the row to see their thinking, code and Activity. Turn
+                      off to show Activity for each step.
                     </Text>
                   </div>
                   <Switch
-                    label="Summarize steps between notes"
+                    label="Compact mode"
                     isOn={summarizeSteps}
                     onClick={() => setStepsSummarized(!summarizeSteps)}
                   />

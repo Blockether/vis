@@ -177,6 +177,66 @@ export function liveRunName(filename?: string): string {
 }
 
 /**
+ * AN OPENED RUN RECORD, in the session's dialog. It reads the record only while it is
+ * open, and it lets the record go when it closes. The run's row and a closed step digest
+ * open it.
+ */
+export function LiveRunDialog({
+  client,
+  sid,
+  attachment,
+  onClose,
+}: {
+  client: GatewayClient;
+  sid: string;
+  attachment: IterationAttachment;
+  onClose: () => void;
+}) {
+  const name = liveRunName(attachment.filename);
+  const iterationId = attachment.iteration_id ?? '';
+  const index = attachment.index ?? 0;
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!iterationId || !sid) return;
+    let alive = true;
+    const release = client.retainAttachment(sid, iterationId, index);
+    client
+      .attachmentUrl(sid, iterationId, index)
+      .then((next) => {
+        if (alive) setUrl(next);
+      })
+      .catch(() => {
+        if (alive) setFailed(true);
+      });
+    return () => {
+      alive = false;
+      release();
+    };
+  }, [client, sid, iterationId, index]);
+
+  return url ? (
+    <LiveArtifact
+      client={client}
+      sid={sid}
+      url={url}
+      chrome={({ subtitle, body }) => (
+        <RunDialog title={name} subtitle={subtitle} onClose={onClose}>
+          {body}
+        </RunDialog>
+      )}
+    />
+  ) : (
+    <RunDialog title={name} onClose={onClose}>
+      <p className="p-4 font-mono text-meta text-dialog-hint">
+        {failed ? "This run's record could not be read." : 'Loading…'}
+      </p>
+    </RunDialog>
+  );
+}
+
+/**
  * A SETTLED RUN, IN THE TRANSCRIPT WHERE IT HAPPENED — one row, and it opens.
  *
  * The pane a run paints while it works is a live surface with a stop in it, and
@@ -216,27 +276,6 @@ export const LiveRunRow = memo(function LiveRunRow({
   // Keyed by the RECORD, not by this row: a turn settling re-mounts the row
   // under a different subtree, and an opened run must stay opened.
   const [opened, setOpened] = useStickyOverlay(`run:${iterationId}:${index}`);
-  const [url, setUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    if (!opened || !iterationId || !sid) return;
-    let alive = true;
-    const release = client.retainAttachment(sid, iterationId, index);
-    client
-      .attachmentUrl(sid, iterationId, index)
-      .then((next) => {
-        if (alive) setUrl(next);
-      })
-      .catch(() => {
-        if (alive) setFailed(true);
-      });
-    return () => {
-      alive = false;
-      release();
-    };
-  }, [client, sid, iterationId, index, opened]);
-
   const close = useCallback(() => setOpened(false), [setOpened]);
   const open = useCallback(() => setOpened(true), [setOpened]);
   const sizeLabel = attachmentBytes(attachment.size);
@@ -264,25 +303,9 @@ export const LiveRunRow = memo(function LiveRunRow({
       )}
       {/* The opened run is a DIALOG over the transcript, not a second screen: the box
           every other dialog opens in on a desktop, the whole glass on a phone. */}
-      {opened &&
-        (url ? (
-          <LiveArtifact
-            client={client}
-            sid={sid}
-            url={url}
-            chrome={({ subtitle, body }) => (
-              <RunDialog title={name} subtitle={subtitle} onClose={close}>
-                {body}
-              </RunDialog>
-            )}
-          />
-        ) : (
-          <RunDialog title={name} onClose={close}>
-            <p className="p-4 font-mono text-meta text-dialog-hint">
-              {failed ? "This run's record could not be read." : 'Loading…'}
-            </p>
-          </RunDialog>
-        ))}
+      {opened && (
+        <LiveRunDialog client={client} sid={sid} attachment={attachment} onClose={close} />
+      )}
     </>
   );
 });

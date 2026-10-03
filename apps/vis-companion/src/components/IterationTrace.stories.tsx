@@ -62,9 +62,12 @@ export const HiddenSourceWithoutOutput: Story = {
       forms: [{ source: 'value = 42', success: true, duration_ms: 10, stdout: '' }],
     })),
   },
-  play: async ({ canvas }) => {
+  play: async ({ canvas, canvasElement }) => {
     await expect(canvas.queryByText('CODE')).toBeNull();
-    await expect(canvas.queryByText('30ms')).toBeNull();
+    // Only the digest row totals the time of the hidden steps.
+    const digest = canvasElement.querySelector('[data-step-digest]')!.parentElement;
+    await expect(canvas.getAllByText('30ms')).toHaveLength(1);
+    await expect(digest).toHaveTextContent('30ms');
     await expect(canvas.queryByRole('button', { name: 'Expand code' })).toBeNull();
     await expect(canvas.queryByText('value = 42')).toBeNull();
   },
@@ -761,10 +764,14 @@ export const GroupDurations: Story = {
   play: async ({ canvasElement }) => {
     await openStepDigests(canvasElement);
     const canvas = within(canvasElement);
-    await expect(canvas.getByText('300ms')).toBeVisible();
+    // The digest row totals its steps; the code band keeps the time of its group.
+    const digest = canvasElement.querySelector('[data-step-digest]')!.parentElement;
+    const band = () => within(canvasElement.querySelector<HTMLElement>('[data-execution-code]')!);
+    await expect(digest).toHaveTextContent('300ms');
+    await expect(band().getByText('300ms')).toBeVisible();
     await expect(canvas.getByText('<1ms')).toBeVisible();
     await userEvent.click(canvas.getAllByRole('button', { name: 'Expand code' })[0]);
-    await expect(canvas.getByText('300ms')).toBeVisible();
+    await expect(band().getByText('300ms')).toBeVisible();
     await userEvent.click(canvas.getByRole('button', { name: 'Collapse code' }));
   },
 };

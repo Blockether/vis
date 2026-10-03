@@ -7133,6 +7133,7 @@ h = 8"
             nil
             false
             {:session-id "s1"
+             :detail-expansions (open-digests "s1" nil)
              :runs [{:view-id "view-1"
                      :title "Release · gh"
                      :reason :completed
@@ -7184,7 +7185,9 @@ h = 8"
                     nil
                     nil
                     false
-                    {:session-id "s1" :runs [(assoc run :is-reopened is-reopened)]})
+                    {:session-id "s1"
+                     :detail-expansions (open-digests "s1" nil)
+                     :runs [(assoc run :is-reopened is-reopened)]})
                   :text
                   strip-ansi
                   strip-sentinels))]
@@ -8209,19 +8212,22 @@ h = 8"
         text-of
         (fn [expand-all?]
           (render/invalidate-cache!)
-          (->> (:lines
-                 (render/format-answer-with-thinking-data*
-                   "Done."
-                   trace
-                   72
-                   {:show-thinking true :show-iterations true}
-                   nil
-                   false
-                   {:session-id "s1"
-                    :detail-expansions
-                    (open-digests {:vis.channel-tui/expand-all-details? expand-all?} "s1" nil)}))
-               (map (comp strip-sentinels strip-ansi))
-               (str/join "\n")))
+          ;; The digest row adds up the steps. This test reads the receipt alone.
+          (let [{:keys [lines line-meta]}
+                (render/format-answer-with-thinking-data*
+                  "Done."
+                  trace
+                  72
+                  {:show-thinking true :show-iterations true}
+                  nil
+                  false
+                  {:session-id "s1"
+                   :detail-expansions
+                   (open-digests {:vis.channel-tui/expand-all-details? expand-all?} "s1" nil)})]
+            (->> (map vector lines line-meta)
+                 (remove #(str/ends-with? (str (:node-id (second %))) ":digest"))
+                 (map (comp strip-sentinels strip-ansi first))
+                 (str/join "\n"))))
 
         expanded
         (text-of true)
@@ -9436,7 +9442,8 @@ print(paths)"
                        (.indexOf ^String source "ls()")
                        (.indexOf ^String source "print(paths)"))))))
       (expect (str/includes? text "│ Name"))
-      (expect (= 2 (count (re-seq #"42ms" text)))))))
+      ;; The digest row, the CODE band and the Activity row each show the time once.
+      (expect (= 3 (count (re-seq #"42ms" text)))))))
 
 (defdescribe
   result-header-alignment-test
@@ -10744,9 +10751,7 @@ print(paths)"
 
         digests
         (fn [entries]
-          (vec (keep #(when (digest? %)
-                        (re-find #"[▸▾] \d+ mutations? · \d+ observations?" (str (:line %))))
-                     entries)))
+          (vec (keep #(when (digest? %) (str/trim (subs (:line %) 1))) entries)))
 
         reasoning
         (fn [entries]
@@ -10770,8 +10775,7 @@ print(paths)"
                 text
                 (str/join "\n" (map :line entries))]
 
-            (expect (= ["▸ 1 mutation · 3 observations" "▸ 0 mutations · 3 observations"]
-                       (digests entries)))
+            (expect (= ["▸ 2 steps" "▸ 1 step"] (digests entries)))
             (expect (= {:kind :toggle-details
                         :session-id "s"
                         :node-id "iteration:tt:i1:digest"
@@ -10781,26 +10785,22 @@ print(paths)"
             (expect (empty? (operations entries)))
             (expect (empty? (reasoning entries)))
             (expect (not (str/includes? text "CODE")))
-            (expect (< (.indexOf ^String text "1 mutation · 3 observations")
+            (expect (< (.indexOf ^String text "▸ 2 steps")
                        (.indexOf ^String text note)
-                       (.indexOf ^String text "0 mutations · 3 observations"))))))
+                       (.indexOf ^String text "▸ 1 step"))))))
     (it "opens a digest to the thinking, code and Activity of its steps"
         (doseq [live? [false true]]
           (let [entries (render* {} live? (open-digests "s" "t"))
                 text (str/join "\n" (map :line entries))
                 at #(.indexOf ^String text ^String %)]
 
-            (expect (= ["▾ 1 mutation · 3 observations" "▾ 0 mutations · 3 observations"]
-                       (digests entries)))
+            (expect (= ["▾ 2 steps" "▾ 1 step"] (digests entries)))
             (expect (= ["1 mutation · 3 observations" "0 mutations · 3 observations"]
                        (operations entries)))
             (expect (= 1 (count (reasoning entries))))
             ;; The note stays above its digest and does not repeat inside it.
             (expect (= 1 (count (re-seq #"Sources read" text))))
-            (expect (< (at "1 mutation · 3 observations")
-                       (at "Read the sources first.")
-                       (at "CODE")
-                       (at note))))))
+            (expect (< (at "▾ 2 steps") (at "Read the sources first.") (at "CODE") (at note))))))
     (it "shows Activity and reasoning for each step when summarizing is off"
         (doseq [live? [false true]]
           (let [entries (render* {:summarize-steps false} live? {})]
@@ -10829,7 +10829,7 @@ print(paths)"
             (expect (= (if summarize? 0 3) (get kinds :activity-header 0))))))
     (it "names and colors a digest by the state of its steps"
         (doseq [[state tone label] [["running" :running "1 running"] ["failed" :error "1 failed"]
-                                    ["succeeded" nil "1 mutation"]]]
+                                    ["succeeded" nil "1 step"]]]
           (let [form
                 {:code "run()"
                  :success? (not= "failed" state)
@@ -10866,15 +10866,91 @@ print(paths)"
                                                                  76 {:viewport-h 30}))})
 
               row
-              (first (filter #(str/includes? (apply str (map :ch %)) "▸ 1 mutation")
+              (first (filter #(str/includes? (apply str (map :ch %)) "▸ 2 steps")
                              (first (:frames captured))))]
 
           (expect (nil? (:error captured)))
-          (expect (str/includes? (apply str (map :ch (filter :bold row)))
-                                 "1 mutation · 3 observations"))
+          (expect (str/includes? (apply str (map :ch (filter :bold row))) "2 steps"))
           (.commitFrame interactions/hit-map)
           (expect (some #(= "iteration:tt:i1:digest" (:node-id %))
                         (.current interactions/hit-map)))))
+    (it "shows the measured time of its steps on the right"
+        (let [timed
+              (fn [idx ms]
+                (assoc (forms idx) :duration-ms ms))
+
+              rows
+              (filter digest?
+                      (#'render/trace-render-entries
+                       {:iterations [{:thinking "Read the sources first." :forms [(timed 0 1200)]}
+                                     {:forms [(timed 1 800)]}
+                                     {:assistant-prose note :forms [(timed 2 500)]}]
+                        :live? false
+                        :content-w 76
+                        :session-id "s"
+                        :session-turn-id "t"
+                        :settings {}}))]
+
+          (expect (= ["▸ 2 steps" "▸ 1 step"]
+                     (map #(first (str/split (subs (:line %) 1) #"\s{2,}")) rows)))
+          (expect (= ["2.0s" "500ms"] (map #(peek (str/split (str/trim (:line %)) #"\s+")) rows)))
+          (expect (every? #(= 75 (count (subs (:line %) 1))) rows))))
+    ;; Live views of the steps fold into one button on the digest row. A closed digest no longer
+    ;; lists their run rows and recordings.
+    (it
+      "folds live views into one button on the digest row"
+      (let [recording
+            {"source" "tool"
+             "kind" "doc"
+             "filename" "Release.live.ndjson"
+             "media_type" "application/vnd.vis.live+ndjson"
+             "size" 2048}
+
+            steps
+            [{:iteration-id "i1"
+              :forms [(assoc (forms 0) :runs [{:view-id "build" :title "Build" :lines 3}])]}
+             {:iteration-id "i2" :forms [(forms 1)] :attachments [recording]}]
+
+            render
+            (fn [steps expansions]
+              (#'render/trace-render-entries
+               {:iterations steps
+                :live? true
+                :content-w 76
+                :session-id "s"
+                :session-turn-id "t"
+                :detail-expansions expansions
+                :settings {}}))
+
+            digest-row
+            #(first (filter digest? %))
+
+            text
+            #(str/join "\n" (map :line %))
+
+            closed
+            (render steps {})
+
+            settled
+            (render (assoc-in steps [0 :forms 0 :runs 0 :reason] :completed) {})]
+
+        ;; A running view wins over an older recording, and it colors the row.
+        (expect (= {:view-id "build" :label " 1 live running "}
+                   (select-keys (get-in (digest-row closed) [:meta :digest-live])
+                                [:view-id :label :artifact])))
+        (expect (str/includes? (:line (digest-row closed)) "▸ 2 steps   1 live running "))
+        (expect (= :running (get-in (digest-row closed) [:meta :status-tone])))
+        (expect (not (str/includes? (text closed) "Build · 3 lines")))
+        (expect (not (str/includes? (text closed) "LIVE Release")))
+        ;; With no running view, the row counts every view and opens the newest recording.
+        (expect (= " 2 live " (get-in (digest-row settled) [:meta :digest-live :label])))
+        (expect (= "Release.live.ndjson"
+                   (get-in (digest-row settled) [:meta :digest-live :artifact :filename])))
+        (expect (nil? (get-in (digest-row settled) [:meta :status-tone])))
+        ;; An open digest lists the run rows again and has no live button.
+        (let [open (render steps (open-digests "s" "t"))]
+          (expect (str/includes? (text open) "Build · 3 lines"))
+          (expect (nil? (get-in (digest-row open) [:meta :digest-live]))))))
     ;; Real turns split here: a step that produced an artifact or failed a check opened
     ;; its own Activity between the same two notes.
     (it

@@ -20,7 +20,7 @@ import Prism from '../lib/prism-core';
 import { ArtifactLinkContext } from '../lib/artifact-links';
 import { DataTable } from './DataTable';
 import { DocPreview, DocStack, docStackSummary } from './DocArtifact';
-import { LiveRunRow } from './LiveArtifact';
+import { LiveRunDialog, LiveRunRow, liveRunName } from './LiveArtifact';
 import { LiveView } from './LiveView';
 import { MermaidBlock } from './MermaidBlock';
 import { JustifiedProse } from './JustifiedProse';
@@ -33,7 +33,6 @@ import {
   ActivityPanel,
   ActivityAttachmentContext,
   ActivityTally,
-  activityCostParts,
 } from './ActivityPanel';
 import {
   mergeActivity,
@@ -41,6 +40,7 @@ import {
   type ActivityProjection,
 } from '../lib/activity';
 import { usePythonCodeShown, useStepsSummarized } from '../lib/transcript-display';
+import { useStickyOverlay } from '../lib/sticky-overlay';
 import { remarkParseCache } from '../lib/markdown-trees';
 import { AlertIcon, ArrowOutIcon, ChevronIcon, ForkIcon, PauseIcon, PlayIcon } from './icons';
 import { artifactShareVerb, shareArtifact } from '../lib/artifact-share';
@@ -69,6 +69,7 @@ import {
   MetaButton,
   PROSE,
   Spinner,
+  TextButton,
 } from './ui';
 import 'prismjs/components/prism-bash';
 import 'prismjs/components/prism-clojure';
@@ -2669,26 +2670,32 @@ function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
 }
 
 /**
- * THE ROW THAT STANDS FOR THE STEPS UNDER A NOTE. It counts what the steps cost in the
- * words of the Activity band, then the calls that are running, failed or cancelled. A
- * failure colors the chevron. Opening the row shows the thinking, code and Activity of
- * the steps. Mirrors the TUI (`render/step-digest-entries`).
+ * THE ROW THAT STANDS FOR THE STEPS UNDER A NOTE. It counts the steps, then the calls that
+ * are running, failed or cancelled, and it shows their measured time on the right. A
+ * failure colors the chevron. A closed row also holds the live control of its steps.
+ * Opening the row shows the thinking, code and Activity of the steps. Mirrors the TUI
+ * (`render/step-digest-entries`).
  */
 function StepDigest({
   chunks,
+  steps,
   live,
   isOpen,
   onToggle,
+  children,
 }: {
   chunks: Chunk[];
+  steps: number;
   live: boolean;
   isOpen: boolean;
   onToggle: () => void;
+  /** The live control of a closed row, between the counts and the time. */
+  children?: ReactNode;
 }) {
   const forms = chunks.flatMap((chunk) => (chunk.kind === 'code' ? chunk.forms : chunk.cards));
   const activity = mergeActivity(forms.flatMap((form) => formActivity(form, live) ?? []));
   const parts = [
-    ...activityCostParts(activity),
+    { text: `${steps} ${steps === 1 ? 'step' : 'steps'}`, tone: '' },
     ...(['running', 'failed', 'cancelled'] as const).flatMap((state) =>
       activity.counts[state]
         ? [
@@ -2700,63 +2707,90 @@ function StepDigest({
         : [],
     ),
   ];
+  // Total measured time of the steps, not wall time across concurrent calls.
+  const measured = forms.reduce(
+    (total, form) => total + (formatDuration(form.duration_ms) == null ? 0 : form.duration_ms!),
+    0,
+  );
+  const duration = measured > 0 ? formatDuration(measured) : null;
   const failed =
     activity.counts.failed > 0 ||
     activity.counts.cancelled > 0 ||
     forms.some((form) => form.error != null && !interruptedPython(form));
   return (
-    <Disclosure
-      tone="chronology"
-      density="comfortable"
-      isOpen={isOpen}
-      className={failed ? 'text-err-ink!' : ''}
-      aria-label={`${isOpen ? 'Collapse' : 'Expand'} steps: ${parts.map((part) => part.text).join(' · ')}`}
-      data-step-digest
-      onClick={onToggle}
-    >
-      <ActivityTally parts={parts} />
-    </Disclosure>
+    <div className="flex min-w-0 items-center gap-2">
+      <Disclosure
+        tone="chronology"
+        density="comfortable"
+        isOpen={isOpen}
+        className={failed ? 'text-err-ink!' : ''}
+        aria-label={`${isOpen ? 'Collapse' : 'Expand'} steps: ${parts.map((part) => part.text).join(' · ')}`}
+        data-step-digest
+        onClick={onToggle}
+      >
+        <ActivityTally parts={parts} />
+      </Disclosure>
+      {children}
+      {duration && (
+        <span className="shrink-0 font-mono text-ui text-code-duration">{duration}</span>
+      )}
+    </div>
   );
 }
 
 /**
- * WHAT A CLOSED DIGEST KEEPS IN VIEW: the failures that its open steps show, and their
- * live views and runs. Files stay in the attachment rail of the segment.
+ * THE LIVE VIEWS OF A CLOSED DIGEST, as one control on its row. While views run, it counts
+ * them and opens the newest one. Otherwise it counts the recordings and opens the newest
+ * one. Mirrors the TUI (`render/step-digest-entries`).
  */
-function ClosedDigest({
-  chunks,
-  showCode,
-  liveViews,
-  attachments,
+function DigestLive({
+  views,
+  records,
   client,
   sid,
 }: {
-  chunks: Chunk[];
-  showCode: boolean;
-  liveViews: LiveViewModel[];
-  attachments: IterationAttachment[];
-  client?: GatewayClient;
-  sid?: string;
+  views: LiveViewModel[];
+  records: IterationAttachment[];
+  client: GatewayClient;
+  sid: string;
 }) {
+  const view = views.at(-1);
+  const record = records.at(-1);
+  // Keyed by the view or the record, not by this row: a settling turn re-mounts the row,
+  // and an opened run must stay open.
+  const [opened, setOpened] = useStickyOverlay(
+    view ? `live:${view.id}` : `run:${record?.iteration_id ?? ''}:${record?.index ?? 0}`,
+  );
+  const close = useCallback(() => setOpened(false), [setOpened]);
+  if (!view && !record) return null;
+  const label = view ? `${views.length} live running` : `${records.length} live`;
+  return (
+    <>
+      <TextButton
+        className="shrink-0 self-stretch"
+        aria-label={`Open ${label}: ${view ? view.title : liveRunName(record?.filename)}`}
+        onClick={() => setOpened(true)}
+      >
+        {label}
+      </TextButton>
+      {opened && view && <LiveView views={[view]} client={client} sid={sid} onClose={close} />}
+      {opened && !view && record && (
+        <LiveRunDialog client={client} sid={sid} attachment={record} onClose={close} />
+      )}
+    </>
+  );
+}
+
+/**
+ * WHAT A CLOSED DIGEST KEEPS IN VIEW: the failures that its open steps show. Its live views
+ * are one control on the digest row, and files stay in the attachment rail of the segment.
+ */
+function ClosedDigest({ chunks, showCode }: { chunks: Chunk[]; showCode: boolean }) {
   // Hidden Python code hides its failures too, as in the open steps.
   const failures = chunks.flatMap((chunk) =>
     chunk.kind === 'cards' ? chunk.cards : showCode || !chunk.isPython ? chunk.forms : [],
   );
-  const { views, runs } = formRuns(
-    chunks.flatMap((chunk) => (chunk.kind === 'code' ? chunk.forms : [])),
-    liveViews,
-    attachments,
-  );
-  return (
-    <>
-      <FailedCards cards={failures} />
-      {client && sid && (views.length > 0 || runs.length > 0) && (
-        <div className="relative z-0 min-w-0 bg-code px-3" data-execution-group>
-          <OwnedRuns views={views} runs={runs} client={client} sid={sid} />
-        </div>
-      )}
-    </>
-  );
+  return <FailedCards cards={failures} />;
 }
 
 const TraceSegment = memo(function TraceSegment({
@@ -2803,7 +2837,8 @@ const TraceSegment = memo(function TraceSegment({
   const attachments = useMemo(() => segment.items.flatMap((entry) => entry.attachments), [segment]);
   // A run already has its own section (live now or retained beside Activity). Do not
   // list earlier record files from the same execution as a second stack of RUN rows.
-  // Without a section, the recorded artifact remains the reload-safe fallback.
+  // Without a section, the recorded artifact remains the reload-safe fallback. A closed
+  // digest opens its recordings from its live control.
   const runOwners = [
     ...liveViews.map((view) => view.owner),
     ...attachments
@@ -2828,6 +2863,23 @@ const TraceSegment = memo(function TraceSegment({
   // thinking, code and Activity. Mirrors the TUI (`render/render-step-digests`).
   const digest = summarize && chunks.length > 0;
   const expanded = !digest || open;
+  // A closed digest folds the live views of its steps and their recordings into one
+  // control on its row. Mirrors the TUI (`render/step-digest-lives`).
+  const lives = useMemo(() => {
+    const forms = chunks.flatMap((chunk) => (chunk.kind === 'code' ? chunk.forms : []));
+    const views = liveViews.filter((view) =>
+      forms.some((form) => liveOwnerMatches(view.owner, form.activity)),
+    );
+    const records = collapseAttachmentVersions(
+      attachments.filter(
+        (entry) =>
+          attachmentIsLive(entry) &&
+          entry.iteration_id &&
+          !views.some((view) => view.id === entry.view_id),
+      ),
+    ).map((thread) => thread[0]);
+    return { views, records };
+  }, [chunks, liveViews, attachments]);
 
   return (
     <section
@@ -2844,10 +2896,15 @@ const TraceSegment = memo(function TraceSegment({
       {digest && (
         <StepDigest
           chunks={chunks}
+          steps={segment.items.length}
           live={live}
           isOpen={open}
           onToggle={() => setOpen((value) => !value)}
-        />
+        >
+          {!open && client && sid && (
+            <DigestLive views={lives.views} records={lives.records} client={client} sid={sid} />
+          )}
+        </StepDigest>
       )}
       {digest && open && thinking && <ThinkingBand railed>{thinking}</ThinkingBand>}
       {/* Chunk-to-chunk breathing room: each chunk is one call (its program
@@ -2876,21 +2933,16 @@ const TraceSegment = memo(function TraceSegment({
           })}
         </div>
       )}
-      {!expanded && (
-        <ClosedDigest
-          chunks={chunks}
-          showCode={showCode}
-          liveViews={liveViews}
-          attachments={attachments}
-          client={client}
-          sid={sid}
-        />
-      )}
+      {!expanded && <ClosedDigest chunks={chunks} showCode={showCode} />}
       {client && sid && (
         <AttachmentRail
           client={client}
           sid={sid}
-          attachments={hasRun ? attachments.filter((entry) => !attachmentIsLive(entry)) : attachments}
+          attachments={
+            hasRun || !expanded
+              ? attachments.filter((entry) => !attachmentIsLive(entry))
+              : attachments
+          }
         />
       )}
     </section>

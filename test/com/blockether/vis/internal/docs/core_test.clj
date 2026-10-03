@@ -577,8 +577,8 @@
                        "does not encrypt HTTP" "Stopping a busy gateway interrupts" "Amber means"]]
         (expect (not (str/includes? md content)) content)
         (expect (str/includes? (:md gateway) content) content))
-      (expect (not (str/includes? md "Summarize steps between notes")))
-      (expect (str/includes? (:md sessions) "Summarize steps between notes"))
+      (expect (not (str/includes? md "**Compact mode**")))
+      (expect (str/includes? (:md sessions) "**Compact mode**"))
       (expect (< (str/index-of md "## First session") (str/index-of md "## Gateway reference")))
       (expect (not (str/includes? md "gateway.md"))))))
 

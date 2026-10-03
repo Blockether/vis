@@ -50,7 +50,14 @@
         {:show-iterations true :show-thinking false}
 
         options
-        {:session-id "live-review" :session-turn-id "turn-review"}
+        {:session-id "live-review"
+         :session-turn-id "turn-review"
+         ;; Open the step digest: a closed digest folds its live views into one button.
+         :detail-expansions
+         {["live-review"
+           (@#'render/detail-node-id
+            {:session-turn-id "turn-review" :iteration-number 1 :section :iteration :kind :digest})]
+          true}}
 
         payload
         (if live?

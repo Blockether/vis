@@ -109,6 +109,55 @@
           (expect (= [:inline-title]
                      (keep #(get-in % [:live-entry :kind]) (:line-meta payload))))))))
 
+(defdescribe
+  closed-digest-live-button
+  (it "folds a live view into one button on the closed digest row"
+      ;; A closed digest hides its LIVE rows. The button on its row opens the live view.
+      (doseq [[pane label] [[(review-pane) " 1 live running "]
+                            [(lv/settled (review-pane) {:reason :completed} 2000) " 1 live "]]]
+        (render/invalidate-cache!)
+        (let [payload (render/progress->lines-data
+                        review-progress
+                        76
+                        {:show-thinking true :show-iterations true}
+                        {:session-id "inline-review"
+                         :now-ms 1000
+                         :live-runs (when-not (lv/dormant? pane) [(lv/transcript-run pane)])
+                         :runs (when (lv/dormant? pane) [(lv/run-row pane)])})
+              lines (:lines payload)
+              row (first (keep-indexed #(when (:digest-live %2) %1) (:line-meta payload)))]
+
+          (expect (= {:view-id (lv/view-id pane) :label label}
+                     (select-keys (get-in payload [:line-meta row :digest-live])
+                                  [:view-id :label])))
+          (expect (str/includes? (nth lines row) (str/trim label)))
+          (expect (not-any? #(str/includes? % "Build verification") lines))
+          (expect (not-any? #(= :activity-header (:kind %)) (:line-meta payload)))
+          (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. 80 12))
+                      ts (doto (TerminalScreen. terminal) (.startScreen))]
+
+            (binding [interactions/hit-map (interactions/create-hit-map)]
+              (.beginFrame interactions/hit-map)
+              (render/draw-chat-bubble!
+                (.newTextGraphics ts)
+                {:role :assistant :text "" :prewrapped-lines lines :line-meta (:line-meta payload)}
+                0 0
+                76 {:viewport-top 0 :viewport-h 12})
+              (.commitFrame interactions/hit-map)
+              (let [regions (.current interactions/hit-map)
+                    button (first (filter #(= :live-reopen (:kind %)) regions))
+                    toggle (first (filter #(str/ends-with? (str (:node-id %)) ":digest") regions))
+                    {:keys [col width] button-row :row} (:bounds button)]
+
+                (expect (= (lv/view-id pane) (:view-id button)))
+                (expect (= (count label) width))
+                (expect (= (get-in toggle [:bounds :row]) button-row))
+                (expect (= button (.lookup interactions/hit-map (int col) (int button-row))))
+                (expect (= :toggle-details
+                           (:kind (.lookup interactions/hit-map
+                                           (int (get-in toggle [:bounds :col]))
+                                           (int button-row))))))))))))
+
 (defn paint-review!
   "Paint the real transcript inside a clipped terminal viewport for #222 review."
   ([screen pane] (paint-review! screen pane 0))
@@ -393,7 +442,10 @@
                 (update :view dissoc :owner))
 
               options
-              {:session-id "inline-review" :runs [(lv/run-row pane)] :now-ms 3000}
+              {:session-id "inline-review"
+               :runs [(lv/run-row pane)]
+               :now-ms 3000
+               :detail-expansions {["inline-review" "iteration:i1:digest"] true}}
 
               payload
               (if streaming?
@@ -431,11 +483,14 @@
 
             project
             (fn [progress pane]
-              (render/progress->lines-data
-                progress
-                90
-                {:show-thinking true :show-iterations true}
-                {:session-id "owner-test" :now-ms 0 :live-runs [(lv/transcript-run pane)]}))
+              (render/progress->lines-data progress
+                                           90
+                                           {:show-thinking true :show-iterations true}
+                                           {:session-id "owner-test"
+                                            :now-ms 0
+                                            :live-runs [(lv/transcript-run pane)]
+                                            :detail-expansions {["owner-test" "iteration:i1:digest"]
+                                                                true}}))
 
             missing
             (project review-progress (update pane :view dissoc :owner))
@@ -664,13 +719,14 @@
                            (assoc-in [:view :title] "Release verification"))
 
                        payload
-                       (render/progress->lines-data review-progress
-                                                    90
-                                                    {:show-iterations true}
-                                                    {:session-id "multi-run"
-                                                     :now-ms 0
-                                                     :live-runs (mapv lv/transcript-run
-                                                                      [pane second-pane])})
+                       (render/progress->lines-data
+                         review-progress
+                         90
+                         {:show-iterations true}
+                         {:session-id "multi-run"
+                          :now-ms 0
+                          :detail-expansions {["multi-run" "iteration:i1:digest"] true}
+                          :live-runs (mapv lv/transcript-run [pane second-pane])})
 
                        rows
                        (keep-indexed #(when (= :inline-title (get-in %2 [:live-entry :kind])) %1)
@@ -726,6 +782,7 @@
               options
               {:session-id "mixed-run"
                :now-ms 0
+               :detail-expansions {["mixed-run" "iteration:i1:digest"] true}
                :runs (cond-> [saved]
                        (not mixed?)
                        (conj (assoc saved

@@ -439,8 +439,8 @@
                     ballpark at any width ≥ 60, and narrower terminals
                     fold at their own width.
      * digest     — a closed step digest paints its note, its row and
-                    the failures. Steps with runs or files keep their
-                    full charge, because those stay visible.
+                    the failures. Steps with files keep their full
+                    charge, because files stay visible.
    User / plain-assistant text goes through the markdown walker, which
    word-wraps and inserts block chrome — fold at 3/4 width to stay above
    it."
@@ -564,18 +564,16 @@
                     (long (error-rows (:error f))))))
 
              ;; A closed digest paints a subset of its open steps, plus its own row and gap.
-             ;; Runs, live views and files stay visible, so their steps keep the full charge.
-             ;; Other steps keep their failures. Recaps and fallback notes lose the slack of
-             ;; the hidden code, so they get their own rows.
+             ;; Files stay visible, so their steps keep the full charge. Other steps keep
+             ;; their failures. Recaps and fallback notes lose the slack of the hidden code,
+             ;; so they get their own rows.
              closed-step-rows
              (fn ^long [it]
                (let [forms
                      (:forms it)
 
                      shown-rows
-                     (if (or (seq (:attachments it)) (some (comp seq :runs) forms))
-                       form-rows-of
-                       (comp error-rows :error))]
+                     (if (seq (:attachments it)) form-rows-of (comp error-rows :error))]
 
                  (+ (long (error-rows (:error it)))
                     (* 3 (+ (count (:recaps it)) (count (:provider-fallbacks it))))

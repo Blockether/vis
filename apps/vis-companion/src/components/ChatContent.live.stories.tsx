@@ -105,9 +105,16 @@ async function expectLiveFrame(element: Element) {
 export const Running: Story = {
   globals: { viewport: { value: 'desktop', isRotated: false } },
   play: async ({ canvas, canvasElement }) => {
-    // A closed digest keeps the live run in view.
-    await expect(canvas.getByRole('button', { name: 'Open run Jenkins build pool' })).toBeVisible();
+    // A closed digest folds the live run into one control on its row, and it opens the run.
+    const control = canvas.getByRole('button', { name: 'Open 1 live running: Jenkins build pool' });
+    await expect(control).toHaveTextContent('1 live running');
+    await expect(canvas.queryByRole('button', { name: 'Open run Jenkins build pool' })).toBeNull();
+    await userEvent.click(control);
+    const opened = within(document.body);
+    await expect(opened.getByRole('button', { name: 'Build log' })).toBeInTheDocument();
+    await userEvent.click(opened.getByRole('button', { name: 'Close Jenkins build pool' }));
     await openStepDigests(canvasElement);
+    await expect(canvas.queryByRole('button', { name: /^Open 1 live running/ })).toBeNull();
     const title = canvas.getByText('Jenkins build pool');
     const liveFrame = await expectLiveFrame(title);
     const activitySurface = title.closest<HTMLElement>('[data-execution-group]')!;

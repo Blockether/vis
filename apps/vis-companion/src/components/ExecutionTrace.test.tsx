@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent } from '@testing-library/react';
+import { act, cleanup, fireEvent, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IterationTrace } from './ChatContent';
 import { renderOpenSteps } from './trace-harness';
@@ -276,7 +276,8 @@ describe('execution grouping', () => {
       band.compareDocumentPosition(view.container.querySelector('[data-activity-row]')!) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(view.getByText('57ms')).toBeVisible();
+    // The CODE band prints the time of its group; the digest row above totals its steps.
+    expect(within(band as HTMLElement).getByText('57ms')).toBeVisible();
     fireEvent.click(view.getByRole('button', { name: 'Collapse code' }));
     expect(view.queryByText(/RESULT/)).toBeNull();
     act(() => setPythonCodeShown(false));

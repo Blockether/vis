@@ -2487,7 +2487,19 @@
                                   :kind :toggle-details
                                   :session-id (:session-id meta)
                                   :node-id (:node-id meta)
-                                  :collapsed? (:collapsed? meta)}))
+                                  :collapsed? (:collapsed? meta)})
+                      ;; The live button sits on the row and wins its own cells.
+                      (when-let [{:keys [col label] :as live} (:digest-live meta)]
+                        (draw-live-button!
+                          g
+                          (assoc live
+                            :right-suffix label
+                            :session-id (:session-id meta))
+                          x
+                          y
+                          iw
+                          (max 0 (- (long iw) (long col) (long (p/display-width label))))
+                          viewport-top)))
                     ;; Activity continues the Code surface, with independent disclosure.
                     (str/starts-with? line activity-marker)
                     (let [raw (subs line 1)
@@ -7828,8 +7840,11 @@
                   (filterv #(and (attach/live-artifact? %) (owns-live-view? activity (:owner %)))
                     form-artifacts))
 
+                ;; A closed digest row opens the recordings, so only files stay below it.
                 artifact-block
-                (artifact-disclosure-entries (remove (set nested-artifacts) form-artifacts)
+                (artifact-disclosure-entries (cond->> (remove (set nested-artifacts) form-artifacts)
+                                               digest-closed?
+                                               (remove attach/live-artifact?))
                                              session-id
                                              (or bubble-w code-width)
                                              (mapcat :runs forms)
@@ -7875,10 +7890,9 @@
                                [(line-entry (str thinking-marker ""))])))
 
                 activity-surface
-                (when activity-run
+                (when (and activity-run (not digest-closed?))
                   (let [entries
-                        (when-not digest-closed?
-                          (activity-detail-entries activity-run (max 1 (long fill-w)) session-id))
+                        (activity-detail-entries activity-run (max 1 (long fill-w)) session-id)
 
                         run-sections
                         (reduce (fn [sections entry]
@@ -7902,31 +7916,24 @@
                                           (str activity-marker line))))
                              run-sections)]
 
-                    (cond
-                      ;; A closed digest keeps runs and live views, without their Activity.
-                      digest-closed? (when (seq run-sections)
-                                       (vec (concat [(line-entry activity-marker)]
-                                                    run-entries
-                                                    [(line-entry activity-marker)])))
-                      ;; Activity shares the padding that closes Code or Result. Alone or after
-                      ;; a failure, it owns its top padding.
-                      :else (vec (concat (when (and (empty? shown-result-block)
-                                                    (or (empty? code-block)
-                                                        (seq inline-error-message-lines)))
-                                           [(line-entry activity-marker)])
-                                         entries
-                                         run-entries
-                                         (when (seq run-sections)
-                                           [(line-entry activity-marker)]))))))]
+                    ;; Activity shares the padding that closes Code or Result. Alone or after a
+                    ;; failure, it owns its top padding.
+                    (vec (concat (when (and (empty? shown-result-block)
+                                            (or (empty? code-block)
+                                                (seq inline-error-message-lines)))
+                                   [(line-entry activity-marker)])
+                                 entries
+                                 run-entries
+                                 (when (seq run-sections) [(line-entry activity-marker)])))))]
 
             ;; CODE, ACTIVITY and RUN are siblings on one execution surface. A closed digest
-            ;; keeps only failures, runs, live views and files.
+            ;; keeps only failures and files, and its row opens the live views.
             (vec (concat (inset-entries
                            (if digest-closed?
-                             (concat inline-error-message-lines activity-surface)
+                             inline-error-message-lines
                              (concat comment-block code-block execution-details activity-surface)))
                          artifact-block
-                         (when-not activity-run generic-run-entries)))))
+                         (when-not (or activity-run digest-closed?) generic-run-entries)))))
 
         ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
         ;; rows joined into the one card. Phase-5 dropped per-form result
@@ -8419,55 +8426,117 @@
           str/trim
           not-empty))
 
+(defn- step-digest-lives
+  "The live views of summarized steps, oldest first: their run rows, then the recordings that
+   no run row names."
+  [steps forms]
+  (let [runs
+        (into [] (mapcat :runs) forms)
+
+        run-ids
+        (into #{} (keep :view-id) runs)]
+
+    (into (mapv (fn [{:keys [view-id reason]}]
+                  {:view-id (str view-id) :running? (nil? reason)})
+                runs)
+          (for [{{:keys [iteration-id attachments]} :entry}
+                steps
+
+                artifact
+                (iteration-artifact-rows iteration-id attachments)
+
+                :when (and (attach/live-artifact? artifact)
+                           (not (contains? run-ids (:view-id artifact))))]
+
+            {:artifact artifact :running? false}))))
+
 (defn- step-digest-entries
-  "One DIGEST row for the steps after a note. It uses the words of the Activity header and
-   adds up all the steps. A failed step colors it red, and a running step colors it yellow."
-  [{:keys [forms node-id open?]} content-w session-id]
-  (let [activities
-        (keep :activity forms)
+  "One DIGEST row for the steps after a note. It counts the steps and their running, failed
+   and cancelled calls, and shows their measured time on the right. A failed step colors it
+   red, and a running step colors it yellow. A closed row also has a live button. It opens
+   the newest running live view of the steps, or else their newest recording."
+  [{:keys [forms node-id open? steps lives]} content-w session-id]
+  (let [states
+        (frequencies (map activity-row-state (mapcat :rows (keep :activity forms))))
 
-        rows
-        (into [] (mapcat :rows) activities)
+        steps
+        (long (or steps 0))
 
-        states
-        (frequencies (map activity-row-state rows))
+        running-lives
+        (filterv :running? lives)
 
-        omitted
-        (apply merge-with + {} (keep #(get-in % [:omitted :by-classification]) activities))
+        live
+        (when-let [target (and (not open?) (or (peek running-lives) (peek (vec lives))))]
+          (assoc (select-keys target [:view-id :artifact])
+            :label (str " "
+                        (if (seq running-lives)
+                          (str (count running-lives) " live running")
+                          (str (count lives) " live"))
+                        " ")))
+
+        duration-ms
+        (reduce + 0 (filter number? (map :duration-ms forms)))
+
+        duration
+        (when (pos? (long duration-ms)) (vis/format-duration duration-ms))
 
         summary
-        (str/join " · "
-                  (concat (for [state
-                                [:running :failed :cancelled]
+        (str (if open? "▾ " "▸ ")
+             (str/join " · "
+                       (cons (str steps (if (= 1 steps) " step" " steps"))
+                             (for [state
+                                   [:running :failed :cancelled]
 
-                                :when (get states state)]
+                                   :when (get states state)]
 
-                            (str (get states state) " " (name state)))
-                          [(activity-cost-text {:rows rows
-                                                :omitted {:by-classification omitted}})]))
+                               (str (get states state) " " (name state))))))
+
+        max-w
+        (max 1 (dec (long content-w)))
+
+        right-w
+        (if duration (+ 2 (long (p/display-width duration))) 0)
+
+        live-w
+        (if live (+ 2 (long (p/display-width (:label live)))) 0)
+
+        left
+        (ellipsize-cols summary (max 1 (- (long max-w) right-w live-w)))
+
+        text
+        (str left (when live (str "  " (:label live))))
 
         tone
         (cond (or (:failed states)
                   (:cancelled states)
                   (some #(or (:error %) (false? (:success? %))) forms))
               :error
-              (:running states) :running
+              (or (:running states) (seq running-lives)) :running
               :else nil)]
 
     [{:line "" :meta nil}
      {:line (str step-digest-marker
-                 (ellipsize-cols (str (if open? "▾ " "▸ ") summary) (max 1 (dec (long content-w)))))
-      :meta {:kind :toggle-details
-             :session-id (str session-id)
-             :node-id node-id
-             :collapsed? (not open?)
-             :status-tone tone}}]))
+                 text
+                 (when duration
+                   (str (repeat-str \space
+                                    (max 2
+                                         (- (long max-w)
+                                            (long (p/display-width text))
+                                            (long (p/display-width duration)))))
+                        duration)))
+      :meta (cond-> {:kind :toggle-details
+                     :session-id (str session-id)
+                     :node-id node-id
+                     :collapsed? (not open?)
+                     :status-tone tone}
+              live
+              (assoc :digest-live (assoc live :col (+ 2 (long (p/display-width left))))))}]))
 
 (defn- render-step-digests
   "Summarized steps: each progress note stays, and its steps fold into one digest row.
    An open digest shows the thinking, code and Activity of the steps, without the note.
-   A closed digest still shows failures, files, runs and live views. Steps before the
-   first note fold the same way. A note with no forms after it keeps its own rows."
+   A closed digest still shows failures and files, and its row opens the live views. Steps
+   before the first note fold the same way. A note with no forms after it keeps its own rows."
   [visible-iterations show-silent? show-thinking?
    {:keys [session-id session-turn-id detail-expansions]}]
   (let [segments (reduce (fn [segments [_ entry :as pair]]
@@ -8502,7 +8571,12 @@
                     (concat (when note
                               [[head-idx
                                 {:iteration-id (:iteration-id head) :assistant-prose note}]])
-                            [[head-idx {::digest {:forms forms :node-id node-id :open? open?}}]]
+                            [[head-idx
+                              {::digest {:forms forms
+                                         :node-id node-id
+                                         :open? open?
+                                         :steps (count steps)
+                                         :lives (step-digest-lives steps forms)}}]]
                             ;; The note renders once, above its digest.
                             (render-iteration-entries
                               (update-in pairs [0 1] dissoc :assistant-prose :content-stream)

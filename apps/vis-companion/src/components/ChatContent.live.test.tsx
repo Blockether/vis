@@ -239,7 +239,7 @@ it.each([
       owner: { invocation_id: 'paged-out', activity_id: activity.history!.id },
     };
     const client = {} as GatewayClient;
-    const mounted = render(
+    const mounted = renderOpenSteps(
       <IterationTrace
         iterations={[]}
         liveViews={[liveView]}
@@ -335,7 +335,7 @@ it.each(['live', 'settled'] as const)(
       index,
       owner: recordOwner,
     });
-    const mounted = render(
+    const mounted = renderOpenSteps(
       <IterationTrace
         iterations={[
           {
@@ -422,7 +422,7 @@ it('replaces the live view with one retained run receipt beside the same Activit
 it('preserves interrupt actions in the sibling run', async () => {
   const activity = activityHistoryPage();
   const viewAction = vi.fn().mockResolvedValue({ is_accepted: true });
-  const mounted = render(
+  const mounted = renderOpenSteps(
     <IterationTrace
       iterations={[{ forms: [{ source: 'monitor()', activity }] }]}
       liveViews={[
@@ -495,7 +495,7 @@ it.each(['hidden', 'ramped'])(
         forms: [{ source: `step(${index})` }],
       })),
     ];
-    const mounted = render(
+    const mounted = renderOpenSteps(
       <IterationTrace
         iterations={iterations}
         liveViews={[liveView]}
@@ -572,7 +572,7 @@ it('keeps multiple views as siblings even when their activity rows are absent', 
     counts: { running: 0, succeeded: 0, failed: 0, cancelled: 0 },
   };
   const owner = { invocation_id: 'paged-out', activity_id: activity.history!.id };
-  const mounted = render(
+  const mounted = renderOpenSteps(
     <IterationTrace
       iterations={[{ forms: [{ source: 'monitor()', activity }] }]}
       liveViews={[
@@ -597,7 +597,7 @@ it('keeps multiple views as siblings even when their activity rows are absent', 
 it('keeps only the newest owned receipt version in the shared surface', () => {
   const activity = activityHistoryPage();
   const owner = { invocation_id: 'paged-out', activity_id: activity.history!.id };
-  const mounted = render(
+  const mounted = renderOpenSteps(
     <IterationTrace
       iterations={[
         {

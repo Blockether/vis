@@ -8,6 +8,7 @@ import {
   STORY_COMPOSER_SUBSCRIPTIONS as subscriptions,
   STORY_LIVE_VIEW,
 } from '../dev/story-data';
+import { openStepDigests } from '../dev/story-steps';
 import type { RunningTurn } from '../lib/running-turn';
 import { SessionScreen } from './SessionScreen';
 
@@ -62,15 +63,16 @@ const meta = {
     ),
   ],
   args: { client, subscriptions, sid: session.id, onBack: fn(), onOpenSession: fn() },
+  // A closed step digest offers the running view of its steps on its row.
   play: async ({ canvas }) => {
-    const title = await canvas.findByText(view.title);
-    const launch = canvas.queryByRole('button', { name: `Open run ${view.title}` });
-    if (launch) {
-      await userEvent.click(launch);
-      const page = within(document.body);
-      await userEvent.click(page.getByRole('button', { name: `Close ${view.title}` }));
-      await expect(title).toBeVisible();
-    }
+    const launch = await canvas.findByRole('button', {
+      name: `Open 1 live running: ${view.title}`,
+    });
+    await userEvent.click(launch);
+    const page = within(document.body);
+    await expect(page.getByRole('dialog', { name: view.title })).toBeVisible();
+    await userEvent.click(page.getByRole('button', { name: `Close ${view.title}` }));
+    await expect(launch).toBeVisible();
   },
 } satisfies Meta<typeof SessionScreen>;
 
@@ -111,11 +113,18 @@ export const SplitPane: Story = {
   // neither covered nor dimmed.
   play: async (context) => {
     const pane = document.querySelector<HTMLElement>('[data-session-surface]')!;
-    await userEvent.click(context.canvas.getByRole('button', { name: `Open run ${view.title}` }));
     const page = within(document.body);
-    const dialog = page.getByRole('dialog', { name: view.title });
-    await expect(pane.contains(dialog)).toBe(true);
-    await userEvent.click(page.getByRole('button', { name: `Close ${view.title}` }));
+    const opensInPane = async (launch: HTMLElement) => {
+      await userEvent.click(launch);
+      await expect(pane.contains(page.getByRole('dialog', { name: view.title }))).toBe(true);
+      await userEvent.click(page.getByRole('button', { name: `Close ${view.title}` }));
+    };
+    // The closed digest opens the view from its row; the open steps open it from the view.
+    await opensInPane(
+      await context.canvas.findByRole('button', { name: `Open 1 live running: ${view.title}` }),
+    );
+    await openStepDigests(context.canvasElement);
+    await opensInPane(context.canvas.getByRole('button', { name: `Open run ${view.title}` }));
   },
 };
 
@@ -127,5 +136,16 @@ export const Unmatched: Story = {
         return Reflect.get(target, key);
       },
     }),
+  },
+  // A view without an owner stays in the turn, outside the closed step digest.
+  play: async ({ canvas }) => {
+    const title = await canvas.findByText(view.title);
+    const launch = canvas.queryByRole('button', { name: `Open run ${view.title}` });
+    if (launch) {
+      await userEvent.click(launch);
+      const page = within(document.body);
+      await userEvent.click(page.getByRole('button', { name: `Close ${view.title}` }));
+      await expect(title).toBeVisible();
+    }
   },
 };

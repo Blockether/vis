@@ -1387,22 +1387,33 @@ export function LiveViewPanel({
         )}
       </section>
       {embedded && opened && (
-        <RunDialog title={view.title} onClose={() => setOpened(false)}>
-          <div className="min-h-0 flex-1 overflow-y-auto py-3">
-            <LiveViewPanel
-              view={view}
-              onInterrupt={onInterrupt}
-              onSelect={onSelect}
-              onActivate={onActivate}
-              error={error}
-              isInterrupting={isInterrupting}
-              load={load}
-              isSettled={isSettled}
-            />
-          </div>
-        </RunDialog>
+        <OpenedRun
+          view={view}
+          onInterrupt={onInterrupt}
+          onSelect={onSelect}
+          onActivate={onActivate}
+          error={error}
+          isInterrupting={isInterrupting}
+          load={load}
+          isSettled={isSettled}
+          onClose={() => setOpened(false)}
+        />
       )}
     </>
+  );
+}
+
+/** An opened run: its panel in the session's dialog. Its row and a closed step digest open it. */
+function OpenedRun({
+  onClose,
+  ...panel
+}: Omit<Parameters<typeof LiveViewPanel>[0], 'embedded'> & { onClose: () => void }) {
+  return (
+    <RunDialog title={panel.view.title} onClose={onClose}>
+      <div className="min-h-0 flex-1 overflow-y-auto py-3">
+        <LiveViewPanel {...panel} />
+      </div>
+    </RunDialog>
   );
 }
 
@@ -1574,11 +1585,14 @@ export function LiveView({
   client,
   sid,
   embedded = false,
+  onClose,
 }: {
   views: LiveViewModel[];
   client: GatewayClient;
   sid: string;
   embedded?: boolean;
+  /** Show the views already opened in the session's dialog, and call this when it closes. */
+  onClose?: () => void;
 }) {
   const [stopping, setStopping] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1628,18 +1642,21 @@ export function LiveView({
     (viewId: string) => (nodeId: string, from: number, limit: number, query?: string) =>
       client.liveViewLog(sid, viewId, nodeId, from, limit, query);
 
-  const panels = views.map((view) => (
-    <LiveViewPanel
-      key={view.id}
-      view={view}
-      embedded={embedded}
-      error={stopping === null ? error : null}
-      isInterrupting={stopping === view.id}
-      onInterrupt={(note) => interrupt(view.id, note)}
-      onSelect={(nodeId, itemIds) => select(view.id, nodeId, itemIds)}
-      onActivate={(nodeId) => activate(view.id, nodeId)}
-      load={readLog(view.id)}
-    />
-  ));
-  return embedded ? panels : <div className="min-w-0 space-y-3">{panels}</div>;
+  const panels = views.map((view) => {
+    const panel = {
+      view,
+      error: stopping === null ? error : null,
+      isInterrupting: stopping === view.id,
+      onInterrupt: (note: string | null) => interrupt(view.id, note),
+      onSelect: (nodeId: string, itemIds: string[]) => select(view.id, nodeId, itemIds),
+      onActivate: (nodeId: string) => activate(view.id, nodeId),
+      load: readLog(view.id),
+    };
+    return onClose ? (
+      <OpenedRun key={view.id} {...panel} onClose={onClose} />
+    ) : (
+      <LiveViewPanel key={view.id} {...panel} embedded={embedded} />
+    );
+  });
+  return embedded || onClose ? panels : <div className="min-w-0 space-y-3">{panels}</div>;
 }
