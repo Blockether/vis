@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GatewayClient } from '../../lib/gateway';
 import { DEFAULT_SPEECH_PREFS } from '../../lib/storage';
@@ -56,6 +56,23 @@ async function openSettings() {
   );
   return await screen.findByRole('combobox', { name: 'Draft backend' });
 }
+
+it('uses the shared touch picker for enum settings without saving a dismissed choice', async () => {
+  const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
+  const save = vi.spyOn(GatewayClient.prototype, 'setSetting');
+  const trigger = await openSettings();
+  await user.pointer({ keys: '[TouchA]', target: trigger });
+  expect(screen.getByRole('listbox', { name: 'Draft backend' })).toBeVisible();
+
+  await user.pointer({ keys: '[TouchA]', target: trigger });
+  expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  expect(trigger).toHaveTextContent('auto');
+  expect(save).not.toHaveBeenCalled();
+  await waitFor(() => expect(trigger).toHaveFocus());
+
+  await user.pointer({ keys: '[TouchA]', target: trigger });
+  expect(screen.getByRole('listbox', { name: 'Draft backend' })).toBeVisible();
+});
 
 describe('global settings provenance', () => {
   // Global settings are the root scope: an explicit value there overrides nothing, so its

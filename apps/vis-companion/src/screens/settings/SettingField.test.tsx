@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SettingValue, Toggle } from '../../lib/types';
 import { SettingField } from './SettingField';
@@ -161,6 +161,37 @@ it('directs unsupported settings to the configuration file instead of a JSON edi
   expect(onChange).not.toHaveBeenCalled();
   expect(onRawChange).not.toHaveBeenCalled();
 });
+
+it.each(['Root access 1', 'Root draft mode 1', 'Rule access 1'])(
+  'keeps %s closed after a second touch without changing the setting',
+  async (label) => {
+    const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
+    const { onChange, onRawChange } = label.startsWith('Root')
+      ? renderField(
+          { id: 'workspaces', label: 'Workspace roots', type: 'array', editor: 'paths' },
+          [{ id: 'docs', path: '~/docs', access: 'read-only', draft: 'shared' }],
+        )
+      : renderField(
+          { id: 'network', label: 'Network', type: 'object', editor: 'network' },
+          { rules: [{ host: 'gateway.example.com', access: 'read-only' }] },
+        );
+    const trigger = screen.getByRole('combobox', { name: label });
+    const value = trigger.textContent;
+    await user.pointer({ keys: '[TouchA]', target: trigger });
+    expect(screen.getByRole('listbox', { name: label })).toBeVisible();
+
+    await user.pointer({ keys: '[TouchA]', target: trigger });
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(trigger.textContent).toBe(value);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onRawChange).not.toHaveBeenCalled();
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    await user.pointer({ keys: '[TouchA]', target: trigger });
+    expect(screen.getByRole('listbox', { name: label })).toBeVisible();
+  },
+);
 
 const accessAliases: [string, string][] = [
   ['read-only', 'read-only'],

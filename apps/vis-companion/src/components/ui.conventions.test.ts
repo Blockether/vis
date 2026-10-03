@@ -108,6 +108,21 @@ describe('the vocabulary stays closed', () => {
     expect(privateOrDead).toEqual([]);
   });
 
+  it('uses the shared Select for every dropdown field', () => {
+    expect(controls).toContain('Select');
+    for (const [path, source] of production) {
+      expect(source, path).not.toMatch(/<select\b|createElement\(\s*['"]select['"]/);
+      if (path.endsWith('/ui.tsx')) continue;
+      expect(source, path).not.toContain('@radix-ui/react-select');
+      if (!/<Select\b/.test(source)) continue;
+
+      const owners = [...source.matchAll(
+        /import\s*\{[^}]*\bSelect\b[^}]*\}\s*from\s*['"]([^'"]+)['"]/g,
+      )].map(([, owner]) => new URL(`${owner}.tsx`, new URL(path, 'file:///src/components/')).pathname);
+      expect(owners, path).toEqual(['/src/components/ui.tsx']);
+    }
+  });
+
   // The surfaces that once hand-rolled their buttons may not grow one back; the
   // transcript keeps exactly one — the `attachment://` link the desktop window
   // claims before React is reached.
