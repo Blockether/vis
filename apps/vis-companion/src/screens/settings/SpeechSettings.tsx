@@ -1117,9 +1117,9 @@ export function SpeechEnginesPanel({
             onClick={() => setOpen((current) => (current === 'tts' ? null : 'tts'))}
           />
           {open === 'tts' && (
-            <div id="speech-tts-engines" className="border-t border-dialog-edge">
-              <SettingsChoiceGroup label="TTS engines">
-                <div className="grid grid-cols-1 gap-px bg-dialog-edge">
+            <div id="speech-tts-engines" className="border-t border-dialog-hint/30 p-2 sm:p-3">
+              <SettingsChoiceGroup label="TTS engines" isFramed>
+                <div className="grid grid-cols-1 divide-y divide-dialog-hint/30">
                   <div data-speech-engine="device" className="grid bg-input">
                     <SettingsChoiceDisclosure
                       title="This device"

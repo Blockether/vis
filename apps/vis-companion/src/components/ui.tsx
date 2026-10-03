@@ -1508,12 +1508,10 @@ export function ChoiceCell({
 }
 
 /**
- * ONE ENGINE ROW WITH TWO INDEPENDENT ACTIONS: choose it, or inspect its settings.
+ * One engine row with separate selection and settings controls.
  *
- * Selection and disclosure used to be one accidental action: choosing an engine exposed
- * its children, while an unselected engine had no way to show its own catalogue. The row
- * is one visual surface with two keyboard targets and no border around the chevron.
- * Both halves keep the selected fill so the chevron stays part of its owner's row.
+ * The status follows the name on one line, with a dot separator at the right.
+ * Both controls keep the selected fill. Touch targets keep a minimum height of 44 pixels.
  */
 export function SettingsChoiceDisclosure({
   title,
@@ -1534,14 +1532,21 @@ export function SettingsChoiceDisclosure({
 }) {
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_2.75rem] mouse:grid-cols-[minmax(0,1fr)_2.5rem]">
-      <ChoiceCell title={title} sub={sub} isSelected={isSelected} onClick={onSelect} />
+      <ChoiceCell
+        title={title}
+        sub={`· ${sub}`}
+        aria-label={`${title} · ${sub}`}
+        isSelected={isSelected}
+        isLeaf
+        onClick={onSelect}
+      />
       <button
         type="button"
         aria-label={`Settings for ${title}`}
         aria-expanded={isOpen}
         aria-controls={controls}
         onClick={onToggle}
-        className={`${iconControlClass} grid min-h-11 w-11 place-items-center transition-[background-color,color] duration-150 active:bg-accent-2 motion-reduce:transition-none mouse:min-h-9 mouse:w-10 ${
+        className={`${iconControlClass} grid min-h-11 w-11 place-items-center transition-[background-color,color] duration-150 active:bg-accent-2 motion-reduce:transition-none mouse:min-h-8 mouse:w-10 ${
           isSelected
             ? 'bg-accent text-accent-foreground'
             : 'bg-input text-dialog-hint enabled:hover:text-white'
@@ -1564,16 +1569,19 @@ export function SettingsChoiceDisclosure({
  *
  * The heading stays on the panel's paper rather than becoming a filled band. Its lower
  * hairline separates the name from the controls, while the nested cluster's top rule, left
- * rail and full-width foot make every boundary explicit. All use the panel's structural ink;
- * amber belongs to selection and to the top-level heading notch, never to nesting.
+ * rail and full-width foot make every boundary explicit. Nested groups use the panel's structural ink.
+ * A framed top-level group uses a soft grey border and heading separator instead.
  */
 export function SettingsChoiceGroup({
   label,
   isNested = false,
+  isFramed = false,
   children,
 }: {
   label: string;
   isNested?: boolean;
+  /** Give a top-level group a soft grey frame and a heading divider. */
+  isFramed?: boolean;
   children: ReactNode;
 }) {
   const headingId = useId();
@@ -1581,11 +1589,21 @@ export function SettingsChoiceGroup({
     <section
       role="group"
       aria-labelledby={headingId}
-      className={isNested ? 'min-w-0 border-l-2 border-t border-dialog-edge bg-panel' : 'min-w-0'}
+      className={`min-w-0 ${
+        isNested
+          ? 'border-l-2 border-t border-dialog-edge bg-panel'
+          : isFramed
+            ? 'border border-dialog-hint/30'
+            : ''
+      }`}
     >
       <header
         className={`flex min-h-6 items-center bg-panel pb-1.5 pt-3 ${
-          isNested ? 'border-b border-dialog-edge pl-6 pr-3' : 'px-3'
+          isNested
+            ? 'border-b border-dialog-edge pl-6 pr-3'
+            : isFramed
+              ? 'border-b border-dialog-hint/30 px-3'
+              : 'px-3'
         }`}
       >
         <Text as="h4" variant="section" id={headingId}>

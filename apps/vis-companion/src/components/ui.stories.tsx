@@ -1084,7 +1084,7 @@ function SettingsChoiceDemo() {
   const [open, setOpen] = useState(true);
   const [engine, setEngine] = useState('piper');
   return (
-    <div className="grid w-full grid-cols-1 gap-px bg-dialog-edge">
+    <div className="grid w-full grid-cols-1 divide-y divide-dialog-hint/30">
       <div className="grid bg-input">
         <SettingsChoiceDisclosure
           title="Piper (gateway)"
@@ -1127,7 +1127,7 @@ export const Settings: Story = {
         <SettingsDisclosure label="Voice" value="Piper English" isOpen={false} className="w-full" />
       </Group>
       <Group of="A group of choices, one of them opened">
-        <SettingsChoiceGroup label="TTS engines">
+        <SettingsChoiceGroup label="TTS engines" isFramed>
           <SettingsChoiceDemo />
         </SettingsChoiceGroup>
       </Group>

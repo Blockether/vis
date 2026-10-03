@@ -221,6 +221,13 @@ describe('the speech-engines band', () => {
     const engines = await screen.findByRole('group', { name: 'TTS engines' });
     const device = choice(/This device/)!;
     const piper = choice(/Piper \(gateway\)/)!;
+    expect(engines).toHaveClass('border', 'border-dialog-hint/30');
+    expect(engines.firstElementChild).toHaveClass('border-b', 'border-dialog-hint/30');
+    expect(engines.lastElementChild).toHaveClass('divide-y', 'divide-dialog-hint/30');
+    expect(engines.lastElementChild).not.toHaveClass('gap-px', 'bg-dialog-edge');
+    expect(device).toHaveClass('min-h-11', 'mouse:min-h-8');
+    expect(device).not.toHaveClass('py-2');
+    expect(await within(piper).findByText('· ready')).toHaveClass('ml-auto');
     const disclosures = [
       within(engines).getByRole('button', { name: 'Settings for This device' }),
       within(engines).getByRole('button', { name: 'Settings for Piper (gateway)' }),

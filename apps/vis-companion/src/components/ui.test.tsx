@@ -745,9 +745,10 @@ describe('a setting is picked and switched by one control each', () => {
 
     const buttons = screen.getAllByRole('button');
     expect(buttons).toHaveLength(2);
-    const choice = buttons.find((button) => button.getAttribute('aria-pressed') === 'true');
+    const choice = screen.getByRole('button', { pressed: true });
     expect(choice).toBeVisible();
-    expect(choice).toHaveAccessibleName(/Piper \(gateway\)/);
+    expect(choice).toHaveAccessibleName('Piper (gateway) · ready');
+    expect(screen.getByText('· ready')).toBeVisible();
   });
 
   it('opens a settings direction with one full-row control', () => {
