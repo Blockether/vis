@@ -167,6 +167,36 @@
           dirty? "Dirty"
           :else "Idle")))
 
+(defn- group-counts
+  "Count each active session once, without counting HITL sessions as LIVE."
+  [sessions current-id]
+  (reduce (fn [counts session]
+            (let [live?
+                  (true? (get session "live"))
+
+                  waiting?
+                  (true? (get session "is_awaiting_input"))
+
+                  unread?
+                  (and (true? (get session "is_unread"))
+                       (pos? (long (or (get session "unread_answers") 0)))
+                       (not live?)
+                       (not= current-id (str (get session "id"))))]
+
+              (if (get session "archived_at")
+                counts
+                (cond-> counts
+                  waiting?
+                  (update :needs-input inc)
+
+                  (and live? (not waiting?))
+                  (update :running inc)
+
+                  unread?
+                  (update :unread inc)))))
+          {:running 0 :needs-input 0 :unread 0}
+          (vals (into {} (map (juxt #(str (get % "id")) identity)) sessions))))
+
 (defn- saved-entries
   "Rows from gateway windows. Open TUI views are never the source of the inventory."
   [db]
@@ -193,6 +223,8 @@
                                         rows
                                         (conj rows session)))
                                     []))
+                status-by-group (group-by #(str (get % "group_id"))
+                                          (concat (:sessions page) (:grouped page) pinned))
                 session-row
                 (fn [session]
                   (let [sid (str (get session "id"))
@@ -233,15 +265,13 @@
                      :action [:session sid]}))]
 
             (into
-              [{:kind :project-select
-                :project project
-                :label (project-label project)
-                :tab-count (long (or (get project "session_count") 0))
-                :running (long (or (get project "live_count") 0))
-                :needs-input (long (or (get project "awaiting_count") 0))
-                :unread (long (or (get project "unread_count") 0))
-                :expanded? expanded?
-                :action [:toggle-project pid]}]
+              [(merge {:kind :project-select
+                       :project project
+                       :label (project-label project)
+                       :tab-count (long (or (get project "session_count") 0))
+                       :expanded? expanded?
+                       :action [:toggle-project pid]}
+                      (project-counts project 0 0 0))]
               (when expanded?
                 (concat
                   (when (seq pinned)
@@ -260,14 +290,19 @@
                                 (let [gid (str (get group "id"))
                                       folded? (contains? (get-in sidebar [:group-folds pid]) gid)]
 
-                                  (cons {:kind :project-group
-                                         :project project
-                                         :group group
-                                         :label (get group "name" "Untitled group")
-                                         :color (get group "color")
-                                         :group-count (long (or (get group "session_count") 0))
-                                         :folded? folded?
-                                         :action [:toggle-group pid gid]}
+                                  (cons (merge {:kind :project-group
+                                                :project project
+                                                :group group
+                                                :label (get group "name" "Untitled group")
+                                                :color (get group "color")
+                                                :group-count (long (or (get group "session_count")
+                                                                       0))
+                                                :folded? folded?
+                                                :action [:toggle-group pid gid]}
+                                               (group-counts (when-not (get group "archived_at")
+                                                               (get status-by-group gid))
+                                                             (some-> (get-in db [:session :id])
+                                                                     str)))
                                         (when-not folded?
                                           (map #(assoc (session-row %) :nested? true)
                                                (get by-group gid))))))
@@ -708,12 +743,19 @@
       (p/set-colors! g (or selected-ink (t/legible-ink t/dialog-hint t/dialog-bg)) t/dialog-bg)
       (p/put-str! g start row details))))
 
+(defn- header-status
+  [entry width]
+  (str/join (if (< (long width) 48) "·" " · ")
+            (keep (fn [[key label]]
+                    (let [n (long (or (get entry key) 0))]
+                      (when (pos? n) (str n " " label))))
+                  [[:needs-input "HITL"] [:running "LIVE"] [:unread "NEW"]])))
+
 (defn- row-status
   [entry sidebar width]
   (case (:kind entry)
     :project-group
-    (let [n (long (:group-count entry))]
-      (str n (if (= 1 n) " session" " sessions")))
+    (header-status entry width)
 
     :project-input
     "HITL"
@@ -727,28 +769,20 @@
     (:project-set :project-page :project-group-page :project-state)
     ""
 
-    (let [{:keys [tab-count running needs-input unread project]}
+    (let [{:keys [tab-count project]}
           entry
 
-          compact?
-          (or (< (long width) 48) (pos? (long unread)))
-
-          separator
-          (if (and (< (long width) 48) (pos? (long unread))) " " " · ")]
+          status
+          (header-status entry width)]
 
       (if (= (get project "id") (:removing sidebar))
         (or (:progress sidebar) "Removing…")
-        (str
-          tab-count
-          (if (= 1 tab-count)
-            (if (= :toggle-project (first (:action entry))) " session" " tab")
-            (if (= :toggle-project (first (:action entry))) " sessions" " tabs"))
-          (when (pos? (long running))
-            (str separator running (if (and (pos? (long needs-input)) compact?) " run" " running")))
-          (when (pos? (long needs-input))
-            (str separator needs-input (if (pos? (long unread)) " input" " needs input")))
-          (when (pos? (long unread)) (str separator unread " new"))
-          (when (= (get project "id") (:opening sidebar)) " · Loading…"))))))
+        (str tab-count
+             (if (= 1 tab-count)
+               (if (= :toggle-project (first (:action entry))) " session" " tab")
+               (if (= :toggle-project (first (:action entry))) " sessions" " tabs"))
+             (when (seq status) (str (if (< (long width) 48) "|" " | ") status))
+             (when (= (get project "id") (:opening sidebar)) " · Loading…"))))))
 
 (defn add-field
   "The inline add field's empty state — what `+` opens in place of a modal."
@@ -1257,7 +1291,10 @@
 
                                                         "  ")
                                                       label)
-                                                 (max 0 (- name-width 2)))))
+                                                 (max 0 (- name-width
+                                                           (if (#{:project-select :project-group} kind)
+                                                             1
+                                                             2))))))
             (if alert?
               (do (p/set-colors! g (or selected-ink (dlg/session-status-ink status)) t/dialog-bg)
                   (p/styled g [p/BOLD] (p/put-str! g status-col row status)))

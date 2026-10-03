@@ -392,8 +392,8 @@
         (expect (str/includes? text "Projects"))
         (when (>= cols 40)
           (expect (str/includes? text "Companion"))
-          (expect (str/includes? text "1 tab · 1 running")))
-        (when (>= cols 26) (expect (str/includes? text "1 running")))
+          (expect (str/includes? text (if (< width 48) "1 tab|1 LIVE" "1 tab | 1 LIVE"))))
+        (when (>= cols 26) (expect (str/includes? text "1 LIVE")))
         (let [footer (nth (str/split-lines text) 16)
               inside (subs footer 1 (dec (count footer)))
               lead (count (take-while #(= \space %) inside))
@@ -1116,7 +1116,7 @@
       (expect (= [{:tab-count 2 :running 2 :needs-input 1 :unread 2}
                   {:tab-count 1 :running 1 :needs-input 0 :unread 0}]
                  (mapv #(select-keys % [:tab-count :running :needs-input :unread]) headers)))
-      (expect (= "2 tabs · 2 run · 1 input · 2 new" (#'projects/row-status (first headers) nil 60)))
+      (expect (= "2 tabs | 1 HITL · 2 LIVE · 2 NEW" (#'projects/row-status (first headers) nil 60)))
       ;; A project the overview never mentions keeps exactly what it came with.
       (expect (= [project-a] (projects/with-gateway-counts [project-a] {"projects" []})))
       (expect (= [project-a] (projects/with-gateway-counts [project-a] nil))))))
@@ -1156,7 +1156,7 @@
                              nil))]
 
             (expect (nil? (:error capture)))
-            (expect (str/includes? text "2 tabs · 1 running · 1 needs input"))
+            (expect (str/includes? text "2 tabs | 1 HITL · 1 LIVE"))
             (expect (re-find #"Mobile navigation +HITL" text))
             (expect (not (str/includes? text "! Mobile")))
             (expect (= (inc (get-in (first (filter #(and (= :project-select (:kind %))
@@ -1386,7 +1386,7 @@
                              nil))]
 
             (expect (nil? (:error capture)))
-            (expect (str/includes? text "3 tabs · 1 run · 1 input · 1 new"))
+            (expect (str/includes? text "3 tabs | 1 HITL · 1 LIVE · 1 NEW"))
             (expect (re-find #"Keyboard navigation +New" text))
             (expect (= 7 row))
             (let [cell (get-in capture
@@ -1435,8 +1435,7 @@
 
                    (expect (= 2 (:unread (second entries))))
                    (expect (= 1 (count (filter #(= :tab-3 (:tab-id %)) entries))))
-                   (expect (str/includes? (cap/frame-text capture) "HITL"))
-                   (expect (not (str/includes? (cap/frame-text capture) "NEW"))))))
+                   (expect (re-find #"Mobile navigation +HITL +│" (cap/frame-text capture))))))
 
 (defdescribe
   project-alert-status-test
@@ -1460,12 +1459,12 @@
 
                  (expect (nil? (:error capture)))
                  (expect (seq rows))
-                 (expect (not (str/includes? text "NEW")))
                  (when (= cols 44)
                    (expect (str/includes? text "Companion"))
-                   (expect (str/includes? text "3 tabs 1 run 1 input 1 new")))
+                   (expect (str/includes? text "3 tabs|1 HITL·1 LIVE·1 NEW")))
                  (doseq [row rows]
                    (let [line (cell-text capture row 0 width)]
+                     (expect (not (str/includes? line "NEW")))
                      (expect (re-find #"(HITL|New) │$" line))
                      (expect (not (re-find #"[!●]" line))))
                    (doseq [col (range (- width 5) (- width 2))
@@ -1538,11 +1537,11 @@
         (expect (= [3 1] (mapv :group-count groups)))
         (expect (= [2 3] (mapv :index groups)))
         (expect (= [:select project-a] (:action (first groups))))
-        (expect (= "3 sessions" (#'projects/row-status (first groups) nil 40)))
-        (expect (= "1 session" (#'projects/row-status (second groups) nil 40)))
+        (expect (= "" (#'projects/row-status (first groups) nil 40)))
+        (expect (= "" (#'projects/row-status (second groups) nil 40)))
         (expect (nil? (:error capture)))
         (expect (str/includes? (cap/frame-text capture) "Release apps"))
-        (expect (str/includes? (cap/frame-text capture) "3 sessions"))
+        (expect (not (str/includes? (cap/frame-text capture) "3 sessions")))
         (expect (str/includes? (cap/frame-text capture) "g menu"))
         (doseq [[group hit] (map vector
                                  groups
@@ -1599,6 +1598,108 @@
                    (expect (= [:session "never-opened"] (:action (nth entries 5))))
                    (expect (= [:page "a" :next] (:action (nth entries 7))))
                    (expect (= [:toggle-project "a"] (:action (first entries)))))))
+
+(defdescribe
+  sidebar-header-status-format-test
+  (it "separates session totals from uppercase status counts"
+      (doseq [[counts expected] [[{} "14 sessions"] [{:running 2} "14 sessions | 2 LIVE"]
+                                 [{:needs-input 1 :unread 3} "14 sessions | 1 HITL · 3 NEW"]
+                                 [{:running 2 :needs-input 1 :unread 3}
+                                  "14 sessions | 1 HITL · 2 LIVE · 3 NEW"]]]
+        (let [entry (merge {:kind :project-select
+                            :project project-a
+                            :tab-count 14
+                            :running 0
+                            :needs-input 0
+                            :unread 0
+                            :action [:toggle-project "a"]}
+                           counts)]
+          (expect (= expected (#'projects/row-status entry nil 60)))
+          (expect (= (-> expected
+                         (str/replace " | " "|")
+                         (str/replace " · " "·"))
+                     (#'projects/row-status entry nil 40))))))
+  (it
+    "counts each grouped session once, including folded groups and later loose pages"
+    ;; Group totals use the complete sidecar, not visible rows or prompt counts.
+    (let [sessions
+          (mapv (fn [index]
+                  (cond-> {"id" (str "group-" index)
+                           "group_id" "g1"
+                           "title" (str "Grouped session " index)}
+                    (< index 3)
+                    (assoc "live" true)
+
+                    (< index 2)
+                    (assoc "is_awaiting_input"
+                      true "awaiting_input_count"
+                      3)
+
+                    (#{3 4} index)
+                    (assoc "is_unread"
+                      true "unread_answers"
+                      5)))
+                (range 14))
+
+          project
+          (assoc project-a
+            "session_count" 14
+            "live_count" 3
+            "awaiting_count" 2
+            "unread_count" 2)
+
+          db
+          (-> (fixture-db)
+              (assoc-in [:project-sidebar :items] [project])
+              (assoc-in [:project-sidebar :expanded] #{"a"})
+              (assoc-in [:project-sidebar :groups "a"] [group-release])
+              (assoc-in [:project-sidebar :group-folds "a"] #{"g1"})
+              (assoc-in [:project-sidebar :pages "a"]
+                        {:sessions [{"id" "later-loose"} (first sessions) (nth sessions 3)]
+                         :after "later-page"
+                         :grouped sessions
+                         :awaiting (vec (take 2 sessions))}))
+
+          entries
+          (projects/sidebar-entries db)
+
+          group
+          (first (filter #(= :project-group (:kind %)) entries))]
+
+      (expect (= {:running 1 :needs-input 2 :unread 2}
+                 (select-keys (first entries) [:running :needs-input :unread])))
+      (expect (= {:running 1 :needs-input 2 :unread 2}
+                 (select-keys group [:running :needs-input :unread])))
+      (expect (= "2 HITL · 1 LIVE · 2 NEW" (#'projects/row-status group nil 60)))
+      (expect (not-any? #(= :project-session (:kind %)) (filter :nested? entries)))
+      (let [visited
+            (assoc db :session {:id "group-3"})
+
+            group
+            (first (filter #(= :project-group (:kind %)) (projects/sidebar-entries visited)))]
+
+        (expect (= 1 (:unread group))))
+      (let [archived
+            (assoc-in db [:project-sidebar :groups "a" 0 "archived_at"] "2026-10-01")
+
+            group
+            (first (filter #(= :project-group (:kind %)) (projects/sidebar-entries archived)))]
+
+        (expect (= "" (#'projects/row-status group nil 60))))
+      (doseq [cols [100 144 168]]
+        (let [capture (cap/capture! {:cols cols
+                                     :rows 24
+                                     :paint!
+                                     (fn [{:keys [screen]}]
+                                       (projects/paint! (.newTextGraphics screen) db cols 24))})
+              line (first (filter #(str/includes? % "Release apps")
+                                  (str/split-lines (cap/frame-text capture))))]
+
+          (expect (nil? (:error capture)))
+          (expect (re-find (if (< (:width (projects/geometry db cols 24)) 48)
+                             #"Release apps +2 HITL·1 LIVE·2 NEW"
+                             #"Release apps +2 HITL · 1 LIVE · 2 NEW")
+                           (or line ""))))))))
 
 (defdescribe saved-project-pins-attention-and-current-off-page-test
              (it "saved project pins attention and current off page"
