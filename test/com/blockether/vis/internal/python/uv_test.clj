@@ -269,47 +269,92 @@
         (try (spit (io/file project "pyproject.toml")
                    (str "[project]\nname = \"bytecode-probe\"\nversion = \"0.1.0\"\n"
                         "requires-python = \">=3.11\"\ndependencies = []\n"))
-             (let [^java.io.File packages (python-runtime/ensure-project! project)]
+             (#'python-runtime/run-uv!
+              project
+              (into [(#'python-runtime/bundled-uv!) "sync"] (#'python-runtime/embedded-python)))
+             (let [^java.io.File packages (#'python-runtime/project-packages project)]
                ;; The probe must run the shipped interpreter, or this check proves nothing.
                (expect (.isDirectory (io/file home "lib" (.getName (.getParentFile packages)))))
                (expect (= before (caches))))
              (finally (#'python-runtime/delete-tree! project))))))
 
 (defdescribe
-  project-without-dependencies-uses-the-embedded-python-test
-  (it "project without dependencies uses the embedded python"
-      ;; With nothing to install, uv's offline check passed before .venv existed. The
-      ;; site-packages probe then made .venv from an interpreter that uv chose or downloaded.
+  project-without-dependencies-uses-shared-packages-test
+  (it "uses shared packages without creating a project environment"
+      ;; uv's check passed without .venv; the package probe then created an unnecessary environment.
       (python-runtime/ensure-library!)
-      (let [project
-            (.toFile (Files/createTempDirectory "vis-uv-no-dependencies"
-                                                (make-array FileAttribute 0)))
-
-            stage
-            #(:stage (first (filter (fn [status]
-                                      (= (.getName project) (:name status)))
-                                    (python-runtime/preparation-status))))]
-
+      (let [project (.toFile (Files/createTempDirectory "vis-uv-no-dependencies"
+                                                        (make-array FileAttribute 0)))]
         (try (spit (io/file project "pyproject.toml")
                    (str "[project]\nname = \"no-dependencies\"\nversion = \"0.1.0\"\n"
                         "requires-python = \">=3.11\"\ndependencies = []\n"))
-             (let [^java.io.File packages
-                   (python-runtime/ensure-project! project)
-
-                   home
-                   (second (re-find #"(?m)^home\s*=\s*(.+?)\s*$"
-                                    (slurp (io/file project ".venv" "pyvenv.cfg"))))]
-
-               (expect (= (-> (io/file (Interpreter/pythonExecutable))
-                              .getCanonicalFile
-                              .getParentFile)
-                          (.getCanonicalFile (io/file home))))
-               (expect (str/starts-with? (.getPath packages)
-                                         (.getPath (.getCanonicalFile (io/file project ".venv")))))
-               (expect (= "ready" (stage)))
-               (python-runtime/ensure-project! project)
-               (expect (= "cached" (stage)) "an environment on the embedded Python is reused"))
+             (doseq [prepare [python-runtime/ensure-project! python-runtime/prepared-project]]
+               (expect (= (.getCanonicalFile (io/file (runtime/packages-dir))) (prepare project)))
+               (expect (not (.exists (io/file project ".venv")))))
+             (let [config (io/file project ".venv/pyvenv.cfg")]
+               (io/make-parents config)
+               (spit config "home = /foreign/python/bin\n")
+               (doseq [prepare [python-runtime/ensure-project! python-runtime/prepared-project]]
+                 (expect (= (.getCanonicalFile (io/file (runtime/packages-dir)))
+                            (prepare project))))
+               (expect (= "home = /foreign/python/bin\n" (slurp config))))
              (finally (#'python-runtime/delete-tree! project))))))
+
+(defdescribe
+  source-only-selection-keeps-required-project-environments-test
+  (it
+    "shares SDK-only sources but keeps dependency groups and editable installations private"
+    (python-runtime/ensure-library!)
+    (let [project
+          (.toFile (Files/createTempDirectory "vis-uv-source-selection"
+                                              (make-array FileAttribute 0)))
+
+          sdk
+          (doto (io/file project "sdk") .mkdirs)
+
+          helper
+          (doto (io/file project "helper") .mkdirs)
+
+          member
+          (doto (io/file project "member") .mkdirs)
+
+          manifest
+          (str "[project]\nname='source-selection'\nversion='0.1.0'\n"
+               "requires-python='>=3.11'\ndependencies=['vis-agent>=0.1.0']\n"
+               "[tool.uv.sources]\nvis-agent={path='sdk'}\nhelper={path='helper'}\n")
+
+          build
+          "[build-system]\nrequires=[]\nbuild-backend='setuptools.build_meta'\n"]
+
+      (try
+        (spit
+          (io/file sdk "pyproject.toml")
+          "[project]\nname='vis-agent'\nversion='0.1.0'\nrequires-python='>=3.11'\ndependencies=[]\n")
+        (spit
+          (io/file helper "pyproject.toml")
+          (str
+            "[project]\nname='helper'\nversion='0.1.0'\nrequires-python='>=3.11'\ndependencies=[]\n"
+            build))
+        (spit
+          (io/file member "pyproject.toml")
+          "[project]\nname='member'\nversion='0.1.0'\nrequires-python='>=3.11'\ndependencies=[]\n")
+        (doseq [[extra expected selected]
+                [["" true project] ["[dependency-groups]\ndev=[]\n" true project]
+                 ["[dependency-groups]\ndev=['helper']\n" false project] [build false project]
+                 [(str "[dependency-groups]\ndev=['helper']\n"
+                       "[tool.uv.workspace]\nmembers=['member']\n") true member]]]
+          (spit (io/file project "pyproject.toml") (str manifest extra))
+          (expect (= expected (#'python-runtime/shared-project? selected true)) extra)
+          (expect (not (.exists (io/file project ".venv")))))
+        ;; A workspace member uses its own default groups.
+        (spit
+          (io/file member "pyproject.toml")
+          (str
+            "[project]\nname='member'\nversion='0.1.0'\nrequires-python='>=3.11'\ndependencies=[]\n"
+            "[dependency-groups]\ndev=['helper']\n"))
+        (expect (false? (#'python-runtime/shared-project? member true)))
+        (expect (not (.exists (io/file project ".venv"))))
+        (finally (#'python-runtime/delete-tree! project))))))
 
 (defdescribe uv-index-invalid-config-does-not-launch-test
              (it "uv index invalid config does not launch"

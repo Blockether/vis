@@ -401,12 +401,15 @@
   (.exists (project-environment project (System/getenv "UV_PROJECT_ENVIRONMENT"))))
 
 (defn- runtime-environment?
-  "True when the extension environment comes from the embedded Python.
-   Preparation hides UV_PROJECT_ENVIRONMENT from uv, so the environment is .venv.
+  "True when the selected extension environment comes from the embedded Python.
+   Automatic preparation ignores UV_PROJECT_ENVIRONMENT. Manual validation honors it.
    Its PEP 405 pyvenv.cfg names the directory of the base interpreter as home."
   [^File project]
   (let [config
-        (io/file (project-environment project nil) "pyvenv.cfg")
+        (io/file (project-environment project
+                                      (when-not *extension-preparation?*
+                                        (System/getenv "UV_PROJECT_ENVIRONMENT")))
+                 "pyvenv.cfg")
 
         home
         (when (.isFile config)
@@ -423,6 +426,24 @@
   "uv options that select the worker's embedded Python and never download another."
   []
   ["--python" (Interpreter/pythonExecutable) "--no-python-downloads"])
+
+(defn- shared-project?
+  "Use shared packages when uv selects no project installation or dependencies beyond the bundled Vis SDK.
+   Keep editable projects and dependency groups in their own environment."
+  [^File project automatic?]
+  (let [requirements (Files/createTempFile "vis-project-"
+                                           ".txt"
+                                           (make-array java.nio.file.attribute.FileAttribute 0))]
+    (try (let [command (into [(bundled-uv!) "export" "--format" "requirements-txt" "--no-header"
+                              "--no-annotate" "--no-hashes" "--prune" "vis-agent" "--output-file"
+                              (str requirements)]
+                             (embedded-python))]
+           (if automatic?
+             (try (run-uv! project (into command ["--locked" "--offline"]))
+                  (catch clojure.lang.ExceptionInfo _ (run-uv! project command)))
+             (run-uv! project (into command ["--locked" "--offline"])))
+           (str/blank? (slurp (.toFile requirements))))
+         (finally (Files/deleteIfExists requirements)))))
 
 (defn- project-packages
   "Ask uv's project interpreter for its site-packages; do not guess workspace paths.
@@ -451,10 +472,15 @@
     (.getCanonicalFile (io/file path))))
 
 (defn prepared-project
-  "Validate a manually prepared environment with uv sync --check; never install."
+  "Validate a manually prepared environment. Never install or replace it.
+   Source-only projects without dependencies beyond Vis use shared packages."
   ^File [^File project]
-  (try (run-uv! project [(bundled-uv!) "sync" "--check"])
-       (project-packages project)
+  (try (if (shared-project? project false)
+         (.getCanonicalFile (io/file (runtime/packages-dir)))
+         (do (when-not (runtime-environment? project)
+               (throw (ex-info "Extension environment must use the embedded Python." {})))
+             (run-uv! project (into [(bundled-uv!) "sync" "--check"] (embedded-python)))
+             (project-packages project)))
        (catch clojure.lang.ExceptionInfo e
          (throw (ex-info (str (.getMessage e)
                               "\nRun vis-agent python uv sync --project "
@@ -462,7 +488,9 @@
                                      (.getCanonicalFile (io/file (System/getProperty "user.dir"))))
                                 "."
                                 (paths/shell-path (.getCanonicalPath project)))
-                              ", then /reload.")
+                              " --python "
+                              (paths/shell-path (Interpreter/pythonExecutable))
+                              " --no-python-downloads, then /reload.")
                          (assoc (ex-data e) :type ::project-sync-required)
                          e)))))
 
@@ -501,27 +529,29 @@
       (.flush config/original-stderr))))
 
 (defn ensure-project!
-  "Prepare an extension with bundled uv and the worker's embedded Python.
-   An offline check reuses a ready environment without resolution or installation;
-   otherwise uv owns lock updates, dependency groups and its package cache.
-   uv's check also passes without an environment or with another interpreter,
-   so a ready environment must also come from the embedded Python."
+  "Prepare an extension with bundled uv and the embedded Python.
+   Source-only projects without dependencies beyond Vis use shared packages.
+   Otherwise uv owns lock updates, dependency groups and its package cache.
+   A ready private environment must pass uv's offline check and use the embedded Python."
   [^File project]
   (locking preparation-lock
     (binding [*extension-preparation?* true]
       (try
-        (let [ready? (try (and (runtime-environment? project)
-                               (do (run-uv! project
-                                            (into [(bundled-uv!) "sync" "--check" "--offline"]
-                                                  (embedded-python)))
-                                   true))
-                          (catch clojure.lang.ExceptionInfo _ false))]
-          (when-not ready?
-            (preparation-stage! project "installing")
-            (run-uv! project (into [(bundled-uv!) "sync"] (embedded-python))))
-          (let [packages (project-packages project)]
-            (preparation-stage! project (if ready? "cached" "ready"))
-            packages))
+        (if (shared-project? project true)
+          (do (preparation-stage! project "cached")
+              (.getCanonicalFile (io/file (runtime/packages-dir))))
+          (let [ready? (try (and (runtime-environment? project)
+                                 (do (run-uv! project
+                                              (into [(bundled-uv!) "sync" "--check" "--offline"]
+                                                    (embedded-python)))
+                                     true))
+                            (catch clojure.lang.ExceptionInfo _ false))]
+            (when-not ready?
+              (preparation-stage! project "installing")
+              (run-uv! project (into [(bundled-uv!) "sync"] (embedded-python))))
+            (let [packages (project-packages project)]
+              (preparation-stage! project (if ready? "cached" "ready"))
+              packages)))
         (catch Throwable t
           (preparation-stage! project "failed")
           (let [data (ex-data t)

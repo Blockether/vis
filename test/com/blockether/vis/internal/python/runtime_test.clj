@@ -7,6 +7,7 @@
    symlinks and execute bits, and the promise that a runtime already resolvable
    is never touched."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.paths :as paths]
@@ -316,6 +317,7 @@
   manual-project-uses-uv-check-test
   (it "manual project uses uv check"
       ;; #183: readiness belongs to uv, not Vis fingerprints or a shared-package marker.
+      (python-runtime/ensure-library!)
       (let [project
             (temp-dir "vis-manual-uv")
 
@@ -325,7 +327,9 @@
             calls
             (atom [])]
 
-        (try (with-redefs-fn {#'python-runtime/bundled-uv! (constantly "/bundled/uv")
+        (try (with-redefs-fn {#'python-runtime/shared-project? (constantly false)
+                              #'python-runtime/runtime-environment? (constantly true)
+                              #'python-runtime/bundled-uv! (constantly "/bundled/uv")
                               #'python-runtime/run-uv!
                               (fn [cwd args]
                                 (expect (= project cwd))
@@ -334,7 +338,9 @@
                                   (str "VIS_PROJECT_SITE=" (pr-str (str packages)) "\n")))}
                (fn []
                  (expect (= (.getCanonicalFile packages) (python-runtime/prepared-project project)))
-                 (expect (= ["/bundled/uv" "sync" "--check"] (first @calls)))
+                 (expect (= (into ["/bundled/uv" "sync" "--check"]
+                                  (#'python-runtime/embedded-python))
+                            (first @calls)))
                  (expect (= ["/bundled/uv" "run" "--no-sync" "--python"
                              (com.blockether.vispython.Interpreter/pythonExecutable)
                              "--no-python-downloads" "python" "-I" "-B" "-c"]
@@ -346,13 +352,16 @@
 (defdescribe
   manual-project-sync-advice-uses-current-directory-test
   (it "manual project sync advice uses current directory"
+      (python-runtime/ensure-library!)
       (let [current
             (.getCanonicalFile (io/file (System/getProperty "user.dir")))
 
             elsewhere
             (temp-dir "vis manual uv other")]
 
-        (try (with-redefs-fn {#'python-runtime/bundled-uv! (constantly "/bundled/uv")
+        (try (with-redefs-fn {#'python-runtime/shared-project? (constantly false)
+                              #'python-runtime/runtime-environment? (constantly true)
+                              #'python-runtime/bundled-uv! (constantly "/bundled/uv")
                               #'python-runtime/run-uv! (fn [_ _]
                                                          (throw (ex-info "uv sync failed" {})))}
                (fn []
@@ -365,15 +374,69 @@
                             (catch clojure.lang.ExceptionInfo e e))]
 
                    (expect (= (str "uv sync failed\nRun vis-agent python uv sync --project ."
-                                   ", then /reload.")
+                                   " --python "
+                                   (paths/shell-path
+                                     (com.blockether.vispython.Interpreter/pythonExecutable))
+                                   " --no-python-downloads, then /reload.")
                               (.getMessage same-dir)))
                    (expect (= (str "uv sync failed\nRun vis-agent python uv sync --project "
                                    (paths/shell-path (.getCanonicalPath elsewhere))
-                                   ", then /reload.")
+                                   " --python "
+                                   (paths/shell-path
+                                     (com.blockether.vispython.Interpreter/pythonExecutable))
+                                   " --no-python-downloads, then /reload.")
                               (.getMessage other-dir)))
                    (expect (= ::python-runtime/project-sync-required (:type (ex-data same-dir)))))))
              (finally (doseq [file (reverse (file-seq elsewhere))]
                         (io/delete-file file true)))))))
+
+(defdescribe
+  manual-project-refuses-a-foreign-interpreter-test
+  (it "rejects a foreign interpreter before the package probe or any installation"
+      ;; uv sync --check alone accepts an environment from another Python.
+      (python-runtime/ensure-library!)
+      (let [project
+            (temp-dir "vis-manual-foreign-python")
+
+            packages
+            (doto (io/file project ".venv/site-packages") .mkdirs)
+
+            config
+            (io/file project ".venv/pyvenv.cfg")
+
+            calls
+            (atom [])]
+
+        (try (spit config "home = /foreign/python/bin\n")
+             (with-redefs-fn {#'python-runtime/bundled-uv! (constantly "/bundled/uv")
+                              #'python-runtime/run-uv!
+                              (fn [_ args]
+                                (swap! calls conj args)
+                                (case (second args)
+                                  "workspace"
+                                  (str project)
+
+                                  "export"
+                                  (do (spit (nth args
+                                                 (inc (.indexOf ^java.util.List args
+                                                                "--output-file")))
+                                            "fixture-dependency==1.0\n")
+                                      "")
+
+                                  "run"
+                                  (str "VIS_PROJECT_SITE=" (pr-str (str packages)) "\n")
+
+                                  ""))}
+               (fn []
+                 (let [error (try (python-runtime/prepared-project project)
+                                  nil
+                                  (catch clojure.lang.ExceptionInfo e e))]
+                   (expect (= ::python-runtime/project-sync-required (:type (ex-data error))))
+                   (expect (str/includes? (str (ex-message error)) "embedded Python"))
+                   (expect (str/includes? (str (ex-message error)) "--no-python-downloads"))
+                   (expect (not-any? #(contains? #{"sync" "run"} (second %)) @calls))
+                   (expect (= "home = /foreign/python/bin\n" (slurp config))))))
+             (finally (#'python-runtime/delete-tree! project))))))
 
 (defdescribe
   automatic-project-preparation-test
@@ -387,6 +450,7 @@
 
         (try (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
                                                          (swap! calls conj args))
+                              #'python-runtime/shared-project? (constantly false)
                               #'python-runtime/runtime-environment? (constantly true)
                               #'python-runtime/project-packages (constantly project)}
                (fn []
@@ -419,6 +483,7 @@
                                            (swap! calls conj (vec (rest args)))
                                            (when (= 1 (count @calls))
                                              (throw (ex-info "Environment needs sync" {}))))
+                                         #'python-runtime/shared-project? (constantly false)
                                          #'python-runtime/runtime-environment? (constantly true)
                                          #'python-runtime/project-packages (constantly project)}
                           (fn []
@@ -451,6 +516,7 @@
 
         (try (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
                                                          (swap! calls conj (vec (rest args))))
+                              #'python-runtime/shared-project? (constantly false)
                               #'python-runtime/runtime-environment? (constantly false)
                               #'python-runtime/project-packages (constantly project)}
                (fn []

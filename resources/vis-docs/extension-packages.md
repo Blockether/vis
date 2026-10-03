@@ -556,17 +556,22 @@ times:
 
 Vis reports a preparation failure. The package does not fall back to `~/.vis/python/packages`.
 
-To prepare the environment, Vis runs bundled upstream `uv sync`. It selects the gateway's embedded
-Python with `--python`. uv manages the project's lock and environment, including default dependency
-groups and removal of extra packages. It can update an existing lock.
+Source-only packages use shared packages when uv selects no dependency beyond the bundled Vis SDK.
+Vis imports their declared `source_paths` without creating `.venv`.
+Projects that need an editable installation keep a private environment.
+
+To prepare a private environment, Vis runs bundled upstream `uv sync`.
+It selects the gateway's embedded Python with `--python` and blocks interpreter downloads.
+uv manages the project's lock and environment, including default dependency groups and removal of extra packages.
+It can update an existing lock.
 
 Vis's [`python.index_url`](configuration.md#python-package-index) supplies uv's default index,
 unless the index environment of uv is already set. To override it, use uv's `--default-index`. uv
 still manages named indexes and package source configuration.
 
-A project with an environment uses its own trusted worker and imports dependencies
+A project that needs its own environment uses a separate trusted worker. It imports dependencies
 from that environment, normally `.venv`, without shared-package fallback. These
-dependencies are not installed into shared sandbox packages. Source-only edits need
+project dependencies are not installed into shared sandbox packages. Source-only edits need
 reload. Build backends and executable `.pth` files are trusted code. Imports in
 `python_execution` never install packages.
 

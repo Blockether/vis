@@ -25,9 +25,9 @@ You need Vis and a Python project you trust. Vis includes uv, so there is no
 separate installation to find on `PATH`. Run uv commands as `vis-agent python uv`.
 The arguments, environment and terminal input/output pass through to uv.
 
-`uv sync` and `vis-agent python uv sync` both prepare the project's environment,
-normally `.venv`. Vis loads project dependencies from that environment in a separate
-trusted extension worker. Build backends run with your OS user's permissions.
+Projects with dependencies or an editable installation use their project environment, normally `.venv`.
+Vis loads it in a separate trusted worker. Build backends run with your OS user's permissions.
+[Source-only projects](#project-and-shared-environments) can use shared packages instead.
 
 ## Declare the editable project
 
@@ -235,8 +235,8 @@ model's sandbox is a separate confined process.
 ## Project and shared environments
 
 `uv sync` installs project dependencies and editable `.pth` files or backend import hooks into the
-project's environment, usually `.venv`. When that environment exists, Vis selects it before it
-starts the matching trusted extension worker. This applies to registration and to session calls.
+project's environment, usually `.venv`. Vis checks the selected environment before starting its trusted
+worker. The environment must use Vis's embedded Python. This applies to registration and session calls.
 
 The worker does not load shared Vis packages or their startup hooks. If a project dependency is
 missing, the call fails. It does not fall back to shared installations. Preparing the environment
@@ -249,10 +249,14 @@ opening its Vis project prepares the missing environment before registration.
 not silently use shared packages instead. Extensions without a declared project
 use `~/.vis/python/packages` and the [shared sync workflow](#install-a-project-into-shared-packages).
 
-Vis follows uv's workspace root and `UV_PROJECT_ENVIRONMENT` when checking whether
-an environment exists. An existing but incomplete environment does not fall back
-to shared packages. To prepare or inspect an environment separately, run
-`vis-agent python uv sync --project PATH`.
+Source-only projects also use shared packages when uv selects no dependency beyond the bundled Vis SDK.
+Vis does not create or read `.venv` for these projects. Declare your import directories in `tool.vis.source_paths`.
+A project that needs an editable installation keeps its own environment, even without other dependencies.
+
+Automatic preparation ignores `UV_PROJECT_ENVIRONMENT` and uses the workspace's `.venv`.
+Manual validation honors that variable. If a selected environment is incomplete or uses another Python,
+Vis reports an error. Run the exact sync command in that error, then `/reload`.
+The command selects Vis's embedded Python and blocks interpreter downloads.
 
 Shared storage also serves the model sandbox, extensions without a declared project,
 and standalone `vis-agent python --shared` commands. Sandbox imports still need their
@@ -293,9 +297,8 @@ remain editable. You do not create or manage an exported requirements file.
 
 Run `/reload` after installation to refresh Vis workers. To run a shared package
 from the CLI, including inside a project, use `vis-agent python --shared -m your_package`.
-Shared sync does not create `.venv`. Extensions without a declared uv project use
-these shared packages. Extensions with a declared project or their own `pyproject.toml`
-use the environment Vis prepares for them instead.
+Shared sync does not create `.venv`. Extensions without a project use these packages.
+Source-only projects without dependencies beyond Vis also use them. Other projects keep their own environment.
 
 **Shared sync keeps unrelated packages**, including packages that you installed from groups that you
 no longer select. All shared consumers use the same installed versions.

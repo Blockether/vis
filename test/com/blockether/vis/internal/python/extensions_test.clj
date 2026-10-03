@@ -5959,6 +5959,50 @@ vis.register_extension(vis.Extension(
                 (expect (and prompt (str/includes? (prompt {}) "stale"))))
               (expect (= "two" (invoke))))))))))
 
+(defdescribe
+  source-only-package-loads-and-reloads-through-shared-packages-test
+  (it
+    "imports declared sources without creating a private environment"
+    (with-shared-packages
+      (fn [packages]
+        (with-fresh-loaded
+          {"source/current/pyproject.toml"
+           (str "[project]\nname='vis-source-only'\nversion='1.0.0'\n"
+                "description='Source tools'\nrequires-python='>=3.11'\n"
+                "dependencies=['vis-agent>=0.1.0']\n"
+                "[tool.vis]\ncategory='tools'\nsource_paths=['src']\n"
+                "[tool.uv.sources]\nvis-agent={path='sdk'}\n")
+           "source/current/sdk/pyproject.toml"
+           "[project]\nname='vis-agent'\nversion='0.1.0'\nrequires-python='>=3.11'\ndependencies=[]\n"
+           "source/current/extension.py"
+           (str
+             "import blockether.vis.extension as vis\nfrom source_only import answer\n"
+             "vis.register_extension(vis.Extension(name='vis-source-only', description='Source tools',"
+             "alias='source-only', symbols=[vis.Symbol(answer)]))\n")
+           "source/current/src/source_only.py"
+           "def answer():\n    \"Return the fixture value.\"\n    return 42\n"}
+          (fn [result {:keys [ext-dir]}]
+            (expect (= 0 (:failed result)))
+            (let [project
+                  (io/file ext-dir "source/current")
+
+                  opts
+                  {:dirs [(str ext-dir)] :sync-projects? true}
+
+                  invoke
+                  #(:result ((symbol-fn (registered "vis-source-only") 'answer)))]
+
+              (expect (= 42 (invoke)))
+              (expect (= packages (python-runtime/ensure-project! project)))
+              (expect (not (.exists (io/file project ".venv"))))
+              (write-ext! ext-dir
+                          "source/current/src/source_only.py"
+                          "def answer():\n    \"Return the fixture value.\"\n    return 43\n")
+              (expect (= 42 (invoke)))
+              (expect (= 0 (:failed (pyx/reload-python-extensions! opts))))
+              (expect (= 43 (invoke)))
+              (expect (not (.exists (io/file project ".venv")))))))))))
+
 (defdescribe package-staging-is-not-scanned-test
              (it "ignores an incomplete hidden install directory"
                  (with-fresh-loaded {".install-incomplete/extension.py"
