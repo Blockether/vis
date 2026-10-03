@@ -32,6 +32,7 @@ import {
   ProjectCrumb,
   ProjectStatusCounts,
   SectionHeader,
+  sessionStatusTone,
 } from '../../components/SessionNavigator';
 import { Menu, MenuItem, MenuNote, MENU_WIDTH } from '../../components/Menu';
 import { ScopedSettingsDialog } from '../settings/ScopedSettingsDialog';
@@ -451,19 +452,16 @@ function GroupBand({
     {
       label: 'HITL',
       count: status.awaiting,
-      tone: 'text-warn',
       description: `${status.awaiting} ${status.awaiting === 1 ? 'session needs' : 'sessions need'} input.`,
     },
     {
       label: 'LIVE',
       count: status.live,
-      tone: 'text-ok',
       description: `${status.live} live ${status.live === 1 ? 'session' : 'sessions'}.`,
     },
     {
       label: 'NEW',
       count: status.unread,
-      tone: 'text-accent-ink',
       description: `${status.unread} ${status.unread === 1 ? 'session' : 'sessions'} with new answers.`,
     },
   ].filter((item) => item.count > 0);
@@ -505,7 +503,7 @@ function GroupBand({
                   {statuses.map((item) => item.description).join(' ')}
                 </span>
                 {statuses.map((item) => (
-                  <span key={item.label} aria-hidden="true" className={`whitespace-nowrap font-semibold ${item.tone}`}>
+                  <span key={item.label} aria-hidden="true" className={`whitespace-nowrap font-semibold ${sessionStatusTone(item.label)}`}>
                     {item.count} {item.label}
                   </span>
                 ))}
@@ -1796,7 +1794,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           awaiting={tally.awaiting}
           unread={tally.unread}
           isAfterTotal
-          liveAction={(
+          renderLive={(label) => (
             <TextButton
               isCaption
               className="pointer-events-auto relative shrink-0 whitespace-nowrap"
@@ -1809,7 +1807,7 @@ export const ProjectGroup = memo(function ProjectGroup({
               aria-busy={isOpeningLive}
               onClick={() => void openLive()}
             >
-              {running} LIVE
+              {label}
             </TextButton>
           )}
         />

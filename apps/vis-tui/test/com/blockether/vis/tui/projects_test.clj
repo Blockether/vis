@@ -1600,6 +1600,93 @@
                    (expect (= [:toggle-project "a"] (:action (first entries)))))))
 
 (defdescribe
+  sidebar-status-color-consistency-test
+  (it
+    "uses the status helper for header counts and session rows in every theme"
+    (let [before
+          @theme/active-theme-id
+
+          sessions
+          [{"id" "input"
+            "group_id" "g1"
+            "title" "Input session"
+            "live" true
+            "is_awaiting_input" true}
+           {"id" "working" "group_id" "g1" "title" "Working session" "live" true}
+           {"id" "unread"
+            "group_id" "g1"
+            "title" "Unread session"
+            "is_unread" true
+            "unread_answers" 1}]
+
+          db
+          (-> (fixture-db)
+              (assoc :active-project-id "b"
+                     :session {:id "not-current"})
+              (assoc-in [:project-sidebar :items]
+                        [(assoc project-a
+                           "session_count" 3
+                           "live_count" 2
+                           "awaiting_count" 1
+                           "unread_count" 1)])
+              (assoc-in [:project-sidebar :expanded] #{"a"})
+              (assoc-in [:project-sidebar :groups "a"] [group-release])
+              (assoc-in [:project-sidebar :pages "a"] {:sessions [] :grouped sessions}))]
+
+      (try
+        (doseq [theme-id
+                (shared-theme/available-theme-ids)
+
+                index
+                [0 1 3 4 5 6]]
+
+          (theme/apply-theme! (keyword theme-id))
+          (let [capture
+                (cap/capture! {:cols 200
+                               :rows 30
+                               :paint! (fn [{:keys [screen]}]
+                                         (projects/paint!
+                                           (.newTextGraphics screen)
+                                           (assoc-in db [:project-sidebar :index] index)
+                                           200
+                                           30))})
+
+                text
+                (cap/frame-text capture)]
+
+            (expect (nil? (:error capture)))
+            (expect (str/includes? text "1 LIVE"))
+            (expect (str/includes? text "Working session"))
+            (doseq [[row line]
+                    (map-indexed vector (str/split-lines text))
+
+                    [label status]
+                    [["1 HITL" "HITL"] ["1 LIVE" "Live"] ["1 NEW" "New"] ["HITL" "HITL"]
+                     ["Live" "Live"] ["New" "New"]]
+
+                    :let [col
+                          (str/index-of line label)]
+                    :when (some? col)
+                    offset
+                    (range (count label))
+
+                    :when (not= \space (nth label offset))]
+
+              (let [cell
+                    (get-in capture [:frames 0 row (+ col offset)])
+
+                    expected
+                    (#'theme-test/rgb-tuple (dlg/session-status-ink status (tuple-rgb (:bg cell))))]
+
+                (expect (= expected (:fg cell)) (str theme-id " " index " " label))
+                (expect (<= theme/legible-contrast (cell-contrast cell)))))))
+        (finally (theme/apply-theme! before)))))
+  (it "uses the same colors for uppercase labels and labels with counts"
+      (doseq [status ["Live" "New" "Waiting" "Stopped" "Dirty" "Archived" "Idle" "HITL"]]
+        (expect (= (dlg/session-status-ink status)
+                   (dlg/session-status-ink (str (str/upper-case status) " ×2")))))))
+
+(defdescribe
   sidebar-header-status-format-test
   (it "separates session totals from uppercase status counts"
       (doseq [[counts expected] [[{} "14 sessions"] [{:running 2} "14 sessions | 2 LIVE"]
@@ -1828,7 +1915,7 @@
       (with-open [terminal (review-terminal 20 2)]
         (let [g (.newTextGraphics terminal)]
           (doseq [status ["HITL" "HITL ×2"]]
-            (#'projects/paint-session-status! g {:status status} 0 0 20 nil)
+            (#'projects/paint-session-status! g {:status status} 0 0 20)
             (expect (= theme/warning-fg (.getForegroundColor g))))))))
 
 (defdescribe saved-project-attachment-only-draft-test

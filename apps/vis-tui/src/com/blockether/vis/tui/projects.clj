@@ -703,8 +703,8 @@
 
 (defn- paint-session-status!
   "Paint the session status in bold, in the companion app's colour for it."
-  [g entry col row available selected-ink]
-  (p/set-colors! g (or selected-ink (dlg/session-status-ink (:status entry))) t/dialog-bg)
+  [g entry col row available]
+  (p/set-colors! g (dlg/session-status-ink (:status entry)) t/dialog-bg)
   (p/styled
     g
     [p/BOLD]
@@ -738,51 +738,79 @@
              (filter #(<= (+ start (long (p/display-width %))) (inc right)))
              first)]
 
-    (when status? (paint-session-status! g entry col row (max 0 (- (inc right) col)) selected-ink))
+    (when status? (paint-session-status! g entry col row (max 0 (- (inc right) col))))
     (when (seq details)
       (p/set-colors! g (or selected-ink (t/legible-ink t/dialog-hint t/dialog-bg)) t/dialog-bg)
       (p/put-str! g start row details))))
 
-(defn- header-status
+(defn- header-status-parts
   [entry width]
-  (str/join (if (< (long width) 48) "·" " · ")
-            (keep (fn [[key label]]
-                    (let [n (long (or (get entry key) 0))]
-                      (when (pos? n) (str n " " label))))
-                  [[:needs-input "HITL"] [:running "LIVE"] [:unread "NEW"]])))
+  (interpose [(if (< (long width) 48) "·" " · ") nil]
+    (keep (fn [[key label]]
+            (let [n (long (or (get entry key) 0))]
+              (when (pos? n) [(str n " " label) label])))
+          [[:needs-input "HITL"] [:running "LIVE"] [:unread "NEW"]])))
 
-(defn- row-status
+(defn- row-status-parts
   [entry sidebar width]
   (case (:kind entry)
     :project-group
-    (header-status entry width)
+    (header-status-parts entry width)
 
     :project-input
-    "HITL"
+    [["HITL" "HITL"]]
 
     :project-unread
-    "New"
+    [["New" "New"]]
 
-    :project-session
-    ""
-
-    (:project-set :project-page :project-group-page :project-state)
-    ""
+    (:project-session :project-set :project-page :project-group-page :project-state)
+    []
 
     (let [{:keys [tab-count project]}
           entry
 
-          status
-          (header-status entry width)]
+          statuses
+          (header-status-parts entry width)]
 
       (if (= (get project "id") (:removing sidebar))
-        (or (:progress sidebar) "Removing…")
-        (str tab-count
-             (if (= 1 tab-count)
-               (if (= :toggle-project (first (:action entry))) " session" " tab")
-               (if (= :toggle-project (first (:action entry))) " sessions" " tabs"))
-             (when (seq status) (str (if (< (long width) 48) "|" " | ") status))
-             (when (= (get project "id") (:opening sidebar)) " · Loading…"))))))
+        [[(or (:progress sidebar) "Removing…") nil]]
+        (concat [[(str tab-count
+                       (if (= 1 tab-count)
+                         (if (= :toggle-project (first (:action entry))) " session" " tab")
+                         (if (= :toggle-project (first (:action entry))) " sessions" " tabs")))
+                  nil]]
+                (when (seq statuses) (cons [(if (< (long width) 48) "|" " | ") nil] statuses))
+                (when (= (get project "id") (:opening sidebar)) [[" · Loading…" nil]]))))))
+
+(defn- row-status
+  [entry sidebar width]
+  (apply str (map first (row-status-parts entry sidebar width))))
+
+(defn- paint-row-status!
+  "Paint each status with its own ink. Totals and separators keep neutral ink."
+  [g parts col row available neutral-ink]
+  (loop [parts
+         (seq parts)
+
+         col
+         (long col)
+
+         remaining
+         (long available)]
+
+    (when (and parts (pos? remaining))
+      (let [[text status]
+            (first parts)
+
+            text
+            (p/truncate-cols text remaining)
+
+            used
+            (long (p/display-width text))]
+
+        (p/set-colors! g (if status (dlg/session-status-ink status) neutral-ink) t/dialog-bg)
+        (p/styled g (if status [p/BOLD] []) (p/put-str! g col row text))
+        (recur (next parts) (+ col used) (- remaining used))))))
 
 (defn add-field
   "The inline add field's empty state — what `+` opens in place of a modal."
@@ -1222,7 +1250,6 @@
         (doseq [[{:keys [index project kind label] :as entry} row]
                 (map vector visible (reductions + 4 (map row-height visible)))
                 :let [child? (not= :project-select kind)
-                      alert? (contains? #{:project-input :project-unread} kind)
                       active? (case kind
                                 :project-session
                                 (= (str (get-in entry [:session "id"]))
@@ -1295,21 +1322,14 @@
                                                            (if (#{:project-select :project-group} kind)
                                                              1
                                                              2))))))
-            (if alert?
-              (do (p/set-colors! g (or selected-ink (dlg/session-status-ink status)) t/dialog-bg)
-                  (p/styled g [p/BOLD] (p/put-str! g status-col row status)))
-              (do (p/set-colors! g
-                                 (or selected-ink
-                                     (cond (and (= :project-group kind) (not focused?))
-                                           (t/group-ink (:color entry))
-                                           (or (pos? (long (or (:needs-input entry) 0)))
-                                               (pos? (long (or (:unread entry) 0))))
-                                           t/warning-fg
-                                           :else t/dialog-hint-key))
-                                 t/dialog-bg)
-                  (p/put-str! g status-col row status)))
+            (paint-row-status! g
+                               (row-status-parts entry sidebar width)
+                               status-col
+                               row
+                               (p/display-width status)
+                               (or selected-ink t/dialog-hint-key))
             (when (= :project-session kind)
-              (when (>= width 48) (paint-session-status! g entry status-col row 14 selected-ink))
+              (when (>= width 48) (paint-session-status! g entry status-col row 14))
               (paint-session-meta! g
                                    entry
                                    (+ row-left 4)

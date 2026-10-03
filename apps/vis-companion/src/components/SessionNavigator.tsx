@@ -583,39 +583,56 @@ export function HeaderTally({
   );
 }
 
+/** Use the same status colors in session rows, group headers, and project headers. */
+export function sessionStatusTone(status: string): string {
+  switch (status.trim().split(/\s+/, 1)[0]?.toUpperCase()) {
+    case 'HITL':
+    case 'WAITING': return 'text-warn';
+    case 'LIVE': return 'text-ok';
+    case 'STOPPED': return 'text-err';
+    case 'NEW': return 'text-accent-ink';
+    case 'DIRTY': return 'text-dirty';
+    case 'ARCHIVED': return 'text-muted';
+    default: return 'text-dialog-hint';
+  }
+}
+
 /** Count sessions with each status. A session waiting for input does not also count as LIVE. */
 export function ProjectStatusCounts({
   live,
   awaiting = 0,
   unread = 0,
   isAfterTotal = false,
-  liveAction,
+  renderLive,
 }: {
   live: number;
   awaiting?: number;
   unread?: number;
   isAfterTotal?: boolean;
-  liveAction?: ReactNode;
+  renderLive?: (label: ReactNode) => ReactNode;
 }) {
   const running = Math.max(0, live - awaiting);
   const statuses = [
-    { label: 'HITL', count: awaiting, tone: 'text-warn' },
-    { label: 'LIVE', count: running, tone: 'text-ok' },
-    { label: 'NEW', count: unread, tone: 'text-accent-ink' },
+    { label: 'HITL', count: awaiting },
+    { label: 'LIVE', count: running },
+    { label: 'NEW', count: unread },
   ].filter((status) => status.count > 0);
 
-  return statuses.map((status, index) => (
-    <span key={status.label} className="inline-flex items-center gap-2 whitespace-nowrap">
-      {(index > 0 || isAfterTotal) && (
-        <span aria-hidden="true">{index === 0 ? '|' : '·'}</span>
-      )}
-      {status.label === 'LIVE' && liveAction ? liveAction : (
-        <span className={`font-bold ${status.tone}`}>
-          {status.count} {status.label}
-        </span>
-      )}
-    </span>
-  ));
+  return statuses.map((status, index) => {
+    const label = (
+      <span className={`font-bold ${sessionStatusTone(status.label)}`}>
+        {status.count} {status.label}
+      </span>
+    );
+    return (
+      <span key={status.label} className="inline-flex items-center gap-2 whitespace-nowrap">
+        {(index > 0 || isAfterTotal) && (
+          <span aria-hidden="true">{index === 0 ? '|' : '·'}</span>
+        )}
+        {status.label === 'LIVE' && renderLive ? renderLive(label) : label}
+      </span>
+    );
+  });
 }
 
 /** A flat scrollable row of machine identities; overflow belongs to the row. */

@@ -117,6 +117,21 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 // Regression: folding a group hid every HITL, LIVE and NEW indication inside it.
 describe('session group status counts', () => {
+  it('uses the same status colors in group headers and session rows', async () => {
+    mount();
+    await waitFor(() => expectCounts(2, 1, 2));
+    fireEvent.click(heading());
+    for (const [id, label, countLabel, tone] of [
+      ['input-a', 'HITL ×3', '2 HITL', 'text-warn'],
+      ['running', 'LIVE', '1 LIVE', 'text-ok'],
+      ['new-a', 'NEW ×5', '2 NEW', 'text-accent-ink'],
+    ]) {
+      const row = document.querySelector<HTMLElement>(`[data-session-id="${id}"]`)!;
+      expect(within(row).getByText(label).parentElement).toHaveClass(tone);
+      expect(within(heading(NAME, true)).getByText(countLabel)).toHaveClass(tone);
+    }
+  });
+
   it('counts the complete group once while collapsed, without reading conversations', async () => {
     const { client } = mount();
     await waitFor(() => expectCounts(2, 1, 2));

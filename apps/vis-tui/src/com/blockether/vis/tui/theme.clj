@@ -328,17 +328,18 @@
 (def legible-contrast "Smallest contrast ratio for small status text: the WCAG 2 AA level." 4.5)
 
 (defn legible-ink
-  "Colour `ink` on paper `bg`, moved toward the theme's text colour until it
-   reaches `legible-contrast`.
-
-   A status keeps its own hue where the theme allows it, and it stays readable
-   on every row tint of every light or dark theme."
+  "Keep the ink's hue where possible while meeting `legible-contrast` on `bg`.
+   Mix toward the theme's text color. If that color lacks contrast, use black or white."
   ^com.googlecode.lanterna.TextColor$RGB [ink bg]
-  (loop [step 0]
-    (let [c (mix-color ink text-fg (* 0.05 (double step)))]
-      (cond (>= (contrast-ratio c bg) (double legible-contrast)) c
-            (>= step 20) text-fg
-            :else (recur (inc step))))))
+  (let [target
+        (if (>= (contrast-ratio text-fg bg) (double legible-contrast))
+          text-fg
+          (max-key #(contrast-ratio % bg) (TextColor$RGB. 0 0 0) (TextColor$RGB. 255 255 255)))]
+    (loop [step 0]
+      (let [c (mix-color ink target (* 0.05 (double step)))]
+        (cond (>= (contrast-ratio c bg) (double legible-contrast)) c
+              (>= step 20) target
+              :else (recur (inc step)))))))
 
 (defn dirty-fg
   "Ink for a session with unsent work: the companion app's ochre, mixed with the

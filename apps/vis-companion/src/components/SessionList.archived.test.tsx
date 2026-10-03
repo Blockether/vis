@@ -55,7 +55,8 @@ describe('an archived session row', () => {
     // Filled and dimmed: put away is a state the row IS in, not the absence of one, so
     // it takes a solid mark rather than IDLE's hollow square.
     const dot = container.querySelector('[data-session-status-dot]')!;
-    expect(dot.className).toContain('bg-muted');
+    expect(dot).toHaveClass('bg-current');
+    expect(dot.parentElement).toHaveClass('text-muted');
     expect(dot.className).not.toContain('animate-pulse');
   });
 

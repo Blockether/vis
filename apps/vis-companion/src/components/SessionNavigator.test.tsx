@@ -10,7 +10,18 @@ import {
   Pager,
   RowDisclosure,
   SectionHeader,
+  sessionStatusTone,
 } from './SessionNavigator';
+
+describe('session status colors', () => {
+  it.each([
+    ['LIVE', 'text-ok'], ['Live', 'text-ok'], ['NEW ×2', 'text-accent-ink'],
+    ['HITL ×3', 'text-warn'], ['WAITING', 'text-warn'], ['STOPPED', 'text-err'],
+    ['DIRTY', 'text-dirty'], ['ARCHIVED', 'text-muted'], ['IDLE', 'text-dialog-hint'],
+  ])('uses the shared color for %s', (label, tone) => {
+    expect(sessionStatusTone(label)).toBe(tone);
+  });
+});
 
 describe('machine selection', () => {
   // Regression, user report (the leading square was crossed out and the right dot

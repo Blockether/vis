@@ -40,7 +40,8 @@ describe('a session whose last turn was cut off', () => {
     expect(screen.queryByText('stopped')).not.toBeInTheDocument();
 
     const dot = view.container.querySelector('[data-session-status-dot]');
-    expect(dot?.className).toContain('bg-err');
+    expect(dot).toHaveClass('bg-current');
+    expect(dot?.parentElement).toHaveClass('text-err');
     // Solid, never pulsing: an interrupted session is the opposite of a live one.
     expect(dot?.className).not.toContain('animate-pulse');
   });

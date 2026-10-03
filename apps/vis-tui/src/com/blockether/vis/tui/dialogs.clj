@@ -6151,20 +6151,20 @@
    `t/legible-ink` keeps each one readable on `bg`, the row paper by default."
   ([status] (session-status-ink status t/dialog-bg))
   ([status bg]
-   (t/legible-ink (case (first (str/split (str/trim (str status)) #"\s+"))
-                    ("HITL" "Waiting")
+   (t/legible-ink (case (first (str/split (str/upper-case (str/trim (str status))) #"\s+"))
+                    ("HITL" "WAITING")
                     t/warning-fg
 
-                    "Live"
+                    "LIVE"
                     t/status-ok
 
-                    "Stopped"
+                    "STOPPED"
                     t/status-bad
 
-                    "New"
+                    "NEW"
                     t/header-active-tab-bg
 
-                    "Dirty"
+                    "DIRTY"
                     (t/dirty-fg)
 
                     t/dialog-hint)

@@ -145,3 +145,11 @@
              (expect (>= (contrast-ratio (t/contrast-ink t/code-success-fg) t/code-success-fg)
                          3.0)))
            (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))))
+
+(defdescribe status-contrast-test
+             (it "keeps status ink readable when a dark theme selects a bright row"
+                 (with-redefs [t/text-fg (TextColor$RGB. 255 255 255)]
+                   (let [paper (TextColor$RGB. 240 240 240)
+                         ink (TextColor$RGB. 80 160 240)]
+
+                     (expect (>= (contrast-ratio (t/legible-ink ink paper) paper) 4.5))))))

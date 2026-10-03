@@ -18,6 +18,7 @@ import {
   LIST_EDGE_END,
   RowDisclosure,
   SectionHeader,
+  sessionStatusTone,
 } from './SessionNavigator';
 import { SwipeActions, type SwipeAction } from './SwipeActions';
 import {
@@ -826,12 +827,12 @@ export const SessionRow = memo(function SessionRow({
                     className={`shrink-0 items-center gap-1 font-mono text-chip font-bold tracking-[0.08em] ${
                       // Narrow sidebars show only live or input-needed marks.
                       status === 'IDLE' && !location ? 'hidden @sm:inline-flex' : 'inline-flex'
-                    } ${statusTone(session, stopped, hasUnsent, unread, isPutAway)}`}
+                    } ${sessionStatusTone(status)}`}
                   >
                     <span
                       data-session-status-dot
                       aria-hidden="true"
-                      className={`size-1.5 shrink-0 ${statusDot(session, stopped, hasUnsent, unread, isPutAway)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`}
+                      className={`size-1.5 shrink-0 ${status === 'IDLE' ? 'border border-current' : 'bg-current'} ${live || status.startsWith('HITL') ? 'animate-pulse motion-reduce:animate-none' : ''}`}
                     />
                     <span
                       className={location ? '' : 'sr-only @sm:not-sr-only'}
@@ -1212,32 +1213,6 @@ function statusLabel(session: Session, stopped: boolean, hasUnsent: boolean, unr
   // news about the session; this is news about you, and it waits its turn.
   if (hasUnsent) return 'DIRTY';
   return 'IDLE';
-}
-
-function statusTone(session: Session, stopped: boolean, hasUnsent: boolean, unread: number, isPutAway: boolean): string {
-  if (isPutAway) return 'text-muted';
-  if (sessionNeedsInput(session)) return 'text-warn';
-  if (sessionIsLive(session)) return 'text-ok';
-  if (stopped) return 'text-err';
-  if (unread > 0) return 'text-accent';
-  if (session.status === 'suspended') return 'text-warn';
-  if (hasUnsent) return 'text-dirty';
-  return 'text-dialog-hint';
-}
-
-function statusDot(session: Session, stopped: boolean, hasUnsent: boolean, unread: number, isPutAway: boolean): string {
-  // Filled and dimmed: put away is a state the row IS in, not the absence of one.
-  if (isPutAway) return 'bg-muted';
-  if (sessionNeedsInput(session)) return 'animate-pulse bg-warn-strong motion-reduce:animate-none';
-  if (sessionIsLive(session)) return 'animate-pulse bg-ok motion-reduce:animate-none';
-  // Solid, never pulsing: an interrupted session is the opposite of live.
-  if (stopped) return 'bg-err';
-  if (unread > 0) return 'bg-accent';
-  if (session.status === 'suspended') return 'bg-warn-strong';
-  // Filled like every mark that means something is waiting. The hollow square
-  // is IDLE's alone, because it is the one that means nothing is.
-  if (hasUnsent) return 'bg-dirty';
-  return 'border border-dialog-hint';
 }
 
 export function draftSearchText(draft: DraftMessage | undefined): string {
