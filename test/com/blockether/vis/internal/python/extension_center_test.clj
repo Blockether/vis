@@ -183,7 +183,7 @@
                         (expect (every? #(true? (get % "prepared")) result)))
                       (expect (nil? (#'fixtures/registered "vis-center-greeter"))
                               "Sync never imports entrypoints")
-                      (expect (= ["sync" "sync" "run"] (mapv second @calls)))
+                      (expect (= ["workspace" "sync" "run"] (mapv second @calls)))
                       (reset! calls []))
                     (when-not declarative?
                       (expect (= 1 (:failed (pyx/reload-python-extensions! opts))))
@@ -203,19 +203,22 @@
                     (expect (= 42 (invoke)))
                     (expect (.isFile (io/file source "uv.lock")))
                     (expect (.isDirectory (io/file source ".venv")))
+                    ;; Reload finds the environment; preparation checks that it uses the embedded Python.
                     (expect
-                      (= (if declarative? ["workspace" "sync" "run"] ["sync" "sync" "run"])
+                      (= (if declarative?
+                           ["workspace" "workspace" "sync" "run"]
+                           ["workspace" "sync" "run"])
                          (mapv second @calls))
                       "Explicit cold preparation installs; an existing environment is checked")
                     (reset! calls [])
                     (when declarative?
                       (expect (= ["cached"]
                                  (mapv #(get % "status") (pyx/sync-packages! {:trust true}))))
-                      (expect (= ["sync" "run"] (mapv second @calls)))
-                      (expect (= ["--check" "--offline"] (subvec (first @calls) 2 4)))
+                      (expect (= ["workspace" "sync" "run"] (mapv second @calls)))
+                      (expect (= ["--check" "--offline"] (subvec (second @calls) 2 4)))
                       (reset! calls []))
                     (expect (= 0 (:failed (pyx/reload-python-extensions! opts))))
-                    (expect (= ["workspace" "sync" "run"] (mapv second @calls))
+                    (expect (= ["workspace" "workspace" "sync" "run"] (mapv second @calls))
                             "uv owns checking whether an unchanged environment needs updating")
                     (spit (io/file source "src/center_logic.py")
                           (str/replace code
@@ -224,7 +227,8 @@
                     (expect (= 42 (invoke)))
                     (expect (= 0 (:failed (pyx/reload-python-extensions! opts))))
                     (expect (= 43 (invoke)))
-                    (expect (= ["workspace" "sync" "run" "workspace" "sync" "run"]
+                    (expect (= ["workspace" "workspace" "sync" "run" "workspace" "workspace" "sync"
+                                "run"]
                                (mapv second @calls)))
                     (spit (io/file source "extension.py") "raise ValueError('broken edit')\n")
                     (expect (= 1 (:failed (pyx/reload-python-extensions! opts))))

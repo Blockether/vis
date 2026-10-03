@@ -375,35 +375,70 @@
           (finally (when (.isAlive ^Process process) (kill-installer! process))
                    (future-cancel output))))))
 
-(defn project-environment-exists?
-  "Check for uv's environment without creating it or resolving dependencies.
-   Workspace members share the workspace environment; UV_PROJECT_ENVIRONMENT
-   overrides .venv and relative overrides resolve against the workspace root.
-   An existing but invalid environment still needs preparation, not shared fallback."
-  [^File project]
+(defn- project-environment
+  "Locate uv's environment without creating it or resolving dependencies.
+   Workspace members share the workspace environment. An override replaces .venv,
+   and a relative override resolves against the workspace root."
+  ^File [^File project override]
   (let [workspace
         (io/file (str/trim (run-uv! project [(bundled-uv!) "workspace" "dir" "--offline"])))
 
         path
-        (or (not-empty (System/getenv "UV_PROJECT_ENVIRONMENT")) ".venv")
+        (or (not-empty override) ".venv")
 
         environment
         (io/file path)]
 
     (when-not (and (.isAbsolute workspace) (.isDirectory workspace))
       (throw (ex-info "uv did not report an existing workspace directory" {})))
-    (.exists (if (.isAbsolute environment) environment (io/file workspace path)))))
+    (if (.isAbsolute environment) environment (io/file workspace path))))
+
+(defn project-environment-exists?
+  "Check for uv's environment without creating it or resolving dependencies.
+   UV_PROJECT_ENVIRONMENT overrides .venv.
+   An existing but invalid environment still needs preparation, not shared fallback."
+  [^File project]
+  (.exists (project-environment project (System/getenv "UV_PROJECT_ENVIRONMENT"))))
+
+(defn- runtime-environment?
+  "True when the extension environment comes from the embedded Python.
+   Preparation hides UV_PROJECT_ENVIRONMENT from uv, so the environment is .venv.
+   Its PEP 405 pyvenv.cfg names the directory of the base interpreter as home."
+  [^File project]
+  (let [config
+        (io/file (project-environment project nil) "pyvenv.cfg")
+
+        home
+        (when (.isFile config)
+          (some #(second (re-matches #"\s*home\s*=\s*(.+?)\s*" %))
+                (str/split-lines (slurp config))))]
+
+    (boolean (and home
+                  (= (.getCanonicalFile (io/file home))
+                     (-> (io/file (Interpreter/pythonExecutable))
+                         .getCanonicalFile
+                         .getParentFile))))))
+
+(defn- embedded-python
+  "uv options that select the worker's embedded Python and never download another."
+  []
+  ["--python" (Interpreter/pythonExecutable) "--no-python-downloads"])
 
 (defn- project-packages
-  "Ask uv's project interpreter for its site-packages; do not guess workspace paths."
+  "Ask uv's project interpreter for its site-packages; do not guess workspace paths.
+   A missing environment comes from the embedded Python; an existing one stays as it is."
   ^File [^File project]
   (let
     [output
      (run-uv!
        project
        ;; -I ignores PYTHONPYCACHEPREFIX, so -B keeps bytecode out of the shipped runtime.
-       [(bundled-uv!) "run" "--no-sync" "python" "-I" "-B" "-c"
-        "import json, sysconfig; print('VIS_PROJECT_SITE=' + json.dumps(sysconfig.get_path('purelib')))"])
+       (vec
+         (concat
+           [(bundled-uv!) "run" "--no-sync"]
+           (embedded-python)
+           ["python" "-I" "-B" "-c"
+            "import json, sysconfig; print('VIS_PROJECT_SITE=' + json.dumps(sysconfig.get_path('purelib')))"])))
 
      path
      (some #(when (str/starts-with? % "VIS_PROJECT_SITE=")
@@ -468,19 +503,22 @@
 (defn ensure-project!
   "Prepare an extension with bundled uv and the worker's embedded Python.
    An offline check reuses a ready environment without resolution or installation;
-   otherwise uv owns lock updates, dependency groups and its package cache."
+   otherwise uv owns lock updates, dependency groups and its package cache.
+   uv's check also passes without an environment or with another interpreter,
+   so a ready environment must also come from the embedded Python."
   [^File project]
   (locking preparation-lock
     (binding [*extension-preparation?* true]
       (try
-        (let [ready? (try (run-uv! project
-                                   [(bundled-uv!) "sync" "--check" "--offline" "--python"
-                                    (Interpreter/pythonExecutable)])
-                          true
+        (let [ready? (try (and (runtime-environment? project)
+                               (do (run-uv! project
+                                            (into [(bundled-uv!) "sync" "--check" "--offline"]
+                                                  (embedded-python)))
+                                   true))
                           (catch clojure.lang.ExceptionInfo _ false))]
           (when-not ready?
             (preparation-stage! project "installing")
-            (run-uv! project [(bundled-uv!) "sync" "--python" (Interpreter/pythonExecutable)]))
+            (run-uv! project (into [(bundled-uv!) "sync"] (embedded-python))))
           (let [packages (project-packages project)]
             (preparation-stage! project (if ready? "cached" "ready"))
             packages))

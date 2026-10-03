@@ -149,8 +149,10 @@
               (fn []
                 (#'python-runtime/run-uv! dir [uv "sync"])
                 (python-runtime/ensure-project! dir)
-                (expect (= ["/foreign/extension-project" "unset"]
-                           (str/split-lines (slurp environment-log)))))))))))
+                (let [[caller & preparation] (str/split-lines (slurp environment-log))]
+                  (expect (= "/foreign/extension-project" caller))
+                  (expect (seq preparation) "preparation started uv")
+                  (expect (every? #{"unset"} preparation))))))))))
 
 (defdescribe
   vis-index-reaches-uv-processes-test
@@ -267,15 +269,46 @@
         (try (spit (io/file project "pyproject.toml")
                    (str "[project]\nname = \"bytecode-probe\"\nversion = \"0.1.0\"\n"
                         "requires-python = \">=3.11\"\ndependencies = []\n"))
-             ;; With nothing to install, the offline check passes before any environment
-             ;; exists, so sync first, as the first preparation of an extension does.
-             (#'python-runtime/run-uv!
-              project
-              [(#'python-runtime/bundled-uv!) "sync" "--python" (Interpreter/pythonExecutable)])
              (let [^java.io.File packages (python-runtime/ensure-project! project)]
                ;; The probe must run the shipped interpreter, or this check proves nothing.
                (expect (.isDirectory (io/file home "lib" (.getName (.getParentFile packages)))))
                (expect (= before (caches))))
+             (finally (#'python-runtime/delete-tree! project))))))
+
+(defdescribe
+  project-without-dependencies-uses-the-embedded-python-test
+  (it "project without dependencies uses the embedded python"
+      ;; With nothing to install, uv's offline check passed before .venv existed. The
+      ;; site-packages probe then made .venv from an interpreter that uv chose or downloaded.
+      (python-runtime/ensure-library!)
+      (let [project
+            (.toFile (Files/createTempDirectory "vis-uv-no-dependencies"
+                                                (make-array FileAttribute 0)))
+
+            stage
+            #(:stage (first (filter (fn [status]
+                                      (= (.getName project) (:name status)))
+                                    (python-runtime/preparation-status))))]
+
+        (try (spit (io/file project "pyproject.toml")
+                   (str "[project]\nname = \"no-dependencies\"\nversion = \"0.1.0\"\n"
+                        "requires-python = \">=3.11\"\ndependencies = []\n"))
+             (let [^java.io.File packages
+                   (python-runtime/ensure-project! project)
+
+                   home
+                   (second (re-find #"(?m)^home\s*=\s*(.+?)\s*$"
+                                    (slurp (io/file project ".venv" "pyvenv.cfg"))))]
+
+               (expect (= (-> (io/file (Interpreter/pythonExecutable))
+                              .getCanonicalFile
+                              .getParentFile)
+                          (.getCanonicalFile (io/file home))))
+               (expect (str/starts-with? (.getPath packages)
+                                         (.getPath (.getCanonicalFile (io/file project ".venv")))))
+               (expect (= "ready" (stage)))
+               (python-runtime/ensure-project! project)
+               (expect (= "cached" (stage)) "an environment on the embedded Python is reused"))
              (finally (#'python-runtime/delete-tree! project))))))
 
 (defdescribe uv-index-invalid-config-does-not-launch-test
@@ -450,6 +483,37 @@
                        (expect (true? (python-runtime/project-environment-exists? member)))
                        (expect (not (.exists (io/file dir "uv.lock"))))
                        (expect (not (.exists (io/file member "uv.lock")))))))))
+
+(defdescribe
+  extension-environment-must-come-from-the-embedded-python-test
+  (it "extension environment must come from the embedded python"
+      ;; uv's check accepts a missing environment and another interpreter.
+      (with-uv-fixture
+        "exit 0\n"
+        (fn [dir _]
+          (let [member
+                (doto (io/file dir "member") .mkdir)
+
+                environment
+                (io/file dir ".venv")
+
+                runtime?
+                (fn [home]
+                  (when home
+                    (spit (io/file environment "pyvenv.cfg")
+                          (str "home = " home "\nversion_info = 3.14.7\n")))
+                  (#'python-runtime/runtime-environment? member))]
+
+            (spit (io/file dir "pyproject.toml") "[tool.uv.workspace]\nmembers=['member']\n")
+            (spit (io/file member "pyproject.toml")
+                  "[project]\nname='extension-member'\nversion='1.0.0'\n")
+            (expect (false? (runtime? nil)))
+            (.mkdir environment)
+            (expect (false? (runtime? nil)) "an environment without pyvenv.cfg")
+            (expect (true? (runtime? (.getParentFile (io/file (Interpreter/pythonExecutable))))))
+            ;; An older runtime or a uv-managed Python is another interpreter.
+            (expect (false? (runtime? (io/file dir "older-runtime" "bin"))))
+            (expect (not (.exists (io/file dir "uv.lock")))))))))
 
 (defdescribe
   extension-environment-probe-keeps-errors-test

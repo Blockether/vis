@@ -335,8 +335,10 @@
                (fn []
                  (expect (= (.getCanonicalFile packages) (python-runtime/prepared-project project)))
                  (expect (= ["/bundled/uv" "sync" "--check"] (first @calls)))
-                 (expect (= ["/bundled/uv" "run" "--no-sync" "python" "-I" "-B" "-c"]
-                            (vec (take 7 (second @calls)))))
+                 (expect (= ["/bundled/uv" "run" "--no-sync" "--python"
+                             (com.blockether.vispython.Interpreter/pythonExecutable)
+                             "--no-python-downloads" "python" "-I" "-B" "-c"]
+                            (vec (take 10 (second @calls)))))
                  (expect (= 2 (count @calls)))))
              (finally (doseq [file (reverse (file-seq project))]
                         (io/delete-file file true)))))))
@@ -385,6 +387,7 @@
 
         (try (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
                                                          (swap! calls conj args))
+                              #'python-runtime/runtime-environment? (constantly true)
                               #'python-runtime/project-packages (constantly project)}
                (fn []
                  (dotimes [_ 2]
@@ -393,7 +396,8 @@
                  (doseq [args @calls]
                    (expect (.isAbsolute (io/file (first args))))
                    (expect (= ["sync" "--check" "--offline" "--python"
-                               (com.blockether.vispython.Interpreter/pythonExecutable)]
+                               (com.blockether.vispython.Interpreter/pythonExecutable)
+                               "--no-python-downloads"]
                               (vec (rest args)))))
                  (expect (= "cached"
                             (:stage (first (filter #(= (.getName project) (:name %))
@@ -415,13 +419,16 @@
                                            (swap! calls conj (vec (rest args)))
                                            (when (= 1 (count @calls))
                                              (throw (ex-info "Environment needs sync" {}))))
+                                         #'python-runtime/runtime-environment? (constantly true)
                                          #'python-runtime/project-packages (constantly project)}
                           (fn []
                             (expect (= project (python-runtime/ensure-project! project)))
                             (expect (= [["sync" "--check" "--offline" "--python"
-                                         (com.blockether.vispython.Interpreter/pythonExecutable)]
+                                         (com.blockether.vispython.Interpreter/pythonExecutable)
+                                         "--no-python-downloads"]
                                         ["sync" "--python"
-                                         (com.blockether.vispython.Interpreter/pythonExecutable)]]
+                                         (com.blockether.vispython.Interpreter/pythonExecutable)
+                                         "--no-python-downloads"]]
                                        @calls))
                             (expect (= "ready"
                                        (:stage (first (filter
@@ -429,6 +436,34 @@
                                                         (python-runtime/preparation-status))))))))
                         (finally (doseq [file (reverse (file-seq project))]
                                    (io/delete-file file true)))))))
+
+(defdescribe
+  automatic-project-preparation-replaces-an-environment-from-another-python
+  (it "automatic project preparation replaces an environment from another python"
+      ;; uv's check also passes without .venv or with another interpreter,
+      ;; so preparation syncs on the embedded Python without asking it.
+      (python-runtime/ensure-library!)
+      (let [project
+            (temp-dir "vis-foreign-project")
+
+            calls
+            (atom [])]
+
+        (try (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
+                                                         (swap! calls conj (vec (rest args))))
+                              #'python-runtime/runtime-environment? (constantly false)
+                              #'python-runtime/project-packages (constantly project)}
+               (fn []
+                 (expect (= project (python-runtime/ensure-project! project)))
+                 (expect (= [["sync" "--python"
+                              (com.blockether.vispython.Interpreter/pythonExecutable)
+                              "--no-python-downloads"]]
+                            @calls))
+                 (expect (= "ready"
+                            (:stage (first (filter #(= (.getName project) (:name %))
+                                                   (python-runtime/preparation-status))))))))
+             (finally (doseq [file (reverse (file-seq project))]
+                        (io/delete-file file true)))))))
 
 ;; Regression (#276, and a gateway startup that printed `[vis extensions] 1.5.1: cached`):
 ;; an installed extension's project directory IS its version, so the bare directory
