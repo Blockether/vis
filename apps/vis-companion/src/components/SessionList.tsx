@@ -850,9 +850,10 @@ export const SessionRow = memo(function SessionRow({
                   {timeLabel(timestamp)}
                 </span>
                 {location && (
-                  <span data-session-location className="col-span-full flex min-w-0 flex-wrap gap-x-3 gap-y-1 font-mono text-meta text-dialog-hint">
-                    <span className="min-w-0 break-words">Project: {location.project}</span>
-                    <span className="min-w-0 break-words">Group: {location.group}</span>
+                  <span data-session-location className="col-span-full flex min-w-0 flex-wrap gap-x-2 gap-y-1 font-mono text-meta text-dialog-hint">
+                    <span className="min-w-0 break-words"><strong className="font-bold">Project:</strong> {location.project}</span>
+                    <span aria-hidden="true"> · </span>
+                    <span className="min-w-0 break-words"><strong className="font-bold">Group:</strong> {location.group}</span>
                   </span>
                 )}
               </span>

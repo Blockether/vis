@@ -675,9 +675,9 @@ describe('the search starts on the session the reader is in', () => {
     view.setOpenSession({ conn: view.conns[0], sid: 'in-use' });
 
     await waitFor(() => expect(rowOrder('Recent sessions')).toEqual(['fresh', 'in-use']));
-    const results = within(screen.getByRole('region', { name: 'Recent sessions' }));
-    expect(results.getByText('Project: zulu')).toBeVisible();
-    expect(results.getByText('Project: alpha')).toBeVisible();
+    expect(within(row('Recent sessions', 'fresh')).getByText('Project:')).toHaveClass('font-bold');
+    expect(row('Recent sessions', 'fresh').querySelector('[data-session-location]')).toHaveTextContent('Project: alpha · Group:');
+    expect(row('Recent sessions', 'in-use').querySelector('[data-session-location]')).toHaveTextContent('Project: zulu · Group:');
     expect(row('Recent sessions', 'in-use')).toHaveAttribute('aria-current', 'page');
   });
 
@@ -775,8 +775,12 @@ describe('explicit search locations and scopes', () => {
     view.setQuery('needle');
     const results = await screen.findByRole('region', { name: 'Matching sessions' });
     await waitFor(() => expect(within(results).getByText('Needle one')).toBeVisible());
-    expect(within(results).getAllByText('Project: Workbench')[0]).toBeVisible();
-    expect(within(results).getByText('Group: Planning')).toBeVisible();
+    const location = within(results).getByText('Needle one').closest('[data-session-id]')!
+      .querySelector<HTMLElement>('[data-session-location]')!;
+    expect(location).toHaveTextContent(/^Project: Workbench · Group: Planning$/);
+    expect(within(location).getByText('Project:')).toHaveClass('font-bold');
+    expect(within(location).getByText('Group:')).toHaveClass('font-bold');
+    expect(within(location).getByText('·')).toHaveAttribute('aria-hidden', 'true');
     const project = await screen.findByRole('combobox', { name: 'Project' });
     // With one machine there is no machine to choose.
     expect(screen.queryByRole('combobox', { name: 'Machine' })).not.toBeInTheDocument();
@@ -845,7 +849,7 @@ describe('explicit search locations and scopes', () => {
     reachEnd();
     await waitFor(() => expect(within(results).getByText('Needle 59')).toBeVisible());
     expect(screen.getByText('60 matches')).toBeVisible();
-    expect(within(results).getAllByText('Project: Workbench')).toHaveLength(60);
+    expect(within(results).getAllByText('Workbench')).toHaveLength(60);
     const last = view.requests.filter((request) => request.path.startsWith('/v1/sessions/actions/search')).at(-1)!;
     const params = new URLSearchParams(last.path.split('?')[1]);
     expect(params.get('project_id')).toBe('p1');
@@ -946,7 +950,7 @@ describe('explicit search locations and scopes', () => {
         : fetch(input, init);
     view.setQuery('needle');
     const results = await screen.findByRole('region', { name: 'Matching sessions' });
-    await waitFor(() => expect(within(results).getByText('Group: Planning')).toBeVisible());
+    await waitFor(() => expect(within(results).getByText('Planning')).toBeVisible());
     expect(screen.getByText('Some project and group choices could not be read. Reopen search to retry.')).toBeVisible();
     await userEvent.click(screen.getByRole('combobox', { name: 'Project' }));
     expect(await screen.findByRole('option', { name: 'Workbench' })).toBeVisible();

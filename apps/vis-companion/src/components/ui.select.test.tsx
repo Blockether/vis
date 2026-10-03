@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { createRef, useState } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { Button, DialogFrame, Modal, Select } from './ui';
 
@@ -103,6 +103,54 @@ describe('Select', () => {
     fireEvent.pointerDown(document.body, { pointerType: 'mouse' });
     await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument());
     expect(trigger).toHaveTextContent('Automatic');
+  });
+
+  it.each(['single', 'multiple'])('keeps the %s picker closed after a second touch on its trigger', async (mode) => {
+    // iOS can send a click to the trigger after the outside pointerdown closes the list.
+    const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
+    render(mode === 'single' ? <BackendChoice /> : <GroupFilter />);
+    const trigger = screen.getByRole('combobox');
+    await user.pointer({ keys: '[TouchA]', target: trigger });
+    expect(screen.getByRole('listbox')).toBeVisible();
+
+    await user.pointer({ keys: '[TouchA>]', target: trigger });
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    await user.pointer({ keys: '[/TouchA]', target: trigger });
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(trigger).toHaveTextContent(mode === 'single' ? 'Automatic' : 'All groups');
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    await user.pointer({ keys: '[TouchA]', target: trigger });
+    expect(screen.getByRole('listbox')).toBeVisible();
+  });
+
+  it('ignores the touch click retargeted from the inert backdrop to the trigger', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
+    render(<BackendChoice />);
+    const trigger = screen.getByRole('combobox');
+    await user.pointer({ keys: '[TouchA]', target: trigger });
+    await user.pointer({ keys: '[TouchA>]', target: document.body });
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    await user.pointer({ keys: '[/TouchA]', target: trigger });
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+
+    await user.pointer({ keys: '[TouchA]', target: trigger });
+    expect(screen.getByRole('listbox')).toBeVisible();
+  });
+
+  it.each(['keyboard', 'assistive click'])('allows %s activation after an outside touch', async (input) => {
+    const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
+    render(<BackendChoice />);
+    const trigger = screen.getByRole('combobox');
+    await user.pointer({ keys: '[TouchA]', target: trigger });
+    await user.pointer({ keys: '[TouchA]', target: document.body });
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    if (input === 'keyboard') await user.keyboard('{Enter}');
+    else fireEvent.click(trigger, { detail: 0 });
+    expect(screen.getByRole('listbox')).toBeVisible();
   });
 
   it('keeps the controlled value until the owner accepts the change, then follows external updates', async () => {

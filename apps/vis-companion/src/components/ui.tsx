@@ -2046,6 +2046,8 @@ export const Select = forwardRef<
   // Radix closes the list after every pick. A toggle in a filter is the one pick that
   // keeps it open, so the next choice is one tap away.
   const toggledRef = useRef(false);
+  // iOS can send a click after an outside press closes the list. Ignore that same gesture.
+  const dismissedPointerRef = useRef(false);
   const generatedId = useId();
   const triggerId = props.id ?? generatedId;
   const unavailable = disabled || options.length === 0;
@@ -2111,6 +2113,11 @@ export const Select = forwardRef<
         id={triggerId}
         ref={ref}
         title={label}
+        onPointerDown={() => { dismissedPointerRef.current = false; }}
+        onClick={(event) => {
+          if (dismissedPointerRef.current && event.detail > 0) event.preventDefault();
+          dismissedPointerRef.current = false;
+        }}
         className={`relative inline-flex h-8 min-w-11 max-w-full items-center justify-between gap-2 self-center rounded-none border border-edge bg-input px-2.5 font-mono text-ui text-white after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-[''] enabled:hover:text-accent-ink focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted data-[state=open]:border-accent mouse:h-7 mouse:after:content-none ${className}`}
       >
         <span className="min-w-0 truncate text-left">
@@ -2124,6 +2131,7 @@ export const Select = forwardRef<
         <SelectPrimitive.Content
           position="popper"
           ref={isolateSelectContent}
+          onPointerDownOutside={() => { dismissedPointerRef.current = true; }}
           sideOffset={8}
           collisionPadding={12}
           aria-label={props['aria-label']}
