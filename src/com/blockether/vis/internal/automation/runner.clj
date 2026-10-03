@@ -102,6 +102,25 @@
                          (assoc (into {} (filter #(< cutoff (long (val %)))) turns)
                            turn-id (now))))))
 
+(defonce ^:private run-sessions (atom {}))
+
+(defn automation-session?
+  "True while an automation run uses this session. Such a run cannot create,
+   change, run or delete automations."
+  [sid]
+  (contains? @run-sessions (str sid)))
+
+(defn- with-run-session
+  "Call `f` while `sid` counts as a session that an automation run uses."
+  [sid f]
+  (swap! run-sessions update (str sid) (fnil inc 0))
+  (try (f)
+       (finally (swap! run-sessions (fn [sessions]
+                                      (let [n (dec (long (get sessions (str sid) 1)))]
+                                        (if (pos? n)
+                                          (assoc sessions (str sid) n)
+                                          (dissoc sessions (str sid)))))))))
+
 ;; Settings
 
 (defn- setting-value [rows] (:value (first (filter #(= "automations" (:id %)) rows))))
@@ -324,13 +343,15 @@
         (get definition "model")
 
         result
-        (call :submit!
-              sid
-              (cond-> {:request (request-text definition run)
-                       :display-request (:request run)
-                       :idempotency-key (str "automation-" (:id run))}
-                model
-                (merge {:provider (get model "provider") :model (get model "model")})))
+        (with-run-session sid
+                          #(call :submit!
+                                 sid
+                                 (cond-> {:request (request-text definition run)
+                                          :display-request (:request run)
+                                          :idempotency-key (str "automation-" (:id run))}
+                                   model
+                                   (merge {:provider (get model "provider")
+                                           :model (get model "model")}))))
 
         answer
         (answer-text result)

@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.foundation.core
   (:require [clojure.string :as str]
             [com.blockether.vis.extension :as ext]
+            [com.blockether.vis.internal.automation.host :as automation-host]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.session.goals :as goals]
             [com.blockether.vis.internal.session.agents :as agents]
@@ -21,7 +22,8 @@
 (defn- combined-prompt
   "Render the toggle-gated core guidance."
   [env]
-  (->> [(drafts/prompt env) (introspection/prompt env) (agents/prompt env) (council/prompt env)]
+  (->> [(drafts/prompt env) (introspection/prompt env) (agents/prompt env) (council/prompt env)
+        (automation-host/prompt env)]
        (remove str/blank?)
        (str/join "\n\n")))
 
@@ -109,6 +111,7 @@
                                                    environment/environment-symbols
                                                    introspection/all-symbols
                                                    council-host/symbols
+                                                   automation-host/symbols
                                                    goals/symbols
                                                    agents/symbols
                                                    shell/shell-symbols

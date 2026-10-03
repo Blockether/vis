@@ -147,6 +147,23 @@
             (expect (= "failed" (:status missing)))
             (expect (empty? (calls-of calls :create)))
             (expect (empty? (calls-of calls :delete)))))))
+  (it "marks the session of a running turn as an automation session"
+      (let [during (atom nil)]
+        (with-runner true
+                     (fn [sid _]
+                       (reset! during (runner/automation-session? sid))
+                       ((answer "Done.") sid nil))
+                     (fn [db _]
+                       (let [run (settled db
+                                          (get (runner/run-now! db
+                                                                (create! db
+                                                                         {"target" {"mode" "session"
+                                                                                    "session_id"
+                                                                                    "s-old"}}))
+                                               "id"))]
+                         (expect (= "completed" (:status run)))
+                         (expect (true? @during))
+                         (expect (false? (runner/automation-session? "s-old"))))))))
   (it "skips a run that the setting blocks and sends deliver-only text without a model"
       (with-runner false
                    (answer "unused")

@@ -326,6 +326,13 @@
    "council.subagents" ["List subagents" "Listed subagents" false]
    "council.cancel" ["Cancel subagent" "Cancelled subagent" false]
    "council.route" ["Choose agent model" "Chose agent model" false]
+   "automations.list" ["List automations" "Listed automations" false]
+   "automations.get" ["Read automation" "Read automation" false]
+   "automations.create" ["Create automation" "Created automation" false]
+   "automations.update" ["Update automation" "Updated automation" false]
+   "automations.delete" ["Delete automation" "Deleted automation" false]
+   "automations.run" ["Run automation" "Started automation run" false]
+   "automations.runs" ["List automation runs" "Listed automation runs" false]
    "read_session" ["Read session" "Read session" true]
    "get_session" ["Inspect session" "Inspected session" true]
    "list_sessions" ["Find sessions" "Found sessions" true]
@@ -577,6 +584,52 @@
                         (str " · " (str/replace (scalar effective) "_" " "))))
        "content" []})))
 
+(defn- automation-state [value] (if (true? (field value "enabled")) "On" "Paused"))
+
+(defn- automation-presentation
+  "Names, states, run statuses and counts. Automation results never hold a secret."
+  [op value]
+  (let [headline (second (get tool-headlines op))]
+    (case op
+      "automations.list"
+      (let [items (field value "automations")]
+        {"headline" headline
+         "summary" (summary-line
+                     [(if (seq items) (counted-label (count items) "automation") "No automations")
+                      (when (false? (field value "is_enabled")) "Automations are off")])
+         "content" (if (seq items)
+                     [{"type" "table"
+                       "columns" ["Automation" "State"]
+                       "rows" (mapv (fn [item]
+                                      [(str (field item "name")) (automation-state item)])
+                                    items)}]
+                     [])})
+
+      "automations.runs"
+      (let [items (field value "runs")]
+        {"headline" headline
+         "summary" (if (seq items) (counted-label (count items) "run") "No runs")
+         "content" (if (seq items)
+                     [{"type" "table"
+                       "columns" ["Automation" "Status"]
+                       "rows" (mapv (fn [item]
+                                      [(str (field item "automation_name"))
+                                       (label (field item "status"))])
+                                    items)}]
+                     [])})
+
+      "automations.run"
+      {"headline" headline
+       "summary" (summary-line [(field value "automation_name") (label (field value "status"))])
+       "content" []}
+
+      "automations.delete"
+      {"headline" headline "summary" (str (field value "name")) "content" []}
+
+      {"headline" headline
+       "summary" (summary-line [(field value "name") (automation-state value)])
+       "content" []})))
+
 (defn- read-session-presentation
   "A compact overview with complete requests and unique failures behind section disclosure."
   [value]
@@ -805,6 +858,7 @@
           (cond (contains? summary-only-results op) []
                 (contains? #{"patch" "read_session"} op) []
                 (str/starts-with? op "council.") []
+                (str/starts-with? op "automations.") []
                 (and (contains? #{"doc" "main_agent_instructions"} op) text) [{"type" "markdown"
                                                                                "text" text}]
                 (and (= op "defs") text) [{"type" "code" "language" "python" "text" text}]
@@ -822,6 +876,7 @@
 
       (cond (= op "read_session") (read-session-presentation value)
             (str/starts-with? op "council.") (council-presentation op value)
+            (str/starts-with? op "automations.") (automation-presentation op value)
             (or (= op "shell") (str/starts-with? op "_shell-")) (shell-presentation value)
             :else {"headline" headline "summary" summary "content" content}))))
 

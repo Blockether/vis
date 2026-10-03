@@ -32,7 +32,9 @@
           end-only
           '#{cat patch _shell-logs _shell-type council.read council.get council.threads
              council.members draft-status main-agent-instructions update_goal council.publish
-             council.subagents council.cancel council.route}]
+             council.subagents council.cancel council.route automations.list automations.get
+             automations.create automations.update automations.delete automations.run
+             automations.runs}]
 
       (expect (= end-only
                  (set (keep #(when (false? (get-in % [:ext.symbol/activity :show-start]))
