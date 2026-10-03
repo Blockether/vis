@@ -23,6 +23,37 @@ describe('session status colors', () => {
   });
 });
 
+describe('project heading height', () => {
+  it('updates the sticky offset when counts wrap and releases the observer on unmount', () => {
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(62);
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    let resize = () => {};
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resize = callback; }
+      observe = observe;
+      disconnect = disconnect;
+    });
+    try {
+      const { container, unmount } = render(
+        <section data-project-root="/project"><SectionHeader>Project</SectionHeader></section>,
+      );
+      const section = container.querySelector('section')!;
+      expect(section.style.getPropertyValue('--project-header-height')).toBe('62px');
+      expect(observe).toHaveBeenCalledWith(section.querySelector('header'));
+      height.mockReturnValue(80);
+      resize();
+      expect(section.style.getPropertyValue('--project-header-height')).toBe('80px');
+      unmount();
+      expect(disconnect).toHaveBeenCalledOnce();
+      expect(section.style.getPropertyValue('--project-header-height')).toBe('');
+    } finally {
+      height.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe('machine selection', () => {
   // Regression, user report (the leading square was crossed out and the right dot
   // should become a full-tile notification tint): one chip, two independent states.
@@ -374,6 +405,7 @@ describe('project pages', () => {
     const header = actions.parentElement as HTMLElement;
 
     expect(header.tagName).toBe('HEADER');
+    expect(header).toHaveClass('min-h-14', 'mouse:min-h-12', 'shadow-project');
     // The band's rule reaches the cluster through its LAST child, so the cluster is it.
     expect(header.lastElementChild).toBe(actions);
     // One shape for every section: the band never becomes a grid to make room for pages.

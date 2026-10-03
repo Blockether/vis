@@ -110,6 +110,11 @@ function expectCounts(input: number, live: number, unread: number, name = NAME, 
     if (count > 0) expect(scope.getByText(`${count} ${label}`)).toBeVisible();
     else expect(scope.queryByText(new RegExp(`^[0-9]+ ${label}$`))).toBeNull();
   }
+  // Regression: group statuses need neutral dots, without leading or trailing separators.
+  const counts = [input, live, unread].filter((count) => count > 0);
+  const separators = scope.queryAllByText('·');
+  expect(separators).toHaveLength(Math.max(0, counts.length - 1));
+  for (const separator of separators) expect(separator).toHaveAttribute('aria-hidden', 'true');
 }
 
 beforeEach(() => { localStorage.clear(); });

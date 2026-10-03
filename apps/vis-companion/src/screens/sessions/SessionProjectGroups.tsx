@@ -296,7 +296,7 @@ function SetHeader({
 }) {
   return (
     <div
-      className={`flex min-h-14 flex-wrap items-center gap-x-2 gap-y-0 border-t border-b border-b-edge-strong py-1 pl-4 max-sm:sticky max-sm:top-13 max-sm:z-5 max-sm:min-h-11.5 max-sm:py-0 mouse:min-h-8 mouse:py-0 ${label === 'Groups' ? 'border-t-set-groups-border bg-set-groups' : 'border-t-set-sessions-border bg-set-sessions'}`}
+      className={`flex min-h-11 flex-wrap items-center gap-x-2 gap-y-0 border-t border-b border-b-edge-strong pl-4 max-sm:sticky max-sm:top-[var(--project-header-height,3.5rem)] max-sm:z-5 mouse:min-h-8 ${label === 'Groups' ? 'border-t-set-groups-border bg-set-groups' : 'border-t-set-sessions-border bg-set-sessions'}`}
     >
       <span className="font-mono text-ui font-medium text-white">{label}</span>
       {isArchived && <span className="font-mono text-ui text-white">Archived</span>}
@@ -509,9 +509,12 @@ function GroupBand({
                 <span id={statusId} className="sr-only">
                   {statuses.map((item) => item.description).join(' ')}
                 </span>
-                {statuses.map((item) => (
-                  <span key={item.label} aria-hidden="true" className={`whitespace-nowrap font-semibold ${sessionStatusTone(item.label)}`}>
-                    {item.count} {item.label}
+                {statuses.map((item, index) => (
+                  <span key={item.label} aria-hidden="true" className="inline-flex items-center gap-2 whitespace-nowrap">
+                    {index > 0 && <span aria-hidden="true">·</span>}
+                    <span className={`font-semibold ${sessionStatusTone(item.label)}`}>
+                      {item.count} {item.label}
+                    </span>
                   </span>
                 ))}
               </span>

@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, userEvent, within } from 'storybook/test';
+import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
 import { STORY_FLEET_CONNS, STORY_NEWER_PROJECT, storyFleetFetch } from '../dev/story-data';
 import { machineKey } from '../lib/fleet';
@@ -121,6 +121,7 @@ export const GroupStatuses: Story = {
     const badges = await Promise.all(['12 HITL', '11 LIVE', '13 NEW'].map((text) =>
       within(toggle).findByText(text),
     ));
+    await expect(within(toggle).getAllByText('·')).toHaveLength(2);
     await expect(toggle).toHaveAccessibleDescription(
       '12 sessions need input. 11 live sessions. 13 sessions with new answers.',
     );
@@ -147,11 +148,17 @@ export const GroupStatuses: Story = {
         }
         for (const width of [320, 375, 393, 626]) {
           screen.style.width = `${width}px`;
-          if (scale === 1 && width === 626) {
-            await expect(header.getBoundingClientRect().height).toBeLessThan(48);
+          if (scale === 1 && width === 626 && header.getBoundingClientRect().width > 0) {
+            await expect(Math.round(header.getBoundingClientRect().height)).toBeGreaterThanOrEqual(48);
+            await expect(header.getBoundingClientRect().height).toBeGreaterThan(toggle.parentElement!.getBoundingClientRect().height);
+            await expect(getComputedStyle(header).boxShadow).not.toBe('none');
             await expect(getComputedStyle(namesAndCounts[1].name).fontSize).toBe(
               getComputedStyle(namesAndCounts[0].name).fontSize,
             );
+          }
+          if (header.getBoundingClientRect().width > 0 && matchMedia('(width < 40rem)').matches) {
+            const setHeader = page.getByText('Groups').parentElement!;
+            await waitFor(() => expect(parseFloat(getComputedStyle(setHeader).top)).toBe(header.offsetHeight));
           }
           for (const { name, counts, parent } of namesAndCounts) {
             const bounds = parent.getBoundingClientRect();
@@ -181,6 +188,10 @@ export const GroupStatuses: Story = {
     const expanded = page.getByRole('button', { name: `Collapse ${STATUS_NAME}` });
     await expect(expanded).toHaveTextContent(/12 HITL.*11 LIVE.*13 NEW/);
     await expect(canvasElement.querySelector('[data-session-id="group-status-0"]')).toHaveAttribute('data-session-id', 'group-status-0');
+    const sessionRow = canvasElement.querySelector('[data-session-id="group-status-0"]')!;
+    if (header.getBoundingClientRect().width > 0) {
+      await expect(header.getBoundingClientRect().height).toBeGreaterThan(sessionRow.getBoundingClientRect().height);
+    }
     await userEvent.click(expanded);
     await expect(page.getByRole('button', { name: `Expand ${STATUS_NAME}` })).toHaveTextContent(
       /12 HITL.*11 LIVE.*13 NEW/,

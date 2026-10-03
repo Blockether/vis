@@ -580,9 +580,16 @@
           (min before (count updated))))))
 
 (defn- row-height
-  "Saved sessions get three lines; project and section headings use one."
+  "Project headings use three lines, saved sessions two, and group headings one."
   [entry]
-  (if (= :project-session (:kind entry)) 3 1))
+  (case (:kind entry)
+    :project-select
+    3
+
+    :project-session
+    2
+
+    1))
 
 (defn- fit-back
   "Fill the visible area backwards from `end` with whole rows only."
@@ -606,6 +613,9 @@
         capacity
         (max 0 (- (long rows) (if (get-in db [:project-sidebar :error]) 8 7)))
 
+        project-height
+        (long (row-height {:kind :project-select}))
+
         index
         (max 0 (long (or (get-in db [:project-sidebar :index]) 0)))
 
@@ -628,10 +638,10 @@
 
     (if (and (seq visible)
              (not (get-in db [:project-sidebar :search]))
-             (> capacity 1)
+             (> capacity project-height)
              (not= :project-select (:kind (first visible))))
       (let [tail
-            (fit-back entries end (dec capacity))
+            (fit-back entries end (- capacity project-height))
 
             parent
             (first (filter #(and (= :project-select (:kind %))
@@ -1269,6 +1279,7 @@
                                 (= (str (get project "id")) (:active-project-id db))
 
                                 (and (:tab-id entry) (= (:tab-id entry) (:active-tab-id db))))
+                      text-row (if (= :project-select kind) (inc (long row)) row)
                       focused? (and (:focused? sidebar) (= index (:index sidebar)))
                       selected-ink (when (dark-selection? entry active? focused?) t/terminal-bg)
                       status (p/truncate-cols (row-status entry sidebar width) (max 0 (- width 9)))
@@ -1295,47 +1306,48 @@
                                  t/dialog-fg))
                            t/dialog-bg)
             (p/fill-rect! g (inc left) row (max 0 (- width 2)) (row-height entry))
-            (p/styled g
-                      (if (or (#{:project-select :project-set} kind) active? focused? selected-ink)
-                        [p/BOLD]
-                        [])
-                      (p/put-str! g
-                                  (inc row-left)
-                                  row
-                                  (dlg/ellipsize (str " "
-                                                      (case kind
-                                                        :project-select
-                                                        (if (contains? sidebar :pages)
-                                                          (if (:expanded? entry) "▾ " "▸ ")
-                                                          "  ")
+            (when (= :project-select kind)
+              (p/set-colors! g t/dialog-fg (t/mix-color t/terminal-bg t/text-fg 0.12))
+              (p/fill-rect! g (inc left) (+ (long row) 2) (max 0 (- width 2)) 1)
+              (p/set-colors! g (or selected-ink t/dialog-fg) t/dialog-bg))
+            (p/styled
+              g
+              (if (or (#{:project-select :project-set} kind) active? focused? selected-ink)
+                [p/BOLD]
+                [])
+              (p/put-str!
+                g
+                (inc row-left)
+                text-row
+                (dlg/ellipsize
+                  (str
+                    " "
+                    (case kind
+                      :project-select
+                      (if (contains? sidebar :pages) (if (:expanded? entry) "▾ " "▸ ") "  ")
 
-                                                        :project-group
-                                                        (if (:folded? entry) "▸ " "▾ ")
+                      :project-group
+                      (if (:folded? entry) "▸ " "▾ ")
 
-                                                        :project-session
-                                                        "  "
+                      :project-session
+                      "  "
 
-                                                        :project-set
-                                                        (if (#{:groups :sessions} (:set entry))
-                                                          (if (:folded? entry) "▸ " "▾ ")
-                                                          "  ")
+                      :project-set
+                      (if (#{:groups :sessions} (:set entry)) (if (:folded? entry) "▸ " "▾ ") "  ")
 
-                                                        (:project-page :project-group-page)
-                                                        "  "
+                      (:project-page :project-group-page)
+                      "  "
 
-                                                        :project-state
-                                                        "  "
+                      :project-state
+                      "  "
 
-                                                        "  ")
-                                                      label)
-                                                 (max 0 (- name-width
-                                                           (if (#{:project-select :project-group} kind)
-                                                             1
-                                                             2))))))
+                      "  ")
+                    label)
+                  (max 0 (- name-width (if (#{:project-select :project-group} kind) 1 2))))))
             (paint-row-status! g
                                (row-status-parts entry sidebar width)
                                status-col
-                               row
+                               text-row
                                (p/display-width status)
                                (or selected-ink t/dialog-hint-key))
             (when (= :project-session kind)

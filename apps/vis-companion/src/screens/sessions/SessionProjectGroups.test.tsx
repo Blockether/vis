@@ -336,9 +336,9 @@ describe('ProjectGroup groups', () => {
     expect(groupsHeader).toHaveClass(
       'border-t', 'border-b', 'border-t-set-groups-border', 'border-b-edge-strong', 'bg-set-groups',
     );
-    expect(groupsHeader).toHaveClass('min-h-14', 'py-1', 'mouse:min-h-8', 'mouse:py-0');
-    // Phone set headings fit the pager's 44px touch target plus their border rules.
-    expect(groupsHeader).toHaveClass('max-sm:min-h-11.5', 'max-sm:py-0');
+    expect(groupsHeader).toHaveClass('min-h-11', 'mouse:min-h-8');
+    // Sticky set headings follow the project's measured height when counts wrap.
+    expect(groupsHeader).toHaveClass('max-sm:top-[var(--project-header-height,3.5rem)]');
     expect(within(groupsHeader).getByText('Groups')).toHaveClass(
       'font-mono', 'text-ui', 'font-medium', 'text-white',
     );
@@ -357,8 +357,8 @@ describe('ProjectGroup groups', () => {
       const row = list.querySelector(`[data-session-id="${id}"]`)!;
       expect(row.closest('[data-swipe-track]')?.firstElementChild).toHaveClass('bg-set-sessions');
     }
-    expect(sessionsHeader).toHaveClass('min-h-14', 'py-1', 'mouse:min-h-8', 'mouse:py-0');
-    expect(sessionsHeader).toHaveClass('max-sm:min-h-11.5', 'max-sm:py-0');
+    expect(sessionsHeader).toHaveClass('min-h-11', 'mouse:min-h-8');
+    expect(sessionsHeader).toHaveClass('max-sm:top-[var(--project-header-height,3.5rem)]');
     expect(within(sessionsHeader).getByText('Sessions')).toHaveClass(
       'font-mono', 'text-ui', 'font-medium', 'text-white',
     );

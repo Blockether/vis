@@ -4,6 +4,7 @@
  */
 import {
   forwardRef,
+  useLayoutEffect,
   useRef,
   useState,
   type ButtonHTMLAttributes,
@@ -20,11 +21,11 @@ import { IconButton, overlayLayer } from './ui';
 const HEADER_TYPE = 'text-title';
 
 /**
- * The sticky project band owns its top and bottom hairlines in every fold state.
- * Session rows draw only their internal separators, so the closing edge is never doubled.
+ * Project headings stay taller than their groups and session rows.
+ * A soft lower shadow separates each sticky heading from the content below.
  */
 const HEADER_BAND =
-  'min-h-11 items-stretch mouse:min-h-10 z-10 border-y border-project-header-border [--dialog-hint:var(--footer-strong)]';
+  'min-h-14 items-stretch mouse:min-h-12 z-10 border-y border-project-header-border shadow-project [--dialog-hint:var(--footer-strong)]';
 
 /**
  * The session list's pull gesture takes over the app bar with the action a release would take.
@@ -113,8 +114,24 @@ export function SectionHeader({
   /** A pointer's secondary click opens the band's own menu, the same one as its `⋯`. */
   onContextMenu?: MouseEventHandler<HTMLElement>;
 }) {
+  const headerRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    const project = header?.closest<HTMLElement>('[data-project-root]');
+    if (!header || !project) return;
+    // Wrapped counts must not leave sticky set headings under the project heading.
+    const measure = () => project.style.setProperty('--project-header-height', `${header.offsetHeight}px`);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    return () => {
+      observer.disconnect();
+      project.style.removeProperty('--project-header-height');
+    };
+  }, []);
   return (
     <header
+      ref={headerRef}
       className={`${HEADER_BAND} sticky top-0 flex ${
         isExpanded
           ? 'bg-project-header-active [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header-active))]'

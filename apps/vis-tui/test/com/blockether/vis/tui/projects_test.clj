@@ -424,7 +424,7 @@
         (expect (= [:select project-b]
                    (projects/key-action
                      db
-                     (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 4 5)))))))))
+                     (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 4 8)))))))))
 
 (defdescribe
   project-sidebar-header-fit-test
@@ -679,7 +679,7 @@
         (expect (str/includes? (nth lines 14) "Project lookup failed"))
         (doseq [label ["? keys" "g menu" "s settings" "a add project"]]
           (expect (str/includes? (nth lines 16) label)))
-        (expect (= 8
+        (expect (= 2
                    (count (projects/visible-entries
                             (assoc-in db [:project-sidebar :items] (vec (repeat 30 project-a)))
                             16)))))))
@@ -696,7 +696,7 @@
                                      :paint!
                                      (fn [{:keys [screen]}]
                                        (projects/paint! (.newTextGraphics screen) db cols 18))})
-              row (nth (str/split-lines (cap/frame-text capture)) (+ 4 index))]
+              row (nth (str/split-lines (cap/frame-text capture)) (+ 5 (* 3 index)))]
 
           (expect (nil? (:error capture)))
           (expect (= fits? (str/includes? row label)))
@@ -726,7 +726,7 @@
                                      (projects/paint! (.newTextGraphics screen) db cols rows))})
 
             row
-            (nth (str/split-lines (cap/frame-text capture)) 4)]
+            (nth (str/split-lines (cap/frame-text capture)) 5)]
 
         (expect (= "CryptoSyf" (projects/project-label {"name" (str home "/CryptoSyf")})))
         (expect (= "Vis" (projects/project-label project-a)))
@@ -748,7 +748,7 @@
                        visible
                        (projects/visible-entries {:project-sidebar sidebar} 16)]
 
-                   (expect (= 9 (count visible)))
+                   (expect (= 3 (count visible)))
                    (expect (= 50 (:index (last visible)))))))
 
 (defn review-terminal
@@ -1163,10 +1163,11 @@
             (expect (str/includes? text "2 tabs | 1 HITL · 1 LIVE"))
             (expect (re-find #"Mobile navigation +HITL" text))
             (expect (not (str/includes? text "! Mobile")))
-            (expect (= (inc (get-in (first (filter #(and (= :project-select (:kind %))
-                                                         (= "b" (get-in % [:project "id"])))
-                                                   (.current projects/hit-map)))
-                                    [:bounds :row]))
+            (expect (= (+ 3
+                          (get-in (first (filter #(and (= :project-select (:kind %))
+                                                       (= "b" (get-in % [:project "id"])))
+                                                 (.current projects/hit-map)))
+                                  [:bounds :row]))
                        row)
                     "The alert appears immediately below its project")
             (let [col (inc (long (str/index-of (nth (str/split-lines text) row) "HITL")))
@@ -1210,7 +1211,7 @@
                        visible
                        (projects/visible-entries db 16)]
 
-                   (expect (= 9 (count visible)))
+                   (expect (= 7 (count visible)))
                    (expect (= :project-select (:kind (first visible)))
                            "Keep the parent visible above a long waiting group")
                    (expect (= 31 (:index (last visible))))
@@ -1392,7 +1393,7 @@
             (expect (nil? (:error capture)))
             (expect (str/includes? text "3 tabs | 1 HITL · 1 LIVE · 1 NEW"))
             (expect (re-find #"Keyboard navigation +New" text))
-            (expect (= 7 row))
+            (expect (= 11 row))
             (let [cell (get-in capture
                                [:frames 0 row
                                 (str/index-of (nth (str/split-lines text) row) "New")])]
@@ -1497,7 +1498,7 @@
                        visible
                        (projects/visible-entries db 16)]
 
-                   (expect (= 9 (count visible)))
+                   (expect (= 7 (count visible)))
                    (expect (= :project-select (:kind (first visible))))
                    (expect (= 30 (:unread (first visible))))
                    (expect (= 31 (:index (last visible))))
@@ -1692,6 +1693,26 @@
 
 (defdescribe
   sidebar-header-status-format-test
+  (it "keeps project headings taller than compact groups and sessions"
+      (expect (= 3 (#'projects/row-height {:kind :project-select})))
+      (expect (= 2 (#'projects/row-height {:kind :project-session})))
+      (expect (= 1 (#'projects/row-height {:kind :project-group}))))
+  (it "separates group statuses with neutral dots at each rail width"
+      (doseq [width
+              [32 40 60]
+
+              [counts expected]
+              [[{} []] [{:running 2} [["2 LIVE" "LIVE"]]]
+               [{:running 2 :unread 3} [["2 LIVE" "LIVE"] [" · " nil] ["3 NEW" "NEW"]]]
+               [{:needs-input 1 :running 2 :unread 3}
+                [["1 HITL" "HITL"] [" · " nil] ["2 LIVE" "LIVE"] [" · " nil] ["3 NEW" "NEW"]]]]]
+
+        (expect (= (if (< width 48)
+                     (mapv (fn [[text tone]]
+                             [(if tone text (str/trim text)) tone])
+                           expected)
+                     expected)
+                   (#'projects/row-status-parts (merge {:kind :project-group} counts) nil width)))))
   (it "separates session totals from uppercase status counts"
       (doseq [[counts expected] [[{} "14 sessions"] [{:running 2} "14 sessions | 2 LIVE"]
                                  [{:needs-input 1 :unread 3} "14 sessions | 1 HITL · 3 NEW"]
@@ -2331,7 +2352,7 @@
             (get-in (first (filter match hits)) [:bounds :row]))
 
           project-row
-          (row-of #(= :project-select (:kind %)))
+          (inc (row-of #(= :project-select (:kind %))))
 
           groups-row
           (row-of #(and (= :project-set (:kind %)) (= :groups (:set %))))
@@ -2349,7 +2370,7 @@
           (row-of #(= "loose-id" (get-in % [:session "id"])))
 
           companion-row
-          (row-of #(= "b" (get-in % [:project "id"])))
+          (inc (row-of #(= "b" (get-in % [:project "id"]))))
 
           column
           (fn [row text]
@@ -2370,9 +2391,9 @@
         (expect (true? (get-in capture [:frames 0 row (column row label) :bold])))))))
 
 (defdescribe
-  project-sidebar-section-headings-are-single-line-test
+  project-sidebar-section-headings-stay-compact-test
   (it
-    "project sidebar section headings are single line"
+    "keeps section headings compact below taller project headings"
     (let [db
           (-> (fixture-db)
               (assoc-in [:project-sidebar :expanded] #{"a"})
@@ -2410,10 +2431,11 @@
           (first (filter #(and (= :project-set (:kind %)) (= :sessions (:set %))) hits))]
 
       (expect (nil? (:error capture)))
-      (doseq [hit [project groups sessions]]
+      (expect (= 3 (get-in project [:bounds :height])))
+      (doseq [hit [groups sessions]]
         (expect (= 1 (get-in hit [:bounds :height]))))
-      (expect (str/includes? (nth lines (get-in project [:bounds :row])) "Vis"))
-      (expect (str/includes? (nth lines (get-in project [:bounds :row])) "2 sessions"))
+      (expect (str/includes? (nth lines (inc (get-in project [:bounds :row]))) "Vis"))
+      (expect (str/includes? (nth lines (inc (get-in project [:bounds :row]))) "2 sessions"))
       (expect (str/includes? (nth lines (get-in groups [:bounds :row])) "▾ Groups"))
       (expect (str/includes? (nth lines (get-in sessions [:bounds :row])) "▾ Sessions"))
       (expect (= [:toggle-groups "a"] (:action groups)))
@@ -2562,7 +2584,11 @@
           (expect (nil? (:error capture)))
           (expect (not (str/includes? (nth lines row) "•")))
           (expect (every? #(= highlight (get-in capture [:frames 0 % 1 :bg]))
-                          (range row (+ row height))))
+                          (range row (+ row height (if (= :project-select (:kind hit)) -1 0)))))
+          (when (= :project-select (:kind hit))
+            (expect (= (#'theme-test/rgb-tuple
+                        (theme/mix-color theme/terminal-bg theme/text-fg 0.12))
+                       (get-in capture [:frames 0 (+ row 2) 1 :bg]))))
           (when (= :project-group (:kind hit))
             (expect (= (#'theme-test/rgb-tuple theme/dialog-fg)
                        (get-in capture [:frames 0 row 6 :fg])))
@@ -2584,11 +2610,11 @@
             (fn [ink fraction]
               (#'theme-test/rgb-tuple (theme/mix-color theme/terminal-bg ink fraction)))]
 
-        (expect (str/includes? (nth lines 4) "Vis"))
-        (expect (not (str/includes? (nth lines 4) "● Vis")))
-        (expect (not (str/includes? (nth lines 4) "▸ Vis")))
+        (expect (str/includes? (nth lines 5) "Vis"))
+        (expect (not (str/includes? (nth lines 5) "● Vis")))
+        (expect (not (str/includes? (nth lines 5) "▸ Vis")))
         (expect (= (palette theme/header-active-tab-bg 0.10) (get-in capture [:frames 0 4 1 :bg])))
-        (expect (= (palette theme/text-fg 0.04) (get-in capture [:frames 0 5 1 :bg])))))))
+        (expect (= (palette theme/text-fg 0.04) (get-in capture [:frames 0 7 1 :bg])))))))
 
 (defdescribe
   saved-session-grid-separates-title-and-status-test
@@ -2631,8 +2657,8 @@
           (get-in capture [:frames 0 live-row (- (:width (projects/geometry db 168 24)) 7)])]
 
       (expect (nil? (:error capture)))
-      (expect (= 3 (get-in live [:bounds :height])))
-      (expect (= (+ live-row 3) idle-row))
+      (expect (= 2 (get-in live [:bounds :height])))
+      (expect (= (+ live-row 2) idle-row))
       (expect (str/includes? (nth lines live-row) "Writing the tests"))
       (expect (str/includes? (nth lines live-row) "* Live"))
       (expect (str/includes? (nth lines idle-row) "Idle"))
@@ -4759,7 +4785,7 @@
 
         (with-redefs [state/app-db (atom db)]
           (let [{:keys [width anchor-row]} (#'screen/sidebar-dialog-region session-entry)]
-            (expect (= 9 anchor-row))
+            (expect (= 10 anchor-row))
             (expect (= (:width (projects/geometry db 144 24)) (width 144 24)))
             ;; A row known only by its painted bounds anchors on its last row.
             (expect (= 12
