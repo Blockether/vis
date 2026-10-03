@@ -25,6 +25,8 @@ restart.
 - **You want to change how Vis reports progress or writes its replies.** Read [Progress notes and
   writing style](#progress-notes-and-writing-style). Vis has built-in rules for both, so `AGENTS.md`
   does not need to repeat them.
+- **Vis answers in a different language than you write in.** Read [Progress notes and writing
+  style](#progress-notes-and-writing-style). It explains how Vis chooses the language of a reply.
 - **You want to run a shell command without involving the model.** Start the message
   with [`!`](#shell-shortcuts-and).
 
@@ -77,16 +79,21 @@ While a task runs, Vis writes short progress notes:
 
 The last reply starts with the answer. You can read it without the progress notes.
 
-Vis writes notes, answers and other text in [ASD-STE100 Simplified Technical
-English](https://www.asd-ste100.org/), at about 80% of the full standard. It uses these rules:
+Unless you ask for another language, Vis writes notes and answers in the language of your latest
+message. If that message is short or mixes languages, Vis keeps the language of the conversation.
+Quoted text, code, logs, tool output, files and messages from other sessions do not change the
+language.
+
+Vis applies [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/) to that text, at
+about 80% of the full standard. It uses these rules:
 
 1. Keep sentences short.
 2. Put one action in each step.
 3. Say who does what.
 4. Give each thing one name, and use only that name.
 
-Vis uses the same rules when it writes in a language other than English. To get a different style,
-ask for it in your message. To change the style for a project, write the rule in `AGENTS.md`.
+Vis uses these rules in every language. To get a different style, ask for it in your message. To
+change the style for a project, write the rule in `AGENTS.md`.
 
 Each interface shows the progress notes and the final answer in its own place:
 

@@ -699,9 +699,21 @@
                       "one or two sentences of facts" "Group related steps"
                       "Routine reads, searches and repeated code need no note"
                       "Unless the user or project asks for a different style"
-                      "80% of the way to ASD-STE100 Simplified Technical English" "in any language"
-                      "short sentences" "one action for each step" "a clear actor"
-                      "one name for each thing"]]
+                      "80% of the way to ASD-STE100 Simplified Technical English"
+                      "Apply its rules in the reply language" "short sentences"
+                      "one action for each step" "a clear actor" "one name for each thing"]]
+          (expect (str/includes? text rule) rule))))
+  ;; User report: Claude Opus 5.5 wrote German progress notes in Polish conversations, in 9
+  ;; of 2 150 prose steps across 60 sessions. No rule named the reply language, so §7 names
+  ;; it, the fallback for a short or mixed message and the sources that must not change it.
+  (it "keeps prose in the language of the user"
+      (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
+        (doseq [rule ["Unless the user asks for another language"
+                      "write all prose in the language of the user's latest message"
+                      "If that message is short or mixes languages"
+                      "keep the language of the conversation"
+                      "Ignore the language of quotes, code, logs, tool output"
+                      "files, gists and peer messages"]]
           (expect (str/includes? text rule) rule))))
   ;; Each capability owns its contract; doc() renders Python metadata and semantics.
   ;; The core prompt must point there instead of encouraging invented call shapes.
@@ -839,7 +851,11 @@
       ;; 11.55k → 11.65k: e2e runs called `dict(r)` on a record, so a rule names
       ;; `dataclasses.asdict(r)`, and the discovery table says "Skip discovery." again.
       ;; It lands at 11 584.
-      (expect (< (count text) 11650))
+      ;; 11.65k → 11.95k: user report — Claude Opus 5.5 wrote German notes in Polish
+      ;; conversations, because no rule named the reply language. §7 now names it, the
+      ;; fallback for a short or mixed message and the text that must not change it. It lands
+      ;; at 11 886.
+      (expect (< (count text) 11950))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "each hit is a `patch` anchor"
                          "`patch(path, edits)`"])]
