@@ -45,6 +45,11 @@
                       {:method method :path path :status (:status r)})))
     (:body r)))
 
+(defn- log-tail
+  "Return the last 40 lines of `file`. The suite deletes its directory, so a failure carries the log."
+  [^File file]
+  (if (.isFile file) (str/join "\n" (take-last 40 (str/split-lines (slurp file)))) ""))
+
 (defn- wait-health!
   [port ^Process process]
   (loop [left 120]
@@ -152,7 +157,10 @@
     (let [process (.start pb)]
       (try (wait-health! port process)
            {:port port :process process}
-           (catch Exception e (#'binary/kill-tree! process) (throw e))))))
+           (catch Exception e
+             (#'binary/kill-tree! process)
+             (throw
+               (ex-info (str (ex-message e) "\n" (log-tail (io/file dir "gateway.log"))) {} e)))))))
 
 (defdescribe
   native-rooms-boundary
@@ -204,7 +212,9 @@
               (when-not (and relay-url
                              (or (:relay-url *deployment*)
                                  (str/starts-with? relay-url "http://127.0.0.1:")))
-                (throw (ex-info "Local Rooms Worker did not start" {})))
+                (throw (ex-info (str "Local Rooms Worker did not start\n"
+                                     (log-tail (io/file dir "relay.log")))
+                                {})))
 
               owner
               (gateway! owner-dir (:port provider))

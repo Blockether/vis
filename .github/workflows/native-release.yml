@@ -294,6 +294,16 @@ jobs:
         env:
           VIS_NATIVE_BIN: ${{ matrix.bin }}
         run: clojure -M:test-native --namespace com.blockether.vis.native-speech-startup-test
+      # The native Rooms suite runs the relay Worker in local workerd and D1.
+      # Skip install scripts, because this job holds a token that can write releases.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/vis-companion-relay/package-lock.json
+      - name: Install the relay test dependencies
+        working-directory: apps/vis-companion-relay
+        run: npm ci --ignore-scripts
       - name: Test the native binaries
         shell: bash
         env:
@@ -574,6 +584,16 @@ jobs:
           target/tui-release-bundle/vis-tui --version
           target/tui-release-bundle/vis-tui --help >/dev/null
           target/tui-release-bundle/vis-tui --check-audio
+      # The native Rooms suite runs the relay Worker in local workerd and D1.
+      # Skip install scripts, because this job holds a token that can write releases.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/vis-companion-relay/package-lock.json
+      - name: Install the relay test dependencies
+        working-directory: apps/vis-companion-relay
+        run: npm ci --ignore-scripts
       - name: Test the native binaries
         shell: bash
         env:
