@@ -7596,7 +7596,7 @@
    {:id :close-tab :label "Close Tab"} {:id :providers :label "Providers"}
    {:id :mcp :label "MCP Servers"} {:id :settings :label "Settings"}
    {:id :session-settings :label "Session settings"} {:id :group-settings :label "Group settings"}
-   {:id :project-settings :label "Project settings"}
+   {:id :project-settings :label "Project settings"} {:id :automations :label "Automations"}
    {:id :toggle-all-details :label "Fold / Unfold All"}
    {:id :toggle-detail-labels :label "Label Folds — jump to one"}
    {:id :toggle-help :label "Keyboard Shortcuts"}

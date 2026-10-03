@@ -7,6 +7,7 @@
     [com.blockether.vis.tui.artifact-inspector :as artifact-inspector]
     [com.blockether.vis.tui.attachments :as attachments]
     [com.blockether.vis.tui.attachment-intake :as attachment-intake]
+    [com.blockether.vis.tui.automations :as automations]
     [com.blockether.vis.tui.chat :as chat]
     [com.blockether.vis.tui.composer-attachment-rail :as attachment-rail]
     [com.blockether.vis.tui.interactions :as interactions]
@@ -2906,6 +2907,12 @@
                 (when (improve/enabled? next-settings) (recur next-settings)))
 
               nil)))))))
+
+(defn- open-automations!
+  "Open the Automations view: run one now, pause or resume it, read its runs, create a
+   one-time secret or delete it."
+  [^TerminalScreen screen]
+  (with-dialog-lock #(automations/show! screen)))
 
 (defn- open-table-viewer!
   "Click an inline `vis-table` grid → the whole CSV as a live spreadsheet: page
@@ -8892,6 +8899,9 @@
 
                                      :improve-settings
                                      (open-improve-settings! screen)
+
+                                     :automations
+                                     (open-automations! screen)
 
                                      :focus-attachments
                                      (state/dispatch [:focus-attachments])
