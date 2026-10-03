@@ -24,8 +24,17 @@ import { LiveRunRow } from './LiveArtifact';
 import { LiveView } from './LiveView';
 import { MermaidBlock } from './MermaidBlock';
 import { JustifiedProse } from './JustifiedProse';
-import { liveOwnerMatches, type LiveView as LiveViewModel } from '../lib/live-view';
-import { ActivityPanel, ActivityAttachmentContext } from './ActivityPanel';
+import {
+  liveOwnerMatches,
+  type LiveView as LiveViewModel,
+  type LiveViewOwner,
+} from '../lib/live-view';
+import {
+  ActivityPanel,
+  ActivityAttachmentContext,
+  ActivityTally,
+  activityCostParts,
+} from './ActivityPanel';
 import {
   mergeActivity,
   settleActivity,
@@ -1697,6 +1706,52 @@ function executionGroup(forms: TranscriptForm[], live: boolean): TranscriptForm 
   };
 }
 
+/** The live views and recorded runs that these forms started. */
+function formRuns(
+  forms: TranscriptForm[],
+  liveViews: LiveViewModel[],
+  attachments: IterationAttachment[],
+): { views: LiveViewModel[]; runs: IterationAttachment[] } {
+  const owns = (owner?: LiveViewOwner) =>
+    forms.some((source) => liveOwnerMatches(owner, source.activity));
+  return {
+    views: liveViews.filter((view) => owns(view.owner)),
+    runs: collapseAttachmentVersions(
+      attachments.filter(
+        (attachment) =>
+          attachmentIsLive(attachment) && attachment.iteration_id && owns(attachment.owner),
+      ),
+    ).map((thread) => thread[0]),
+  };
+}
+
+/** The live views and recorded runs of an execution, each run in its own section. */
+function OwnedRuns({
+  views,
+  runs,
+  client,
+  sid,
+}: {
+  views: LiveViewModel[];
+  runs: IterationAttachment[];
+  client: GatewayClient;
+  sid: string;
+}) {
+  return (
+    <>
+      <LiveView views={views} client={client} sid={sid} embedded />
+      {runs.map((attachment) => (
+        <section
+          key={`run-${attachment.iteration_id ?? 'iter'}-${attachment.index}`}
+          data-execution-run
+        >
+          <LiveRunRow client={client} sid={sid} attachment={attachment} embedded />
+        </section>
+      ))}
+    </>
+  );
+}
+
 const FormTrace = memo(function FormTrace({
   forms,
   live = false,
@@ -1733,17 +1788,7 @@ const FormTrace = memo(function FormTrace({
     .filter(Boolean)
     .join('\n');
   const { detected: detectedActivity, running, status } = formStep(form, live);
-  const ownedViews = liveViews.filter((view) =>
-    forms.some((source) => liveOwnerMatches(view.owner, source.activity)),
-  );
-  const ownedAttachments = collapseAttachmentVersions(
-    attachments.filter(
-      (attachment) =>
-        attachmentIsLive(attachment) &&
-        attachment.iteration_id &&
-        forms.some((source) => liveOwnerMatches(attachment.owner, source.activity)),
-    ),
-  ).map((thread) => thread[0]);
+  const { views: ownedViews, runs: ownedAttachments } = formRuns(forms, liveViews, attachments);
   const hasActivity = detectedActivity || ownedViews.length > 0 || ownedAttachments.length > 0;
   return (
     <div className={live ? `min-w-0 ${transcriptRiseClass}` : 'min-w-0'}>
@@ -1789,17 +1834,7 @@ const FormTrace = memo(function FormTrace({
           )}
         </div>
         {client && sid && (
-          <>
-            <LiveView views={ownedViews} client={client} sid={sid} embedded />
-            {ownedAttachments.map((attachment) => (
-              <section
-                key={`run-${attachment.iteration_id ?? 'iter'}-${attachment.index}`}
-                data-execution-run
-              >
-                <LiveRunRow client={client} sid={sid} attachment={attachment} embedded />
-              </section>
-            ))}
-          </>
+          <OwnedRuns views={ownedViews} runs={ownedAttachments} client={client} sid={sid} />
         )}
       </div>
     </div>
@@ -2633,6 +2668,97 @@ function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
   );
 }
 
+/**
+ * THE ROW THAT STANDS FOR THE STEPS UNDER A NOTE. It counts what the steps cost in the
+ * words of the Activity band, then the calls that are running, failed or cancelled. A
+ * failure colors the chevron. Opening the row shows the thinking, code and Activity of
+ * the steps. Mirrors the TUI (`render/step-digest-entries`).
+ */
+function StepDigest({
+  chunks,
+  live,
+  isOpen,
+  onToggle,
+}: {
+  chunks: Chunk[];
+  live: boolean;
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  const forms = chunks.flatMap((chunk) => (chunk.kind === 'code' ? chunk.forms : chunk.cards));
+  const activity = mergeActivity(forms.flatMap((form) => formActivity(form, live) ?? []));
+  const parts = [
+    ...activityCostParts(activity),
+    ...(['running', 'failed', 'cancelled'] as const).flatMap((state) =>
+      activity.counts[state]
+        ? [
+            {
+              text: `${activity.counts[state]} ${state}`,
+              tone: state === 'running' ? '' : 'text-err-ink',
+            },
+          ]
+        : [],
+    ),
+  ];
+  const failed =
+    activity.counts.failed > 0 ||
+    activity.counts.cancelled > 0 ||
+    forms.some((form) => form.error != null && !interruptedPython(form));
+  return (
+    <Disclosure
+      tone="chronology"
+      density="comfortable"
+      isOpen={isOpen}
+      className={failed ? 'text-err-ink!' : ''}
+      aria-label={`${isOpen ? 'Collapse' : 'Expand'} steps: ${parts.map((part) => part.text).join(' · ')}`}
+      data-step-digest
+      onClick={onToggle}
+    >
+      <ActivityTally parts={parts} />
+    </Disclosure>
+  );
+}
+
+/**
+ * WHAT A CLOSED DIGEST KEEPS IN VIEW: the failures that its open steps show, and their
+ * live views and runs. Files stay in the attachment rail of the segment.
+ */
+function ClosedDigest({
+  chunks,
+  showCode,
+  liveViews,
+  attachments,
+  client,
+  sid,
+}: {
+  chunks: Chunk[];
+  showCode: boolean;
+  liveViews: LiveViewModel[];
+  attachments: IterationAttachment[];
+  client?: GatewayClient;
+  sid?: string;
+}) {
+  // Hidden Python code hides its failures too, as in the open steps.
+  const failures = chunks.flatMap((chunk) =>
+    chunk.kind === 'cards' ? chunk.cards : showCode || !chunk.isPython ? chunk.forms : [],
+  );
+  const { views, runs } = formRuns(
+    chunks.flatMap((chunk) => (chunk.kind === 'code' ? chunk.forms : [])),
+    liveViews,
+    attachments,
+  );
+  return (
+    <>
+      <FailedCards cards={failures} />
+      {client && sid && (views.length > 0 || runs.length > 0) && (
+        <div className="relative z-0 min-w-0 bg-code px-3" data-execution-group>
+          <OwnedRuns views={views} runs={runs} client={client} sid={sid} />
+        </div>
+      )}
+    </>
+  );
+}
+
 const TraceSegment = memo(function TraceSegment({
   segment,
   live,
@@ -2642,6 +2768,7 @@ const TraceSegment = memo(function TraceSegment({
   sid,
   liveViews,
 }: TraceSegmentProps) {
+  const [open, setOpen] = useState(false);
   // Summarized, a run's consecutive Python forms share one source and Activity; otherwise
   // every form keeps its own.
   const chunks = useMemo(() => {
@@ -2697,23 +2824,36 @@ const TraceSegment = memo(function TraceSegment({
         .join('\n\n'),
     [segment],
   );
+  // Summarized, the steps under a note fold into one digest row. Opening it shows their
+  // thinking, code and Activity. Mirrors the TUI (`render/render-step-digests`).
+  const digest = summarize && chunks.length > 0;
+  const expanded = !digest || open;
 
   return (
     <section
       className={`relative min-w-0 ${live ? transcriptEnterClass : ''}`}
       data-transcript-part
     >
-      {thinking && <ThinkingBand railed>{thinking}</ThinkingBand>}
+      {!digest && thinking && <ThinkingBand railed>{thinking}</ThinkingBand>}
       {segment.head.prose && (
         // The trace owns outer gaps; prose only separates bands within this segment.
         <div className="py-2.5 text-ui text-vis-message first:pt-0 last:pb-0 mouse:text-title [&+*]:mt-0">
           <Markdown>{segment.head.prose}</Markdown>
         </div>
       )}
+      {digest && (
+        <StepDigest
+          chunks={chunks}
+          live={live}
+          isOpen={open}
+          onToggle={() => setOpen((value) => !value)}
+        />
+      )}
+      {digest && open && thinking && <ThinkingBand railed>{thinking}</ThinkingBand>}
       {/* Chunk-to-chunk breathing room: each chunk is one call (its program
           glued to its own results), so the ONLY whitespace in the stack
           falls BETWEEN calls. */}
-      {chunks.length > 0 && (
+      {expanded && chunks.length > 0 && (
         <div className="grid min-w-0 gap-2.5">
           {chunks.map((chunk) => {
             return (
@@ -2735,6 +2875,16 @@ const TraceSegment = memo(function TraceSegment({
             );
           })}
         </div>
+      )}
+      {!expanded && (
+        <ClosedDigest
+          chunks={chunks}
+          showCode={showCode}
+          liveViews={liveViews}
+          attachments={attachments}
+          client={client}
+          sid={sid}
+        />
       )}
       {client && sid && (
         <AttachmentRail

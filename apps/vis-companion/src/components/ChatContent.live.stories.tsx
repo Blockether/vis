@@ -3,6 +3,7 @@ import { expect, fn, userEvent, within } from 'storybook/test';
 import { IterationTrace } from './ChatContent';
 import type { ActivityProjection } from '../lib/activity';
 import { STORY_INERT_CLIENT } from '../dev/story-data';
+import { openStepDigests } from '../dev/story-steps';
 import type { LiveView } from '../lib/live-view';
 
 const activity: ActivityProjection = {
@@ -103,7 +104,10 @@ async function expectLiveFrame(element: Element) {
 /** Regression #222: production execution surface and live actions, without a gateway. */
 export const Running: Story = {
   globals: { viewport: { value: 'desktop', isRotated: false } },
-  play: async ({ canvas }) => {
+  play: async ({ canvas, canvasElement }) => {
+    // A closed digest keeps the live run in view.
+    await expect(canvas.getByRole('button', { name: 'Open run Jenkins build pool' })).toBeVisible();
+    await openStepDigests(canvasElement);
     const title = canvas.getByText('Jenkins build pool');
     const liveFrame = await expectLiveFrame(title);
     const activitySurface = title.closest<HTMLElement>('[data-execution-group]')!;
@@ -275,7 +279,8 @@ export const Settled: Story = {
       },
     ],
   },
-  play: async ({ canvas }) => {
+  play: async ({ canvas, canvasElement }) => {
+    await openStepDigests(canvasElement);
     const run = canvas.getByRole('button', { name: 'Open run Jenkins build pool' });
     const group = run.closest('[data-execution-group]')!;
     await expect(group).not.toHaveClass('border');

@@ -1344,6 +1344,8 @@
 
 (def ^:private queue-border-marker p/MARKER_QUEUE_BORDER)
 
+(def ^:private step-digest-marker p/MARKER_STEP_DIGEST)
+
 (def ^:private activity-marker p/MARKER_ACTIVITY)
 
 (def ^:private md-h1-marker p/MARKER_MD_H1)
@@ -2464,6 +2466,28 @@
                     (do (p/set-colors! g t/header-active-tab-accent bg-color)
                         (p/fill-rect! g fbx y fill-iw 1)
                         (p/put-str! g x y (str "└" (repeat-str "─" (max 0 (dec (long iw)))))))
+                    ;; A step digest stays on transcript paper; only its state colors it.
+                    (str/starts-with? line step-digest-marker)
+                    (let [raw (subs line 1)
+                          tone-fg (case (:status-tone meta)
+                                    :running
+                                    t/warning-fg
+
+                                    :error
+                                    t/status-bad
+
+                                    t/text-fg)
+                          abs-row (+ (long viewport-top) (long y))]
+
+                      (p/set-colors! g tone-fg bg-color)
+                      (p/fill-rect! g fbx y fill-iw 1)
+                      (p/styled g [p/BOLD] (p/put-str! g x y raw))
+                      (.register interactions/hit-map
+                                 {:bounds {:row abs-row :col x :width (long iw)}
+                                  :kind :toggle-details
+                                  :session-id (:session-id meta)
+                                  :node-id (:node-id meta)
+                                  :collapsed? (:collapsed? meta)}))
                     ;; Activity continues the Code surface, with independent disclosure.
                     (str/starts-with? line activity-marker)
                     (let [raw (subs line 1)
@@ -7154,8 +7178,12 @@
 (defn- format-iteration-entry-entries
   [entry code-width iteration-number &
    [{:keys [show-header? session-id detail-expansions session-turn-id live-preview?
-            show-python-code? summarize-steps? bubble-w]
-     :or {show-header? false live-preview? false show-python-code? true summarize-steps? true}}]]
+            show-python-code? summarize-steps? digest-closed? bubble-w]
+     :or {show-header? false
+          live-preview? false
+          show-python-code? true
+          summarize-steps? true
+          digest-closed? false}}]]
   ;; Iteration / block header labels removed per user directive. The
   ;; `show-header?` argument is retained as a no-op for callers; we
   ;; never paint the right-aligned ITERATION N band any more.
@@ -7849,7 +7877,8 @@
                 activity-surface
                 (when activity-run
                   (let [entries
-                        (activity-detail-entries activity-run (max 1 (long fill-w)) session-id)
+                        (when-not digest-closed?
+                          (activity-detail-entries activity-run (max 1 (long fill-w)) session-id))
 
                         run-sections
                         (reduce (fn [sections entry]
@@ -7862,27 +7891,40 @@
                                 []
                                 (concat generic-run-entries
                                         inline-live-entries
-                                        live-artifact-block))]
+                                        live-artifact-block))
 
-                    ;; Activity shares the padding that closes Code or Result. Alone or after
-                    ;; a failure, it owns its top padding.
-                    (vec (concat (when (and (empty? shown-result-block)
-                                            (or (empty? code-block)
-                                                (seq inline-error-message-lines)))
-                                   [(line-entry activity-marker)])
-                                 entries
-                                 (map #(update %
-                                               :line
-                                               (fn [line]
-                                                 (if (str/starts-with? line activity-marker)
-                                                   line
-                                                   (str activity-marker line))))
-                                      run-sections)
-                                 (when (seq run-sections) [(line-entry activity-marker)])))))]
+                        run-entries
+                        (map #(update %
+                                      :line
+                                      (fn [line]
+                                        (if (str/starts-with? line activity-marker)
+                                          line
+                                          (str activity-marker line))))
+                             run-sections)]
 
-            ;; CODE, ACTIVITY and RUN are siblings on one execution surface.
+                    (cond
+                      ;; A closed digest keeps runs and live views, without their Activity.
+                      digest-closed? (when (seq run-sections)
+                                       (vec (concat [(line-entry activity-marker)]
+                                                    run-entries
+                                                    [(line-entry activity-marker)])))
+                      ;; Activity shares the padding that closes Code or Result. Alone or after
+                      ;; a failure, it owns its top padding.
+                      :else (vec (concat (when (and (empty? shown-result-block)
+                                                    (or (empty? code-block)
+                                                        (seq inline-error-message-lines)))
+                                           [(line-entry activity-marker)])
+                                         entries
+                                         run-entries
+                                         (when (seq run-sections)
+                                           [(line-entry activity-marker)]))))))]
+
+            ;; CODE, ACTIVITY and RUN are siblings on one execution surface. A closed digest
+            ;; keeps only failures, runs, live views and files.
             (vec (concat (inset-entries
-                           (concat comment-block code-block execution-details activity-surface))
+                           (if digest-closed?
+                             (concat inline-error-message-lines activity-surface)
+                             (concat comment-block code-block execution-details activity-surface)))
                          artifact-block
                          (when-not activity-run generic-run-entries)))))
 
@@ -8368,6 +8410,108 @@
                 (recur (reduce conj! out (iter-entry-fn (first (first xs)))) (next xs))))
             (recur (reduce conj! out (iter-entry-fn (first (first xs)))) (next xs))))))))
 
+(defn- step-note
+  "The progress note that an iteration shows: its prose, or its streamed text before it
+   calls a tool. Nil when it shows neither."
+  [{:keys [assistant-prose content-stream forms]}]
+  (some-> (or assistant-prose (when (empty? forms) content-stream))
+          str
+          str/trim
+          not-empty))
+
+(defn- step-digest-entries
+  "One DIGEST row for the steps after a note. It uses the words of the Activity header and
+   adds up all the steps. A failed step colors it red, and a running step colors it yellow."
+  [{:keys [forms node-id open?]} content-w session-id]
+  (let [activities
+        (keep :activity forms)
+
+        rows
+        (into [] (mapcat :rows) activities)
+
+        states
+        (frequencies (map activity-row-state rows))
+
+        omitted
+        (apply merge-with + {} (keep #(get-in % [:omitted :by-classification]) activities))
+
+        summary
+        (str/join " · "
+                  (concat (for [state
+                                [:running :failed :cancelled]
+
+                                :when (get states state)]
+
+                            (str (get states state) " " (name state)))
+                          [(activity-cost-text {:rows rows
+                                                :omitted {:by-classification omitted}})]))
+
+        tone
+        (cond (or (:failed states)
+                  (:cancelled states)
+                  (some #(or (:error %) (false? (:success? %))) forms))
+              :error
+              (:running states) :running
+              :else nil)]
+
+    [{:line "" :meta nil}
+     {:line (str step-digest-marker
+                 (ellipsize-cols (str (if open? "▾ " "▸ ") summary) (max 1 (dec (long content-w)))))
+      :meta {:kind :toggle-details
+             :session-id (str session-id)
+             :node-id node-id
+             :collapsed? (not open?)
+             :status-tone tone}}]))
+
+(defn- render-step-digests
+  "Summarized steps: each progress note stays, and its steps fold into one digest row.
+   An open digest shows the thinking, code and Activity of the steps, without the note.
+   A closed digest still shows failures, files, runs and live views. Steps before the
+   first note fold the same way. A note with no forms after it keeps its own rows."
+  [visible-iterations show-silent? show-thinking?
+   {:keys [session-id session-turn-id detail-expansions]}]
+  (let [segments (reduce (fn [segments [_ entry :as pair]]
+                           (let [step {:pair pair
+                                       :entry (visible-iteration-entry entry show-silent?)}]
+                             (if (or (empty? segments) (step-note (:entry step)))
+                               (conj segments [step])
+                               (update segments (dec (count segments)) conj step))))
+                         []
+                         visible-iterations)]
+    (into []
+          (mapcat
+            (fn [steps]
+              (let [{[head-idx] :pair head :entry} (first steps)
+                    forms (into [] (mapcat (comp :forms :entry)) steps)
+                    note (step-note head)
+                    pairs (mapv :pair steps)]
+
+                (if (empty? forms)
+                  pairs
+                  (let [node-id (detail-node-id {:session-turn-id session-turn-id
+                                                 :iteration-number (inc (long head-idx))
+                                                 :section :iteration
+                                                 :kind :digest})
+                        open? (detail-expanded? detail-expansions session-id node-id false)
+                        closed (fn [[idx entry]]
+                                 [[idx
+                                   (-> entry
+                                       (dissoc :thinking)
+                                       (assoc ::digest-closed? true))]])]
+
+                    (concat (when note
+                              [[head-idx
+                                {:iteration-id (:iteration-id head) :assistant-prose note}]])
+                            [[head-idx {::digest {:forms forms :node-id node-id :open? open?}}]]
+                            ;; The note renders once, above its digest.
+                            (render-iteration-entries
+                              (update-in pairs [0 1] dissoc :assistant-prose :content-stream)
+                              (if open? vector closed)
+                              show-silent?
+                              show-thinking?
+                              true)))))))
+          segments)))
+
 (defn- render-adjacent-thinking-entries
   "Join reasoning across iteration groups whose remaining output is invisible."
   [groups iter-entry-fn]
@@ -8439,62 +8583,61 @@
 
         iter-entry-fn
         (fn [[idx entry]]
-          (let [visible
-                (visible-iteration-entry entry show-silent?)
+          (if-let [digest (::digest entry)]
+            (step-digest-entries digest content-w session-id)
+            (let [visible (visible-iteration-entry entry show-silent?)
+                  stripped (if show-thinking? visible (dissoc visible :thinking))
+                  digest-closed? (boolean (::digest-closed? entry))
+                  iter-num (inc (long idx))
+                  detail-scope-opts {:section :iteration
+                                     :iteration-number iter-num
+                                     :session-id session-id
+                                     :session-turn-id session-turn-id
+                                     :detail-expansions detail-expansions}
+                  k [::iter-entries (if live? :live :final) iter-num
+                     (iteration-fingerprint stripped) (long content-w) bubble-w
+                     show-iteration-headers? (boolean show-thinking?) (boolean show-silent?)
+                     (get settings :show-python-code true) summarize-steps? digest-closed?
+                     session-id session-turn-id
+                     ;; Tool-badge / op-row disclosures are keyed
+                     ;; `iter<N>:t<frag>:op<M>` — scoped by the TURN
+                     ;; token, NOT the `iteration:t<frag>:i<N>` base
+                     ;; that `relevant-detail-expansions-key` filters
+                     ;; on. Using the iteration-scoped key here meant
+                     ;; toggling a badge in LIVE view never busted
+                     ;; this cache, so the badge never collapsed/
+                     ;; expanded until the turn finished. Turn-scoped
+                     ;; key catches every disclosure in the bubble.
+                     (turn-detail-expansions-key detail-scope-opts)]
+                  inner-opts {:show-header? show-iteration-headers?
+                              :bubble-w bubble-w
+                              :show-python-code? (get settings :show-python-code true)
+                              :summarize-steps? summarize-steps?
+                              :digest-closed? digest-closed?
+                              :session-id session-id
+                              :session-turn-id session-turn-id
+                              :detail-expansions detail-expansions
+                              :live-preview? live?}
+                  render! #(format-iteration-entry-entries stripped content-w iter-num inner-opts)]
 
-                stripped
-                (if show-thinking? visible (dissoc visible :thinking))
-
-                iter-num
-                (inc (long idx))
-
-                detail-scope-opts
-                {:section :iteration
-                 :iteration-number iter-num
-                 :session-id session-id
-                 :session-turn-id session-turn-id
-                 :detail-expansions detail-expansions}
-
-                k
-                [::iter-entries (if live? :live :final) iter-num (iteration-fingerprint stripped)
-                 (long content-w) bubble-w show-iteration-headers? (boolean show-thinking?)
-                 (boolean show-silent?) (get settings :show-python-code true) summarize-steps?
-                 session-id session-turn-id
-                 ;; Tool-badge / op-row disclosures are keyed
-                 ;; `iter<N>:t<frag>:op<M>` — scoped by the TURN
-                 ;; token, NOT the `iteration:t<frag>:i<N>` base
-                 ;; that `relevant-detail-expansions-key` filters
-                 ;; on. Using the iteration-scoped key here meant
-                 ;; toggling a badge in LIVE view never busted
-                 ;; this cache, so the badge never collapsed/
-                 ;; expanded until the turn finished. Turn-scoped
-                 ;; key catches every disclosure in the bubble.
-                 (turn-detail-expansions-key detail-scope-opts)]
-
-                inner-opts
-                {:show-header? show-iteration-headers?
-                 :bubble-w bubble-w
-                 :show-python-code? (get settings :show-python-code true)
-                 :summarize-steps? summarize-steps?
-                 :session-id session-id
-                 :session-turn-id session-turn-id
-                 :detail-expansions detail-expansions
-                 :live-preview? live?}
-
-                render!
-                #(format-iteration-entry-entries stripped content-w iter-num inner-opts)]
-
-            (if live? (cached* k render!) (render!))))]
+              (if live? (cached* k render!) (render!)))))]
 
     (when (and show-iterations? (not suppress-trace?) (seq iterations))
-      ;; The code blocks render flat — no TURN wrapper. The turn-level
-      ;; collapsible header was removed (it only hid the blocks and carried no
-      ;; information the per-block headers + op rows don't already convey).
-      (let [groups (render-iteration-entries visible-iterations
-                                             vector
-                                             show-silent?
-                                             show-thinking?
-                                             summarize-steps?)]
+      ;; The code blocks render flat — no TURN wrapper. Summarized steps fold under
+      ;; one digest row for each progress note. Without a session nothing can keep a
+      ;; digest open, so the summarized steps paint in full.
+      (let [groups (if (and summarize-steps? session-id)
+                     (render-step-digests visible-iterations
+                                          show-silent?
+                                          show-thinking?
+                                          {:session-id session-id
+                                           :session-turn-id session-turn-id
+                                           :detail-expansions detail-expansions})
+                     (render-iteration-entries visible-iterations
+                                               vector
+                                               show-silent?
+                                               show-thinking?
+                                               false))]
         (coalesce-bubble-blanks (if (and show-thinking? (not (get settings :show-python-code true)))
                                   (render-adjacent-thinking-entries groups iter-entry-fn)
                                   (mapcat iter-entry-fn groups)))))))

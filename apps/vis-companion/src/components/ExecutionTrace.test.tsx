@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render } from '@testing-library/react';
+import { act, cleanup, fireEvent } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IterationTrace } from './ChatContent';
+import { renderOpenSteps } from './trace-harness';
 import { readPythonCodeShown, setPythonCodeShown } from '../lib/transcript-display';
 import { reduceRunningTurnEvent } from '../lib/running-turn';
 import type { SseEvent, TranscriptForm, TranscriptIteration } from '../lib/types';
@@ -67,7 +68,7 @@ describe('execution grouping', () => {
     }
     turn = reduceRunningTurnEvent(turn, { type: 'turn.completed' } as SseEvent);
     expect(turn?.iterations.flatMap((iteration) => iteration.forms ?? [])).toHaveLength(count);
-    const view = render(<IterationTrace whole iterations={turn!.iterations} />);
+    const view = renderOpenSteps(<IterationTrace whole iterations={turn!.iterations} />);
     const duration = `${(count / 10).toFixed(1)}s`;
     const code = view.container.querySelector('[data-execution-code]')!;
     expect(code).toHaveTextContent(duration);
@@ -86,7 +87,7 @@ describe('execution grouping', () => {
 
   it('does not label a partially timed group as a measured total', () => {
     // #224: a missing measurement is not a zero-duration execution.
-    const view = render(
+    const view = renderOpenSteps(
       <IterationTrace
         whole
         iterations={iterations([
@@ -108,7 +109,7 @@ describe('execution grouping', () => {
         { source: 'second()', stdout: 'last output', duration_ms: 20 },
       ];
       const original = JSON.stringify(forms);
-      const view = render(
+      const view = renderOpenSteps(
         <IterationTrace
           whole
           iterations={
@@ -144,7 +145,7 @@ describe('execution grouping', () => {
   it('keeps one result open as more stdout arrives', () => {
     const first = { source: 'first()', stdout: 'first output\n', duration_ms: 10 };
     const second = { source: 'second()' };
-    const view = render(<IterationTrace whole live iterations={iterations([first, second])} />);
+    const view = renderOpenSteps(<IterationTrace whole live iterations={iterations([first, second])} />);
     fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
     fireEvent.click(view.getByRole('button', { name: 'Expand result' }));
     view.rerender(
@@ -162,7 +163,7 @@ describe('execution grouping', () => {
   });
 
   it('merges stdout without hiding failure status or creating empty cards', () => {
-    const view = render(
+    const view = renderOpenSteps(
       <IterationTrace
         whole
         iterations={iterations([
@@ -194,7 +195,7 @@ describe('execution grouping', () => {
   });
 
   it('keeps collapsed CODE, ACTIVITY and FAILED rows equally compact on mobile', () => {
-    const view = render(
+    const view = renderOpenSteps(
       <IterationTrace
         whole
         iterations={iterations([
@@ -221,7 +222,7 @@ describe('execution grouping', () => {
   });
 
   it('keeps a grouped collapsed failure level with its neighboring rows', () => {
-    const view = render(
+    const view = renderOpenSteps(
       <IterationTrace
         whole
         iterations={iterations([
@@ -239,7 +240,7 @@ describe('execution grouping', () => {
   });
 
   it('owns source and result in one CODE disclosure before Activity', () => {
-    const view = render(
+    const view = renderOpenSteps(
       <IterationTrace
         whole
         iterations={iterations([
@@ -314,7 +315,7 @@ describe('execution grouping', () => {
         position: index + 1,
         forms: [form],
       }));
-      const view = render(<IterationTrace whole iterations={data} />);
+      const view = renderOpenSteps(<IterationTrace whole iterations={data} />);
       expect(view.getAllByRole('button', { name: 'Expand code' })).toHaveLength(1);
       expect(view.getAllByRole('button', { name: 'Expand Activity' })).toHaveLength(1);
       const toggle = view.getByRole('button', { name: 'Expand Activity' });
@@ -354,7 +355,7 @@ describe('execution grouping', () => {
       },
     ];
     const original = JSON.stringify(forms);
-    const view = render(<IterationTrace whole iterations={iterations(forms)} />);
+    const view = renderOpenSteps(<IterationTrace whole iterations={iterations(forms)} />);
     expect(view.queryByRole('button', { name: 'Expand execution trace' })).toBeNull();
     fireEvent.click(view.getByRole('button', { name: 'Expand Activity' }));
     fireEvent.click(view.getByRole('button', { name: /Search ×2/ }));
@@ -372,7 +373,7 @@ describe('execution grouping', () => {
   it.each(['running', 'failed', 'cancelled'] as const)(
     "keeps the group %s and every member's evidence",
     (state) => {
-      const view = render(
+      const view = renderOpenSteps(
         <IterationTrace
           whole
           live
@@ -398,7 +399,7 @@ describe('execution grouping', () => {
   it.each([{ comment: 'A separate step' }, { display_language: 'bash' }, { tag: 'user-shell' }])(
     'does not group across a semantic boundary %j',
     (boundary) => {
-      const view = render(
+      const view = renderOpenSteps(
         <IterationTrace
           whole
           iterations={iterations([
@@ -415,7 +416,7 @@ describe('execution grouping', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
     try {
-      const view = render(
+      const view = renderOpenSteps(
         <IterationTrace
           whole
           iterations={iterations([
@@ -431,7 +432,7 @@ describe('execution grouping', () => {
     }
   });
   it('does not add empty result cards below an activity-only group', () => {
-    const view = render(
+    const view = renderOpenSteps(
       <IterationTrace
         whole
         live
@@ -465,7 +466,7 @@ describe('device-local Python visibility', () => {
           activity: activity(live ? 'running' : 'succeeded', 'retained stage'),
         },
       ]);
-      const view = render(<IterationTrace whole live={live} iterations={data} />);
+      const view = renderOpenSteps(<IterationTrace whole live={live} iterations={data} />);
       fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
       fireEvent.click(view.getByRole('button', { name: 'Expand result' }));
       expect(view.container.textContent).toContain('secret_source()');
@@ -481,7 +482,7 @@ describe('device-local Python visibility', () => {
       expect(view.queryByRole('button', { name: 'Copy result' })).toBeNull();
       expect(view.container.textContent).toContain('retained stage');
       view.unmount();
-      const restored = render(<IterationTrace whole live={live} iterations={data} />);
+      const restored = renderOpenSteps(<IterationTrace whole live={live} iterations={data} />);
       expect(restored.container.querySelector('[data-execution-code]')).toBeNull();
       expect(restored.container.querySelector('[data-code-result]')).toBeNull();
       expect(restored.container.textContent).toContain('retained stage');
@@ -499,7 +500,7 @@ describe('device-local Python visibility', () => {
     ),
   )('shows only Activity for $state Python with source $source', ({ state, source }) => {
     setPythonCodeShown(false);
-    const view = render(
+    const view = renderOpenSteps(
       <IterationTrace
         whole
         live={state === 'running'}
@@ -528,7 +529,7 @@ describe('device-local Python visibility', () => {
     'does not hide non-Python code or results: %j',
     (metadata) => {
       setPythonCodeShown(false);
-      const view = render(
+      const view = renderOpenSteps(
         <IterationTrace
           whole
           iterations={iterations([
@@ -546,7 +547,7 @@ describe('device-local Python visibility', () => {
 
 it('opens the complete program below its own CODE header', () => {
   const code = 'paths = await ls(root)\nprint(paths)';
-  const view = render(
+  const view = renderOpenSteps(
     <IterationTrace
       whole
       iterations={iterations([{ source: code, activity: activity('succeeded', 'Files listed') }])}
@@ -567,7 +568,7 @@ it('opens the complete program below its own CODE header', () => {
 
 it.each([true, false])('pads standalone source until Activity arrives (live=%s)', (live) => {
   const form = { source: 'value = 42\nprint(value)' };
-  const view = render(<IterationTrace whole live={live} iterations={iterations([form])} />);
+  const view = renderOpenSteps(<IterationTrace whole live={live} iterations={iterations([form])} />);
   fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
   const band = view.container.querySelector('[data-execution-code]')!;
   const body = band.querySelector('[data-code-body]')!;
@@ -594,7 +595,7 @@ it.each([true, false])('pads standalone source until Activity arrives (live=%s)'
 });
 
 it('folds even a one-line program under the CODE header', () => {
-  const view = render(<IterationTrace whole iterations={iterations([{ source: 'print(42)' }])} />);
+  const view = renderOpenSteps(<IterationTrace whole iterations={iterations([{ source: 'print(42)' }])} />);
   fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
   expect(view.container.textContent).toContain('print(42)');
   expect(view.getByRole('button', { name: 'Copy code' })).toBeVisible();

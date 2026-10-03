@@ -16,6 +16,7 @@ import {
 import { AssistantMessage, IterationTrace, UserMessage } from './ChatContent';
 import { ActivityHistoryContext } from './ActivityPanel';
 import { GROUPED_ACTIVITY_HISTORY_IDS, groupedActivityHistoryPage } from '../dev/activity-history';
+import { openStepDigests } from '../dev/story-steps';
 
 /**
  * A TURN, DRAWN AS JOINED EXECUTION BANDS.
@@ -231,6 +232,7 @@ export const ThinkingAndCode: Story = {
     iterations: STORY_THINKING_AND_CODE,
   },
   play: async ({ canvasElement }) => {
+    await openStepDigests(canvasElement);
     const canvas = within(canvasElement);
     const code = canvasElement.querySelector('[data-execution-code]')!;
     await userEvent.click(canvas.getByRole('button', { name: 'Expand code' }));
@@ -264,6 +266,7 @@ export const ThinkingLists: Story = {
     ],
   },
   play: async ({ canvasElement }) => {
+    await openStepDigests(canvasElement);
     const canvas = within(canvasElement);
     const band = (await canvas.findByText('So I could:')).closest('section')!;
     const lists = [...band.querySelectorAll('ol[role="list"], ul[role="list"]')];
@@ -347,6 +350,7 @@ export const ThinkingDisclosurePointer: Story = {
 export const TrailingMetadata: Story = {
   args: ThinkingAndCode.args,
   play: async ({ canvasElement }) => {
+    await openStepDigests(canvasElement);
     const canvas = within(canvasElement);
     const activityToggle = canvas.getByRole('button', { name: 'Expand Activity' });
     await userEvent.click(canvas.getByRole('button', { name: 'Expand code' }));
@@ -669,6 +673,7 @@ export const GroupedActivityHistories: Story = {
     ),
   ],
   play: async ({ canvas, canvasElement }) => {
+    await openStepDigests(canvasElement);
     await expect(canvas.getAllByRole('button', { name: 'Expand code' })).toHaveLength(1);
     const toggle = canvas.getByRole('button', { name: 'Expand Activity' });
     await expect(toggle).toHaveTextContent('7 operations');
@@ -713,6 +718,7 @@ export const MergedResults: Story = {
     ],
   },
   play: async ({ canvasElement }) => {
+    await openStepDigests(canvasElement);
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Expand code' }));
     await expect(canvas.getAllByRole('button', { name: 'Expand result' })).toHaveLength(1);
@@ -753,6 +759,7 @@ export const GroupDurations: Story = {
     ],
   },
   play: async ({ canvasElement }) => {
+    await openStepDigests(canvasElement);
     const canvas = within(canvasElement);
     await expect(canvas.getByText('300ms')).toBeVisible();
     await expect(canvas.getByText('<1ms')).toBeVisible();
@@ -765,6 +772,7 @@ export const GroupDurations: Story = {
 export const GroupStages: Story = {
   ...CompactGroup,
   play: async ({ canvasElement }) => {
+    await openStepDigests(canvasElement);
     const canvas = within(canvasElement);
     await expect(canvas.queryByRole('list', { name: 'Operation groups' })).toBeNull();
     await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
@@ -776,6 +784,7 @@ export const GroupStages: Story = {
 export const HiddenCode: Story = {
   args: { live: true, showCode: false, iterations: STORY_COMPACT_EXECUTIONS },
   play: async ({ canvasElement }) => {
+    await openStepDigests(canvasElement);
     const canvas = within(canvasElement);
     await expect(canvasElement.querySelector('[data-execution-code]')).toBeNull();
     await expect(canvasElement.querySelector('[data-code-result]')).toBeNull();
@@ -798,6 +807,7 @@ export const CodeWithoutActivity: Story = {
     iterations: [{ position: 1, forms: [{ source: 'value = 42\nprint(value)' }] }],
   },
   play: async ({ canvasElement }) => {
+    await openStepDigests(canvasElement);
     const canvas = within(canvasElement);
     await expect(canvas.queryByRole('button', { name: 'Expand Activity' })).toBeNull();
     await expect(canvas.queryByRole('button', { name: 'Expand result' })).toBeNull();
@@ -826,6 +836,7 @@ export const CodeWithResult: Story = {
     })),
   },
   play: async ({ canvasElement }) => {
+    await openStepDigests(canvasElement);
     const canvas = within(canvasElement);
     await expect(canvas.queryByRole('button', { name: 'Expand result' })).toBeNull();
     const code = canvasElement.querySelector('[data-execution-code]')!;
@@ -881,6 +892,7 @@ export const JoinedActivity: Story = {
     iterations: STORY_JOINED_ACTIVITY.running,
   },
   play: async ({ canvasElement }) => {
+    await openStepDigests(canvasElement);
     const canvas = within(canvasElement);
     const code = canvasElement.querySelector('[data-execution-code]')!;
     const band = canvas.getByRole('button', { name: 'Expand Activity' });
@@ -1008,6 +1020,7 @@ export const CustomAgentName: Story = {
 
 /** A monochrome review must preserve symbols, disclosure and a still page. */
 const monochromePlay: Story['play'] = async ({ canvas, canvasElement }) => {
+  await openStepDigests(canvasElement);
   const trace = canvas.getAllByRole('button', { name: 'Expand Activity' })[0];
   await userEvent.click(trace);
   await expect(canvas.getByRole('button', { name: 'Collapse Activity' })).toHaveAttribute(

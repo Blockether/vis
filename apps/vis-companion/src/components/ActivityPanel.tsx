@@ -162,6 +162,32 @@ export function activityCostParts(activity?: ActivityProjection): readonly Activ
 }
 
 /**
+ * The counters of a closed band, each in its own ink. A narrow screen shows the short
+ * words; a copy keeps the whole words.
+ */
+export function ActivityTally({
+  parts,
+  placement,
+}: {
+  parts: readonly ActivityCostPart[];
+  placement?: 'inline' | 'trailing';
+}) {
+  return (
+    <BandTally placement={placement}>
+      {parts.map((part, index) => (
+        <Fragment key={part.text}>
+          {index ? ' · ' : null}
+          <span className={part.tone || undefined}>
+            {part.short ?? part.text}
+            {part.short && <span className="max-sm:hidden">{part.text.slice(part.short.length)}</span>}
+          </span>
+        </Fragment>
+      ))}
+    </BandTally>
+  );
+}
+
+/**
  * WHAT THE STEP CALLED, in the order it called it — the receipt beside the chevron.
  *
  * A reader recognises a step by its calls, not by a word for how it ended: the
@@ -1381,21 +1407,7 @@ export function ActivityPanel({
           className="min-w-0 flex-1"
           tone="execution"
           inlineChevron
-          tally={
-            <BandTally placement="trailing">
-              {tally.map((part, index) => (
-                <Fragment key={part.text}>
-                  {index ? ' · ' : null}
-                  <span className={part.tone || undefined}>
-                    {part.short ?? part.text}
-                    {part.short && (
-                      <span className="max-sm:hidden">{part.text.slice(part.short.length)}</span>
-                    )}
-                  </span>
-                </Fragment>
-              ))}
-            </BandTally>
-          }
+          tally={<ActivityTally parts={tally} placement="trailing" />}
           isOpen={open}
           aria-label={open ? 'Collapse Activity' : 'Expand Activity'}
           onClick={() => setOpen((value) => !value)}

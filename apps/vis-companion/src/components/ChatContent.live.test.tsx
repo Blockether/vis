@@ -4,6 +4,7 @@ import { expect, it, vi } from 'vitest';
 import { LiveViewPanel } from './LiveView';
 import { STORY_LIVE_VIEW } from '../dev/story-data';
 import { IterationTrace } from './ChatContent';
+import { renderOpenSteps } from './trace-harness';
 import { activityHistoryPage } from '../dev/activity-history';
 import type { GatewayClient } from '../lib/gateway';
 import { liveOwnerMatches, liveRecordFromText, liveViewFromWire } from '../lib/live-view';
@@ -306,7 +307,7 @@ it('keeps concurrent owned views and unmatched views separate, including streame
     sid: 'session',
     whole: true,
   };
-  const mounted = render(<IterationTrace {...props} />);
+  const mounted = renderOpenSteps(<IterationTrace {...props} />);
   const firstSurface = mounted.getByText('First monitor').closest('[data-execution-group]');
   const secondSurface = mounted.getByText('Second monitor').closest('[data-execution-group]');
   expect(firstSurface).toBeVisible();
@@ -371,7 +372,7 @@ it('replaces the live view with one retained run receipt beside the same Activit
   const owner = { invocation_id: 'paged-out', activity_id: activity.history!.id };
   const props = { client: {} as GatewayClient, sid: 'session', whole: true };
   const iteration = { id: 'iteration', forms: [{ source: 'monitor()', activity }] };
-  const mounted = render(
+  const mounted = renderOpenSteps(
     <IterationTrace
       {...props}
       iterations={[iteration]}
@@ -523,7 +524,7 @@ it.each(['hidden', 'ramped'])(
 // Regression #222: association must not add hierarchy or another horizontal inset.
 it('renders RUN beside Activity and opens it without folding the preview', () => {
   const activity = activityHistoryPage();
-  const mounted = render(
+  const mounted = renderOpenSteps(
     <IterationTrace
       iterations={[{ forms: [{ source: 'monitor()', activity }] }]}
       liveViews={[

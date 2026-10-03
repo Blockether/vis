@@ -53,15 +53,17 @@
 (defn review-payload
   ([pane width] (review-payload pane width {}))
   ([pane width options]
-   (render/progress->lines-data review-progress
-                                width
-                                {:show-thinking true :show-iterations true}
-                                (merge {:session-id "inline-review"
-                                        :now-ms 1000
-                                        :live-runs (when-not (lv/dormant? pane)
-                                                     [(lv/transcript-run pane)])
-                                        :runs (when (lv/dormant? pane) [(lv/run-row pane)])}
-                                       options))))
+   (render/progress->lines-data
+     review-progress
+     width
+     {:show-thinking true :show-iterations true}
+     (-> (merge {:session-id "inline-review"
+                 :now-ms 1000
+                 :live-runs (when-not (lv/dormant? pane) [(lv/transcript-run pane)])
+                 :runs (when (lv/dormant? pane) [(lv/run-row pane)])}
+                options)
+         ;; Activity lives inside the step digest, so the review opens it.
+         (update :detail-expansions assoc ["inline-review" "iteration:i1:digest"] true)))))
 
 (defdescribe
   live-run-is-an-activity-sibling
@@ -75,14 +77,15 @@
 
         (render/invalidate-cache!)
         (let [payload
-              (render/progress->lines-data review-progress
-                                           width
-                                           {:show-iterations true}
-                                           {:session-id "inline-review"
-                                            :now-ms 1000
-                                            :detail-expansions
-                                            (if collapsed? {:vis.channel-tui/baseline :collapse} {})
-                                            :live-runs [(lv/transcript-run (review-pane))]})
+              (render/progress->lines-data
+                review-progress
+                width
+                {:show-iterations true}
+                {:session-id "inline-review"
+                 :now-ms 1000
+                 :detail-expansions (assoc (if collapsed? {:vis.channel-tui/baseline :collapse} {})
+                                      ["inline-review" "iteration:i1:digest"] true)
+                 :live-runs [(lv/transcript-run (review-pane))]})
 
               lines
               (:lines payload)
@@ -471,7 +474,9 @@
               {:state "running" :history {:id activity-id} :rows []})
 
             options
-            {:session-id "history-test" :now-ms 0}
+            {:session-id "history-test"
+             :now-ms 0
+             :detail-expansions {["history-test" "iteration:i1:digest"] true}}
 
             live
             (render/progress->lines-data progress

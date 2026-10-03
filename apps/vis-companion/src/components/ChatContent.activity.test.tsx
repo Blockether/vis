@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
 import { IterationTrace } from './ChatContent';
+import { renderOpenSteps } from './trace-harness';
 import type { ActivityProjection } from '../lib/activity';
 import { reduceRunningTurnEvent, type RunningTurn } from '../lib/running-turn';
 import type { SseEvent } from '../lib/types';
@@ -88,7 +89,7 @@ it.each(outcomes.flatMap((outcome) => [false, true].map((history) => ({ outcome,
   'replaces running Activity with $outcome through live events (history: $history)',
   ({ outcome, history }) => {
     const running = activityEvent(start(), snapshot('running', history ? 1 : undefined));
-    const view = render(trace(running));
+    const view = renderOpenSteps(trace(running));
     fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
     expect(screen.getByText('Checking suite')).toBeVisible();
     expect(screen.getByText('Suite progress · In progress')).toBeVisible();
@@ -121,7 +122,7 @@ it.each(
       { type: 'progress', label: 'Suite progress', ...(determinate ? { value: 1, total: 3 } : {}) },
     ];
     const running = activityEvent(start(), initial);
-    const view = render(trace(running));
+    const view = renderOpenSteps(trace(running));
     fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
     expect(screen.getByRole('progressbar', { name: 'Suite progress' })).toBeVisible();
 
@@ -148,7 +149,7 @@ it.each(
 it.each(outcomes)('does not resurrect running after a %s revision', (outcome) => {
   const running = activityEvent(start(), snapshot('running', 1));
   const settled = activityEvent(running, snapshot(outcome, 2));
-  const view = render(trace(settled));
+  const view = renderOpenSteps(trace(settled));
   fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
   const replay = activityEvent(settled, snapshot('running', 1));
   view.rerender(trace(replay));

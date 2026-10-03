@@ -438,12 +438,20 @@
                     fences, list gaps) makes /60 the safe historical
                     ballpark at any width ≥ 60, and narrower terminals
                     fold at their own width.
+     * digest     — a closed step digest paints its note, its row and
+                    the failures. Steps with runs or files keep their
+                    full charge, because those stay visible.
    User / plain-assistant text goes through the markdown walker, which
    word-wraps and inserts block chrome — fold at 3/4 width to stay above
    it."
   (^long [message ^long bubble-w] (estimated-height message bubble-w nil nil))
   (^long [message ^long bubble-w detail-expansions session-id]
-   (let [content-w
+   (long (estimated-height message bubble-w detail-expansions session-id nil)))
+  ([message bubble-w detail-expansions session-id settings]
+   (let [bubble-w
+         (long bubble-w)
+
+         content-w
          (max 1 (- bubble-w 4))
 
          ;; Word-wrap + markdown block chrome cost more rows than a pure
@@ -496,6 +504,11 @@
              expanded?
              (any-details-expanded? message detail-expansions session-id)
 
+             ;; A closed step digest hides the code, results and thinking of its steps. Without a
+             ;; session the painter has no digest, so the steps paint in full.
+             digest-closed?
+             (and session-id (get settings :summarize-steps true) (not expanded?))
+
              ;; Collapsed-default caps: preview rows + the `+N more` row.
              peek
              (long ast/reasoning-preview-line-limit)
@@ -513,67 +526,88 @@
                        expanded? (+ full 3)
                        :else (+ (min full cap) 3))))
 
-             form-rows
-             (long
-               (reduce
-                 (fn [^long acc it]
-                   (+ acc
-                      (long
-                        (reduce (fn [^long a f]
-                                  (let [c
-                                        (:code f)
+             ;; Error band: pads + caret rows + the headline WRAPPED at fill-w — a long
+             ;; provider/exception message paints multiple rows, a flat charge undershoots.
+             ;; PROVIDER errors additionally paint explanation + next-step + facts + two
+             ;; 600-char raw trims, all uncollapsed — bound those by the trim budget
+             ;; instead of reproducing perr here.
+             error-rows
+             (fn ^long [err]
+               (if err
+                 (let [data
+                       (:data err)
 
-                                        cr
-                                        (long (if (and (string? c) (not (str/blank? c)))
-                                                (+ (wrapped-rows-est c fold-w) 2)
-                                                0))
+                       provider?
+                       (and (map? data) (or (:status data) (:body data) (:request-id data)))]
 
-                                        rr
-                                        (long (section-rows (:body (vis/result-card f))))
+                   (+ 4
+                      (prose-rows-est (str (or (:message err) err)) fold-w)
+                      (if provider? (+ 12 (quot (+ 1200 (dec fold-w)) fold-w)) 0)))
+                 0))
 
-                                        comr
-                                        (long (let [cm (:comment f)]
-                                                (if (and (string? cm) (not (str/blank? cm)))
-                                                  (+ (wrapped-rows-est cm fold-w) 2)
-                                                  0)))]
+             ;; Code + result (+ comment, + error) rows of one form.
+             form-rows-of
+             (fn ^long [f]
+               (let [c
+                     (:code f)
 
-                                    (+ a
-                                       cr
-                                       rr
-                                       comr
-                                       ;; Error band: pads + caret rows + the headline
-                                       ;; WRAPPED at fill-w — a long provider/exception
-                                       ;; message paints multiple rows, a flat charge
-                                       ;; undershoots. PROVIDER errors additionally paint
-                                       ;; explanation + next-step + facts + two 600-char
-                                       ;; raw trims, all uncollapsed — bound those by the
-                                       ;; trim budget instead of reproducing perr here.
-                                       (long (if-let [err (:error f)]
-                                               (let [data (:data err)
-                                                     provider? (and (map? data)
-                                                                    (or (:status data)
-                                                                        (:body data)
-                                                                        (:request-id data)))]
+                     cm
+                     (:comment f)]
 
-                                                 (+ 4
-                                                    (prose-rows-est (str (or (:message err) err))
-                                                                    fold-w)
-                                                    (if provider?
-                                                      (+ 12 (quot (+ 1200 (dec fold-w)) fold-w))
-                                                      0)))
-                                               0)))))
-                                0
-                                (:forms it)))))
-                 0
-                 trace))
+                 (+ (long (if (and (string? c) (not (str/blank? c)))
+                            (+ (wrapped-rows-est c fold-w) 2)
+                            0))
+                    (long (section-rows (:body (vis/result-card f))))
+                    (long (if (and (string? cm) (not (str/blank? cm)))
+                            (+ (wrapped-rows-est cm fold-w) 2)
+                            0))
+                    (long (error-rows (:error f))))))
+
+             ;; A closed digest paints a subset of its open steps, plus its own row and gap.
+             ;; Runs, live views and files stay visible, so their steps keep the full charge.
+             ;; Other steps keep their failures. Recaps and fallback notes lose the slack of
+             ;; the hidden code, so they get their own rows.
+             closed-step-rows
+             (fn ^long [it]
+               (let [forms
+                     (:forms it)
+
+                     shown-rows
+                     (if (or (seq (:attachments it)) (some (comp seq :runs) forms))
+                       form-rows-of
+                       (comp error-rows :error))]
+
+                 (+ (long (error-rows (:error it)))
+                    (* 3 (+ (count (:recaps it)) (count (:provider-fallbacks it))))
+                    (if (seq forms)
+                      (+ 2
+                         (long (reduce (fn [^long a f]
+                                         (+ a (long (shown-rows f))))
+                                       0
+                                       forms)))
+                      0))))
+
+             step-rows
+             (long (reduce (fn [^long acc it]
+                             (+ acc
+                                (long (if digest-closed?
+                                        (closed-step-rows it)
+                                        (reduce (fn [^long a f]
+                                                  (+ a (long (form-rows-of f))))
+                                                0
+                                                (:forms it))))))
+                           0
+                           trace))
 
              ;; ▸ THINKING accordion contains reasoning only. Provider
              ;; `:content-stream` is answer prose and stays outside the accordion.
+             ;; A closed digest hides the thinking of its steps with code.
              think-rows
              (long (reduce (fn [^long acc it]
                              (+ acc
                                 (long (let [full (prose-rows-est (:thinking it) fold-w)]
                                         (cond (zero? full) 0
+                                              (and digest-closed? (seq (:forms it))) 0
                                               expanded? (+ full 5)
                                               :else (+ (min full cap) 5))))))
                            0
@@ -595,7 +629,7 @@
          (long (+ 5          ;; label + footer + note + gap
                   img-rows   ;; reserved picture boxes
                   n-iter     ;; iteration headers
-                  form-rows  ;; code + result (+ error) rows
+                  step-rows  ;; code + result (+ error) rows, or the digests
                   think-rows ;; per-iteration reasoning + band
                   prose-rows ;; per-iteration assistant prose
                   run-rows   ;; the rail of finished runs + its margin
@@ -606,8 +640,8 @@
        :else (long (+ 6 img-rows (prose-rows-est text prose-w)))))))
 
 (defn- estimated-height-with-turn-separator
-  [_messages _settings bubble-w _idx message detail-expansions session-id]
-  (estimated-height message (long bubble-w) detail-expansions session-id))
+  [_messages settings bubble-w _idx message detail-expansions session-id]
+  (estimated-height message (long bubble-w) detail-expansions session-id settings))
 
 (defn- estimated-height-cached
   "Memoized `estimated-height-with-turn-separator` under the SAME key the

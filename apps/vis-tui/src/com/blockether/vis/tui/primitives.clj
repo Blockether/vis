@@ -1038,6 +1038,8 @@
 
 (def MARKER_QUEUE_BORDER "\uE013") ;; queue bottom border -> accent corner + horizontal rule that caps the left rail, above the edit hint
 
+(def MARKER_STEP_DIGEST "\uE014") ;; digest of the steps after a progress note, on transcript paper
+
 (def MARKER_ACTIVITY "\uE015") ;; compact Activity timeline surface
 
 (def MARKER_TH_MD_H1 "\uE021") ;; markdown heading 1 (thinking)

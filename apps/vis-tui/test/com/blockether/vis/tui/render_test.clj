@@ -36,6 +36,21 @@
 
 (def ^:private coalesce-bubble-blanks @#'render/coalesce-bubble-blanks)
 
+(def ^:private detail-node-id @#'render/detail-node-id)
+
+(defn- open-digests
+  "Detail expansions that open the step digests of the first 32 iterations of a turn, so a
+   test sees each step."
+  ([session-id session-turn-id] (open-digests {} session-id session-turn-id))
+  ([expansions session-id session-turn-id]
+   (into (or expansions {})
+         (for [n (range 1 33)]
+           [[(str session-id)
+             (detail-node-id {:session-turn-id session-turn-id
+                              :iteration-number n
+                              :section :iteration
+                              :kind :digest})] true]))))
+
 (defdescribe
   activity-section-spacing-test
   (it "separates result sections even when output has no trailing newline"
@@ -3235,7 +3250,10 @@
             (render/progress->lines-data {:iterations [iter]}
                                          80
                                          {:show-thinking true :show-iterations true}
-                                         {:now-ms 1000 :turn-start-ms 0 :session-id "s1"})
+                                         {:now-ms 1000
+                                          :turn-start-ms 0
+                                          :session-id "s1"
+                                          :detail-expansions (open-digests "s1" nil)})
 
             body
             (strip-sentinels (strip-ansi (str/join "\n" (:lines payload))))]
@@ -3262,10 +3280,11 @@
           {:show-thinking true :show-iterations true}
 
           live
-          (:lines (render/progress->lines-data {:iterations [iter]}
-                                               80
-                                               settings
-                                               {:now-ms 1000 :turn-start-ms 0}))
+          (:lines (render/progress->lines-data
+                    {:iterations [iter]}
+                    80
+                    settings
+                    {:now-ms 1000 :turn-start-ms 0 :detail-expansions (open-digests nil nil)}))
 
           cancel
           (:lines (render/format-answer-with-thinking-data "Cancelled by user."
@@ -3274,7 +3293,8 @@
                                                            settings
                                                            nil
                                                            true
-                                                           nil))
+                                                           {:detail-expansions (open-digests nil
+                                                                                             nil)}))
 
           clean
           (fn [line]
@@ -3320,7 +3340,9 @@
               (strip-ansi (render/progress->text {:iterations (mapv mk-entry (range 5))}
                                                  80
                                                  {:show-thinking true :show-iterations true}
-                                                 {:now-ms 1000 :turn-start-ms 0}))]
+                                                 {:now-ms 1000
+                                                  :turn-start-ms 0
+                                                  :detail-expansions (open-digests nil nil)}))]
 
           (expect (not (str/includes? body "hidden while live")))
           (expect (str/includes? body "(+ 0 1)"))
@@ -3513,18 +3535,20 @@
                   {:code "(+ 1 2)" :stdout nil :duration-ms 1 :success? true :silent? false}]}]}
 
               hidden-body
-              (strip-ansi (render/progress->text
-                            progress
-                            80
-                            {:show-thinking true :show-iterations true :show-silent false}
-                            {:now-ms 1000 :turn-start-ms 0}))
+              (strip-ansi
+                (render/progress->text
+                  progress
+                  80
+                  {:show-thinking true :show-iterations true :show-silent false}
+                  {:now-ms 1000 :turn-start-ms 0 :detail-expansions (open-digests nil nil)}))
 
               shown-body
-              (strip-ansi (render/progress->text
-                            progress
-                            80
-                            {:show-thinking true :show-iterations true :show-silent true}
-                            {:now-ms 1000 :turn-start-ms 0}))]
+              (strip-ansi
+                (render/progress->text
+                  progress
+                  80
+                  {:show-thinking true :show-iterations true :show-silent true}
+                  {:now-ms 1000 :turn-start-ms 0 :detail-expansions (open-digests nil nil)}))]
 
           (expect (not (str/includes? hidden-body "set-session-title!")))
           (expect (str/includes? hidden-body "(+ 1 2)"))
@@ -3717,28 +3741,31 @@
             (expect (= [(dec (count (:lines a)))] (vec diff))))
           ;; `:text` mirrors `:lines`: same body, different last (spinner) line.
           (expect (not= (:text a) (:text b))))))
-    (it "a content change busts the body cache and grows the trace"
-        (render/invalidate-cache!)
-        (let [three
-              (render/progress->lines-data {:iterations (mapv mk-iter (range 3))}
-                                           130
-                                           settings
-                                           (extra 1700000005000))
+    (it
+      "a content change busts the body cache and grows the trace"
+      (render/invalidate-cache!)
+      (let [three
+            (render/progress->lines-data {:iterations (mapv mk-iter (range 3))}
+                                         130
+                                         settings
+                                         (assoc (extra 1700000005000)
+                                           :detail-expansions (open-digests "s1" "turn-abc12345")))
 
-              size3
-              (render/cache-size)
+            size3
+            (render/cache-size)
 
-              four
-              (render/progress->lines-data {:iterations (mapv mk-iter (range 4))}
-                                           130
-                                           settings
-                                           (extra 1700000005000))
+            four
+            (render/progress->lines-data {:iterations (mapv mk-iter (range 4))}
+                                         130
+                                         settings
+                                         (assoc (extra 1700000005000)
+                                           :detail-expansions (open-digests "s1" "turn-abc12345")))
 
-              size4
-              (render/cache-size)]
+            size4
+            (render/cache-size)]
 
-          (expect (> size4 size3))
-          (expect (> (count (:lines four)) (count (:lines three))))))
+        (expect (> size4 size3))
+        (expect (> (count (:lines four)) (count (:lines three))))))
     (it "renders a queued image as its filename, never the raw drop path"
         (render/invalidate-cache!)
         (let [payload
@@ -4562,7 +4589,7 @@
         (expect (not (str/includes? (:text payload) "[iteration 1 · block 1]")))
         (expect (not (str/includes? (:text payload) huge-result)))
         (expect (every? #(or (not= :toggle-details (:kind %))
-                             (re-find #":(execution|code)$" (str (:node-id %))))
+                             (re-find #":(execution|code|digest)$" (str (:node-id %))))
                         (:line-meta payload)))))
   (it "collapses completed reasoning behind the badge on the answer view"
       ;; Completed reasoning defaults collapsed; the legacy
@@ -6986,7 +7013,9 @@ h = 8"
           false
           {:session-id "sid"
            :session-turn-id "abcd1234-5678-9999"
-           :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
+           :detail-expansions (open-digests {:vis.channel-tui/expand-execution-details? true}
+                                            "sid"
+                                            "abcd1234-5678-9999")})
 
         message
         {:role :assistant
@@ -7193,7 +7222,7 @@ h = 8"
                 strip-sentinels))
 
           collapsed
-          (render-row 80 {})
+          (render-row 80 (open-digests "s1" "turn-1"))
 
           expanded
           (render-row 80 {:vis.channel-tui/expand-all-details? true})]
@@ -7239,7 +7268,7 @@ h = 8"
                   strip-sentinels))
 
             collapsed
-            (render-row {})
+            (render-row (open-digests "s1" "turn-1"))
 
             expanded
             (render-row {:vis.channel-tui/expand-all-details? true})]
@@ -7286,7 +7315,7 @@ h = 8"
                 strip-sentinels))
 
           collapsed
-          (render-row {})
+          (render-row (open-digests "s1" "turn-1"))
 
           collapsed-lines
           (str/split-lines collapsed)
@@ -7348,7 +7377,9 @@ h = 8"
               nil
               nil
               false
-              {:session-id "s1" :session-turn-id "turn-1" :detail-expansions {}})
+              {:session-id "s1"
+               :session-turn-id "turn-1"
+               :detail-expansions (open-digests "s1" "turn-1")})
             :text
             strip-ansi
             strip-sentinels)]
@@ -7488,7 +7519,8 @@ h = 8"
                                                     {:show-thinking true :show-iterations true}
                                                     nil
                                                     false
-                                                    {:session-id "s1"})
+                                                    {:session-id "s1"
+                                                     :detail-expansions (open-digests "s1" nil)})
 
           collapsed-text
           (-> (:text collapsed-rendered)
@@ -8177,15 +8209,17 @@ h = 8"
         text-of
         (fn [expand-all?]
           (render/invalidate-cache!)
-          (->> (:lines (render/format-answer-with-thinking-data*
-                         "Done."
-                         trace
-                         72
-                         {:show-thinking true :show-iterations true}
-                         nil
-                         false
-                         {:session-id "s1"
-                          :detail-expansions {:vis.channel-tui/expand-all-details? expand-all?}}))
+          (->> (:lines
+                 (render/format-answer-with-thinking-data*
+                   "Done."
+                   trace
+                   72
+                   {:show-thinking true :show-iterations true}
+                   nil
+                   false
+                   {:session-id "s1"
+                    :detail-expansions
+                    (open-digests {:vis.channel-tui/expand-all-details? expand-all?} "s1" nil)}))
                (map (comp strip-sentinels strip-ansi))
                (str/join "\n")))
 
@@ -8339,8 +8373,10 @@ h = 8"
             {:session-id "live-more"
              :now-ms 1000
              :turn-start-ms 0
-             :detail-expansions (assoc expansions
-                                  ["live-more" "iteration:i1:b1:activity:#band"] true)}))
+             :detail-expansions (open-digests (assoc expansions
+                                                ["live-more" "iteration:i1:b1:activity:#band"] true)
+                                              "live-more"
+                                              nil)}))
 
         row-ids
         (fn [payload]
@@ -8624,7 +8660,9 @@ h = 8"
               :session-id "activity-padding"
               :session-turn-id "turn"
               :settings {:show-python-code false}
-              :detail-expansions {:vis.channel-tui/expand-all-details? expanded?}})
+              :detail-expansions (open-digests {:vis.channel-tui/expand-all-details? expanded?}
+                                               "activity-padding"
+                                               "turn")})
 
             header-index
             (first (keep-indexed #(when (= :activity-header (get-in %2 [:meta :kind])) %1) entries))
@@ -8915,12 +8953,14 @@ h = 8"
   (let [entries
         (fn [forms opts]
           (#'render/trace-render-entries
-           (merge {:iterations [{:forms forms}]
-                   :content-w 76
-                   :session-id "s"
-                   :session-turn-id "t"
-                   :settings {:show-python-code true}}
-                  opts)))
+           (update (merge {:iterations [{:forms forms}]
+                           :content-w 76
+                           :session-id "s"
+                           :session-turn-id "t"
+                           :settings {:show-python-code true}}
+                          opts)
+                   :detail-expansions open-digests
+                   "s" "t")))
 
         bands
         (fn [painted]
@@ -9426,7 +9466,8 @@ print(paths)"
             {:session-id "result-align"
              :now-ms 1000
              :turn-start-ms 0
-             :detail-expansions {:vis.channel-tui/expand-all-details? expanded?}}
+             :detail-expansions
+             (open-digests {:vis.channel-tui/expand-all-details? expanded?} "result-align" nil)}
 
             data
             (if live?
@@ -9496,7 +9537,8 @@ print(paths)"
             nil
             false
             {:session-id "result-align"
-             :detail-expansions {["result-align" "iteration:i1:b1:code"] true}})
+             :detail-expansions
+             (open-digests {["result-align" "iteration:i1:b1:code"] true} "result-align" nil)})
 
           captured
           (cap/capture! {:cols 80
@@ -10663,8 +10705,9 @@ print(paths)"
           (expect (nil? error))
           (expect (= #{{:kind :file :session-id "fixture" :url "src/example.clj"}} targets))))))
 
-;; Progress notes are the only visible separators of a turn's work: the steps between two
-;; notes share one Activity, live and after the turn finishes, and its header adds up their cost.
+;; Progress notes are the only visible separators of a turn's work: the steps after each note
+;; fold into one digest row, live and after the turn finishes. The digest adds up their cost,
+;; and an open digest shows their thinking, code and Activity.
 (defdescribe
   summarized-steps-test
   (let [forms
@@ -10679,19 +10722,30 @@ print(paths)"
          {:assistant-prose note :forms [(forms 2)]}]
 
         render*
-        (fn [settings live?]
+        (fn [settings live? expansions]
           (#'render/trace-render-entries
            {:iterations trace
             :live? live?
             :content-w 76
             :session-id "s"
             :session-turn-id "t"
-            :settings settings}))
+            :settings settings
+            :detail-expansions expansions}))
 
         operations
         (fn [entries]
           (vec (keep #(when (= :activity-header (get-in % [:meta :kind]))
                         (re-find #"\d+ mutations? · \d+ observations?" (str (:line %))))
+                     entries)))
+
+        digest?
+        (fn [entry]
+          (str/ends-with? (str (get-in entry [:meta :node-id])) ":digest"))
+
+        digests
+        (fn [entries]
+          (vec (keep #(when (digest? %)
+                        (re-find #"[▸▾] \d+ mutations? · \d+ observations?" (str (:line %))))
                      entries)))
 
         reasoning
@@ -10703,7 +10757,7 @@ print(paths)"
                                                                      id)))
                 entries))]
 
-    (it "combines the steps between progress notes into one Activity, live or finished"
+    (it "folds the steps after each progress note into one digest row, live or finished"
         (doseq [live?
                 [false true]
 
@@ -10711,25 +10765,51 @@ print(paths)"
                 [false true]]
 
           (let [entries
-                (render* {:show-python-code shown?} live?)
+                (render* {:show-python-code shown?} live? {})
 
                 text
                 (str/join "\n" (map :line entries))]
 
-            (expect (= ["1 mutation · 3 observations" "0 mutations · 3 observations"]
-                       (operations entries)))
-            (expect (= 1 (count (reasoning entries))))
+            (expect (= ["▸ 1 mutation · 3 observations" "▸ 0 mutations · 3 observations"]
+                       (digests entries)))
+            (expect (= {:kind :toggle-details
+                        :session-id "s"
+                        :node-id "iteration:tt:i1:digest"
+                        :collapsed? true
+                        :status-tone nil}
+                       (:meta (first (filter digest? entries)))))
+            (expect (empty? (operations entries)))
+            (expect (empty? (reasoning entries)))
+            (expect (not (str/includes? text "CODE")))
             (expect (< (.indexOf ^String text "1 mutation · 3 observations")
                        (.indexOf ^String text note)
                        (.indexOf ^String text "0 mutations · 3 observations"))))))
+    (it "opens a digest to the thinking, code and Activity of its steps"
+        (doseq [live? [false true]]
+          (let [entries (render* {} live? (open-digests "s" "t"))
+                text (str/join "\n" (map :line entries))
+                at #(.indexOf ^String text ^String %)]
+
+            (expect (= ["▾ 1 mutation · 3 observations" "▾ 0 mutations · 3 observations"]
+                       (digests entries)))
+            (expect (= ["1 mutation · 3 observations" "0 mutations · 3 observations"]
+                       (operations entries)))
+            (expect (= 1 (count (reasoning entries))))
+            ;; The note stays above its digest and does not repeat inside it.
+            (expect (= 1 (count (re-seq #"Sources read" text))))
+            (expect (< (at "1 mutation · 3 observations")
+                       (at "Read the sources first.")
+                       (at "CODE")
+                       (at note))))))
     (it "shows Activity and reasoning for each step when summarizing is off"
         (doseq [live? [false true]]
-          (let [entries (render* {:summarize-steps false} live?)]
+          (let [entries (render* {:summarize-steps false} live? {})]
+            (expect (empty? (digests entries)))
             (expect (= ["1 mutation · 1 observation" "0 mutations · 2 observations"
                         "0 mutations · 3 observations"]
                        (operations entries)))
             (expect (= 2 (count (reasoning entries)))))))
-    (it "keeps a finished turn's notes and Activity instead of folding them"
+    (it "keeps a finished turn's notes and digests instead of folding them"
         (doseq [summarize? [true false]]
           (let [{:keys [text line-meta]} (render/format-answer-with-thinking-data
                                            "Done."
@@ -10738,15 +10818,67 @@ print(paths)"
                                            {:summarize-steps summarize?}
                                            nil
                                            false
-                                           {:session-id "s" :session-turn-id "t"})]
+                                           {:session-id "s" :session-turn-id "t"})
+                kinds (frequencies
+                        (keep #(if (str/ends-with? (str (:node-id %)) ":digest") :digest (:kind %))
+                              line-meta))]
+
             (expect (str/includes? text note))
             (expect (str/includes? text "Done."))
-            (expect (= (if summarize? 2 3)
-                       (count (filter #(= :activity-header (:kind %)) line-meta)))))))
+            (expect (= (if summarize? 2 0) (get kinds :digest 0)))
+            (expect (= (if summarize? 0 3) (get kinds :activity-header 0))))))
+    (it "names and colors a digest by the state of its steps"
+        (doseq [[state tone label] [["running" :running "1 running"] ["failed" :error "1 failed"]
+                                    ["succeeded" nil "1 mutation"]]]
+          (let [form
+                {:code "run()"
+                 :success? (not= "failed" state)
+                 :activity
+                 {:state state
+                  :rows
+                  [{:id "a" :operation "shell" :signal "mutation" :summary "npm test" :state state}]
+                  :omitted {:rows 0 :by-classification {}}}}
+                digest (first (filter digest?
+                                      (#'render/trace-render-entries
+                                       {:iterations [{:forms [form]}]
+                                        :live? (= "running" state)
+                                        :content-w 76
+                                        :session-id "s"
+                                        :session-turn-id "t"
+                                        :settings {}})))]
+
+            (expect (= tone (get-in digest [:meta :status-tone])))
+            (expect (str/includes? (:line digest) label)))))
+    (it "paints a digest row as one bold toggle"
+        (let [entries
+              (render* {} false {})
+
+              captured
+              (cap/capture! {:cols 80
+                             :rows 30
+                             :paint! (fn [{:keys [g]}]
+                                       (render/draw-chat-bubble! g
+                                                                 {:role :assistant
+                                                                  :prewrapped-lines (mapv :line
+                                                                                          entries)
+                                                                  :line-meta (mapv :meta entries)}
+                                                                 0 0
+                                                                 76 {:viewport-h 30}))})
+
+              row
+              (first (filter #(str/includes? (apply str (map :ch %)) "▸ 1 mutation")
+                             (first (:frames captured))))]
+
+          (expect (nil? (:error captured)))
+          (expect (str/includes? (apply str (map :ch (filter :bold row)))
+                                 "1 mutation · 3 observations"))
+          (.commitFrame interactions/hit-map)
+          (expect (some #(= "iteration:tt:i1:digest" (:node-id %))
+                        (.current interactions/hit-map)))))
     ;; Real turns split here: a step that produced an artifact or failed a check opened
     ;; its own Activity between the same two notes.
     (it
-      "keeps artifacts and errors inside the Activity of their notes"
+      "pins failures, files and step errors under a closed digest"
       (let [artifact
             {"source" "tool"
              "kind" "doc"
@@ -10773,33 +10905,37 @@ print(paths)"
              {:iteration-id "i5" :assistant-prose note :forms [(forms 1)]}]
 
             render
-            (fn [summarize? live?]
+            (fn [summarize? live? expansions]
               (#'render/trace-render-entries
                {:iterations steps
                 :live? live?
                 :content-w 76
                 :session-id "s"
                 :session-turn-id "t"
-                :detail-expansions {:vis.channel-tui/expand-execution-details? true}
+                :detail-expansions expansions
                 :settings {:summarize-steps summarize?}}))
 
             headers
             (fn [entries]
-              (count (filter #(= :activity-header (get-in % [:meta :kind])) entries)))]
+              (count (filter #(= :activity-header (get-in % [:meta :kind])) entries)))
+
+            artifact-meta
+            {:filename "report.html"
+             :media-type "text/html"
+             :size 2048
+             :iteration-id "i2"
+             :index 0}]
 
         (doseq [live? [false true]]
-          (let [entries (render true live?)
-                text (str/join "\n" (map :line entries))
-                at #(.indexOf ^String text ^String %)]
+          (doseq [[entries open?] [[(render true live? {}) false]
+                                   [(render true live? (open-digests "s" "t")) true]]]
+            (let [text (str/join "\n" (map :line entries))
+                  at #(.indexOf ^String text ^String %)]
 
-            (expect (= 2 (headers entries)))
-            (expect (some #(= {:filename "report.html"
-                               :media-type "text/html"
-                               :size 2048
-                               :iteration-id "i2"
-                               :index 0}
-                              (get-in % [:meta :artifact]))
-                          entries))
-            ;; The failed check keeps its collapsed FAILED band inside the merged Activity.
-            (expect (< -1 (at "FAILED") (at "report.html") (at "Step timed out") (at note))))
-          (expect (= 5 (headers (render false live?)))))))))
+              ;; Open, the steps share one Activity. Closed, no Activity shows.
+              (expect (= (if open? 2 0) (headers entries)))
+              (expect (some #(= artifact-meta (get-in % [:meta :artifact])) entries))
+              (expect (= :error (get-in (first (filter digest? entries)) [:meta :status-tone])))
+              ;; The failed check keeps its collapsed FAILED band, open or closed.
+              (expect (< -1 (at "FAILED") (at "report.html") (at "Step timed out") (at note)))))
+          (expect (= 5 (headers (render false live? {})))))))))

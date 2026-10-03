@@ -13,17 +13,22 @@ import {
   ThinkingBand,
   UserMessage,
 } from './ChatContent';
+import { openStepsMarkup, renderOpenSteps } from './trace-harness';
 import { STORY_TURN_ITERATIONS, STORY_TURN_ITERATIONS_SETTLED } from '../dev/story-data';
+import type { ActivityProjection } from '../lib/activity';
 import type { GatewayClient } from '../lib/gateway';
 import { mediaFrameClass, mediaGridClass, mediaTileFrameClass } from '../lib/media-frame';
 import { speechOutput } from '../lib/speech';
 import { setStepsSummarized } from '../lib/transcript-display';
 import type { IterationAttachment, TranscriptTurn } from '../lib/types';
 
-/** Visible text of a rendered chunk: tags out, entities back. */
+/**
+ * Visible text of a rendered chunk: tags out, entities back. A tag ends outside its
+ * quoted attributes, because DOM markup keeps the `>` of a class such as `[&>*]:mt-0`.
+ */
 const text = (html: string) =>
   html
-    .replace(/<[^>]+>/g, '')
+    .replace(/<(?:[^>"']|"[^"]*"|'[^']*')*>/g, '')
     .replace(/&quot;/g, '"')
     .replace(/&#x27;/g, "'")
     .replace(/&gt;/g, '>')
@@ -945,7 +950,7 @@ describe('collapsed tool results', () => {
       ],
     };
 
-    const html = renderToStaticMarkup(<AssistantMessage turn={turn} />);
+    const html = openStepsMarkup(<AssistantMessage turn={turn} />);
 
     expect(count(html, /<details/g)).toBe(400);
     expect(count(html, /RESULT/g)).toBe(400);
@@ -1023,7 +1028,7 @@ describe('a turn declares no size it has not measured', () => {
 describe('a card gives stdout one stable band and no op badge', () => {
   const card = (form: Record<string, unknown>) =>
     text(
-      renderToStaticMarkup(
+      openStepsMarkup(
         <AssistantMessage
           turn={{
             turn_id: 'titles',
@@ -1126,7 +1131,7 @@ describe('command turns expose one canonical result', () => {
   });
 
   it('shows a bang result from its one stdout fact', () => {
-    const painted = render(
+    const painted = renderOpenSteps(
       <AssistantMessage
         turn={{
           turn_id: 'bang',
@@ -1176,7 +1181,7 @@ describe('a Python evaluation without detected Activity', () => {
     }) as unknown as TranscriptTurn;
 
   it('is the running execution before any semantic activity appears', () => {
-    const painted = render(
+    const painted = renderOpenSteps(
       <AssistantMessage turn={turnWith({ source: 'answer = 42' }, 'running')} streaming />,
     );
 
@@ -1188,7 +1193,7 @@ describe('a Python evaluation without detected Activity', () => {
   });
 
   it('restores one settled receipt with Python and stdout evidence', () => {
-    const painted = render(
+    const painted = renderOpenSteps(
       <AssistantMessage
         turn={turnWith({
           source: 'print(42)',
@@ -1206,7 +1211,7 @@ describe('a Python evaluation without detected Activity', () => {
   });
 
   it('keeps a failed Python message collapsed instead of showing its source', () => {
-    const painted = render(
+    const painted = renderOpenSteps(
       <AssistantMessage
         turn={turnWith({
           source: 'raise Error()',
@@ -1236,7 +1241,7 @@ describe('a Python evaluation without detected Activity', () => {
   // Regression, user screenshot: a stopped execution showed a second Interrupted band
   // instead of a quiet state beside CODE in the same header.
   it('places an interrupted Python execution beside CODE without a result band', () => {
-    const painted = render(
+    const painted = renderOpenSteps(
       <AssistantMessage
         turn={turnWith({
           source: 'walk_the_tree()',
@@ -1265,7 +1270,7 @@ describe('a Python evaluation without detected Activity', () => {
 
   it('enhances the same receipt when semantic activity arrives', () => {
     const runningTurn = turnWith({ source: 'answer = search()' }, 'running');
-    const painted = render(<AssistantMessage turn={runningTurn} streaming />);
+    const painted = renderOpenSteps(<AssistantMessage turn={runningTurn} streaming />);
     const receipt = painted.container.querySelector('[aria-label="Execution trace"]')!;
     expect(receipt.getAttribute('role')).toBe('status');
 
@@ -1304,7 +1309,7 @@ describe('a Python evaluation without detected Activity', () => {
   });
 
   it('does not invent Activity when an empty projection settles', () => {
-    const painted = render(
+    const painted = renderOpenSteps(
       <AssistantMessage
         turn={turnWith({
           source: 'print(42)',
@@ -1371,7 +1376,7 @@ describe('Activity follows the combined Python source', () => {
   // Regression, user screenshot: the nested RESULT header made a dark stripe
   // between the CODE and ACTIVITY bands in dark themes.
   it('keeps a collapsed and expanded result on the same surface as code and Activity', () => {
-    const painted = render(
+    const painted = renderOpenSteps(
       <AssistantMessage
         turn={turnOf([
           { source: 'run()', stdout: 'first line\nsecond line', activity: runningActivity },
@@ -1392,7 +1397,7 @@ describe('Activity follows the combined Python source', () => {
   });
 
   it('groups adjacent calls without dropping either result', () => {
-    const painted = render(
+    const painted = renderOpenSteps(
       <AssistantMessage
         turn={turnOf([
           { source: 'first_form()', stdout: 'first result\n' },
@@ -1424,7 +1429,7 @@ describe('Activity follows the combined Python source', () => {
   });
 
   it('keeps grouped failures and output while placing an interruption beside CODE', () => {
-    const painted = render(
+    const painted = renderOpenSteps(
       <AssistantMessage
         turn={turnOf([
           { source: 'first_form()', error: 'java.lang.InterruptedException', duration_ms: 29 },
@@ -1454,7 +1459,7 @@ describe('Activity follows the combined Python source', () => {
   // iteration's array index, so the running panel vanished — and the same anchor
   // could place a second copy. One field on one form cannot do either.
   it('paints exactly one Activity for the form that owns it', () => {
-    const painted = render(
+    const painted = renderOpenSteps(
       <AssistantMessage
         turn={turnOf([
           { source: 'first_form()', stdout: 'first result\n' },
@@ -1584,7 +1589,7 @@ describe('Activity follows the combined Python source', () => {
   });
 
   it('keeps mixed outcomes independently collapsible', () => {
-    const painted = render(
+    const painted = renderOpenSteps(
       <AssistantMessage
         turn={turnOf([
           { source: 'fail()', error: { message: 'Operation failed' } },
@@ -1610,7 +1615,7 @@ describe('Activity follows the combined Python source', () => {
   it.each([320, 390, 768, 1440])(
     'keeps Activity visible while source independently expands at %ipx',
     (width) => {
-      const painted = render(
+      const painted = renderOpenSteps(
         <div style={{ width }}>
           <AssistantMessage
             turn={turnOf([
@@ -1665,7 +1670,7 @@ describe('Activity follows the combined Python source', () => {
   // very number the terminal frame measured.
   it('keeps settled Activity and elapsed time at the transcript boundary', () => {
     const rendered = text(
-      renderToStaticMarkup(
+      openStepsMarkup(
         <AssistantMessage
           turn={turnOf([
             {
@@ -1693,7 +1698,7 @@ describe('Activity follows the combined Python source', () => {
 
   // Regression, T137: one duration must not appear on two nested bands.
   it('prints elapsed once on the result rather than a redundant execution band', () => {
-    const painted = render(
+    const painted = renderOpenSteps(
       <AssistantMessage
         turn={turnOf([
           {
@@ -1719,7 +1724,7 @@ describe('Activity follows the combined Python source', () => {
   });
   it('uses only the actual terminal Activity count after settlement', () => {
     const rendered = text(
-      renderToStaticMarkup(
+      openStepsMarkup(
         <AssistantMessage
           turn={turnOf([
             {
@@ -2195,7 +2200,7 @@ describe('a turn drawn as one thread', () => {
     Array.from(container.querySelectorAll('[data-execution-code]'));
 
   it('marks every execution group, not every segment', () => {
-    const { container } = render(
+    const { container } = renderOpenSteps(
       <IterationTrace iterations={STORY_TURN_ITERATIONS_SETTLED} whole />,
     );
 
@@ -2204,7 +2209,7 @@ describe('a turn drawn as one thread', () => {
   });
 
   it('does not turn source icons into failure or cancellation rings', () => {
-    const { container } = render(
+    const { container } = renderOpenSteps(
       <IterationTrace iterations={STORY_TURN_ITERATIONS_SETTLED} whole />,
     );
 
@@ -2213,7 +2218,7 @@ describe('a turn drawn as one thread', () => {
   });
 
   it('keeps the same source icons while invocations are running', () => {
-    const { container } = render(<IterationTrace iterations={STORY_TURN_ITERATIONS} live whole />);
+    const { container } = renderOpenSteps(<IterationTrace iterations={STORY_TURN_ITERATIONS} live whole />);
 
     expect(marks(container)).toHaveLength(2);
   });
@@ -2224,7 +2229,7 @@ describe('a turn drawn as one thread', () => {
   // receipt row on screen it read as a stale word; with a column of rings it
   // read as three things happening at once.
   it('closes a step that measured itself, even while the turn runs on', () => {
-    const { container } = render(<IterationTrace iterations={STORY_TURN_ITERATIONS} live whole />);
+    const { container } = renderOpenSteps(<IterationTrace iterations={STORY_TURN_ITERATIONS} live whole />);
 
     // The first group is settled even though the next group is still running.
     const rows = Array.from(container.querySelectorAll('[aria-label="Execution trace"]'));
@@ -2233,7 +2238,7 @@ describe('a turn drawn as one thread', () => {
     expect(rows[1].getAttribute('role')).toBe('status');
   });
   it('gives a multi-step trace no repeated landmark', () => {
-    const { container } = render(
+    const { container } = renderOpenSteps(
       <IterationTrace iterations={STORY_TURN_ITERATIONS_SETTLED} whole />,
     );
 
@@ -2246,7 +2251,7 @@ describe('a turn drawn as one thread', () => {
   });
 
   it('still says RUNNING out loud for the step that is moving', () => {
-    const { container } = render(<IterationTrace iterations={STORY_TURN_ITERATIONS} live whole />);
+    const { container } = renderOpenSteps(<IterationTrace iterations={STORY_TURN_ITERATIONS} live whole />);
 
     // The ring is `aria-hidden`; the row beside it is what a screen reader gets,
     // and the two are read from ONE `formStep` so they cannot disagree.
@@ -2291,7 +2296,7 @@ describe('compact execution groups', () => {
   });
 
   it('shows one code line before one activity for adjacent Python calls', () => {
-    const painted = render(
+    const painted = renderOpenSteps(
       <IterationTrace
         whole
         iterations={[
@@ -2320,7 +2325,7 @@ describe('compact execution groups', () => {
   it.each([0, 0.5, 0.999])(
     'shows <1ms for a measured sub-millisecond execution (%s)',
     (duration) => {
-      const painted = render(
+      const painted = renderOpenSteps(
         <IterationTrace
           whole
           iterations={[{ position: 1, forms: [{ source: 'pass', duration_ms: duration }] }]}
@@ -2334,7 +2339,8 @@ describe('compact execution groups', () => {
 });
 
 // Progress notes are the only visible separators of a turn's work: the steps between two
-// notes share one Activity and one reasoning band, live and after the turn finishes.
+// notes fold into one digest row, live and after the turn finishes. Opening the row shows
+// their one reasoning band, their code and their Activity.
 describe('steps between progress notes', () => {
   const note = 'Sources read; now the last batch.';
   const iterations = [
@@ -2370,9 +2376,43 @@ describe('steps between progress notes', () => {
     );
   const follows = (before: Node, after: Node) =>
     Boolean(before.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const digests = (root: HTMLElement) => [
+    ...root.querySelectorAll<HTMLButtonElement>('button[data-step-digest]'),
+  ];
+  const client = {
+    attachmentUrl: async () => 'blob:none',
+    retainAttachment: () => () => {},
+  } as unknown as GatewayClient;
+  const report: IterationAttachment = {
+    index: 0,
+    iteration_id: 'step-2',
+    filename: 'report.pdf',
+    media_type: 'application/pdf',
+    size: 2048,
+  };
+  // One settled read: the digest counts it, and its open steps show it as Activity.
+  const read: ActivityProjection = {
+    state: 'succeeded',
+    counts: { running: 0, succeeded: 1, failed: 0, cancelled: 0 },
+    rows: [
+      {
+        id: 'read-call',
+        sequence: 1,
+        operation: 'cat',
+        presenter: 'observation',
+        signal: 'observation',
+        state: 'succeeded',
+        summary: 'Read sources.md',
+        duration_ms: 12,
+        resources: [],
+        evidence: [],
+      },
+    ],
+    omitted: { rows: 0, by_classification: {} },
+  };
 
   it('combines the steps between notes into one Activity and one reasoning band', () => {
-    const painted = render(<IterationTrace whole iterations={iterations} />);
+    const painted = renderOpenSteps(<IterationTrace whole iterations={iterations} />);
     const [first, second] = traces(painted.container);
     const noted = painted.getByText(note);
     expect(traces(painted.container)).toHaveLength(2);
@@ -2385,21 +2425,10 @@ describe('steps between progress notes', () => {
   // Regression: a step that produced an artifact opened a second Activity between the
   // same two notes, so one run of work read as two.
   it('keeps an artifact inside the Activity of its notes', () => {
-    const client = {
-      attachmentUrl: async () => 'blob:none',
-      retainAttachment: () => () => {},
-    } as unknown as GatewayClient;
-    const report: IterationAttachment = {
-      index: 0,
-      iteration_id: 'step-2',
-      filename: 'report.pdf',
-      media_type: 'application/pdf',
-      size: 2048,
-    };
     const produced = iterations.map((step) =>
       step.id === 'step-2' ? { ...step, attachments: [report] } : step,
     );
-    const painted = render(<IterationTrace whole iterations={produced} client={client} sid="s1" />);
+    const painted = renderOpenSteps(<IterationTrace whole iterations={produced} client={client} sid="s1" />);
     const [first, second] = traces(painted.container);
     const artifact = painted.getByText('report.pdf');
     const noted = painted.getByText(note);
@@ -2409,11 +2438,82 @@ describe('steps between progress notes', () => {
     expect(follows(noted, second)).toBe(true);
   });
 
+  it('shows each note above one closed digest of its steps', () => {
+    const painted = render(<IterationTrace whole showCode iterations={iterations} />);
+    const [first, second] = digests(painted.container);
+    const noted = painted.getByText(note);
+    expect(digests(painted.container).map((row) => row.getAttribute('aria-label'))).toEqual([
+      'Expand steps: 0 mutations',
+      'Expand steps: 0 mutations',
+    ]);
+    expect(follows(first, noted)).toBe(true);
+    expect(follows(noted, second)).toBe(true);
+    expect(traces(painted.container)).toHaveLength(0);
+    expect(bands(painted.container)).toEqual([]);
+    expect(painted.container.textContent).not.toContain('read_first()');
+  });
+
+  it('opens a digest to show the thinking, code and Activity of its steps', () => {
+    const observed = iterations.map((step) =>
+      step.id === 'step-2'
+        ? { ...step, forms: [{ source: 'read_second()', duration_ms: 10, activity: read }] }
+        : step,
+    );
+    const painted = render(<IterationTrace whole showCode iterations={observed} />);
+    const [first, second] = digests(painted.container);
+    expect(first).toHaveAttribute('aria-label', 'Expand steps: 0 mutations · 1 observation');
+    fireEvent.click(first);
+    const [band] = painted.container.querySelectorAll('.bg-thinking-surface');
+    const [opened] = traces(painted.container);
+    expect(first).toHaveAttribute('aria-expanded', 'true');
+    expect(first).toHaveAttribute('aria-label', 'Collapse steps: 0 mutations · 1 observation');
+    expect(second).toHaveAttribute('aria-expanded', 'false');
+    expect(bands(painted.container)).toEqual([['Read the sources first.', 'One more source.']]);
+    expect(traces(painted.container)).toHaveLength(1);
+    fireEvent.click(painted.getByRole('button', { name: 'Expand code' }));
+    const code = painted.container.querySelector('[data-execution-code]')?.textContent;
+    expect(code).toContain('read_first()');
+    expect(code).toContain('read_second()');
+    expect(painted.getByRole('button', { name: 'Expand Activity' })).toBeInTheDocument();
+    expect(follows(first, band)).toBe(true);
+    expect(follows(band, opened)).toBe(true);
+    expect(painted.container.textContent).not.toContain('check()');
+    expect(painted.getAllByText(note)).toHaveLength(1);
+    fireEvent.click(first);
+    expect(traces(painted.container)).toHaveLength(0);
+    expect(bands(painted.container)).toEqual([]);
+  });
+
+  it('keeps failures and files in view while a digest is closed', () => {
+    const failed = iterations.map((step) =>
+      step.id === 'step-2'
+        ? {
+            ...step,
+            attachments: [report],
+            forms: [{ source: 'read_second()', duration_ms: 10, error: 'missing source' }],
+          }
+        : step,
+    );
+    const painted = render(
+      <IterationTrace whole showCode iterations={failed} client={client} sid="s1" />,
+    );
+    const [first, second] = digests(painted.container);
+    expect(first).toHaveClass('text-err-ink!');
+    expect(second).not.toHaveClass('text-err-ink!');
+    expect(painted.getByRole('button', { name: 'Expand error details' })).toHaveTextContent(
+      'Failed',
+    );
+    expect(painted.getByText('report.pdf')).toBeInTheDocument();
+    expect(traces(painted.container)).toHaveLength(0);
+    expect(painted.container.textContent).not.toContain('read_second()');
+  });
+
   it('shows Activity and reasoning for each step when summarizing is off', () => {
     setStepsSummarized(false);
     try {
       const painted = render(<IterationTrace whole iterations={iterations} />);
       expect(traces(painted.container)).toHaveLength(4);
+      expect(digests(painted.container)).toEqual([]);
       expect(bands(painted.container)).toEqual([['Read the sources first.'], ['One more source.']]);
       expect(localStorage.getItem('vis.summarize_steps')).toBe('separate');
     } finally {
@@ -2485,7 +2585,7 @@ it('keeps independently paged Activity sources addressable in a combined executi
       },
     ],
   } as TranscriptTurn;
-  const view = render(
+  const view = renderOpenSteps(
     <ActivityHistoryContext.Provider value={{ load }}>
       <AssistantMessage turn={turn} />
     </ActivityHistoryContext.Provider>,

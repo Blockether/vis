@@ -1130,7 +1130,8 @@
                                                                   :text
                                                                   "SEARCH_EVIDENCE_BODY"}]}}]}}]}]}]
               :scroll scroll/follow
-              :detail-expansions {}
+              ;; Result and Activity live inside the open step digest.
+              :detail-expansions {["click-session" "iteration:i1:digest"] true}
               :loading? false
               :progress nil}]
       (virtual/invalidate-heights!)
@@ -3583,7 +3584,8 @@ therapy line 2"
               false
               {:session-id "sid"
                :session-turn-id "turn"
-               :detail-expansions {:vis.channel-tui/expand-all-details? expanded?}})
+               :detail-expansions {:vis.channel-tui/expand-all-details? expanded?
+                                   ["sid" "iteration:tturn:i1:digest"] true}})
 
             message
             {:role :assistant :prewrapped-lines (:lines payload) :line-meta (:line-meta payload)}
@@ -3628,7 +3630,10 @@ therapy line 2"
                                                    {:show-thinking true :show-iterations true}
                                                    nil
                                                    false
-                                                   {:session-id "sid" :session-turn-id "turn"})
+                                                   {:session-id "sid"
+                                                    :session-turn-id "turn"
+                                                    :detail-expansions
+                                                    {["sid" "iteration:tturn:i1:digest"] true}})
 
           message
           {:role :assistant :prewrapped-lines (:lines payload) :line-meta (:line-meta payload)}
@@ -3787,7 +3792,9 @@ therapy line 2"
                       {}
                       nil
                       false
-                      {:session-id "sid" :session-turn-id "turn"})
+                      {:session-id "sid"
+                       :session-turn-id "turn"
+                       :detail-expansions {["sid" "iteration:tturn:i1:digest"] true}})
             message
             {:role :assistant :prewrapped-lines (:lines payload) :line-meta (:line-meta payload)}
             copy (first

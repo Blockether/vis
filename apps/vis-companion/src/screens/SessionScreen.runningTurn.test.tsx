@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
-import { act, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 
 import { renderSessionScreen, sessionFixture } from './session-screen-harness';
 import activityFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json';
@@ -502,6 +502,7 @@ describe('a running transcript row without canonical session state', () => {
       });
     });
 
+    fireEvent.click(await screen.findByRole('button', { name: /^Expand steps/ }));
     expect((await screen.findAllByRole('button', { name: 'Expand code' })).length).toBe(1);
   });
 

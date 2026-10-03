@@ -187,8 +187,8 @@ const notesFirstTurn = {
   content: [{ id: 'answer', type: 'prose', markdown: 'The parser still fails one test.' }],
 } as unknown as TranscriptTurn;
 
-// A finished turn keeps its progress notes: the steps between two notes share one Activity,
-// then the answer follows.
+// A finished turn keeps its progress notes: the steps between two notes fold into one closed
+// digest, then the answer follows.
 export const NotesFirstFinishedTurn: Story = {
   render: () => (
     <div className="space-y-6">
@@ -204,10 +204,10 @@ export const NotesFirstFinishedTurn: Story = {
     expect(sections).toHaveLength(2);
     for (const section of sections) {
       const scope = within(section);
-      const traces = [...section.querySelectorAll<HTMLElement>('[aria-label="Execution trace"]')];
       const note = scope.getByText('Sources read; running the suite now.');
       const answer = scope.getByText('The parser still fails one test.');
-      expect(traces).toHaveLength(2);
+      expect(scope.getAllByRole('button', { name: /^Expand steps/ })).toHaveLength(2);
+      expect(section.querySelectorAll('[aria-label="Execution trace"]')).toHaveLength(0);
       expect(note).toBeVisible();
       expect(answer).toBeVisible();
     }

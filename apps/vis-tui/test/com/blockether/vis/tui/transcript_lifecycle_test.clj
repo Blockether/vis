@@ -18,6 +18,18 @@
 
 (def ^:private checkpoint "Reasoning checkpoint 6")
 
+;; Code and reasoning live inside the step digests, so these transcripts open every digest.
+;; The settled test message has no turn id, so its digests use the bare node id.
+(def ^:private open-digests
+  (into {}
+        (for [turn
+              ["tc1:" ""]
+
+              n
+              (range 1 14)]
+
+          [["s1" (str "iteration:" turn "i" n ":digest")] true])))
+
 (defn- lifecycle-db
   [pane]
   (let [iterations
@@ -28,10 +40,12 @@
                        :assistant-prose (str "Progress note " i)
                        :forms [{:code (str "verify_" i "()") :stdout "Verified" :success? true}]})
                     (range 12)))]
-    (merge
-      (dissoc (active-live/viewer-review-db pane) :live-viewer-id)
-      (#'state-test/terminal-test-db)
-      {:progress {:iterations iterations} :scroll scroll/follow :live-views (if pane [pane] [])})))
+    (merge (dissoc (active-live/viewer-review-db pane) :live-viewer-id)
+           (#'state-test/terminal-test-db)
+           {:progress {:iterations iterations}
+            :scroll scroll/follow
+            :live-views (if pane [pane] [])
+            :detail-expansions open-digests})))
 
 (defn- paint!
   [^TerminalScreen terminal]
@@ -65,6 +79,7 @@
                                      {:session-id "s1"
                                       :session-turn-id "c1"
                                       :now-ms 1000
+                                      :detail-expansions (:detail-expansions db)
                                       :live-runs (mapv lv/transcript-run (:live-views db))})
 
         row
@@ -74,7 +89,9 @@
         (nth (:offsets layout) 1)]
 
     (expect (number? row))
-    (state/dispatch [:set-scroll (+ assistant-top row)])
+    ;; The first paint only estimates the heights above the bubble. A small margin keeps the
+    ;; checkpoint inside the viewport when the next paint measures them.
+    (state/dispatch [:set-scroll (max 0 (- (+ assistant-top row) 4))])
     (paint! terminal)))
 
 (defn- assert-following

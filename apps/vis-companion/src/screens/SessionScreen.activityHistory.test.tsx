@@ -46,6 +46,7 @@ it.each([false, true])('loads grouped history without bulk controls (failure: %s
       }),
     },
   });
+  fireEvent.click(await screen.findByRole('button', { name: /^Expand steps/ }));
   const expand = await screen.findByRole('button', { name: 'Expand Activity' });
   expect(activityPage).not.toHaveBeenCalled();
   fireEvent.click(expand);

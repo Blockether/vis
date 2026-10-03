@@ -200,48 +200,68 @@
                       (estimated-height (trace-assistant-msg 1 20 "ok") bubble-w)]
 
                   (expect (< a b)))))
-  (describe "estimated-height is within 2x of real bubble-height"
-            ;; Smoke-check that the heuristic stays in the right order of
-            ;; magnitude. Off-screen accuracy only nudges the scrollbar, but
-            ;; a 10x miss would shift the thumb so badly the user notices.
-            (it "user msg"
-                (let [m
-                      (user-msg (apply str (repeat 200 "x")))
+  (describe
+    "estimated-height is within 2x of real bubble-height"
+    ;; Smoke-check that the heuristic stays in the right order of
+    ;; magnitude. Off-screen accuracy only nudges the scrollbar, but
+    ;; a 10x miss would shift the thumb so badly the user notices.
+    (it "user msg"
+        (let [m
+              (user-msg (apply str (repeat 200 "x")))
 
-                      pm
-                      (project-message m bubble-w settings)
+              pm
+              (project-message m bubble-w settings)
 
-                      est
-                      (estimated-height m bubble-w)
+              est
+              (estimated-height m bubble-w)
 
-                      real
-                      (render/bubble-height pm bubble-w)
+              real
+              (render/bubble-height pm bubble-w)
 
-                      ratio
-                      (max (/ (double est) real) (/ (double real) est))]
+              ratio
+              (max (/ (double est) real) (/ (double real) est))]
 
-                  (expect (<= ratio 2.5))))
-            (it "trace assistant"
-                (let [m
-                      (trace-assistant-msg 5 3 "Some answer text.")
+          (expect (<= ratio 2.5))))
+    (it "trace assistant"
+        (let [m
+              (trace-assistant-msg 5 3 "Some answer text.")
 
-                      pm
-                      (project-message m bubble-w settings)
+              pm
+              (project-message m bubble-w settings)
 
-                      est
-                      (estimated-height m bubble-w)
+              est
+              (estimated-height m bubble-w)
 
-                      real
-                      (render/bubble-height pm bubble-w)
+              real
+              (render/bubble-height pm bubble-w)
 
-                      ratio
-                      (max (/ (double est) real) (/ (double real) est))]
+              ratio
+              (max (/ (double est) real) (/ (double real) est))]
 
-                  ;; trace estimator can over-shoot (per-form lines, etc.); we
-                  ;; allow up to 4x because the alternative is paying the full
-                  ;; format pass for off-screen bubbles, which is the bug we
-                  ;; came here to fix.
-                  (expect (<= ratio 4.0))))))
+          ;; trace estimator can over-shoot (per-form lines, etc.); we
+          ;; allow up to 4x because the alternative is paying the full
+          ;; format pass for off-screen bubbles, which is the bug we
+          ;; came here to fix.
+          (expect (<= ratio 4.0))))
+    (it "trace assistant with closed step digests"
+        (let [m
+              (trace-assistant-msg 5 3 "Some answer text.")
+
+              pm
+              (project-message m bubble-w settings {:session-id "closed" :detail-expansions {}})
+
+              est
+              (estimated-height m bubble-w {} "closed")
+
+              real
+              (render/bubble-height pm bubble-w)
+
+              ratio
+              (max (/ (double est) real) (/ (double real) est))]
+
+          ;; A closed digest hides the code of its steps, so the estimate must not
+          ;; charge that code.
+          (expect (<= ratio 4.0))))))
 
 (defdescribe
   layout-test
@@ -340,7 +360,8 @@
                               {:loading? true
                                :progress {:iterations trace}
                                :progress-extra {:now-ms 1000 :turn-start-ms 0}}
-                              {:session-id "session" :detail-expansions {}})
+                              {:session-id "session"
+                               :detail-expansions {["session" "iteration:i1:digest"] true}})
 
               projected
               (:projected (first visible))]
@@ -673,6 +694,30 @@
                   [est real] (est->real m w)]
 
               (expect (>= (long est) (long real)) (str "w=" w " est=" est " real=" real)))))
+      (it "closed step digests with notes, failures and step errors, across widths"
+          (let [failure
+                (apply str (repeat 40 "the provider rejected the request because "))
+
+                base
+                (trace-assistant-msg 4 2 "Final answer.")]
+
+            (doseq [m
+                    [(-> base
+                         (assoc-in [:traces 0 :assistant-prose] "First I look at the files.")
+                         (assoc-in [:traces 2 :assistant-prose]
+                                   (str/join "\n\n" (repeat 6 "Then I change the parser."))))
+                     (assoc-in base [:traces 1 :forms 0 :error] {:message failure})
+                     (assoc-in base
+                       [:traces 1 :forms 1 :error]
+                       {:message "HTTP 500"
+                        :data {:status 500 :body (apply str (repeat 900 "b")) :request-id "req-1"}})
+                     (assoc-in base [:traces 3 :error] {:message failure})]
+
+                    w
+                    [64 104 194 254]]
+
+              (let [[est real] (est->real m w)]
+                (expect (>= (long est) (long real)) (str "w=" w " est=" est " real=" real))))))
       (it "pasted diff as a user message (list-marker block chrome)"
           (doseq [w [84 154 254]]
             (let [m (user-msg (str/join "\n"
@@ -1621,7 +1666,7 @@
             {:session-id "growing-transcript" :detail-expansions {}}
 
             requested
-            (+ (estimated-height prefix width) 20)
+            (+ (estimated-height prefix width {} (:session-id opts)) 20)
 
             before
             (virtual/layout messages width settings requested inner-h {} opts)
@@ -1815,7 +1860,7 @@
 
         (expect (some? target))
         (expect (= (estimated-height traced width) (estimated-height pending width)))
-        (expect (some #(str/includes? % "thinking line")
+        (expect (some #(str/includes? % "Progress note")
                       (get-in after [:visible 0 :projected :prewrapped-lines])))
         (expect (number? (row-of after)))
         (when (number? (row-of after))

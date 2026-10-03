@@ -9,6 +9,7 @@ import {
   STORY_COMPOSER_PASTE,
   STORY_PENDING_ATTACHMENTS,
 } from '../dev/story-data';
+import { openStepDigests } from '../dev/story-steps';
 import { draftMessageKey, hydrateDraftMessages, writeDraftMessage } from '../lib/draft-messages';
 import type { RunningTurn } from '../lib/running-turn';
 import type { GatewayCapabilities } from '../lib/types';
@@ -177,6 +178,7 @@ export const ReadingLayout: Story = {
     const page = within(canvasElement);
     const composer = await page.findByRole('textbox', { name: 'Message Vis' });
     const transcript = page.getByRole('region', { name: 'Transcript' });
+    await openStepDigests(transcript);
     const prose = transcript.querySelectorAll(
       '.bg-answer p, .text-you-message-foreground, .text-vis-message p, .text-thinking p',
     );

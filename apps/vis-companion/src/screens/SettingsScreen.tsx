@@ -302,8 +302,9 @@ export function SettingsDialog({
                       Summarize steps between notes
                     </Text>
                     <Text as="p" variant="description">
-                      Combine the steps between progress notes into one Activity, during and
-                      after a turn. Turn off to show Activity for each step.
+                      Fold the steps between progress notes into one digest, during and after a
+                      turn. Open a digest to see its thinking, code and Activity. Turn off to
+                      show Activity for each step.
                     </Text>
                   </div>
                   <Switch

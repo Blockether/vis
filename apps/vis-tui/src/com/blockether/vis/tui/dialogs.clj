@@ -3320,7 +3320,7 @@
     :type :toggle
     :label "Summarize steps between notes"
     :description
-    "Combine the steps between progress notes into one Activity, during and after a turn. Turn off to show Activity for each step."}
+    "Fold the steps between progress notes into one digest, during and after a turn. Open a digest to see its thinking, code and Activity. Turn off to show Activity for each step."}
    {:type :section :label "Theme"}
    {:key :theme-name
     :type :choice

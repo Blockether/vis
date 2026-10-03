@@ -121,7 +121,8 @@
            nil
            false
            {:session-id "activity-review"
-            :detail-expansions expansions
+            ;; The joined surface lives inside the step digest, so the review opens it.
+            :detail-expansions (assoc expansions ["activity-review" "iteration:i1:digest"] true)
             :runs (:runs live-records)})]
 
      (doto (.newTextGraphics screen)
@@ -884,7 +885,8 @@
                 {:show-iterations true}
                 {:session-id "live-padding"
                  :now-ms 1000
-                 :detail-expansions {:vis.channel-tui/expand-all-details? expanded?}})
+                 :detail-expansions {:vis.channel-tui/expand-all-details? expanded?
+                                     ["live-padding" "iteration:i1:digest"] true}})
 
               lines
               (:lines payload)

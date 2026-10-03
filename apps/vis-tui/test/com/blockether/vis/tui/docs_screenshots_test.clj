@@ -118,7 +118,7 @@
 
     (cap/capture!
       {:cols 80
-       :rows 17
+       :rows 20
        :paint! (fn [{:keys [screen]}]
                  (let [rendered
                        (render/format-answer-with-thinking-data*
@@ -148,7 +148,7 @@
                                               :prewrapped-lines (:lines rendered)
                                               :line-meta (:line-meta rendered)}
                                              2 1
-                                             76 {:viewport-h 15})
+                                             76 {:viewport-h 18})
                    (.commitFrame interactions/hit-map)
                    (.refresh ^TerminalScreen screen)))})))
 

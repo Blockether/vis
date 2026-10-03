@@ -48,8 +48,8 @@ waits in a queue. You can also cancel the running turn or quit the session.
 
 ### Follow progress
 
-Vis adds short notes while it works. Each Activity groups the steps between two notes.
-Open an Activity to see its steps and results. Files and images appear after it.
+Vis adds short notes while it works. Under each note, one digest row gives a summary of the steps after the note.
+Open the digest to see the thinking, code and Activity of these steps. Failures, files, images and live views stay visible when the digest is closed.
 
 To see each step as a separate Activity, turn off **Summarize steps between notes** in Settings, under **Responses**.
 The terminal and each app keep their own choice.
