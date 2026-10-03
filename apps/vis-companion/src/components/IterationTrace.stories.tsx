@@ -885,7 +885,7 @@ export const JoinedActivity: Story = {
     const code = canvasElement.querySelector('[data-execution-code]')!;
     const band = canvas.getByRole('button', { name: 'Expand Activity' });
     await expect(band).toHaveTextContent('ACTIVITY');
-    await expect(band).toHaveTextContent('3 mutations · 8 observations · 2 checks · 1 running');
+    await expect(band).toHaveTextContent('3 mutations · 8 observations · 2 verifications · 1 running');
     await expect(canvas.queryByRole('button', { name: /Read ×8/ })).toBeNull();
     await userEvent.click(band);
     const reads = canvas.getByRole('button', { name: /Read ×8/ });
