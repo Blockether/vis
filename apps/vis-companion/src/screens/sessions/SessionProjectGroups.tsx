@@ -294,9 +294,26 @@ function SetHeader({
   /** Whether this set shows its archived entries instead of active ones. */
   isArchived?: boolean;
 }) {
+  const headerRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    const set = header?.parentElement;
+    if (label !== 'Groups' || !header || !set) return;
+    // Archived labels and page controls can change the height of the Groups header.
+    const measure = () => set.style.setProperty('--groups-header-height', `${header.offsetHeight}px`);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    return () => {
+      observer.disconnect();
+      set.style.removeProperty('--groups-header-height');
+    };
+  }, [label]);
+
   return (
     <div
-      className={`flex min-h-11 flex-wrap items-center gap-x-2 gap-y-0 border-t border-b border-b-edge-strong pl-4 max-sm:sticky max-sm:top-[var(--project-header-height,3.5rem)] max-sm:z-5 mouse:min-h-8 ${label === 'Groups' ? 'border-t-set-groups-border bg-set-groups' : 'border-t-set-sessions-border bg-set-sessions'}`}
+      ref={headerRef}
+      className={`sticky top-[var(--project-header-height,3.5rem)] z-5 flex min-h-11 flex-wrap items-center gap-x-2 gap-y-0 border-t border-b border-b-edge-strong pl-4 mouse:static mouse:min-h-8 ${label === 'Groups' ? 'border-t-set-groups-border bg-set-groups' : 'border-t-set-sessions-border bg-set-sessions'}`}
     >
       <span className="font-mono text-ui font-medium text-white">{label}</span>
       {isArchived && <span className="font-mono text-ui text-white">Archived</span>}
@@ -476,7 +493,7 @@ function GroupBand({
   // its own heading; otherwise the next group or set supplies that boundary.
   return (
     <div
-      className={`flex items-stretch border-t-edge border-b-edge-strong bg-set-groups ${isFirst ? '' : 'border-t'} ${hasVisibleRows ? 'border-b' : ''}`}
+      className={`sticky top-[calc(var(--project-header-height,3.5rem)+var(--groups-header-height,2.75rem))] z-1 flex items-stretch border-t-edge border-b-edge-strong bg-set-groups mouse:static ${isFirst ? '' : 'border-t'} ${hasVisibleRows ? 'border-b' : ''}`}
       onContextMenu={(event) => {
         if (!hasHardwarePointer() || event.target instanceof HTMLInputElement) return;
         event.preventDefault();

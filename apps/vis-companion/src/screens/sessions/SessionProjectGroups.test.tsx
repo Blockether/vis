@@ -254,6 +254,34 @@ describe('ProjectGroup groups', () => {
   beforeEach(() => window.localStorage.clear());
   afterEach(() => vi.restoreAllMocks());
 
+  it('updates the group sticky offset and releases its observer when the project folds', async () => {
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(44);
+    const observed = new Map<Element, { resize: () => void; disconnect: ReturnType<typeof vi.fn> }>();
+    vi.stubGlobal('ResizeObserver', class {
+      private resize: () => void;
+      constructor(resize: () => void) { this.resize = resize; }
+      observe = (element: Element) => observed.set(element, { resize: this.resize, disconnect: this.disconnect });
+      disconnect = vi.fn();
+    });
+    try {
+      const { user } = mount();
+      await band('Wallet work');
+      const header = screen.getByText('Groups').parentElement!;
+      const set = header.parentElement!;
+      const observer = observed.get(header)!;
+      expect(set.style.getPropertyValue('--groups-header-height')).toBe('44px');
+      height.mockReturnValue(72);
+      observer.resize();
+      expect(set.style.getPropertyValue('--groups-header-height')).toBe('72px');
+      await user.click(screen.getByRole('button', { name: `Collapse ${STORY_NEWER_PROJECT.name}` }));
+      expect(observer.disconnect).toHaveBeenCalledOnce();
+      expect(set.style.getPropertyValue('--groups-header-height')).toBe('');
+    } finally {
+      height.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('nests a group band under the project header, with its colour and filed rows', async () => {
     mount();
     const wallet = await band('Wallet work');
@@ -338,7 +366,7 @@ describe('ProjectGroup groups', () => {
     );
     expect(groupsHeader).toHaveClass('min-h-11', 'mouse:min-h-8');
     // Sticky set headings follow the project's measured height when counts wrap.
-    expect(groupsHeader).toHaveClass('max-sm:top-[var(--project-header-height,3.5rem)]');
+    expect(groupsHeader).toHaveClass('sticky', 'top-[var(--project-header-height,3.5rem)]', 'mouse:static');
     expect(within(groupsHeader).getByText('Groups')).toHaveClass(
       'font-mono', 'text-ui', 'font-medium', 'text-white',
     );
@@ -358,7 +386,7 @@ describe('ProjectGroup groups', () => {
       expect(row.closest('[data-swipe-track]')?.firstElementChild).toHaveClass('bg-set-sessions');
     }
     expect(sessionsHeader).toHaveClass('min-h-11', 'mouse:min-h-8');
-    expect(sessionsHeader).toHaveClass('max-sm:top-[var(--project-header-height,3.5rem)]');
+    expect(sessionsHeader).toHaveClass('sticky', 'top-[var(--project-header-height,3.5rem)]', 'mouse:static');
     expect(within(sessionsHeader).getByText('Sessions')).toHaveClass(
       'font-mono', 'text-ui', 'font-medium', 'text-white',
     );
