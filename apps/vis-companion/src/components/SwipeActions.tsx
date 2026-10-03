@@ -43,9 +43,8 @@ export interface SwipeAction {
   /** The caption ON the cell, and the shortest true word for it: `Star`, `Rename`, `Forget`. */
   label: string;
   /**
-   * The whole sentence, for a reader who cannot see the row the strip belongs
-   * to: a machine row's `Primary` is `Make tower primary`. The caption stays
-   * one word wide, because the cell is 72px and a wrapped caption is a smear.
+   * The full action name for assistive technology and tooltips.
+   * Cells share the available row width, up to 72px each. Keep captions short.
    */
   name?: string;
   icon: ReactNode;
@@ -463,8 +462,11 @@ export function SwipeActions({
       >
         <RowActionMenu actions={actions} label={label} handle={menuRef} />
       </div>
+      {/* Layout sizes every action before the first swipe. Scrolling does not change
+          these widths; only the row width or action count can change them. */}
       <div
-        className="flex shrink-0 snap-end mouse:hidden"
+        className="flex min-w-0 max-w-full shrink-0 snap-end mouse:hidden"
+        style={{ width: `${actions.length * 4.5}rem` }}
         role="group"
         aria-label={label ? `${label} actions` : 'Row actions'}
       >
@@ -474,7 +476,7 @@ export function SwipeActions({
             type="button"
             aria-label={action.name ?? action.label}
             title={action.name ?? action.label}
-            className={`flex w-[4.5rem] shrink-0 flex-col items-center justify-center gap-1 border-l border-edge-strong font-mono text-chip font-bold uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none ${
+            className={`flex min-w-0 flex-1 flex-col items-center justify-center gap-1 border-l border-edge-strong font-mono text-chip font-bold uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none ${
               action.tone === 'danger'
                 ? 'bg-err-surface text-err-ink'
                 : action.tone === 'accent'
@@ -488,7 +490,7 @@ export function SwipeActions({
             }}
           >
             <span aria-hidden="true">{action.icon}</span>
-            <span>{action.label}</span>
+            <span className="max-w-full truncate px-0.5">{action.label}</span>
           </button>
         ))}
       </div>

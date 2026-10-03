@@ -97,6 +97,51 @@ it.each([false, true])(
   },
 );
 
+// Six fixed-width cells exceeded the row width and clipped the first action on iPhones.
+it.each([1, 3, 6, 8])(
+  'sizes %i actions before the first swipe and keeps that size while open',
+  (count) => {
+    const actions = Array.from({ length: count }, (_, index) => ({
+      key: String(index),
+      label: index === count - 1 ? 'Delete' : 'Move to...',
+      icon: <TrashIcon />,
+      onSelect: () => {},
+    }));
+    const { container, rerender } = render(
+      <SwipeActions label="a session" actions={actions}>
+        <span>row</span>
+      </SwipeActions>,
+    );
+    const track = container.querySelector<HTMLElement>('[data-swipe-track]')!;
+    const strip = screen.getByRole('group', { name: 'a session actions' });
+    expect(track.scrollLeft).toBe(0);
+    expect(strip).toHaveClass('max-w-full');
+    expect(strip).toHaveStyle({ width: `${count * 4.5}rem` });
+    for (const button of strip.querySelectorAll('button')) {
+      expect(button).toHaveClass('min-w-0', 'flex-1');
+      expect(button).not.toHaveClass('w-[4.5rem]');
+      expect(button.lastElementChild).toHaveClass('max-w-full', 'truncate');
+    }
+    const sizing = strip.getAttribute('style');
+    fireEvent.scroll(track, { target: { scrollLeft: 120 } });
+    rerender(
+      <SwipeActions
+        label="a session"
+        actions={actions.map((action) => ({ ...action, label: 'Unarchive' }))}
+      >
+        <span>row updated while open</span>
+      </SwipeActions>,
+    );
+    expect(strip.getAttribute('style')).toBe(sizing);
+    rerender(
+      <SwipeActions label="a session" actions={actions.slice(0, 1)}>
+        <span>row</span>
+      </SwipeActions>,
+    );
+    expect(strip).toHaveStyle({ width: '4.5rem' });
+  },
+);
+
 // Regression, user report (paraphrased: on the desktop that sideways scrolling is
 // broken and should not be there at all): every row of both lists was a scroll-snap
 // track 288px wider than its own box, and a pointer has no swipe — so the only way
