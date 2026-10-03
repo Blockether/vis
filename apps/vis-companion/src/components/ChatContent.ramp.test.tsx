@@ -2,6 +2,7 @@
 import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { setStepsSummarized } from '../lib/transcript-display';
 import type { TranscriptIteration } from '../lib/types';
 
 const { IterationTrace } = await import('./ChatContent');
@@ -37,12 +38,14 @@ const FRAME_MS = 70;
 
 /**
  * Mount a trace of `count` iterations and pump animation frames until it stops
- * asking for them, answering how many frames the backfill took.
+ * asking for them, answering how many frames the backfill took, how many
+ * segments it mounted and whether it still paints an "earlier steps" rule.
+ * `summarize` picks Compact mode (the default) or separate steps.
  */
 function rampFrames(
   count: number,
-  { unfold = false }: { unfold?: boolean } = {},
-): { frames: number; segments: number } {
+  { unfold = false, summarize = true }: { unfold?: boolean; summarize?: boolean } = {},
+): { frames: number; segments: number; folded: boolean } {
   const queue: FrameRequestCallback[] = [];
   let clock = 0;
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
@@ -52,6 +55,7 @@ function rampFrames(
   vi.stubGlobal('cancelAnimationFrame', () => {});
   vi.spyOn(performance, 'now').mockImplementation(() => clock);
 
+  setStepsSummarized(summarize);
   const iterations = Array.from({ length: count }, (_, index) => iteration(index));
   const view = render(
     <IterationTrace iterations={iterations} live={false} client={client} sid="s1" />,
@@ -85,13 +89,17 @@ function rampFrames(
     frames += pump();
   }
   const segments = rail();
+  const folded = [...view.container.querySelectorAll('button')].some((button) =>
+    /earlier step/.test(button.textContent ?? ''),
+  );
   view.unmount();
-  return { frames, segments };
+  return { frames, segments, folded };
 }
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  setStepsSummarized(true);
 });
 
 describe('a trace backfilling the turns a reader is scrolling into', () => {
@@ -100,21 +108,33 @@ describe('a trace backfilling the turns a reader is scrolling into', () => {
   // them — measured in Chromium at 393x852, 107,090 px and 23,806 DOM nodes for
   // that turn alone, 180 screens a reader had to drag through. The ramp above
   // decides how FAST the trace mounts; only a fold decides how MUCH of it exists.
-  it('stops at the fold instead of mounting a whole turn nobody scrolled to', () => {
-    const { frames, segments } = rampFrames(300);
+  it('folds separate steps instead of mounting a whole turn nobody scrolled to', () => {
+    const { frames, segments, folded } = rampFrames(300, { summarize: false });
 
     // The last 24 steps, plus the rule that says how many are behind them.
     expect(segments).toBe(25);
+    expect(folded).toBe(true);
     expect(frames).toBeLessThanOrEqual(20);
   });
 
   it('hands the rest back in a handful of frames, not one frame per handful', () => {
-    const { frames, segments } = rampFrames(300, { unfold: true });
+    const { frames, segments } = rampFrames(300, { unfold: true, summarize: false });
 
     // A step that triples until it hurts reaches all 300 segments in well
     // under twenty paid frames. The old floor-bound controller needed one
     // frame per two segments.
     expect(segments).toBe(300);
+    expect(frames).toBeLessThanOrEqual(20);
+  }, 20_000); // The frame-count assertion owns performance, not jsdom wall time.
+
+  // Regression, user request (Compact mode must not hide earlier steps): in Compact
+  // mode the digests already keep a long turn short, so the fold only hid earlier
+  // notes behind a rule. A Compact trace mounts every segment through the ramp.
+  it('never folds a Compact trace, and still mounts it in a handful of frames', () => {
+    const { frames, segments, folded } = rampFrames(300);
+
+    expect(segments).toBe(300);
+    expect(folded).toBe(false);
     expect(frames).toBeLessThanOrEqual(20);
   }, 20_000); // The frame-count assertion owns performance, not jsdom wall time.
 

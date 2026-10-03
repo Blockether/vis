@@ -2501,7 +2501,8 @@ const RAMP_STEP_TARGET_MS = 100;
 const RAMP_STEP_LONG_MS = 200;
 
 // Initially fold exceptionally long traces to their final segments; expansion feeds
-// earlier segments through the frame ramp.
+// earlier segments through the frame ramp. Only separate steps fold: in Compact mode
+// the digests already keep a long turn short, so the ramp mounts every segment.
 const SEGMENT_FOLD = 24;
 
 // Only the bottom-most expanding trace ramps at once, avoiding competing layout work.
@@ -3042,8 +3043,10 @@ export const IterationTrace = memo(function IterationTrace({
 
   // Where the ramp stops. `hidden` still only ever SHRINKS, so a trace that is
   // being written never folds away a segment it has already painted: the floor
-  // rises under it and the ramp simply has nothing left to do.
-  const foldFloor = whole || unfolded ? 0 : Math.max(0, segments.length - SEGMENT_FOLD);
+  // rises under it and the ramp simply has nothing left to do. A Compact trace
+  // has no floor: its digests are the fold.
+  const foldFloor =
+    whole || unfolded || summarize ? 0 : Math.max(0, segments.length - SEGMENT_FOLD);
 
   const rampDone = hidden <= foldFloor;
 
