@@ -25,7 +25,7 @@ def _ask(namespace, tool, args):
 def _tables(namespace):
     """The metadata tables the engine seeded, as plain dicts."""
     out = {}
-    for key in ("docs", "calls", "sigs", "kinds", "keys"):
+    for key in ("docs", "calls", "sigs", "kinds", "keys", "results"):
         table = namespace.get(f"__vis_{key}__")
         out[key] = dict(table) if isinstance(table, dict) else {}
     return out

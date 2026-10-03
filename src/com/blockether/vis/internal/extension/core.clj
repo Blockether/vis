@@ -3067,8 +3067,15 @@
                 (str/replace #"[^A-Za-z0-9_]" ""))]
       (when (re-matches #"[A-Za-z_][A-Za-z0-9_]*" n) n))))
 
-(defn- call-shape-signature
-  "Python parameter list for a `:ext.symbol/call` SHAPE. The shape already
+(defn- parameter
+  "One host parameter as data: its Python `name`, its `symbol.json` `kind` and the
+   `default` source after `=`. That is `None`, `...` for a default the host does
+   not show, or nil for a required or variadic parameter."
+  ([nm kind] (parameter nm kind nil))
+  ([nm kind default] {:name nm :kind kind :default default}))
+
+(defn- call-shape-parameters
+  "Python parameters for a `:ext.symbol/call` SHAPE. The shape already
    declares how a Python call's keywords re-expand onto the implementation's
    positionals, so it IS the sandbox-facing signature: `:lead-opt` is one
    optional leading parameter, `:pos` the required ones, `:opt-pos` the optional
@@ -3084,14 +3091,15 @@
         (if lead 1 0)]
 
     (when (every? some? named)
-      (str/join ", "
-                (concat (map #(str % "=None") (take lead-n named))
-                        (take (count pos) (drop lead-n named))
-                        (map #(str % "=None") (drop (+ lead-n (count pos)) named))
-                        (when (and rest-mode (not= :never rest-mode)) ["**kwargs"]))))))
+      (vec (concat
+             (map #(parameter % "positional_or_keyword" "None") (take lead-n named))
+             (map #(parameter % "positional_or_keyword") (take (count pos) (drop lead-n named)))
+             (map #(parameter % "positional_or_keyword" "None") (drop (+ lead-n (count pos)) named))
+             (when (and rest-mode (not= :never rest-mode))
+               [(parameter "kwargs" "var_keyword")]))))))
 
-(defn- arglists-signature
-  "Python parameter list from the implementation's `:ext.symbol/arglists`, for an
+(defn- arglists-parameters
+  "Python parameters from the implementation's `:ext.symbol/arglists`, for an
    entry that declares no `:call` shape. The longest fixed arity names the
    parameters, everything past the SHORTEST arity is optional, a `&` tail is
    `*args`, and `**kwargs` is always accepted because CPython folds keywords
@@ -3129,41 +3137,100 @@
         (mapv python-param-name longest)]
 
     (cond
-      ;; `languages()` — declared with no parameters at all. "" is what renders
+      ;; `languages()` — declared with no parameters at all. [] is what renders
       ;; that; nil would leave the sandbox reporting the async trampoline's own
       ;; `(*a, **k)`, promising arguments the tool refuses.
-      (and (seq lists) (empty? named) (not variadic?)) ""
+      (and (seq lists) (empty? named) (not variadic?)) []
       (and (seq named) (every? some? named))
-      (str/join ", "
-                (concat (map-indexed (fn [i n]
-                                       (if (< (long i) (long required)) n (str n "=None")))
-                                     named)
-                        (when variadic? ["*args"])
-                        ["**kwargs"])))))
+      (vec (concat (map-indexed (fn [i n]
+                                  (if (< (long i) (long required))
+                                    (parameter n "positional_or_keyword")
+                                    (parameter n "positional_or_keyword" "None")))
+                                named)
+                   (when variadic? [(parameter "args" "var_positional")])
+                   [(parameter "kwargs" "var_keyword")])))))
 
-(defn- option-keys-signature
+(defn- with-option-keys
   "Add registered options to a host signature's canonical keyword form. Keep the
    dispatcher permissive: required keys may still arrive inside an options dict."
-  [signature params]
-  (if (and (seq params) signature (str/ends-with? signature "**kwargs"))
-    (let [positional
-          (butlast (str/split signature #", "))
+  [parameters params]
+  (let [kwargs (peek parameters)]
+    (if (and (seq params) (= "var_keyword" (:kind kwargs)))
+      (let [positional (pop parameters)
+            names (into #{}
+                        (comp (remove #(contains? #{"var_positional" "var_keyword"} (:kind %)))
+                              (map :name))
+                        positional)]
 
-          names
-          (into #{} (map #(first (str/split % #"="))) positional)
-
-          options
-          (remove #(contains? names (:name %)) params)]
-
-      (str/join ", "
-                (concat positional
-                        (when (and (seq options) (not-any? #(str/starts-with? % "*") positional))
-                          ["*"])
+        (-> positional
+            (into (comp (remove #(contains? names (:name %)))
                         (map (fn [{:keys [name required?]}]
-                               (str name (when-not required? "=...")))
-                             options)
-                        ["**kwargs"])))
-    signature))
+                               (parameter name "keyword_only" (when-not required? "...")))))
+                  params)
+            (conj kwargs)))
+      parameters)))
+
+(defn- render-parameters
+  "The Python parameter list of `parameters`, as `inspect.signature` prints it. A
+   bare `*` opens the keyword-only parameters unless `*args` already did."
+  [parameters]
+  (loop [[p & more]
+         parameters
+
+         star?
+         false
+
+         out
+         []]
+
+    (if-not p
+      (str/join ", " out)
+      (let [kind
+            (:kind p)
+
+            bare-star?
+            (and (= "keyword_only" kind) (not star?))]
+
+        (recur more
+               (or star? bare-star? (= "var_positional" kind))
+               (cond-> out
+                 bare-star?
+                 (conj "*")
+
+                 :always
+                 (conj (case kind
+                         "var_positional"
+                         (str "*" (:name p))
+
+                         "var_keyword"
+                         (str "**" (:name p))
+
+                         (cond-> (:name p)
+                           (:default p)
+                           (str "=" (:default p)))))))))))
+
+(defn- symbol-parameters
+  "The sandbox-facing parameters of one callable ENTRY as data: its `:call` shape,
+   else its arglists, then its registered option keys. nil when the declaration
+   names no legal parameters."
+  [entry]
+  (let [params
+        (:ext.symbol/params entry)
+
+        shape
+        (:ext.symbol/call entry)
+
+        ;; A pure options-map tool also accepts its keys as keywords.
+        shape
+        (if
+          (and (seq params) (= ["options"] (:pos shape)) (:rest shape) (not= :never (:rest shape)))
+          (assoc shape :pos [])
+          shape)]
+
+    (with-option-keys (or (when (map? shape) (call-shape-parameters shape))
+                          (arglists-parameters (:ext.symbol/arglists entry)
+                                               (boolean (:ext.symbol/inject-env? entry))))
+                      params)))
 
 (defn symbol-signature
   "Python signature text for ONE symbol entry, as `inspect.signature` prints it:
@@ -3181,29 +3248,57 @@
   [entry]
   (when (:ext.symbol/fn entry)
     (or (get-in entry [:ext.symbol/contract "signature"])
-        (let [params
-              (:ext.symbol/params entry)
+        (some->> (symbol-parameters entry)
+                 render-parameters
+                 (format "(%s)")))))
 
-              shape
-              (:ext.symbol/call entry)
+(def ^:private any-type
+  "The `symbol.json` type of a host value that its declaration does not annotate."
+  {"kind" "any" "name" "Any"})
 
-              ;; A pure options-map tool also accepts its keys as keywords.
-              shape
-              (if (and (seq params)
-                       (= ["options"] (:pos shape))
-                       (:rest shape)
-                       (not= :never (:rest shape)))
-                (assoc shape :pos [])
-                shape)
+(defn- contract-parameter
+  "One host parameter as a `symbol.json` parameter. Only a `None` default has
+   source to show; `...` marks a default that the host does not render."
+  [{nm :name kind :kind default :default}]
+  {"name" nm
+   "type" any-type
+   "required" (and (nil? default) (not (contains? #{"var_positional" "var_keyword"} kind)))
+   "has_default" (some? default)
+   "default_is_none" (= "None" default)
+   "default_source" (when (= "None" default) "None")
+   "kind" kind})
 
-              parameters
-              (option-keys-signature (or (when (map? shape) (call-shape-signature shape))
-                                         (arglists-signature (:ext.symbol/arglists entry)
-                                                             (boolean (:ext.symbol/inject-env?
-                                                                        entry))))
-                                     params)]
+(defn symbol-contract
+  "The portable `symbol.json` callable contract of one ENTRY that the sandbox binds
+   as `py-name`: the value of its `.contract` attribute. A Python extension
+   declares its own. A host verb derives one from the declaration that also
+   renders its signature, keys and page. Its parameters and return are `Any`, and
+   the return's description is the declared raw result. nil when the entry is not
+   callable or names no legal parameters."
+  [entry py-name]
+  (or (:ext.symbol/contract entry)
+      (let [parameters
+            (when (:ext.symbol/fn entry) (symbol-parameters entry))
 
-          (when parameters (str "(" parameters ")"))))))
+            description
+            (or (:ext.symbol/description entry) (:ext.symbol/doc entry))
+
+            tag
+            (:ext.symbol/tag entry)
+
+            result
+            (:ext.symbol/result entry)]
+
+        (when (and parameters tag (util/non-blank-string? description))
+          {"version" 1
+           "name" py-name
+           "tag" (name tag)
+           "description" description
+           "signature" (str "(" (render-parameters parameters) ")")
+           "parameters" (mapv contract-parameter parameters)
+           "returns" (cond-> any-type
+                       result
+                       (assoc "description" result))}))))
 
 (defn symbol-keys-line
   "`Keys: query (REQUIRED) · paths · context` — the options-dict vocabulary from
@@ -3229,30 +3324,29 @@
                         params)))))
 
 (defn symbol-doc-text
-  "Model-facing doc text for ONE symbol ENTRY: the compact `:description` (falling
-   back to the implementation docstring), then the raw-result contract whenever the
-   entry declares one. Returns nil without prose — a handle with no description has
-   no page. This is the single source `doc(name)` answers from.
+  "Model-facing doc text for ONE symbol ENTRY: the compact `:description`, falling
+   back to the implementation docstring. Returns nil without prose — a handle with
+   no description has no page. This is the single source of the prose that
+   `doc(name)` answers with.
 
-   PROSE ONLY. How the handle is CALLED is structure, not text: `symbol-signature`
-   renders the call line and `symbol-keys-line` the required keys, and
-   `doc-corpus/entry-text` prints both above this document."
+   PROSE ONLY. How the handle is CALLED and what it RETURNS are structure, not
+   text: `symbol-signature` renders the call line, `symbol-keys-line` the
+   required keys and `symbol-result-line` the raw result, and
+   `doc-corpus/entry-text` prints all three above this document."
   [entry]
-  (let [prose
-        (or (:ext.symbol/description entry) (:ext.symbol/doc entry))
+  (let [prose (or (:ext.symbol/description entry) (:ext.symbol/doc entry))]
+    (when (util/non-blank-string? prose) prose)))
 
-        ;; The raw-result contract belongs to EVERY doc-bearing symbol: a sandbox
-        ;; verb is called from Python with nothing in front of it, so `doc(name)`
-        ;; is the only place its result keys are ever stated.
-        result
-        (:ext.symbol/result entry)
-
-        text
-        (cond-> prose
-          (and (string? prose) result)
-          (str "\n\nRaw result: " result))]
-
-    (when (util/non-blank-string? text) text)))
+(defn symbol-result-line
+  "`Raw result: …` — the declared raw-result contract of ONE entry, nil without
+   one. A sandbox verb is called from Python with nothing in front of it, so
+   `doc(name)` is the only place its result keys are stated. STRUCTURE like
+   `symbol-keys-line`: `env-python` ships it as `__vis_results__`, and
+   `doc-corpus/entry-text` prints it under the call and keys lines. A reader
+   that keeps only the start of a long page still sees the result shape."
+  [entry]
+  (when-let [result (:ext.symbol/result entry)]
+    (str "Raw result: " result)))
 
 (defn sandbox-symbol-signatures
   "Map `{sandbox-symbol -> python-signature-text}` for every engine-bound
@@ -3300,6 +3394,30 @@
 
                     line
                     (symbol-keys-line entry)]
+              :when (and sym line)]
+
+          [sym line])))
+
+(defn sandbox-symbol-results
+  "Map `{sandbox-symbol -> result-line}` for every engine-bound callable that
+   declares a raw result, from `symbol-result-line`. The result twin of
+   `sandbox-symbol-keys`, seeded into the sandbox as `__vis_results__` by
+   `env-python/build-agent-context`, and per turn by aliased extensions through
+   `env-python/set-python-binding-result!`."
+  []
+  (manifest/initialize!)
+  (into {}
+        (for [ext
+              (registered-extensions)
+
+              entry
+              (ext-symbols ext)
+
+              :let [sym
+                    (:ext.symbol/symbol entry)
+
+                    line
+                    (symbol-result-line entry)]
               :when (and sym line)]
 
           [sym line])))

@@ -982,6 +982,28 @@
           (expect (str/includes? out "KEYED=True"))
           (expect (str/includes? out "REQUIRED=True"))
           (expect (str/includes? out "ONCE=1"))))
+    ;; Clojure host verbs have no typed result model, so their declaration is the
+    ;; only contract. The page states the raw result before the prose, and
+    ;; `.contract` gives the same declaration as data.
+    (it
+      "leads every wired verb page with its raw result and gives the verb that contract"
+      (let
+        [out
+         (run
+           (str
+             "import inspect, json\n" "bad = []\n"
+             "for n in [" (str/join ", " (map pr-str native))
+             "]:\n" "    f = eval(n)\n"
+             "    c = getattr(f, 'contract', None) or {}\n"
+             "    sig = str(inspect.signature(f)).replace('=Ellipsis', '=...')\n"
+             "    raw = c.get('returns', {}).get('description')\n"
+             "    tail = ('\\nRaw result: ' + raw if raw else '') + '\\n\\n' + str(c.get('description'))\n"
+             "    page = doc(n)\n" "    top = page[:-len(tail)].partition('\\n\\n')[2]\n"
+             "    ok = page.endswith(tail) and c.get('name') == n and c.get('signature') == sig\n"
+             "    ok = ok and top.split('\\n')[0] == n + sig and '\\n\\n' not in top\n"
+             "    if not ok or 'Raw result:' in top: bad.append(n)\n"
+             "print('BAD=' + json.dumps(bad))"))]
+        (expect (re-find #"BAD=\[\]" out) out)))
     (it "apropos('') lists real tools but not builtins or the asyncio shim"
         (let [out (run (str "a=[i.name for i in apropos('')]\n"
                             "print('asyncio='+str('asyncio' in a),"

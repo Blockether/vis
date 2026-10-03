@@ -10,6 +10,7 @@
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.contract.activity :as activity-contract]
+            [com.blockether.vis.contract.document :as contract-document]
             [com.blockether.vis.internal.loop.iteration :as iteration]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.workspace.core :as workspace]
@@ -940,6 +941,79 @@
               (filter #(re-matches #"[a-z][a-z0-9_]{2,}" %)))
         (re-seq #"`([^`]+)`" (str result))))
 
+;; Regression: the system prompt sends a model to `fn.contract` for a result shape,
+;; but only Python extensions carried one. `council.publish.contract` raised an
+;; AttributeError and failed a Council recovery E2E run.
+(defdescribe
+  symbol-contract-test
+  (it "derives a schema-valid contract from a host verb's declaration"
+      (let [contract (extension/symbol-contract #:ext.symbol{:fn sample-channel-fn
+                                                             :symbol 'council.publish
+                                                             :doc "Publish one entry."
+                                                             :tag :external
+                                                             :result "`{entry_id, thread_id}`"
+                                                             :call {:pos ["content"] :rest :always}
+                                                             :params [{:name "kind" :required? true}
+                                                                      {:name "title"}]}
+                                                "council.publish")]
+        (expect (contract-document/valid-json? "symbol" "callable" contract))
+        (expect (= {"version" 1
+                    "name" "council.publish"
+                    "tag" "external"
+                    "description" "Publish one entry."
+                    "signature" "(content, *, kind, title=..., **kwargs)"
+                    "returns" {"kind" "any" "name" "Any" "description" "`{entry_id, thread_id}`"}}
+                   (dissoc contract "parameters")))
+        (expect
+          (= [["content" "positional_or_keyword" true false] ["kind" "keyword_only" true false]
+              ["title" "keyword_only" false true] ["kwargs" "var_keyword" false false]]
+             (mapv (juxt #(get % "name") #(get % "kind") #(get % "required") #(get % "has_default"))
+                   (get contract "parameters"))))))
+  (it "shows a None default as source and leaves a hidden default unrendered"
+      (let [contract
+            (extension/symbol-contract #:ext.symbol{:fn sample-channel-fn
+                                                    :doc "Run a command."
+                                                    :tag :mutation
+                                                    :arglists '([command] [command opts])
+                                                    :params [{:name "cwd"}]}
+                                       "shell")
+
+            by-name
+            (into {} (map (juxt #(get % "name") identity)) (get contract "parameters"))
+
+            default-view
+            (juxt #(get % "default_source")
+                  #(get % "default_is_none")
+                  #(get % "has_default")
+                  #(get % "required"))]
+
+        (expect (contract-document/valid-json? "symbol" "callable" contract))
+        (expect (= ["None" true true false] (default-view (by-name "opts"))))
+        (expect (= [nil false true false] (default-view (by-name "cwd"))))
+        (expect (= {"kind" "any" "name" "Any"} (get contract "returns")))))
+  (it "keeps a declared Python contract and derives none without a callable"
+      (let [declared {"version" 1 "name" "declared"}]
+        (expect (= declared
+                   (extension/symbol-contract #:ext.symbol{:fn sample-channel-fn :contract declared}
+                                              "other")))
+        (expect (nil? (extension/symbol-contract
+                        #:ext.symbol{:doc "No callable." :tag :observation :arglists '([])}
+                        "none")))
+        (expect (nil? (extension/symbol-contract #:ext.symbol{:fn sample-channel-fn
+                                                              :doc "Rest only."
+                                                              :tag :observation
+                                                              :arglists '([& args])}
+                                                 "none")))))
+  (it "gives every live tool a valid contract with its call line and raw result"
+      (doseq [entry (live-tool-entries)]
+        (let [sym (:ext.symbol/symbol entry)
+              contract (extension/symbol-contract entry (str sym))]
+
+          (expect (contract-document/valid-json? "symbol" "callable" contract) (str sym))
+          (expect (= (extension/symbol-signature entry) (get contract "signature")) (str sym))
+          (expect (= (:ext.symbol/result entry) (get-in contract ["returns" "description"]))
+                  (str sym))))))
+
 ;; Regression, doc quality: a tool page used to be prose alone — 17 of the bound
  ;; tools never showed a single call, and an options-dict tool stated its required
  ;; keys nowhere `doc(name)` could reach, so the model learned them from refusals.
@@ -955,7 +1029,7 @@
             (expect (string? (extension/symbol-doc-text entry)) (str sym " has no doc text"))
             (expect (string? (extension/symbol-signature entry))
                     (str sym " declares no signature — its page cannot show a call"))))))
-  (it "keeps the document itself PROSE, opening on no signature and no keys line"
+  (it "keeps the document itself PROSE, without a call, keys or raw-result line"
       (doseq [entry (live-tool-entries)]
         (let [text (str (extension/symbol-doc-text entry))
               nm (or (:ext.symbol/name entry)
@@ -963,7 +1037,16 @@
               first-line (first (str/split-lines text))]
 
           (expect (not (str/starts-with? first-line (str nm "("))) first-line)
-          (expect (not (str/starts-with? first-line "Keys:")) first-line))))
+          (expect (not (str/starts-with? first-line "Keys:")) first-line)
+          (expect (not (str/includes? text "Raw result:")) (str nm " repeats its raw result")))))
+  (it "states each declared raw result unchanged, which the page prints under the call"
+      (let [results (extension/sandbox-symbol-results)]
+        (doseq [entry (live-tool-entries)]
+          (let [sym (:ext.symbol/symbol entry)
+                line (extension/symbol-result-line entry)]
+
+            (expect (= (str "Raw result: " (:ext.symbol/result entry)) line) (str sym))
+            (expect (= line (get results sym)) (str sym))))))
   (it "documents every tool with BOTH a description and a raw-result contract"
       ;; The implementation docstring is developer documentation: a model-facing
       ;; page states what the verb does AND the exact shape Python receives.
@@ -1534,7 +1617,7 @@
   symbol-doc-prose-test
   "The `doc(name)` pages and extension descriptions that Vis ships follow the prose
    limits of the manual: short sentences, short paragraphs and no semicolons."
-  (it "keeps every built-in symbol document, parameter note and extension description within them"
+  (it "keeps each symbol doc, raw result, parameter note and extension description within them"
       (manifest/initialize!)
       (let [built-ins
             (filter #(= "vis" (:ext/owner %)) (extension/registered-extensions))
@@ -1554,8 +1637,9 @@
                           (extension/ext-symbols ext)
 
                           text
-                          (cons (extension/symbol-doc-text entry)
-                                (map :note (:ext.symbol/params entry)))
+                          (list* (extension/symbol-doc-text entry)
+                                 (extension/symbol-result-line entry)
+                                 (map :note (:ext.symbol/params entry)))
 
                           message
                           (prose/breaks (str text))]

@@ -654,18 +654,35 @@
   [session sym keys-text]
   (set-python-binding-meta! session sym "__vis_keys__" keys-text))
 
-(defn set-python-binding-contract!
-  "Attach a portable description to an installed Python extension callable.
-   No runtime shim or parallel registry: the value comes from its symbol entry."
-  [session sym contract]
-  (when (and session contract)
+(defn set-python-binding-result!
+  "The raw-result line of `sym`, printed by `doc(name)` under the call and keys
+   lines."
+  [session sym result-text]
+  (set-python-binding-meta! session sym "__vis_results__" result-text))
+
+(defn set-python-binding-contracts!
+  "Attach portable descriptions to installed callables in ONE guest call.
+   `sym->contract` maps each bound symbol to the `symbol.json` contract that its
+   `.contract` attribute holds, and a nil contract is skipped. No runtime shim or
+   parallel registry: each value comes from its symbol entry."
+  [session sym->contract]
+  (when-let [named (and session
+                        (not-empty (into {}
+                                         (keep (fn [[sym contract]]
+                                                 (when contract [(sym->py-name sym) contract])))
+                                         sym->contract)))]
     (exec! session
-           (str "__vis_parts__ = " (py-json-literal (str/split (sym->py-name sym) #"\."))
-                "\n" "__vis_tool__ = globals()[__vis_parts__[0]]\n"
-                "for __vis_part__ in __vis_parts__[1:]:\n"
-                "    __vis_tool__ = getattr(__vis_tool__, __vis_part__)\n"
-                "__vis_tool__.contract = " (py-json-literal contract)
-                "\n" "del __vis_parts__, __vis_tool__\n"))))
+           (str "for __vis_n__, __vis_c__ in " (py-json-literal named)
+                ".items():\n" "    __vis_tool__ = globals()[__vis_n__.split('.')[0]]\n"
+                "    for __vis_part__ in __vis_n__.split('.')[1:]:\n"
+                "        __vis_tool__ = getattr(__vis_tool__, __vis_part__)\n"
+                "    __vis_tool__.contract = __vis_c__\n"
+                "del __vis_n__, __vis_c__, __vis_tool__\n"))))
+
+(defn set-python-binding-contract!
+  "Attach a portable description to one installed callable."
+  [session sym contract]
+  (set-python-binding-contracts! session {sym contract}))
 
 (defn remove-python-binding!
   "Remove `sym` from `session` entirely, including dotted namespace members and
@@ -673,14 +690,16 @@
   [session sym]
   (let [names [(sym->py-name sym)]]
     (assert-unowned-bindings! session (map #(first (str/split % #"\." 2)) names))
-    (exec! session
-           (str "for __vis_n__ in " (py-json-literal (vec names))
-                ":\n" "    if '.' in __vis_n__:\n"
-                "        __vis_remove_dotted_tool__(__vis_n__)\n" "    else:\n"
-                "        globals().pop(__vis_n__, None)\n"
-                "    for __vis_table__ in ('__vis_docs__', '__vis_sigs__', '__vis_keys__'):\n"
-                "        globals().get(__vis_table__, {}).pop(__vis_n__, None)\n"
-                "del __vis_n__, __vis_table__"))
+    (exec!
+      session
+      (str
+        "for __vis_n__ in " (py-json-literal (vec names))
+        ":\n" "    if '.' in __vis_n__:\n"
+        "        __vis_remove_dotted_tool__(__vis_n__)\n" "    else:\n"
+        "        globals().pop(__vis_n__, None)\n"
+        "    for __vis_table__ in ('__vis_docs__', '__vis_sigs__', '__vis_keys__', '__vis_results__'):\n"
+        "        globals().get(__vis_table__, {}).pop(__vis_n__, None)\n"
+        "del __vis_n__, __vis_table__"))
     nil))
 
 ;; The environment's sandbox — built on first entry, never before
@@ -864,11 +883,11 @@
    contracts win name collisions; documents retain corpus order.
 
    `facts` is what only the guest knows — its callable names, the registered
-   `__vis_docs__`/`__vis_calls__`/`__vis_sigs__`/`__vis_kinds__`/`__vis_keys__`
+   `__vis_docs__`/`__vis_calls__`/`__vis_sigs__`/`__vis_kinds__`/`__vis_keys__`/`__vis_results__`
    tables and the gists of its own `def`s — gathered there and merged here, in
    ONE call. Documents are read LIVE on the call that asks, so a skill edited
    mid-session answers with what it says now."
-  [{:keys [names docs calls sigs kinds keys def-docs def-calls]}]
+  [{:keys [names docs calls sigs kinds keys results def-docs def-calls]}]
   (let [document-entries
         (doc-corpus/entries)
 
@@ -951,7 +970,10 @@
               (assoc :call call)
 
               (seq (str (get keys nm)))
-              (assoc :params (str (get keys nm)))))))
+              (assoc :params (str (get keys nm)))
+
+              (seq (str (get results nm)))
+              (assoc :result (str (get results nm)))))))
       ordered-names)))
 
 (defn- apropos-visible
@@ -1309,7 +1331,7 @@
             :when (not (fn? val))]
 
       (set-python-binding! session sym val))
-    ;; The contracts: description, signature and options vocabulary, keyed by
+    ;; The contracts: description, signature, options vocabulary and raw result, keyed by
     ;; the same Python names the bindings above wired.
     (try (let [by-py-name (fn [sym->text]
                             (into {}
@@ -1319,7 +1341,8 @@
                                   (or custom-bindings {})))]
            (update-json! session "__vis_docs__" (by-py-name (extension/sandbox-symbol-docs)))
            (update-json! session "__vis_sigs__" (by-py-name (extension/sandbox-symbol-signatures)))
-           (update-json! session "__vis_keys__" (by-py-name (extension/sandbox-symbol-keys))))
+           (update-json! session "__vis_keys__" (by-py-name (extension/sandbox-symbol-keys)))
+           (update-json! session "__vis_results__" (by-py-name (extension/sandbox-symbol-results))))
          (catch Throwable _ nil))
     ;; With the shell tools off the `shell` verb is simply not bound, and a
     ;; shell-shaped question would answer with silence — which reads as "no
@@ -1336,12 +1359,15 @@
     (install-introspection! session)
     (py-exec! session "import vis_results\nvis_results.install(globals())")
     (exec! session "__vis_stamp_tools__()")
-    (doseq [ext (extension/registered-extensions)
-            entry (extension/ext-symbols ext)
-            :let [sym (:ext.symbol/symbol entry)]
-            :when (contains? (or custom-bindings {}) sym)]
+    (set-python-binding-contracts! session
+                                   (into {}
+                                         (for [ext (extension/registered-extensions)
+                                               entry (extension/ext-symbols ext)
+                                               :let [sym (:ext.symbol/symbol entry)]
+                                               :when (fn? (get custom-bindings sym))]
 
-      (set-python-binding-contract! session sym (:ext.symbol/contract entry)))
+                                           [sym
+                                            (extension/symbol-contract entry (sym->py-name sym))])))
     (install-network! session network-opts)
     (install-network-probe! session)
     {:python-context session

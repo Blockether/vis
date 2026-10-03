@@ -293,6 +293,29 @@ Whole skill body."}
       (expect (= "" (dc/body-text "   \n  ")))))
 
 (defdescribe
+  entry-text-test
+  "What `doc(name)` prints for one entry: first the call, keys and raw-result
+   lines, then the whole document."
+  (it "puts the structure lines above the document, in that order"
+      (expect (= (str "# grep  ·  callable\n\n"
+                      "grep(*, query=...)\n" "Keys: query (REQUIRED)\n"
+                      "Raw result: One row for each hit.\n\n" "Search file contents.")
+                 (dc/entry-text {:name "grep"
+                                 :call "grep(*, query=...)"
+                                 :params "Keys: query (REQUIRED)"
+                                 :result "Raw result: One row for each hit."
+                                 :text "Search file contents.\n"}
+                                "callable"))))
+  (it "leaves out each structure line that the entry does not declare"
+      (expect (= "# cat\n\ncat(path)\nRaw result: The lines.\n\nShow one file."
+                 (dc/entry-text {:name "cat"
+                                 :call "cat(path)"
+                                 :result "Raw result: The lines."
+                                 :text "Show one file."})))
+      (expect (= "# guide\n\nRead this first."
+                 (dc/entry-text {:name "guide" :text "Read this first."})))))
+
+(defdescribe
   static-record-test
   "A static record is CHECKED where it is READ. The manifest declares which
    resources exist; `:vis.doc/record` declares what a record inside one has to be

@@ -417,15 +417,16 @@
 (defn entry-text
   "What `doc(target)` answers for one entry: the handle, the expression that
    uses it when there is one, the keys that expression's options dict must carry,
-   then the WHOLE document. `note` is the caller's one-word remark about the
-   handle (`env-python` marks a live callable)."
+   the raw result it returns, then the WHOLE document. `note` is the caller's
+   one-word remark about the handle (`env-python` marks a live callable)."
   ([entry] (entry-text entry nil))
-  ([{:keys [name text call params]} note]
+  ([{:keys [name text call params result]} note]
    (str "# "
         name
         (when (seq (str note)) (str "  ·  " note))
         (when (seq (str call)) (str "\n\n" call))
         (when (seq (str params)) (str "\n" params))
+        (when (seq (str result)) (str "\n" result))
         "\n\n"
         (str/trim (str text)))))
 

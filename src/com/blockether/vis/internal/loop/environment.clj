@@ -86,14 +86,19 @@
               (env/set-python-binding-signature! python-context
                                                  target
                                                  (extension/symbol-signature (get by-sym sym)))
-              (env/set-python-binding-contract! python-context
-                                                target
-                                                (:ext.symbol/contract (get by-sym sym)))
+              (env/set-python-binding-contract!
+                python-context
+                target
+                (extension/symbol-contract (get by-sym sym) (env/sym->py-name target)))
               ;; ...and the keys its options dict must carry, so `doc(name)`
               ;; states requiredness for an aliased tool too.
               (env/set-python-binding-keys! python-context
                                             target
-                                            (extension/symbol-keys-line (get by-sym sym))))
+                                            (extension/symbol-keys-line (get by-sym sym)))
+              ;; ...and its raw result, which `doc(name)` prints under the keys.
+              (env/set-python-binding-result! python-context
+                                              target
+                                              (extension/symbol-result-line (get by-sym sym))))
           (env/remove-python-binding! python-context target))))))
 
 (defn sync-active-extension-symbols!
