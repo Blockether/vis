@@ -136,13 +136,16 @@ it('does not render technical resource IDs as expandable files', () => {
 it.each([
   ['council.publish', 'Published Council message'],
   ['council.get', 'Read Council message'],
-])('shows only the %s label and message body', (operation, headline) => {
+])('shows the %s label, its IDs and the message body', (operation, headline) => {
   const activity = structuredClone(storyData.ACTIVITY_RESULTS);
   activity.rows = activity.rows.filter((row) => row.operation === operation);
   expect(activity.rows).toHaveLength(1);
   paintActivity({ activity });
   expect(screen.getByRole('button', { name: new RegExp(headline) })).toBeVisible();
-  expect(document.querySelector('[data-activity-summary]')).toBeNull();
+  // The engine names the message and its thread, so a reply can use the real thread.
+  expect(document.querySelector('[data-activity-summary]')).toHaveTextContent(
+    'Message 42 · Thread 42',
+  );
   openEverySettledStep();
   expect(document.body.textContent).toContain(
     'Read links to the file; Patch shows its changes after one disclosure.',

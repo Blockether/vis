@@ -158,7 +158,12 @@ export const ResultFirst: Story = {
     }
     for (const row of [rows[4], rows[5]]) {
       await expect(within(row).queryByRole('table')).not.toBeInTheDocument();
-      await expect(row.textContent).not.toMatch(/Thread id|Title|42|Kind|Content|Ping|reviewer/);
+      // The summary names the message and its thread. No raw field repeats them.
+      const summary = row.querySelector<HTMLElement>('[data-activity-summary]')!;
+      await expect(summary).toHaveTextContent('Message 42 · Thread 42');
+      await expect(row.textContent!.replace(summary.textContent!, '')).not.toMatch(
+        /Thread id|Title|42|Kind|Content|Ping|reviewer/,
+      );
     }
     await expect(canvas.queryByRole('columnheader', { name: 'Field' })).not.toBeInTheDocument();
     await expect(canvas.queryByRole('columnheader', { name: 'Value' })).not.toBeInTheDocument();
