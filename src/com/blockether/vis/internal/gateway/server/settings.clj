@@ -12,6 +12,7 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.council.rooms :as rooms]
             [com.blockether.vis.internal.gateway.server.http :as http]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.paths :as paths]
@@ -20,7 +21,7 @@
 
 (defn- toggle-json
   [{:keys [id label description type choices value experimental? scopes source scope is-override
-           overridden-by inherited-value inherited-source own-value group]}]
+           overridden-by inherited-value inherited-source own-value group inheritance]}]
   (cond-> {:id id
            :label label
            :type (name type)
@@ -33,7 +34,14 @@
            :own-value own-value
            :inherited-value inherited-value
            :inherited-source inherited-source
-           :applies (if (#{:skills :mcp :engines} group) "next_call" "next_turn")}
+           :applies (if (#{:skills :mcp :engines :council_rooms} group) "next_call" "next_turn")}
+    (= "restrict" inheritance)
+    (assoc :inheritance inheritance)
+
+    (= "council_room" id)
+    (assoc :choice-labels
+      (into {"local" "Local Council"} (map (juxt :room_id :name)) (:rooms (rooms/read-state))))
+
     description
     (assoc :description description)
 

@@ -55,11 +55,11 @@ def test_gateway_routes_and_lease_policy_are_shared():
     lease = gateway["x-vis-client-lease"]
     assert 0 < lease["touch_ms"] < lease["keepalive_ms"] < lease["ttl_ms"]
     assert 0 < lease["keepalive_timeout_ms"] < lease["keepalive_ms"]
-    assert len(routes) == 138
-    assert len(operations) == 173
+    assert len(routes) == 146
+    assert len(operations) == 182
     assert Counter(operation["request"] for operation in operations) == {
-        "none": 113,
-        "json": 55,
+        "none": 118,
+        "json": 59,
         "binary": 5,
     }
     assert by_path["/v1/decisions/models"]["operations"]["get"] == {

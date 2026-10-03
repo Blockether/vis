@@ -35,6 +35,12 @@ export interface Env {
   MINT_LIMIT: RateLimit;
   PUSH_ADDRESS_LIMIT: RateLimit;
   PUSH_DEVICE_LIMIT: RateLimit;
+
+  /** Rooms credentials and storage never authorize a Push grant. */
+  ROOMS_DB?: D1Database;
+  ROOMS_ADMIN_TOKEN?: string;
+  ROOMS_ADDRESS_LIMIT?: RateLimit;
+  ROOMS_MACHINE_LIMIT?: RateLimit;
 }
 
 /** Everything non-deterministic, injected so a test can pin it. */

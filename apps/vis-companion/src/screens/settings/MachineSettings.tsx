@@ -54,6 +54,7 @@ import { SpeechEnginesPanel, type SaveSpeechPrefs } from './SpeechSettings';
 import { FormLabel, SettingsPanel } from './SettingsLayout';
 import { ExtensionNotice, ExtensionsPanel, extensionMeta } from './ExtensionSettings';
 import { SettingField } from './SettingField';
+import { RoomsPanel } from './RoomsPanel';
 import { IMPROVE_MODE_LABELS, type ImproveMode } from '../../lib/improve';
 
 /** Closed-choice setting: one shared picker, with saving disabling input. */
@@ -81,7 +82,7 @@ export function EnumSetting({
         value: choice,
         label: toggle.id === 'improve_mode'
           ? (IMPROVE_MODE_LABELS[choice as ImproveMode] ?? choice)
-          : choice,
+          : (toggle.choice_labels?.[choice] ?? choice),
       }))}
     />
   );
@@ -273,6 +274,10 @@ export function ValueSetting({
  * row stays locked: changing it here would not change what that session uses.
  */
 export function lockNote(toggle: Toggle): string | null {
+  if (toggle.inheritance === 'restrict' && toggle.enabled === false && toggle.source
+      && toggle.source !== 'default' && toggle.source !== toggle.scope) {
+    return `Locked: ${toggle.source} settings deny this permission. This scope cannot allow it.`;
+  }
   const by = toggle.overridden_by;
   if (!by) return null;
   const where = `${by.scope.charAt(0).toUpperCase()}${by.scope.slice(1)} settings`;
@@ -326,7 +331,7 @@ export function SettingRow({ toggle, busy, onToggle, onPick, onInherit }: {
       {onInherit && (
         <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2 sm:px-4">
           <Text variant="description">{toggle.is_override ? 'Set here' : `Inherited from ${toggle.source ?? 'default'}`}</Text>
-          {toggle.is_override && <Button variant="secondary" density="panel" disabled={busy || lock !== null} onClick={onInherit}>Use inherited value</Button>}
+          {toggle.is_override && <Button variant="secondary" density="panel" disabled={busy || (lock !== null && toggle.inheritance !== 'restrict')} onClick={onInherit}>Use inherited value</Button>}
         </div>
       )}
     </div>
@@ -473,6 +478,7 @@ export function MachineSettings({
         <>
           <ProvidersPanel client={client} />
           <NotificationsPanel client={client} gateway={gateway} />
+          <RoomsPanel client={client} onChanged={load} />
           <McpServersPanel client={client} />
           <SpeechEnginesPanel client={client} prefs={speechPrefs} onChange={onSpeechChange} />
         </>

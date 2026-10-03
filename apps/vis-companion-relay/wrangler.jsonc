@@ -1,5 +1,6 @@
 {
-  // Push relay only. No OAuth callbacks, database, Durable Objects or queues.
+  // Push uses sealed grants. Council Rooms uses a separate D1 database.
+  // scripts/prepare-deploy.mjs adds its private binding for migrations and deployment.
   // Grants carry their contents sealed under RELAY_SEAL_KEY (src/seal.ts).
   // Abuse counters live in Cloudflare's rate limiting bindings at the edge.
   //
@@ -27,7 +28,10 @@
     { "name": "PUSH_ADDRESS_LIMIT", "namespace_id": "1002", "simple": { "limit": 60, "period": 60 } },
     // Keyed by the DEVICE, not the grant: minting a second grant for the same
     // phone therefore buys no extra pushes to it.
-    { "name": "PUSH_DEVICE_LIMIT", "namespace_id": "1003", "simple": { "limit": 20, "period": 60 } }
+    { "name": "PUSH_DEVICE_LIMIT", "namespace_id": "1003", "simple": { "limit": 20, "period": 60 } },
+    // Rooms has separate counters. Presence refresh and inbox reads share these budgets.
+    { "name": "ROOMS_ADDRESS_LIMIT", "namespace_id": "1004", "simple": { "limit": 2400, "period": 60 } },
+    { "name": "ROOMS_MACHINE_LIMIT", "namespace_id": "1005", "simple": { "limit": 1200, "period": 60 } }
   ],
   // Public configuration only. Key material is a secret, never a var:
   //   wrangler secret put RELAY_SEAL_KEY / APNS_KEY_P8 / FCM_SERVICE_ACCOUNT

@@ -1,77 +1,36 @@
 # Council rooms, schedules and webhooks
 
-Let Vis machines share Council threads through one small HTTP server, and start agent work from a
-crontab schedule or a webhook.
+Connect selected Vis groups and sessions through the existing relay. Keep sharing and remote waking under human control.
 
 ## Context
 
-Council is local today. Each session has one group: UI group, then project, then workspace
-repository, then a directory hash (`session-group` in
-`src/com/blockether/vis/internal/council/core.clj`). A foreign `group_id` fails with
-`group-not-found`. Pings and wakes stay inside the group: an explicit ping or an answering
-`reply_to` resumes an idle peer, `ping="all"` and `members()` see only active sessions, and a
-managed team keeps its team rule (`wake-allowed?` in `session/agents.clj`). The gateway routes
-`/v1/sessions/:sid/council/...` serve one session on one engine.
+Council is local today. The accepted Rooms design extends `apps/vis-companion-relay`, the existing Cloudflare Worker.
+Push keeps its sealed grants and has no device database. Rooms uses separate credentials, rate limits and D1 tables.
+The operator can read room messages. This design does not provide end-to-end encryption.
 
-No scheduler exists; only internal `ScheduledExecutor`s (MCP, views, session model). The gateway
-already has what a task runner needs: `create-session!` (accepts `:group-id`), `submit-turn!`
-(queues a busy session, takes an idempotency key), `close-session!`, and the terminal events
-`turn.completed`, `turn.failed` and `turn.cancelled` (`gateway.json`). Gateway authentication is
-one bearer secret; a route contribution can declare its own `:prefix`, `:open-uris` and
-unauthorized response (`gateway/server.clj`).
+Canonical protocols live in `packages/vis-contract/resources/vis-contract/schema/`. Rooms reuses the Council payload definitions.
+The Worker uses compiled validators from these schemas. The gateway and Python SDK validate the same definitions.
+The model keeps the existing `council.publish`, `members`, `read`, `threads` and `get` methods.
 
-Goals:
+A machine has a persistent ID and credential. A room membership survives presence expiry.
+An owner creates bounded invitations. Opening a link has no effect. Explicit redemption consumes an invite atomically.
+The fragment carries the invite secret. The database stores only credential and invite hashes.
 
-1. Multiplayer Council: sessions on different machines use the same `council.publish`, `read`,
-   `threads`, `get` and `members` calls. The model-facing API gets no new names.
-2. A rooms server with a written contract: machine IDs, rooms that an admin or moderators create,
-   membership, presence leases, entries and threads. A Python reference server with SQL and
-   DynamoDB stores, and a Python SDK client.
-3. Scheduled tasks with standard crontab expressions. A task targets an existing session, a new
-   session or a temporary session.
-4. Webhooks: an external system starts a task with a token and gets the outcome by polling or by a
-   signed callback.
+Joining a machine does not share a group, a session, past messages, files or local failure reports.
+Settings select the sharing scope. Child scopes must not widen parent restrictions. Remote waking requires separate consent.
+Room access must constrain sends, reads, discovery, notification delivery and wake requests.
 
-Prior art (Hermes Agent, `NousResearch/hermes-agent` main: `website/docs/user-guide/features/cron.md`,
-`website/docs/user-guide/messaging/webhooks.md`, `website/docs/user-guide/features/hooks.md`,
-`agent/outbound_webhooks.py`):
-
-- Cron: the gateway ticks every 60 s and runs each due job in a fresh, isolated agent session.
-  Formats: one-shot delays (`in 30m`), intervals (`every 2h`), natural phrases compiled to cron,
-  5-field cron with names, ISO timestamps. Output goes to a delivery target; `[SILENT]` suppresses a
-  successful delivery; failures always deliver. Cron runs cannot create cron jobs.
-- Inbound webhooks: named routes with a required secret (GitHub `X-Hub-Signature-256`, GitLab
-  token, Standard Webhooks, timestamped generic HMAC), event filters, dot-path prompt templates,
-  delivery IDs cached for 1 h, rate and body limits, and `cron_job` routes that fire an existing job.
-- Events: gateway hooks (`gateway:startup`, `session:start|end|reset|compress`,
-  `agent:start|step|end`, `command:*`), plugin hooks (`pre/post_tool_call`, `pre/post_llm_call`,
-  stream observers, `pre/post_api_request`, ...), and outbound webhooks that POST plugin-hook events
-  with `X-Hermes-Signature-256`, a 10 s timeout and at most 2 attempts, fire and forget.
-
-Vis takes: one isolated run per fire as a target mode, delivery-ID idempotency, signed callbacks,
-no self-scheduling. Vis does not take now: natural-language schedules (the model writes the cron
-line), platform delivery adapters, coalescing, filter scripts and per-tool outbound events
-(authenticated clients already stream turn events).
-
-Naming: "relay" belongs to the push Worker `apps/vis-companion-relay`. The new feature is
-"Council rooms": server `apps/vis-rooms`, contract `rooms.json`, SDK module `blockether.vis.rooms`.
+The user authorized Rooms end to end, including verification, commits and pushes. A Vis product release needs another request.
+Cron, webhooks, a Python server and AWS hosting are not part of this implementation turn.
 
 Rejected alternatives:
 
-- Rooms link as an extension with a timer: a wake writes entries as the local session, so
-  `reply_to`, `members()` and recipient checks cannot see remote sessions. It also needs three new
-  extension APIs (scheduler, Council publish hook, ingest and roster host calls). The engine owns
-  Council semantics, so the link lives there.
-- Reuse `apps/vis-companion-relay`: another trust model; it seals APNs/FCM grants and stores nothing.
-- WebSockets or a broker (NATS, Redis): stateful infrastructure. Polling against a `head` counter
-  is enough for agent traffic and runs on Lambda.
-- FastAPI/Pydantic models: a second source of shapes. The server validates with the canonical
-  JSON Schemas.
-- DynamoDB only: does not run on the test server. SQL first; DynamoDB behind the same store API.
-- A new CRUD API for schedules and webhooks: settings already have typed objects, scopes,
-  revisions, `PATCH /v1/settings` and the SDK `patch_settings`.
-- Model-managed schedules and room links: a model could schedule itself or share a group without
-  consent. People configure both through settings or the SDK.
+- A separate Python server: the existing Worker already provides the relay address and deployment boundary.
+- Push credentials for Rooms: possession of a notification grant must not authorize room access.
+- Implicit join on GET: previews and link scanners must not consume invitations or enable sharing.
+- Model-managed sharing: a model must not widen its own room permissions.
+- Exporting local history: consent starts new room traffic, not a historical upload.
+- Unrestricted session overrides: a session must not bypass its group's restrictions.
 
 ## 0. Self-wake rule (done)
 
@@ -87,194 +46,92 @@ pass; independent peers still wake each other; managed children still wake thems
 
 Unknowns: none.
 
-## 1. Rooms contract
+## 1. Canonical Rooms protocol
 
-Rationale: the SDK, the server and the engine link implement one written contract.
+Rationale: clients and servers must share one source for payload shapes, bounds and operations.
 
-Data: `packages/vis-contract/resources/vis-contract/schema/rooms.json`. Its `$defs` reference the
-`council.json` shapes (`publish` fields, `entry`, `entry_page`, `thread_page`, `member`, `kind`).
+Data: `packages/vis-contract/resources/vis-contract/schema/rooms.json` references `council.json`.
+`apps/vis-companion-relay/scripts/compile-rooms-contract.mjs` compiles Worker validators without runtime code generation.
+The SDK registry includes the Rooms schema. Generated validators and database limits must stay current.
 
-- IDs: `machine_id` and `room` are slugs `^[a-z0-9][a-z0-9-]{0,62}$`. A remote session ID is
-  `<session-uuid>@<machine_id>`; the server adds the suffix from the token, so a machine cannot
-  speak for another. `entry_id` is a gapless sequence per room from 1; `thread_id` is the root
-  `entry_id`.
-- Roles: `admin` (the server secret from deployment, `VIS_ROOMS_ADMIN_SECRET`), `moderator` (a
-  machine that the admin promoted), `member` (any enrolled machine).
+Acceptance criteria:
 
-| Method and path | Role | Request -> response |
-|---|---|---|
-| `GET /v1/info` | none | -> `{contract, limits}` (TTL bounds, page limit, byte limits) |
-| `POST /v1/enrollments` | admin, moderator | `{expires_in_s, max_uses}` -> `{code, expires_at}`; code shown once |
-| `POST /v1/machines` | enrollment code, admin | `{machine_id}` -> `{machine_id, role, token}`; token shown once; 409 when taken |
-| `GET /v1/machines/me` | member | -> `machine` |
-| `DELETE /v1/machines/me` | member | release the ID: presence, memberships and token go, entries stay -> 204 |
-| `PUT /v1/machines/{machine_id}/role` | admin | `{role}` -> `machine` |
-| `DELETE /v1/machines/{machine_id}` | admin | -> 204 |
-| `POST /v1/rooms` | admin, moderator | `{room, title}` -> `room`; 409 when it exists |
-| `GET /v1/rooms` | member | -> `{rooms: [room + joined]}` |
-| `DELETE /v1/rooms/{room}` | admin, moderator | -> 204 |
-| `PUT /v1/rooms/{room}/members/me` | member | join -> `room` |
-| `DELETE /v1/rooms/{room}/members/{machine_id or me}` | self, moderator | leave or remove -> 204 |
-| `PUT /v1/rooms/{room}/presence` | room member | `{ttl_s, sessions: [member]}` -> `{expires_at, head, members: [remote_member]}` |
-| `DELETE /v1/rooms/{room}/presence` | room member | -> 204 |
-| `POST /v1/rooms/{room}/entries` | room member | `room_publish` -> `entry` |
-| `GET /v1/rooms/{room}/entries?after&limit&thread_id` | room member | -> `entry_page` |
-| `GET /v1/rooms/{room}/entries/{entry_id}` | room member | -> `entry` |
-| `GET /v1/rooms/{room}/threads?after&limit` | room member | -> `thread_page` |
+- Every HTTP operation has request, response, authorization and error definitions.
+- Python, Clojure and Worker consumers validate the same payloads.
+- Tests reject unknown fields, malformed IDs, excessive bodies and unsafe continuations.
 
-- New `$defs`: `machine {machine_id, role, created_at}`, `enrollment`,
-  `room {room, title, head, created_by, created_at, joined?}`, `presence_request {ttl_s, sessions}`,
-  `presence {expires_at, head, members}`, `remote_member` (`member` + `machine_id`, `expires_at`),
-  `room_publish` (`publish` without `group_id` and `activation_id`, with required
-  `author_session_id` and `idempotency_key`), `error {error: {code, message}}`.
-- Guarantees: a reader never sees entry n before n-1. The same machine and `idempotency_key`
-  with the same body returns the first entry; another body returns 409. `ping` IDs must be live
-  presence members (422). `thread_id` and `reply_to` must exist in the room (422). Byte limits
-  come from `council.json`. Presence TTL is 15-300 s and is renewed every TTL/3; members are
-  filtered by `expires_at > now`.
-- Errors: 400 invalid, 401 missing or bad token, 403 role or membership, 404, 409 conflict,
-  413 too large, 422 bad reference, 429 rate limit.
+Unknowns: none. The Rooms catalog covers 21 relay operations and nine gateway management operations.
 
-Acceptance criteria: schema examples validate in Python (`validate("rooms", ...)`) and in Clojure
-(Skjema); code reads bounds from the schema and never copies them; contract and docs tests pass.
+## 2. Rooms module and Python SDK
 
-Unknowns: open rooms for every enrolled machine (proposed) or an invite-only flag later; a
-long-poll `wait_s` on entries for lower latency (later).
+Rationale: keep the relay deployment while separating room storage and authorization from Push.
 
-## 2. Reference server and SDK client
+Data: `apps/vis-companion-relay/src/rooms/` and `migrations/` own the Worker module and D1 schema.
+The SDK client belongs in `packages/vis-agent/src/blockether/vis/rooms.py`.
 
-Rationale: one Python server runs on a small VPS and on Lambda; one SDK client serves scripts,
-extensions and tests.
+Acceptance criteria:
 
-Data:
+- Only administrators and moderators create rooms. Owners manage invitations and membership.
+- One-use invites admit one concurrent redeemer. Lost responses can be retried without consuming another use.
+- Revocation takes effect on the next request. A replay must not restore revoked membership.
+- Session identity belongs to one machine. Presence leases do not remove membership.
+- Council replies, receipts, idempotency and bounded pagination preserve their protocol semantics.
+- Rooms failures do not disable Push. All existing relay tests pass.
 
-- `apps/vis-rooms/`: `pyproject.toml` (uv); `vis_rooms/app.py` (Starlette ASGI; Mangum adapter for
-  Lambda); `auth.py` (SHA-256 token hashes, constant-time admin check, per-token rate limit);
-  `store/sql.py` (SQLite now, Postgres-compatible DDL); `store/dynamo.py` (boto3); `tests/` (one
-  contract suite against both stores; DynamoDB through moto).
-- `packages/vis-agent/src/blockether/vis/rooms.py`: `RoomsClient(server, token)` with `info`,
-  `reserve_machine`, `release_machine`, `me`, `create_enrollment`, `set_role`, `create_room`,
-  `rooms`, `delete_room`, `join`, `leave`, `presence`, `end_presence`, `publish`, `entries`,
-  `entry`, `threads`. Typed frozen results; bodies validated with the canonical schemas.
+Unknowns: none for the implemented protocol. Real workerd and D1 tests cover every declared relay operation.
 
-SQL (one transaction per publish; SQLite uses `BEGIN IMMEDIATE`):
+## 3. Engine and scoped Settings
 
-```sql
-CREATE TABLE machines (machine_id TEXT PRIMARY KEY, role TEXT NOT NULL,
-  token_sha256 TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL);
-CREATE TABLE enrollments (code_sha256 TEXT PRIMARY KEY, uses_left INTEGER NOT NULL,
-  expires_at INTEGER NOT NULL, created_by TEXT NOT NULL);
-CREATE TABLE rooms (room TEXT PRIMARY KEY, title TEXT, head INTEGER NOT NULL DEFAULT 0,
-  created_by TEXT NOT NULL, created_at INTEGER NOT NULL);
-CREATE TABLE room_members (room TEXT NOT NULL REFERENCES rooms ON DELETE CASCADE,
-  machine_id TEXT NOT NULL REFERENCES machines ON DELETE CASCADE, joined_at INTEGER NOT NULL,
-  PRIMARY KEY (room, machine_id));
-CREATE TABLE presence (room TEXT NOT NULL, machine_id TEXT NOT NULL, sessions TEXT NOT NULL,
-  expires_at INTEGER NOT NULL, PRIMARY KEY (room, machine_id));
-CREATE TABLE entries (room TEXT NOT NULL, entry_id INTEGER NOT NULL, thread_id INTEGER NOT NULL,
-  machine_id TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL,
-  PRIMARY KEY (room, entry_id));
-CREATE INDEX entries_by_thread ON entries (room, thread_id, entry_id);
-CREATE TABLE publish_keys (room TEXT NOT NULL, machine_id TEXT NOT NULL,
-  idempotency_key TEXT NOT NULL, entry_id INTEGER NOT NULL, body_sha256 TEXT NOT NULL,
-  PRIMARY KEY (room, machine_id, idempotency_key));
-```
+Rationale: humans select sharing boundaries; ordinary Council calls enforce those boundaries.
 
-Publish: `UPDATE rooms SET head = head + 1 WHERE room = ? RETURNING head`, then insert the entry
-and its key in the same transaction.
+Data: `src/com/blockether/vis/internal/council/`, scoped settings and the existing gateway lifecycle.
+A configured room is authoritative for its new Council traffic. Unconfigured sessions remain local.
+Credentials must stay outside returned Settings values and model context.
 
-DynamoDB (one table, keys `PK`/`SK`, TTL attribute `ttl`):
+Acceptance criteria:
 
-| Item | PK | SK |
-|---|---|---|
-| machine | `MACHINE#<machine_id>` | `META` |
-| token lookup | `TOKEN#<sha256>` | `META` |
-| enrollment | `ENROLL#<sha256>` | `META` (+ `ttl`) |
-| room | `ROOM#<room>` | `META` (`head`) |
-| membership | `ROOM#<room>` | `MEMBER#<machine_id>` |
-| presence | `ROOM#<room>` | `PRESENCE#<machine_id>` (+ `ttl`) |
-| entry | `ROOM#<room>` | `ENTRY#<20-digit entry_id>` |
-| publish key | `ROOM#<room>` | `KEY#<machine_id>#<idempotency_key>` |
-| thread | `ROOM#<room>` | `THREAD#<20-digit root entry_id>` |
+- Machine, project, group and session restrictions resolve predictably. Child scopes cannot broaden an explicit parent limit.
+- A group or session can stay local. Joining alone enables no sharing and no waking.
+- Normal Council APIs use the selected room without exposing gateway secrets or local source references.
+- Automatic failure reports remain local.
+- Held queues stay held. Incoming remote pings require current membership, room permission and wake consent.
+- Reconnection, restart, policy changes and duplicate delivery do not replay completed work.
+- Affected Lazytest suites, formatting and reflection lint pass.
 
-Publish is one `TransactWriteItems`: `META` with condition `head = n-1` sets `n`; `ENTRY#n` and
-`KEY#...` are put with `attribute_not_exists`; `THREAD#root` is updated. A lost race retries with
-the new head. Reads use `Query` with `ConsistentRead`. DynamoDB TTL deletes late, so presence
-reads also filter `expires_at > now`. A sparse GSI over room `META` items lists rooms.
+Unknowns: the final native rebuild remains to be checked. JVM tests cover durable cursors, policy changes and remote receipt failures.
 
-Acceptance criteria: the contract suite passes on SQLite and on DynamoDB (moto) with the same
-cases: order under 8 parallel writers, idempotent retry, 409 for a changed body, 409 for a taken
-machine ID, role checks on every route, presence expiry, 422 for a ping to an expired member,
-thread listing and byte limits. SDK tests run against the in-process server. Ruff format and lint
-are clean.
+## 4. Settings user interface
 
-Unknowns: CI wiring for `apps/vis-rooms`; the license audit for `starlette`, `uvicorn`, `mangum`,
-`boto3` and `moto`.
+Rationale: joining must show the machine and sharing effect before the user confirms.
 
-## 3. Test deployment
+Data: Companion Settings and shared `src/components/ui.tsx` controls; existing scoped Settings support in the TUI.
 
-Rationale: prove the server on real HTTPS before engine work depends on it.
+Acceptance criteria:
 
-Data: the deployment recipe lives in the `infrastructure` repository: a `vis-rooms` systemd unit
-(uvicorn, own user), a SQLite file, TLS through the existing front, the admin secret from the
-infrastructure secret store and a hostname under the project domain. No deployment detail goes
-into this repository.
+- A person can paste an invite link, confirm joining and see the resulting membership.
+- A person can restrict a project, group or session to allowed rooms and select its active room.
+- The interface distinguishes membership, sharing and wake consent.
+- Expired, used and revoked invitations produce useful, secret-free errors.
+- UI tests cover confirmation, refusal, inherited limits and successful join.
 
-Acceptance criteria: `GET /v1/info` answers over HTTPS; the SDK on two machines reserves machine
-IDs, creates a room, joins it and exchanges entries; a service restart keeps the data; the admin
-secret never appears in logs.
+Unknowns: none in the implemented Settings flow. Companion tests cover confirmation, invitation refusal and inherited restrictions.
 
-Unknowns: hostname and TLS front on the test server; backup of the SQLite file.
+## 5. Deployment and two-machine verification
 
-## 4. Engine link
+Rationale: local tests do not prove that two independent gateways can exchange Council traffic.
 
-Rationale: Council semantics (members, recipient checks, `reply_to`, wakes) stay in the engine;
-the link only moves entries.
+Data: deploy the tested Worker with separate Rooms bindings. Use isolated gateways on a laptop and a second machine.
+Private deployment details belong in `infrastructure`, never in this public repository.
 
-Data:
+Acceptance criteria:
 
-- Settings: global `council.rooms.server` and `council.rooms.machine`. A gateway route
-  `POST /v1/council/rooms/enroll {server, machine, code}` reserves the machine ID and writes the
-  token to `~/.vis/state.yml`; the SDK, the TUI and the Companion call it. The group or project
-  setting `council.room` links that Council group to a room; a project `vis.yml` can link a whole
-  team. One local group per room on a machine.
-- `src/com/blockether/vis/internal/council/rooms.clj` (`babashka.http-client`, `wire/json-str`):
-  one loop per linked group. Presence every TTL/3 (sessions are the active local members); pull
-  when `head` is above the cursor; push the outbox. `gateway/wiring.clj` starts and stops it next
-  to `install-waker!`.
-- Store: a map `(room, entry_id) <-> local entry_id`, a cursor per room and an outbox keyed by the
-  local idempotency key. Pushed: entries published in a linked group. Not pushed: pulled entries,
-  `autocomplain` entries, `source_ref` and entries from before the link.
-- `council/core.clj`: `members` adds the live remote roster; recipient checks accept
-  `<uuid>@<machine>` while that member is live; a pulled entry uses the local delivery path (an
-  active recipient gets input when `reply_required`; an idle recipient wakes). A remote author has
-  no agent record, so `wake-allowed?` treats it as an independent peer.
-- Docs: a `council.md` section on other machines: what leaves the machine, who can read it and how
-  to leave. Settings reference for the new keys.
+- Gateway A creates a room and invitation. Gateway B joins through Settings or the same SDK protocol.
+- An addressed Council question reaches B. B's reply resolves A's obligation.
+- A disallowed group or session cannot send, read, discover or wake across the room boundary.
+- Revocation and reconnect tests pass. Existing Push behavior remains healthy.
+- Record the tested revisions, checks, commits and deployment outcome without secrets.
 
-Acceptance criteria: Lazytest with two engines, separate stores and one in-process fake server
-validated against `rooms.json`: a remote ping wakes an idle session; a `reply_to` across machines
-marks the request replied; a retry after a server outage publishes once; an expired lease removes
-the member; an unknown remote ping ID fails with `invalid-recipient`; nothing leaves the machine
-without `council.room`. The model-facing Council API has no new names.
-
-Unknowns: whether a remote ping may wake an idle session (proposed: yes, as a local peer, with a
-limit per remote author); the exact settings keys and scope rules in the settings catalog.
-
-## 5. Two-machine end-to-end
-
-Rationale: the real check is two gateways on two hosts.
-
-Data: the phase 3 server, the Vis gateway on the test server (`visgw`) and a laptop gateway;
-machine IDs such as `mikrus` and `karol-mbp`; room `vis-dev`.
-
-Acceptance criteria: enrollment, room creation by a moderator and linking work from settings;
-`council.members()` on each side lists the other machine's sessions; a `coordination` ping with
-`reply_required` wakes the remote session, and its `reply_to` answer arrives within one heartbeat
-plus 2 s; the outage drill (stop the server for 2 min, publish, start it) delivers exactly once;
-a stopped gateway leaves the roster after the TTL; a taken machine ID gets 409.
-
-Unknowns: whether the test-server gateway stays up between checks.
+Unknowns: production deployment and physical two-machine verification remain pending. Cloudflare access, D1 creation and the second host JVM are verified.
 
 ## 6. Scheduled tasks (crontab)
 
@@ -345,23 +202,24 @@ example and a signature check.
 Unknowns: exposing only `/v1/webhooks/*` from the test-server gateway; inbound GitHub-style HMAC
 signatures (later).
 
-## 8. AWS (optional)
+## 8. Alternate hosting (deferred)
 
-Rationale: corporate deployments use AWS; no earlier phase needs it.
+Rationale: self-hosted Python and AWS can implement the same Rooms protocol later.
 
-Data: the same server on Lambda (Mangum) behind API Gateway with the DynamoDB store; IaC in the
-`infrastructure` repository; a JWT authorizer (Entra, Okta or Cognito) can replace enrollment codes.
+Data: the canonical schema and SDK must not require D1-specific behavior from clients.
 
-Acceptance criteria: the phase 2 contract suite passes against a real on-demand table; the phase 5
-script passes against the API Gateway URL.
+Acceptance criteria: alternate backends pass the shared protocol and concurrency tests before use.
 
-Unknowns: AWS account and credentials; how JWT identities map to roles.
+Unknowns: no alternate backend or AWS deployment is authorized in the current Rooms scope.
 
 ## Plan state
 
-- Phase 0 is complete and pushed in 65bba8f7b. The affected namespaces pass (762 cases); clj
-  format and lint are clean.
-- Phases 1-8 are a proposal and wait for a decision. Track A (phases 1-5 and 8) and track B
-  (phases 6-7) do not depend on each other.
-- Open decisions: remote wake policy; open or invite-only rooms; a default project for `new` and
-  `temporary` targets; the server hostname.
+- Self-wake fix: complete, verified and pushed in `65bba8f7b`.
+- Rooms protocol, Worker, SDK, engine, scoped Settings and Companion interface are implemented.
+- Verification: 674 affected JVM tests, 22 SDK tests, 94 documentation tests and 3396 Companion tests pass. One Companion test is skipped.
+- Relay verification: 49 Worker tests, three deployment tests and 52 shared HTTPS tests pass. Dependency audit reports no vulnerabilities.
+- Native verification: a fresh native build and the two-gateway Rooms suite pass, including the final receipt fix.
+- Cloudflare: the Rooms database, administrator secret and private CI variable are provisioned. Production Push remains healthy.
+- Deployment and physical two-machine verification remain pending. No live gateway was restarted.
+- Cron, webhooks and alternate hosting remain deferred.
+- No Rooms commit, push, Worker deployment or Vis product release has occurred.

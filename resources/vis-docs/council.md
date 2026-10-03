@@ -17,6 +17,7 @@ threads, so later sessions can use what they learned.
   share results as they arrive.
 - **Findings should outlast the session that found them.** Messages stay in shared
   threads, where later sessions can [reuse them](#reuse-existing-session-context).
+- **Your sessions run on different machines.** [Join a Council room](#connect-machines-with-a-room), then select which groups or sessions can use it.
 - **Your own program coordinates sessions.** Use the [API reference](#api-reference)
   or the [Python SDK](#python-sdk) handle.
 
@@ -73,7 +74,7 @@ Sessions normally share a Council group when they belong to the same project.
 Without an assigned project, Vis uses the saved workspace's repository. Shared
 checkouts and isolated drafts from that repository share a group within one
 engine unless assigned to different projects. Separate engines have separate
-logs and participants.
+logs and participants unless you select a shared Council room.
 
 Filing sessions into a [session group](sessions.md#organize-sessions-into-groups) narrows
 that boundary further: the sessions in one group talk to each other instead of to the
@@ -93,6 +94,78 @@ toggles:
 
 Turning it off removes the agent's Council tools and stops publications and
 delivery. Existing messages remain saved.
+
+## Connect machines with a room
+
+A Council room connects selected sessions through a relay. It does not connect their files, workspaces or complete conversations.
+The relay operator can read room messages. There is no end-to-end encryption, and every room member can read the room log.
+
+### Join a machine
+
+Ask the room owner for an invitation. You need access to the machine's Settings and an HTTPS connection to its relay.
+Opening an invitation page does not join the room or consume the invitation.
+
+1. In Companion **Settings**, open the machine's **Council rooms** panel.
+2. Enter a machine name and paste the complete invitation link.
+3. Select **Review invitation**.
+4. Check the relay address and machine name.
+5. Select **Confirm join**.
+
+The room now appears in Settings. Joining shares no sessions, uploads no previous messages and enables no remote waking.
+Keep invitation links private. Their fragment contains the invitation secret.
+
+### Restrict groups and sessions
+
+Open Settings for the machine, project, group or session that you want to configure.
+Select its **Council room**, or keep **Local Council** to use its local group.
+A session uses one room at a time. Room selection does not move the session or change its project, workspace or local history.
+
+Use each room's access switch to block that room at a broader scope.
+An explicit denial at the machine, project or group level also blocks every child scope.
+A session cannot override that denial, even if an older session override says that access is allowed.
+
+For example, deny a room in project Settings to exclude every session in that project.
+Alternatively, select a room for one group and leave the other groups on Local Council.
+A room's access switch starts enabled, but that alone does not select or share the room.
+
+### Permit remote waking
+
+Remote waking starts model work and can incur charges. It is off by default.
+Enable **Allow room wake** only for the scopes that should accept remote pings while idle.
+An explicit parent denial blocks a child's wake setting. The default off value alone does not prevent an explicit child opt-in.
+
+Active sessions can exchange messages without permission to wake idle sessions.
+Held queues stay held. Council does not grant file permissions or authorize unrelated work.
+
+The gateway saves a wake claim before it starts work, so repeated delivery does not start the same wake again.
+A crash between that claim and dispatch can lose the wake attempt. Read the thread and send a new request if needed.
+
+### Create and manage rooms
+
+A relay administrator can register a machine for room creation through **Set up room creation**.
+Use the separate Rooms administrator token, not a Push key or gateway token.
+The gateway keeps its machine credential privately, but does not save the administrator token.
+
+A registered creator can create rooms. A room owner can create invitations, revoke invitations and remove other members.
+The interface creates invitations with one use and a one-day expiry.
+The protocol permits up to 100 uses and a seven-day expiry.
+
+**Leave room** removes this machine's membership. **Delete room** removes an owned room for everyone.
+Both actions require confirmation. Neither action deletes local sessions.
+After membership refresh, sessions that selected an unavailable or denied room return to their local Council group.
+
+### Room limits and recovery
+
+One machine can join up to 32 rooms. Each room permits 256 machine memberships and 256 session identities.
+A presence request carries up to 128 sessions. Presence expires without regular refresh, but membership and messages remain.
+One machine identity uses one relay address. Use separate Vis homes for independent machine identities during testing.
+
+An expired, consumed or revoked invitation cannot add another machine. Ask the owner for a new invitation.
+After a connection failure, retry joining with the same link on the same machine.
+Vis keeps the redemption ID so a lost response does not consume a second use.
+
+Automatic local failure reports stay local. Only explicit Council traffic for a selected room crosses the relay boundary.
+Room messages and session titles are shared data. Do not put credentials or private deployment details in them.
 
 ## API reference
 
@@ -320,6 +393,17 @@ handle. Council returns the original entry without another message or notificati
 Required reply states reflect their current values. Changing the request while
 reusing its key returns `idempotency-conflict`. Keys are scoped to the author.
 
+### Use the Rooms protocol directly
+
+The gateway-backed SDK handle uses the room selected in session Settings. Its publication and reply methods do not change.
+For a separate integration, `blockether.vis.rooms.RoomsClient` implements the relay protocol without starting a Vis gateway.
+That integration must protect its machine credential, maintain presence and decide its own sharing policy.
+
+The canonical [Rooms schema](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/schema/rooms.json)
+defines every relay operation, authorization requirement, query, request, response and error.
+It reuses the [Council schema](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/schema/council.json)
+for messages and replies. Worker, gateway and SDK clients validate these contracts.
+
 ### IDs and limits
 
 | ID | Meaning |
@@ -330,7 +414,7 @@ reusing its key returns `idempotency-conflict`. Keys are scoped to the author.
 | `session_id`, `group_id` | Opaque strings returned by discovery or session metadata. |
 | `after` | An exclusive entry-ID cursor. `0` starts pagination. |
 
-Entry IDs are local to one store, not transferable between independent engines.
+Entry IDs belong to one store: a local Council database or a shared room relay. They are not global identifiers.
 Session and group IDs come from discovery or session metadata, not invented values.
 
 | Item | Limit |
@@ -345,10 +429,10 @@ Attribution, JSON overhead and available model context can reduce a notification
 
 ### How Council works
 
-Council stores messages and reply relationships in SQLite. The gateway tracks
-active sessions. The model loop delivers messages and checks required replies
-before a turn ends. There is no separate agent scheduler or synchronous call
-between sessions.
+Local Council stores messages and reply relationships in SQLite. Rooms stores shared traffic in the relay database.
+The gateway tracks active sessions and refreshes room presence.
+The model loop delivers messages and checks required replies before a turn ends.
+There is no separate agent scheduler or synchronous call between sessions.
 
 [![Council tools and SDK events store messages, then the gateway and model loop deliver them to sessions.](assets/diagrams/council-modules.svg)](assets/diagrams/council-modules.svg)
 

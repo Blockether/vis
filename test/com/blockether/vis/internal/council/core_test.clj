@@ -2910,7 +2910,8 @@
                          (get-in (ps/db-council-get db id)
                                  [:source_ref :session_turn_iteration_id])))))
           (swap! (:turn-state-atom env) assoc :form-idx 1)
-          (with-redefs-fn {(ns-resolve 'com.blockether.vis.internal.council.core 'session-group)
+          (with-redefs-fn {(ns-resolve 'com.blockether.vis.internal.council.core
+                                       'local-session-group)
                            (constantly nil)}
             #(let [result (record! (assoc tool :svar/tool-call-id "ungrouped") failure) entry
                    (ps/db-council-get db (get-in result [:error :complain_entry_id]))]

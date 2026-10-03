@@ -100,7 +100,7 @@
    row can pick its rendering strategy (toggle vs. cycle) without
    re-deriving anything."
   [{:keys [id label default description owner since persist? group type choices visible-fn channels
-           settings? experimental? scopes]}]
+           settings? experimental? scopes inheritance]}]
   (let [t (or type :boolean)]
     (cond-> {:id id
              :label (str label)
@@ -114,6 +114,7 @@
              :owner (or owner :vis)
              :persist? (boolean persist?)
              :scopes (vec (or scopes toggle-contract/default-scopes))
+             :inheritance (or inheritance "override")
              :experimental? (boolean experimental?)
              ;; `:settings? false` keeps a toggle registered/persisted but OUT
              ;; of every channel's Settings dialog (it has its own control,

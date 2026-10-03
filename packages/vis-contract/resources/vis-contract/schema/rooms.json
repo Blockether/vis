@@ -1,0 +1,924 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contract.blockether.com/vis/schema/rooms.json",
+  "$ref": "#/$defs/room",
+  "$comment": "Rooms share Council payloads, not gateway or Push credentials. All times are Unix milliseconds. A membership survives presence expiry. The server validates authorization and UTF-8 budgets separately.",
+  "x-vis-limits": {
+    "request_bytes": 262144,
+    "response_bytes": 262144,
+    "invite_lifetime_ms": 604800000,
+    "rooms_per_machine": 32,
+    "machines_per_room": 256,
+    "sessions_per_room": 256
+  },
+  "x-vis-http": [
+    {
+      "method": "POST",
+      "path": "/v1/rooms/machines",
+      "auth": "admin",
+      "request": "machine_registration",
+      "response": "machine",
+      "error": "error",
+      "query": null
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/rooms/machines/{machine_id}",
+      "auth": "admin",
+      "request": "machine_update",
+      "response": "machine",
+      "error": "error",
+      "query": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/rooms/machine",
+      "auth": "machine",
+      "request": null,
+      "response": "machine",
+      "error": "error",
+      "query": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/rooms",
+      "auth": "creator",
+      "request": "room_create",
+      "response": "room",
+      "error": "error",
+      "query": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/rooms",
+      "auth": "machine",
+      "request": null,
+      "response": "room_list",
+      "error": "error",
+      "query": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/rooms/join",
+      "auth": "machine-or-new",
+      "request": "join",
+      "response": "joined",
+      "error": "error",
+      "query": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/rooms/{room_id}",
+      "auth": "owner",
+      "request": null,
+      "response": "ok",
+      "error": "error",
+      "query": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/rooms/{room_id}/invites",
+      "auth": "owner",
+      "request": "invite_create",
+      "response": "invite_created",
+      "error": "error",
+      "query": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/rooms/{room_id}/invites/{invite_id}",
+      "auth": "owner",
+      "request": null,
+      "response": "ok",
+      "error": "error",
+      "query": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/rooms/{room_id}/members",
+      "auth": "member",
+      "request": null,
+      "response": "membership_list",
+      "error": "error",
+      "query": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/rooms/{room_id}/members/{machine_id}",
+      "auth": "owner-or-self",
+      "request": null,
+      "response": "ok",
+      "error": "error",
+      "query": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/rooms/{room_id}/presence",
+      "auth": "member",
+      "request": "presence",
+      "response": "lease",
+      "error": "error",
+      "query": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/rooms/{room_id}/sessions",
+      "auth": "member",
+      "request": null,
+      "response": "session_list",
+      "error": "error",
+      "query": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/rooms/{room_id}/entries",
+      "auth": "member",
+      "request": "publication",
+      "response": "entry",
+      "error": "error",
+      "query": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/rooms/{room_id}/entries",
+      "auth": "member",
+      "request": null,
+      "response": "entry_page",
+      "error": "error",
+      "query": "page_request"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/rooms/{room_id}/entries/{entry_id}",
+      "auth": "member",
+      "request": null,
+      "response": "entry",
+      "error": "error",
+      "query": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/rooms/{room_id}/threads",
+      "auth": "member",
+      "request": null,
+      "response": "thread_page",
+      "error": "error",
+      "query": "thread_request"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/rooms/{room_id}/pending",
+      "auth": "member",
+      "request": null,
+      "response": "pending",
+      "error": "error",
+      "query": "pending_request"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/rooms/{room_id}/receipts",
+      "auth": "member",
+      "request": "receipts",
+      "response": "ok",
+      "error": "error",
+      "query": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/rooms/{room_id}/inbox",
+      "auth": "member",
+      "request": null,
+      "response": "entry_page",
+      "error": "error",
+      "query": "inbox_request"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/rooms/{room_id}/wake",
+      "auth": "member",
+      "request": "wake",
+      "response": "entry",
+      "error": "error",
+      "query": null
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "secret": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43,128}$"
+    },
+    "machine": {
+      "type": "object",
+      "properties": {
+        "machine_id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "can_create_rooms": {
+          "type": "boolean"
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "machine_id",
+        "name",
+        "can_create_rooms",
+        "created_at"
+      ],
+      "additionalProperties": false
+    },
+    "machine_registration": {
+      "type": "object",
+      "properties": {
+        "machine_id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "credential": {
+          "$ref": "#/$defs/secret"
+        },
+        "can_create_rooms": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "machine_id",
+        "name",
+        "credential"
+      ],
+      "additionalProperties": false
+    },
+    "machine_update": {
+      "type": "object",
+      "properties": {
+        "can_create_rooms": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "can_create_rooms"
+      ],
+      "additionalProperties": false
+    },
+    "room": {
+      "type": "object",
+      "properties": {
+        "room_id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "owner_machine_id": {
+          "$ref": "#/$defs/id"
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "room_id",
+        "name",
+        "owner_machine_id",
+        "created_at"
+      ],
+      "additionalProperties": false
+    },
+    "room_create": {
+      "type": "object",
+      "properties": {
+        "room_id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "owner_machine_id": {
+          "$ref": "#/$defs/id"
+        }
+      },
+      "required": [
+        "room_id",
+        "name",
+        "owner_machine_id"
+      ],
+      "additionalProperties": false
+    },
+    "room_list": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/room"
+      },
+      "maxItems": 32
+    },
+    "membership": {
+      "type": "object",
+      "properties": {
+        "machine_id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "role": {
+          "enum": [
+            "owner",
+            "member"
+          ]
+        },
+        "joined_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "machine_id",
+        "name",
+        "role",
+        "joined_at"
+      ],
+      "additionalProperties": false
+    },
+    "membership_list": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/membership"
+      },
+      "maxItems": 256
+    },
+    "invite_create": {
+      "type": "object",
+      "properties": {
+        "invite_id": {
+          "$ref": "#/$defs/id"
+        },
+        "token": {
+          "$ref": "#/$defs/secret"
+        },
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max_uses": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 1
+        }
+      },
+      "required": [
+        "invite_id",
+        "token",
+        "expires_at"
+      ],
+      "additionalProperties": false
+    },
+    "invite": {
+      "type": "object",
+      "properties": {
+        "invite_id": {
+          "$ref": "#/$defs/id"
+        },
+        "room_id": {
+          "$ref": "#/$defs/id"
+        },
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max_uses": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "uses": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "revoked": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "invite_id",
+        "room_id",
+        "expires_at",
+        "max_uses",
+        "uses",
+        "revoked"
+      ],
+      "additionalProperties": false
+    },
+    "invite_created": {
+      "type": "object",
+      "properties": {
+        "invite": {
+          "$ref": "#/$defs/invite"
+        },
+        "invite_url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "invite",
+        "invite_url"
+      ],
+      "additionalProperties": false
+    },
+    "join": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/id"
+        },
+        "invite_token": {
+          "$ref": "#/$defs/secret"
+        },
+        "machine_id": {
+          "$ref": "#/$defs/id"
+        },
+        "machine_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        }
+      },
+      "required": [
+        "request_id",
+        "invite_token",
+        "machine_id",
+        "machine_name"
+      ],
+      "additionalProperties": false
+    },
+    "joined": {
+      "type": "object",
+      "properties": {
+        "machine": {
+          "$ref": "#/$defs/machine"
+        },
+        "room": {
+          "$ref": "#/$defs/room"
+        }
+      },
+      "required": [
+        "machine",
+        "room"
+      ],
+      "additionalProperties": false
+    },
+    "presence_session": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "$ref": "#/$defs/id"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "state": {
+          "enum": [
+            "running",
+            "queued",
+            "held",
+            "idle"
+          ]
+        },
+        "wake_allowed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "session_id",
+        "title",
+        "state",
+        "wake_allowed"
+      ],
+      "additionalProperties": false
+    },
+    "presence": {
+      "type": "object",
+      "properties": {
+        "sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/presence_session"
+          },
+          "maxItems": 128
+        },
+        "lease_seconds": {
+          "type": "integer",
+          "minimum": 15,
+          "maximum": 90,
+          "default": 60
+        }
+      },
+      "required": [
+        "sessions"
+      ],
+      "additionalProperties": false
+    },
+    "lease": {
+      "type": "object",
+      "properties": {
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "expires_at"
+      ],
+      "additionalProperties": false
+    },
+    "publication": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "$ref": "#/$defs/id"
+        },
+        "publication": {
+          "$ref": "https://contract.blockether.com/vis/schema/council.json#/$defs/publish"
+        }
+      },
+      "required": [
+        "session_id",
+        "publication"
+      ],
+      "additionalProperties": false
+    },
+    "entry": {
+      "$ref": "https://contract.blockether.com/vis/schema/council.json#/$defs/entry"
+    },
+    "entry_page": {
+      "$ref": "https://contract.blockether.com/vis/schema/council.json#/$defs/entry_page"
+    },
+    "thread_page": {
+      "$ref": "https://contract.blockether.com/vis/schema/council.json#/$defs/thread_page"
+    },
+    "session_list": {
+      "type": "array",
+      "items": {
+        "$ref": "https://contract.blockether.com/vis/schema/council.json#/$defs/member"
+      },
+      "maxItems": 256
+    },
+    "pending": {
+      "type": "array",
+      "items": {
+        "$ref": "https://contract.blockether.com/vis/schema/council.json#/$defs/entry"
+      },
+      "maxItems": 50
+    },
+    "receipt": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "$ref": "#/$defs/id"
+        },
+        "entry_id": {
+          "$ref": "https://contract.blockether.com/vis/schema/council.json#/$defs/entry_id"
+        },
+        "state": {
+          "enum": [
+            "delivered",
+            "unavailable",
+            "interrupted"
+          ]
+        }
+      },
+      "required": [
+        "session_id",
+        "entry_id",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "receipts": {
+      "type": "object",
+      "properties": {
+        "receipts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/receipt"
+          },
+          "maxItems": 50
+        }
+      },
+      "required": [
+        "receipts"
+      ],
+      "additionalProperties": false
+    },
+    "page_request": {
+      "$ref": "https://contract.blockether.com/vis/schema/council.json#/$defs/page_request"
+    },
+    "ok": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "enum": [
+                "invalid_request",
+                "unauthorized",
+                "forbidden",
+                "not_found",
+                "conflict",
+                "invite_unavailable",
+                "too_large",
+                "rate_limited",
+                "rooms_unconfigured",
+                "rooms_unavailable",
+                "capacity",
+                "invalid_thread",
+                "invalid_recipient",
+                "invalid_reply",
+                "inactive_session"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    "inbox_request": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "$ref": "#/$defs/id"
+        },
+        "after": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "default": 20
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "additionalProperties": false
+    },
+    "wake": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "$ref": "#/$defs/id"
+        },
+        "event": {
+          "$ref": "https://contract.blockether.com/vis/schema/council.json#/$defs/wake"
+        }
+      },
+      "required": [
+        "session_id",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "gateway_status": {
+      "type": "object",
+      "properties": {
+        "configured": {
+          "type": "boolean"
+        },
+        "relay_url": {
+          "type": "string"
+        },
+        "machine": {
+          "$ref": "#/$defs/machine"
+        },
+        "rooms": {
+          "$ref": "#/$defs/room_list"
+        }
+      },
+      "required": [
+        "configured",
+        "rooms"
+      ],
+      "additionalProperties": false
+    },
+    "gateway_register": {
+      "type": "object",
+      "properties": {
+        "relay_url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "admin_token": {
+          "$ref": "#/$defs/secret"
+        }
+      },
+      "required": [
+        "relay_url",
+        "name",
+        "admin_token"
+      ],
+      "additionalProperties": false
+    },
+    "gateway_join": {
+      "type": "object",
+      "properties": {
+        "invite_url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "machine_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      },
+      "required": [
+        "invite_url",
+        "machine_name"
+      ],
+      "additionalProperties": false
+    },
+    "gateway_create": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "gateway_invite": {
+      "type": "object",
+      "properties": {
+        "expires_in_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 604800,
+          "default": 86400
+        },
+        "max_uses": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 1
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "entry_id": {
+      "$ref": "https://contract.blockether.com/vis/schema/council.json#/$defs/entry_id"
+    },
+    "local_state": {
+      "type": "object",
+      "properties": {
+        "relay_url": {
+          "type": "string"
+        },
+        "machine_id": {
+          "$ref": "#/$defs/id"
+        },
+        "credential": {
+          "$ref": "#/$defs/secret"
+        },
+        "name": {
+          "type": "string"
+        },
+        "machine": {
+          "$ref": "#/$defs/machine"
+        },
+        "rooms": {
+          "$ref": "#/$defs/room_list"
+        },
+        "cursors": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "redemptions": {
+          "type": "object",
+          "maxProperties": 128,
+          "additionalProperties": {
+            "$ref": "#/$defs/id"
+          }
+        }
+      },
+      "required": [
+        "relay_url",
+        "machine_id",
+        "credential",
+        "name",
+        "rooms",
+        "cursors",
+        "redemptions"
+      ],
+      "additionalProperties": false
+    },
+    "pending_request": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "$ref": "#/$defs/id"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "additionalProperties": false
+    },
+    "thread_request": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/page_request"
+        },
+        {
+          "not": {
+            "required": [
+              "thread_id"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

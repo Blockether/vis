@@ -9,6 +9,7 @@
 import { activityProjectionFromWire, type ActivityProjection } from './activity';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import { unreadTurnCount } from './unread';
+import type { CouncilRoom, RoomInvitation, RoomMember, RoomsStatus } from './rooms';
 import type { PushGateway } from './relay';
 import {
   ATTACHMENT_MEMORY_BUDGET,
@@ -2456,6 +2457,42 @@ export class GatewayClient {
         writeSnapshot(this.settingsKey('setting', target, setting.id), setting);
       }
     }
+  }
+
+  rooms(signal?: AbortSignal): Promise<RoomsStatus> {
+    return this.request('GET', '/v1/council/rooms', undefined, signal);
+  }
+
+  joinRoom(invite_url: string, machine_name: string): Promise<unknown> {
+    return this.request('POST', '/v1/council/rooms/join', { invite_url, machine_name });
+  }
+
+  registerRooms(relay_url: string, name: string, admin_token: string): Promise<RoomsStatus> {
+    return this.request('POST', '/v1/council/rooms/register', { relay_url, name, admin_token });
+  }
+
+  createRoom(name: string): Promise<CouncilRoom> {
+    return this.request('POST', '/v1/council/rooms', { name });
+  }
+
+  inviteToRoom(roomId: string): Promise<RoomInvitation> {
+    return this.request('POST', `/v1/council/rooms/${encodeURIComponent(roomId)}/invites`, {});
+  }
+
+  revokeRoomInvite(roomId: string, inviteId: string): Promise<unknown> {
+    return this.request('DELETE', `/v1/council/rooms/${encodeURIComponent(roomId)}/invites/${encodeURIComponent(inviteId)}`);
+  }
+
+  roomMembers(roomId: string): Promise<RoomMember[]> {
+    return this.request('GET', `/v1/council/rooms/${encodeURIComponent(roomId)}/members`);
+  }
+
+  removeRoomMember(roomId: string, machineId: string): Promise<unknown> {
+    return this.request('DELETE', `/v1/council/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(machineId)}`);
+  }
+
+  deleteRoom(roomId: string): Promise<unknown> {
+    return this.request('DELETE', `/v1/council/rooms/${encodeURIComponent(roomId)}`);
   }
 
   // ── Improve: project issues and governed review ─────────────────

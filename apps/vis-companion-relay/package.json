@@ -2,11 +2,14 @@
   "name": "vis-companion-relay",
   "version": "0.1.0",
   "private": true,
-  "description": "Push relay for the vis companion \u2014 a Cloudflare Worker that holds the APNs/FCM signing keys so self-hosted gateways never have to.",
+  "description": "Cloudflare relay for Companion push notifications and shared Council rooms.",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
-    "test": "vitest run",
+    "test": "node scripts/compile-rooms-contract.mjs --check && node --test test/deploy.test.mjs && vitest run",
+    "contracts": "node scripts/compile-rooms-contract.mjs",
+    "format:check": "prettier --check src/rooms test/rooms.test.ts test/*.mjs scripts/*.mjs",
+    "lint": "eslint src/rooms test/rooms.test.ts test/*.mjs scripts/*.mjs",
     "test:watch": "vitest",
     "dev": "wrangler dev --remote",
     "deploy": "wrangler deploy"
@@ -14,8 +17,15 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260730.1",
     "@types/node": "^24.0.0",
+    "ajv": "^8.17.1",
+    "esbuild": "^0.28.2",
+    "eslint": "^9.39.0",
+    "jsonc-parser": "^3.3.1",
+    "miniflare": "^5.20261001.0-alpha",
+    "prettier": "^3.6.2",
     "typescript": "^5.7.0",
-    "vitest": "^3.2.0",
+    "typescript-eslint": "^8.48.0",
+    "vitest": "^4.1.11",
     "wrangler": "^4.0.0"
   }
 }

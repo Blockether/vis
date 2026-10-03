@@ -107,12 +107,44 @@
             "global"
           ],
           "description": "Scopes where this setting may be overridden; unrelated to its presentation group."
+        },
+        "inheritance": {
+          "enum": [
+            "override",
+            "restrict"
+          ],
+          "default": "override",
+          "description": "A restricted boolean stays false after any explicit ancestor denial."
         }
       },
       "required": [
         "id",
         "label",
         "default"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "inheritance": {
+                "const": "restrict"
+              }
+            },
+            "required": [
+              "inheritance"
+            ]
+          },
+          "then": {
+            "properties": {
+              "type": {
+                "const": "boolean"
+              },
+              "default": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
       ]
     },
     "scope": {

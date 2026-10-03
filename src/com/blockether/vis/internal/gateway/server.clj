@@ -34,6 +34,8 @@
     [com.blockether.vis.contract.wire :as wire]
     [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
     [com.blockether.vis.internal.gateway.server.council :as council-api]
+    [com.blockether.vis.internal.gateway.server.rooms :as rooms-api]
+    [com.blockether.vis.internal.council.rooms :as rooms]
     [com.blockether.vis.internal.gateway.server.decisions :as decisions-api]
     [com.blockether.vis.internal.gateway.server.devices :as devices-api]
     [com.blockether.vis.internal.gateway.server.fs :as fs-api]
@@ -1518,10 +1520,10 @@
 (def ^:private route-handlers
   "Every handler map the built-in router binds. Each operation in
    [[gateway-contract/route-table]] belongs to exactly one of them."
-  [server-handlers council-api/handlers decisions-api/handlers devices-api/handlers fs-api/handlers
-   mcp-api/handlers projects-api/handlers providers-api/handlers sessions-api/handlers
-   settings-api/handlers speech-api/handlers transcripts-api/handlers turns-api/handlers
-   views-api/handlers])
+  [server-handlers council-api/handlers rooms-api/handlers decisions-api/handlers
+   devices-api/handlers fs-api/handlers mcp-api/handlers projects-api/handlers
+   providers-api/handlers sessions-api/handlers settings-api/handlers speech-api/handlers
+   transcripts-api/handlers turns-api/handlers views-api/handlers])
 
 (defn- route-precedence
   "Sort key for a route path. At the first segment where two paths differ, a fixed
@@ -2083,7 +2085,9 @@
      (try (discovery/register-self! db {:port port :host host :secret token})
           (catch Throwable t
             (tel/log! :warn ["gateway: registry self-registration failed" (ex-message t)])))
-     (swap! instance/server-state assoc :stop-improve! (improve-review/start! db))
+     (swap! instance/server-state assoc
+       :stop-improve! (improve-review/start! db)
+       :stop-rooms! (rooms/start! db))
      (when managed? (ensure-idle-reaper!))
      (tel/log! :info
                ["gateway: listening" (str host ":" port)
@@ -2117,7 +2121,8 @@
 (defn stop!
   "Stop the gateway server if running. Idempotent."
   []
-  (when-let [{:keys [^Server server db stop-improve!]} @instance/server-state]
+  (when-let [{:keys [^Server server db stop-improve! stop-rooms!]} @instance/server-state]
+    (when stop-rooms! (stop-rooms!))
     (when stop-improve! (stop-improve!))
     ;; Release the listening socket FIRST so a successor daemon racing this
     ;; close-then-reopen handoff can bind the port immediately. The slow reap

@@ -14,6 +14,7 @@ const setting = {
   max_length: 80,
 };
 beforeEach(() => {
+  vi.spyOn(GatewayClient.prototype, 'rooms').mockResolvedValue({ configured: false, rooms: [] });
   vi.spyOn(GatewayClient.prototype, 'cachedSettings').mockReturnValue(null);
   vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue({
     revision: 'agent-name-1',

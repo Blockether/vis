@@ -16,6 +16,7 @@ import { FCM_DEAD_REASONS, FCM_MAX_PAYLOAD_BYTES, fcmConfig, fcmPayload, sendFcm
 import { sha256Hex } from './jwt';
 import { fitNotification } from './payload';
 import { seal, unseal } from './seal';
+import { handleRooms } from './rooms';
 import type { Deps, Env, Notification, Platform } from './types';
 import { PLATFORMS } from './types';
 
@@ -393,6 +394,10 @@ async function route(request: Request, env: Env, deps: Deps): Promise<Response> 
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, '') || '/';
   const method = request.method.toUpperCase();
+
+  if (path === '/rooms/join' || path === '/v1/rooms' || path.startsWith('/v1/rooms/')) {
+    return handleRooms(request, env, deps, readJson);
+  }
 
   const limit = maxRequestBytes(env);
   if (isOversized(request, limit)) return oversized(limit);

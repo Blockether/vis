@@ -60,6 +60,9 @@
 
                  status
                  (case kind
+                   :rooms-error
+                   (:status (ex-data e) 503)
+
                    (:group-not-found :entry-not-found)
                    404
 

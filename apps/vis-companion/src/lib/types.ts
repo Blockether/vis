@@ -367,6 +367,8 @@ export interface Toggle {
   is_experimental?: boolean;
   value?: SettingValue;
   choices?: string[];
+  choice_labels?: Record<string, string>;
+  inheritance?: 'override' | 'restrict';
   max_length?: number;
   multiline?: boolean;
   scopes?: SettingsScope[];

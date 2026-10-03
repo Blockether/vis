@@ -1479,7 +1479,6 @@
     },
     {
       "audience": "sdk",
-      "audience": "sdk",
       "operations": {
         "post": {
           "request": "json",
@@ -1535,6 +1534,103 @@
         }
       },
       "path": "/v1/voice/model"
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/council/rooms",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json",
+          "response_schema": "rooms_gateway_status"
+        },
+        "post": {
+          "request": "json",
+          "response": "json",
+          "response_schema": "rooms_room",
+          "request_schema": "rooms_gateway_create"
+        }
+      }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/council/rooms/register",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json",
+          "response_schema": "rooms_gateway_status",
+          "request_schema": "rooms_gateway_register"
+        }
+      }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/council/rooms/join",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json",
+          "response_schema": "rooms_joined",
+          "request_schema": "rooms_gateway_join"
+        }
+      }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/council/rooms/:room-id",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "json",
+          "response_schema": "rooms_ok"
+        }
+      }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/council/rooms/:room-id/invites",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json",
+          "response_schema": "rooms_invite_created",
+          "request_schema": "rooms_gateway_invite"
+        }
+      }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/council/rooms/:room-id/invites/:invite-id",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "json",
+          "response_schema": "rooms_ok"
+        }
+      }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/council/rooms/:room-id/members",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json",
+          "response_schema": "rooms_membership_list"
+        }
+      }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/council/rooms/:room-id/members/:machine-id",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "json",
+          "response_schema": "rooms_ok"
+        }
+      }
     }
   ],
   "x-vis-client-lease": {
@@ -2457,16 +2553,60 @@
         "is_experimental": {
           "type": "boolean"
         },
-        "multiline": { "type": "boolean" },
-        "editor": {
-          "enum": ["switch", "select", "text", "multiline", "number", "paths", "filesystem", "network", "list"]
+        "multiline": {
+          "type": "boolean"
         },
-        "schema": { "type": "string" },
-        "applies": { "enum": ["immediate", "next_call", "next_turn", "reload", "restart"] },
+        "editor": {
+          "enum": [
+            "switch",
+            "select",
+            "text",
+            "multiline",
+            "number",
+            "paths",
+            "filesystem",
+            "network",
+            "list"
+          ]
+        },
+        "schema": {
+          "type": "string"
+        },
+        "applies": {
+          "enum": [
+            "immediate",
+            "next_call",
+            "next_turn",
+            "reload",
+            "restart"
+          ]
+        },
         "own_value": {},
-        "inherited_value": { "$ref": "#/$defs/setting_value" },
-        "inherited_source": { "enum": ["default", "global", "project", "group", "session"] },
-        "max_length": { "type": "integer", "minimum": 1 }
+        "inherited_value": {
+          "$ref": "#/$defs/setting_value"
+        },
+        "inherited_source": {
+          "enum": [
+            "default",
+            "global",
+            "project",
+            "group",
+            "session"
+          ]
+        },
+        "max_length": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "inheritance": {
+          "$ref": "toggle.json#/$defs/contribution/properties/inheritance"
+        },
+        "choice_labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
       }
     },
     "settings": {
@@ -2487,9 +2627,19 @@
             "null"
           ]
         },
-        "label": { "type": "string" },
-        "revision": { "type": "string", "minLength": 1 },
-        "lineage": { "type": "array", "items": { "type": "object" } },
+        "label": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lineage": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
         "groups": {
           "type": "array",
           "items": {
@@ -2528,11 +2678,30 @@
         "status"
       ],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "origin": { "enum": ["built_in", "global", "project"] },
-        "path": { "type": "string" },
-        "status": { "enum": ["loaded", "stale", "failed"] },
-        "error": { "type": "string" }
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "origin": {
+          "enum": [
+            "built_in",
+            "global",
+            "project"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "loaded",
+            "stale",
+            "failed"
+          ]
+        },
+        "error": {
+          "type": "string"
+        }
       }
     },
     "extension_reload": {
@@ -2542,8 +2711,14 @@
         "failed"
       ],
       "properties": {
-        "loaded": { "type": "integer", "minimum": 0 },
-        "failed": { "type": "integer", "minimum": 0 }
+        "loaded": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "setting_write": {
@@ -2688,6 +2863,36 @@
           }
         }
       }
+    },
+    "rooms_gateway_status": {
+      "$ref": "rooms.json#/$defs/gateway_status"
+    },
+    "rooms_gateway_create": {
+      "$ref": "rooms.json#/$defs/gateway_create"
+    },
+    "rooms_room": {
+      "$ref": "rooms.json#/$defs/room"
+    },
+    "rooms_gateway_register": {
+      "$ref": "rooms.json#/$defs/gateway_register"
+    },
+    "rooms_gateway_join": {
+      "$ref": "rooms.json#/$defs/gateway_join"
+    },
+    "rooms_joined": {
+      "$ref": "rooms.json#/$defs/joined"
+    },
+    "rooms_ok": {
+      "$ref": "rooms.json#/$defs/ok"
+    },
+    "rooms_gateway_invite": {
+      "$ref": "rooms.json#/$defs/gateway_invite"
+    },
+    "rooms_invite_created": {
+      "$ref": "rooms.json#/$defs/invite_created"
+    },
+    "rooms_membership_list": {
+      "$ref": "rooms.json#/$defs/membership_list"
     }
   }
 }

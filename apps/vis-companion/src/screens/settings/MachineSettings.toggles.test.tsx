@@ -18,6 +18,7 @@ const backend: Toggle = {
 const gateway = { id: 'draft-dropdown-test', url: 'http://127.0.0.1:7890', token: 'test' };
 
 beforeEach(() => {
+  vi.spyOn(GatewayClient.prototype, 'rooms').mockResolvedValue({ configured: false, rooms: [] });
   vi.spyOn(GatewayClient.prototype, 'cachedSettings').mockReturnValue(null);
   vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue({
     revision: 'toggles-1',

@@ -18,7 +18,9 @@ const quiet = (input?: RequestInfo | URL) =>
       JSON.stringify(
         input && new URL(String(input), URL_A).pathname === '/v1/settings'
           ? { revision: 'quiet-1', groups: [] }
-          : {},
+          : input && new URL(String(input), URL_A).pathname === '/v1/council/rooms'
+            ? { configured: false, rooms: [] }
+            : {},
       ),
       {
         status: 200,
@@ -30,7 +32,7 @@ const quiet = (input?: RequestInfo | URL) =>
 /** A reachable gateway whose protocol floor excludes this app build. */
 const incompatibleSettings = (input: RequestInfo | URL) => {
   const path = new URL(String(input), URL_A).pathname;
-  if (path !== '/v1/settings') return quiet();
+  if (path !== '/v1/settings') return quiet(input);
   return Promise.resolve(
     new Response(
       JSON.stringify({

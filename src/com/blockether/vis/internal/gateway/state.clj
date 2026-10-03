@@ -25,6 +25,7 @@
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.council.core :as council]
+            [com.blockether.vis.internal.council.rooms :as rooms]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.format :as fmt]
@@ -4548,10 +4549,11 @@
       (let [[kind v paused] @decision]
         (case kind
           :council-active
-          (do (persistance/db-council-bind-wake! (:db council-ping)
-                                                 (:entry-id council-ping)
-                                                 (str sid)
-                                                 v)
+          (do (when-not (:remote? council-ping)
+                (persistance/db-council-bind-wake! (:db council-ping)
+                                                   (:entry-id council-ping)
+                                                   (str sid)
+                                                   v))
               {:council-active? true})
 
           :council-unavailable
@@ -4581,7 +4583,7 @@
 
           :accepted
           (let [turn (get-turn sid tid)]
-            (when council-ping
+            (when (and council-ping (not (:remote? council-ping)))
               (try (persistance/db-council-bind-wake! (:db council-ping)
                                                       (:entry-id council-ping)
                                                       (str sid)
@@ -4630,6 +4632,7 @@
   (when-not (and (council/enabled?)
                  (council-wake-eligible? db sid)
                  (= (:group_id entry) (council/default-group db sid))
+                 (or (nil? (rooms/selected-room db sid)) (rooms/wake-allowed? db sid))
                  (agents/wake-allowed? db (:author_session_id entry) sid))
     (throw (ex-info "Council target changed groups before wake" {:error :invalid-recipient})))
   (let [result
@@ -4646,8 +4649,12 @@
                             ").")))
            :display-request (:content entry)
            :engine-opts {:request-kind :council :council-entry-id (:entry_id entry)}
-           ;; Council insertion already deduplicates dispatch; do not share user turn keys.
-           :council-ping {:db db :entry-id (:entry_id entry) :entry entry}})]
+           :idempotency-key (when (rooms/selected-room db sid)
+                              (str "room:" (:group_id entry) ":" (:entry_id entry)))
+           :council-ping {:db db
+                          :entry-id (:entry_id entry)
+                          :entry entry
+                          :remote? (boolean (rooms/selected-room db sid))}})]
     (when (:error result)
       (throw (ex-info (:message result "Council target cannot be started")
                       {:error (:error result)})))

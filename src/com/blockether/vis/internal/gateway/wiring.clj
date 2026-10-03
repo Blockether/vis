@@ -10,6 +10,7 @@
    Slots receive Vars, so reloading a namespace during development keeps the
    wiring live."
   (:require [com.blockether.vis.internal.council.core :as council]
+            [com.blockether.vis.internal.council.rooms :as rooms]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop.environment :as loop-env]
@@ -26,6 +27,9 @@
     ;; through the gateway's turn submission.
     (council/install-runtime! #'state/council-runtime)
     (council/install-waker! #'state/council-wake-eligible? #'state/council-wake!)
+    (rooms/install-runtime! #'state/council-runtime
+                            #'state/council-wake-eligible?
+                            #'state/council-wake!)
     (agents/install-runtime! state/agent-runtime)
     ;; A live View a human stops after its block returned has no collector left;
     ;; the gateway owns the database, so it files the late artifact.

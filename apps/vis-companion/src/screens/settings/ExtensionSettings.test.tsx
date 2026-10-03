@@ -28,6 +28,7 @@ const catalog = (origin: 'global' | 'project', path: string): SettingsResponse =
 });
 
 beforeEach(() => {
+  vi.spyOn(GatewayClient.prototype, 'rooms').mockResolvedValue({ configured: false, rooms: [] });
   vi.stubGlobal(
     'fetch',
     vi.fn(async () => new Response('{}', { headers: { 'Content-Type': 'application/json' } })),
