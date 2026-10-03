@@ -66,7 +66,7 @@ const meta = {
   // A closed step digest offers the running view of its steps on its row.
   play: async ({ canvas }) => {
     const launch = await canvas.findByRole('button', {
-      name: `Open 1 live running: ${view.title}`,
+      name: `Open running live view: ${view.title}`,
     });
     await userEvent.click(launch);
     const page = within(document.body);
@@ -121,7 +121,7 @@ export const SplitPane: Story = {
     };
     // The closed digest opens the view from its row; the open steps open it from the view.
     await opensInPane(
-      await context.canvas.findByRole('button', { name: `Open 1 live running: ${view.title}` }),
+      await context.canvas.findByRole('button', { name: `Open running live view: ${view.title}` }),
     );
     await openStepDigests(context.canvasElement);
     await opensInPane(context.canvas.getByRole('button', { name: `Open run ${view.title}` }));
