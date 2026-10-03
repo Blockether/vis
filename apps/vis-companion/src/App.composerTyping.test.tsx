@@ -149,10 +149,10 @@ describe('typing in the composer', () => {
     // words you never sent is not idle, and it never wore two labels for it.
     const status = screen.getByText('DIRTY');
     expect(status).toBeVisible();
-    expect(status.closest('[data-session-status]')?.className).toContain('text-dirty');
+    expect(status.closest('[data-session-status]')).toHaveClass('text-dirty');
     expect(
-      status.closest('[data-session-status]')?.querySelector('[data-session-status-dot]')?.className,
-    ).toContain('bg-dirty');
+      status.closest('[data-session-status]')?.querySelector('[data-session-status-dot]'),
+    ).toHaveClass('bg-current');
     expect(screen.queryByText('dirty')).not.toBeInTheDocument();
     view.unmount();
   });
