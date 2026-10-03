@@ -84,11 +84,13 @@
                          #'gateway-client/release-hook-installed? (atom true)}
           (fn []
             (await-health! @process)
-            (let [sid
-                  (get (:body (request-json! :post
-                                             "/v1/sessions"
-                                             {:body {:channel "api" :root (.getAbsolutePath dir)}}))
-                       "id")
+            (let [created
+                  (request-json! :post
+                                 "/v1/sessions"
+                                 {:body {:channel "api" :root (.getAbsolutePath dir)}})
+
+                  sid
+                  (get (:body created) "id")
 
                   catalog-path
                   (str "/v1/settings?scope=session&target_id=" sid)
@@ -126,6 +128,8 @@
                   revision
                   (get-in saved [:body "revision"])]
 
+              (expect (= 201 (:status created))
+                      (pr-str {:status (:status created) :error (get-in created [:body "error"])}))
               (expect (string? sid))
               (expect (re-matches #"[0-9a-f]{64}" (str (get initial "revision")))
                       "The catalog must carry a SHA-256 revision")

@@ -57,6 +57,7 @@
          :bin bin
          :project project
          :plain plain
+         :python python
          :shared shared
          :environment (merge (#'native/native-environment)
                              {"VIS_PYTHON_PACKAGES" (.getCanonicalPath shared)
@@ -225,17 +226,33 @@
   (it
     "boots a declared-project extension without shared packages or preload hooks"
     (with-environment
-      (fn [{:keys [bin home plain project environment site]}]
-        ;; uv checks declared distributions before loading an extension. This
-        ;; non-package fixture keeps its editable path, not CLI-only metadata.
+      (fn [{:keys [bin home plain project environment site python] :as fixture}]
+        ;; A declared local dependency requires a private environment under the shared-source contract.
+        (with-open [out (io/output-stream (io/file project "vis_cli_fixture-1.0-py3-none-any.whl"))]
+          (.write out ^bytes (#'native/pip-wheel)))
+        (write-file! project
+                     "pyproject.toml"
+                     (str "[project]\nname='native-environment-project'\nversion='0.1.0'\n"
+                          "requires-python='>=3.11'\ndependencies=['vis-cli-fixture==1.0']\n"
+                          "[tool.uv]\npackage=false\n"
+                          "[tool.uv.sources]\n"
+                          "vis-cli-fixture={path='vis_cli_fixture-1.0-py3-none-any.whl'}\n"))
+        ;; Keep the editable path, not CLI-only metadata for the uninstalled root project.
         (#'native/delete-tree! (io/file site "native_environment_project-0.1.0.dist-info"))
+        (let [synced (run-python fixture
+                                 project
+                                 {}
+                                 ["uv" "sync" "--offline" "--python" (str python)
+                                  "--no-python-downloads"])]
+          (expect (= 0 (:exit synced)) (:output synced)))
         (write-file! home
                      ".vis/extensions/environment_probe.py"
                      (str "# /// script\n# dependencies = []\n# [tool.vis]\n"
-                          "# project = '../../project'\n# ///\n"
-                          "import importlib.util, os, sys\n"
+                          "# project = '../../project'\n# ///\n" "import importlib.util, os, sys\n"
                           "import blockether.vis.extension as vis\n"
-                          "from native_env_project import VALUE\n" "assert VALUE == 226\n"
+                          "from native_env_project import VALUE\n"
+                          "assert VALUE == 226\n"
+                          "import vis_cli_fixture\nassert vis_cli_fixture.VALUE == 42\n"
                           "assert importlib.util.find_spec('native_shared_only') is None\n"
                           "assert importlib.util.find_spec('native_shared_editable') is None\n"
                           "assert importlib.util.find_spec('native_shared_preload') is None\n"

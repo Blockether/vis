@@ -674,7 +674,23 @@
 
               (expect finished? "Native goal continuation must finish without a process timeout")
               (when-not (= "paused" status) (expect (= 0 exit) output))
-              (expect (= iterations (count requests)) output)
+              (expect (= iterations (count requests))
+                      (str output
+                           "\nProvider request summaries: "
+                           (pr-str (mapv (fn [{:keys [path body]}]
+                                           (let [payload (json/read-json body)
+                                                 messages (get payload "messages")
+                                                 message (last messages)
+                                                 content (get message "content")]
+
+                                             {:path path
+                                              :model (get payload "model")
+                                              :roles (mapv #(get % "role") messages)
+                                              :last-role (get message "role")
+                                              :last-content
+                                              (when (string? content)
+                                                (subs content 0 (min 300 (count content))))}))
+                                         requests))))
               (expect (str/includes? (:body (first requests)) "3 consecutive goal continuations")
                       "The linked image must include the current model-assessed blocker audit")
               (when resolution
