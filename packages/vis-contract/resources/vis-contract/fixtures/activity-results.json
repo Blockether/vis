@@ -151,7 +151,7 @@
       "operation": "council.publish",
       "presentation": {
         "headline": "Published Council message",
-        "summary": "",
+        "summary": "Message 42 · Thread 42",
         "content": [
           {
             "type": "markdown",
@@ -183,7 +183,7 @@
       "operation": "council.get",
       "presentation": {
         "headline": "Read Council message",
-        "summary": "",
+        "summary": "Message 42 · Thread 42",
         "content": [
           {
             "type": "markdown",

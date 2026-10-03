@@ -1,4 +1,5 @@
 import collections
+import copy
 import csv
 import hashlib
 import json
@@ -1910,6 +1911,176 @@ class EvaluationIntegrationEdgeTest(unittest.TestCase):
         )
         self.assertEqual(2, metrics["doc_calls"])
         self.assertTrue(failures)
+
+
+class CouncilRecoveryTest(unittest.TestCase):
+    def test_seeded_handoff_matches_exact_evidence(self):
+        scenario = run.load_scenarios(["council-thread-recovery"])[0]
+        with tempfile.TemporaryDirectory() as work:
+            run.seed_files(scenario, work)
+            self.assertEqual([], run.structured_failures(scenario, work, "", []))
+
+    def events(self):
+        expected = run.load_scenarios(["council-thread-recovery"])[0][
+            "want_council_recovery"
+        ]
+
+        def activity(row_id, scope, operation, state, entries, body=None, sequence=1):
+            resources = [{"type": "council-thread", "id": "42"}] + [
+                {"type": "council-entry", "id": str(entry)} for entry in entries
+            ]
+            presentation = {
+                "content": [{"type": "markdown", "text": body}] if body else [],
+            }
+            if operation == "council.read" and state == "succeeded":
+                presentation["sections"] = [
+                    {"content": [{"type": "markdown", "text": text}]}
+                    for text in expected.values()
+                ]
+            return {
+                "event": "trace-chunk",
+                "payload": {
+                    "phase": "form-activity",
+                    "scope": scope,
+                    "activity": {
+                        "rows": [
+                            {
+                                "id": row_id,
+                                "sequence": sequence,
+                                "operation": operation,
+                                "state": state,
+                                "resources": resources,
+                                "presentation": presentation,
+                            }
+                        ],
+                    },
+                },
+            }
+
+        def result(scope, error=None):
+            return {
+                "event": "trace-chunk",
+                "payload": {
+                    "phase": "form-result",
+                    "scope": scope,
+                    "stdout": "",
+                    "error": error,
+                },
+            }
+
+        error = {
+            "message": "Council entry_id=43 is a reply in thread_id=42. "
+            "Use thread_id=42 to read or continue this thread.",
+            "data": {"error": "invalid-thread", "entry_id": 43, "thread_id": 42},
+        }
+        return [
+            activity(
+                "root",
+                "t1/i1/f1",
+                "council.publish",
+                "succeeded",
+                [42],
+                expected["root_content"],
+            ),
+            activity(
+                "reply",
+                "t1/i1/f1",
+                "council.publish",
+                "succeeded",
+                [43],
+                expected["reply_content"],
+                sequence=2,
+            ),
+            result("t1/i1/f1"),
+            activity("mistake", "t1/i2/f1", "council.read", "failed", []),
+            result("t1/i2/f1", error),
+            activity("repair", "t1/i3/f1", "council.read", "succeeded", [42, 43]),
+            result("t1/i3/f1"),
+            {"event": "result", "payload": {"answer": "council-thread-recovery-ok"}},
+        ]
+
+    def evaluate(self, events, recovery=True):
+        checks = {}
+        if recovery:
+            checks["want_council_recovery"] = run.load_scenarios(
+                ["council-thread-recovery"]
+            )[0]["want_council_recovery"]
+        return DiscoveryEvaluationTest().run_events(events, **checks)
+
+    def test_only_a_verified_repair_accepts_the_expected_error(self):
+        result = self.evaluate(self.events())
+        self.assertTrue(result["correct"], result["detail"])
+        self.assertEqual(0, result["errors"])
+        self.assertEqual(1, result["surfaced_errors"])
+        self.assertEqual(1, result["activity_failures"])
+        self.assertEqual(1, result["expected_errors"])
+        self.assertEqual(1, result["expected_activity_failures"])
+
+    def test_error_data_must_match_the_message_ids(self):
+        for data in (
+            {},
+            {"entry_id": 43},
+            {"thread_id": 42},
+            {"entry_id": 44, "thread_id": 42},
+            {"entry_id": 43, "thread_id": 99},
+            {"entry_id": "43", "thread_id": 42},
+            {"entry_id": 43.0, "thread_id": 42},
+            {"entry_id": 43, "thread_id": 42.0},
+        ):
+            with self.subTest(data=data):
+                events = self.events()
+                events[4]["payload"]["error"]["data"] = {
+                    "error": "invalid-thread",
+                    **data,
+                }
+                result = self.evaluate(events)
+                self.assertFalse(result["correct"], result["detail"])
+
+    def test_normal_scenarios_still_reject_the_same_failure(self):
+        result = self.evaluate(self.events(), recovery=False)
+        self.assertFalse(result["correct"])
+        self.assertGreater(result["errors"], 0)
+
+    def test_incomplete_repeated_or_unrelated_repairs_cannot_pass(self):
+        events = self.events()
+        cases = {
+            "no mistake": events[:3] + events[5:],
+            "no repair": events[:5] + events[-1:],
+            "repair before mistake": events[:3]
+            + events[5:7]
+            + events[3:5]
+            + events[-1:],
+        }
+        repeated = copy.deepcopy(events)
+        repeated[5]["payload"]["activity"]["rows"][0].update(
+            id="mistake-again", state="failed"
+        )
+        repeated[6]["payload"]["error"] = copy.deepcopy(events[4]["payload"]["error"])
+        cases["repeated mistake"] = repeated
+        for name in ("wrong thread", "missing reply", "wrong body", "other failure"):
+            changed = copy.deepcopy(events)
+            row = changed[5]["payload"]["activity"]["rows"][0]
+            if name == "wrong thread":
+                row["resources"][0]["id"] = "99"
+            elif name == "missing reply":
+                row["resources"].pop()
+            elif name == "wrong body":
+                row["presentation"]["sections"][1]["content"][0]["text"] = "Other"
+            else:
+                changed[3]["payload"]["activity"]["rows"][0]["operation"] = "probe.read"
+            cases[name] = changed
+        for name, trace in cases.items():
+            with self.subTest(case=name):
+                result = self.evaluate(trace)
+                self.assertFalse(result["correct"], result["detail"])
+
+    def test_an_extra_failure_is_not_hidden_by_a_valid_repair(self):
+        events = self.events()
+        extra = DiscoveryEvaluationTest().activity("failed", row_id="other-failure")
+        events.insert(-1, extra)
+        result = self.evaluate(events)
+        self.assertFalse(result["correct"])
+        self.assertGreater(result["errors"], 0)
 
 
 if __name__ == "__main__":

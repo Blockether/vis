@@ -501,13 +501,23 @@
                                  (str/replace (scalar state) "_" " "))))
                         (sort-by (comp scalar key) states))))))
 
+(defn- council-reference
+  [value]
+  (str/join " · "
+            (remove str/blank?
+              [(when-let [id (field value "entry_id")]
+                 (str "Message " id))
+               (when-let [id (field value "thread_id")]
+                 (str "Thread " id))])))
+
 (defn- council-message
   [value]
   {"headline" (session-preview (or (not-empty (field value "title"))
                                    (when (field value "reply_to") "Reply")
                                    "Message")
                                96)
-   "summary" (or (council-replies value) "")
+   "summary" (str/join " · "
+                       (remove str/blank? [(council-reference value) (council-replies value)]))
    "content" (council-body value "content")})
 
 (defn- council-agent
@@ -530,7 +540,10 @@
     (case op
       ("council.publish" "council.get")
       {"headline" headline
-       "summary" (if (not-empty (field value "content")) "" "No message content")
+       "summary" (str/join " · "
+                           (remove str/blank?
+                             [(council-reference value)
+                              (when-not (not-empty (field value "content")) "No message content")]))
        "content" (council-body value "content")}
 
       ("council.read" "council.threads" "council.members" "council.subagents")

@@ -4,7 +4,7 @@ scenarios and checks, per scenario:
 
   - CONVERGED   the loop reached a final answer (no hang / crash)
   - CORRECT     resulting files, answers and observed operations satisfy the scenario
-  - NO-ERROR    no surfaced errors or failed/cancelled/unfinished Activities
+  - NO-ERROR    no unexpected errors or failed/cancelled/unfinished Activities
   - FAST PATH   the anchored `patch` wrote the edit, rather than the model
                 wandering through the file with `cat` alone
 
@@ -341,6 +341,128 @@ def unfenced_json(text):
     if text.startswith("```json\n") and text.endswith("\n```"):
         return text[8:-4]
     return text
+
+
+def council_recovery_evidence(form_outputs, activities, expected):
+    """Accept one reply-ID error only after a verified read of its real thread."""
+    errors = [event for event in form_outputs if event.get("error")]
+    failed_reads = [
+        row
+        for row in activities
+        if row.get("operation") == "council.read"
+        and row.get("state") in {"failed", "cancelled"}
+    ]
+    if len(errors) != 1 or len(failed_reads) != 1:
+        return (
+            ["Council recovery requires exactly one surfaced read failure"],
+            set(),
+            [],
+        )
+    event, failed = errors[0], failed_reads[0]
+    error = event["error"]
+    message = error.get("message", "") if isinstance(error, dict) else ""
+    data = error.get("data") if isinstance(error, dict) else None
+    match = re.fullmatch(
+        r"Council entry_id=(\d+) is a reply in thread_id=(\d+)\. "
+        r"Use thread_id=\2 to read or continue this thread\.",
+        message,
+    )
+    if not match or not isinstance(data, dict) or data.get("error") != "invalid-thread":
+        return ["Council recovery did not receive the reply-ID repair"], set(), []
+    entry_id, thread_id = match.groups()
+    if int(entry_id) <= 0 or int(thread_id) <= 0 or entry_id == thread_id:
+        return (
+            ["Council recovery requires distinct positive message and thread IDs"],
+            set(),
+            [],
+        )
+    if any(
+        type(data.get(key)) is not int or data[key] != int(value)
+        for key, value in (("entry_id", entry_id), ("thread_id", thread_id))
+    ):
+        return (
+            ["Council recovery error data must name the real reply and thread"],
+            set(),
+            [],
+        )
+    order = {output["scope"]: index for index, output in enumerate(form_outputs)}
+
+    def position(row):
+        return order.get(row.get("scope"), -1), row.get("sequence", 0)
+
+    def references(row, kind):
+        return {
+            resource.get("id")
+            for resource in row.get("resources", [])
+            if resource.get("type") == kind
+        }
+
+    def bodies(row):
+        presentation = row.get("presentation") or {}
+        blocks = list(presentation.get("content") or [])
+        for section in presentation.get("sections") or []:
+            blocks.extend(section.get("content") or [])
+        return [
+            block.get("text") for block in blocks if block.get("type") == "markdown"
+        ]
+
+    publications = [
+        row
+        for row in activities
+        if row.get("operation") == "council.publish" and row.get("state") == "succeeded"
+    ]
+    roots = [
+        row
+        for row in publications
+        if references(row, "council-entry") == {thread_id}
+        and references(row, "council-thread") == {thread_id}
+        and bodies(row) == [expected["root_content"]]
+    ]
+    replies = [
+        row
+        for row in publications
+        if references(row, "council-entry") == {entry_id}
+        and references(row, "council-thread") == {thread_id}
+        and bodies(row) == [expected["reply_content"]]
+    ]
+    reads = [
+        row
+        for row in activities
+        if row.get("operation") == "council.read" and row.get("state") == "succeeded"
+    ]
+    if (
+        len(publications) != 2
+        or len(roots) != 1
+        or len(replies) != 1
+        or len(reads) != 1
+    ):
+        return (
+            ["Council recovery lacks the two real publications and one repaired read"],
+            set(),
+            [],
+        )
+    root, reply, repaired = roots[0], replies[0], reads[0]
+    failures = []
+    if failed.get("state") != "failed" or failed.get("scope") != event.get("scope"):
+        failures.append("Council recovery error does not match its failed Activity")
+    if any(
+        not row.get("scope") or row["scope"] not in order
+        for row in (root, reply, failed, repaired)
+    ):
+        failures.append("Council recovery is missing a form scope")
+    if not position(root) < position(reply) < position(failed) < position(repaired):
+        failures.append(
+            "Council recovery did not read the thread after the reply-ID error"
+        )
+    if references(repaired, "council-thread") != {thread_id} or references(
+        repaired, "council-entry"
+    ) != {thread_id, entry_id}:
+        failures.append("Council recovery read another thread or missed a message")
+    if bodies(repaired) != [expected["root_content"], expected["reply_content"]]:
+        failures.append("Council recovery did not read both complete message bodies")
+    if failures:
+        return failures, set(), []
+    return [], {failed["id"]}, [message]
 
 
 def structured_failures(sc, work, answer, activities):
@@ -1238,6 +1360,7 @@ def run_one(job):
                         "iteration": pl.get("iteration"),
                         "stdout": stdout,
                         "tool_call_id": pl.get("tool-call-id"),
+                        "error": pl.get("error"),
                     }
                 )
                 largest_form_output = max(largest_form_output, len(stdout))
@@ -1272,15 +1395,27 @@ def run_one(job):
         ]
         unscoped_failures = [row for row in failed_activities if not row["scope"]]
         surfaced_errors = len(errs)
+        recovery_failures, expected_failed_ids, expected_error_messages = [], set(), []
+        if expected := sc.get("want_council_recovery"):
+            recovery_failures, expected_failed_ids, expected_error_messages = (
+                council_recovery_evidence(form_outputs, activity_rows, expected)
+            )
+        for message in expected_error_messages:
+            errs.remove(message)
         errs.extend(
             f"activity {row['operation']} {row.get('state')}"
             for row in [*caught_failures, *unscoped_failures, *incomplete_activities]
+            if row["id"] not in expected_failed_ids
         )
         tools = [
             row["operation"] for row in activity_rows if row.get("state") == "succeeded"
         ]
-        correct = not (failed_activities or incomplete_activities)
-        detail = []
+        correct = not (
+            any(row["id"] not in expected_failed_ids for row in failed_activities)
+            or incomplete_activities
+            or recovery_failures
+        )
+        detail = list(recovery_failures)
         for name, subs in (sc.get("want") or {}).items():
             try:
                 txt = open(os.path.join(work, name)).read()
@@ -1545,6 +1680,10 @@ def run_one(job):
         evidence.append(
             f"stdout={total_form_output} total chars; surfaced-errors={surfaced_errors}; activity-failures={len(failed_activities)} ({len(caught_failures)} without a form error)"
         )
+        if expected_error_messages:
+            evidence.append(
+                "verified Council recovery: 1 expected error and 1 failed Activity"
+            )
         if tokens and not token_failures:
             evidence.append(
                 f"tokens=input {tokens['input']} (cached {tokens['cached']}, uncached {tokens['uncached']}, share {tokens['cached_input_percent']}%), output {tokens['output']}, reasoning {tokens['reasoning'] if tokens['reasoning'] is not None else 'unavailable'}"
@@ -1624,6 +1763,8 @@ def run_one(job):
             "max_form_output_chars": largest_form_output,
             "total_output_chars": total_form_output,
             "surfaced_errors": surfaced_errors,
+            "expected_errors": len(expected_error_messages),
+            "expected_activity_failures": len(expected_failed_ids),
             "activity_successes": len(tools),
             "activity_failures": len(failed_activities),
             "caught_activity_failures": len(caught_failures),

@@ -34,7 +34,7 @@
                                   (#'host/result {} operation {:group_id "internal-group"} entry))]
 
                      (expect (= {"headline" headline
-                                 "summary" ""
+                                 "summary" "Message 279 · Thread 258"
                                  "content" [{"type" "markdown" "text" "Useful result"}]}
                                 @published))
                      (expect (= (wire/->wire entry) (:result result)))))))

@@ -334,7 +334,7 @@
 
 (defdescribe
   council-activity-test
-  (it "shows only the Council publish label and complete message body"
+  (it "shows both IDs and the complete Council publication"
       (let [body
             (apply str (repeat 200 "Full **message**.\n"))
 
@@ -356,11 +356,27 @@
         (doseq [value [entry (wire/->wire entry)]]
           (let [view (result-view {:operation :council.publish} value)]
             (expect (= {"headline" "Published Council message"
-                        "summary" ""
+                        "summary" "Message 42 · Thread 42"
                         "content" [{"type" "markdown" "text" body}]}
                        view))
             (expect (contract/valid-projection? (result-fixture [[:council.publish "" value
                                                                   nil]])))))))
+  (it "distinguishes a reply ID from its thread with native and wire keys"
+      (let [entry {:entry_id 43 :thread_id 42 :content "Reply"}]
+        (doseq [value [entry (wire/->wire entry)]
+                operation [:council.publish :council.get :council.read]]
+
+          (let [view (result-view {:operation operation}
+                                  (if (= operation :council.read) {:entries [value]} value))]
+            (expect (= "Message 43 · Thread 42"
+                       (if (= operation :council.read)
+                         (get-in view ["sections" 0 "summary"])
+                         (get view "summary"))))))))
+  (it "keeps both IDs when a message has no body"
+      (doseq [operation [:council.publish :council.get]]
+        (let [view (result-view {:operation operation} {:entry_id 43 :thread_id 42 :content ""})]
+          (expect (= "Message 43 · Thread 42 · No message content" (get view "summary")))
+          (expect (empty? (get view "content"))))))
   (it "names an absent message body without exposing receipt metadata"
       (doseq [[operation headline]
               [[:council.publish "Published Council message"] [:council.get "Read Council message"]]
@@ -370,7 +386,7 @@
 
         (expect (= {"headline" headline "summary" "No message content" "content" []}
                    (result-view {:operation operation} value)))))
-  (it "shows only the Council read label and message body"
+  (it "shows both IDs and the Council message body"
       (let [view (result-view
                    {:operation :council.get}
                    {:title "Review"
@@ -387,7 +403,7 @@
                     :replies [{:session_id "internal-recipient" :state "pending"}
                               {:session_id "internal-other" :state "replied" :reply_entry_id 43}]})]
         (expect (= {"headline" "Read Council message"
-                    "summary" ""
+                    "summary" "Message 42 · Thread 42"
                     "content" [{"type" "markdown" "text" "Tests **passed**."}]}
                    view))))
   (it "summarizes pages and keeps each read message behind its own disclosure"
@@ -396,6 +412,7 @@
                         :content "Full **message**."
                         :created_at 1
                         :entry_id 42
+                        :thread_id 41
                         :kind "coordination"}]
              :after 42
              :has_more true}
@@ -406,7 +423,7 @@
         (expect (= "1 message · more available" (get view "summary")))
         (expect (empty? (get view "content")))
         (expect (= [{"headline" "Review"
-                     "summary" ""
+                     "summary" "Message 42 · Thread 41"
                      "content" [{"type" "markdown" "text" "Full **message**."}]}]
                    (get view "sections")))))
   (it "uses one compact table for member and thread lists"

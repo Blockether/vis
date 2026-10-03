@@ -37,6 +37,12 @@ e2e/
 - **want_activity_sequence** — exact operation order and count within the named
   namespaces, independently checked against terminal Activity snapshots.
 - **forbid_tools** — operations that must not occur, including failed attempts.
+- **want_council_recovery** — require one reply-ID error, then a successful read of its real thread.
+  Set `root_content` and `reply_content` to the fixture bodies.
+  The guard checks both publications, their IDs, the error, the read order and both complete bodies.
+  Only this verified error and its failed Activity are expected.
+  Other errors, repeated mistakes and incomplete recovery fail the scenario.
+  Results retain raw failure counts and report expected failures separately.
 - **max_form_output_chars** / **max_total_output_chars** — nonnegative peak and
   cumulative stdout limits. These measure characters, not tokens; traces stay intact.
 - **discovery** — required `signatures` and `contracts` names, or `known: true` to
@@ -181,8 +187,9 @@ models stream slowly enough to outlast the default budget.
 
 `results.json` contains every run, including failures, plus per-scenario/model
 summaries. Compare pass counts before efficiency: each run must converge, satisfy
-all correctness guards, and have no surfaced errors, failed/cancelled Activities
-or unfinished Activities. Repeated snapshots count once, after terminal state updates.
+all correctness guards, and have no unexpected errors or unfinished Activities.
+The Council recovery guard accepts only its verified error and failed Activity.
+Repeated snapshots count once, after terminal state updates.
 A form's final snapshot collapses the calls it made into one row: a row that snapshot
 no longer lists finished with the group, so only a row still running there counts as
 unfinished work.

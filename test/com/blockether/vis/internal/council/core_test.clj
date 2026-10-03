@@ -12,7 +12,7 @@
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
             [honey.sql :as sql]
-            [lazytest.core :refer [defdescribe expect it]]
+            [lazytest.core :refer [defdescribe describe expect it]]
             [next.jdbc :as jdbc]
             [taoensso.nippy :as nippy]
             [taoensso.telemere :as tel]))
@@ -430,6 +430,75 @@
                               {:parent_id (:entry_id root) :kind "coordination" :content "Wrong"})))
           (expect (= gid (:group_id root)))
           (expect (= 3 (count (:entries (page w {})))))))))
+
+(defdescribe
+  thread-id-recovery-test
+  (describe
+    "a reply in the session group"
+    (it "returns both IDs and a usable repair for reads and publications"
+        ;; A reply ID must give a repair without changing the thread contract.
+        (with-council
+          (doseq [operation [:read :publish]]
+            (let [w (world)
+                  root (publish w {:kind "coordination" :content "Root"})
+                  reply
+                  (publish w {:kind "informational" :content "Reply" :thread_id (:thread_id root)})
+                  ^clojure.lang.ExceptionInfo failure
+                  (try (case operation
+                         :read
+                         (page w {:thread_id (:entry_id reply)})
+
+                         :publish
+                         (publish
+                           w
+                           {:kind "informational" :content "Next" :thread_id (:entry_id reply)}))
+                       nil
+                       (catch clojure.lang.ExceptionInfo e e))
+                  repair (ex-data failure)]
+
+              (expect
+                (= {:error :invalid-thread :entry_id (:entry_id reply) :thread_id (:thread_id root)}
+                   repair))
+              (expect (= (str "Council entry_id="
+                              (:entry_id reply)
+                              " is a reply in thread_id="
+                              (:thread_id root)
+                              ". Use thread_id="
+                              (:thread_id root)
+                              " to read or continue this thread.")
+                         (.getMessage failure)))
+              (expect (= [(:entry_id root) (:entry_id reply)]
+                         (mapv :entry_id (:entries (page w {:thread_id (:thread_id repair)})))))
+              (when (= operation :publish)
+                (expect (= (:thread_id root)
+                           (:thread_id (publish w
+                                                {:kind "informational"
+                                                 :content "Next"
+                                                 :thread_id (:thread_id repair)}))))))))))
+  (describe
+    "unavailable entries"
+    (it "keeps unknown IDs and IDs from another group indistinguishable"
+        (with-council
+          (let [{:keys [db] :as w}
+                (world)
+
+                foreign
+                (world db 1)
+
+                root
+                (publish foreign {:kind "coordination" :content "Private root"})
+
+                reply
+                (publish
+                  foreign
+                  {:kind "informational" :content "Private reply" :thread_id (:thread_id root)})]
+
+            (doseq [id [(:entry_id root) (:entry_id reply) 999999]]
+              (let [^clojure.lang.ExceptionInfo failure
+                    (try (page w {:thread_id id}) nil (catch clojure.lang.ExceptionInfo e e))]
+                (expect (= {:error :invalid-thread} (ex-data failure)))
+                (expect (= "Council thread must identify a root in this group"
+                           (.getMessage failure))))))))))
 
 (defdescribe
   title-publication-test

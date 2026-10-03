@@ -236,8 +236,17 @@
   [db gid id]
   (when id
     (let [entry (ps/db-council-get db id)]
-      (when-not (and (= gid (:group_id entry)) (= id (:thread_id entry)))
-        (fail! :invalid-thread "Council thread must identify a root in this group")))))
+      (when-not (= gid (:group_id entry))
+        (fail! :invalid-thread "Council thread must identify a root in this group"))
+      (when-not (= id (:thread_id entry))
+        (throw (ex-info (str "Council entry_id="
+                             id
+                             " is a reply in thread_id="
+                             (:thread_id entry)
+                             ". Use thread_id="
+                             (:thread_id entry)
+                             " to read or continue this thread.")
+                        {:error :invalid-thread :entry_id id :thread_id (:thread_id entry)}))))))
 
 (defn members
   [db snapshot sid opts]
