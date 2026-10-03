@@ -4,14 +4,13 @@
    Every function here is pure. A payload is untrusted data: it can fill a
    prompt template, but it never selects a target, a model or a tool."
   (:require [clojure.string :as str]
-            [com.blockether.vis.contract.wire :as wire])
+            [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.util :as util])
   (:import (java.nio.charset StandardCharsets)
            (java.security MessageDigest)
            (java.util Arrays Base64 HexFormat)
            (javax.crypto Mac)
            (javax.crypto.spec SecretKeySpec)))
-
-(defn- utf8 ^bytes [^String text] (.getBytes text StandardCharsets/UTF_8))
 
 (defn hmac
   "HMAC-SHA256 of `data` with `key`."
@@ -32,7 +31,7 @@
   ^bytes [^String secret]
   (if (str/starts-with? secret "whsec_")
     (.decode (Base64/getDecoder) (subs secret 6))
-    (utf8 secret)))
+    (util/utf8 secret)))
 
 (defn standard-signature
   "The `v1,<base64>` signature of Standard Webhooks for one message."
@@ -40,7 +39,7 @@
   (str "v1,"
        (.encodeToString (Base64/getEncoder)
                         (hmac (standard-key secret)
-                              (concat-bytes (utf8 (str message-id "." timestamp ".")) body)))))
+                              (concat-bytes (util/utf8 (str message-id "." timestamp ".")) body)))))
 
 (defn- same-bytes? [^bytes a ^bytes b] (boolean (and a b (MessageDigest/isEqual a b))))
 
@@ -67,7 +66,7 @@
     "github"
     (let [header (str (get headers "x-hub-signature-256"))]
       (when-not (and (str/starts-with? header "sha256=")
-                     (same-bytes? (hmac (utf8 secret) body) (hex-bytes (subs header 7))))
+                     (same-bytes? (hmac (util/utf8 secret) body) (hex-bytes (subs header 7))))
         "signature"))
 
     "standard"
@@ -102,8 +101,8 @@
 
       (cond (not (and timestamp signature)) "signature"
             (not (fresh? timestamp now skew-seconds)) "timestamp"
-            (not (same-bytes? (hmac (utf8 secret)
-                                    (concat-bytes (utf8 (str (str/trim timestamp) ".")) body))
+            (not (same-bytes? (hmac (util/utf8 secret)
+                                    (concat-bytes (util/utf8 (str (str/trim timestamp) ".")) body))
                               (hex-bytes (str/trim signature))))
             "signature"
             :else nil))
@@ -116,7 +115,8 @@
           token
           (or (get headers "x-gitlab-token") (get headers "x-webhook-token") bearer)]
 
-      (when-not (and token (same-bytes? (utf8 secret) (utf8 (str/trim token)))) "signature"))
+      (when-not (and token (same-bytes? (util/utf8 secret) (util/utf8 (str/trim token))))
+        "signature"))
 
     "signature"))
 
@@ -184,7 +184,7 @@
 
 (defn- clip
   [^String text max-bytes]
-  (let [data (utf8 text)]
+  (let [data (util/utf8 text)]
     (if (<= (alength data) (long max-bytes))
       text
       (let [cut (loop [end (long max-bytes)]

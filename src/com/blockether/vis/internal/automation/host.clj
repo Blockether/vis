@@ -5,9 +5,8 @@
             [com.blockether.vis.internal.automation.core :as automation]
             [com.blockether.vis.internal.automation.runner :as runner]
             [com.blockether.vis.internal.config.toggles :as toggles]
-            [com.blockether.vis.internal.extension.core :as extension]))
-
-(defn- now [] (System/currentTimeMillis))
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.util :as util]))
 
 (defn- ok [value] (extension/success {:result value}))
 
@@ -25,12 +24,13 @@
    every run."
   [env]
   (let [db (:db-info env)]
-    (ok {"automations" (automation/list-all db (now)) "is_enabled" (runner/globally-enabled? db)})))
+    (ok {"automations" (automation/list-all db (util/now-ms))
+         "is_enabled" (runner/globally-enabled? db)})))
 
 (defn get-automation
   "Read one automation by its id."
   [env automation-id]
-  (ok (automation/describe (:db-info env) (str automation-id) (now))))
+  (ok (automation/describe (:db-info env) (str automation-id) (util/now-ms))))
 
 (defn create-automation
   "Create an automation from one definition dict. Required: `name`, `prompt`, `triggers` and
@@ -57,14 +57,14 @@
    and callback secrets in the Companion app or the TUI. This tool never returns a secret."
   [env definition]
   (check-interactive! env)
-  (ok (automation/create! (:db-info env) definition (now))))
+  (ok (automation/create! (:db-info env) definition (util/now-ms))))
 
 (defn update-automation
   "Replace the given top-level fields of an automation, for example `{\"enabled\": False}` to
    pause it. `triggers`, `target` and `delivery` are replaced as a whole."
   [env automation-id changes]
   (check-interactive! env)
-  (ok (automation/update! (:db-info env) (str automation-id) changes (now))))
+  (ok (automation/update! (:db-info env) (str automation-id) changes (util/now-ms))))
 
 (defn delete-automation
   "Delete an automation and its run history. Ask the person first."
@@ -77,7 +77,7 @@
         (str automation-id)
 
         automation-name
-        (get (automation/describe db id (now)) "name")]
+        (get (automation/describe db id (util/now-ms)) "name")]
 
     (ok (assoc (automation/delete! db id) "name" automation-name))))
 

@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.persistance.core :as ps]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import (java.lang ProcessHandle)
            (java.nio.charset StandardCharsets)
@@ -60,8 +61,6 @@
     (apply f args)
     (throw (ex-info "The automation runtime is not installed" {:slot slot}))))
 
-(defn- now ^long [] (System/currentTimeMillis))
-
 (defn- own-pid ^long [] (.pid (ProcessHandle/current)))
 
 (defn- daemon-factory
@@ -97,10 +96,10 @@
 
 (defn- remember-turn!
   [turn-id]
-  (let [cutoff (- (now) 600000)]
+  (let [cutoff (- (util/now-ms) 600000)]
     (swap! quiet-turns (fn [turns]
                          (assoc (into {} (filter #(< cutoff (long (val %)))) turns)
-                           turn-id (now))))))
+                           turn-id (util/now-ms))))))
 
 (defonce ^:private run-sessions (atom {}))
 
@@ -160,25 +159,23 @@
         (:callback_secret row)
 
         timestamp
-        (str (quot (now) 1000))
+        (str (quot (util/now-ms) 1000))
 
         response
         (when url
-          (try (http/post url
-                          {:headers (cond-> {"content-type" "application/json"
-                                             "user-agent" "Vis-Automations"
-                                             "webhook-id" id
-                                             "webhook-timestamp" timestamp}
-                                      secret
-                                      (assoc "webhook-signature"
-                                        (webhook/standard-signature
-                                          secret
-                                          id
-                                          timestamp
-                                          (.getBytes ^String payload StandardCharsets/UTF_8))))
-                           :body payload
-                           :timeout (automation/limit :callback_timeout_ms)
-                           :throw false})
+          (try (http/post
+                 url
+                 {:headers
+                  (cond-> {"content-type" "application/json"
+                           "user-agent" "Vis-Automations"
+                           "webhook-id" id
+                           "webhook-timestamp" timestamp}
+                    secret
+                    (assoc "webhook-signature"
+                      (webhook/standard-signature secret id timestamp (util/utf8 payload))))
+                  :body payload
+                  :timeout (automation/limit :callback_timeout_ms)
+                  :throw false})
                (catch Exception e {:error (or (ex-message e) (str e))})))
 
         status
@@ -193,12 +190,12 @@
                                                          :attempts attempt
                                                          :last_error
                                                          "The automation has no callback now."
-                                                         :updated_at (now)})
+                                                         :updated_at (util/now-ms)})
           (and status (<= 200 (long status) 299))
           (ps/db-automation-update-delivery!
             db
             id
-            {:status "delivered" :attempts attempt :updated_at (now)})
+            {:status "delivered" :attempts attempt :updated_at (util/now-ms)})
           :else (let [error
                       (or (:error response) (str "HTTP " status))
 
@@ -208,9 +205,9 @@
                   (ps/db-automation-update-delivery!
                     db
                     id
-                    (cond-> {:attempts attempt :last_error error :updated_at (now)}
+                    (cond-> {:attempts attempt :last_error error :updated_at (util/now-ms)}
                       (and retry (< attempt (automation/limit :callback_attempts)))
-                      (assoc :next_attempt_at (+ (now) (long retry)))
+                      (assoc :next_attempt_at (+ (util/now-ms) (long retry)))
 
                       (not (and retry (< attempt (automation/limit :callback_attempts))))
                       (assoc :status "failed")))))))
@@ -221,7 +218,7 @@
   (when (.compareAndSet ^AtomicBoolean delivery-running false true)
     (submit-task! delivery-pool
                   (fn []
-                    (try (doseq [delivery (ps/db-automation-due-deliveries db (now) 16)]
+                    (try (doseq [delivery (ps/db-automation-due-deliveries db (util/now-ms) 16)]
                            (send-callback! db delivery))
                          (catch Throwable t
                            (tel/log!
@@ -251,7 +248,7 @@
                  (tel/log! {:level :warn :id ::alert-failed :data {:error (ex-message t)}}))))
         (when-let [{:strs [events]} (get-in definition ["delivery" "callback"])]
           (when (or (empty? events) (some #{event} events))
-            (let [at (now)]
+            (let [at (util/now-ms)]
               (ps/db-automation-enqueue-delivery!
                 db
                 {:id (str (UUID/randomUUID))
@@ -270,7 +267,7 @@
 
 (defn- claim!
   [db automation-id kind trigger-key {:keys [scheduled-at request status reason]}]
-  (let [at (now)]
+  (let [at (util/now-ms)]
     (ps/db-automation-claim-run! db
                                  (cond-> {:id (str (UUID/randomUUID))
                                           :automation_id automation-id
@@ -289,7 +286,10 @@
 
 (defn- finish!
   [db run-id attrs]
-  (ps/db-automation-update-run! db run-id ["queued" "running"] (assoc attrs :finished_at (now))))
+  (ps/db-automation-update-run! db
+                                run-id
+                                ["queued" "running"]
+                                (assoc attrs :finished_at (util/now-ms))))
 
 (defn- answer-text
   [result]
@@ -387,7 +387,7 @@
                (ps/db-automation-update-run! db
                                              run-id
                                              ["queued"]
-                                             {:status "running" :started_at (now)}))
+                                             {:status "running" :started_at (util/now-ms)}))
       (let [definition
             (:definition row)
 
@@ -547,7 +547,7 @@
                 automation/webhook-trigger)
 
         at
-        (long (or received-at (now)))]
+        (long (or received-at (util/now-ms)))]
 
     (cond (nil? trigger) {:status 404 :error [:not-found "This automation has no webhook"]}
           (nil? (:webhook_secret row))
@@ -662,7 +662,7 @@
                                                      {:status "unknown"
                                                       :reason
                                                       "The gateway stopped before the run finished."
-                                                      :finished_at (now)})]
+                                                      :finished_at (util/now-ms)})]
       (deliver! db (ps/db-automation-get db (:automation_id run)) updated))))
 
 (defonce ^:private scheduler (atom nil))
@@ -694,7 +694,7 @@
         (AtomicBoolean. true)
 
         started
-        (now)
+        (util/now-ms)
 
         thread
         (Thread. ^Runnable
@@ -706,7 +706,7 @@
                           (- started (long once-grace-ms))]
 
                      (when (.get running)
-                       (let [to (now)]
+                       (let [to (util/now-ms)]
                          (try (when (globally-enabled? db) (fire-schedules! db from to once-from))
                               (deliver-due! db)
                               (catch Throwable t

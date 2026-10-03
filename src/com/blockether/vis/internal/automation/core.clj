@@ -7,9 +7,9 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.internal.automation.cron :as cron]
-            [com.blockether.vis.internal.persistance.core :as ps])
+            [com.blockether.vis.internal.persistance.core :as ps]
+            [com.blockether.vis.internal.util :as util])
   (:import (java.net URI URISyntaxException)
-           (java.nio.charset StandardCharsets)
            (java.security SecureRandom)
            (java.util Base64 UUID)))
 
@@ -28,7 +28,7 @@
   [what id]
   (throw (ex-info (str what " not found") {:status 404 :code :not-found :id id})))
 
-(defn- utf8-size ^long [^String text] (alength (.getBytes text StandardCharsets/UTF_8)))
+(defn- utf8-size ^long [^String text] (alength (util/utf8 text)))
 
 (defn- branches
   "The `oneOf` branches that one schema error belongs to, outermost first."

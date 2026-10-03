@@ -5,10 +5,9 @@
             [com.blockether.vis.internal.automation.relay :as automation-relay]
             [com.blockether.vis.internal.automation.runner :as runner]
             [com.blockether.vis.internal.gateway.server.http :as http]
-            [com.blockether.vis.internal.loop :as lp])
+            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.util :as util])
   (:import (java.io InputStream)))
-
-(defn- now [] (System/currentTimeMillis))
 
 (defn- json-body
   [request]
@@ -63,19 +62,19 @@
 
 (def handlers
   {[:get "/v1/automations"] (respond (fn [_ db _]
-                                       {"automations" (automation/list-all db (now))
+                                       {"automations" (automation/list-all db (util/now-ms))
                                         "is_enabled" (runner/globally-enabled? db)}))
    [:post "/v1/automations"] (respond (fn [request db _]
-                                        (automation/create! db (json-body request) (now))))
+                                        (automation/create! db (json-body request) (util/now-ms))))
    [:get "/v1/automations/runs"] (respond runs)
    [:get "/v1/automations/runs/:run-id"] (respond (fn [_ db params]
                                                     (automation/run db (:run-id params))))
    [:get "/v1/automations/:automation-id"]
    (respond (fn [_ db params]
-              (automation/describe db (:automation-id params) (now))))
+              (automation/describe db (:automation-id params) (util/now-ms))))
    [:patch "/v1/automations/:automation-id"]
    (respond (fn [request db params]
-              (automation/update! db (:automation-id params) (json-body request) (now))))
+              (automation/update! db (:automation-id params) (json-body request) (util/now-ms))))
    [:delete "/v1/automations/:automation-id"] (respond
                                                 (fn [_ db params]
                                                   (automation/delete! db (:automation-id params))))
@@ -87,7 +86,7 @@
               (let [created (automation/rotate-secret! db
                                                        (:automation-id params)
                                                        (get (json-body request) "kind")
-                                                       (now))]
+                                                       (util/now-ms))]
                 ;; A first webhook secret is the moment the relay address becomes useful.
                 (when (= "webhook" (get created "kind")) (automation-relay/refresh! db))
                 created)))
