@@ -10775,8 +10775,7 @@ print(paths)"
                 text
                 (str/join "\n" (map :line entries))]
 
-            (expect (= ["▸ 2 steps · 1 mutation · 3 observations"
-                        "▸ 1 step · 0 mutations · 3 observations"]
+            (expect (= ["▸ 1 mutation · 3 observations" "▸ 0 mutations · 3 observations"]
                        (digests entries)))
             (expect (= {:kind :toggle-details
                         :session-id "s"
@@ -10787,24 +10786,25 @@ print(paths)"
             (expect (empty? (operations entries)))
             (expect (empty? (reasoning entries)))
             (expect (not (str/includes? text "CODE")))
-            (expect (< (.indexOf ^String text "▸ 2 steps")
+            ;; Regression, user report: the row names what the calls did, not how many steps ran.
+            (expect (not (re-find #"\d+ steps?\b" text)))
+            (expect (< (.indexOf ^String text "▸ 1 mutation")
                        (.indexOf ^String text note)
-                       (.indexOf ^String text "▸ 1 step"))))))
+                       (.indexOf ^String text "▸ 0 mutations"))))))
     (it "opens a digest to the thinking, code and Activity of its steps"
         (doseq [live? [false true]]
           (let [entries (render* {} live? (open-digests "s" "t"))
                 text (str/join "\n" (map :line entries))
                 at #(.indexOf ^String text ^String %)]
 
-            (expect (= ["▾ 2 steps · 1 mutation · 3 observations"
-                        "▾ 1 step · 0 mutations · 3 observations"]
+            (expect (= ["▾ 1 mutation · 3 observations" "▾ 0 mutations · 3 observations"]
                        (digests entries)))
             (expect (= ["1 mutation · 3 observations" "0 mutations · 3 observations"]
                        (operations entries)))
             (expect (= 1 (count (reasoning entries))))
             ;; The note stays above its digest and does not repeat inside it.
             (expect (= 1 (count (re-seq #"Sources read" text))))
-            (expect (< (at "▾ 2 steps") (at "Read the sources first.") (at "CODE") (at note))))))
+            (expect (< (at "▾ 1 mutation") (at "Read the sources first.") (at "CODE") (at note))))))
     (it "shows Activity and reasoning for each step when summarizing is off"
         (doseq [live? [false true]]
           (let [entries (render* {:summarize-steps false} live? {})]
@@ -10833,7 +10833,7 @@ print(paths)"
             (expect (= (if summarize? 0 3) (get kinds :activity-header 0))))))
     (it "names and colors a digest by the state of its steps"
         (doseq [[state tone label] [["running" :running "1 running"] ["failed" :error "1 failed"]
-                                    ["succeeded" nil "1 step"]]]
+                                    ["succeeded" nil "1 mutation"]]]
           (let [form
                 {:code "run()"
                  :success? (not= "failed" state)
@@ -10870,11 +10870,11 @@ print(paths)"
                                                                  76 {:viewport-h 30}))})
 
               row
-              (first (filter #(str/includes? (apply str (map :ch %)) "▸ 2 steps")
+              (first (filter #(str/includes? (apply str (map :ch %)) "▸ 1 mutation")
                              (first (:frames captured))))]
 
           (expect (nil? (:error captured)))
-          (expect (str/includes? (apply str (map :ch (filter :bold row))) "2 steps"))
+          (expect (str/includes? (apply str (map :ch (filter :bold row))) "1 mutation"))
           (.commitFrame interactions/hit-map)
           (expect (some #(= "iteration:tt:i1:digest" (:node-id %))
                         (.current interactions/hit-map)))))
@@ -10895,8 +10895,7 @@ print(paths)"
                         :session-turn-id "t"
                         :settings {}}))]
 
-          (expect (= ["▸ 2 steps · 1 mutation · 3 observations"
-                      "▸ 1 step · 0 mutations · 3 observations"]
+          (expect (= ["▸ 1 mutation · 3 observations" "▸ 0 mutations · 3 observations"]
                      (map #(first (str/split (subs (:line %) 1) #"\s{2,}")) rows)))
           (expect (= ["2.0s" "500ms"] (map #(peek (str/split (str/trim (:line %)) #"\s+")) rows)))
           (expect (every? #(= 75 (count (subs (:line %) 1))) rows))))
@@ -10944,8 +10943,7 @@ print(paths)"
                    (select-keys (get-in (digest-row closed) [:meta :digest-live])
                                 [:view-id :label :artifact])))
         ;; Regression, user report: `live` ends the counts after a dot, as text of the row itself.
-        (expect (str/includes? (:line (digest-row closed))
-                               "▸ 2 steps · 1 mutation · 3 observations · live"))
+        (expect (str/includes? (:line (digest-row closed)) "▸ 1 mutation · 3 observations · live"))
         (let [{:keys [line meta]}
               (digest-row closed)
 

@@ -49,7 +49,7 @@ waits in a queue. You can also cancel the running turn or quit the session.
 ### Follow progress
 
 Vis adds short notes while it works. Under each note, one digest row gives a summary of the steps after the note.
-The row shows the number of steps and what their calls did, for example `2 steps · 1 mutation · 3 observations`.
+The row shows what their calls did, for example `1 mutation · 3 observations`.
 It also shows any running, failed or cancelled calls and the time that the steps took.
 When you stop a turn, the stopped step counts as a failure, so the row turns red.
 
@@ -60,7 +60,7 @@ The mutation count always shows, also when it is 0, so you can see at once if th
 Open the digest to see the thinking, code and Activity of these steps. Failures, files and images stay visible when the digest is closed.
 The Interrupted message of a stopped step shows only in the open digest.
 
-When the steps open live views, a closed row ends its counts with **live**, for example `2 steps · 1 running · live`. Select **live** to open the newest running live view, or else the newest recording.
+When the steps open live views, a closed row ends its counts with **live**, for example `1 mutation · 1 running · live`. Select **live** to open the newest running live view, or else the newest recording.
 
 To see each step as a separate Activity, turn off **Compact mode** in Settings, under **Responses**.
 The terminal and each app keep their own choice.

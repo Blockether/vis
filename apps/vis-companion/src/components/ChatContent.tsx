@@ -2672,23 +2672,22 @@ function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
 }
 
 /**
- * THE ROW THAT STANDS FOR THE STEPS UNDER A NOTE. It counts the steps, then what their calls
- * did (`activityCostParts`), then the calls that are running, failed or cancelled. It shows
- * their measured time on the right. A failure colors the chevron. A stop is a failure too,
- * so a cancelled call or an interrupted step also colors it. A closed row ends its counts
- * with `· live`, the live control of its steps. Opening the row shows the thinking, code
- * and Activity of the steps. Mirrors the TUI (`render/step-digest-entries`).
+ * THE ROW THAT STANDS FOR THE STEPS UNDER A NOTE. It names what their calls did, in the words
+ * of Activity (`activityCostParts`), not how many steps ran. Then it counts the calls that are
+ * running, failed or cancelled, and it shows their measured time on the right. A failure
+ * colors the chevron. A stop is a failure too, so a cancelled call or an interrupted step also
+ * colors it. A closed row ends its counts with `· live`, the live control of its steps.
+ * Opening the row shows the thinking, code and Activity of the steps. Mirrors the TUI
+ * (`render/step-digest-entries`).
  */
 function StepDigest({
   chunks,
-  steps,
   live,
   isOpen,
   onToggle,
   children,
 }: {
   chunks: Chunk[];
-  steps: number;
   live: boolean;
   isOpen: boolean;
   onToggle: () => void;
@@ -2698,7 +2697,6 @@ function StepDigest({
   const forms = chunks.flatMap((chunk) => (chunk.kind === 'code' ? chunk.forms : chunk.cards));
   const activity = mergeActivity(forms.flatMap((form) => formActivity(form, live) ?? []));
   const parts = [
-    { text: `${steps} ${steps === 1 ? 'step' : 'steps'}`, tone: '' },
     ...activityCostParts(activity),
     ...(['running', 'failed', 'cancelled'] as const).flatMap((state) =>
       activity.counts[state]
@@ -2912,7 +2910,6 @@ const TraceSegment = memo(function TraceSegment({
       {digest && (
         <StepDigest
           chunks={chunks}
-          steps={segment.items.length}
           live={live}
           isOpen={open}
           onToggle={() => setOpen((value) => !value)}

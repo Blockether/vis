@@ -8486,13 +8486,13 @@
             {:artifact artifact :running? false}))))
 
 (defn- step-digest-entries
-  "One DIGEST row for the steps after a note. It counts the steps, then what their calls did
-   (`activity-cost-text`), then their running, failed and cancelled calls. It shows their
-   measured time on the right. A failed step colors it red, and a running step colors it
-   yellow. A stop is a failure too, so a cancelled call or an interrupted step also colors it
-   red. A closed row ends its counts with `· live`, in the same font. It opens the newest
-   running live view of the steps, or else their newest recording."
-  [{:keys [forms node-id open? steps lives]} content-w session-id]
+  "One DIGEST row for the steps after a note. It names what their calls did, in the words of
+   Activity (`activity-cost-text`), not how many steps ran. Then it counts their running, failed
+   and cancelled calls, and it shows their measured time on the right. A failed step colors it
+   red, and a running step colors it yellow. A stop is a failure too, so a cancelled call or an
+   interrupted step also colors it red. A closed row ends its counts with `· live`, in the same
+   font. It opens the newest running live view of the steps, or else their newest recording."
+  [{:keys [forms node-id open? lives]} content-w session-id]
   (let [activities
         (keep :activity forms)
 
@@ -8504,9 +8504,6 @@
 
         omitted
         (apply merge-with + {} (keep #(get-in % [:omitted :by-classification]) activities))
-
-        steps
-        (long (or steps 0))
 
         running-lives
         (filterv :running? lives)
@@ -8524,8 +8521,7 @@
         summary
         (str (if open? "▾ " "▸ ")
              (str/join " · "
-                       (concat [(str steps (if (= 1 steps) " step" " steps"))
-                                (activity-cost-text {:rows rows
+                       (concat [(activity-cost-text {:rows rows
                                                      :omitted {:by-classification omitted}})]
                                (for [state
                                      [:running :failed :cancelled]
@@ -8624,7 +8620,6 @@
                               {::digest {:forms forms
                                          :node-id node-id
                                          :open? open?
-                                         :steps (count steps)
                                          :lives (step-digest-lives steps forms)}}]]
                             ;; The note renders once, above its digest.
                             (render-iteration-entries

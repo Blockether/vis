@@ -1306,7 +1306,7 @@ describe('a Python evaluation without detected Activity', () => {
       const digest = painted.container.querySelector<HTMLElement>('[data-step-digest]')!;
       expect(digest).toHaveAttribute(
         'aria-label',
-        `Expand steps: 1 step · 0 mutations · 1 ${state}`,
+        `Expand steps: 0 mutations · 1 ${state}`,
       );
       expect(digest).toHaveClass('text-err-ink!');
       expect(digest.querySelector('.text-err-ink')).toHaveTextContent(`1 ${state}`);
@@ -2506,9 +2506,12 @@ describe('steps between progress notes', () => {
     const [first, second] = digests(painted.container);
     const noted = painted.getByText(note);
     expect(digests(painted.container).map((row) => row.getAttribute('aria-label'))).toEqual([
-      'Expand steps: 2 steps · 0 mutations',
-      'Expand steps: 1 step · 0 mutations',
+      'Expand steps: 0 mutations',
+      'Expand steps: 0 mutations',
     ]);
+    // Regression, user report: the row names what the calls did, not how many steps ran.
+    const counted = digests(painted.container).map((row) => row.textContent);
+    expect(counted.filter((text) => /\bsteps?\b/.test(text ?? ''))).toEqual([]);
     // The measured time of the steps stands on the right of each row.
     expect(digests(painted.container).map((row) => row.nextElementSibling?.textContent)).toEqual([
       '20ms',
@@ -2531,7 +2534,7 @@ describe('steps between progress notes', () => {
     const [first, second] = digests(painted.container);
     expect(first).toHaveAttribute(
       'aria-label',
-      'Expand steps: 2 steps · 0 mutations · 1 observation',
+      'Expand steps: 0 mutations · 1 observation',
     );
     fireEvent.click(first);
     const [band] = painted.container.querySelectorAll('.bg-thinking-surface');
@@ -2539,7 +2542,7 @@ describe('steps between progress notes', () => {
     expect(first).toHaveAttribute('aria-expanded', 'true');
     expect(first).toHaveAttribute(
       'aria-label',
-      'Collapse steps: 2 steps · 0 mutations · 1 observation',
+      'Collapse steps: 0 mutations · 1 observation',
     );
     expect(second).toHaveAttribute('aria-expanded', 'false');
     expect(bands(painted.container)).toEqual([['Read the sources first.', 'One more source.']]);
