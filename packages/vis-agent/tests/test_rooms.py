@@ -147,7 +147,9 @@ def test_real_http_redirect_never_forwards_credentials():
         thread = Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            client = RoomsClient(f"http://127.0.0.1:{server.server_port}", identity().credential)
+            client = RoomsClient(
+                f"http://127.0.0.1:{server.server_port}", identity().credential
+            )
             with pytest.raises(RoomsError):
                 client.machine()
             assert requests == ["/v1/rooms/machine"]
