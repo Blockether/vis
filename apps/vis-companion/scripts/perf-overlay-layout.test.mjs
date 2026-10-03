@@ -3,6 +3,30 @@ import { chromium } from 'playwright';
 import { build } from 'vite';
 import { expect, it } from 'vitest';
 
+// Shared controls extend their touch targets beyond their visible faces.
+async function touchTarget(locator) {
+  return locator.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    const reach = getComputedStyle(element, '::after');
+    let { left, right, top, bottom } = box;
+    const px = (value) => Number.parseFloat(value) || 0;
+    if (reach.content !== 'none' && reach.content !== 'normal') {
+      left = Math.min(left, box.left + px(style.borderLeftWidth) + px(reach.left));
+      right = Math.max(right, box.right - px(style.borderRightWidth) - px(reach.right));
+      top = Math.min(top, box.top + px(style.borderTopWidth) + px(reach.top));
+      bottom = Math.max(bottom, box.bottom - px(style.borderBottomWidth) - px(reach.bottom));
+    }
+    const x = (left + right) / 2;
+    const y = (top + bottom) / 2;
+    const points = [[left + 1, y], [right - 1, y], [x, top + 1], [x, bottom - 1]];
+    return {
+      x: left, y: top, width: right - left, height: bottom - top,
+      reachable: points.every(([x, y]) => element.contains(document.elementFromPoint(x, y))),
+    };
+  });
+}
+
 // The overlay mounts outside the app shell, so only its own layout clears the notch.
 // Run the production bundle in Chromium with real CSS safe-area values, not jsdom.
 it.runIf(process.env.CI)('keeps memory controls tappable inside every safe area', async () => {
@@ -39,20 +63,32 @@ it.runIf(process.env.CI)('keeps memory controls tappable inside every safe area'
       await page.goto('http://127.0.0.1/?perf=1');
       const panel = page.getByRole('region', { name: 'Memory overlay', exact: true });
       await panel.waitFor();
-      const insideSafeArea = async (locator) => {
-        const box = await locator.boundingBox();
+      const insideSafeArea = async (locator, control = false) => {
+        const box = control ? await touchTarget(locator) : await locator.boundingBox();
         expect(box).not.toBeNull();
         expect(box.x).toBeGreaterThanOrEqual(insets.left + 8);
         expect(box.y).toBeGreaterThanOrEqual(insets.top + 8);
         expect(box.x + box.width).toBeLessThanOrEqual(width - insets.right - 8);
         expect(box.y + box.height).toBeLessThanOrEqual(height - insets.bottom - 8);
+        if (control) {
+          expect(box.height).toBeGreaterThanOrEqual(44);
+          expect(box.width).toBeGreaterThanOrEqual(44);
+          expect(box.reachable).toBe(true);
+        }
       };
       await insideSafeArea(panel);
+      const minimizeControl = panel.getByRole('button', { name: 'Minimize memory overlay' });
+      const controlBox = await minimizeControl.boundingBox();
+      const iconBox = await minimizeControl.locator('svg').boundingBox();
+      const contentBox = await minimizeControl.evaluate((element) => {
+        const boxes = [...element.children].map((child) => child.getBoundingClientRect());
+        return { left: Math.min(...boxes.map((box) => box.left)), right: Math.max(...boxes.map((box) => box.right)) };
+      });
+      // Keep the icon and its label centered within the control, not against its left padding.
+      expect(Math.abs((contentBox.left + contentBox.right) / 2 - controlBox.x - controlBox.width / 2)).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(iconBox.y + iconBox.height / 2 - controlBox.y - controlBox.height / 2)).toBeLessThanOrEqual(0.5);
       for (const button of await panel.getByRole('button').all()) {
-        await insideSafeArea(button);
-        const box = await button.boundingBox();
-        expect(box.height).toBeGreaterThanOrEqual(44);
-        expect(box.width).toBeGreaterThanOrEqual(44);
+        await insideSafeArea(button, true);
       }
       await panel.getByRole('button', { name: 'Show items' }).tap();
       expect(await panel.getByRole('button', { name: 'Show bytes' }).isVisible()).toBe(true);
@@ -61,12 +97,11 @@ it.runIf(process.env.CI)('keeps memory controls tappable inside every safe area'
       await details.evaluate((element) => { element.scrollTop = element.scrollHeight; });
       if (width > height) expect(await details.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
       const minimize = panel.getByRole('button', { name: 'Minimize memory overlay' });
-      await insideSafeArea(minimize);
+      await insideSafeArea(minimize, true);
       await minimize.tap();
       const summary = page.getByRole('button', { name: /^Memory .* listeners$/ });
       await summary.waitFor();
-      await insideSafeArea(summary);
-      expect((await summary.boundingBox()).height).toBeGreaterThanOrEqual(44);
+      await insideSafeArea(summary, true);
       await summary.tap();
       await panel.waitFor();
       expect(await panel.getByRole('heading', { name: 'Listeners added since the baseline' }).count()).toBe(1);

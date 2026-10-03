@@ -195,10 +195,17 @@ describe('memory overlay', () => {
   it('minimizes to a one-line summary and opens again', () => {
     render(<PerfOverlay read={() => report()} refreshMs={60_000} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Minimize memory overlay' }));
+    const toggle = screen.getByRole('button', { name: 'Minimize memory overlay' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(toggle);
 
     expect(screen.queryByRole('region', { name: 'Memory overlay' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Memory 48.0 MB · 10 listeners' }));
+    const summary = screen.getByRole('button', { name: 'Memory 48.0 MB · 10 listeners' });
+    // Keep the control's gesture state so the click after a pointer release is ignored.
+    expect(summary).toBe(toggle);
+    expect(summary).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(summary);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByRole('region', { name: 'Memory overlay' })).toBeInTheDocument();
   });
 
