@@ -488,6 +488,7 @@
 
         base-state
         (cond credential-gap :rejected
+              (= :rejected (:auth-state status)) :rejected
               ;; Nothing was checked, so nothing is proven either way.
               unproven? :unverified
               (contains? local-no-auth-provider-ids (:id provider))
@@ -497,7 +498,9 @@
               :else :unverified)
 
         status*
-        (assoc status :auth-state base-state)
+        (cond-> (assoc status :auth-state base-state)
+          (= :rejected base-state)
+          (assoc :is-authenticated false))
 
         limits
         (when (and (:is-authenticated status*) (:provider/limits-fn registered))
@@ -1035,18 +1038,15 @@
        (svar/sort-models (:id preset))))
 
 (defn authenticated-preset-providers
-  "Registered providers that BIND THEMSELVES — the credential lives OUTSIDE the
-   persisted fleet, so the provider is usable with no `Add provider` step at all.
-   Shaped as minimal picker rows (`{:id … :models …}` carrying the preset's
-   default catalog models) in [[catalog/preset-order]], not the registry's hash
-   order, and appended by [[picker-fleet]].
+  "Registered providers with credentials outside the persisted fleet.
+   Rows include default catalog models and follow [[catalog/preset-order]].
+   [[picker-fleet]] appends these rows after configured providers.
 
-   Two ways in. A MANAGED provider ([[managed?]]) binds because its runtime
-   issues the credential: there is nothing local to probe and nothing a human
-   could add. Every other provider binds only when its OWN `:provider/detect-fn`
-   (local, no network) finds one — an OAuth token file, a keychain entry.
+   A managed provider binds through credentials from its runtime.
+   Other providers use their local `:provider/detect-fn` without network requests.
+   Saved rejection metadata keeps the row visible for Connect, but does not authorize requests.
 
-   A provider with neither, or with no default models, is skipped."
+   Skip providers without credential metadata or default models."
   []
   (let [configured (into #{} (map :id) (configured-providers))]
     (into []

@@ -106,6 +106,22 @@
                               (select-keys (@#'provider/gateway-provider-status-safe {:id :ollama})
                                            ["is_authenticated" "source" "provider_id"]))))))
 
+(defdescribe rejected-provider-connect-test
+             (it
+               "offers Connect for rejected credentials even when an older snapshot says signed in"
+               (let [actions
+                     (provider/provider-action-items
+                       {:id :anthropic-coding-plan}
+                       {"is_authenticated" true
+                        "auth_state" "rejected"
+                        "error" "Your sign-in expired. Select Connect to sign in again."})
+
+                     connect
+                     (first (filter #(= :authenticate (:id %)) actions))]
+
+                 (expect (= "Connect" (:label connect)))
+                 (expect (false? (:force? connect))))))
+
 (defdescribe
   provider-action-items-test
   (it

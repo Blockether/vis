@@ -3,6 +3,7 @@
             [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.provider.vendor.anthropic :as anthropic]
             [lazytest.core :refer [defdescribe expect it throws?]]))
 
@@ -222,3 +223,84 @@
               (expect (= [] (get-in report [:dynamic :limits])))
               (expect (str/includes? (get-in report [:dynamic :note])
                                      "providers auth anthropic-coding-plan"))))))))
+
+(defdescribe
+  rejected-refresh-credentials-test
+  (it
+    "reports a saved rejection and requires sign-in without using either token"
+    (let [saved
+          (atom {:access-token "old-access"
+                 :refresh-token "old-refresh"
+                 :expires-at-ms (+ (System/currentTimeMillis) 3600000)
+                 :reauth-required true})
+
+          requests
+          (atom 0)]
+
+      (with-redefs-fn {#'anthropic/load-auth-file #(deref saved)
+                       #'http/get (fn [& _]
+                                    (swap! requests inc)
+                                    (throw (ex-info "Unexpected request" {})))
+                       #'http/post (fn [& _]
+                                     (swap! requests inc)
+                                     (throw (ex-info "Unexpected refresh" {})))}
+        (fn []
+          (expect (= :rejected (:auth-state (anthropic/detect-credentials))))
+          (expect (false? (anthropic/authenticated?)))
+          (expect (false? (:is-authenticated (anthropic/status))))
+          (expect (= :rejected (:auth-state (anthropic/status))))
+          (expect (str/includes? (:error (anthropic/status)) "Select Connect"))
+          (expect (= :provider/reauthentication-required
+                     (try (anthropic/get-anthropic-token!)
+                          nil
+                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+          (let [report (#'anthropic/fetch-limits-report)]
+            (expect (= :unauthenticated (:status report)))
+            (expect (str/includes? (get-in report [:dynamic :note]) "Select Connect")))
+          (expect (zero? @requests))
+          (swap! saved dissoc :reauth-required)
+          (expect (true? (:is-authenticated (anthropic/status))))
+          (expect (= {:token "old-access"} (anthropic/get-anthropic-token!)))))))
+  (it "persists the rejection and notifies connected views without exposing token values"
+      (let [file
+            (java.io.File/createTempFile "vis-auth-rejection-" ".json")
+
+            notifications
+            (atom [])
+
+            credentials
+            {:access-token "fixture-access" :refresh-token "fixture-refresh"}]
+
+        (try (with-redefs-fn {#'anthropic/auth-file #(.getPath file)
+                              #'anthropic/auth-dir #(.getParentFile file)
+                              #'provider-limits/auth-changed! #(swap! notifications conj %)}
+               (fn []
+                 (#'anthropic/save-auth-file! credentials)
+                 (expect (empty? @notifications))
+                 (#'anthropic/save-auth-file! (assoc credentials :reauth-required true))
+                 (expect (= [:anthropic-coding-plan] @notifications))
+                 (expect (true? (:reauth-required (#'anthropic/load-auth-file))))
+                 (expect (nil? (:oauth-token-preview (anthropic/status))))))
+             (finally (.delete file))))))
+
+(defdescribe status-credential-snapshot-test
+             (it "keeps status consistent when a rejection is saved after the credential read"
+                 (let [saved
+                       (atom {:access-token "fixture-access"
+                              :refresh-token "fixture-refresh"
+                              :account-id "account"})
+
+                       reads
+                       (atom 0)]
+
+                   (with-redefs-fn {#'anthropic/load-auth-file
+                                    (fn []
+                                      (swap! reads inc)
+                                      (let [credentials @saved]
+                                        (swap! saved assoc :reauth-required true)
+                                        credentials))}
+                     (fn []
+                       (expect (true? (:is-authenticated (anthropic/status))))
+                       (expect (= 1 @reads))
+                       (expect (= :rejected (:auth-state (anthropic/status))))
+                       (expect (= 2 @reads)))))))

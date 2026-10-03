@@ -313,3 +313,115 @@
         (when before
           ;; Pre-fix this grew by one fd per interrupted acquisition.
           (expect (< (- (fds) before) 10)))))))
+
+(defn- stored-refresher
+  [saved exchange!]
+  (oauth/make-file-refresher {:load #(deref saved)
+                              :saved-at :saved-at-ms
+                              :refresh-token :refresh-token
+                              :exchange! exchange!
+                              :persist! #(reset! saved (assoc %
+                                                         :saved-at-ms (System/currentTimeMillis)))
+                              :->token #(hash-map :token (:access-token %))
+                              :no-token! #(throw (ex-info "No saved credential" {}))}))
+
+(defdescribe
+  rejected-refresh-grant-test
+  (it "persists a rejected grant and asks for sign-in without repeating the exchange"
+      ;; An expired Anthropic refresh token returned invalid_grant on every attempt.
+      (let
+        [saved
+         (atom {:access-token "old-access" :refresh-token "old-refresh" :saved-at-ms 0})
+
+         calls
+         (atom 0)
+
+         exchange!
+         (fn [_]
+           (swap! calls inc)
+           (throw
+             (ex-info
+               "HTTP 400"
+               {:status 400
+                :body
+                "{\"error\":\"invalid_grant\",\"error_description\":\"Refresh token expired\"}"})))
+
+         refresh!
+         (stored-refresher saved exchange!)
+
+         rejected
+         (fn [f]
+           (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))]
+
+        (expect (= :provider/reauthentication-required (:type (rejected refresh!))))
+        (expect (true? (:reauth-required @saved)))
+        (expect (true? (get (json/read-json (oauth/auth-json-str @saved)) "reauth_required")))
+        (expect (= :provider/reauthentication-required (:type (rejected refresh!))))
+        ;; A new process reads the same verdict from the credential file.
+        (expect (= :provider/reauthentication-required
+                   (:type (rejected (stored-refresher saved exchange!)))))
+        (expect (= 1 @calls))
+        ;; A completed sign-in replaces the saved credential and clears the verdict.
+        (reset! saved {:access-token "new-access"
+                       :refresh-token "new-refresh"
+                       :saved-at-ms (System/currentTimeMillis)})
+        (expect (= {:token "new-access"} (refresh!)))
+        (expect (= 1 @calls))))
+  (it "makes one exchange when concurrent callers receive the same rejected grant"
+      (let [saved
+            (atom {:refresh-token "old-refresh" :saved-at-ms 0})
+
+            calls
+            (atom 0)
+
+            refresh!
+            (stored-refresher saved
+                              (fn [_]
+                                (swap! calls inc)
+                                (throw (ex-info "Rejected grant"
+                                                {:status 400
+                                                 :body "{\"error\":\"invalid_grant\"}"}))))
+
+            results
+            (mapv deref
+                  (mapv (fn [_]
+                          (future
+                            (try (refresh!) nil (catch clojure.lang.ExceptionInfo e (ex-data e)))))
+                        (range 12)))]
+
+        (expect (= 1 @calls))
+        (expect (every? #(= {:type :provider/reauthentication-required} %) results))))
+  (it "does not overwrite a new sign-in when an older exchange reports an invalid grant"
+      (let [saved
+            (atom {:refresh-token "old-refresh" :saved-at-ms 0})
+
+            replacement
+            {:access-token "new-access" :refresh-token "new-refresh"}
+
+            refresh!
+            (stored-refresher saved
+                              (fn [_]
+                                (reset! saved replacement)
+                                (throw (ex-info "Rejected old grant"
+                                                {:status 400
+                                                 :body "{\"error\":\"invalid_grant\"}"}))))]
+
+        (expect (= {:token "new-access"} (refresh!)))
+        (expect (= replacement @saved))))
+  (it "does not require sign-in for network errors, throttling, or other bad requests"
+      (doseq [data [{:status 429 :body "{\"error\":\"rate_limit_exceeded\"}"}
+                    {:status 503 :body "{\"error\":\"invalid_grant\"}"}
+                    {:status 400 :body "{\"error\":\"invalid_request\"}"}
+                    {:status 400 :body "not JSON"} {:type :network-timeout}]]
+        (let [saved (atom {:refresh-token "refresh" :saved-at-ms 0})
+              calls (atom 0)
+              failure (ex-info "Temporary failure" data)
+              refresh! (stored-refresher saved
+                                         (fn [_]
+                                           (swap! calls inc)
+                                           (throw failure)))]
+
+          (dotimes [_ 2]
+            (expect (identical? failure (try (refresh!) nil (catch Exception e e)))))
+          (expect (nil? (:reauth-required @saved)))
+          (expect (= 2 @calls))))))

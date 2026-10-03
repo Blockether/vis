@@ -8975,6 +8975,34 @@
                                                  (fn []
                                                    (throw (ex-info "disk race" {})))})]
           (expect (= provider (first (:providers (hydrate-router-credentials router))))))))
+  (it "requires sign-in only for the selected provider after a refresh grant is rejected"
+      (let [rejected?
+            (atom true)
+
+            environment
+            {:router {:providers [{:id :expired :api-key "old"}
+                                  {:id :healthy :api-key "current"}]}}]
+
+        (with-redefs [registry/provider-by-id
+                      (fn [id]
+                        {:provider/get-token-fn
+                         (fn []
+                           (if (and (= id :expired) @rejected?)
+                             (throw (ex-info "Select Connect to sign in again."
+                                             {:type :provider/reauthentication-required}))
+                             {:token "current"}))})]
+          (expect (= "current"
+                     (get-in (hydrate-environment-router environment :healthy)
+                             [:router :providers 1 :api-key])))
+          (let [failure (try (hydrate-environment-router environment :expired)
+                             nil
+                             (catch clojure.lang.ExceptionInfo e e))]
+            (expect (= :provider/reauthentication-required (:type (ex-data failure))))
+            (expect (= :expired (:provider-id (ex-data failure)))))
+          (reset! rejected? false)
+          (expect (= "current"
+                     (get-in (hydrate-environment-router environment :expired)
+                             [:router :providers 0 :api-key]))))))
   ;; Regression, issue #152: the credential could answer a responses path
   ;; but never the wire it speaks, so a runtime-issued Responses endpoint
   ;; kept the chat dialect the router had defaulted to.

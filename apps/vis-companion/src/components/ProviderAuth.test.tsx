@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AuthFlow, ProviderPreset, RouterProvider } from '../lib/types';
+import type { AuthFlow, ProviderLimits, ProviderPreset, RouterProvider } from '../lib/types';
+import type { GatewayClient } from '../lib/gateway';
 import {
   AddProviderButton,
   AddProviderPicker,
@@ -13,6 +14,7 @@ import {
   providerStatusMark,
   providerStatusLine,
   unscopedMessage,
+  useProviderFleet,
   type ProviderAuth,
 } from './ProviderAuth';
 import { CircleAlertIcon, CircleCheckIcon, CircleDashedIcon, CircleXIcon } from './icons';
@@ -375,6 +377,45 @@ describe('provider authentication verdict', () => {
   });
 });
 
+describe('live provider authentication', () => {
+  it('updates an open view when sign-in expires and when another device reconnects', async () => {
+    const connected: RouterProvider = {
+      ...provider('anthropic-coding-plan'),
+      status: { is_authenticated: true, auth_state: 'verified' },
+    };
+    let receive: ((id: string, limits: ProviderLimits) => void) | undefined;
+    const client = {
+      cachedRouter: () => null,
+      router: async () => [connected],
+      onProviderLimits: (listener: typeof receive) => {
+        receive = listener;
+        return () => {
+          receive = undefined;
+        };
+      },
+    } as unknown as GatewayClient;
+    const { result } = renderHook(() => useProviderFleet(client));
+    await waitFor(() => expect(result.current.providers).toEqual([connected]));
+    act(() => {
+      receive?.(connected.id, {
+        status: 'unauthenticated',
+        dynamic: { limits: [], note: 'Select Connect to sign in again.' },
+      });
+    });
+    expect(result.current.providers?.[0].status).toMatchObject({
+      is_authenticated: false,
+      auth_state: 'rejected',
+      error: 'Select Connect to sign in again.',
+    });
+    act(() => receive?.(connected.id, { status: 'ok', dynamic: { limits: [] } }));
+    expect(result.current.providers?.[0].status).toMatchObject({
+      is_authenticated: true,
+      auth_state: 'verified',
+    });
+    expect(result.current.providers?.[0].status?.error).toBeUndefined();
+  });
+});
+
 // A provider stays compact until its chevron disclosure is opened.
 describe('ProviderRows', () => {
   const signedIn = (fields: Partial<RouterProvider> = {}): RouterProvider => ({
@@ -502,6 +543,28 @@ describe('ProviderRows', () => {
     expect(screen.getByText('Sign in')).toBeVisible();
     fireEvent.click(screen.getByText('ANTHROPIC'));
     expect(started).toEqual(['anthropic']);
+  });
+
+  it('shows the full rejected-grant message and offers Connect for an expired sign-in', () => {
+    const started: string[] = [];
+    const message = 'Your sign-in has expired or was revoked. Select Connect to sign in again.';
+    const expired = {
+      ...provider('anthropic-coding-plan'),
+      status: { is_authenticated: false, auth_state: 'rejected' as const, error: message },
+    };
+    render(
+      <ProviderRows
+        auth={state({
+          providers: [expired],
+          signIn: async (row: RouterProvider) => { started.push(row.id); },
+        })}
+      />,
+    );
+    const error = screen.getByText(message);
+    expect(error).toBeVisible();
+    expect(error.className).not.toContain('truncate');
+    fireEvent.click(screen.getByRole('button', { name: /ANTHROPIC-CODING-PLAN.*Connect/ }));
+    expect(started).toEqual(['anthropic-coding-plan']);
   });
 
   it('hangs that account’s own models under the rank verb instead of guessing one', () => {

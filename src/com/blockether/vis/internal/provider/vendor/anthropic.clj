@@ -17,6 +17,7 @@
             [com.blockether.vis.extension :as ext]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.provider.oauth :as oauth])
   (:import [java.net URLDecoder URLEncoder]
            [java.security SecureRandom]
@@ -216,6 +217,7 @@
   (let [^java.io.File dir (auth-dir)]
     (when-not (.exists dir) (.mkdirs dir))
     (spit (auth-file) (wire/json-str (assoc credentials :saved-at-ms (util/now-ms))))
+    (when (:reauth-required credentials) (provider-limits/auth-changed! :anthropic-coding-plan))
     credentials))
 
 (defn- delete-auth-file!
@@ -227,10 +229,11 @@
   "Detect persisted Anthropic OAuth credentials without network validation."
   []
   (when-let [auth (load-auth-file)]
-    (when-not (str/blank? (:access-token auth))
-      {:access-token (:access-token auth)
-       :source :auth-file
-       :expires-at-ms (:expires-at-ms auth)})))
+    (or (oauth/reauthentication-status auth)
+        (when-not (str/blank? (:access-token auth))
+          {:access-token (:access-token auth)
+           :source :auth-file
+           :expires-at-ms (:expires-at-ms auth)}))))
 
 (def ^:private file-refresher
   "Single-flight refresh for the rotating Anthropic refresh_token (see
@@ -266,7 +269,7 @@
   "Return a fresh Anthropic Claude subscription access token for Vis runtime."
   []
   (let [auth
-        (load-auth-file)
+        (oauth/require-usable-credentials! (load-auth-file))
 
         now
         (util/now-ms)]
@@ -451,22 +454,26 @@
                                         (str "Anthropic usage endpoint failed: HTTP " status)
                                         {:status status :body body})))
      (catch clojure.lang.ExceptionInfo e
-       (if (= :vis/anthropic-not-authenticated (:type (ex-data e)))
+       (cond
+         (oauth/reauthentication-error? e) {:provider-id :anthropic-coding-plan
+                                            :status :unauthenticated
+                                            :dynamic {:limits [] :note (ex-message e)}}
+         (= :vis/anthropic-not-authenticated (:type (ex-data e)))
          {:provider-id :anthropic-coding-plan
           :status :unauthenticated
           :dynamic
           {:limits []
            :note
            "Run `vis-agent providers auth anthropic-coding-plan` to authenticate with Claude subscription."}}
-         (limits-error-report :vis/anthropic-limits-error
-                              (or (ex-message e) "Anthropic limits check failed")
-                              (dissoc (ex-data e) :access-token :refresh-token :token))))
+         :else (limits-error-report :vis/anthropic-limits-error
+                                    (or (ex-message e) "Anthropic limits check failed")
+                                    (dissoc (ex-data e) :access-token :refresh-token :token))))
      (catch Throwable t
        (limits-error-report :vis/anthropic-limits-error
                             (or (ex-message t) (.getName (class t)))
                             {:class (.getName (class t))})))))
 
-(defn authenticated? [] (some? (detect-credentials)))
+(defn authenticated? [] (boolean (:access-token (detect-credentials))))
 
 (defn status
   []
@@ -476,15 +483,17 @@
         now
         (util/now-ms)]
 
-    (cond-> {:is-authenticated (some? detected)}
+    (if (= :rejected (:auth-state detected))
       detected
-      (assoc :source
-        (:source detected) :oauth-token-preview
-        (let [t (:access-token detected)]
-          (str (subs t 0 (min 8 (count t))) "...")))
+      (cond-> {:is-authenticated (some? detected)}
+        detected
+        (assoc :source
+          (:source detected) :oauth-token-preview
+          (let [t (:access-token detected)]
+            (str (subs t 0 (min 8 (count t))) "...")))
 
-      (:expires-at-ms detected)
-      (assoc :expires-in-ms (- (long (:expires-at-ms detected)) now)))))
+        (:expires-at-ms detected)
+        (assoc :expires-in-ms (- (long (:expires-at-ms detected)) now))))))
 
 (defn logout! [] (delete-auth-file!) :logged-out)
 
@@ -513,7 +522,7 @@
     {:keys [open-browser-fn manual-code-fn force?]
      :or {open-browser-fn open-browser! manual-code-fn prompt-for-code!}}]
    (let [print! (or printer-fn (constantly nil))]
-     (if (and (not force?) (detect-credentials))
+     (if (and (not force?) (authenticated?))
        (do (print! "  Already authenticated with Anthropic Claude subscription.")
            (print! "  Run `vis-agent providers status anthropic-coding-plan` for details.")
            (print!

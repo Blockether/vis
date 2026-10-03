@@ -20,6 +20,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.provider.oauth :as oauth]
             [taoensso.telemere :as tel])
   (:import [java.net URLDecoder URLEncoder]
@@ -246,6 +247,7 @@
   (let [dir (io/file (str (System/getProperty "user.home") "/.vis"))]
     (when-not (.exists dir) (.mkdirs dir))
     (spit (auth-file) (oauth/auth-json-str (assoc credentials :saved-at (util/now-ms))))
+    (when (:reauth-required credentials) (provider-limits/auth-changed! :openai-codex))
     credentials))
 
 (defn- delete-auth-file!
@@ -258,12 +260,13 @@
    map or nil; does not validate with the network."
   []
   (when-let [auth (load-auth-file)]
-    (when-let [access-token (:access-token auth)]
-      (when-not (str/blank? access-token)
-        {:access-token access-token
-         :source :auth-file
-         :account-id (or (:account-id auth) (account-id access-token))
-         :expires-at-ms (:expires-at-ms auth)}))))
+    (or (oauth/reauthentication-status auth)
+        (when-let [access-token (:access-token auth)]
+          (when-not (str/blank? access-token)
+            {:access-token access-token
+             :source :auth-file
+             :account-id (or (:account-id auth) (account-id access-token))
+             :expires-at-ms (:expires-at-ms auth)})))))
 
 (defn- token-map
   "Provider-token shape for a creds map. Resolves the ChatGPT account id
@@ -320,7 +323,7 @@
    Vis: `{:token access-token :api-url CODEX_BASE_URL :llm-headers {...}}`."
   []
   (let [auth
-        (load-auth-file)
+        (oauth/require-usable-credentials! (load-auth-file))
 
         now
         (util/now-ms)]
@@ -408,7 +411,7 @@
     {:keys [originator open-browser-fn manual-code-fn force?]
      :or {originator "vis" open-browser-fn open-browser! manual-code-fn prompt-for-code!}}]
    (let [print! (or printer-fn (constantly nil))]
-     (if (and (not force?) (detect-credentials))
+     (if (and (not force?) (:access-token (detect-credentials)))
        (do (print! "  Already authenticated with OpenAI Codex.")
            (print! "  Run `vis-agent providers status openai-codex` for details.")
            (print! "  Run `vis-agent providers logout openai-codex` first to re-authenticate.")
@@ -536,7 +539,7 @@
 
 ;; Public CLI helpers
 
-(defn authenticated? [] (some? (detect-credentials)))
+(defn authenticated? [] (boolean (:access-token (detect-credentials))))
 
 (defn status
   []
@@ -546,18 +549,20 @@
         now
         (util/now-ms)]
 
-    (cond-> {:is-authenticated (some? detected)}
+    (if (= :rejected (:auth-state detected))
       detected
-      (assoc :source
-        (:source detected) :account-id
-        (:account-id detected) :oauth-token-preview
-        (let [t (:access-token detected)]
-          (str (subs t 0 (min 8 (count t))) "...")))
+      (cond-> {:is-authenticated (some? detected)}
+        detected
+        (assoc :source
+          (:source detected) :account-id
+          (:account-id detected) :oauth-token-preview
+          (let [t (:access-token detected)]
+            (str (subs t 0 (min 8 (count t))) "...")))
 
-      (:expires-at-ms detected)
-      (assoc :copilot-token-valid?
-        (> (long (:expires-at-ms detected)) now) :expires-in-ms
-        (- (long (:expires-at-ms detected)) now)))))
+        (:expires-at-ms detected)
+        (assoc :copilot-token-valid?
+          (> (long (:expires-at-ms detected)) now) :expires-in-ms
+          (- (long (:expires-at-ms detected)) now))))))
 
 (defn logout! [] (delete-auth-file!) :logged-out)
 
@@ -565,11 +570,14 @@
 
 (defn- usage-error-report
   [^Throwable t]
-  (if (usage-auth-error? t)
+  (if (or (oauth/reauthentication-error? t) (usage-auth-error? t))
     {:provider-id :openai-codex
      :status :unauthenticated
      :fetched-at-ms (util/now-ms)
-     :dynamic {:limits [] :note "OpenAI Codex credentials were rejected."}
+     :dynamic {:limits []
+               :note (if (oauth/reauthentication-error? t)
+                       (ex-message t)
+                       "OpenAI Codex credentials were rejected.")}
      :error {:type :provider/openai-codex-usage-unauthenticated
              :message (or (ex-message t) (.getName (class t)))}}
     {:provider-id :openai-codex
@@ -960,13 +968,16 @@
    the rotating OAuth token and retries once so TUI/gateway/iOS status panels
    do not get stuck on a server-rotated access token."
   []
-  (let [detected (detect-credentials)]
-    (if (nil? detected)
-      {:provider-id :openai-codex
-       :status :unauthenticated
-       :fetched-at-ms (util/now-ms)
-       :dynamic {:limits [] :note "OpenAI Codex is not authenticated."}}
-      (authenticated-limits-report!))))
+  (try (let [detected (detect-credentials)]
+         (if (nil? detected)
+           {:provider-id :openai-codex
+            :status :unauthenticated
+            :fetched-at-ms (util/now-ms)
+            :dynamic {:limits []
+                      :note (or (:error (oauth/reauthentication-status (load-auth-file)))
+                                "OpenAI Codex is not authenticated.")}}
+           (authenticated-limits-report!)))
+       (catch Throwable t (usage-error-report t))))
 
 (require '[com.blockether.vis.extension :as ext])
 

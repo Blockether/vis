@@ -20,6 +20,7 @@
             [com.blockether.vis.internal.provider.error :as perr]
             [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
+            [com.blockether.vis.internal.provider.oauth :as oauth]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.session.model :as session-model]
@@ -848,52 +849,60 @@
    `:provider/get-token-fn` (OAuth and friends), and a command-backed
    `api_key_command`, whose token is re-read from the credential cache so an
    `invalidate-credential-command!` on a 401 actually reaches the wire instead of
-   waiting for the next router build. A provider token lookup failure is
-   deliberately failure-safe: the provider retains its previous snapshot so normal
-   request/error handling remains authoritative."
-  [{:keys [id] :as provider-entry}]
-  (if-let [get-token-fn (some-> (registry/provider-by-id id)
-                                :provider/get-token-fn)]
-    (try (let [{:keys [token api-url llm-headers responses-path api-style]} (get-token-fn)
-               ;; The credential may also NAME the wire it issued
-               ;; (#152): an extension that mints its own `api_url`
-               ;; is the only thing that knows the dialect. Config
-               ;; precedence was resolved when the router was built,
-               ;; so a runtime dialect fills a gap, never overrides.
-               dialect (when (nil? (:api-style provider-entry))
-                         (config/effective-api-style {:runtime api-style}))]
+   waiting for the next router build. A transient lookup failure keeps the previous
+   snapshot. A rejected refresh grant stops only the selected provider's attempt."
+  ([provider-entry] (hydrate-provider-credentials provider-entry nil))
+  ([{:keys [id] :as provider-entry} required-provider-id]
+   (if-let [get-token-fn (some-> (registry/provider-by-id id)
+                                 :provider/get-token-fn)]
+     (try
+       (let [{:keys [token api-url llm-headers responses-path api-style]} (get-token-fn)
+             ;; The credential may also NAME the wire it issued
+             ;; (#152): an extension that mints its own `api_url`
+             ;; is the only thing that knows the dialect. Config
+             ;; precedence was resolved when the router was built,
+             ;; so a runtime dialect fills a gap, never overrides.
+             dialect (when (nil? (:api-style provider-entry))
+                       (config/effective-api-style {:runtime api-style}))]
 
-           (cond-> provider-entry
-             (some? token)
-             (assoc :api-key token)
+         (cond-> provider-entry
+           (some? token)
+           (assoc :api-key token)
 
-             (some? api-url)
-             (assoc :base-url api-url)
+           (some? api-url)
+           (assoc :base-url api-url)
 
-             (some? llm-headers)
-             (assoc :llm-headers llm-headers)
+           (some? llm-headers)
+           (assoc :llm-headers llm-headers)
 
-             (some? responses-path)
-             (assoc :responses-path responses-path)
+           (some? responses-path)
+           (assoc :responses-path responses-path)
 
-             (some? dialect)
-             (assoc :api-style dialect)))
-         (catch Throwable t
-           (tel/log! {:level :warn
-                      :id ::provider-credential-hydration-failed
-                      :data {:provider id :error (ex-message t)}}
-                     (str "Could not hydrate current credential for "
-                          id
-                          "; retaining the previous request snapshot"))
-           provider-entry))
-    ;; Command-backed: the cache serves the same token in the
-    ;; steady state (no fork per request) and re-execs the
-    ;; helper exactly once after a 401 invalidated it. A helper
-    ;; that is failing right now yields nil and keeps the
-    ;; snapshot, so the provider error stays authoritative.
-    (if-let [token (config/command-token id)]
-      (assoc provider-entry :api-key token)
-      provider-entry)))
+           (some? dialect)
+           (assoc :api-style dialect)))
+       (catch Throwable t
+         (if (oauth/reauthentication-error? t)
+           (if (= id required-provider-id)
+             (throw (ex-info (ex-message t)
+                             (assoc (ex-data t)
+                               :provider-id id
+                               :provider id)))
+             provider-entry)
+           (do (tel/log! {:level :warn
+                          :id ::provider-credential-hydration-failed
+                          :data {:provider id :error (ex-message t)}}
+                         (str "Could not hydrate current credential for "
+                              id
+                              "; retaining the previous request snapshot"))
+               provider-entry))))
+     ;; Command-backed: the cache serves the same token in the
+     ;; steady state (no fork per request) and re-execs the
+     ;; helper exactly once after a 401 invalidated it. A helper
+     ;; that is failing right now yields nil and keeps the
+     ;; snapshot, so the provider error stays authoritative.
+     (if-let [token (config/command-token id)]
+       (assoc provider-entry :api-key token)
+       provider-entry))))
 
 (defn- hydrate-router-credentials
   "Return an attempt-local copy of `router` with every provider's current
@@ -904,14 +913,16 @@
    so repeated hydration with the same token, endpoint, and headers keeps its opaque
    Svar handle. A changed credential or route produces a different snapshot and
    replaces that handle."
-  [router]
-  (let [provider-entries
-        (:providers router)
+  ([router] (hydrate-router-credentials router nil))
+  ([router required-provider-id]
+   (let [provider-entries
+         (:providers router)
 
-        hydrated
-        (mapv (comp hydrate-model-metadata hydrate-provider-credentials) provider-entries)]
+         hydrated
+         (mapv (comp hydrate-model-metadata #(hydrate-provider-credentials % required-provider-id))
+               provider-entries)]
 
-    (if (= hydrated provider-entries) router (assoc router :providers hydrated))))
+     (if (= hydrated provider-entries) router (assoc router :providers hydrated)))))
 
 (defn- with-provider-session-headers
   "Merge this session's headers for one provider into its `:llm-headers`.
@@ -968,7 +979,10 @@
                                       (:session-llm-headers environment))))
   ([environment provider-id]
    (auth-health/ensure-authenticated! provider-id)
-   (hydrate-environment-router environment)))
+   (update environment
+           :router
+           #(with-session-llm-headers (hydrate-router-credentials % provider-id)
+                                      (:session-llm-headers environment)))))
 
 (defn hydrate-request-model-metadata
   "Resolve missing or invalid model limits from the selected provider before preflight.

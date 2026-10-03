@@ -821,9 +821,10 @@
       "Output token budget too small"
 
       :auth
-      (if (and (all-attempts-auth? err) (> (count (provider-error-attempts err)) 1))
-        "All providers rejected your credentials"
-        "Provider authentication failed")
+      (cond (= :provider/reauthentication-required (:type data)) "Sign-in required"
+            (and (all-attempts-auth? err) (> (count (provider-error-attempts err)) 1))
+            "All providers rejected your credentials"
+            :else "Provider authentication failed")
 
       :quota-exhausted
       "Provider quota exhausted"
@@ -934,13 +935,17 @@
 
       :auth
       (let [ids (auth-failed-provider-ids err)]
-        (if (and (nil? (provider-id-of data)) (seq ids))
-          (str "NEXT STEP: re-authenticate "
-               (str/join ", " (map str ids))
-               " or fix "
-               (if (= 1 (count ids)) "its API key" "their API keys")
-               ", then retry.")
-          (auth-provider-next-step data)))
+        (cond (= :provider/reauthentication-required (:type data))
+              (str "NEXT STEP: open Providers, select Connect for "
+                   (or (provider-id-of data) "this provider")
+                   ", then retry after signing in.")
+              (and (nil? (provider-id-of data)) (seq ids))
+              (str "NEXT STEP: re-authenticate "
+                   (str/join ", " (map str ids))
+                   " or fix "
+                   (if (= 1 (count ids)) "its API key" "their API keys")
+                   ", then retry.")
+              :else (auth-provider-next-step data)))
 
       :quota-exhausted
       "NEXT STEP: check the provider plan, usage limits, and available credits, then retry."

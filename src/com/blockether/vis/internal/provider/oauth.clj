@@ -25,7 +25,8 @@
    reuse/refresh fns. Both return a 0-arg fn yielding the provider-token
    map, owning their own lock; drop them straight into
    `:provider/get-token-fn` / `:provider/refresh-token-fn`."
-  (:require [clojure.java.io :as io]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util]))
@@ -161,6 +162,34 @@
                            (try (.release ^java.nio.channels.FileLock fl) (catch Throwable _ nil)))
                          (close-quietly! ch)))))))))
 
+(def ^:private reauthentication-message
+  "Your sign-in has expired or was revoked. Select Connect to sign in again.")
+
+(defn reauthentication-status
+  "Return the saved rejection verdict, or nil when sign-in is not required."
+  [credentials]
+  (when (true? (:reauth-required credentials))
+    {:is-authenticated false :auth-state :rejected :error reauthentication-message}))
+
+(defn require-usable-credentials!
+  "Reject a saved invalid grant before token reuse or another refresh exchange."
+  [credentials]
+  (when (reauthentication-status credentials)
+    (throw (ex-info reauthentication-message {:type :provider/reauthentication-required})))
+  credentials)
+
+(defn reauthentication-error?
+  "True when a refresh grant requires a new sign-in."
+  [error]
+  (= :provider/reauthentication-required (:type (ex-data error))))
+
+(defn- invalid-grant?
+  [error]
+  (let [{:keys [status body]} (ex-data error)]
+    (and (contains? #{400 401} status)
+         (try (= "invalid_grant" (:error (json/read-json body :key-fn keyword)))
+              (catch Exception _ false)))))
+
 (defn make-file-refresher
   "Build a 0/1-arg single-flight refresh fn for a FILE-backed credential
    store whose token endpoint ROTATES the refresh_token (Anthropic,
@@ -198,7 +227,7 @@
 
         reuse
         (fn [rejected]
-          (let [creds (load)]
+          (let [creds (require-usable-credentials! (load))]
             (when (and creds (fresh-within? (saved-at creds) window))
               (let [tok (->token creds)]
                 ;; Never hand back the exact token the server just
@@ -210,15 +239,26 @@
         refresh!
         (fn []
           (let [creds
-                (load)
+                (require-usable-credentials! (load))
 
                 rt
                 (refresh-token creds)]
 
             (when (str/blank? rt) (no-token!))
-            (-> (exchange! rt)
-                persist!
-                ->token)))
+            (try (-> (exchange! rt)
+                     persist!
+                     ->token)
+                 (catch clojure.lang.ExceptionInfo e
+                   (if-not (invalid-grant? e)
+                     (throw e)
+                     (let [current (load)]
+                       ;; A sign-in can replace the file while the exchange is pending.
+                       (if (= rt (refresh-token current))
+                         (let [rejected (assoc current :reauth-required true)]
+                           (persist! rejected)
+                           (require-usable-credentials! rejected))
+                         (do (when (str/blank? (refresh-token current)) (no-token!))
+                             (->token (require-usable-credentials! current))))))))))
 
         ;; In-process monitor serializes threads in THIS JVM; the file lock
         ;; then serializes across JVMs. Order matters: hold the monitor first

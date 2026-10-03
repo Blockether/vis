@@ -219,8 +219,9 @@
                    :error {:message message}})))
 
 (defn- provider-authenticated?
-  ([provider] (boolean (get (gateway-provider-status-safe provider) "is_authenticated")))
-  ([_provider status] (boolean (get status "is_authenticated"))))
+  ([provider] (provider-authenticated? provider (gateway-provider-status-safe provider)))
+  ([_provider status]
+   (and (true? (get status "is_authenticated")) (not= "rejected" (get status "auth_state")))))
 
 (defn show-provider-status!
   "Status + limits as the RICH canonical markdown form, painted through the IR
@@ -263,7 +264,9 @@
          (provider-authenticated? provider status)
 
          auth-label
-         (if is-authenticated "Re-authenticate" "Authenticate")]
+         (cond (= "rejected" (get status "auth_state")) "Connect"
+               is-authenticated "Re-authenticate"
+               :else "Authenticate")]
 
      (-> (cond-> [{:id :default :label "Set as Default..." :key \d}]
            (not is-default)

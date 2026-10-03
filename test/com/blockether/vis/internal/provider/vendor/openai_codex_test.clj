@@ -554,3 +554,52 @@
                                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
                          (expect (= (if (= :poll delayed-leg) 0 1) @exchanges))
                          (expect (zero? @saves))))))))
+
+(defdescribe rejected-refresh-credentials-test
+             (it "requires sign-in for saved rejected refresh grants without making requests"
+                 (with-redefs-fn {#'codex/load-auth-file
+                                  (constantly {:access-token "old-access"
+                                               :refresh-token "old-refresh"
+                                               :account-id "account"
+                                               :expires-at-ms (+ (System/currentTimeMillis) 3600000)
+                                               :reauth-required true})
+                                  #'http/get (fn [& _]
+                                               (throw (ex-info "Unexpected request" {})))
+                                  #'http/post (fn [& _]
+                                                (throw (ex-info "Unexpected refresh" {})))}
+                   (fn []
+                     (expect (= :rejected (:auth-state (codex/detect-credentials))))
+                     (expect (false? (codex/authenticated?)))
+                     (expect (false? (:is-authenticated (codex/status))))
+                     (expect (= :rejected (:auth-state (codex/status))))
+                     (expect (clojure.string/includes? (:error (codex/status)) "Select Connect"))
+                     (expect (= :provider/reauthentication-required
+                                (try (codex/get-openai-codex-token!)
+                                     nil
+                                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                     (let [report (codex/limits)]
+                       (expect (= :unauthenticated (:status report)))
+                       (expect (clojure.string/includes? (get-in report [:dynamic :note])
+                                                         "Select Connect")))))))
+
+(defdescribe status-credential-snapshot-test
+             (it "keeps status consistent when a rejection is saved after the credential read"
+                 (let [saved
+                       (atom {:access-token "fixture-access"
+                              :refresh-token "fixture-refresh"
+                              :account-id "account"})
+
+                       reads
+                       (atom 0)]
+
+                   (with-redefs-fn {#'codex/load-auth-file
+                                    (fn []
+                                      (swap! reads inc)
+                                      (let [credentials @saved]
+                                        (swap! saved assoc :reauth-required true)
+                                        credentials))}
+                     (fn []
+                       (expect (true? (:is-authenticated (codex/status))))
+                       (expect (= 1 @reads))
+                       (expect (= :rejected (:auth-state (codex/status))))
+                       (expect (= 2 @reads)))))))

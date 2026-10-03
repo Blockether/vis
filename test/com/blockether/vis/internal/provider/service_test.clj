@@ -93,6 +93,17 @@
           (expect (true? (:is-authenticated status)))
           (expect (= :unverified (:auth-state status)))))))
 
+(defdescribe provider-status-keeps-explicit-rejection
+             (it "keeps a provider's saved sign-in requirement in live and cached status"
+                 (let [verdict {:is-authenticated false
+                                :auth-state :rejected
+                                :error "Your sign-in expired. Select Connect to sign in again."}]
+                   (with-redefs [registry/provider-by-id (constantly {:provider/status-fn
+                                                                      (constantly verdict)})]
+                     (expect (= verdict (providers/provider-status {:id :rejected-grant-test})))
+                     (expect (= verdict
+                                (providers/provider-status-cached {:id :rejected-grant-test})))))))
+
 (defdescribe
   cached-provider-status-never-touches-the-network
   (it "cached provider status never touches the network"
@@ -369,14 +380,14 @@
       ;; The model picker must list providers whose OAuth creds live OUTSIDE config
       ;; (token files / keychain) even before they're saved into `:providers` — the
       ;; whole point of `picker-fleet` vs `configured-providers`.
-      (let [detected (atom true)]
+      (let [detected (atom {:access-token "tok"})]
         (with-redefs [config/load-config (constantly {:providers [{:id :openai
                                                                    :models [{:name "gpt-x"}]}]})
                       config/deleted-provider-ids (constantly #{})
                       registry/registered-providers
                       (constantly [{:provider/id :anthropic-coding-plan
                                     :provider/detect-fn (fn []
-                                                          (when @detected {:access-token "tok"}))}
+                                                          @detected)}
                                    {:provider/id :openai
                                     :provider/detect-fn (fn []
                                                           {:access-token "tok"})}])
@@ -393,8 +404,11 @@
                     "its preset default catalog models are attached"))
           (expect (= [:openai :anthropic-coding-plan] (mapv :id (providers/picker-fleet)))
                   "picker-fleet = configured fleet first, authenticated extras appended")
+          ;; Keep rejected credentials visible so the user can select Connect.
+          (reset! detected {:is-authenticated false :auth-state :rejected})
+          (expect (= [:openai :anthropic-coding-plan] (mapv :id (providers/picker-fleet))))
           ;; No stored creds -> not surfaced.
-          (reset! detected false)
+          (reset! detected nil)
           (expect (empty? (providers/authenticated-preset-providers))
                   "a provider with no detected creds is skipped")
           (expect (= [:openai] (mapv :id (providers/picker-fleet))))))

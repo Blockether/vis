@@ -380,7 +380,36 @@ export function useProviderFleet(client: GatewayClient): ProviderFleet {
     () =>
       client.onProviderLimits((providerId, limits) => {
         setProviders(
-          (rows) => rows?.map((row) => (row.id === providerId ? { ...row, limits } : row)) ?? rows,
+          (rows) => rows?.map((row) => {
+            if (row.id !== providerId) return row;
+            // These are explicit gateway verdicts, not guesses from a quota value.
+            if (limits.status === 'unauthenticated') {
+              return {
+                ...row,
+                limits,
+                status: {
+                  ...row.status,
+                  is_authenticated: false,
+                  auth_state: 'rejected',
+                  error: limits.dynamic?.note ?? limits.error?.message ?? 'Select Connect to sign in again.',
+                },
+              };
+            }
+            if (limits.status === 'ok') {
+              return {
+                ...row,
+                limits,
+                status: {
+                  ...row.status,
+                  is_authenticated: true,
+                  auth_state: 'verified',
+                  error: undefined,
+                  warning: undefined,
+                },
+              };
+            }
+            return { ...row, limits };
+          }) ?? rows,
         );
       }),
     [client],
@@ -1208,6 +1237,7 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
       {rows.map((provider) => {
         const status = providerStatusMark(provider);
         const authed = isProviderAuthed(provider);
+        const rejected = providerAuthState(provider) === 'rejected';
         const isProbing = pending === `status:${provider.id}`;
         const mark = providerQuotaMark(provider);
         const isOpen = authed && expanded.has(provider.id);
@@ -1327,7 +1357,10 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                         </Text>
                       )}
                     </span>
-                    <Text variant="meta" className="mt-0.5 block truncate">
+                    <Text
+                      variant="meta"
+                      className={rejected ? 'mt-0.5 block whitespace-normal text-err' : 'mt-0.5 block truncate'}
+                    >
                       {providerRowLine(provider)}
                     </Text>
                   </span>
@@ -1336,7 +1369,7 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                     className="shrink-0"
                     title={providerLimitsLine(provider) ?? status.label}
                   >
-                    {!authed ? 'Sign in' : (mark ?? '')}
+                    {!authed ? (rejected ? 'Connect' : 'Sign in') : (mark ?? '')}
                   </Text>
                   <ChevronIcon
                     open={isOpen}

@@ -17,6 +17,19 @@
             :error "rate limited"}
            {:provider "openai" :model "gpt-5" :status 401 :reason :auth :error "unauthorized"}]}})
 
+(defdescribe
+  refresh-grant-rejection-presentation-test
+  (it "shows a sign-in requirement instead of suggesting another unchanged retry"
+      (let [error (ex-info
+                    "Your sign-in has expired or was revoked. Select Connect to sign in again."
+                    {:type :provider/reauthentication-required
+                     :provider-id :anthropic-coding-plan})]
+        (doseq [value [error {:message (ex-message error) :data (ex-data error)}]]
+          (expect (= :auth (perr/provider-error-kind value)))
+          (expect (= "Sign-in required" (perr/provider-error-title value)))
+          (expect (str/includes? (perr/provider-error-next-step value) "Connect"))
+          (expect (str/includes? (perr/provider-error-next-step value) "anthropic-coding-plan"))))))
+
 ;; Regression, issue #167: the upstream status survived classification but the
 ;; canonical block flattened the diagnosis into prose, leaving channels to lose
 ;; the HTTP fact or parse sentences back into a card.
