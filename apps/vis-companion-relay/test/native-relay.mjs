@@ -1,14 +1,21 @@
-/** Local Worker fixture for the native two-gateway Rooms suite. */
+/** Local Worker fixture for the native Rooms and automation suites. */
 import { build } from "esbuild";
 import { Miniflare } from "miniflare";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 
 const bundle = await build({
   stdin: {
     contents: `import { handle } from './src/index.ts';
     export default { fetch(request, env) {
       const limiter = { limit: async () => ({ success: true }) };
-      return handle(request, { ...env, ROOMS_ADDRESS_LIMIT: limiter, ROOMS_MACHINE_LIMIT: limiter });
+      return handle(request, {
+        ...env,
+        ROOMS_ADDRESS_LIMIT: limiter,
+        ROOMS_MACHINE_LIMIT: limiter,
+        HOOKS_CREATE_LIMIT: limiter,
+        HOOKS_INBOX_LIMIT: limiter,
+        HOOKS_SENDER_LIMIT: limiter,
+      });
     } };`,
     resolveDir: process.cwd(),
   },
@@ -35,10 +42,13 @@ const worker = new Miniflare({
         },
         env: {
           ROOMS_DB: { type: "d1", id: "ROOMS_DB" },
-          ROOMS_ADMIN_TOKEN: {
-            type: "text",
-            value: process.env.ROOMS_ADMIN_TOKEN,
-          },
+          // Only the Rooms suite names an administrator.
+          ...(process.env.ROOMS_ADMIN_TOKEN && {
+            ROOMS_ADMIN_TOKEN: {
+              type: "text",
+              value: process.env.ROOMS_ADMIN_TOKEN,
+            },
+          }),
         },
         exports: {},
       },
@@ -46,11 +56,10 @@ const worker = new Miniflare({
   ],
 });
 const db = await worker.getD1Database("ROOMS_DB");
-for (const name of ["0001_rooms.sql", "0002_rooms_limits.sql"]) {
-  const sql = await readFile(
-    new URL(`../migrations/${name}`, import.meta.url),
-    "utf8",
-  );
+const migrations = new URL("../migrations/", import.meta.url);
+for (const name of (await readdir(migrations)).sort()) {
+  if (!name.endsWith(".sql")) continue;
+  const sql = await readFile(new URL(name, migrations), "utf8");
   const statements = sql
     .replace(/^--.*$/gm, "")
     .split(/\n\s*\n/)
