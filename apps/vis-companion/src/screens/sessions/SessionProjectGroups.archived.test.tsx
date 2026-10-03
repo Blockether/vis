@@ -303,6 +303,7 @@ describe('a project shows the sessions it archived', () => {
       true,
       'exclude',
       ARCHIVED_BANDS,
+      true,
     );
     expect(again.client.listProjectPage).toHaveBeenCalledWith(
       ROOT,
@@ -313,6 +314,7 @@ describe('a project shows the sessions it archived', () => {
       false,
       'only',
       ARCHIVED_BANDS,
+      true,
     );
   });
 
@@ -352,6 +354,7 @@ describe('a project shows the sessions it archived', () => {
       false,
       'exclude',
       undefined,
+      true,
     );
   });
 
@@ -374,6 +377,7 @@ describe('a project shows the sessions it archived', () => {
       true,
       'only',
       ARCHIVED_BANDS,
+      true,
     );
     expect(client.listSessionGroups).toHaveBeenLastCalledWith(
       ROOT,
@@ -530,6 +534,7 @@ describe('a project shows the sessions it archived', () => {
       true,
       'only',
       ARCHIVED_BANDS,
+      true,
     );
   });
 

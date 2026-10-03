@@ -842,6 +842,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           start === 0,
           archived,
           bandWindow,
+          true,
         );
         if (!live) return;
         if (answer.nextCursor) cursors.current.set(from + answer.rows.length, answer.nextCursor);
@@ -911,7 +912,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     const control = new AbortController();
     let live = true;
     void getClient(conn)
-      .listProjectPage(root, 1, '', pins.current, control.signal, false, groupArchived, bandWindow)
+      .listProjectPage(root, 1, '', pins.current, control.signal, false, groupArchived, bandWindow, true)
       .then((answer) => {
         if (!live) return;
         setGroupedPage({

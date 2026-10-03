@@ -1630,7 +1630,7 @@ describe('ProjectGroup groups', () => {
       undefined,
     );
     expect(client.listProjectPage).toHaveBeenLastCalledWith(
-      ROOT, 10, '', expect.any(Map), expect.any(AbortSignal), true, 'exclude', undefined,
+      ROOT, 10, '', expect.any(Map), expect.any(AbortSignal), true, 'exclude', undefined, true,
     );
     // One page of sessions is one page: that set has nothing to step through.
     const sessions = screen.getByText('Sessions').parentElement as HTMLElement;
@@ -1676,10 +1676,10 @@ describe('ProjectGroup groups', () => {
     );
     // The loose sessions stay live; the shelves under the archived bands come from the archive.
     expect(client.listProjectPage).toHaveBeenCalledWith(
-      ROOT, 10, '', expect.any(Map), expect.any(AbortSignal), true, 'exclude', turned,
+      ROOT, 10, '', expect.any(Map), expect.any(AbortSignal), true, 'exclude', turned, true,
     );
     expect(client.listProjectPage).toHaveBeenCalledWith(
-      ROOT, 1, '', expect.any(Map), expect.any(AbortSignal), false, 'only', turned,
+      ROOT, 1, '', expect.any(Map), expect.any(AbortSignal), false, 'only', turned, true,
     );
   });
 
@@ -1754,7 +1754,7 @@ describe('ProjectGroup groups', () => {
           turned,
         );
         expect(client.listProjectPage).toHaveBeenCalledWith(
-          ROOT, 1, '', expect.any(Map), expect.any(AbortSignal), false, 'only', turned,
+          ROOT, 1, '', expect.any(Map), expect.any(AbortSignal), false, 'only', turned, true,
         );
       });
       const nextName = names[ARCHIVED_GROUPS_PAGE].name;

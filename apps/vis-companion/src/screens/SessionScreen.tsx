@@ -1735,7 +1735,7 @@ export function SessionScreen({
   const loadTranscript = useCallback(
     async (row?: Session | null, signal?: AbortSignal) => {
       try {
-        const next =
+        const received =
           row === undefined
             ? await client.openingTranscript(sid, signal)
             : await client.transcriptIfMoved(sid, row, signal);
@@ -1744,8 +1744,10 @@ export function SessionScreen({
         // do not stop a fetch promptly), so cancellation guards the state as well
         // as the transport.
         if (signal?.aborted) return null;
-        if (!next) {
-          // Unchanged: the gateway just told us the cache IS its current answer.
+        // A background warm can replace the cache while this screen holds older rows.
+        // "Unchanged" confirms that cache, not necessarily the transcript already painted.
+        const next = received ?? client.cachedTranscript(sid);
+        if (!next || next === turnsRef.current) {
           setTurnsFresh(true);
           // Unchanged: keep the painted turns, their object identities, and the
           // scroll position exactly as they are.

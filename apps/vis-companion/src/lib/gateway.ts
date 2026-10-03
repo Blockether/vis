@@ -8,6 +8,7 @@
 
 import { activityProjectionFromWire, type ActivityProjection } from './activity';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
+import { unreadTurnCount } from './unread';
 import type { PushGateway } from './relay';
 import {
   ATTACHMENT_MEMORY_BUDGET,
@@ -645,10 +646,15 @@ function sessionTurnCount(row: Session): number {
   return Number.isFinite(count) && count > 0 ? count : 0;
 }
 
-/** Did a known row gain a finished answer since the previous list window? */
+/** Does this row need a finished answer ready before the list exposes it? */
 function sessionHasNewAnswer(previous: Session | undefined, next: Session): boolean {
-  if (!previous || sessionIsActive(next)) return false;
-  return sessionIsActive(previous) || sessionTurnCount(next) > sessionTurnCount(previous);
+  if (sessionIsActive(next)) return false;
+  return (
+    unreadTurnCount(next) > 0 ||
+    (!!previous && (
+      sessionIsActive(previous) || sessionTurnCount(next) > sessionTurnCount(previous)
+    ))
+  );
 }
 
 function transcriptPrefetchStamp(row: Session): string {
@@ -3233,8 +3239,7 @@ export class GatewayClient {
     previous: readonly Session[] | null,
     rows: readonly Session[],
   ): Promise<boolean> {
-    if (!previous?.length) return true;
-    const before = new Map(previous.map((row) => [row.id, row]));
+    const before = new Map(previous?.map((row) => [row.id, row]));
     const selected: Session[] = [];
     const seen = new Set<string>();
     for (const row of rows) {
@@ -3610,6 +3615,9 @@ export class GatewayClient {
    * `listSessionGroups` cut: `grouped` then holds those bands' rows alone. It belongs to
    * the question a window answered, so a page held for another page of bands is not an
    * answer to this one.
+   *
+   * `warmTranscripts` prepares recent answers for a visible page. Reads ahead and
+   * administrative walks leave it off, so they cannot evict the visible transcript cache.
    */
   async listProjectPage(
     root: string,
@@ -3620,6 +3628,7 @@ export class GatewayClient {
     persistHead = false,
     archived: ArchiveView = 'exclude',
     bands?: BandWindow,
+    warmTranscripts = false,
   ): Promise<ProjectPage> {
     // The overlay rides down here too: a session holding words typed on THIS device
     // is in this device's list and in nobody else's, so a page cut without it is a
@@ -3645,8 +3654,17 @@ export class GatewayClient {
       signal,
       pin?.etag ? { 'If-None-Match': pin.etag } : undefined,
     );
-    const remember = (window: { etag: string; page: ProjectPage }): ProjectPage => {
+    const remember = async (window: { etag: string; page: ProjectPage }): Promise<ProjectPage> => {
       window = { ...window, page: this.withoutDeletedProjectSessions(window.page) };
+      if (warmTranscripts) {
+        const visible = [...window.page.rows, ...window.page.awaiting, ...window.page.grouped];
+        const previous = pin ? [...pin.page.rows, ...pin.page.awaiting, ...pin.page.grouped] : null;
+        this.prefetchActiveTranscripts(visible);
+        if (!(await this.prefetchSettledTranscripts(previous, visible))) {
+          if (pin) return this.withoutDeletedProjectSessions(pin.page);
+          throw new Error('Could not prepare new answers');
+        }
+      }
       // The saved head is the project's ACTIVE first page: a reveal is a look at another
       // list, and a cold start must not paint the archive in its place.
       if (persistHead && !after && archived === 'exclude' && limit <= MAX_PROJECT_HEAD_ROWS)
