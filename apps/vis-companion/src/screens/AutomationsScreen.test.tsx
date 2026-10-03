@@ -5,6 +5,9 @@ import { AutomationsWorkspace } from './AutomationsScreen';
 import { storyAutomationsClient } from '../dev/story-data';
 
 const click = (name: string) => fireEvent.click(screen.getByRole('button', { name }));
+/** A form field by the start of its label; the label also holds the hint. */
+const field = (name: RegExp) => screen.getByRole('textbox', { name });
+const type = (name: RegExp, value: string) => fireEvent.change(field(name), { target: { value } });
 
 async function openAutomation(name: string, client = storyAutomationsClient()) {
   render(<AutomationsWorkspace client={client} gatewayUrl="http://gateway.example.com/" />);
@@ -125,5 +128,121 @@ describe('Automations workspace', () => {
     click('Retry');
     expect(await screen.findByText('2 automations')).toBeVisible();
     expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it('creates an automation from the form and opens it', async () => {
+    const client = storyAutomationsClient();
+    const create = vi.spyOn(client, 'createAutomation');
+    render(<AutomationsWorkspace client={client} />);
+    expect(await screen.findByText('2 automations')).toBeVisible();
+    click('New automation');
+    expect(screen.getByRole('heading', { name: 'New automation' })).toBeVisible();
+    click('Create automation');
+    expect(screen.getByText('Give the automation a name.')).toBeVisible();
+    expect(create).not.toHaveBeenCalled();
+    type(/^Name/, 'Nightly check');
+    type(/^Prompt/, 'Check the build.');
+    click('Create automation');
+    expect(await screen.findByText('Automation created.')).toBeVisible();
+    expect(create).toHaveBeenCalledWith({
+      name: 'Nightly check',
+      prompt: 'Check the build.',
+      triggers: [{ kind: 'every', seconds: 86_400 }],
+      target: { mode: 'new' },
+      delivery: { push: true, callback: null },
+      model: null,
+      deliver_only: false,
+    });
+    expect(screen.getByRole('heading', { name: 'Nightly check' })).toBeVisible();
+    expect(screen.getByText('Every day')).toBeVisible();
+    expect(screen.getByText('3 automations')).toBeVisible();
+  });
+
+  it('keeps the form and the typed values when the machine refuses them', async () => {
+    const client = storyAutomationsClient();
+    vi.spyOn(client, 'createAutomation').mockRejectedValueOnce(
+      new Error('An automation store holds at most 256 automations'),
+    );
+    render(<AutomationsWorkspace client={client} />);
+    expect(await screen.findByText('2 automations')).toBeVisible();
+    click('New automation');
+    type(/^Name/, 'One more');
+    type(/^Prompt/, 'Check it.');
+    click('Create automation');
+    expect(
+      await screen.findByText('An automation store holds at most 256 automations'),
+    ).toBeVisible();
+    expect(field(/^Name/)).toHaveValue('One more');
+    click('Cancel');
+    expect(screen.queryByRole('heading', { name: 'New automation' })).toBeNull();
+    expect(screen.queryByText(/holds at most 256/)).toBeNull();
+    expect(screen.getByText('2 automations')).toBeVisible();
+  });
+
+  it('adds and removes triggers', async () => {
+    render(<AutomationsWorkspace client={storyAutomationsClient()} />);
+    expect(await screen.findByText('2 automations')).toBeVisible();
+    click('New automation');
+    expect(screen.queryByRole('button', { name: /^Remove trigger/ })).toBeNull();
+    click('Add trigger');
+    expect(screen.getByRole('group', { name: 'Trigger 2' })).toBeVisible();
+    click('Remove trigger 1');
+    expect(screen.getByRole('group', { name: 'Trigger' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /^Remove trigger/ })).toBeNull();
+  });
+
+  it('saves only the changed fields of an automation', async () => {
+    const client = await openAutomation('Morning summary');
+    const update = vi.spyOn(client, 'updateAutomation');
+    click('Edit');
+    expect(screen.getByRole('heading', { name: 'Edit Morning summary' })).toBeVisible();
+    expect(field(/^Cron expression/)).toHaveValue('0 9 * * 1-5');
+    click('Save automation');
+    expect(await screen.findByText('No changes to save.')).toBeVisible();
+    expect(update).not.toHaveBeenCalled();
+    click('Edit');
+    type(/^Prompt/, 'List the open pull requests.');
+    type(/^Cron expression/, '30 7 * * 1-5');
+    click('Save automation');
+    expect(await screen.findByText('Automation saved.')).toBeVisible();
+    expect(update).toHaveBeenCalledWith('auto-standup', {
+      prompt: 'List the open pull requests.',
+      triggers: [{ kind: 'cron', expression: '30 7 * * 1-5', timezone: 'Europe/Warsaw' }],
+    });
+    expect(screen.getByText('List the open pull requests.')).toBeVisible();
+    expect(screen.getByText('Cron 30 7 * * 1-5 · Europe/Warsaw')).toBeVisible();
+  });
+
+  it('keeps the payload filters of a webhook trigger that you edit', async () => {
+    const story = storyAutomationsClient();
+    const filters = [{ field: 'action', equals: 'opened' }];
+    const client = {
+      ...story,
+      automations: async () => {
+        const page = await story.automations();
+        return {
+          ...page,
+          automations: page.automations.map((automation) =>
+            automation.webhook
+              ? { ...automation, triggers: [{ ...automation.triggers[0], filters }] }
+              : automation,
+          ),
+        };
+      },
+    };
+    const update = vi.spyOn(client, 'updateAutomation');
+    await openAutomation('Review new pull requests', client);
+    click('Edit');
+    expect(
+      screen.getByText('This trigger keeps its 1 payload filter. Ask Vis in a chat to change it.'),
+    ).toBeVisible();
+    type(/^Events/, 'pull_request, push');
+    click('Save automation');
+    expect(await screen.findByText('Automation saved.')).toBeVisible();
+    expect(update).toHaveBeenCalledWith('auto-review', {
+      triggers: [
+        { kind: 'webhook', signature: 'github', events: ['pull_request', 'push'], filters },
+      ],
+    });
   });
 });

@@ -3,6 +3,8 @@ import { GatewayClient } from '../lib/gateway';
 import type { GatewayConn } from '../lib/types';
 import { timeLabel } from '../lib/fleet';
 import {
+  automationInput,
+  automationPatch,
   automationSummary,
   deliveryLabel,
   runMillis,
@@ -11,6 +13,7 @@ import {
   triggerLabel,
   wordLabel,
   type Automation,
+  type AutomationDraft,
   type AutomationList,
   type AutomationRun,
   type AutomationSecret,
@@ -27,10 +30,12 @@ import {
   CircleXIcon,
   PauseIcon,
 } from '../components/icons';
+import { AutomationForm } from './AutomationForm';
 
 export type AutomationsClient = Pick<
   GatewayClient,
   | 'automations'
+  | 'createAutomation'
   | 'automationRuns'
   | 'updateAutomation'
   | 'runAutomation'
@@ -99,6 +104,8 @@ export function AutomationsWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+  /** The open form: a null id creates an automation. */
+  const [form, setForm] = useState<{ id: string | null } | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -135,6 +142,46 @@ export function AutomationsWorkspace({
     setNotice(null);
   };
   const selected = list?.automations.find((item) => item.id === selectedId) ?? null;
+  const editing = form?.id
+    ? (list?.automations.find((item) => item.id === form.id) ?? null)
+    : null;
+  const edit = (id: string | null) => {
+    setForm({ id });
+    setError(null);
+    setNotice(null);
+  };
+  const keep = (automation: Automation) =>
+    setList(
+      (current) =>
+        current && {
+          ...current,
+          automations: current.automations.some((item) => item.id === automation.id)
+            ? current.automations.map((item) => (item.id === automation.id ? automation : item))
+            : [...current.automations, automation],
+        },
+    );
+  const save = (draft: AutomationDraft) =>
+    void run(async () => {
+      if (editing) {
+        const changes = automationPatch(draft, editing);
+        const isChanged = Object.keys(changes).length > 0;
+        if (isChanged) keep(await client.updateAutomation(editing.id, changes));
+        setForm(null);
+        setNotice(isChanged ? 'Automation saved.' : 'No changes to save.');
+        if (!isChanged) return;
+      } else {
+        const created = await client.createAutomation(automationInput(draft));
+        keep(created);
+        setForm(null);
+        setSelectedId(created.id);
+        setNotice(
+          created.webhook
+            ? 'Automation created. Create the webhook secret, then give the webhook address to the sender.'
+            : 'Automation created.',
+        );
+      }
+      refresh();
+    });
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -143,9 +190,16 @@ export function AutomationsWorkspace({
           <AutomationsIcon />
           {list ? countLabel(list.automations.length) : 'Loading automations…'}
         </span>
-        <Button variant="secondary" disabled={busy} onClick={refresh}>
-          Refresh
-        </Button>
+        <span className="flex flex-wrap items-center gap-3">
+          {!form && (
+            <Button disabled={busy} onClick={() => edit(null)}>
+              New automation
+            </Button>
+          )}
+          <Button variant="secondary" disabled={busy} onClick={refresh}>
+            Refresh
+          </Button>
+        </span>
       </div>
       {list && !list.is_enabled && (
         <div className="px-3 pt-3">
@@ -165,7 +219,18 @@ export function AutomationsWorkspace({
           <Banner kind="ok">{notice}</Banner>
         </div>
       )}
-      {selected ? (
+      {form && (!form.id || editing) ? (
+        <AutomationForm
+          key={form.id ?? 'new'}
+          automation={editing}
+          busy={busy}
+          onCancel={() => {
+            setForm(null);
+            setError(null);
+          }}
+          onSave={save}
+        />
+      ) : selected ? (
         <AutomationDetail
           key={selected.id}
           automation={selected}
@@ -175,6 +240,7 @@ export function AutomationsWorkspace({
           refreshKey={revision}
           run={run}
           onBack={() => open(null)}
+          onEdit={() => edit(selected.id)}
           onChanged={refresh}
           onNotice={setNotice}
           onDeleted={() => {
@@ -189,8 +255,8 @@ export function AutomationsWorkspace({
             <div className="space-y-2 p-4 font-mono text-body">
               <p className="font-bold">No automations on this machine</p>
               <p className="text-dialog-hint">
-                Ask Vis in a chat to create one. For example: “Every weekday at 9:00, summarize
-                the new issues.”
+                Select New automation, or ask Vis in a chat. For example: “Every weekday at 9:00,
+                summarize the new issues.”
               </p>
             </div>
           )}
@@ -263,6 +329,7 @@ function AutomationDetail({
   refreshKey,
   run,
   onBack,
+  onEdit,
   onChanged,
   onNotice,
   onDeleted,
@@ -274,6 +341,7 @@ function AutomationDetail({
   refreshKey: number;
   run: (action: () => Promise<void>) => Promise<void>;
   onBack: () => void;
+  onEdit: () => void;
   onChanged: () => void;
   onNotice: (text: string) => void;
   onDeleted: () => void;
@@ -331,6 +399,9 @@ function AutomationDetail({
           }
         >
           Run now
+        </Button>
+        <Button variant="secondary" disabled={busy} onClick={onEdit}>
+          Edit
         </Button>
         <Button
           variant="secondary"

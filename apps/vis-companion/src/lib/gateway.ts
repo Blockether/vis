@@ -100,6 +100,7 @@ import type {
 } from './improve';
 import type {
   Automation,
+  AutomationInput,
   AutomationList,
   AutomationPatch,
   AutomationRun,
@@ -2551,6 +2552,10 @@ export class GatewayClient {
 
   automations(signal?: AbortSignal): Promise<AutomationList> {
     return this.request('GET', '/v1/automations', undefined, signal);
+  }
+
+  createAutomation(input: AutomationInput): Promise<Automation> {
+    return this.request('POST', '/v1/automations', input);
   }
 
   automationRuns(automationId: string, signal?: AbortSignal): Promise<AutomationRunList> {

@@ -2803,9 +2803,42 @@ export function storyAutomationsClient({
     automationRuns: async (automationId) => ({
       runs: runs.filter((run) => run.automation_id === automationId),
     }),
+    createAutomation: async (input) => {
+      const id = `auto-new-${automations.length + 1}`;
+      const automation: Automation = {
+        id,
+        name: input.name,
+        enabled: input.enabled ?? true,
+        triggers: input.triggers,
+        prompt: input.prompt,
+        target: input.target,
+        delivery: {
+          push: input.delivery?.push ?? true,
+          callback: input.delivery?.callback ?? null,
+        },
+        model: input.model ?? null,
+        deliver_only: input.deliver_only ?? false,
+        created_at: STORY_AUTOMATION_RUN.created_at,
+        updated_at: STORY_AUTOMATION_RUN.created_at,
+        next_run_at: null,
+        webhook: input.triggers.some((trigger) => trigger.kind === 'webhook')
+          ? { path: `/v1/hooks/${id}` }
+          : null,
+        secrets: { webhook: false, callback: false },
+        last_run: null,
+      };
+      automations = [...automations, automation];
+      return automation;
+    },
     updateAutomation: async (id, changes) => {
       const current = find(id);
-      const updated = { ...current, ...changes, updated_at: current.updated_at + 1 };
+      const merged = { ...current, ...changes, updated_at: current.updated_at + 1 };
+      const updated = {
+        ...merged,
+        webhook: merged.triggers.some((trigger) => trigger.kind === 'webhook')
+          ? (current.webhook ?? { path: `/v1/hooks/${id}` })
+          : null,
+      };
       automations = automations.map((item) => (item.id === id ? updated : item));
       return updated;
     },
@@ -2857,7 +2890,8 @@ export function storyAutomationsFetch(
     const [, , , rawId, action] = url.pathname.split('/');
     const id = decodeURIComponent(rawId ?? '');
     let body: unknown;
-    if (url.pathname === '/v1/automations') body = await client.automations();
+    if (url.pathname === '/v1/automations')
+      body = method === 'POST' ? await client.createAutomation(attrs) : await client.automations();
     else if (url.pathname === '/v1/automations/runs')
       body = await client.automationRuns(url.searchParams.get('automation_id') ?? '');
     else if (action === 'run') body = await client.runAutomation(id);

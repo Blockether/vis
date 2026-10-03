@@ -62,6 +62,11 @@ later, ask again, for example `Move the morning review list to 7:30.` The tool i
 while automations are on. A run that an automation started cannot create, change or delete
 automations.
 
+You can also create an automation in the app. Select the **Open automations** icon, choose the
+machine and select **New automation**. Fill in the name, the prompt and the triggers, then select
+**Create automation**. To change an automation, open it and select **Edit**. The form keeps the
+[filters](#filter-events) of a webhook trigger. To change them, ask Vis in a chat.
+
 Each automation has these parts:
 
 | Part | What it sets |
@@ -196,7 +201,8 @@ minutes, 10 minutes, 1 hour and 6 hours. It stops after 6 attempts. A repeated a
 A webhook trigger starts a run when another service sends a signed request.
 
 1. Ask Vis for an automation with a webhook trigger. Name the service and the events, for example
-   `When GitHub reports a new pull request for main, review it in a new session.`
+   `When GitHub reports a new pull request for main, review it in a new session.` In the app form,
+   add a **Webhook** trigger instead.
 2. Open the automation in the [automation views](#manage-automations). Select **Create webhook
    secret** and copy the secret. Vis shows it only once.
 3. Copy the webhook address. The app shows it as **Webhook address**, and the TUI shows it in
@@ -322,7 +328,8 @@ webhook trigger also shows **Create webhook secret**. An automation with a callb
 In the app, select the **Open automations** icon in the header. The icon shows when a connected
 machine allows automations or has automations. Choose the machine, then select an automation. The
 app shows its triggers, next run, target, delivery, webhook address and recent runs. It has buttons
-for the same actions.
+for the same actions. **New automation** and **Edit** open the form from [Create an
+automation](#create-an-automation).
 
 **Run now** starts a manual run at once. **Pause** stops the triggers until you select **Resume**.
 **Replace webhook secret** and **Replace callback secret** create a new secret. The old secret
