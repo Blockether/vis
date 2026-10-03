@@ -22,6 +22,8 @@
 import type { ImproveMode, ImproveRecord, ImproveSettings } from '../lib/improve';
 import type { RoomsStatus } from '../lib/rooms';
 import type { ImproveClient } from '../screens/ImproveScreen';
+import type { Automation, AutomationRun } from '../lib/automations';
+import type { AutomationsClient } from '../screens/AutomationsScreen';
 import { activityProjectionFromWire, type ActivityProjection } from '../lib/activity';
 import activityWire from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json';
 import activityGroupingCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-groups.json';
@@ -2712,6 +2714,161 @@ export function storyImproveFetch(mode: ImproveMode = 'human'): typeof fetch {
           ? await client.updateImproveRecord(id, attrs)
           : await client.improveRecord(id);
     } else throw new Error(`No Improve fixture for ${url.pathname}`);
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+}
+
+export const STORY_AUTOMATION_RUN: AutomationRun = {
+  id: 'run-standup-1',
+  automation_id: 'auto-standup',
+  automation_name: 'Morning summary',
+  trigger: 'cron',
+  status: 'completed',
+  reason: null,
+  scheduled_at: 1780038000000,
+  created_at: 1780038000000,
+  started_at: 1780038001000,
+  finished_at: 1780038042000,
+  session_id: 'session-standup',
+  turn_id: 'turn-standup-1',
+  answer: 'Three issues changed since yesterday.',
+  error: null,
+  is_silent: false,
+};
+
+export const STORY_AUTOMATIONS: Automation[] = [
+  {
+    id: 'auto-standup',
+    name: 'Morning summary',
+    enabled: true,
+    triggers: [{ kind: 'cron', expression: '0 9 * * 1-5', timezone: 'Europe/Warsaw' }],
+    prompt: 'Summarize the issues and pull requests that changed since yesterday.',
+    target: { mode: 'new', root: '/workspace/vis' },
+    delivery: { push: true, callback: null },
+    model: null,
+    deliver_only: false,
+    created_at: 1779900000000,
+    updated_at: 1779900000000,
+    next_run_at: 1780124400000,
+    webhook: null,
+    secrets: { webhook: false, callback: false },
+    last_run: STORY_AUTOMATION_RUN,
+  },
+  {
+    id: 'auto-review',
+    name: 'Review new pull requests',
+    enabled: false,
+    triggers: [{ kind: 'webhook', signature: 'github', events: ['pull_request'] }],
+    prompt: 'Review pull request {pull_request.number}: {pull_request.title}.',
+    target: { mode: 'temporary' },
+    delivery: { push: false, callback: { url: 'https://gateway.example.com/review-results' } },
+    model: { provider: 'openai', model: 'gpt-5.4' },
+    deliver_only: false,
+    created_at: 1779900000000,
+    updated_at: 1779950000000,
+    next_run_at: null,
+    webhook: { path: '/v1/hooks/auto-review' },
+    secrets: { webhook: true, callback: false },
+    last_run: {
+      ...STORY_AUTOMATION_RUN,
+      id: 'run-review-1',
+      automation_id: 'auto-review',
+      automation_name: 'Review new pull requests',
+      trigger: 'webhook',
+      status: 'failed',
+      session_id: null,
+      turn_id: null,
+      answer: null,
+      error: 'The target session does not exist.',
+    },
+  },
+];
+
+/** Deterministic Automations boundary, never a network or model call. */
+export function storyAutomationsClient({
+  enabled = true,
+  empty = false,
+}: { enabled?: boolean; empty?: boolean } = {}): AutomationsClient {
+  let automations = empty ? [] : STORY_AUTOMATIONS.map((automation) => ({ ...automation }));
+  let runs = empty
+    ? []
+    : STORY_AUTOMATIONS.flatMap((automation) => (automation.last_run ? [automation.last_run] : []));
+  let secrets = 0;
+  const find = (id: string) => {
+    const automation = automations.find((item) => item.id === id);
+    if (!automation) throw new Error('Automation not found');
+    return automation;
+  };
+  return {
+    automations: async () => ({ automations: [...automations], is_enabled: enabled }),
+    automationRuns: async (automationId) => ({
+      runs: runs.filter((run) => run.automation_id === automationId),
+    }),
+    updateAutomation: async (id, changes) => {
+      const current = find(id);
+      const updated = { ...current, ...changes, updated_at: current.updated_at + 1 };
+      automations = automations.map((item) => (item.id === id ? updated : item));
+      return updated;
+    },
+    runAutomation: async (id) => {
+      const automation = find(id);
+      const run: AutomationRun = {
+        ...STORY_AUTOMATION_RUN,
+        id: `run-manual-${runs.length + 1}`,
+        automation_id: id,
+        automation_name: automation.name,
+        trigger: 'manual',
+        status: 'queued',
+        scheduled_at: null,
+        started_at: null,
+        finished_at: null,
+        session_id: null,
+        turn_id: null,
+        answer: null,
+      };
+      runs = [run, ...runs];
+      return run;
+    },
+    createAutomationSecret: async (id, kind) => {
+      find(id);
+      automations = automations.map((item) =>
+        item.id === id ? { ...item, secrets: { ...item.secrets, [kind]: true } } : item,
+      );
+      secrets += 1;
+      return { kind, secret: `story-${kind}-secret-${secrets}` };
+    },
+    deleteAutomation: async (id) => {
+      find(id);
+      automations = automations.filter((item) => item.id !== id);
+      return { id, is_deleted: true };
+    },
+  };
+}
+
+/** Authenticated HTTP is the only mocked boundary in the Automations entry story. */
+export function storyAutomationsFetch(
+  options: { enabled?: boolean; empty?: boolean } = {},
+): typeof fetch {
+  const client = storyAutomationsClient(options);
+  return async (input, init) => {
+    const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const url = new URL(href);
+    const attrs = init?.body ? JSON.parse(String(init.body)) : {};
+    const method = init?.method ?? 'GET';
+    const [, , , rawId, action] = url.pathname.split('/');
+    const id = decodeURIComponent(rawId ?? '');
+    let body: unknown;
+    if (url.pathname === '/v1/automations') body = await client.automations();
+    else if (url.pathname === '/v1/automations/runs')
+      body = await client.automationRuns(url.searchParams.get('automation_id') ?? '');
+    else if (action === 'run') body = await client.runAutomation(id);
+    else if (action === 'secrets') body = await client.createAutomationSecret(id, attrs.kind);
+    else if (id && method === 'PATCH') body = await client.updateAutomation(id, attrs);
+    else if (id && method === 'DELETE') body = await client.deleteAutomation(id);
+    else throw new Error(`No Automations fixture for ${method} ${url.pathname}`);
     return new Response(JSON.stringify(body), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },

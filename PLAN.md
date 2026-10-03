@@ -119,5 +119,5 @@ Unknowns: none.
 - Phase 2: done. A local receiver checks the Standard Webhooks signature. A failed callback retries, then arrives once, or stops after 6 attempts. `[SILENT]` sends nothing.
 - Phase 3: done. Route and runner tests cover each webhook status, a repeated delivery and the untrusted-content note.
 - Phase 4: not started.
-- Phase 5: in progress. The model tool `automations.*` has Activity presentation and refuses changes during an automation run. The TUI Automations view (`/automations` and the command palette) runs, pauses, resumes, lists runs, creates one-time secrets and deletes. The Companion screen and the docs page remain.
+- Phase 5: in progress. The model tool `automations.*` has Activity presentation and refuses changes during an automation run. The TUI Automations view (command palette) and the Companion Automations screen (header entry) run, pause, resume, list runs, create one-time secrets and delete. The docs page remains.
 - Phase 6: not started.

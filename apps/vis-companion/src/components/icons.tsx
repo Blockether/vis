@@ -10,6 +10,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpRight,
+  CalendarClock,
   Camera,
   ChartNoAxesColumn,
   Check,
@@ -133,6 +134,11 @@ export function SearchIcon({ className }: { className?: string }) {
 /** Reports, ideas and reviewed improvements. */
 export function ImproveIcon({ className }: { className?: string }) {
   return <Mark icon={Lightbulb} className={className} />;
+}
+
+/** Prompts that run on a schedule or a webhook. */
+export function AutomationsIcon({ className }: { className?: string }) {
+  return <Mark icon={CalendarClock} className={className} />;
 }
 
 /**

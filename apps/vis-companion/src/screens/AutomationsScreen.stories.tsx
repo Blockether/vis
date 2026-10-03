@@ -1,0 +1,89 @@
+import type { Meta, StoryObj } from '@storybook/react-vite';
+import { expect, userEvent } from 'storybook/test';
+import { useState } from 'react';
+import { AutomationsWorkspace } from './AutomationsScreen';
+import { DialogFrame } from '../components/ui';
+import { storyAutomationsClient } from '../dev/story-data';
+
+function Workspace({
+  enabled = true,
+  empty = false,
+  failed = false,
+}: {
+  enabled?: boolean;
+  empty?: boolean;
+  failed?: boolean;
+}) {
+  const [client] = useState(() => {
+    const fixture = storyAutomationsClient({ enabled, empty });
+    if (failed)
+      fixture.automations = async () => {
+        throw new Error('Machine unavailable. Retry when it reconnects.');
+      };
+    return fixture;
+  });
+  return (
+    <div className="flex h-dvh flex-col bg-ink sm:p-4">
+      <DialogFrame title="Automations" subtitle="Prompts that run on a schedule or a webhook">
+        <AutomationsWorkspace client={client} gatewayUrl="https://gateway.example.com" />
+      </DialogFrame>
+    </div>
+  );
+}
+
+const meta = {
+  title: 'Screens/Automations',
+  component: Workspace,
+  parameters: { layout: 'fullscreen' },
+} satisfies Meta<typeof Workspace>;
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const List: Story = {
+  play: async ({ canvas }) => {
+    await expect(await canvas.findByText('2 automations')).toBeVisible();
+    await expect(canvas.getByText('Morning summary')).toBeVisible();
+  },
+};
+
+export const Off: Story = {
+  args: { enabled: false },
+  play: async ({ canvas }) => {
+    await expect(await canvas.findByText(/Automations are off on this machine/)).toBeVisible();
+  },
+};
+
+export const Empty: Story = {
+  args: { empty: true },
+  play: async ({ canvas }) => {
+    await expect(await canvas.findByText('No automations on this machine')).toBeVisible();
+  },
+};
+
+export const Failed: Story = {
+  args: { failed: true },
+  play: async ({ canvas }) => {
+    await expect(
+      await canvas.findByText('Machine unavailable. Retry when it reconnects.'),
+    ).toBeVisible();
+    await expect(canvas.getByRole('button', { name: 'Retry' })).toBeEnabled();
+  },
+};
+
+export const Details: Story = {
+  play: async ({ canvas }) => {
+    await userEvent.click(await canvas.findByText('Review new pull requests'));
+    await expect(
+      await canvas.findByText('https://gateway.example.com/v1/hooks/auto-review'),
+    ).toBeVisible();
+    await expect(await canvas.findByText('The target session does not exist.')).toBeVisible();
+  },
+};
+
+export const NewSecret: Story = {
+  play: async (context) => {
+    await Details.play!(context);
+    await userEvent.click(context.canvas.getByRole('button', { name: 'Create callback secret' }));
+    await expect(await context.canvas.findByText('story-callback-secret-1')).toBeVisible();
+  },
+};

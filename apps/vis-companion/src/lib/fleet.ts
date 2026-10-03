@@ -456,7 +456,7 @@ function stampFormat(sameYear: boolean): Intl.DateTimeFormat {
  * not this one. A bare "5d" hides which day it was, and the exact stamp used to
  * live in a `title` tooltip — invisible on a touch screen.
  */
-export function timeLabel(value?: string, now: number = Date.now()): string {
+export function timeLabel(value?: string | number, now: number = Date.now()): string {
   const millis = dateMillis(value);
   if (!millis) return '-';
   const seconds = Math.round((millis - now) / 1000);

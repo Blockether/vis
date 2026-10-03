@@ -70,6 +70,7 @@ import { getThemePref } from './lib/storage';
 import { IconButton } from './components/ui';
 import { SearchIcon, SettingsIcon } from './components/icons';
 import { ImproveLauncher } from './components/ImproveLauncher';
+import { AutomationsLauncher } from './components/AutomationsLauncher';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
@@ -1343,6 +1344,13 @@ export function App() {
               refreshKey={!!settingsDestination}
             />
           }
+          automations={
+            <AutomationsLauncher
+              gateways={conns}
+              primaryUrl={primary?.url}
+              refreshKey={!!settingsDestination}
+            />
+          }
         />
       )}
 
@@ -1471,11 +1479,13 @@ export function Header({
   onSearch,
   onAppSettings,
   improve,
+  automations,
 }: {
   /** Open the search dialog. `null` while there is no session list to search. */
   onSearch: (() => void) | null;
   onAppSettings: () => void;
   improve?: ReactNode;
+  automations?: ReactNode;
 }) {
   // `/` opens the search from anywhere on the shell except a field, where it is a
   // character someone is typing. `Ctrl+/` is never a character, so it opens the search
@@ -1552,6 +1562,7 @@ export function Header({
             </IconButton>
           )}
           {improve}
+          {automations}
           <IconButton
             type="button"
             label="Open preferences"

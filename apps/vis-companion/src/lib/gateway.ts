@@ -98,6 +98,15 @@ import type {
   ImproveSettings,
   ImproveUpdate,
 } from './improve';
+import type {
+  Automation,
+  AutomationList,
+  AutomationPatch,
+  AutomationRun,
+  AutomationRunList,
+  AutomationSecret,
+  AutomationSecretKind,
+} from './automations';
 import {
   flushSnapshots,
   hydrateSnapshots,
@@ -2536,6 +2545,39 @@ export class GatewayClient {
 
   reviewImprove(): Promise<unknown> {
     return this.request('POST', '/v1/improve/review', {});
+  }
+
+  // ── Automations: prompts that run on a schedule or a webhook ────
+
+  automations(signal?: AbortSignal): Promise<AutomationList> {
+    return this.request('GET', '/v1/automations', undefined, signal);
+  }
+
+  automationRuns(automationId: string, signal?: AbortSignal): Promise<AutomationRunList> {
+    const query = new URLSearchParams({ automation_id: automationId, limit: '20' });
+    return this.request('GET', `/v1/automations/runs?${query}`, undefined, signal);
+  }
+
+  updateAutomation(automationId: string, changes: AutomationPatch): Promise<Automation> {
+    return this.request('PATCH', `/v1/automations/${encodeURIComponent(automationId)}`, changes);
+  }
+
+  runAutomation(automationId: string): Promise<AutomationRun> {
+    return this.request('POST', `/v1/automations/${encodeURIComponent(automationId)}/run`, {});
+  }
+
+  /** The only answer that carries a secret value. No other route reads it back. */
+  createAutomationSecret(
+    automationId: string,
+    kind: AutomationSecretKind,
+  ): Promise<AutomationSecret> {
+    return this.request('POST', `/v1/automations/${encodeURIComponent(automationId)}/secrets`, {
+      kind,
+    });
+  }
+
+  deleteAutomation(automationId: string): Promise<unknown> {
+    return this.request('DELETE', `/v1/automations/${encodeURIComponent(automationId)}`);
   }
 
   // ── Gateway-owned MCP servers ───────────────────────────────────
