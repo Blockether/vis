@@ -7,7 +7,8 @@
             [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.native-binary-test :as binary]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [java.io File]
+  (:import [com.sun.net.httpserver HttpServer]
+           [java.io File]
            [java.net ServerSocket]))
 
 (defn- request-json!
@@ -51,6 +52,9 @@
           ^File bin
           (#'binary/require-binary)
 
+          {:keys [server port]}
+          (#'binary/start-stub-provider! "Settings check complete.")
+
           gateway-port
           (with-open [socket (ServerSocket. 0)]
             (.getLocalPort socket))
@@ -59,6 +63,8 @@
           (atom nil)]
 
       (try
+        ;; A new session needs a provider. Declare the keyless stub, not a host credential.
+        (#'binary/overlay! dir port)
         (let [pb
               (doto (ProcessBuilder. ^java.util.List
                                      [(.getAbsolutePath bin)
@@ -166,4 +172,5 @@
                 (expect (nil? (get (setting-row (:body cleared) id) "own_value")))))))
         (finally (when-let [owned @process]
                    (#'binary/kill-tree! owned))
+                 (.stop ^HttpServer server 0)
                  (#'binary/delete-tree! dir))))))
