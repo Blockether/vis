@@ -171,7 +171,7 @@ export function PerfOverlay({
       aria-label={open ? 'Memory overlay' : undefined}
       className={`pointer-events-auto bg-panel p-2 font-mono text-meta shadow-float ${
         open
-          ? 'flex max-h-[min(80dvh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-1rem))] w-[min(40rem,calc(100dvw-env(safe-area-inset-left)-env(safe-area-inset-right)-1rem))] flex-col gap-2 overflow-hidden border border-dialog-edge'
+          ? 'flex h-[calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-1rem)] w-[calc(100dvw-env(safe-area-inset-left)-env(safe-area-inset-right)-1rem)] flex-col gap-2 overflow-hidden border border-dialog-edge'
           : 'max-w-full'
       }`}
     >
@@ -234,7 +234,7 @@ export function PerfOverlay({
       </header>
 
       {open ? (
-        <div role="region" aria-label="Memory details" tabIndex={0} className="min-h-0 space-y-2 overflow-auto overscroll-contain">
+        <div role="region" aria-label="Memory details" tabIndex={0} className="min-h-0 flex-1 space-y-2 overflow-auto overscroll-contain">
           <div className="grid grid-cols-4 gap-1">
             <Figure
               label="JS heap"

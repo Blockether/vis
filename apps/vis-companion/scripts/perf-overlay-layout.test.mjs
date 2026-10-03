@@ -57,11 +57,12 @@ it.runIf(process.env.CI)('keeps memory controls tappable inside every safe area'
     const cdp = await context.newCDPSession(page);
     const cases = [
       { width: 393, height: 852, top: 62, bottom: 34, left: 0, right: 0 },
-      { width: 852, height: 393, top: 0, bottom: 21, left: 62, right: 62 },
+      { width: 852, height: 393, top: 0, bottom: 21, left: 62, right: 62, expectScroll: true },
       { width: 320, height: 568, top: 20, bottom: 0, left: 0, right: 0 },
       { width: 768, height: 1024, top: 24, bottom: 20, left: 0, right: 0 },
+      { width: 1440, height: 900, top: 0, bottom: 0, left: 0, right: 0 },
     ];
-    for (const { width, height, ...insets } of cases) {
+    for (const { width, height, expectScroll = false, ...insets } of cases) {
       await page.setViewportSize({ width, height });
       await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets });
       await page.goto('http://127.0.0.1/?perf=1');
@@ -81,7 +82,15 @@ it.runIf(process.env.CI)('keeps memory controls tappable inside every safe area'
           expect(box.framed).toBe(false);
         }
       };
+      const fillsSafeArea = async () => {
+        const box = await panel.boundingBox();
+        expect(box.x).toBeCloseTo(insets.left + 8, 1);
+        expect(box.y).toBeCloseTo(insets.top + 8, 1);
+        expect(box.width).toBeCloseTo(width - insets.left - insets.right - 16, 1);
+        expect(box.height).toBeCloseTo(height - insets.top - insets.bottom - 16, 1);
+      };
       await insideSafeArea(panel);
+      await fillsSafeArea();
       const minimizeControl = panel.getByRole('button', { name: 'Minimize memory overlay' });
       const controlBox = await minimizeControl.boundingBox();
       const iconBox = await minimizeControl.locator('svg').boundingBox();
@@ -100,15 +109,17 @@ it.runIf(process.env.CI)('keeps memory controls tappable inside every safe area'
       await panel.getByRole('button', { name: 'Set baseline' }).tap();
       const details = panel.getByRole('region', { name: 'Memory details' });
       await details.evaluate((element) => { element.scrollTop = element.scrollHeight; });
-      if (width > height) expect(await details.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+      if (expectScroll) expect(await details.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
       const minimize = panel.getByRole('button', { name: 'Minimize memory overlay' });
       await insideSafeArea(minimize, true);
       await minimize.tap();
       const summary = page.getByRole('button', { name: /^Memory .* listeners$/ });
       await summary.waitFor();
       await insideSafeArea(summary, true);
+      expect((await page.locator('#vis-perf').boundingBox()).height).toBeLessThan(height / 2);
       await summary.tap();
       await panel.waitFor();
+      await fillsSafeArea();
       expect(await panel.getByRole('heading', { name: 'Listeners added since the baseline' }).count()).toBe(1);
     }
   } finally {
