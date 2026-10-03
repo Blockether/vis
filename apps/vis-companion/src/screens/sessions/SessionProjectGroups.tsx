@@ -5,6 +5,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -81,6 +82,7 @@ import {
 } from '../../lib/project-fold';
 import { SESSION_DRAG_MIME, useSessionDropTarget } from '../../lib/session-drag';
 import type { ArchiveView, BandWindow, GatewayConn, Session, SessionGroup } from '../../lib/types';
+import { unreadAfterVisit } from '../../lib/unread';
 
 /** Where inside the group sheet the reader is standing (`ProjectGroup`). */
 type MenuStep =
@@ -98,6 +100,12 @@ type GroupBandView = {
   color: string | null;
   count: number;
   archived: boolean;
+};
+
+type GroupStatusCounts = {
+  awaiting: number;
+  live: number;
+  unread: number;
 };
 
 /**
@@ -415,6 +423,7 @@ function GroupNameField({
 function GroupBand({
   name,
   color,
+  status,
   isOpen,
   isFirst,
   hasVisibleRows,
@@ -426,6 +435,7 @@ function GroupBand({
 }: {
   name: string;
   color: string | null;
+  status: GroupStatusCounts;
   isOpen: boolean;
   isFirst: boolean;
   hasVisibleRows: boolean;
@@ -435,6 +445,27 @@ function GroupBand({
   onRename: (name: string) => Promise<void>;
   onCancelRename: () => void;
 }) {
+  const statusId = useId();
+  const statuses = [
+    {
+      label: 'HITL',
+      count: status.awaiting,
+      tone: 'text-warn',
+      description: `${status.awaiting} ${status.awaiting === 1 ? 'session needs' : 'sessions need'} input.`,
+    },
+    {
+      label: 'LIVE',
+      count: status.live,
+      tone: 'text-ok',
+      description: `${status.live} live ${status.live === 1 ? 'session' : 'sessions'}.`,
+    },
+    {
+      label: 'NEW',
+      count: status.unread,
+      tone: 'text-accent-ink',
+      description: `${status.unread} ${status.unread === 1 ? 'session' : 'sessions'} with new answers.`,
+    },
+  ].filter((item) => item.count > 0);
   // The set header supplies the first top edge. A group with visible rows closes
   // its own heading; otherwise the next group or set supplies that boundary.
   return (
@@ -454,6 +485,7 @@ function GroupBand({
         type="button"
         aria-expanded={isOpen}
         aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${name}`}
+        aria-describedby={!isRenaming && statuses.length > 0 ? statusId : undefined}
         onClick={onToggle}
         className={`flex min-w-0 items-center gap-0 py-1.5 pl-3 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white ${isRenaming ? '' : 'flex-1'}`}
       >
@@ -462,7 +494,21 @@ function GroupBand({
           <ChevronIcon open={isOpen} className="size-3 -translate-x-1.5 text-dialog-hint" />
         </span>
         {!isRenaming && (
-          <span className="min-w-0 truncate font-mono text-body font-medium text-white">{name}</span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-mono text-body font-medium text-white">{name}</span>
+            {statuses.length > 0 && (
+              <span className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 font-mono text-ui font-semibold">
+                <span id={statusId} className="sr-only">
+                  {statuses.map((item) => item.description).join(' ')}
+                </span>
+                {statuses.map((item) => (
+                  <span key={item.label} aria-hidden="true" className={`whitespace-nowrap ${item.tone}`}>
+                    {item.label} {item.count}
+                  </span>
+                ))}
+              </span>
+            )}
+          </span>
         )}
       </button>
       {isRenaming && <GroupNameField name={name} onRename={onRename} onCancel={onCancelRename} />}
@@ -577,7 +623,7 @@ export const ProjectGroup = memo(function ProjectGroup({
 }) {
   const { label: project, root, sessions, tally } = group;
   const { conn, sessions: list } = machine;
-  const { getClient, drafts, needle, actions: rowActions, openRow, previewId, preview } = context;
+  const { getClient, drafts, needle, actions: rowActions, openRow, previewId, preview, readFloors } = context;
   const { pageSize, isVisible, revision = 0, reads = 0 } = reading;
   const { state: creating, start: onNewSession } = creation;
   const base = useMemo(() => getClient(conn).base, [conn, getClient]);
@@ -1216,6 +1262,9 @@ export const ProjectGroup = memo(function ProjectGroup({
   const filed = useMemo(() => {
     const banded = new Set(bands.map((band) => band.id));
     const byGroup = new Map<string, Session[]>();
+    const statuses = new Map<string, GroupStatusCounts>(
+      bands.map((band) => [band.id, { awaiting: 0, live: 0, unread: 0 }]),
+    );
     const loose: Session[] = [];
     // The groups rows name that this page of the wall does not hold.
     const unread = new Set<string>();
@@ -1230,6 +1279,16 @@ export const ProjectGroup = memo(function ProjectGroup({
         const held = byGroup.get(gid);
         if (held) held.push(session);
         else byGroup.set(gid, [session]);
+        // Count complete, deduplicated group rows, not the loose page or expanded rows.
+        const counts = statuses.get(gid)!;
+        if (!sessionIsArchived(session) && groupById.get(gid)?.archived_at == null) {
+          if (sessionNeedsInput(session)) counts.awaiting += 1;
+          else if (sessionIsLive(session)) counts.live += 1;
+          const key = sessionRowKey(conn, session.id);
+          if (key !== openRow && unreadAfterVisit(session, readFloors?.get(key)) > 0) {
+            counts.unread += 1;
+          }
+        }
         continue;
       }
       if (gid !== '' && !groupById.has(gid)) unread.add(gid);
@@ -1237,8 +1296,8 @@ export const ProjectGroup = memo(function ProjectGroup({
       // A run parked on the reader is never held back: it is said among the loose ones.
       if (gid === '' || sessionNeedsInput(session)) loose.push(session);
     }
-    return { byGroup, loose, unread };
-  }, [painted, bands, groupById]);
+    return { byGroup, statuses, loose, unread };
+  }, [painted, bands, groupById, conn, openRow, readFloors]);
   // A ROW CAN NAME A GROUP THIS DEVICE HAS NOT READ: it was made on another client after
   // this page of the wall was read. Ask for the groups again ONCE per such id, and only
   // after the reads under way have answered: asking while they were still out cancelled
@@ -1574,7 +1633,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           commands={soleGroup ? soleGroupCommands : rowCommands}
           deletion={deletion}
           isOpen={openRow !== null && openRow === sessionRowKey(conn, session.id)}
-          seenAnswers={context.readFloors?.get(sessionRowKey(conn, session.id))}
+          seenAnswers={readFloors?.get(sessionRowKey(conn, session.id))}
           isSelected={selectedSet.has(session.id)}
           onSelectionClick={onRowSelectionClick}
           dragIds={selectedSet.has(session.id) ? selectedIds : undefined}
@@ -1871,6 +1930,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                       <GroupBand
                         name={band.name}
                         color={band.color}
+                        status={filed.statuses.get(band.id)!}
                         isOpen={isBandOpen}
                         isFirst={index === 0}
                         hasVisibleRows={isBandOpen && held.length > 0}
