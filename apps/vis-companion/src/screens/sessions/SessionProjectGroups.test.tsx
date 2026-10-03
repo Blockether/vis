@@ -1843,6 +1843,28 @@ describe('ProjectGroup groups', () => {
     expect(still.querySelector('[data-session-id="filed-only"]')).toBeInTheDocument();
   });
 
+  // Regression: tail pages omit grouped rows, so their polls left grouped NEW answers stale.
+  it('refreshes grouped answers while the Sessions list stays on a later page', async () => {
+    const loose = STORY_NEWER_PROJECT.rows;
+    let filed: Session = { ...loose[0], id: 'group-page-new', title: 'Before answer', group_id: WALLET,
+      live: false, is_unread: false, unread_answers: 0 };
+    const head = () => ({ rows: loose, total: 24, awaiting: [], grouped: [filed], nextCursor: 'after-10' });
+    const tail = { rows: loose, total: 24, awaiting: [], grouped: [], nextCursor: '' };
+    const listProjectPage = vi.fn(async (_root: string, _limit: number, after: string) => after ? tail : head());
+    const { user, hold } = mount(machine({ heldProjectPage: head, listProjectPage }), undefined, '', loose);
+    await band('Wallet work');
+    const steps = screen.getByRole('navigation', { name: `Pages of ${STORY_NEWER_PROJECT.name} sessions` });
+    await user.click(within(steps).getByRole('button', { name: 'Next page' }));
+    await within(steps).findByText('Page 2 of 3');
+
+    filed = { ...filed, title: 'Grouped answer ready', is_unread: true, unread_answers: 1,
+      answer_count: 2, turn_count: 2, modified_at: 'new-answer' };
+    hold([...loose]);
+    await waitFor(() => expect(surface(filed.id)).toHaveTextContent('Grouped answer ready'));
+    expect(surface(filed.id)).toHaveTextContent('NEW');
+    expect(within(steps).getByText('Page 2 of 3')).toBeInTheDocument();
+  });
+
   it('keeps the archived Groups page when the Sessions archive opens', async () => {
     const client = shelves();
     const { user } = mount(client, undefined, '', STORY_NEWER_PROJECT.rows);

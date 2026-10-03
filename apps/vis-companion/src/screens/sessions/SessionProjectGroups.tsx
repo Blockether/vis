@@ -898,9 +898,9 @@ export const ProjectGroup = memo(function ProjectGroup({
     conn, root, start, pageSize, isVisible, isShowing, searching, archived, bandWindow,
     bandOffset, list, getClient, groupsRead, revision, noteRefresh,
   ]);
-  // The gateway applies one archive filter to both sides of a project page. When the
-  // two sets differ, read the grouped sidecar in its own view; the limit of one only
-  // applies to loose sessions, while grouped rows arrive complete for the band window.
+  // Tail pages omit grouped rows. Read them separately there and when archive views differ.
+  // The limit applies to loose rows; grouped rows cover the complete band window.
+  const readGroupsAside = groupArchived !== archived || start > 0;
   const [groupedPage, setGroupedPage] = useState<{
     view: ArchiveView;
     offset: number;
@@ -908,7 +908,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     read: number;
   } | null>(null);
   useEffect(() => {
-    if (!isVisible || !isShowing || searching || groupArchived === archived) return;
+    if (!isVisible || !isShowing || searching || !readGroupsAside) return;
     const control = new AbortController();
     let live = true;
     void getClient(conn)
@@ -931,7 +931,7 @@ export const ProjectGroup = memo(function ProjectGroup({
       control.abort();
     };
   }, [
-    conn, root, isVisible, isShowing, searching, groupArchived, archived, bandWindow,
+    conn, root, isVisible, isShowing, searching, groupArchived, readGroupsAside, bandWindow,
     bandOffset, list, getClient, groupsRead, revision, noteRefresh,
   ]);
   // The count under the header and the pages beside it are ONE number — the
@@ -1032,7 +1032,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   // Each response can land first: never put a new band's name over the previous page's
   // sessions, or create an unnamed band from rows whose own page has not arrived yet.
   const matchedRows =
-    groupArchived === archived
+    !readGroupsAside
       ? paged?.view === groupArchived &&
         paged.bandOffset === bandOffset &&
         paged.read === groupsRead
@@ -1507,11 +1507,17 @@ export const ProjectGroup = memo(function ProjectGroup({
       dropping.current = false;
     }
   };
+  const retainTranscript = useCallback(
+    (rowConn: GatewayConn, session: Session) => getClient(rowConn).retainTranscript(session),
+    [getClient],
+  );
+  const retain = isVisible && isShowing ? retainTranscript : undefined;
   // The row's own verb opens an anchored popup only when there is a group to choose.
   const rowCommands = useMemo<SessionRowCommands>(
     () => ({
       ...rowActions.commands,
       archive: archiveSession,
+      retain,
       ...(bands.length > 0 && {
         moveToGroup: (session: Session, _conn: GatewayConn, anchor: HTMLElement) => {
           if (moving.current) return;
@@ -1522,7 +1528,7 @@ export const ProjectGroup = memo(function ProjectGroup({
         },
       }),
     }),
-    [archiveSession, bands.length, rowActions.commands],
+    [archiveSession, bands.length, retain, rowActions.commands],
   );
   // The project's only group is the one this row is under, so there is no other
   // destination to choose: Ungroup acts directly. A refused move leaves the row put.
@@ -1539,8 +1545,8 @@ export const ProjectGroup = memo(function ProjectGroup({
     [assignGroup],
   );
   const soleGroupCommands = useMemo<SessionRowCommands>(
-    () => ({ ...rowActions.commands, archive: archiveSession, ungroup: ungroupSession }),
-    [archiveSession, rowActions.commands, ungroupSession],
+    () => ({ ...rowActions.commands, archive: archiveSession, ungroup: ungroupSession, retain }),
+    [archiveSession, retain, rowActions.commands, ungroupSession],
   );
   const row = (session: Session) => {
     const pending = pendingDeleteId === session.id;

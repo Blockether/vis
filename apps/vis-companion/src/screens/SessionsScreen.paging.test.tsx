@@ -197,8 +197,9 @@ describe('gateway-backed project pages', () => {
       ]);
       expect(view.getByText('Page 3 of 3')).toHaveAttribute('aria-live', 'polite');
       expect(view.getByLabelText('Next page')).toBeDisabled();
-      // Every read is still one page of one project: no walk of the machine.
-      expect(pageReads(view).every((read) => read.includes('limit=15'))).toBe(true);
+      // Later pages refresh the grouped sidecar with one loose row, never the whole machine.
+      const sidecar = '/v1/sessions?order=recent&root=/Users/dev/alpha&limit=1&grouped=aside';
+      expect(pageReads(view).filter((read) => !read.includes('limit=15'))).toEqual([sidecar]);
     } finally {
       view.unmount();
       view.restore();

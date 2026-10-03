@@ -580,6 +580,9 @@ const deviceFlights = new Map<string, Promise<DevicesState>>();
 /** Background transcript reads already in flight, shared by every client instance. */
 const transcriptPrefetches = new Map<string, Promise<boolean>>();
 
+/** References from unread rows near the viewport, shared across client instances. */
+const retainedTranscripts = new Map<string, number>();
+
 /** Last active-list row a background read completed for, so polls stay cheap. */
 const transcriptPrefetchStamps = new Map<string, string>();
 
@@ -663,7 +666,7 @@ function transcriptPrefetchStamp(row: Session): string {
   );
 }
 
-/** Ten recently used transcript windows per machine, independent of panel caches. */
+/** Normal transcript budget per machine. Visible unread rows remain protected until they leave the viewport. */
 export const SESSION_CACHE_LIMIT = 10;
 
 /**
@@ -700,7 +703,7 @@ function dropSnapshot(key: string): void {
   transcriptPrefetchStamps.delete(key);
 }
 
-/** Enforce one kind's LRU budget without letting another kind consume it. */
+/** Keep visible answers before older LRU entries. Only visible rows can exceed the normal budget. */
 function trimSnapshotKind(key: string): void {
   const target = snapshotParts(key);
   const limit = SNAPSHOT_KIND_LIMITS.get(target.kind);
@@ -709,7 +712,10 @@ function trimSnapshotKind(key: string): void {
     const parts = snapshotParts(candidate);
     return parts.base === target.base && parts.kind === target.kind;
   });
-  for (const oldest of matching.slice(0, Math.max(0, matching.length - limit))) {
+  const expendable = matching.filter((candidate) =>
+    !retainedTranscripts.has(candidate.replace('\u0000session\u0000', '\u0000transcript\u0000')),
+  );
+  for (const oldest of expendable.slice(0, Math.max(0, matching.length - limit))) {
     dropSnapshot(oldest);
   }
 }
@@ -3219,15 +3225,47 @@ export class GatewayClient {
     void this.prefetchTranscript(row, true);
   }
 
-  /** Pull every active session visible in a list response into the rolling cache. */
-  private prefetchActiveTranscripts(rows: readonly Session[]): void {
-    const selected = new Set<string>();
+  /** Prepare an unread row near the viewport and keep its answer until the row leaves. */
+  retainTranscript(row: Session): () => void {
+    const key = this.snapshotKey('transcript', row.id);
+    retainedTranscripts.set(key, (retainedTranscripts.get(key) ?? 0) + 1);
+    void this.prefetchTranscript(row, true);
+    let retained = true;
+    return () => {
+      if (!retained) return;
+      retained = false;
+      const remaining = (retainedTranscripts.get(key) ?? 1) - 1;
+      if (remaining > 0) retainedTranscripts.set(key, remaining);
+      else retainedTranscripts.delete(key);
+      trimSnapshotKind(key);
+      trimSnapshotKind(this.snapshotKey('session', row.id));
+      scheduleSnapshotFlush(snapshotStores);
+    };
+  }
+
+  /** Reserve the cache for visible rows before spending spare slots on list prefetch. */
+  private transcriptWarmRows(rows: readonly Session[], accepts: (row: Session) => boolean): Session[] {
+    const prefix = `${this.snapshotKey('transcript')}\u0000`;
+    const retained = new Set([...retainedTranscripts.keys()].filter((key) => key.startsWith(prefix)));
+    let spare = Math.max(0, SESSION_CACHE_LIMIT - retained.size);
+    const selected: Session[] = [];
+    const seen = new Set<string>();
     for (const row of rows) {
-      if (selected.size >= SESSION_CACHE_LIMIT) break;
-      if (!row.id || !sessionIsActive(row) || selected.has(row.id)) continue;
-      selected.add(row.id);
-      void this.prefetchTranscript(row);
+      if (!row.id || seen.has(row.id) || !accepts(row)) continue;
+      seen.add(row.id);
+      if (!retained.has(this.snapshotKey('transcript', row.id))) {
+        if (spare === 0) continue;
+        spare -= 1;
+      }
+      selected.push(row);
     }
+    return selected;
+  }
+
+  /** Pull active sessions into the rolling cache without displacing visible answers. */
+  private prefetchActiveTranscripts(rows: readonly Session[]): void {
+    for (const row of this.transcriptWarmRows(rows, sessionIsActive))
+      void this.prefetchTranscript(row);
   }
 
   /**
@@ -3240,14 +3278,7 @@ export class GatewayClient {
     rows: readonly Session[],
   ): Promise<boolean> {
     const before = new Map(previous?.map((row) => [row.id, row]));
-    const selected: Session[] = [];
-    const seen = new Set<string>();
-    for (const row of rows) {
-      if (selected.length >= SESSION_CACHE_LIMIT) break;
-      if (!row.id || seen.has(row.id) || !sessionHasNewAnswer(before.get(row.id), row)) continue;
-      seen.add(row.id);
-      selected.push(row);
-    }
+    const selected = this.transcriptWarmRows(rows, (row) => sessionHasNewAnswer(before.get(row.id), row));
     const ready = await Promise.all(selected.map((row) => this.prefetchTranscript(row)));
     return ready.every(Boolean);
   }

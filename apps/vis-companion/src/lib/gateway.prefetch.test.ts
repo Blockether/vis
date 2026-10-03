@@ -155,4 +155,58 @@ describe('preparing NEW sessions before opening', () => {
     expect(client.cachedTranscript('session-0')).toEqual(turns);
     expect(client.cachedTranscript('session-11')).toBeNull();
   });
+
+  it('retains a larger viewport only while its rows remain visible', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => page()));
+    const { GatewayClient, SESSION_CACHE_LIMIT } = await import('./gateway');
+    const client = new GatewayClient({ url: 'http://gateway.example.com' });
+    const rows = Array.from({ length: 12 }, (_, index) => ({ ...row, id: `visible-${index}` }));
+    const release = rows.map((row) => client.retainTranscript(row));
+    const otherView = client.retainTranscript(rows[0]);
+    try {
+      await vi.waitFor(() => expect(rows.filter((row) => client.cachedTranscript(row.id))).toHaveLength(12));
+      client.warmTranscript({ ...row, id: 'outside-viewport' });
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(13));
+      expect(rows.every((row) => client.cachedTranscript(row.id) !== null)).toBe(true);
+      release[0]();
+      release[0]();
+      expect(client.cachedTranscript(rows[0].id)).toEqual(turns);
+      otherView();
+      expect(rows.filter((row) => client.cachedTranscript(row.id))).toHaveLength(11);
+      release[1]();
+      expect(rows.filter((row) => client.cachedTranscript(row.id))).toHaveLength(SESSION_CACHE_LIMIT);
+    } finally {
+      otherView();
+      release.forEach((stop) => stop());
+    }
+  });
+
+  it('retries a failed visible answer on the next project poll beyond the first ten rows', async () => {
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient({ url: 'http://gateway.example.com' });
+    const rows = Array.from({ length: 12 }, (_, index) => ({ ...row, id: `retry-${index}` }));
+    const visible = rows[11];
+    let failed = false;
+    let attempts = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith('/transcript')) {
+        if (path.includes(`/${visible.id}/`)) {
+          attempts += 1;
+          if (!failed) { failed = true; return new Response('', { status: 403 }); }
+        }
+        return page();
+      }
+      return new Response(JSON.stringify({ sessions: rows.slice(0, 10), grouped: rows.slice(10), total: 10 }));
+    }));
+    const stop = client.retainTranscript(visible);
+    try {
+      await vi.waitFor(() => expect(failed).toBe(true));
+      await client.listProjectPage('/project', 10, '', new Map(), undefined, true, 'exclude', undefined, true);
+      expect(client.cachedTranscript(visible.id)).toEqual(turns);
+      expect(attempts).toBe(2);
+    } finally {
+      stop();
+    }
+  });
 });

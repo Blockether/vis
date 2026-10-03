@@ -47,6 +47,27 @@ import {
 import { hasHardwarePointer } from '../lib/pointer';
 import { SESSION_DRAG_MIME, useSessionLift } from '../lib/session-drag';
 
+const transcriptRows = new Map<Element, (near: boolean) => void>();
+let transcriptObserver: IntersectionObserver | null = null;
+
+/** Share one observer across rows. Collapsed groups register no rows. */
+function observeTranscriptRow(element: Element, changed: (near: boolean) => void): () => void {
+  if (typeof IntersectionObserver === 'undefined') return () => {};
+  transcriptObserver ??= new IntersectionObserver((entries) => {
+    for (const entry of entries) transcriptRows.get(entry.target)?.(entry.isIntersecting);
+  }, { rootMargin: '120px 0px' });
+  transcriptRows.set(element, changed);
+  transcriptObserver.observe(element);
+  return () => {
+    transcriptRows.delete(element);
+    transcriptObserver?.unobserve(element);
+    if (transcriptRows.size === 0) {
+      transcriptObserver?.disconnect();
+      transcriptObserver = null;
+    }
+  };
+}
+
 // Same frames as the session transcript's spinner and the TUI's
 // `paint-content-loading!` — one vocabulary for "working" across the product.
 // Two placeholder projects with ragged title widths: an even grid reads as a
@@ -104,6 +125,8 @@ export type SessionRowCommands = {
   read?: (conn: GatewayConn, session: Session) => void;
   /** Start reading this session's transcript: the reader is reaching for its row. */
   warm?: (conn: GatewayConn, session: Session) => void;
+  /** Keep an unread answer ready while its row is near the viewport. */
+  retain?: (conn: GatewayConn, session: Session) => () => void;
   rename: (session: Session, conn: GatewayConn, title: string) => Promise<void>;
   /** Copy the entire conversation and open the fork; absent in standalone rows. */
   fork?: (session: Session, conn: GatewayConn) => Promise<void>;
@@ -547,6 +570,24 @@ export const SessionRow = memo(function SessionRow({
   // only way into that confirmation, so the row is still on screen right here, and
   // `clientHeight` is the height it stands inside the list's own rule.
   const rowRef = useRef<HTMLDivElement>(null);
+  const retain = commands.retain;
+  const hasUnread = unread > 0;
+  useEffect(() => {
+    const element = rowRef.current;
+    if (!element || !retain || !hasUnread) return;
+    let release: (() => void) | undefined;
+    const stop = observeTranscriptRow(element, (near) => {
+      if (near && !release) release = retain(conn, session);
+      else if (!near) {
+        release?.();
+        release = undefined;
+      }
+    });
+    return () => {
+      stop();
+      release?.();
+    };
+  }, [conn, hasUnread, retain, session]);
   const [standingHeight, setStandingHeight] = useState<number | undefined>(undefined);
   const requestDelete = useCallback(() => {
     setStandingHeight(rowRef.current?.clientHeight);
