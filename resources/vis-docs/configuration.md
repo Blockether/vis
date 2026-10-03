@@ -577,6 +577,7 @@ toggles:
   introspection: true   # default false; lets the agent read its own session data
   council: true         # default true; classified project messages, replies and explicit pings
   draft_backend: off    # default off; opt in with auto | worktree | rift (see drafts.md)
+  automations: true     # default false; lets schedules and webhooks start turns (see automations.md)
 ```
 
 Run `/reload` after editing.

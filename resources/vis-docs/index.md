@@ -275,6 +275,7 @@ To use Vis in your code, see the [Python SDK](python-sdk.md) or [Java and Clojur
 - [Sessions](sessions.md) — continue, stop or find your work.
 - [Drafts](drafts.md) — review changes in a separate working copy.
 - [Council](council.md) — ask another session for help or a second review.
+- [Automations](automations.md) — run a prompt on a schedule or from a webhook.
 - [Reporting a bug](reporting-bugs.md) — report a problem without exposing private data.
 
 ### SDKs

@@ -33,7 +33,11 @@
     {:blurb
      "Try a change in an isolated working copy, review the diff and decide whether to approve it."
      :page "drafts"
-     :title "Drafts"}
+      :title "Drafts"}
+     {:blurb
+      "Run a prompt on a schedule or from a webhook, and get each result in a session, on your phone or at your address."
+      :page "automations"
+      :title "Automations"}
     {:blurb "Report a problem with useful evidence, without sharing credentials or private code."
      :page "reporting-bugs"
      :title "Reporting a bug"}]
