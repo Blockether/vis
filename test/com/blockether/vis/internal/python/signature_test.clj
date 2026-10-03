@@ -40,7 +40,10 @@
             "signature.tuple-probe"
             {"binding" "signature_tuple_probe"
              "signature"
-             "(limit: int = ..., *, ids: tuple[int, ...] = ()) -> tuple['RunSummary', ...]"})
+             "(limit: int = ..., *, ids: tuple[int, ...] = ()) -> tuple['RunSummary', ...]"}
+            ;; Regression: a nullable record name gained ForwardRef(...) in the printed signature.
+            "signature.optional-record-probe" {"binding" "signature_optional_record_probe"
+                                               "signature" "() -> 'Installation' | None"})
 
           bindings
           (into {}
