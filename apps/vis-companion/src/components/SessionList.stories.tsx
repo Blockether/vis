@@ -242,7 +242,8 @@ export const Stopped: Story = {
     // One mark, not two: the status mark alone says the turn was cut off.
     await expect(canvas.queryByText('stopped')).not.toBeInTheDocument();
     const dot = canvasElement.querySelector<HTMLElement>('[data-session-status-dot]')!;
-    await expect(dot).toHaveClass('bg-err');
+    await expect(dot).toHaveClass('bg-current');
+    await expect(dot.parentElement).toHaveClass('text-err');
     // Solid, never pulsing: an interrupted session is the opposite of a live one.
     await expect(dot).not.toHaveClass('animate-pulse');
   },
@@ -278,7 +279,8 @@ export const Unsent: Story = {
     await expect(canvas.queryByText('IDLE')).not.toBeInTheDocument();
     await expect(canvas.queryByText('dirty')).not.toBeInTheDocument();
     const dot = canvasElement.querySelector<HTMLElement>('[data-session-status-dot]')!;
-    await expect(dot).toHaveClass('bg-dirty');
+    await expect(dot).toHaveClass('bg-current');
+    await expect(dot.parentElement).toHaveClass('text-dirty');
     // Nothing is running: the brown mark is solid, like STOPPED and unlike LIVE.
     await expect(dot).not.toHaveClass('animate-pulse');
   },
@@ -310,7 +312,8 @@ export const Archived: Story = {
     await expect(canvas.queryByText('IDLE')).not.toBeInTheDocument();
     const dot = canvasElement.querySelector<HTMLElement>('[data-session-status-dot]')!;
     // Filled and dimmed: put away is a state the row is in, not the absence of one.
-    await expect(dot).toHaveClass('bg-muted');
+    await expect(dot).toHaveClass('bg-current');
+    await expect(dot.parentElement).toHaveClass('text-muted');
     await expect(dot).not.toHaveClass('animate-pulse');
   },
 };
