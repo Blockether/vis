@@ -164,12 +164,21 @@ it.each([
 });
 
 it('keeps embedded document headings and code inside their Activity step', () => {
-  paintActivity({ activity: storyData.ACTIVITY_RESULTS });
+  const activity = structuredClone(storyData.ACTIVITY_RESULTS);
+  // Grep keeps only its summary, so the engine fixture has no code block. Give the
+  // documentation step one, to keep the frameless code check.
+  activity.rows
+    .find((row) => row.operation === 'doc')!
+    .presentation!.content.push({ type: 'code', text: '(activity/present row)' });
+  paintActivity({ activity });
   openEverySettledStep();
   expect(screen.getByRole('heading', { name: 'Activity', level: 5 })).toBeVisible();
   expect(screen.queryAllByRole('region', { name: 'text code' })).toHaveLength(0);
   // Issue #260: a clean verification row no longer embeds its runner output.
   expect(screen.getAllByRole('group', { name: 'text code' })).toHaveLength(1);
+  const grep = document.querySelector<HTMLElement>('[data-activity-row$=":result-2"]')!;
+  expect(grep).toHaveTextContent('grep');
+  expect(within(grep).queryByRole('group')).toBeNull();
 });
 
 it('shares a table layout without losing repeated headers or result groups', () => {
