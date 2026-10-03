@@ -130,14 +130,14 @@ Unknowns: e2e provider limits on Mikrus.
 - Phase 3 is done: tool declaration, introspection, Council, drafts, agents, MCP and harness.
 - Phase 4 is done for vis-lang-interface 2.6.2, vis-lang-clojure 1.9.2, vis-lang-python 1.6.2,
   `gh.py` and `uplink.py`. `vis.yml` pins the new versions.
-- Phase 4 blocker: vis-spel 0.1.12 waits for green spel CI. example.org removed its `h1`, so 22
-  spel tests fail on Linux and macOS. They need local fixture pages instead of the live site.
+- Phase 4 is done for vis-spel 0.1.12. The release is published, and `vis.yml` pins it.
+- Spel CI is green on Linux, macOS and Windows at 4e5bedeb76e. Browser tests serve local pages.
 - Phase 5 is done: vis AGENTS.md has a Simplified English rule set. Four sibling files changed.
 - Phase 6 is done: six hard words are fixed, and `test-prose/simpler-words` enforces the rule.
-- Phase 7 is done. The full local suite passes (6327 cases), and clj format and lint are clean.
-- CI passes the main suite on Linux and macOS. The standalone TUI suite fails one test, "session
-  picker coalesces wheel floods and moves selection". It failed before this work too (83dba5bc8).
-  CI then skips Beta Native, so the Mikrus e2e runs use the JVM source gateway.
+- Phase 7 is done. The full local suite passes at ba9cf9a5d (6331 cases). Clojure format and lint are clean.
+- Vis CI is green at ba9cf9a5d, including the standalone TUI suite and the SDK boundary tests.
+- 7e08d3671 orders the wheel test sessions. ba9cf9a5d serializes writes on memory stores to keep model picks.
+- The Mikrus e2e below used the JVM source gateway because the earlier CI failure blocked Beta Native.
 - Mikrus e2e at b39cc06cd: 24 of 39 scenarios pass. A 60-second usage query timeout of the JVM
   gateway fails 5 of them. Mikrus tool setup fails 3. 4 give the correct result with one model
   code error. 3 fail on behavior; `ls-source-root-discovery` then passed 3 of 3.
