@@ -56,7 +56,6 @@ import type {
   TranscriptTurn,
 } from '../lib/types';
 import type { GwHealth } from '../components/Machines';
-import type { ManagedProject } from '../components/ManageProjectsSheet';
 import type { ProviderAuth } from '../components/ProviderAuth';
 
 /**
@@ -1254,11 +1253,8 @@ export const STORY_GATEWAY_HEALTH: Record<string, GwHealth> = {
   },
 };
 
-/** Two real project states: one running, one settled. */
-export const STORY_PROJECTS: ManagedProject[] = [
-  { name: 'vis', root: '/Users/me/code/vis', projectId: 'project-vis', count: 61, live: 2 },
-  { name: 'demo', root: '/Users/me/code/demo', projectId: 'project-demo', count: 4, live: 0 },
-];
+/** The folders of two projects one machine already has. */
+export const STORY_PROJECT_ROOTS = ['/Users/me/code/vis', '/Users/me/code/demo'];
 
 const STORY_HISTORY_CUTS: SessionArtifact[] = [
   {

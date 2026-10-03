@@ -3812,6 +3812,56 @@
       (expect (some? after))
       (expect (nil? (:project-id after)))))
   (it
+    "moves a project's sessions with its folder"
+    (let [s
+          (h/store)
+
+          p
+          (persistance/db-create-project! s {:name "vis" :workspace-root "/old/vis"})
+
+          trunk
+          (vis/db-workspace-insert! s {:repo-id "vis-old" :repo-root "/old/vis" :root "/old/vis"})
+
+          draft
+          (vis/db-workspace-insert! s
+                                    {:repo-id "vis-old"
+                                     :repo-root "/old/vis"
+                                     :root "/drafts/vis-1"
+                                     :workspace-kind :draft
+                                     :fork-ms 1})
+
+          other
+          (vis/db-workspace-insert! s {:repo-id "x" :repo-root "/old/x" :root "/old/x"})
+
+          moved
+          (persistance/db-update-project! s (:id p) {:workspace-root "/new/vis" :repo-id "vis-new"})
+
+          ws
+          (fn [w]
+            (select-keys (persistance/db-workspace-get s (:id w)) [:repo-id :repo-root :root]))]
+
+      (expect (= "/new/vis" (:workspace-root moved)))
+      ;; the trunk follows the folder; a draft keeps its clone and applies into the new folder
+      (expect (= {:repo-id "vis-new" :repo-root "/new/vis" :root "/new/vis"} (ws trunk)))
+      (expect (= {:repo-id "vis-new" :repo-root "/new/vis" :root "/drafts/vis-1"} (ws draft)))
+      (expect (= {:repo-id "x" :repo-root "/old/x" :root "/old/x"} (ws other)))))
+  (it
+    "names a path-named project by its folder when the store opens"
+    (let [s
+          (h/store)
+
+          legacy
+          (persistance/db-create-project! s {:name "/old/vis" :workspace-root "/old/vis"})
+
+          named
+          (persistance/db-create-project! s {:name "Main app" :workspace-root "/old/app"})
+
+          _
+          ((private-core-fn "install-schema!") (:datasource s))]
+
+      (expect (= "vis" (:name (persistance/db-get-project s (:id legacy)))))
+      (expect (= "Main app" (:name (persistance/db-get-project s (:id named)))))))
+  (it
     "keeps project sessions MOVABLE via project_position"
     (let [s
           (h/store)

@@ -935,8 +935,6 @@ export const Bands: Story = {
       <Group of="A project, and the fold that exposes its sessions">
         <ProjectCrumb
           name={STORY_SESSION.project}
-          qualifier={STORY_SESSION.where}
-          qualifierTitle={STORY_SESSION.where}
           counts={(
             <>
               <HeaderTally count={1928} unit="session" />

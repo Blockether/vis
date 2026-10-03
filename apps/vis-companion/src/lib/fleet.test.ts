@@ -834,6 +834,24 @@ describe('a row that names its project', () => {
 
     expect(groups.map((group) => group.label)).toEqual(['vis']);
   });
+
+  // The header names the project and never its path: an older gateway stored the
+  // folder path as the project name, and its header must still say only the folder.
+  it('names a project whose stored name is a path by its folder', () => {
+    const legacy: GatewayOverview = {
+      ...overview,
+      projects: overview.projects.map((project) => ({ ...project, name: project.root })),
+    };
+    const groups = projectGroups(legacy, [
+      session('s5', { project_name: '~/vis-sandbox', workspace: { root: '/Users/me/vis-sandbox' } }),
+    ]);
+
+    expect(groups.map((group) => group.label)).toEqual(['vis', 'vis-sandbox']);
+    expect(searchGroups([session('s6', { project_name: 'Wallet app' })])[0]?.label).toBe('Wallet app');
+    expect(
+      searchGroups([session('s7', { project_name: 'C:\\Users\\me\\billing\\' })])[0]?.label,
+    ).toBe('billing');
+  });
 });
 
 // Regression, duplicate project header: the gateway files EVERY session under its

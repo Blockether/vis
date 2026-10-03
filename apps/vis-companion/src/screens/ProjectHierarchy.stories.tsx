@@ -50,7 +50,10 @@ export const GroupedSessions: Story = {
     const collapsed = page.queryByRole('button', { name: 'Expand infrastructure' });
     if (collapsed) await userEvent.click(collapsed);
     await within(group).findByText('Rotate the relay signing key');
-    await expect(within(header).queryByRole('button', { name: /^Actions for/ })).toBeNull();
+    // The band holds only the project's own menu; each set under it holds its own.
+    const bandMenus = within(header).getAllByRole('button', { name: /^Actions for/ });
+    await expect(bandMenus).toHaveLength(1);
+    await expect(bandMenus[0]).toHaveAccessibleName('Actions for infrastructure');
     await expect(header.querySelector('[data-swipe-track]')).toBeNull();
 
     // Regression: repeated project controls and row controls must stay unframed. Each set

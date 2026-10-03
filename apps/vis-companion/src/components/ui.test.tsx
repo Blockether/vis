@@ -94,7 +94,7 @@ describe('settings headers', () => {
 describe('ProjectCrumb', () => {
   it('is a disclosure that names its project and its state', () => {
     render(
-      <ProjectCrumb name="vis" qualifier="~/vis" disclosure={{ isOpen: true, onToggle: () => {}, label: 'Collapse vis' }} />,
+      <ProjectCrumb name="vis" disclosure={{ isOpen: true, onToggle: () => {}, label: 'Collapse vis' }} />,
     );
 
     expect(screen.getByRole('button', { name: 'Collapse vis' })).toHaveAttribute(
@@ -437,7 +437,7 @@ describe('MachineProjectsButton', () => {
     render(<MachineProjectsButton machine="tower" onPress={() => {}} />);
 
     expect(
-      screen.getByRole('button', { name: 'Projects on tower' }),
+      screen.getByRole('button', { name: 'New project on tower' }),
     ).toBeInTheDocument();
   });
 });

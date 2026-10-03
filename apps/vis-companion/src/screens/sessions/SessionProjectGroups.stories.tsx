@@ -106,8 +106,11 @@ export const ShowNewerSession: Story = {
         name: 'Pages of /CryptoSafe sessions',
       });
       await expect(pager).toBeVisible();
-      // The project header no longer owns the lists' actions or their creation controls.
-      await expect(within(header).queryByRole('button', { name: /^Actions for / })).toBeNull();
+      // The project header holds only the project's own menu, never the lists' actions
+      // or their creation controls.
+      const bandMenus = within(header).getAllByRole('button', { name: /^Actions for / });
+      await expect(bandMenus).toHaveLength(1);
+      await expect(bandMenus[0]).toHaveAccessibleName(`Actions for ${args.group.label}`);
       await expect(within(header).queryByRole('button', { name: /^New session/ })).toBeNull();
       // The pager and Sessions actions share the set header beneath the project band.
       await expect(within(header).queryByRole('navigation')).toBeNull();

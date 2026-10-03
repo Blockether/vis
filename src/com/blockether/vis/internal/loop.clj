@@ -13,7 +13,8 @@
             [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
-            [com.blockether.vis.internal.session.titling :as titling]))
+            [com.blockether.vis.internal.session.titling :as titling]
+            [com.blockether.vis.internal.workspace.core :as workspace]))
 
 (defn db-info
   "Return the process-wide shared DB connection bound to
@@ -119,16 +120,22 @@
   ([root] (get-project-by-root "local" root))
   ([owner-id root] (persistance/db-get-project-by-root (db-info) owner-id root)))
 
+(defn- folder-name
+  "Last path segment of `root`, the default name of its project, or `root` itself
+   when it has none (the filesystem root)."
+  [root]
+  (or (not-empty (.getName (java.io.File. (str root)))) (str root)))
+
 (defn ensure-project-for-root!
   "Get-or-create the project bound to canonical workspace `root` (a project IS a
    tab set). Race-safe: on a UNIQUE(owner_id, workspace_root) collision from a
    creator the insert throws and we re-read. `name` seeds a freshly created
-   project (falls back to the root path)."
+   project (falls back to the folder name)."
   ([root] (ensure-project-for-root! "local" root nil))
   ([owner-id root name]
    (python-extensions/prepare-project! root)
    (or (get-project-by-root owner-id root)
-       (try (create-project! {:name (or (not-empty (str name)) (str root))
+       (try (create-project! {:name (or (not-empty (str name)) (folder-name root))
                               :owner-id (or owner-id "local")
                               :workspace-root root})
             ;; ONLY a lost get-or-create race is expected here (the partial
@@ -138,7 +145,35 @@
             ;; original error was the true cause, so rethrow it.
             (catch Throwable e (or (get-project-by-root owner-id root) (throw e)))))))
 
-(defn update-project! [project-id opts] (persistance/db-update-project! (db-info) project-id opts))
+(defn update-project!
+  "Patch a project (see `db-update-project!`). A new `:workspace-root` must name an
+   existing directory that no other project of the same owner uses. The project's
+   sessions move with it."
+  [project-id opts]
+  (if-not (contains? opts :workspace-root)
+    (persistance/db-update-project! (db-info) project-id opts)
+    (let [root
+          (workspace/normalize-root (:workspace-root opts))
+
+          project
+          (get-project project-id)
+
+          holder
+          (when (and project root) (get-project-by-root (:owner-id project) root))]
+
+      (when-not (and root (.isDirectory (java.io.File. ^String root)))
+        (throw (ex-info (str "Not a directory: " (:workspace-root opts))
+                        {:type :project/not-a-directory :path (:workspace-root opts)})))
+      (when (and holder (not= (:id holder) (:id project)))
+        (throw (ex-info (str "Another project already uses " root)
+                        {:type :project/root-taken :path root :project-id (:id holder)})))
+      (when project
+        (python-extensions/prepare-project! root)
+        (persistance/db-update-project! (db-info)
+                                        project-id
+                                        (assoc opts
+                                          :workspace-root root
+                                          :repo-id (workspace/repo-id-for root)))))))
 
 (defn delete-project! [project-id] (persistance/db-delete-project! (db-info) project-id))
 

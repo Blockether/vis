@@ -6082,8 +6082,35 @@
                                                  {:loading? false
                                                   :error "Add failed · check directory"}])))))))
 
+(defn- move-project!
+  "Give `project` the folder at `path`. The gateway moves the project's sessions
+   with it, and it refuses a missing folder or a folder of another project."
+  [project path]
+  (let [pid
+        (some-> (get project "id")
+                str)
+
+        root
+        (str/trim (str path))]
+
+    (when (and pid (not (str/blank? root)))
+      (state/dispatch [:project-sidebar {:loading? true :error nil}])
+      (vis/worker-future
+        "tui-move-project"
+        (fn []
+          (try (vis/gateway-update-project! pid {:workspace-root root})
+               (refresh-projects!)
+               (vis/notify! (str "Moved " (projects/project-label project) " to its new folder")
+                            :level :success
+                            :ttl-ms copy-success-ttl-ms)
+               (catch Throwable error
+                 (state/dispatch [:project-sidebar
+                                  {:loading? false
+                                   :error (str "Move failed · " (ex-message error))}]))))))))
+
 (defn- create-project-folder!
-  "Create a folder in the gateway listing, then add its returned path as a project."
+  "Create a folder in the gateway listing. Then add it as a project, or give it to the
+   project whose folder the field changes."
   [screen field add!]
   (if-let [parent (:listing-path field)]
     (when-let [entered (with-dialog-lock
@@ -6099,7 +6126,9 @@
                        (when-not (seq path)
                          (throw (ex-info "Gateway did not return the folder path" {})))
                        (state/dispatch [:project-sidebar {:adding nil :saving? false}])
-                       (add! path))
+                       (if-let [project (:moving field)]
+                         (move-project! project path)
+                         (add! path)))
                      (catch Throwable error
                        (state/dispatch [:project-sidebar
                                         {:saving? false
@@ -6256,6 +6285,31 @@
                                 :ttl-ms copy-success-ttl-ms))
                  (finally (state/dispatch [:project-sidebar {:removing nil :progress nil}])))))))))
 
+(defn- rename-project!
+  "Ask for a new project name, then store it on the gateway. The rail changes only
+   from the gateway's answer. A blank or unchanged name sends nothing."
+  [screen project]
+  (when-let [pid (some-> (get project "id")
+                         str)]
+    (when-let [entered (with-dialog-lock #(dlg/text-input-dialog! screen
+                                                                  "Rename project" "Project name"
+                                                                  :initial (projects/project-label
+                                                                             project)))]
+      (let [name (str/trim (str entered))]
+        (cond (str/blank? name) (vis/notify! "A project name cannot be empty"
+                                             :level :warn
+                                             :ttl-ms copy-success-ttl-ms)
+              (not= name (str/trim (str (get project "name"))))
+              (vis/worker-future "tui-project-rename"
+                                 (fn []
+                                   (try (vis/gateway-update-project! pid {:name name})
+                                        (refresh-projects!)
+                                        (catch Throwable error
+                                          (vis/notify! (str "Could not rename project: "
+                                                            (ex-message error))
+                                                       :level :warn
+                                                       :ttl-ms copy-success-ttl-ms))))))))))
+
 (defn- sidebar-row-menu!
   "The rail's ⋮ menu for the row under the cursor, from `projects/row-menu-items`.
    An `:initial-action` on `entry` runs that item without the menu, which is how
@@ -6309,6 +6363,14 @@
 
       :delete-project
       (remove-project! screen project)
+
+      :rename-project
+      (rename-project! screen project)
+
+      :move-project
+      (when pid
+        (state/dispatch [:project-sidebar {:focused? true :index 0}])
+        (store-add-field! (assoc (projects/add-field) :moving project)))
 
       :toggle-session
       (when sid (state/dispatch [:project-session-select-toggle pid sid]))
@@ -6707,8 +6769,9 @@
 
       :add-commit
       (when-not (get-in @state/app-db [:project-sidebar :saving?])
-        (state/dispatch [:project-sidebar {:adding nil}])
-        (add! value))
+        (let [moving (get-in @state/app-db [:project-sidebar :adding :moving])]
+          (state/dispatch [:project-sidebar {:adding nil}])
+          (if moving (move-project! moving value) (add! value))))
 
       :add-folder
       (when (and new-folder! (not (get-in @state/app-db [:project-sidebar :saving?])))

@@ -25,7 +25,7 @@ describe('warming the split screens', () => {
     const watch = watchUnhandledRejections();
     const view = renderApp({ machines: [{ label: 'laptop' }] });
     try {
-      await screen.findByRole('button', { name: 'Projects on laptop' });
+      await screen.findByRole('button', { name: 'New project on laptop' });
       // Every iOS WebView is a browser without requestIdleCallback, and so is
       // jsdom: the warm-up here is the 300 ms fallback timer.
       await new Promise((resolve) => setTimeout(resolve, 400));

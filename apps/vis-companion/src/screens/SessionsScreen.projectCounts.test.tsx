@@ -72,17 +72,21 @@ describe('what a project header counts', () => {
   });
 });
 
-// Regression: path-derived project names were repeated above the session count.
+// Regression, user report (paraphrased: a project shows only its name, never its
+// folder): a header prints the name once, with no path and no path title, also when an
+// older gateway stored the path as the name.
 describe('what a project header names', () => {
   it.each([
-    { name: '~/project', root: '/Users/dev/project', qualifier: '' },
-    { name: '/project', root: '/project', qualifier: '' },
-    { name: '~/project', root: 'C:\\Users\\dev\\project', qualifier: '' },
-    { name: 'project', root: '/Users/dev/project', qualifier: '' },
-    { name: 'project', root: '/Users/dev/work/project', qualifier: '~/work' },
+    { name: '~/project', root: '/Users/dev/project', shown: 'project' },
+    { name: '/project', root: '/project', shown: 'project' },
+    { name: '~/project', root: 'C:\\Users\\dev\\project', shown: 'project' },
+    { name: 'C:\\Users\\dev\\project', root: 'C:\\Users\\dev\\project', shown: 'project' },
+    { name: 'project', root: '/Users/dev/project', shown: 'project' },
+    { name: 'project', root: '/Users/dev/work/project', shown: 'project' },
+    { name: 'Billing API', root: '/Users/dev/work/project', shown: 'Billing API' },
   ])(
-    'shows $name once and preserves distinct checkout details',
-    async ({ name, root, qualifier }) => {
+    'shows $name as $shown and never prints its folder',
+    async ({ name, root, shown }) => {
       const session = listSession({ id: 'project-row', workspace: { root } });
       const view = renderSessionsScreen({
         machines: [
@@ -117,13 +121,13 @@ describe('what a project header names', () => {
         ],
       });
       restore = view.restore;
-      const heading = await screen.findByRole('button', { name: `Collapse ${name}` });
+      const heading = await screen.findByRole('button', { name: `Collapse ${shown}` });
       const header = heading.closest('header')!;
-      expect(within(header).getAllByText(name)).toHaveLength(1);
-      const detail = header.querySelector('[title]');
-      expect(detail).toHaveAttribute('title', root);
-      expect(detail?.textContent).toBe(`${name}${qualifier}`);
-      expect(detail).not.toContainElement(within(header).getByText('1 session'));
+      expect(within(header).getAllByText(shown)).toHaveLength(1);
+      expect(header.textContent).not.toMatch(/[~/\\]/);
+      const titles = Array.from(header.querySelectorAll('[title]'), (node) => node.getAttribute('title'));
+      expect(titles.filter((title) => /[~/\\]/.test(title ?? ''))).toEqual([]);
+      expect(within(header).getByText(shown)).not.toContainElement(within(header).getByText('1 session'));
     },
   );
 });

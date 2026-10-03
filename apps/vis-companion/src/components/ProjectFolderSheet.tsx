@@ -1,5 +1,8 @@
 /**
- * Manage projects on ONE machine: browse, create, move, and choose project folders.
+ * Choose a project folder on ONE machine: browse, create, and pick it.
+ *
+ * The same sheet adds a project (`add`) and gives an existing project another folder
+ * (`move`). The machine's projects themselves are managed from each project's own menu.
  *
  * A machine owns its projects, so the only thing that knows which folders exist is
  * the machine: every row here comes from `GET /v1/fs` on that gateway. The sheet
@@ -20,17 +23,14 @@
  * It is `AnchoredPanel` + `MenuHeading` + `MenuItem` now, so it cannot drift again.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BandButton, ConfirmRow, IconButton, Input, Spinner } from './ui';
-import { AnchoredPanel, MenuBack, MenuHeading, MenuItem, MenuNote } from './Menu';
+import { BandButton, IconButton, Input, Spinner } from './ui';
+import { AnchoredPanel, MenuHeading, MenuItem, MenuNote } from './Menu';
 import type { MenuPosition } from '../lib/anchored-menu';
 import {
   CheckIcon,
   ChevronIcon,
   FolderPlusIcon,
   PencilIcon,
-  PlusIcon,
-  ProjectsIcon,
-  TrashIcon,
   UndoIcon,
 } from './icons';
 import type { GatewayClient } from '../lib/gateway';
@@ -114,78 +114,37 @@ function entryHint(entry: BrowseEntry): string {
   return entry.branch ? `${count} · ${entry.branch}` : count;
 }
 
-/** One project this machine already owns, as the portal lists it. */
-export interface ManagedProject {
-  /** The name the sessions list titles it with. */
-  name: string;
-  /** Canonical root on that machine — the identity, and what removal acts on. */
-  root: string;
-  /** The gateway's project id when the root is a saved project, `''` otherwise. */
-  projectId: string;
-  /** How many transcripts it holds. */
-  count: number;
-  /** How many of those are running right now. */
-  live: number;
-}
+/** What the sheet is for, as its band, its way out and its commit verbs say it. */
+const WORDS = {
+  add: { title: 'New project', close: 'new project', use: 'Use project', create: 'Create project' },
+  move: { title: 'Change folder', close: 'change folder', use: 'Move here', create: 'Create and move' },
+} as const;
 
-export interface ProjectRemovalProgress {
-  done: number;
-  total: number;
-}
-
-interface ProjectRemoval {
-  project: ManagedProject;
-  rowHeight?: number;
-  busy: boolean;
-  error: string | null;
-  progress: ProjectRemovalProgress | null;
-}
-
-export function ManageProjectsSheet({
+export function ProjectFolderSheet({
   label,
-  isAdding,
+  mode,
   at,
   client,
   startAt,
   knownRoots,
-  projects,
   onCancel,
   onChoose,
-  onRemove,
 }: {
   /** The machine whose files these are — the title says it, so no row has to. */
   label: string;
-  /**
-   * Opens straight on the folder browser. The row's `New project` control means what
-   * it says: landing on the inventory first and making a human hunt for another
-   * creation control is a tap spent on a verb already chosen.
-   */
-  isAdding?: boolean;
+  /** `add` makes the chosen folder a project; `move` gives an existing project that folder. */
+  mode: 'add' | 'move';
   /** Where the panel hangs from `sm:` up — the control that opened it. */
   at: MenuPosition | null;
   client: GatewayClient;
-  /** Where browsing opens: the machine's current project, or its home. */
+  /** Where browsing opens: the project's own folder, the machine's current one, or home. */
   startAt: string | null;
-  /** Roots this machine already runs sessions in, so the common case is recognised. */
+  /** Roots this machine already has as projects, so the common case is recognised. */
   knownRoots: Set<string>;
-  /** What this machine ALREADY has. The portal opens on these, not on a filesystem. */
-  projects: ManagedProject[];
   onCancel: () => void;
   onChoose: (root: string) => void | Promise<void>;
-  /**
-   * Remove every transcript in one project. This sheet owns the in-row question; the
-   * caller owns the gateway mutation and reports a fallback fan-out as it advances.
-   */
-  onRemove: (
-    project: ManagedProject,
-    onProgress: (progress: ProjectRemovalProgress) => void,
-  ) => void | Promise<void>;
 }) {
-  // The portal opens on what this machine HAS; the filesystem is one step in, behind
-  // the verb that needs it. It used to open on `GET /v1/fs` — a folder browser called
-  // "Manage projects", which could add a project and never showed you the ones you
-  // had, let alone remove one.
-  const [adding, setAdding] = useState(isAdding || projects.length === 0);
+  const words = WORDS[mode];
   const [dir, setDir] = useState<string>(startingDir(startAt) ?? '~');
   const [listing, setListing] = useState<{
     path: string;
@@ -201,14 +160,6 @@ export function ManageProjectsSheet({
   // `null` is not creating; a string is the folder that does not exist yet.
   const [folder, setFolder] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  // The destructive question REPLACES exactly one inventory row. Successful removals
-  // stay gone even though the caller's `machine` snapshot predates the request.
-  const [removing, setRemoving] = useState<ProjectRemoval | null>(null);
-  const [removedRoots, setRemovedRoots] = useState<Set<string>>(() => new Set());
-  const visibleProjects = useMemo(
-    () => projects.filter((project) => !removedRoots.has(project.root)),
-    [projects, removedRoots],
-  );
 
   const typedSplit = typed === null ? null : splitTyped(typed);
 
@@ -223,10 +174,7 @@ export function ManageProjectsSheet({
     listing !== null && (wanted === listing.path || wanted === homeify(listing.path, listing.home));
   const isTyping = typedSplit !== null;
   useEffect(() => {
-    // The inventory is not a filesystem: while it is on screen the gateway is never
-    // asked for a folder. Listing behind it spent a round-trip nobody could see and
-    // landed its rows under the projects, one frame late.
-    if (!adding || settled) return;
+    if (settled) return;
     const controller = new AbortController();
     const timer = window.setTimeout(
       () => {
@@ -251,7 +199,7 @@ export function ManageProjectsSheet({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [adding, client, wanted, settled, isTyping]);
+  }, [client, wanted, settled, isTyping]);
 
   const home = listing?.home ?? '';
   const here = listing?.path ?? '';
@@ -292,50 +240,6 @@ export function ManageProjectsSheet({
       setSaving(false);
     }
   }, [alreadyProject, client, folder, here, onChoose, target]);
-
-  const askRemove = useCallback((project: ManagedProject, rowHeight?: number) => {
-    setRemoving({ project, rowHeight, busy: false, error: null, progress: null });
-  }, []);
-
-  const keepProject = useCallback(() => setRemoving(null), []);
-
-  const commitRemove = useCallback(
-    async (project: ManagedProject) => {
-      if (removing?.project.root !== project.root || removing.busy) return;
-      setRemoving((current) =>
-        current?.project.root === project.root
-          ? { ...current, busy: true, error: null, progress: null }
-          : current,
-      );
-      try {
-        await onRemove(project, (progress) =>
-          setRemoving((current) =>
-            current?.project.root === project.root ? { ...current, progress } : current,
-          ),
-        );
-        setRemovedRoots((current) => {
-          if (current.has(project.root)) return current;
-          const next = new Set(current);
-          next.add(project.root);
-          return next;
-        });
-        setRemoving((current) => (current?.project.root === project.root ? null : current));
-      } catch (cause) {
-        const message = (cause as Error).message;
-        setRemoving((current) =>
-          current?.project.root === project.root
-            ? {
-                ...current,
-                busy: false,
-                error: message,
-                progress: null,
-              }
-            : current,
-        );
-      }
-    },
-    [onRemove, removing],
-  );
 
   const enter = useCallback((path: string) => {
     setTyped(null);
@@ -390,7 +294,7 @@ export function ManageProjectsSheet({
   // folder taking the add stroke, the tick that commits — and keeps its verb as the
   // name a screen reader speaks and a pointer sees. Naming a folder turns that add
   // stroke into an UNDO: the cell that opened the line takes it back. It wore this
-  // app's close stroke — a plus turned 45° — and in the `isAdding` step that stood two
+  // app's close stroke — a plus turned 45° — and in the `add` step that stood two
   // identical crosses one cell apart, one leaving the LINE and one leaving the PANEL.
   const projectCells = (
     <>
@@ -403,7 +307,7 @@ export function ManageProjectsSheet({
       </BandButton>
       <BandButton
         isPrimary
-        label={folder === null ? 'Use project' : 'Create project'}
+        label={folder === null ? words.use : words.create}
         disabled={saving || !target || alreadyProject || (folder !== null && !folder.trim())}
         onClick={() => void commit()}
       >
@@ -416,7 +320,7 @@ export function ManageProjectsSheet({
     <AnchoredPanel
       size="browse"
       role="dialog"
-      label={`Manage projects on ${label}`}
+      label={`${words.title} on ${label}`}
       at={at}
       onDismiss={onCancel}
     >
@@ -431,225 +335,139 @@ export function ManageProjectsSheet({
           the sheet, in a panel that was opened FROM that machine's own rail. The name
           survives where a reader who cannot see that rail still needs it: the panel's
           `aria-label` and the way out. */}
-      {!adding && (
-        <MenuHeading
-          titleCells={
-            // Creation is a band cell directly beside Projects; Close stays at the far edge.
-            <BandButton isFirst label="New project" onClick={() => setAdding(true)}>
-              <PlusIcon className="size-3.5" />
-            </BandButton>
-          }
-          onClose={onCancel}
-          closeLabel={`Close projects on ${label}`}
-        >
-          Projects
-        </MenuHeading>
-      )}
+      <MenuHeading
+        cells={projectCells}
+        onClose={onCancel}
+        closeLabel={`Close ${words.close} on ${label}`}
+      >
+        {words.title}
+      </MenuHeading>
 
-      {!adding ? (
-        <>
-          {/* Each project opens its own workspace; deletion stays beside that project. */}
-          <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain [&>*:last-child]:border-b-0">
-            {visibleProjects.length === 0 ? (
-              <MenuNote>This machine has no projects yet.</MenuNote>
-            ) : (
-              visibleProjects.map((entry) =>
-                removing?.project.root === entry.root ? (
-                  <ConfirmRow
-                    key={entry.root}
-                    question={`Delete ${entry.name}?`}
-                    cost={removing.error ? `Could not delete: ${removing.error}` : undefined}
-                    confirmLabel={
-                      removing.busy
-                        ? removing.progress
-                          ? `Deleting ${removing.progress.done} of ${removing.progress.total}...`
-                          : 'Deleting...'
-                        : 'Yes, delete'
-                    }
-                    isBusy={removing.busy}
-                    rowHeight={removing.rowHeight}
-                    onKeep={keepProject}
-                    onConfirm={() => void commitRemove(entry)}
-                  />
-                ) : (
-                  <MenuItem
-                    key={entry.root}
-                    icon={<ProjectsIcon className="size-4" />}
-                    title={entry.name}
-                    meta={`${entry.count} ${entry.count === 1 ? 'transcript' : 'transcripts'}${
-                      entry.live > 0 ? `, ${entry.live} running` : ''
+      {alreadyProject && <MenuNote>It’s already a project</MenuNote>}
+
+      {typed === null ? (
+        <div className={`${PATH_BAND} gap-1 bg-panel-2 ${SHEET_EDGE}`}>
+          {crumbs.length > shown.length && (
+            <span className="shrink-0 font-mono text-meta text-dialog-hint" aria-hidden>
+              …
+            </span>
+          )}
+          <span className="flex min-w-0 flex-1 items-center overflow-hidden">
+            {shown.map((crumb, index) => {
+              const isHere = index === shown.length - 1;
+              return (
+                <span key={crumb.path} className="flex min-w-0 items-center">
+                  {/* A separator BETWEEN crumbs, never in front of the first one: the
+                  bar used to open `› ~ › vis`, a chevron pointing at nothing. */}
+                  {(index > 0 || crumbs.length > shown.length) && (
+                    <ChevronIcon
+                      className="mx-0.5 size-3 shrink-0 text-dialog-hint"
+                      aria-hidden
+                    />
+                  )}
+                  {/* A crumb is a real target: the text-only ones were 14px tall in a
+                  sheet whose every other row was 44. */}
+                  <button
+                    type="button"
+                    disabled={isHere}
+                    aria-current={isHere ? 'location' : undefined}
+                    className={`min-h-11 truncate px-1 font-mono text-meta transition-colors duration-150 focus-visible:outline-none motion-reduce:transition-none mouse:min-h-7 ${
+                      isHere
+                        ? 'font-bold text-white'
+                        : 'text-accent-ink mouse:hover:text-white focus-visible:bg-hover'
                     }`}
-                    onSelect={() => onChoose(entry.root)}
-                    action={
-                      <IconButton
-                        variant="remove"
-                        label={`Remove every transcript in ${entry.name}`}
-                        onClick={(event) =>
-                          askRemove(entry, event.currentTarget.parentElement?.getBoundingClientRect().height)
-                        }
-                        className="after:-left-[9px] after:-right-[3px] sm:after:-left-1.5 sm:after:-right-1.5"
-                      >
-                        <TrashIcon className="size-4" />
-                      </IconButton>
-                    }
-                  />
-                ),
-              )
-            )}
-          </div>
-        </>
-      ) : (
-        <>
-          {/* Adding is a task, not a step in a tour, so its band carries the app's one way
-          out when the human ASKED for it by name (the start flow's `New project`).
-          Reached from the inventory's own plus it IS a step inside this
-          menu, and a step is left the way it was entered — otherwise the only exit
-          from the browser is closing the sheet and finding the folder mark again. */}
-          {isAdding ? (
-            <MenuHeading
-              cells={projectCells}
-              onClose={onCancel}
-              closeLabel={`Close new project on ${label}`}
-            >
-              New project
-            </MenuHeading>
-          ) : (
-            <MenuBack
-              label={`Back to projects on ${label}`}
-              onBack={() => setAdding(false)}
-              cells={projectCells}
-            >
-              New project
-            </MenuBack>
-          )}
-
-          {alreadyProject && <MenuNote>It’s already a project</MenuNote>}
-
-          {typed === null ? (
-            <div className={`${PATH_BAND} gap-1 bg-panel-2 ${SHEET_EDGE}`}>
-              {crumbs.length > shown.length && (
-                <span className="shrink-0 font-mono text-meta text-dialog-hint" aria-hidden>
-                  …
+                    onClick={() => enter(crumb.path)}
+                  >
+                    {crumb.label}
+                  </button>
                 </span>
-              )}
-              <span className="flex min-w-0 flex-1 items-center overflow-hidden">
-                {shown.map((crumb, index) => {
-                  const isHere = index === shown.length - 1;
-                  return (
-                    <span key={crumb.path} className="flex min-w-0 items-center">
-                      {/* A separator BETWEEN crumbs, never in front of the first one: the
-                      bar used to open `› ~ › vis`, a chevron pointing at nothing. */}
-                      {(index > 0 || crumbs.length > shown.length) && (
-                        <ChevronIcon
-                          className="mx-0.5 size-3 shrink-0 text-dialog-hint"
-                          aria-hidden
-                        />
-                      )}
-                      {/* A crumb is a real target: the text-only ones were 14px tall in a
-                      sheet whose every other row was 44. */}
-                      <button
-                        type="button"
-                        disabled={isHere}
-                        aria-current={isHere ? 'location' : undefined}
-                        className={`min-h-11 truncate px-1 font-mono text-meta transition-colors duration-150 focus-visible:outline-none motion-reduce:transition-none mouse:min-h-7 ${
-                          isHere
-                            ? 'font-bold text-white'
-                            : 'text-accent-ink mouse:hover:text-white focus-visible:bg-hover'
-                        }`}
-                        onClick={() => enter(crumb.path)}
-                      >
-                        {crumb.label}
-                      </button>
-                    </span>
-                  );
-                })}
-              </span>
-              {pencil}
-            </div>
-          ) : (
-            <div className={`${PATH_BAND} gap-2 bg-panel-2 ${SHEET_EDGE}`}>
-              <Input
-                autoFocus
-                value={typed}
-                aria-label="Path on this machine"
-                placeholder="~/code/thing"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                onChange={(event) => setTyped(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Enter') return;
-                  if (exact) enter(exact.path);
-                  else void commit();
-                }}
-              />
-              {pencil}
-            </div>
-          )}
-
-          {folder !== null && (
-            <div className={`${PATH_BAND} gap-2 bg-panel ${SHEET_EDGE}`}>
-              {/* The line that names the new folder leads with the MARK of the cell that
-              opened it. It led with a `+` typed into the band — a glyph standing in for
-              an icon, one row under the very cell that draws that icon properly. */}
-              <FolderPlusIcon className="text-accent-ink" />
-              <Input
-                autoFocus
-                value={folder}
-                maxLength={64}
-                aria-label="New folder name"
-                placeholder="band-repaint"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                onChange={(event) => setFolder(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') void commit();
-                }}
-              />
-            </div>
-          )}
-
-          {/* The last folder drops its rule so it cannot double the panel's bottom edge. */}
-          <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain [&>*:last-child]:border-b-0 [&>div>*:last-child]:border-b-0">
-            {error ? (
-              <p className={`py-3 font-mono text-meta text-err ${SHEET_EDGE}`}>{error}</p>
-            ) : busy && !listing ? (
-              <MenuNote>
-                <Spinner tone="accent" />
-                Reading folders...
-              </MenuNote>
-            ) : rows.length === 0 ? (
-              <MenuNote>
-                {typedSplit?.leaf ? 'No folder here starts with that.' : 'No folders in here.'}
-              </MenuNote>
-            ) : (
-              // A folder row IS a menu row — a glyph, a name, the consequence of choosing
-              // it, and an optional badge — so it is the app's menu row, not a fourth
-              // near-copy of one. The badge's WORD says whether Vis already knows this
-              // folder or merely that it is a repo.
-              // `inert`, not `aria-hidden`: while a new folder is being named these rows
-              // are out of play, and a container that is merely hidden from the a11y tree
-              // still hands its buttons to the Tab key.
-              <div className={folder === null ? '' : 'opacity-40'} inert={folder !== null}>
-                {rows.map((entry) => (
-                  <MenuItem
-                    key={entry.path}
-                    icon={<ChevronIcon className="size-3.5" />}
-                    title={`${entry.name}/`}
-                    hint={entryHint(entry)}
-                    badge={knownRoots.has(entry.path) ? 'project' : entry.is_repo ? 'git' : undefined}
-                    onSelect={() => enter(entry.path)}
-                  />
-                ))}
-              </div>
-            )}
-            {listing?.is_truncated && (
-              <MenuNote>Only the first folders are listed — type the path instead.</MenuNote>
-            )}
-          </div>
-        </>
+              );
+            })}
+          </span>
+          {pencil}
+        </div>
+      ) : (
+        <div className={`${PATH_BAND} gap-2 bg-panel-2 ${SHEET_EDGE}`}>
+          <Input
+            autoFocus
+            value={typed}
+            aria-label="Path on this machine"
+            placeholder="~/code/thing"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            onChange={(event) => setTyped(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter') return;
+              if (exact) enter(exact.path);
+              else void commit();
+            }}
+          />
+          {pencil}
+        </div>
       )}
+
+      {folder !== null && (
+        <div className={`${PATH_BAND} gap-2 bg-panel ${SHEET_EDGE}`}>
+          {/* The line that names the new folder leads with the MARK of the cell that
+          opened it. It led with a `+` typed into the band — a glyph standing in for
+          an icon, one row under the very cell that draws that icon properly. */}
+          <FolderPlusIcon className="text-accent-ink" />
+          <Input
+            autoFocus
+            value={folder}
+            maxLength={64}
+            aria-label="New folder name"
+            placeholder="band-repaint"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            onChange={(event) => setFolder(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') void commit();
+            }}
+          />
+        </div>
+      )}
+
+      {/* The last folder drops its rule so it cannot double the panel's bottom edge. */}
+      <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain [&>*:last-child]:border-b-0 [&>div>*:last-child]:border-b-0">
+        {error ? (
+          <p className={`py-3 font-mono text-meta text-err ${SHEET_EDGE}`}>{error}</p>
+        ) : busy && !listing ? (
+          <MenuNote>
+            <Spinner tone="accent" />
+            Reading folders...
+          </MenuNote>
+        ) : rows.length === 0 ? (
+          <MenuNote>
+            {typedSplit?.leaf ? 'No folder here starts with that.' : 'No folders in here.'}
+          </MenuNote>
+        ) : (
+          // A folder row IS a menu row — a glyph, a name, the consequence of choosing
+          // it, and an optional badge — so it is the app's menu row, not a fourth
+          // near-copy of one. The badge's WORD says whether Vis already knows this
+          // folder or merely that it is a repo.
+          // `inert`, not `aria-hidden`: while a new folder is being named these rows
+          // are out of play, and a container that is merely hidden from the a11y tree
+          // still hands its buttons to the Tab key.
+          <div className={folder === null ? '' : 'opacity-40'} inert={folder !== null}>
+            {rows.map((entry) => (
+              <MenuItem
+                key={entry.path}
+                icon={<ChevronIcon className="size-3.5" />}
+                title={`${entry.name}/`}
+                hint={entryHint(entry)}
+                badge={knownRoots.has(entry.path) ? 'project' : entry.is_repo ? 'git' : undefined}
+                onSelect={() => enter(entry.path)}
+              />
+            ))}
+          </div>
+        )}
+        {listing?.is_truncated && (
+          <MenuNote>Only the first folders are listed — type the path instead.</MenuNote>
+        )}
+      </div>
     </AnchoredPanel>
   );
 }

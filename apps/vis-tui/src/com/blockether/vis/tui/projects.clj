@@ -7,7 +7,6 @@
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.keymap :as keymap]
-            [com.blockether.vis.tui.paths :as paths]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t])
   (:import [com.googlecode.lanterna TerminalPosition]
@@ -123,13 +122,21 @@
      :unread (max (long unread) (long (or (get project "unread_count") 0)))}))
 
 (defn project-label
-  "What a project row paints. A project nobody renamed is named by its own root
-   path, so the rail showed `/Users/me/CryptoSyf` where every other path in the
-   TUI reads `~/CryptoSyf`. Home is shortened for DISPLAY only — selection,
-   matching and the gateway keep the stored name — and a name a human typed, or
-   a root outside home, passes through unchanged."
+  "What a project row paints: the project's name, never its folder. An older gateway
+   stored the folder path as the name, so a name that is a path paints only its last
+   folder name. A blank name falls back to the folder name of the project's root."
   [project]
-  (paths/abbreviate-home (get project "name" "Untitled project")))
+  (let [folder
+        (fn [path]
+          (let [path (str/replace (str/trim (str path)) #"[\\/]+$" "")]
+            (or (not-empty (last (str/split path #"[\\/]"))) (not-empty path))))
+
+        named
+        (str/trim (str (get project "name")))]
+
+    (cond (str/blank? named) (or (folder (get project "workspace_root")) "Untitled project")
+          (re-find #"^(~|/|[A-Za-z]:[\\/])" named) (or (folder named) named)
+          :else named)))
 
 (defn- session-local
   [db sid]
@@ -1100,7 +1107,9 @@
                                                  (long width)
                                                  (str (:text field))
                                                  (long (or (:cursor field) 0))
-                                                 "/absolute/directory")]
+                                                 (if-let [project (:moving field)]
+                                                   (str "New folder for " (project-label project))
+                                                   "/absolute/directory"))]
           (paint-suggestions! g
                               field
                               left
@@ -1143,7 +1152,8 @@
    their own keys; their pairs have no command."
   [sidebar]
   (cond (:search sidebar) [["Enter" "open"] ["Esc" "clear search"] ["↑↓" "results"]]
-        (:adding sidebar) [["Enter" "add"] ["Esc" "cancel"] ["Tab" "complete"] ["C-n" "folder"]]
+        (:adding sidebar) [["Enter" (if (get-in sidebar [:adding :moving]) "move" "add")]
+                           ["Esc" "cancel"] ["Tab" "complete"] ["C-n" "folder"]]
         :else (mapv (fn [[id label]]
                       [(or (some-> (keymap/sidebar-key id)
                                    str)
@@ -1506,6 +1516,8 @@
       :else [(menu-item :use-project "Use project" nil)
              (menu-item :new-session "＋ New session" :new-session)
              (menu-item :new "＋ New group…" :new-group)
+             (menu-item :rename-project "Rename project…" :rename)
+             (menu-item :move-project "Change folder…" nil)
              (menu-item :settings "Project settings…" :settings)
              (menu-item :refresh "Refresh projects" :refresh)
              (menu-item :delete-project "✗ Remove project and sessions…" :delete)])))

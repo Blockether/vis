@@ -133,6 +133,11 @@ terminal. Use **↑** and **↓** to choose a project, group or session, and pre
 If your terminal reports mouse clicks, you can click rows and menu items instead.
 **Tab** does not switch sessions.
 
+Each project shows only its name. A new project takes the name of its folder. To rename a project
+or change its folder, press **g** on the project row. Then choose **Rename project…** or
+**Change folder…**. For a new folder, type its path and press **Enter**. The project keeps its
+sessions, and Vis does not move your files.
+
 To search saved session titles and conversation text, press **/** while Projects has focus. The
 search also finds sessions outside the pages on screen. Result-page rows show more matches. Press
 **Esc** to go back to your previous folds and page.
@@ -145,6 +150,13 @@ the list, it keeps focus.
 
 The app lists sessions under their projects, with groups inside each project.
 Choose a session to open it.
+
+Each project shows only its name. A new project takes the name of its folder. To add a project,
+choose the folder icon next to the **+** button. Then choose the project folder.
+
+To change a project, right-click it or choose the three-dot button at its right. The menu has
+**Rename project**, **Change folder**, **Settings** and **Delete project**. When you change the
+folder, the project keeps its sessions. Vis does not move your files.
 
 To search your sessions, choose the search icon in the app bar. On a phone, you can also
 pull the session list down. The search opens in its own dialog. The session list behind

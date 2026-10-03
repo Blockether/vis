@@ -74,7 +74,7 @@ describe('a cold start reopens only the transcript the app died on', () => {
     const view = coldStart();
 
     // Not the transcript: the list, with the machine's own tile to reconnect it.
-    expect(await screen.findByRole('button', { name: 'Projects on laptop' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'New project on laptop' })).toBeVisible();
     expect(screen.queryByLabelText('Message Vis')).toBeNull();
     view.unmount();
   });

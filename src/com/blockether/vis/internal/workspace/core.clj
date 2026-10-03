@@ -573,7 +573,7 @@
               (str/replace #"(^-+|-+$)" ""))]
     (if (str/blank? s) "ws" s)))
 
-(defn- repo-id-for
+(defn repo-id-for
   "Stable per-root grouping id (sanitized basename + path hash).
    Groups a repo's clones together in listings; no git involved."
   [root]

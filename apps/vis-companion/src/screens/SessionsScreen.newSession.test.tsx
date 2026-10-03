@@ -113,11 +113,11 @@ describe('where "New session" lives', () => {
     const view = renderSessionsScreen({ machines: alpha() });
     restore = view.restore;
     await screen.findByText('First');
-    // The title already names the project, so a compact path that only repeats the
-    // name is not printed under it; the canonical root stays on the element itself.
-    const qualifier = screen.getByTitle('/Users/dev/project');
-    expect(qualifier.textContent).not.toContain('~/project');
-    expect(qualifier.textContent).toBe('project');
+    // The header names the project only. The canonical root never shows on the screen,
+    // not even as a hover title, but the create request still carries it.
+    expect(screen.queryByText(/~\/project|\/Users\/dev\/project/)).toBeNull();
+    expect(screen.queryByTitle('/Users/dev/project')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Collapse project' })).toBeVisible();
     expect(screen.getByText('1 session')).toBeVisible();
 
     view.requests.length = 0;
@@ -147,20 +147,19 @@ describe('where "New session" lives', () => {
     expect(screen.queryByRole('menu')).toBeNull();
 
     // The one row it held that this screen owns is the sheet the amber mark opens.
-    await userEvent.click(screen.getByRole('button', { name: 'Projects on alpha' }));
-    const sheet = within(await screen.findByRole('dialog'));
-    expect(sheet.getByRole('button', { name: 'New project' })).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: 'New project on alpha' }));
+    expect(await screen.findByRole('dialog', { name: 'New project on alpha' })).toBeVisible();
   });
 
-  // Regression, visual review: the icon-only Projects action opens the machine's
-  // project inventory, not a new session.
-  it("names the machine's projects and opens them from a real button", async () => {
+  // Regression, visual review: the icon-only New project action opens the folder
+  // browser of the machine, not a new session.
+  it('names the new-project action and opens it from a real button', async () => {
     const view = renderSessionsScreen({ machines: alpha() });
     restore = view.restore;
     await screen.findByText('First');
 
-    const add = screen.getByRole('button', { name: 'Projects on alpha' });
-    expect(add).not.toHaveTextContent('Projects');
+    const add = screen.getByRole('button', { name: 'New project on alpha' });
+    expect(add).not.toHaveTextContent('New project');
     expect(add.querySelector('svg')).toBeInTheDocument();
     // ...and it opens the SAME portal the menu row opens, aimed at this machine.
     await userEvent.click(add);
@@ -192,8 +191,7 @@ describe('where "New session" lives', () => {
     restore = view.restore;
     await screen.findByText('First');
 
-    await userEvent.click(screen.getByRole('button', { name: 'Projects on alpha' }));
-    await userEvent.click(screen.getByRole('button', { name: 'New project' }));
+    await userEvent.click(screen.getByRole('button', { name: 'New project on alpha' }));
     await screen.findByText('No folders in here.');
     view.requests.length = 0;
     await userEvent.click(screen.getByRole('button', { name: 'Use project' }));
@@ -238,7 +236,7 @@ describe('where "New session" lives', () => {
     expect(screen.getByText('Add a project to start a session.')).toBeInTheDocument();
     expect(screen.queryByText(/Open the .* menu/)).toBeNull();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Projects on alpha' }));
+    await userEvent.click(screen.getByRole('button', { name: 'New project on alpha' }));
     await screen.findByText('No folders in here.');
     await userEvent.click(screen.getByRole('button', { name: 'Use project' }));
 
@@ -267,7 +265,7 @@ describe('where "New session" lives', () => {
     expect(screen.queryByRole('button', { name: 'Rename alpha' })).toBeNull();
 
     // The control stands OUTSIDE the list card, on the row above it, after the switch.
-    const create = screen.getByRole('button', { name: 'Projects on alpha' });
+    const create = screen.getByRole('button', { name: 'New project on alpha' });
     const strip = screen.getByLabelText('Machines');
     const list = screen.getByLabelText('alpha projects');
     expect(create.closest('section')).toBe(screen.getByLabelText('Sessions'));
@@ -303,7 +301,7 @@ describe('machine, project and session are three different shapes', () => {
     restore = view.restore;
 
     await screen.findByText('No projects yet');
-    expect(screen.getAllByRole('button', { name: 'Projects on alpha' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'New project on alpha' })).toHaveLength(1);
   });
 
   // Regression, user report ("the individual session is bigger then project"): a session

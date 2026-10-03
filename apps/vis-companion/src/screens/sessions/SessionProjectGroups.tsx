@@ -73,7 +73,6 @@ import {
 } from '../../lib/gateway';
 import { GROUP_COLORS, groupColor, groupSwatch } from '../../lib/group-colors';
 import { isIosAppOnMac } from '../../lib/host';
-import { compactProjectPath } from '../../lib/path';
 import { hasHardwarePointer } from '../../lib/pointer';
 import {
   groupFoldKey,
@@ -94,6 +93,8 @@ type MenuStep =
   | { kind: 'group'; id: string }
   | { kind: 'delete'; id: string }
   | { kind: 'colour'; id: string }
+  | { kind: 'project' }
+  | { kind: 'drop-project' }
 
 /** One group as a band paints it: the gateway's row, or what a row itself said. */
 type GroupBandView = {
@@ -312,13 +313,19 @@ function SetHeader({
   );
 }
 
-/** A group's name becomes a field in its own band, without opening another sheet. */
-function GroupNameField({
+/** A group's or a project's name becomes a field in its own band, without another sheet. */
+function NameField({
   name,
+  noun = 'group',
+  face = 'font-mono text-body font-medium text-white',
   onRename,
   onCancel,
 }: {
   name: string;
+  /** What the name belongs to, as its errors say it. */
+  noun?: 'group' | 'project';
+  /** The type the field wears: the band's own name type. */
+  face?: string;
   onRename: (name: string) => Promise<void>;
   onCancel: () => void;
 }) {
@@ -333,7 +340,7 @@ function GroupNameField({
     if (saving.current) return;
     const next = draft.trim();
     if (!next) {
-      setError('A group name cannot be empty.');
+      setError(`A ${noun} name cannot be empty.`);
       inputRef.current?.focus();
       return;
     }
@@ -349,7 +356,7 @@ function GroupNameField({
       onCancel();
     } catch (cause) {
       setError(
-        cause instanceof GatewayError && cause.status === 409
+        cause instanceof GatewayError && cause.status === 409 && noun === 'group'
           ? 'This project already has a group with that name.'
           : 'That did not reach the machine. Try again.',
       );
@@ -368,7 +375,7 @@ function GroupNameField({
         aria-label={`Rename ${name}`}
         autoCapitalize="sentences"
         autoCorrect="off"
-        face="font-mono text-body font-medium text-white"
+        face={face}
         fit="track"
         readOnly={busy}
         value={draft}
@@ -512,7 +519,7 @@ function GroupBand({
           </span>
         )}
       </button>
-      {isRenaming && <GroupNameField name={name} onRename={onRename} onCancel={onCancelRename} />}
+      {isRenaming && <NameField name={name} onRename={onRename} onCancel={onCancelRename} />}
       <HeaderActions align="center">
         <IconButton
           label={`Actions for ${name}`}
@@ -578,6 +585,19 @@ export type ProjectCreation = {
 };
 
 /**
+ * What a project's own menu asks of the screen that holds its machine. The folder
+ * browser and the fleet read live there, not in one project's band.
+ */
+export type ProjectActions = {
+  /** Give the project a new name; resolves once the list has read it again. */
+  rename: (conn: GatewayConn, group: ProjectGroupView, name: string) => Promise<void>;
+  /** Open the folder browser that moves the project, where its menu stood. */
+  move: (conn: GatewayConn, group: ProjectGroupView, at: MenuPosition) => void;
+  /** Delete the project and every session in it. */
+  remove: (conn: GatewayConn, group: ProjectGroupView) => Promise<void>;
+};
+
+/**
  * Which plus is busy: one machine's project, and the band inside it when the reader
  * started the session on a group rather than on the project header.
  */
@@ -611,6 +631,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   reading,
   creation,
   initiallyOpen,
+  projectActions,
 }: {
   /** Canonical gateway-owned project identity, counts, and held preview rows. */
   group: ProjectGroupView;
@@ -621,6 +642,8 @@ export const ProjectGroup = memo(function ProjectGroup({
   creation: ProjectCreation;
   /** Only the first project in the machine's own order opens by default. */
   initiallyOpen: boolean;
+  /** The project's own verbs; without them its menu offers only its settings. */
+  projectActions?: ProjectActions;
 }) {
   const { label: project, root, sessions, tally } = group;
   const { conn, sessions: list } = machine;
@@ -811,20 +834,6 @@ export const ProjectGroup = memo(function ProjectGroup({
     fold(true);
   };
   // Even an empty project can have archived groups or start a new session.
-  // WHERE THIS CHECKOUT IS, and only when that is not what its NAME already said.
-  //
-  // The path exists to tell two `vis` checkouts apart. A project that sits directly in
-  // home under its own folder name answers that question with the name itself, so
-  // `vis` wore `~/vis` under it — the same word twice, in the line that also has to
-  // carry the count and the live states, and on a 393px phone the address won that
-  // fight and truncated to `~/v…`. `HeaderTitle` already refuses exactly this for a
-  // machine whose address IS its name; a project is the same rule one level down.
-  const where = compactProjectPath(root, project);
-  const qualifierPath = where
-    ? where === project || where === `~/${project}`
-      ? ''
-      : where
-    : 'No workspace path';
   // A FILTER is a fleet-wide question and its answer may not sit behind a fold: while
   // a query is on, every project that still has rows shows them. The fold the reader
   // set is untouched and is back the moment the query is.
@@ -1438,6 +1447,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   const [typed, setTyped] = useState('');
   const [failure, setFailure] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [isRenamingProject, setIsRenamingProject] = useState(false);
   const openMenu = useCallback((anchor: HTMLElement, step: MenuStep, point?: { x: number; y: number }) => {
     const at = menuPosition(point ? pointerAnchor(point, MENU_WIDTH) : anchor.getBoundingClientRect(), MENU_WIDTH);
     if (!at) return;
@@ -1468,6 +1478,30 @@ export const ProjectGroup = memo(function ProjectGroup({
           ? 'A session in this group is still active. Archive it once its turn is done.'
           : failed instanceof GatewayError && failed.status === 409
             ? 'This project already has a group with that name.'
+            : 'That did not reach the machine. Try again.',
+      );
+    } finally {
+      setIsBusy(false);
+    }
+  };
+  // A project's verbs run on the screen that holds its machine. A refusal stays in this
+  // sheet; a partial delete says how many sessions stayed.
+  const runProject = async (act: () => Promise<void>) => {
+    setIsBusy(true);
+    setFailure(null);
+    try {
+      await act();
+      setMenu(null);
+    } catch (failed) {
+      const errorType =
+        failed instanceof GatewayError
+          ? (failed.body as { error?: { type?: string } } | null)?.error?.type
+          : null;
+      setFailure(
+        errorType === 'session-busy'
+          ? 'A session in this project is still active. Try again once its turn is done.'
+          : failed instanceof Error && !(failed instanceof GatewayError) && failed.message
+            ? failed.message
             : 'That did not reach the machine. Try again.',
       );
     } finally {
@@ -1839,18 +1873,49 @@ export const ProjectGroup = memo(function ProjectGroup({
         data-machine={machineKey(conn)}
         data-project-root={root}
       >
-        <SectionHeader isExpanded={isShowing}>
-          <ProjectCrumb
-            name={project}
-            qualifier={qualifierPath || undefined}
-            counts={counts}
-            qualifierTitle={root}
-            disclosure={{
-              isOpen: isShowing,
-              onToggle: () => fold(!isShowing),
-              label: `${isShowing ? 'Collapse' : 'Expand'} ${project}`,
-            }}
-          />
+        {/* The header names the project and nothing else: its folder is a setting of the
+            project, changed from this menu, never a second line under the name. */}
+        <SectionHeader
+          isExpanded={isShowing}
+          onContextMenu={(event) => {
+            if (!hasHardwarePointer() || event.target instanceof HTMLInputElement) return;
+            event.preventDefault();
+            openMenu(event.currentTarget, { kind: 'project' }, { x: event.clientX, y: event.clientY });
+          }}
+        >
+          {isRenamingProject && projectActions ? (
+            <span className="flex min-w-0 flex-1 items-center pl-4 pr-2 mouse:pr-2.5">
+              <span aria-hidden className={LIST_MARK} />
+              <NameField
+                name={project}
+                noun="project"
+                face="text-body font-bold text-white"
+                onRename={(name) => projectActions.rename(conn, group, name)}
+                onCancel={() => setIsRenamingProject(false)}
+              />
+            </span>
+          ) : (
+            <ProjectCrumb
+              name={project}
+              counts={counts}
+              disclosure={{
+                isOpen: isShowing,
+                onToggle: () => fold(!isShowing),
+                label: `${isShowing ? 'Collapse' : 'Expand'} ${project}`,
+              }}
+            />
+          )}
+          <HeaderActions align="center">
+            <IconButton
+              label={`Actions for ${project}`}
+              variant="quiet"
+              aria-haspopup="dialog"
+              aria-expanded={menu?.step.kind === 'project' || menu?.step.kind === 'drop-project'}
+              onClick={(event) => openMenu(event.currentTarget, { kind: 'project' })}
+            >
+              <DotsIcon className="size-3.5" />
+            </IconButton>
+          </HeaderActions>
         </SectionHeader>
         {liveFailure && !isGroupRevealing && !isSessionRevealing && (
           <p
@@ -1968,7 +2033,11 @@ export const ProjectGroup = memo(function ProjectGroup({
       {settingsTarget && <ScopedSettingsDialog key={`${settingsTarget.scope}:${settingsTarget.target_id}`} client={getClient(conn)} target={settingsTarget} onClose={() => setSettingsTarget(null)} />}
       {menu && (
         <Menu
-          label={`${menu.step.kind === 'sessions' ? 'Sessions' : 'Groups'} in ${project}`}
+          label={
+            menu.step.kind === 'project' || menu.step.kind === 'drop-project'
+              ? project
+              : `${menu.step.kind === 'sessions' ? 'Sessions' : 'Groups'} in ${project}`
+          }
           at={menu.at}
           onDismiss={() => setMenu(null)}
         >
@@ -1994,7 +2063,6 @@ export const ProjectGroup = memo(function ProjectGroup({
                       setMenu(null);
                     }}
                   />
-                  <MenuItem title="Settings" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { setMenu(null); setSettingsTarget({ scope: 'project', target_id: root, label: project }); }} />
                   {failure && <MenuNote>{failure}</MenuNote>}
                 </>
               );
@@ -2037,6 +2105,64 @@ export const ProjectGroup = memo(function ProjectGroup({
                       })
                     }
                   />
+                  {failure && <MenuNote>{failure}</MenuNote>}
+                </>
+              );
+            // THE PROJECT'S OWN VERBS. Renaming edits the name in its header, like a group's;
+            // the folder is chosen in the machine's folder browser; deleting asks first.
+            if (step.kind === 'project')
+              return (
+                <>
+                  {projectActions && group.projectId && (
+                    <>
+                      <MenuItem
+                        title="Rename project"
+                        icon={<PencilIcon className="size-3.5" />}
+                        onSelect={() => {
+                          setMenu(null);
+                          setIsRenamingProject(true);
+                        }}
+                      />
+                      <MenuItem
+                        title="Change folder"
+                        icon={<ProjectsIcon className="size-3.5" />}
+                        onSelect={() => {
+                          setMenu(null);
+                          projectActions.move(conn, group, menu.at);
+                        }}
+                      />
+                    </>
+                  )}
+                  <MenuItem title="Settings" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { setMenu(null); setSettingsTarget({ scope: 'project', target_id: root, label: project }); }} />
+                  {projectActions && (
+                    <MenuItem
+                      title="Delete project"
+                      tone="danger"
+                      icon={<TrashIcon className="size-3.5" />}
+                      onSelect={() => goTo({ kind: 'drop-project' })}
+                    />
+                  )}
+                </>
+              );
+            if (step.kind === 'drop-project')
+              return (
+                <>
+                  <MenuItem
+                    title="Keep the project"
+                    icon={<ProjectsIcon className="size-3.5" />}
+                    disabled={isBusy}
+                    onSelect={() => goTo({ kind: 'project' })}
+                  />
+                  {projectActions && (
+                    <MenuItem
+                      title={isBusy ? 'Deleting...' : 'Delete it and its sessions'}
+                      meta={`${tally.count} ${tally.count === 1 ? 'session' : 'sessions'}`}
+                      tone="danger"
+                      icon={<TrashIcon className="size-3.5" />}
+                      disabled={isBusy}
+                      onSelect={() => void runProject(() => projectActions.remove(conn, group))}
+                    />
+                  )}
                   {failure && <MenuNote>{failure}</MenuNote>}
                 </>
               );

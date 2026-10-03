@@ -12839,3 +12839,56 @@
                                                                       (:session-id environment))
                                   [:health :model-input-limit])))))
            (finally (loop-env/dispose-environment! environment))))))
+
+(defdescribe
+  project-folder-test
+  (it
+    "names a new project by its folder and moves it with its sessions"
+    (let [home
+          (.getCanonicalPath (.toFile (java.nio.file.Files/createTempDirectory
+                                        "vis-project-folder-"
+                                        (make-array java.nio.file.attribute.FileAttribute 0))))
+
+          dir!
+          (fn [^String path]
+            (let [dir (java.io.File. home path)]
+              (.mkdirs dir)
+              (.getCanonicalPath dir)))]
+
+      (with-redefs [config/resolve-db-spec
+                    (constantly (str home "/vis.db"))
+
+                    python-extensions/prepare-project!
+                    (constantly nil)]
+
+        (let [old
+              (dir! "old/vis")
+
+              new
+              (dir! "new/app")
+
+              taken
+              (dir! "taken")
+
+              project
+              (lp/ensure-project-for-root! old)
+
+              _
+              (lp/ensure-project-for-root! taken)
+
+              trunk
+              (workspace/create-trunk-at! (lp/db-info) old)
+
+              failure
+              (fn [root]
+                (try (lp/update-project! (:id project) {:workspace-root root})
+                     nil
+                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+
+          (expect (= "vis" (:name project)))
+          (expect (= :project/not-a-directory (failure (str home "/missing"))))
+          (expect (= :project/root-taken (failure taken)))
+          (let [moved (lp/update-project! (:id project) {:workspace-root new})]
+            (expect (= new (:workspace-root moved)))
+            (expect (= "vis" (:name moved)))
+            (expect (= new (:root (persistance/db-workspace-get (lp/db-info) (:id trunk)))))))))))

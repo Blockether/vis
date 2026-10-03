@@ -19,7 +19,7 @@ const machines = () => [
 
 // Deleting ONE session is a row-level answer to a row-level question, so it is
 // asked IN the row: two full-width answers standing the row's own height. Renaming
-// still needs a field; project deletion asks in its own inventory row too.
+// still needs a field; project deletion asks inside the project's own menu.
 describe('deleting one session confirms inside its own row', () => {
   it('asks in the row, not in a dialog, and only that row is asked', async () => {
     const view = renderSessionsScreen({ machines: machines() });
@@ -85,9 +85,11 @@ describe('deleting one session confirms inside its own row', () => {
   });
 });
 
-// Project deletion belongs in project management, not in the navigation band.
-describe('project removal is available only from project management', () => {
-  it.each([0, 2])('keeps the project band free of action menus with %i sessions', async (count) => {
+// Regression, user report (paraphrased: a project needs the same right-click and
+// three-dot menu as every other row): the project band holds exactly one menu, its own.
+// It holds no row actions and no swipe track, and creation stays in the Sessions set.
+describe('a project band holds only its own menu', () => {
+  it.each([0, 2])('keeps one project menu on the band with %i sessions', async (count) => {
     const view = renderSessionsScreen({
       machines: [
         {
@@ -111,11 +113,13 @@ describe('project removal is available only from project management', () => {
     const project = await screen.findByRole('region', { name: 'project sessions' });
     const header = project.querySelector('header')!;
 
-    expect(within(header).queryByRole('button', { name: 'Actions for project' })).toBeNull();
+    const menus = within(header).getAllByRole('button', { name: /^Actions for / });
+    expect(menus).toHaveLength(1);
+    expect(menus[0]).toHaveAccessibleName('Actions for project');
+    expect(menus[0]).toHaveAttribute('aria-haspopup', 'dialog');
     expect(within(header).queryByRole('group', { name: 'project actions' })).toBeNull();
     expect(header.querySelector('[data-swipe-track]')).toBeNull();
-    // The project band remains free of menus; creation stays in the Sessions set
-    // even when it has no rows.
+    // Creation stays in the Sessions set, even when it has no rows.
     const sessionsAction = within(project).getByRole('button', {
       name: 'Actions for sessions in /Users/dev/project',
     });
@@ -131,7 +135,7 @@ describe('project removal is available only from project management', () => {
     } else {
       expect(within(header).getByRole('button', { name: 'Collapse project' })).toBeEnabled();
     }
-    expect(screen.getByRole('button', { name: 'Projects on alpha' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'New project on alpha' })).toBeEnabled();
     expect(view.requests.some((request) => request.method === 'DELETE')).toBe(false);
   });
 
@@ -161,8 +165,6 @@ describe('project removal is available only from project management', () => {
     });
     restore = view.restore;
     await screen.findByText('Unassigned session');
-    fireEvent.click(screen.getByRole('button', { name: 'Projects on alpha' }));
-    await screen.findByRole('dialog', { name: 'Manage projects on alpha' });
     view.requests.length = 0;
     let complete!: () => void;
     const response = new Promise<void>((resolve) => {
@@ -174,16 +176,15 @@ describe('project removal is available only from project management', () => {
       return gateway(input, init);
     };
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove every transcript in project' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Yes, delete' }));
-    expect(await screen.findByRole('button', { name: 'Deleting...' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for project' }));
+    const menu = await screen.findByRole('dialog', { name: 'project' });
+    fireEvent.click(within(menu).getByRole('button', { name: 'Delete project' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Delete it and its sessions/ }));
+    expect(await screen.findByRole('button', { name: /^Deleting\.\.\./ })).toBeDisabled();
     await act(async () => complete());
 
-    await waitFor(() =>
-      expect(screen.queryByRole('group', { name: 'Delete project?' })).toBeNull(),
-    );
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'project' })).toBeNull());
     expect(screen.queryByText('Deleting...')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Remove every transcript in project' })).toBeNull();
     expect(screen.getByText('Unassigned session')).toBeInTheDocument();
     expect(
       view.requests.filter((request) => request.method === 'DELETE').map((request) => request.path),
@@ -191,10 +192,10 @@ describe('project removal is available only from project management', () => {
   });
 });
 
-// Regression, user report: project trash left its inventory row and opened a second
-// dialog. The project manager must ask and commit in that exact row, like a session does.
-describe('deleting a project confirms inside its inventory row', () => {
-  it('keeps the projects sheet and replaces only the selected row', async () => {
+// The project's own menu asks before it deletes, in the same sheet: no second dialog,
+// and nothing reaches the machine until the reader confirms.
+describe('deleting a project asks inside its own menu', () => {
+  it('keeps one sheet, offers a way back, and deletes only on the second answer', async () => {
     const view = renderSessionsScreen({
       machines: [
         {
@@ -205,30 +206,18 @@ describe('deleting a project confirms inside its inventory row', () => {
     });
     restore = view.restore;
     await screen.findByText('First');
-    fireEvent.click(screen.getByRole('button', { name: 'Projects on alpha' }));
-    const sheet = await screen.findByRole('dialog', {
-      name: 'Manage projects on alpha',
-    });
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for project' }));
+    const sheet = await screen.findByRole('dialog', { name: 'project' });
     view.requests.length = 0;
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: 'Remove every transcript in project',
-      }),
-    );
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Delete project' }));
 
-    await screen.findByRole('group', { name: 'Delete project?' });
+    await screen.findByRole('button', { name: /^Delete it and its sessions/ });
     expect(screen.getAllByRole('dialog')).toEqual([sheet]);
     expect(view.requests.some((request) => request.method === 'DELETE')).toBe(false);
 
-    fireEvent.click(screen.getByRole('button', { name: 'No, keep' }));
-    expect(await screen.findByRole('button', { name: /^project/ })).toBeVisible();
-
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: 'Remove every transcript in project',
-      }),
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Yes, delete' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Keep the project' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete project' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Delete it and its sessions/ }));
 
     await waitFor(() =>
       expect(
@@ -237,11 +226,7 @@ describe('deleting a project confirms inside its inventory row', () => {
         ),
       ).toBe(true),
     );
-    await waitFor(() =>
-      expect(screen.queryByRole('group', { name: 'Delete project?' })).toBeNull(),
-    );
-    expect(screen.getAllByRole('dialog')).toEqual([sheet]);
-    expect(screen.getByText('This machine has no projects yet.')).toBeVisible();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'project' })).toBeNull());
   });
 });
 

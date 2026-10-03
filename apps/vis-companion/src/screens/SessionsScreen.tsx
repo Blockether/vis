@@ -21,6 +21,7 @@ import { SearchSessionRows, SessionSearchScopes, useSessionSearchScope, type Sea
 import {
   ProjectGroup,
   creationKey,
+  type ProjectActions,
   type ProjectCreation,
   type ProjectGroupReading,
   type SessionRowsContext,
@@ -45,7 +46,7 @@ import {
   type ListAnchor,
 } from '../lib/list-scroll';
 import { usePullToSearch, type PullPhase } from '../lib/pull-to-search';
-import { ManageProjectsSheet, type ManagedProject } from '../components/ManageProjectsSheet';
+import { ProjectFolderSheet } from '../components/ProjectFolderSheet';
 import { useDeskRail, useFitRows, useMouseDensity } from '../lib/fit-rows';
 import { clearMachineOutage, machineOutage, rememberMachineOutage } from '../lib/fleet-outage';
 import {
@@ -427,9 +428,11 @@ export function SessionsScreen({
     label: string;
   } | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
-  const [manageProjects, setManageProjects] = useState<{
-    machine: FleetMachine;
+  const [projectFolder, setProjectFolder] = useState<{
+    conn: GatewayConn;
     at: MenuPosition;
+    /** The project that moves; absent when the chosen folder becomes a new project. */
+    project?: ProjectGroupView;
   } | null>(null);
   const pollStartedAt = useRef<number | null>(null);
   // Is the gateway pushing this list its fleet status, and when did the window last
@@ -947,7 +950,7 @@ export function SessionsScreen({
   // gateway already answered which ids disappeared, so neither a session nor a project
   // removal re-downloads the fleet merely to rediscover that answer.
   const forgetSessions = useCallback(
-    (conn: GatewayConn, ids: string[], project?: ManagedProject) => {
+    (conn: GatewayConn, ids: string[], project?: Pick<ProjectGroupView, 'projectId' | 'root'>) => {
       const api = clientFor(conn);
       for (const sid of ids) api.forgetDeletedSession(sid);
 
@@ -1520,13 +1523,13 @@ export function SessionsScreen({
 
   const selectScope = useCallback((next: string | null) => setScopePick(next), []);
 
-  // ONE sheet, opened from wherever the machine is named: the row above the card when
-  // the list is scoped, and that machine's own band in the fleet view. It is anchored
+  // ONE folder browser, opened from wherever the machine is named: the row above the card
+  // when the list is scoped, and that machine's own band in the fleet view. It is anchored
   // on the button that was pressed, so the anchor travels with the verb.
-  const openManageProjects = useCallback((machine: FleetMachine, anchor: HTMLElement) => {
+  const openProjectFolder = useCallback((machine: FleetMachine, anchor: HTMLElement) => {
     const at = menuPosition(anchor.getBoundingClientRect(), BROWSE_WIDTH);
     if (!at) return;
-    setManageProjects({ machine, at });
+    setProjectFolder({ conn: machine.conn, at });
   }, []);
 
   const createSession = useCallback(
@@ -1566,12 +1569,8 @@ export function SessionsScreen({
   // The unit is the group ON THIS MACHINE, never "this project everywhere": the same
   // repo checked out on two machines is two projects and two deletes. A saved project is
   // one gateway request; a root-only group keeps the existing complete, best-effort walk.
-  const removeManagedProject = useCallback(
-    async (
-      project: ManagedProject,
-      conn: GatewayConn,
-      onProgress: (progress: { done: number; total: number }) => void,
-    ) => {
+  const removeProject = useCallback(
+    async (project: ProjectGroupView, conn: GatewayConn) => {
       const api = clientFor(conn);
       if (project.projectId) {
         const deleted = await api.deleteProject(project.projectId);
@@ -1582,7 +1581,6 @@ export function SessionsScreen({
       const ids = await projectSessionIds(api, project.root);
       const gone: string[] = [];
       let failed = 0;
-      onProgress({ done: 0, total: ids.length });
       for (const sid of ids) {
         try {
           await api.deleteSession(sid);
@@ -1590,7 +1588,6 @@ export function SessionsScreen({
         } catch {
           failed += 1;
         }
-        onProgress({ done: gone.length + failed, total: ids.length });
       }
       // A partial fan-out is exactly known too: successful ids leave while refusals keep
       // their rows. Only a complete answer removes the project itself from the overview.
@@ -1598,6 +1595,20 @@ export function SessionsScreen({
       if (failed > 0) throw new Error(`${failed} of ${ids.length} sessions could not be deleted.`);
     },
     [forgetSessions],
+  );
+
+  // A project's own menu acts on the machine that holds it. A new name or folder is
+  // read back from the gateway, so the header shows what the machine stored.
+  const projectActions = useMemo<ProjectActions>(
+    () => ({
+      rename: async (conn, group, name) => {
+        await clientFor(conn).updateProject(group.projectId, { name });
+        await load();
+      },
+      move: (conn, group, at) => setProjectFolder({ conn, at, project: group }),
+      remove: (conn, group) => removeProject(group, conn),
+    }),
+    [load, removeProject],
   );
 
   const startDelete = useCallback((session: Session, conn: GatewayConn) => {
@@ -1809,19 +1820,6 @@ export function SessionsScreen({
     [rowContext, searchNeedle, previewId, searching],
   );
 
-  // Project management uses gateway overview counts, matching the visible headers.
-  const managedProjects = useCallback(
-    (machine: FleetMachine): ManagedProject[] =>
-      projectGroups(machine.overview, machine.sessions ?? []).map((group) => ({
-        name: group.label,
-        root: group.root,
-        projectId: group.projectId,
-        count: group.tally.count,
-        live: group.tally.live,
-      })),
-    [],
-  );
-
   // Report only reachability transitions, and only a total fleet outage. This prevents
   // a dead-gateway mount loop while allowing degraded multi-machine lists.
   const loadError = fleetError(machines);
@@ -1854,14 +1852,19 @@ export function SessionsScreen({
   );
 
   // ONE VERB, ONE PLACE: the strip beside the switch, on the row that names the
-  // machine it opens the projects of (`ui.test.tsx` counts the call site).
+  // machine it adds a project to (`ui.test.tsx` counts the call site).
   const projectsVerb =
     scopeMachine && !scopeMachine.error ? (
       <MachineProjectsButton
         machine={machineLabel(scopeMachine.conn)}
-        onPress={(anchor) => openManageProjects(scopeMachine, anchor)}
+        onPress={(anchor) => openProjectFolder(scopeMachine, anchor)}
       />
     ) : null;
+  // The folder browser's machine, read from the fleet on each render, so its known
+  // roots follow the list.
+  const folderMachine = projectFolder
+    ? machines.find((machine) => machineKey(machine.conn) === machineKey(projectFolder.conn))
+    : undefined;
   if (loadError) return null;
 
   // ONE MACHINE SWITCH over the list. The search dialog offers the same choice as a
@@ -2043,6 +2046,7 @@ export function SessionsScreen({
           searchScope={searchScope}
           context={foundContext}
           creation={projectCreation}
+          projectActions={projectActions}
           note={(machine) => {
             const key = machineKey(machine.conn);
             // Saved rows are not an answer here either (see `MachineRead`): the dialog
@@ -2169,6 +2173,7 @@ export function SessionsScreen({
               sections={sections}
               context={rowContext}
               creation={projectCreation}
+              projectActions={projectActions}
               note={(machine) =>
                 ({
                   reading: 'Reading sessions...',
@@ -2212,30 +2217,29 @@ export function SessionsScreen({
         )}
       </div>
 
-      {manageProjects && (
-        <ManageProjectsSheet
-          label={machineLabel(manageProjects.machine.conn)}
-          at={manageProjects.at}
-          client={clientFor(manageProjects.machine.conn)}
-          startAt={machineProject(manageProjects.machine)?.path ?? null}
+      {projectFolder && folderMachine && (
+        <ProjectFolderSheet
+          label={machineLabel(projectFolder.conn)}
+          mode={projectFolder.project ? 'move' : 'add'}
+          at={projectFolder.at}
+          client={clientFor(projectFolder.conn)}
+          // A move opens beside the project's own folder; an add, beside the current one.
+          startAt={projectFolder.project?.root ?? machineProject(folderMachine)?.path ?? null}
           knownRoots={
             new Set(
-              projectGroups(manageProjects.machine.overview, manageProjects.machine.sessions ?? [])
+              projectGroups(folderMachine.overview, folderMachine.sessions ?? [])
                 .map((group) => group.root)
                 .filter(Boolean),
             )
           }
-          projects={managedProjects(manageProjects.machine)}
-          onCancel={() => setManageProjects(null)}
+          onCancel={() => setProjectFolder(null)}
           onChoose={async (root: string) => {
-            const conn = manageProjects.machine.conn;
-            await clientFor(conn).ensureProject(root);
+            const { conn, project } = projectFolder;
+            if (project) await clientFor(conn).updateProject(project.projectId, { workspace_root: root });
+            else await clientFor(conn).ensureProject(root);
             await load();
-            setManageProjects(null);
+            setProjectFolder(null);
           }}
-          onRemove={(entry, onProgress) =>
-            removeManagedProject(entry, manageProjects.machine.conn, onProgress)
-          }
         />
       )}
       {isSearchOpen && (
@@ -2340,6 +2344,7 @@ function MachineSections({
   sections,
   context,
   creation,
+  projectActions,
   searchScope,
   note,
 }: {
@@ -2347,6 +2352,8 @@ function MachineSections({
   sections: MachineSection[];
   context: SessionRowsContext;
   creation: ProjectCreation;
+  /** A project's own verbs: rename, change folder, delete. */
+  projectActions?: ProjectActions;
   searchScope?: SearchScope;
   /** What a machine with no project to show says instead. */
   note: (machine: FleetMachine) => string;
@@ -2388,6 +2395,7 @@ function MachineSections({
                   context={context}
                   reading={reading}
                   creation={creation}
+                  projectActions={projectActions}
                   // The order already put the machine's live work on top; the
                   // project it lands on is the one that opens by itself.
                   initiallyOpen={groupIndex === 0}

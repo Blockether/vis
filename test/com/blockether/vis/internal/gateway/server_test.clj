@@ -4022,6 +4022,47 @@
               (expect (empty? @calls))))))))
 
 (defdescribe
+  project-patch-moves-a-project-to-another-folder
+  (it
+    "project patch moves a project to another folder"
+    (let [pid
+          (java.util.UUID/randomUUID)
+
+          calls
+          (atom [])
+
+          handler
+          #'projects-api/patch-project-handler
+
+          patch!
+          (fn [body]
+            (handler {:path-params {:pid (str pid)}
+                      :body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str body)
+                                                                      "UTF-8"))}))]
+
+      (with-redefs-fn {#'state/update-project!
+                       (fn [p opts]
+                         (swap! calls conj [p opts])
+                         (case (:workspace-root opts)
+                           "/missing"
+                           (throw (ex-info "Not a directory: /missing"
+                                           {:type :project/not-a-directory}))
+
+                           "/taken"
+                           (throw (ex-info "Another project already uses /taken"
+                                           {:type :project/root-taken}))
+
+                           {"id" (str pid) "name" "vis" "workspace_root" (:workspace-root opts)}))}
+        (fn []
+          (let [response (patch! {"workspace_root" "/new/vis"})]
+            (expect (= 200 (:status response)))
+            (expect (= "/new/vis" (get (wire/parse-json (:body response)) "workspace_root")))
+            (expect (= [[pid {:workspace-root "/new/vis"}]] @calls)))
+          (expect (= 400 (:status (patch! {"workspace_root" " "}))))
+          (expect (= 400 (:status (patch! {"workspace_root" "/missing"}))))
+          (expect (= 409 (:status (patch! {"workspace_root" "/taken"})))))))))
+
+(defdescribe
   session-group-routes-divide-a-project-without-touching-its-sessions
   (it
     "session group routes divide a project without touching its sessions"

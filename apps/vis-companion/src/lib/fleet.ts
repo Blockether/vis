@@ -502,7 +502,7 @@ export function projectPath(session: Session): string {
 }
 
 /**
- * The name a project header wears: the name its sessions AGREE on, else its folder.
+ * The name a project header wears: the name its sessions AGREE on, else its folder name.
  *
  * A group is a working directory, and the rows in it are free to disagree about the optional
  * `project_name` the gateway carried — so reading the name off `sessions[0]` made the header
@@ -523,10 +523,8 @@ export function projectLabel(sessions: Session[]): string {
     ),
   );
   const agreed = named.size === 1 ? [...named][0] : '';
-  if (agreed) return homeifyPath(agreed);
   const root = sessions.map(projectPath).find(Boolean) ?? '';
-  if (root) return root.split('/').pop() || homeifyPath(root);
-  return 'No project';
+  return projectName(agreed, root);
 }
 
 /** Group by workspace root, preserving session order inside each group.
@@ -663,7 +661,7 @@ export function projectGroups(
     const sessions = byRoot.get(project.root) ?? NO_SESSIONS;
     return {
       root: project.root,
-      label: project.name.trim() ? homeifyPath(project.name.trim()) : rootLabel(project.root),
+      label: projectName(project.name, project.root),
       projectId: project.project_id ?? '',
       tally: {
         count: project.session_count,
@@ -739,7 +737,17 @@ function agreedProjectId(sessions: Session[]): string {
 /** The name a bare root wears when nothing named the project: its last segment. */
 function rootLabel(root: string): string {
   if (!root) return 'No project';
-  return root.split('/').pop() || homeifyPath(root);
+  return root.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || homeifyPath(root);
+}
+
+/**
+ * A project's name, never its path. An older gateway stored the folder path as the
+ * name, so a name that is a path wears only its last folder name.
+ */
+function projectName(name: string, root: string): string {
+  const named = name.trim();
+  if (!named) return rootLabel(root);
+  return /^(~|\/|[A-Za-z]:[\\/])/.test(named) ? rootLabel(named) : named;
 }
 
 /** Where a machine is working right now, as the menu says it out loud. */

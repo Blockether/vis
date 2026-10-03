@@ -58,8 +58,8 @@ export const FlatMachineBarCompact: Story = {
     const page = within(canvasElement);
     await page.findByRole('button', { name: 'tower' });
     const other = page.getByRole('button', { name: 'macbook-pro-16-work' });
-    const projects = page.getByRole('button', { name: 'Projects on tower' });
-    await expect(projects).not.toHaveTextContent('Projects');
+    const projects = page.getByRole('button', { name: 'New project on tower' });
+    await expect(projects).not.toHaveTextContent('New project');
     await expect(projects).toHaveClass('border-0');
     await expect(other).toHaveClass('bg-level-project');
     await expect(page.queryByRole('group', { name: /Addresses on/ })).toBeNull();
@@ -80,9 +80,9 @@ export const FlatMachineBarWide: Story = {
   ],
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
-    const projects = page.getByRole('button', { name: 'Projects on tower' });
+    const projects = page.getByRole('button', { name: 'New project on tower' });
     await expect(await page.findByRole('button', { name: 'macbook-pro-16-work' })).toBeVisible();
-    await expect(projects).not.toHaveTextContent('Projects');
+    await expect(projects).not.toHaveTextContent('New project');
     await expect(page.queryByRole('group', { name: /Addresses on/ })).toBeNull();
   },
 };
@@ -101,7 +101,11 @@ export const Fleet: Story = {
     // This first assertion waits for the screen's asynchronous gateway fixture.
     await expect(await page.findByText('uberworkspace')).toBeVisible();
     await expect(await page.findByText('svar')).toBeVisible();
-    await expect(await page.findByTitle('~/rewrite')).toBeVisible();
+    // The project header names the project only; its folder never shows there.
+    const rewrite = canvasElement.querySelector('[data-project-root="~/rewrite"] > header');
+    await expect(rewrite).not.toBeNull();
+    await expect(rewrite).not.toHaveTextContent('~/rewrite');
+    await expect(rewrite?.querySelector('[title="~/rewrite"]')).toBeNull();
     // Response order must not determine which repository appears first.
     const roots = Array.from(
       canvasElement.querySelectorAll<HTMLElement>('[data-project-root]'),
@@ -144,7 +148,9 @@ export const Fleet: Story = {
     await expect(pageField).toHaveValue(pageValue);
     await expect(pageField).toBeEnabled();
     await expect(within(pager).getByRole('button', { name: 'Next page' })).toBeEnabled();
-    await expect(within(header).queryByRole('button', { name: /^Actions for/ })).toBeNull();
+    const bandMenus = within(header).getAllByRole('button', { name: /^Actions for/ });
+    await expect(bandMenus).toHaveLength(1);
+    await expect(bandMenus[0]).toHaveAccessibleName('Actions for uberworkspace');
     await expect(header.querySelector('[data-swipe-track]')).toBeNull();
     // The set menu stands on the set it acts on, not on the band, so it is found in the
     // project — and only after the fold above, which unmounts it with the list it serves.
@@ -308,34 +314,18 @@ export const DeleteProject: Story = {
   globals: { viewport: { value: 'desktop', isRotated: false } },
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
+    const body = within(canvasElement.ownerDocument.body);
     await page.findByRole('region', { name: 'uberworkspace sessions' });
-    await userEvent.click(page.getByRole('button', { name: 'Projects on tower' }));
-    const sheet = within(
-      await within(canvasElement.ownerDocument.body).findByRole('dialog', {
-        name: 'Manage projects on tower',
-      }),
-    );
-    const ask = async () => {
-      await userEvent.click(
-        sheet.getByRole('button', {
-          name: 'Remove every transcript in uberworkspace',
-        }),
-      );
-    };
+    await userEvent.click(page.getByRole('button', { name: 'Actions for uberworkspace' }));
+    const sheet = within(await body.findByRole('dialog', { name: 'uberworkspace' }));
 
-    await ask();
-    await expect(sheet.getByRole('group', { name: 'Delete uberworkspace?' })).toBeVisible();
-    await userEvent.click(sheet.getByRole('button', { name: 'No, keep' }));
-    await expect(
-      sheet.getByRole('button', {
-        name: 'Remove every transcript in uberworkspace',
-      }),
-    ).toBeVisible();
+    await userEvent.click(sheet.getByRole('button', { name: 'Delete project' }));
+    await expect(sheet.getByRole('button', { name: /^Delete it and its sessions/ })).toBeVisible();
+    await userEvent.click(sheet.getByRole('button', { name: 'Keep the project' }));
+    await expect(sheet.getByRole('button', { name: 'Delete project' })).toBeVisible();
 
-    await ask();
-    await userEvent.click(sheet.getByRole('button', { name: 'Yes, delete' }));
-    await expect(sheet.queryByRole('group', { name: 'Delete uberworkspace?' })).toBeNull();
-    await userEvent.keyboard('{Escape}');
+    await userEvent.click(sheet.getByRole('button', { name: 'Delete project' }));
+    await userEvent.click(sheet.getByRole('button', { name: /^Delete it and its sessions/ }));
     // Held same-root rows survive; without the saved name, the band uses its folder name.
     await expect(await page.findByRole('region', { name: 'rewrite sessions' })).toBeVisible();
     await expect(page.queryByText('Deleting...')).toBeNull();

@@ -703,10 +703,10 @@
           (expect (= (not fits?) (str/includes? row "…")))))))
 
 (defdescribe
-  project-name-reads-as-a-home-path-test
-  (it "project name reads as a home path"
-      ;; A project nobody renamed is named by its own ROOT, and the rail painted that
-      ;; absolute path in full while every other path in the TUI reads `~/…`.
+  project-row-paints-only-its-name-test
+  (it "project row paints only its name"
+      ;; Regression, user report (paraphrased: a project shows only its name, never its
+      ;; folder): a project that an older gateway named by its ROOT paints that folder name.
       (let [home
             (System/getProperty "user.home")
 
@@ -728,12 +728,16 @@
             row
             (nth (str/split-lines (cap/frame-text capture)) 4)]
 
-        (expect (= "~/CryptoSyf" (projects/project-label {"name" (str home "/CryptoSyf")})))
+        (expect (= "CryptoSyf" (projects/project-label {"name" (str home "/CryptoSyf")})))
         (expect (= "Vis" (projects/project-label project-a)))
-        (expect (= "/opt/shared/vis" (projects/project-label {"name" "/opt/shared/vis"})))
+        (expect (= "vis" (projects/project-label {"name" "/opt/shared/vis"})))
+        (expect (= "billing" (projects/project-label {"name" "C:\\work\\billing\\"})))
+        (expect (= "companion"
+                   (projects/project-label {"name" "  " "workspace_root" "/work/companion"})))
         (expect (= "Untitled project" (projects/project-label {})))
         (expect (nil? (:error capture)))
-        (expect (str/includes? row "~/CryptoSyf"))
+        (expect (str/includes? row "CryptoSyf"))
+        (expect (not (str/includes? row "~/")))
         (expect (not (str/includes? row home))))))
 
 (defdescribe project-sidebar-overflow-test
@@ -3990,6 +3994,129 @@
          nil
          #(swap! calls conj [:choose (get % "id")]))
         (expect (= [[:choose "a"] [:remove "b"]] @calls))))))
+
+;; Regression, user report (paraphrased: a project needs its own menu to rename it and to
+;; give it another folder, the same as in the app): the rail's project menu offers both
+;; verbs, and each one changes the project only through the gateway.
+(defdescribe
+  project-menu-renames-and-moves-the-project-test
+  (it "lists rename and change folder on the project row"
+      (let [items (projects/row-menu-items (fixture-db) {:kind :project-select :project project-a})]
+        (expect (= [:use-project :new-session :new :rename-project :move-project :settings :refresh
+                    :delete-project]
+                   (mapv :id items)))
+        (expect (= (keymap/sidebar-key :rename)
+                   (:key (some #(when (= :rename-project (:id %)) %) items))))))
+  (it
+    "renames the project and sends nothing for a blank or unchanged name"
+    (let [answer
+          (atom "  Billing API  ")
+
+          calls
+          (atom [])
+
+          rename!
+          #(#'screen/sidebar-row-menu!
+             nil
+             {:kind :project-select :project project-a :initial-action :rename-project}
+             nil)]
+
+      (with-redefs [state/app-db
+                    (atom (fixture-db))
+
+                    screen/with-dialog-lock
+                    (fn [f]
+                      (f))
+
+                    dlg/text-input-dialog!
+                    (fn [_ title label & {:keys [initial]}]
+                      (swap! calls conj [:ask title label initial])
+                      @answer)
+
+                    vis/worker-future
+                    (fn [_ f]
+                      (f))
+
+                    vis/gateway-update-project!
+                    (fn [pid opts]
+                      (swap! calls conj [:update pid opts])
+                      project-a)
+
+                    screen/refresh-projects!
+                    #(swap! calls conj [:refresh])
+
+                    vis/notify!
+                    (fn [& _])]
+
+        (rename!)
+        (expect (= [[:ask "Rename project" "Project name" "Vis"] [:update "a" {:name "Billing API"}]
+                    [:refresh]]
+                   @calls))
+        (reset! calls [])
+        (reset! answer "Vis")
+        (rename!)
+        (reset! answer "   ")
+        (rename!)
+        (expect (= [:ask :ask] (mapv first @calls))))))
+  (it
+    "moves the project to the folder typed in the rail's own field"
+    (let [calls (atom [])]
+      (with-redefs-fn {#'state/app-db (atom (fixture-db))
+                       #'vis/worker-future (fn [_ f]
+                                             (f))
+                       #'vis/gateway-list-projects (constantly [project-a project-b])
+                       #'vis/gateway-browse-directories (constantly browse-listing)
+                       #'vis/gateway-update-project! (fn [pid opts]
+                                                       (swap! calls conj [:update pid opts])
+                                                       project-a)
+                       #'vis/notify! (fn [& _])}
+        #(let [press!
+               (fn [k]
+                 (#'screen/project-sidebar-key!
+                  (cap/key-stroke k)
+                  (fn [_])
+                  (fn [path]
+                    (swap! calls conj [:add path]))
+                  (fn [_])
+                  (fn [_])
+                  (fn [_])))] (#'screen/sidebar-row-menu!
+                               nil
+                               {:kind :project-select
+                                :project project-a
+                                :initial-action :move-project}
+                               nil) (expect (= project-a
+                                               (get-in @state/app-db
+                                                       [:project-sidebar :adding :moving])))
+           (expect (= ["Enter" "move"]
+                      (first (#'projects/footer-pairs (:project-sidebar @state/app-db)))))
+           (doseq [c "/work/new"]
+             (press! c)) (press! :enter) (expect (nil? (get-in @state/app-db
+                                                               [:project-sidebar :adding])))
+           (expect (= [[:update "a" {:workspace-root "/work/new"}]] @calls))))))
+  (it "moves the project into a folder created from the same field"
+      (let [calls (atom [])]
+        (with-redefs [state/app-db (atom (fixture-db))
+                      screen/with-dialog-lock (fn [f]
+                                                (f))
+                      dlg/text-input-dialog! (fn [_ _ _ & _]
+                                               "new")
+                      vis/worker-future (fn [_ f]
+                                          (f))
+                      vis/gateway-create-directory! (fn [parent name]
+                                                      (swap! calls conj [:mkdir parent name])
+                                                      {"path" "/work/new"})
+                      vis/gateway-update-project! (fn [pid opts]
+                                                    (swap! calls conj [:update pid opts])
+                                                    project-a)
+                      screen/refresh-projects! (fn [])
+                      vis/notify! (fn [& _])]
+
+          (#'screen/create-project-folder!
+           nil
+           {:text "/work/" :cursor 6 :listing-path "/work" :moving project-a}
+           #(swap! calls conj [:add %]))
+          (expect (= [[:mkdir "/work" "new"] [:update "a" {:workspace-root "/work/new"}]]
+                     @calls))))))
 
 (defdescribe empty-project-chooses-its-own-root-test
              (it "empty project chooses its own root"

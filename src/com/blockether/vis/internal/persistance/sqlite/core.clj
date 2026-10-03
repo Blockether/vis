@@ -230,11 +230,23 @@
    LEFT JOIN session_soul s ON s.id = i.session_soul_id
    WHERE NOT EXISTS (SELECT 1 FROM improve_record r WHERE r.entry_id = i.entry_id)")
 
+(def ^:private project-folder-name-sql
+  "Name each project that carries its whole folder path as its name by the last
+   path segment. A project that a person named keeps its name."
+  "UPDATE project
+   SET name = substr(workspace_root,
+                     length(rtrim(workspace_root, replace(workspace_root, '/', ''))) + 1)
+   WHERE name = workspace_root
+     AND trim(substr(workspace_root,
+                     length(rtrim(workspace_root, replace(workspace_root, '/', ''))) + 1)) <> ''")
+
 (defn- install-schema!
   [^DataSource ds]
   (migration/migrate! ds MIGRATIONS)
   ;; Backfill only missing workflow rows. Reopening never overwrites human analysis or state.
-  (when (toggles/enabled? "improve") (jdbc/execute! ds [improve-intake-sql])))
+  (when (toggles/enabled? "improve") (jdbc/execute! ds [improve-intake-sql]))
+  ;; Projects show their name, never their path: rename the path-named ones once.
+  (jdbc/execute! ds [project-folder-name-sql]))
 
 ;; Connection management
 ;;
@@ -2461,11 +2473,29 @@
                            pid)))]
       (db-get-project db-info project-id))))
 
+(defn- move-project-workspaces!
+  "Carry the workspaces of the checkout at `from` to the checkout at `to`: trunks
+   repoint their root, and every workspace applies into `to`, grouped by `repo-id`."
+  [tx-info from to repo-id]
+  (execute! tx-info
+            {:update :workspace
+             :set {:root to}
+             :where [:and [:= :workspace_kind (->kw :trunk)] [:= :root from]]})
+  (execute! tx-info
+            {:update :workspace
+             :set (cond-> {:repo_root to}
+                    repo-id
+                    (assoc :repo_id repo-id))
+             :where [:= :repo_root from]}))
+
 (defn db-update-project!
   "Patch a `project`: any of `:name` (non-blank), `:color`, `:position`,
-   `:archived?` (true stamps `archived_at`=now, false clears it). Returns the
-   updated project (canonical shape) or nil when nothing to change."
-  [db-info project-id {:keys [name color position archived? workspace-root] :as opts}]
+   `:archived?` (true stamps `archived_at`=now, false clears it) and
+   `:workspace-root`. A changed `:workspace-root` moves the project's sessions in
+   the same transaction (see `move-project-workspaces!`); `:repo-id` is the
+   grouping id of the new root. Returns the updated project (canonical shape) or
+   nil when nothing to change."
+  [db-info project-id {:keys [name color position archived? workspace-root repo-id] :as opts}]
   (when (and (ds db-info) project-id (seq opts))
     (when (and (contains? opts :name) (str/blank? (str name)))
       (throw (ex-info "db-update-project! :name must be non-blank"
@@ -2489,7 +2519,17 @@
         (sqlite-write-tx!
           db-info
           (fn [tx-info]
-            (execute! tx-info {:update :project :set set-map :where [:= :id (->id project-id)]})))
+            (let [where [:= :id (->id project-id)]
+                  from (when (contains? opts :workspace-root)
+                         (:workspace_root
+                           (query-one! tx-info
+                                       {:select [:workspace_root] :from :project :where where})))]
+
+              (execute! tx-info {:update :project :set set-map :where where})
+              (when (and (not (str/blank? (str from)))
+                         (not (str/blank? (str workspace-root)))
+                         (not= from (str workspace-root)))
+                (move-project-workspaces! tx-info from (str workspace-root) repo-id)))))
         (db-get-project db-info project-id)))))
 
 (defn db-delete-project!

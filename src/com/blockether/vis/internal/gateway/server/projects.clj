@@ -98,7 +98,9 @@
       (project-404 pid-str))))
 
 (defn- patch-project-handler
-  "PATCH /v1/projects/:pid {name?, color?, position?, archived?} — patch a project."
+  "PATCH /v1/projects/:pid {name?, color?, position?, archived?, workspace_root?} —
+   patch a project. A new `workspace_root` moves the project and its sessions to that
+   folder: 400 when it is not a directory, 409 when another project uses it."
   [request]
   (let [pid-str
         (get-in request [:path-params :pid])
@@ -121,15 +123,29 @@
           (assoc :position (get body "position"))
 
           (contains? body "archived")
-          (assoc :archived? (boolean (get body "archived"))))]
+          (assoc :archived? (boolean (get body "archived")))
+
+          (contains? body "workspace_root")
+          (assoc :workspace-root (get body "workspace_root")))]
 
     (cond (not pid) (project-404 pid-str)
           (and (contains? opts :name) (str/blank? (str (:name opts))))
           (http/error-response 400 :invalid-request "name must be a non-blank string")
+          (and (contains? opts :workspace-root) (str/blank? (str (:workspace-root opts))))
+          (http/error-response 400 :invalid-request "workspace_root must be a non-blank string")
           (empty? opts) (http/error-response 400 :invalid-request "no project fields to update")
-          :else (if-let [p (state/update-project! pid opts)]
-                  (http/json-response p)
-                  (project-404 pid-str)))))
+          :else (try (if-let [p (state/update-project! pid opts)]
+                       (http/json-response p)
+                       (project-404 pid-str))
+                     (catch clojure.lang.ExceptionInfo e
+                       (case (:type (ex-data e))
+                         :project/not-a-directory
+                         (http/error-response 400 :not-a-directory (ex-message e))
+
+                         :project/root-taken
+                         (http/error-response 409 :project-root-taken (ex-message e))
+
+                         (throw e)))))))
 
 (defn- delete-project-handler
   "DELETE /v1/projects/:pid[?is_recursive=true] — by default member sessions

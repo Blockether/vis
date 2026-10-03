@@ -2609,6 +2609,8 @@
 
 (def gateway-turn-trace turn-trace)
 
+(def gateway-update-project! update-project!)
+
 (def gateway-update-session-group! update-session-group!)
 
 (def gateway-view-action! view-action!)

@@ -8,6 +8,7 @@ import {
   useState,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
+  type MouseEventHandler,
   type ReactNode,
   type Ref,
 } from 'react';
@@ -105,9 +106,12 @@ export const HEADER_COUNTS =
 export function SectionHeader({
   children,
   isExpanded = false,
+  onContextMenu,
 }: {
   children: ReactNode;
   isExpanded?: boolean;
+  /** A pointer's secondary click opens the band's own menu, the same one as its `⋯`. */
+  onContextMenu?: MouseEventHandler<HTMLElement>;
 }) {
   return (
     <header
@@ -116,6 +120,7 @@ export function SectionHeader({
           ? 'bg-project-header-active [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header-active))]'
           : 'bg-project-header [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))]'
       } mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover`}
+      onContextMenu={onContextMenu}
     >
       {children}
     </header>
@@ -302,17 +307,13 @@ export function HeaderTitle({
   );
 }
 
-/** Keep the project name left and its counts right. Show a distinct path below the name. */
+/** Keep the project name left and its counts right. The name is the whole title: never a path. */
 export function ProjectCrumb({
   name,
-  qualifier,
-  qualifierTitle,
   counts,
   disclosure,
 }: {
-  name: ReactNode;
-  qualifier?: ReactNode;
-  qualifierTitle?: string;
+  name: string;
   counts?: ReactNode;
   /** The fold to expose, or null when this project has no session list. */
   disclosure: {
@@ -338,15 +339,10 @@ export function ProjectCrumb({
           <ChevronIcon open={disclosure.isOpen} className="size-3.5 -translate-x-1.5 text-dialog-hint" />
         )}
       </span>
-      <span className="pointer-events-none relative min-w-0 flex-1" title={qualifierTitle}>
+      <span className="pointer-events-none relative min-w-0 flex-1" title={name}>
         <span className="block truncate text-body font-bold text-white">
           {name}
         </span>
-        {qualifier && (
-          <span className="block truncate font-mono text-ui text-dialog-hint mouse:text-chip">
-            {qualifier}
-          </span>
-        )}
       </span>
       {counts && (
         <span className={`pointer-events-none relative ml-2 ${HEADER_COUNTS}`}>
@@ -555,14 +551,14 @@ export function HeaderMeta({
  *
  * IT CARRIES NEITHER STEP NOR WEIGHT OF ITS OWN: the header line sets both. In a group
  * band that line is the small `HeaderMeta`; a named set has a larger label and count. In
- * a project header it is `ProjectCrumb`'s qualifier, shared with the states and an
+ * a project header it is `ProjectCrumb`'s counts, shared with the states and an
  * arrival so the whole line stays on the total's baseline.
  *
  * A count is a NUMBER AND ITS NOUN, on every screen. A bare `725` over a list of
  * rows says nothing about what was counted, and the phone is exactly where the
  * reader has the least context to supply it from — so the noun is never dropped to
  * win back width. What gives way instead is the project's own name, which
- * truncates with the full path on its `title` — or, where a caller's own row is
+ * truncates with its full name on its `title` — or, where a caller's own row is
  * fuller than its column, the whole count: `className` positions this span, so a
  * header may let the total ellipsise and keep an arrival beside it whole.
  */
@@ -751,20 +747,15 @@ export function NewSessionButton({
 }
 
 /**
- * A MACHINE'S PROJECTS: the inventory of one gateway, opened from the thing that
- * names that gateway.
+ * ADD A PROJECT to one machine, from the strip that names that machine.
  *
- * IT IS NOT A CREATE, and for a long time it said it was. `openManageProjects` opens
- * `ManageProjectsSheet` on `Projects` — choose the machine's current
- * project, remove one, or take the `New project…` at its foot — so a control spelled
- * "New project" promised the last of the three things behind it, and a plus on the
- * band would have promised the same plus one row below meant a session. So it wears
- * the NOUN it opens: the app's one mark for a place on disk, the same folder a
- * project row carries, with the fork inside it left to mean a copy of that place.
+ * It opens that machine's folder browser (`ProjectFolderSheet`) straight away. There is
+ * no inventory behind it: each project's own menu renames it, moves it to another
+ * folder or deletes it, so the list itself is the inventory.
  *
- * The same borderless icon opens the project inventory from the machine strip.
- * It names the machine for assistive technology and anchors the sheet without
- * changing the measured box on press.
+ * It wears the app's one mark for a place on disk, not a plus: the plus beside it
+ * starts a session. It names the machine for assistive technology and anchors the
+ * sheet without changing the measured box on press.
  */
 export function MachineProjectsButton({
   machine,
@@ -773,8 +764,8 @@ export function MachineProjectsButton({
   machine: string;
   onPress: (anchor: HTMLElement) => void;
 }) {
-  const label = `Projects on ${machine}`;
-  const title = `Projects on ${machine} — choose one, add one, remove one`;
+  const label = `New project on ${machine}`;
+  const title = `New project on ${machine} — choose its folder`;
   return (
     <IconButton
       label={label}

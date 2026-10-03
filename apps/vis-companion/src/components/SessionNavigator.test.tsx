@@ -96,11 +96,11 @@ describe('machine bar', () => {
     );
   });
 
-  it('keeps Projects icon-only and borderless while opening the same sheet', async () => {
+  it('keeps New project icon-only and borderless while it opens the folder sheet', async () => {
     const onPress = vi.fn();
     render(<MachineProjectsButton machine="tower" onPress={onPress} />);
-    const projects = screen.getByRole('button', { name: 'Projects on tower' });
-    expect(projects).not.toHaveTextContent('Projects');
+    const projects = screen.getByRole('button', { name: 'New project on tower' });
+    expect(projects).not.toHaveTextContent('New project');
     expect(projects).toHaveClass('border-0');
     expect(projects.querySelector('svg')).toBeInTheDocument();
     await userEvent.click(projects);

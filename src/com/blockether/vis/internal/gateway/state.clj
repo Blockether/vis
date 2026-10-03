@@ -6577,7 +6577,13 @@
   ([root] (ensure-project-for-root! "local" root nil))
   ([owner-id root name] (project-wire (lp/ensure-project-for-root! owner-id root name))))
 
-(defn update-project! [pid opts] (project-wire (lp/update-project! pid opts)))
+(defn update-project!
+  "Patch a wire project. A moved project root re-draws the project headers; see
+   `projects-overview-epoch`."
+  [pid opts]
+  (let [p (project-wire (lp/update-project! pid opts))]
+    (when (and p (contains? opts :workspace-root)) (swap! projects-overview-epoch inc))
+    p))
 
 (declare close-session!)
 

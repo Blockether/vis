@@ -4108,6 +4108,15 @@ export class GatewayClient {
   }
 
   /**
+   * Rename a project, or move it and its sessions to another folder on the machine.
+   * The gateway answers 400 for a folder that does not exist and 409 for a folder
+   * another project already uses.
+   */
+  async updateProject(pid: string, change: { name?: string; workspace_root?: string }): Promise<void> {
+    await this.request('PATCH', `/v1/projects/${encodeURIComponent(pid)}`, change);
+  }
+
+  /**
    * Delete a project AND every session in it.
    *
    * Plain `DELETE /v1/projects/:pid` only drops the row and scatters its members

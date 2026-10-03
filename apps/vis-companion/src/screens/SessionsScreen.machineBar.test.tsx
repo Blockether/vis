@@ -28,8 +28,8 @@ it('shows a compact machine strip without current or alternate addresses', async
   expect(screen.queryByRole('group', { name: 'Addresses on tower' })).toBeNull();
   expect(screen.queryByText('10.0.0.5:7890')).toBeNull();
   expect(screen.queryByText('gateway.example.com')).toBeNull();
-  const projects = screen.getByRole('button', { name: 'Projects on tower' });
-  expect(projects).not.toHaveTextContent('Projects');
+  const projects = screen.getByRole('button', { name: 'New project on tower' });
+  expect(projects).not.toHaveTextContent('New project');
   expect(projects.querySelector('svg')).toBeInTheDocument();
 });
 
@@ -48,5 +48,5 @@ it('keeps retry actions without showing routes', async () => {
   const retry = await screen.findByRole('button', { name: 'Reconnect to mini' });
   expect(retry).toHaveClass('text-err-ink');
   expect(screen.queryByRole('group', { name: /Addresses on/ })).toBeNull();
-  expect(screen.getByRole('button', { name: 'Projects on tower' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'New project on tower' })).toBeVisible();
 });

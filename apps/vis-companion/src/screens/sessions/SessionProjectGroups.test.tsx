@@ -14,7 +14,7 @@ import {
   releaseLift,
 } from '../../lib/session-drag';
 import type { ArchiveView, BandWindow, Session, SessionGroup, SettingsTarget } from '../../lib/types';
-import { ProjectGroup, type ProjectCreation } from './SessionProjectGroups';
+import { ProjectGroup, type ProjectActions, type ProjectCreation } from './SessionProjectGroups';
 
 const conn = STORY_FLEET_CONNS[0];
 const ROOT = STORY_NEWER_PROJECT.root;
@@ -134,6 +134,7 @@ function mount(
   creation?: ProjectCreation,
   needle = '',
   rows: Session[] = ROWS,
+  actions?: ProjectActions,
 ) {
   const started: ProjectCreation = creation ?? { state: null, start: vi.fn(async () => {}) };
   const open = vi.fn();
@@ -178,6 +179,7 @@ function mount(
         isVisible: true,
       }}
       creation={started}
+      projectActions={actions}
       initiallyOpen
     />
   );
@@ -518,11 +520,13 @@ describe('ProjectGroup groups', () => {
         mcpServers: vi.fn(async () => []),
       }),
     );
+    // Settings belong to the project, so they stand in the project's own menu only.
     await user.click(await screen.findByRole('button', { name: `Actions for groups in ${ROOT}` }));
-    const project = within(sheet(`Groups in ${ROOT}`)).getByRole('button', { name: 'Settings' });
+    expect(within(sheet(`Groups in ${ROOT}`)).queryByRole('button', { name: 'Settings' })).toBeNull();
+    await user.click(document.body);
+    await user.click(screen.getByRole('button', { name: `Actions for ${STORY_NEWER_PROJECT.name}` }));
+    const project = within(sheet(STORY_NEWER_PROJECT.name)).getByRole('button', { name: 'Settings' });
     expect(project.querySelector('svg.lucide-settings')).toBeInTheDocument();
-    const projectActions = within(sheet(`Groups in ${ROOT}`)).getAllByRole('button');
-    expect(projectActions[projectActions.length - 1]).toBe(project);
     await user.click(project);
     expect(screen.getByRole('dialog', { name: 'Project settings' })).toBeInTheDocument();
     await waitFor(() =>
@@ -542,6 +546,48 @@ describe('ProjectGroup groups', () => {
     await waitFor(() =>
       expect(read).toHaveBeenCalledWith(expect.any(AbortSignal), { scope: 'group', target_id: WALLET }),
     );
+  });
+
+  // The project header names the project and holds its own verbs. The same menu opens
+  // from its ⋯ and from a pointer's secondary click, like every other band in the list.
+  it('opens the project menu from its header and runs its verbs', async () => {
+    finePointer();
+    const name = STORY_NEWER_PROJECT.name;
+    const actions = { rename: vi.fn(async () => {}), move: vi.fn(), remove: vi.fn(async () => {}) };
+    const { user } = mount(machine(), undefined, '', ROWS, actions);
+    const dots = await screen.findByRole('button', { name: `Actions for ${name}` });
+
+    expect(fireEvent.contextMenu(dots.closest('header')!, { clientX: 40, clientY: 40 })).toBe(false);
+    expect(within(sheet(name)).getAllByRole('button').map((button) => button.textContent)).toEqual([
+      'Rename project',
+      'Change folder',
+      'Settings',
+      'Delete project',
+    ]);
+    await user.click(within(sheet(name)).getByText('Change folder'));
+    expect(actions.move).toHaveBeenCalledWith(conn, expect.objectContaining({ root: ROOT }), expect.anything());
+
+    await user.click(dots);
+    await user.click(within(sheet(name)).getByText('Rename project'));
+    const field = screen.getByRole('textbox', { name: `Rename ${name}` });
+    await user.clear(field);
+    await user.type(field, 'Wallet app{Enter}');
+    expect(actions.rename).toHaveBeenCalledWith(conn, expect.objectContaining({ root: ROOT }), 'Wallet app');
+
+    await user.click(dots);
+    await user.click(within(sheet(name)).getByText('Delete project'));
+    expect(actions.remove).not.toHaveBeenCalled();
+    await user.click(within(sheet(name)).getByText('Delete it and its sessions'));
+    await waitFor(() => expect(actions.remove).toHaveBeenCalledWith(conn, expect.objectContaining({ root: ROOT })));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name })).toBeNull());
+  });
+
+  it('offers only the settings of a project when the screen gives it no verbs', async () => {
+    const { user } = mount();
+    await user.click(await screen.findByRole('button', { name: `Actions for ${STORY_NEWER_PROJECT.name}` }));
+    expect(
+      within(sheet(STORY_NEWER_PROJECT.name)).getAllByRole('button').map((button) => button.textContent),
+    ).toEqual(['Settings']);
   });
 
   it('starts an ungrouped session from the Sessions menu', async () => {

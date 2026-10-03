@@ -111,7 +111,7 @@ describe('the desk split', () => {
 describe('the app bar', () => {
   const mount = async () => {
     const view = renderApp({ machines: [{ label: 'laptop' }] });
-    await screen.findByRole('button', { name: 'Projects on laptop' });
+    await screen.findByRole('button', { name: 'New project on laptop' });
     return view;
   };
 
@@ -260,7 +260,7 @@ describe('the app bar', () => {
     expect(field).toHaveFocus();
     expect(within(dialog).getByRole('button', { name: 'Close search' })).toBeVisible();
     // The list behind the dialog stays whole: nothing in it is filtered away.
-    expect(screen.getByRole('button', { name: 'Projects on laptop' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'New project on laptop' })).toBeVisible();
     await userEvent.type(field, 'needle');
     expect(field).toHaveValue('needle');
     await userEvent.keyboard('{Escape}');
@@ -308,7 +308,7 @@ describe('the app bar', () => {
     // The very same node, still carrying the fleet — never rebuilt, never hidden.
     expect(main.contains(list)).toBe(true);
     expect(list.className).toBe('isolate h-full');
-    expect(within(list).getByRole('button', { name: 'Projects on laptop' })).toBeVisible();
+    expect(within(list).getByRole('button', { name: 'New project on laptop' })).toBeVisible();
     view.unmount();
     view.restore();
   });
