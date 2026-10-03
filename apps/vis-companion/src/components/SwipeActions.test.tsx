@@ -77,6 +77,26 @@ describe('SwipeActions tones', () => {
   });
 });
 
+// The shared list inset left empty paper after the last action on mobile.
+it.each([false, true])(
+  'ends the touch strip at its last action, alignMenuWithHeader=%s',
+  (alignMenuWithHeader) => {
+    render(
+      <SwipeActions
+        label="a session"
+        alignMenuWithHeader={alignMenuWithHeader}
+        actions={[{ key: 'delete', label: 'Delete', icon: <TrashIcon />, onSelect: () => {} }]}
+      >
+        <span>row</span>
+      </SwipeActions>,
+    );
+    const strip = screen.getByRole('group', { name: 'a session actions' });
+    expect(strip).toHaveClass('snap-end');
+    expect(strip.className).not.toMatch(/\b(?:p|px|pr|pe)-/);
+    expect(strip.lastElementChild).toBe(screen.getByRole('button', { name: 'Delete' }));
+  },
+);
+
 // Regression, user report (paraphrased: on the desktop that sideways scrolling is
 // broken and should not be there at all): every row of both lists was a scroll-snap
 // track 288px wider than its own box, and a pointer has no swipe — so the only way
@@ -125,7 +145,7 @@ describe('a mouse never slides', () => {
     const settings = markup(true);
     expect(session).toContain('mouse:flex pr-3 sm:pr-4');
     expect(settings).toContain('mouse:flex pr-1 sm:pr-2');
-    expect(settings).toContain('snap-end mouse:hidden pr-3 sm:pr-4');
+    expect(settings).toContain('snap-end mouse:hidden');
   });
 
   // Regression, user report (paraphrased: a plus standing on the left is unacceptable,

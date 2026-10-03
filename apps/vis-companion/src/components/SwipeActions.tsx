@@ -464,7 +464,7 @@ export function SwipeActions({
         <RowActionMenu actions={actions} label={label} handle={menuRef} />
       </div>
       <div
-        className={`flex shrink-0 snap-end mouse:hidden ${LIST_EDGE_END}`}
+        className="flex shrink-0 snap-end mouse:hidden"
         role="group"
         aria-label={label ? `${label} actions` : 'Row actions'}
       >
