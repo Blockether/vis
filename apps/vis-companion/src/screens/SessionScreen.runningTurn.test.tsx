@@ -648,3 +648,24 @@ describe("a form frame's numeric form_index", () => {
     expect(forms[0].activity?.state).toBe('running');
   });
 });
+
+// Reopening a large live turn must not fetch its hidden trace during adoption.
+describe('a windowed running turn', () => {
+  it.each([false, true])('keeps the earlier-steps control when live=%s', async (live) => {
+    const turnTrace = vi.fn();
+    renderSessionScreen({
+      session: sessionFixture({ live, current_turn_id: live ? 't-large' : null }),
+      client: {
+        turnTrace,
+        transcript: async () => [{
+          turn_id: 't-large', status: live ? 'running' : 'done',
+          request: 'A large request', iterations_offset: 99, iterations_total: 100,
+          iterations: [{ id: 'i100', position: 100, assistant_prose: 'Latest visible progress' }],
+        }],
+      },
+    });
+    expect(await screen.findByText('Latest visible progress')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Show 99 earlier steps of this turn' })).toBeVisible();
+    expect(turnTrace).not.toHaveBeenCalled();
+  });
+});

@@ -1304,6 +1304,9 @@ export interface TranscriptTurn {
   content?: ContentBlock[];
   attachments?: GatewayAttachment[];
   iterations?: TranscriptIteration[];
+  /** Number of earlier steps omitted from this window. */
+  iterations_offset?: number;
+  iterations_total?: number;
   model?: string;
   provider?: string;
   created_at?: number;

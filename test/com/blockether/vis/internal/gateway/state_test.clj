@@ -1577,6 +1577,89 @@
           (expect (= [] (state/session-artifacts (java.util.UUID/randomUUID))))))))
 
 (defdescribe
+  transcript-iteration-window-test
+  (it
+    "hydrates only recent steps and leaves complete history available"
+    (let [sid
+          (random-uuid)
+
+          tid
+          (random-uuid)
+
+          seen
+          (atom [])
+
+          iterations
+          (mapv (fn [n]
+                  {:id (str "i" n)
+                   :position n
+                   :assistant-prose (str "Step " n)
+                   :forms [{:code (apply str (repeat 10000 "x"))}]})
+                (range 1 101))]
+
+      (with-redefs-fn {#'lp/db-info (constantly ::db)
+                       #'persistance/db-list-session-turns
+                       (fn [_ _]
+                         [{:id tid :status "done" :content [{:type "prose" :markdown "Ready"}]}])
+                       #'persistance/db-list-turns-attachments (fn [_ _]
+                                                                 {})
+                       #'persistance/db-list-session-turn-iterations (fn [_ _]
+                                                                       iterations)
+                       #'persistance/db-list-iterations-attachments-meta (fn [_ _]
+                                                                           {})
+                       #'state/with-display-iteration (fn [row]
+                                                        (swap! seen conj (:position row))
+                                                        row)}
+        (fn []
+          ;; Turn paging alone still sent every tool step during a session switch.
+          (let [page
+                (state/transcript-page sid {:limit 2 :iteration-limit 8})
+
+                row
+                (first (:turns page))]
+
+            (expect (= (vec (range 93 101)) @seen))
+            (expect (= 92 (get row "iterations_offset")))
+            (expect (= 100 (get row "iterations_total")))
+            (expect (= 8 (count (get row "iterations"))))
+            (expect (= "Ready" (get-in row ["content" 0 "markdown"])))
+            (expect (< (count (wire/json-str page)) 100000)))
+          ;; One large tool result must not defeat the recent-step count limit.
+          (doseq [at [98 99]]
+            (with-redefs [persistance/db-list-session-turn-iterations (fn [_ _]
+                                                                        (assoc-in iterations
+                                                                          [at :forms 0 :code]
+                                                                          (apply str
+                                                                            (repeat 1000000 "x"))))]
+              (let [row (first (:turns (state/transcript-page sid {:limit 2 :iteration-limit 8})))]
+                (expect (= (inc at) (get row "iterations_offset")))
+                (expect (= (- 99 at) (count (get row "iterations"))))
+                (expect (= "Ready" (get-in row ["content" 0 "markdown"])))
+                (expect (< (count (wire/json-str row)) 20000)))))
+          ;; Recent-step pages must not fill the old multi-megabyte page budget.
+          (with-redefs [persistance/db-list-session-turns
+                        (fn [_ _]
+                          (mapv (fn [_]
+                                  {:id (random-uuid)
+                                   :status "done"
+                                   :content [{:type "prose" :markdown "Ready"}]})
+                                (range 10)))]
+            (let [page (state/transcript-page sid {:limit 24 :iteration-limit 8})]
+              (expect (= 4 (count (:turns page))))
+              (expect (= 6 (:offset page)))
+              (expect (:has-more page))))
+          ;; A malformed trace must not hide a persisted answer.
+          (with-redefs-fn {#'state/with-display-iteration (fn [_]
+                                                            (throw (ex-info "Invalid trace" {})))}
+            #(expect (= "Ready"
+                        (get-in (state/transcript-page sid {:limit 2 :iteration-limit 8})
+                                [:turns 0 "content" 0 "markdown"]))))
+          (reset! seen [])
+          (let [full (first (state/transcript sid))]
+            (expect (= 100 (count (get full "iterations"))))
+            (expect (nil? (get full "iterations_offset")))))))))
+
+(defdescribe
   transcript-page-test
   "The transcript window exists so a client never pays for history it will not
    paint: a long session is tens of megabytes and nearly all of that cost is

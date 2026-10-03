@@ -11,6 +11,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type CSSProperties,
   type PointerEvent,
   type ReactNode,
@@ -1988,7 +1989,7 @@ export const ThinkingBand = memo(function ThinkingBand({
 
 // ONE artifact a tool call produced (an `attach`ed image or file). The gateway
 // ships descriptors only, never bytes, so the picture is pulled from the
-// attachment endpoint on first paint — with the auth headers an
+// attachment endpoint near the viewport — with the auth headers an
 // `<img src>` cannot carry, hence the object URL. This is the app's twin of the
 // TUI's inline image: the SAME produced artifact, painted where it was made.
 const AttachmentTile = memo(function AttachmentTile({
@@ -2009,6 +2010,8 @@ const AttachmentTile = memo(function AttachmentTile({
   galleryAt?: number;
 }) {
   const [url, setUrl] = useState<string | null>(null);
+  const placeholderRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(() => typeof IntersectionObserver === 'undefined');
   // Bumped when the browser refuses the URL we handed it — the client's object
   // URL cache is bounded, so a picture parked off-screen long enough can have
   // been revoked under it. Re-asking repopulates the cache; it is not a retry
@@ -2023,7 +2026,20 @@ const AttachmentTile = memo(function AttachmentTile({
   const name = attachment.filename || 'attachment';
 
   useEffect(() => {
-    if (!isPlayable || !iterationId || !sid) return;
+    const node = placeholderRef.current;
+    if (visible || !node || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setVisible(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: '200px' });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible || !isPlayable || !iterationId || !sid) return;
     let alive = true;
     // Hold this artifact's object URL for as long as the tile is mounted. The
     // client's cache is bounded and REVOKES what it evicts, and re-entering a
@@ -2044,7 +2060,7 @@ const AttachmentTile = memo(function AttachmentTile({
       alive = false;
       release();
     };
-  }, [client, sid, iterationId, index, isPlayable, attempt]);
+  }, [client, sid, iterationId, index, isPlayable, attempt, visible]);
 
   // A non-visual artifact reaching a tile is the failure path only — the rail
   // below routes files into the collapsed recorded-files row. Decided at mount
@@ -2076,7 +2092,7 @@ const AttachmentTile = memo(function AttachmentTile({
             <span className="min-w-0 truncate">{name}</span>
           </span>
         ) : !url ? (
-          <div className="h-11 w-full animate-pulse bg-thinking-surface" aria-hidden="true" />
+          <div ref={placeholderRef} className="h-11 w-full animate-pulse bg-thinking-surface" aria-hidden="true" />
         ) : (
           <RecordingPlayer src={url} onError={() => setFailed(true)} />
         )}
@@ -2100,7 +2116,7 @@ const AttachmentTile = memo(function AttachmentTile({
       {isTile ? null : <span className="min-w-0 truncate">{name}</span>}
     </div>
   ) : !url ? (
-    <div className={mediaPendingClass} aria-hidden="true" />
+    <div ref={placeholderRef} className={mediaPendingClass} aria-hidden="true" />
   ) : isVideo ? (
     // A clip PLAYING from an authenticated artifact URL is already a local Blob: the
     // client had to fetch every byte before it could make that URL. `ClipVideo`
@@ -2267,10 +2283,8 @@ export const AttachmentRail = memo(function AttachmentRail({
   attachments: IterationAttachment[];
 }) {
   const [open, setOpen] = useState(false);
-  // ONE page of media at a time — see `pageBySize`. Every tile that mounts asks
-  // the gateway for its bytes, so an iteration that produced forty figures used
-  // to start forty downloads in the same tick, on whatever connection a phone
-  // happens to have. Revealed a page at a time, by count AND by weight.
+  // Keep each page small. Fetch playable artifacts only near the viewport,
+  // so hidden media cannot delay a session switch on a slow connection.
   const [pages, setPages] = useState(1);
   // ONE ROW PER ARTIFACT, NOT PER CUT.
   //
@@ -3760,6 +3774,51 @@ function TurnStamp({ position, createdAt }: { position?: number; createdAt?: num
   );
 }
 
+function TurnTrace({
+  turn,
+  ...props
+}: Omit<ComponentProps<typeof IterationTrace>, 'iterations'> & { turn: TranscriptTurn }) {
+  const [history, setHistory] = useState<TranscriptIteration[] | null>(null);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const iterations = useMemo(() => {
+    const recent = turn.iterations ?? [];
+    if (!history) return recent;
+    // Streamed steps win over an older history response for the same iteration.
+    const merged = new Map(history.map((step, index) => [step.position ?? step.id ?? index, step]));
+    recent.forEach((step, index) => merged.set(step.position ?? step.id ?? index, step));
+    return [...merged.values()].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+  }, [history, turn.iterations]);
+  const earlier = history ? 0 : (turn.iterations_offset ?? 0);
+  const readHistory = async () => {
+    if (loadingHistory || !props.client || !props.sid) return;
+    setLoadingHistory(true);
+    setHistoryError('');
+    try {
+      setHistory(await props.client.turnTrace(props.sid, turn.turn_id));
+    } catch (cause) {
+      setHistoryError((cause as Error).message);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+  return (
+    <>
+      {earlier > 0 && props.client && props.sid && (
+        <LoadMore
+          label={`Show ${earlier} earlier step${earlier === 1 ? '' : 's'} of this turn`}
+          onClick={() => void readHistory()}
+          disabled={loadingHistory}
+        >
+          {loadingHistory ? 'Loading earlier steps…' : `${earlier} earlier step${earlier === 1 ? '' : 's'}`}
+        </LoadMore>
+      )}
+      {historyError && <p role="alert" className="text-ui text-err-ink">{historyError}</p>}
+      <IterationTrace {...props} iterations={iterations} whole={props.whole || history !== null} />
+    </>
+  );
+}
+
 export const AssistantMessage = memo(function AssistantMessage({
   turn,
   agentName = 'Vis',
@@ -3871,8 +3930,9 @@ export const AssistantMessage = memo(function AssistantMessage({
         </div>
       </div>
       <div className="min-w-0 [&>:first-child]:mt-0">
-        <IterationTrace
-          iterations={turn.iterations ?? []}
+        <TurnTrace
+          key={turn.turn_id}
+          turn={turn}
           answered={answered}
           live={streaming}
           whole={whole}

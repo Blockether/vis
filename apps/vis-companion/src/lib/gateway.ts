@@ -579,6 +579,8 @@ const deviceReads = new Map<string, number>();
 const deviceFlights = new Map<string, Promise<DevicesState>>();
 /** Background transcript reads already in flight, shared by every client instance. */
 const transcriptPrefetches = new Map<string, Promise<boolean>>();
+/** Shared reads finish into the cache even when one reader leaves. */
+const transcriptReads = new Map<string, Promise<TranscriptTurn[]>>();
 
 /** References from unread rows near the viewport, shared across client instances. */
 const retainedTranscripts = new Map<string, number>();
@@ -4366,6 +4368,7 @@ export class GatewayClient {
   ): Promise<TranscriptPage> {
     const search = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) search.set(key, String(value));
+    search.set('iteration_limit', '8');
     const suffix = search.toString();
     const response = await this.request<{
       turns?: TranscriptTurn[];
@@ -4453,8 +4456,24 @@ export class GatewayClient {
     limit: number = TRANSCRIPT_PAGE,
     urgent = false,
   ): Promise<TranscriptTurn[]> {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    const key = `${this.snapshotKey('transcript', sid)}:${limit}`;
+    const pending = transcriptReads.get(key);
+    if (pending) return pending;
+    const read = this.readTranscript(sid, limit, urgent).finally(() => {
+      if (transcriptReads.get(key) === read) transcriptReads.delete(key);
+    });
+    transcriptReads.set(key, read);
+    return read;
+  }
+
+  private async readTranscript(
+    sid: string,
+    limit: number,
+    urgent: boolean,
+  ): Promise<TranscriptTurn[]> {
     const key = this.snapshotKey('transcript', sid);
-    const page = await this.fetchTranscriptPage(sid, { limit }, signal, urgent);
+    const page = await this.fetchTranscriptPage(sid, { limit }, undefined, urgent);
     const cached = this.cachedTranscript(sid);
     const held = transcriptWindows.get(key);
     const heldOffset = cached?.length ? (held?.offset ?? 0) : page.offset;
@@ -4574,8 +4593,11 @@ export class GatewayClient {
     const key = this.snapshotKey('transcript', sid);
     const warming = transcriptPrefetches.get(key);
     if (warming) {
-      await warming;
+      const prepared = await warming;
       if (signal?.aborted) return null;
+      const expected = row && transcriptPrefetchStamp(row);
+      if (prepared && expected && transcriptPrefetchStamps.get(key) === expected)
+        return this.cachedTranscript(sid);
     }
     const stamp = transcriptStamp(row);
     const cached = this.cachedTranscript(sid);

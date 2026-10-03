@@ -1829,6 +1829,7 @@ export function SessionScreen({
         council: row?.running_council ?? persisted?.council,
         answer: '',
         iterations,
+        iterationsOffset: persisted?.iterations_offset,
         startedAt,
         status: 'running',
       };
@@ -4490,6 +4491,7 @@ export function SessionScreen({
             request: runningTurn.request,
             status: runningTurn.status,
             iterations: runningTurn.iterations,
+            iterations_offset: runningTurn.iterationsOffset,
             content:
               runningTurn.content ??
               (runningTurn.answer

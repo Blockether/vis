@@ -2188,7 +2188,13 @@
       (expect (= [200 {:limit 2 :offset nil}] (call "limit=1&limit=2")))
       ;; a present-but-unparsable window param is a 400, not a silent full-transcript fallback
       (expect (= 400 (first (call "limit=abc"))))
-      (expect (= 400 (first (call "limit=10&offset=nope")))))))
+      (expect (= 400 (first (call "limit=10&offset=nope"))))
+      (expect (= [200 {:limit 24 :offset nil :iteration-limit 8}]
+                 (call "limit=24&iteration_limit=8")))
+      (expect (= [200 {:limit nil :offset nil :iteration-limit 4}]
+                 (call "iteration_limit=8&iteration_limit=4")))
+      (doseq [value ["abc" "0" "-1" "" "9223372036854775808"]]
+        (expect (= 400 (first (call (str "iteration_limit=" value)))))))))
 
 (defdescribe
   multi-sse-reports-sessions-deleted-while-disconnected

@@ -40,6 +40,8 @@ export interface RunningTurn {
   council?: CouncilRequest;
   answer: string;
   iterations: TranscriptIteration[];
+  /** Earlier persisted steps remain available through the turn trace. */
+  iterationsOffset?: number;
   /** Replay head announced before its older frames, so the ticker starts at NOW. */
   latestIteration?: number;
   progress?: TurnProgress;

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { fireEvent, render, waitFor } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AssistantMessage,
   AttachmentRail,
@@ -1758,6 +1758,9 @@ describe('Activity follows the combined Python source', () => {
 // that produced forty artifacts fired forty requests in one tick — on whatever
 // connection the phone had. A page at a time now, by count AND by weight.
 describe('the attachment rail', () => {
+  // These media tests have no layout. The history suite controls viewport entry.
+  beforeEach(() => vi.stubGlobal('IntersectionObserver', undefined));
+  afterEach(() => vi.unstubAllGlobals());
   const client = {
     attachmentUrl: async () => 'blob:none',
     retainAttachment: () => () => {},

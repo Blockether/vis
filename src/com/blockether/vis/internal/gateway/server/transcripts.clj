@@ -32,11 +32,20 @@
     (let [given? (fn [k]
                    (some? (get-in request [:query-params k])))
           limit (http/query-long request "limit")
-          offset (http/query-long request "offset")]
+          offset (http/query-long request "offset")
+          iteration-limit (http/query-long request "iteration_limit")]
 
-      (if (or (and (given? "limit") (nil? limit)) (and (given? "offset") (nil? offset)))
-        (http/error-response 400 :invalid-window "limit and offset must be integers")
-        (let [page (state/transcript-page sid {:limit limit :offset offset})]
+      (if (or (and (given? "limit") (nil? limit))
+              (and (given? "offset") (nil? offset))
+              (and (given? "iteration_limit")
+                   (or (nil? iteration-limit) (not (pos? (long iteration-limit))))))
+        (http/error-response 400
+                             :invalid-window
+                             "limit and offset must be integers; iteration_limit must be positive")
+        (let [page (state/transcript-page sid
+                                          (cond-> {:limit limit :offset offset}
+                                            iteration-limit
+                                            (assoc :iteration-limit iteration-limit)))]
           (http/json-response {:turns (:turns page)
                                :total (:total page)
                                :offset (:offset page)

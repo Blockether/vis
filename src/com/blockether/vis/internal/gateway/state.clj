@@ -2321,14 +2321,50 @@
 (defn- transcript-turn
   "Hydrate one persisted turn in the canonical remote-channel shape and attach
    the canonical TUI/CLI bubble-footer strings."
-  [db att-by-soul turn]
-  (let [iteration-rows
-        (try (->> (persistance/db-list-session-turn-iterations db (:id turn))
-                  (mapv with-display-iteration))
+  [db att-by-soul turn & [iteration-limit]]
+  (let [all-iterations
+        (try (vec (persistance/db-list-session-turn-iterations db (:id turn)))
              (catch Throwable t
                (tel/log! :warn
                          ["gateway: turn-iteration hydration failed" (:id turn) (ex-message t)])
                []))
+
+        window-start
+        (if iteration-limit (max 0 (- (count all-iterations) (max 1 (long iteration-limit)))) 0)
+
+        window-rows
+        (try (mapv with-display-iteration (subvec all-iterations window-start))
+             (catch Throwable t
+               (tel/log! :warn
+                         ["gateway: turn-iteration hydration failed" (:id turn) (ex-message t)])
+               []))
+
+        iteration-rows
+        (if iteration-limit
+          ;; A single tool result can exceed a megabyte. Keep a contiguous suffix
+          ;; within 128 KiB; older details remain available through the turn trace.
+          (loop [remaining
+                 (rseq window-rows)
+
+                 rows
+                 '()
+
+                 bytes
+                 0]
+
+            (if-let [row (first remaining)]
+              (let [size (alength (.getBytes ^String (wire/json-str row)
+                                             java.nio.charset.StandardCharsets/UTF_8))
+                    total (+ (long bytes) (long size))]
+
+                (if (> total (* 128 1024))
+                  (vec rows)
+                  (recur (next remaining) (conj rows row) total)))
+              (vec rows)))
+          window-rows)
+
+        iteration-offset
+        (- (count all-iterations) (count iteration-rows))
 
         ;; Produced artifacts (images and documents from `attach`) as the
         ;; SAME lean descriptors the live `iteration.completed` frame carries —
@@ -2360,7 +2396,7 @@
         (last iterations)
 
         tokens-per-second
-        (persisted-tokens-per-second iteration-rows)
+        (persisted-tokens-per-second all-iterations)
 
         tokens
         (cond-> {}
@@ -2444,6 +2480,11 @@
                 (assoc :turn-id (str (:id turn))
                        :request (or (get-in turn [:council :content]) (:user-request turn))
                        :iterations iterations))
+      (some? iteration-limit)
+      (assoc :iterations-offset
+        iteration-offset :iterations-total
+        (count all-iterations))
+
       (seq (get att-by-soul (str (:id turn))))
       (assoc :attachments (get att-by-soul (str (:id turn))))
 
@@ -2502,13 +2543,13 @@
 
 (defn- budgeted-page-turns
   "Hydrate `window` (oldest-first rows) from its NEWEST row BACKWARDS, stopping
-   AT the row that first exceeds `TRANSCRIPT_PAGE_MAX_BYTES` — that row is still
+   AT the row that first exceeds `byte-limit` — that row is still
    INCLUDED, so the page overshoots by at most one turn and a page is never
    empty. Hydration is where a page's cost lives, so a stopped page never pays
    for the rows it does not send. Returns `[rows dropped]` — `rows` still
    oldest-first, `dropped` the number of OLDEST window rows left out, which the
    caller adds to `:offset`."
-  [db att-by-soul window]
+  [hydrate window byte-limit]
   (loop [i
          (dec (count window))
 
@@ -2521,7 +2562,7 @@
     (if (neg? i)
       [(vec rows) 0]
       (let [row
-            (wire/canonical (transcript-turn db att-by-soul (nth window i)))
+            (wire/canonical (hydrate (nth window i)))
 
             bytes'
             (+ (long bytes)
@@ -2534,7 +2575,7 @@
         ;; so re-entering the session showed no image at all until the user
         ;; happened to scroll back. Overshoot is bounded by that single row, and
         ;; the page still always advances (`dropped` counts the rows below it).
-        (if (> bytes' (long @TRANSCRIPT_PAGE_MAX_BYTES))
+        (if (> bytes' (long byte-limit))
           [(vec (conj rows row)) i]
           (recur (dec i) (conj rows row) bytes'))))))
 
@@ -2557,11 +2598,14 @@
 
   `opts`: `:limit` window size (nil = every row, unbudgeted — the TUI's
   whole-transcript read), `:offset` 0-based start in the oldest-first list
-  (nil = the NEWEST `:limit` rows).
+  (nil = the NEWEST `:limit` rows). `:iteration-limit` keeps recent steps
+  within 128 KiB per turn and reduces the page budget to 256 KiB. Each turn
+  reports `iterations_offset` and `iterations_total`. The turn trace endpoint
+  keeps the complete history. Answers and user attachments are not truncated.
 
   Returns `{:turns <oldest-first window> :total <turn count> :offset <window
   start> :has-more <older rows exist>}`."
-  [sid {:keys [limit offset]}]
+  [sid {:keys [limit offset iteration-limit]}]
   (try
     (let [db
           (lp/db-info)
@@ -2587,10 +2631,19 @@
           att-by-soul
           (try (persistance/db-list-turns-attachments db (map :id window)) (catch Throwable _ {}))
 
+          hydrate
+          (if iteration-limit
+            #(transcript-turn db att-by-soul % iteration-limit)
+            #(transcript-turn db att-by-soul %))
+
           [rows dropped]
           (if limit
-            (budgeted-page-turns db att-by-soul window)
-            [(wire/canonical (mapv (partial transcript-turn db att-by-soul) window)) 0])
+            (budgeted-page-turns hydrate
+                                 window
+                                 (if iteration-limit
+                                   (min (long @TRANSCRIPT_PAGE_MAX_BYTES) (* 256 1024))
+                                   @TRANSCRIPT_PAGE_MAX_BYTES))
+            [(wire/canonical (mapv hydrate window)) 0])
 
           from
           (long (+ start (long dropped)))]
