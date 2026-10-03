@@ -10,6 +10,17 @@ import {
 
 const databaseId = "00000000-0000-4000-8000-000000000001";
 
+test("D1 migration guards avoid nested CASE blocks", async () => {
+  // The remote D1 migration parser rejects CASE ... END inside trigger blocks.
+  const sql = await readFile(
+    new URL("../migrations/0001_rooms.sql", import.meta.url),
+    "utf8",
+  );
+  const triggers = sql.match(/^CREATE TRIGGER[\s\S]*?^END;/gm) ?? [];
+  assert.ok(triggers.length > 0);
+  for (const trigger of triggers) assert.doesNotMatch(trigger, /\bCASE\b/i);
+});
+
 test("deployment adds private Rooms storage without changing Push configuration", async () => {
   const directory = await mkdtemp(join(tmpdir(), "vis-relay-config-"));
   try {

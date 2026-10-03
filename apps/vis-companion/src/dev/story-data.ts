@@ -20,6 +20,7 @@
  */
 
 import type { ImproveMode, ImproveRecord, ImproveSettings } from '../lib/improve';
+import type { RoomsStatus } from '../lib/rooms';
 import type { ImproveClient } from '../screens/ImproveScreen';
 import { activityProjectionFromWire, type ActivityProjection } from '../lib/activity';
 import activityWire from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json';
@@ -2487,6 +2488,7 @@ export function storySettingsFetch(populated = false): typeof fetch {
     }
     let body: unknown = {};
     if (url.pathname === '/v1/router') body = { providers: populated ? STORY_PROVIDERS : [] };
+    if (url.pathname === '/v1/council/rooms') body = { configured: false, rooms: [] } satisfies RoomsStatus;
     if (url.pathname === '/v1/settings' && init?.method === 'POST') {
       const request = JSON.parse(String(init.body));
       if (request.id === agentName.id) {

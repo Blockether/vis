@@ -51,13 +51,13 @@ WHEN NOT EXISTS (
   SELECT 1 FROM room_redemptions WHERE invite_id = NEW.invite_id AND request_id = NEW.request_id
 )
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'invite_unavailable') WHERE NOT EXISTS (
     SELECT 1 FROM room_invites i JOIN council_rooms r ON r.room_id = i.room_id
     JOIN room_machines m ON m.machine_id = NEW.machine_id
     WHERE i.invite_id = NEW.invite_id AND i.revoked_at IS NULL AND r.deleted_at IS NULL
       AND i.expires_at > NEW.created_at AND i.uses < i.max_uses
       AND m.credential_hash = NEW.credential_hash
-  ) THEN RAISE(ABORT, 'invite_unavailable') END;
+  );
 END;
 
 CREATE TRIGGER IF NOT EXISTS room_redeem_apply AFTER INSERT ON room_redemptions
@@ -126,27 +126,27 @@ END;
 CREATE TRIGGER IF NOT EXISTS room_member_capacity BEFORE INSERT ON room_memberships
 WHEN NOT EXISTS (SELECT 1 FROM room_memberships WHERE room_id = NEW.room_id AND machine_id = NEW.machine_id AND revoked_at IS NULL)
 BEGIN
-  SELECT CASE WHEN (SELECT count(*) FROM room_memberships m JOIN council_rooms r USING(room_id)
+  SELECT RAISE(ABORT, 'room_capacity') WHERE (SELECT count(*) FROM room_memberships m JOIN council_rooms r USING(room_id)
     WHERE m.machine_id = NEW.machine_id AND m.revoked_at IS NULL AND r.deleted_at IS NULL)
-    >= (SELECT value FROM room_limits WHERE name = 'rooms_per_machine') THEN RAISE(ABORT, 'room_capacity') END;
-  SELECT CASE WHEN (SELECT count(*) FROM room_memberships WHERE room_id = NEW.room_id AND revoked_at IS NULL)
-    >= (SELECT value FROM room_limits WHERE name = 'machines_per_room') THEN RAISE(ABORT, 'room_capacity') END;
+    >= (SELECT value FROM room_limits WHERE name = 'rooms_per_machine');
+  SELECT RAISE(ABORT, 'room_capacity') WHERE (SELECT count(*) FROM room_memberships WHERE room_id = NEW.room_id AND revoked_at IS NULL)
+    >= (SELECT value FROM room_limits WHERE name = 'machines_per_room');
 END;
 
 CREATE TRIGGER IF NOT EXISTS room_presence_guard BEFORE INSERT ON room_presence
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'room_forbidden') WHERE NOT EXISTS (
     SELECT 1 FROM room_memberships m JOIN council_rooms r USING(room_id)
     JOIN room_sessions s ON s.machine_id = m.machine_id
     WHERE m.room_id = NEW.room_id AND s.session_id = NEW.session_id AND m.revoked_at IS NULL AND r.deleted_at IS NULL
-  ) THEN RAISE(ABORT, 'room_forbidden') END;
-  SELECT CASE WHEN (SELECT count(*) FROM room_presence WHERE room_id = NEW.room_id)
-    >= (SELECT value FROM room_limits WHERE name = 'sessions_per_room') THEN RAISE(ABORT, 'room_capacity') END;
+  );
+  SELECT RAISE(ABORT, 'room_capacity') WHERE (SELECT count(*) FROM room_presence WHERE room_id = NEW.room_id)
+    >= (SELECT value FROM room_limits WHERE name = 'sessions_per_room');
 END;
 
 CREATE TRIGGER IF NOT EXISTS room_entry_guard BEFORE INSERT ON room_entries
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'room_forbidden') WHERE NOT EXISTS (
     SELECT 1 FROM room_presence p JOIN room_sessions s USING(session_id)
     JOIN room_memberships m ON m.room_id = p.room_id AND m.machine_id = s.machine_id
     JOIN council_rooms r ON r.room_id = m.room_id
@@ -154,11 +154,11 @@ BEGIN
       AND p.expires_at > NEW.created_at AND (p.state IN ('running', 'queued')
         OR (NEW.self_wake = 1 AND p.state = 'idle' AND p.wake_allowed = 1))
       AND m.revoked_at IS NULL AND r.deleted_at IS NULL
-  ) THEN RAISE(ABORT, 'room_forbidden') END;
-  SELECT CASE WHEN EXISTS (
+  );
+  SELECT RAISE(ABORT, 'room_identity') WHERE EXISTS (
     SELECT 1 FROM room_entries WHERE room_id = NEW.room_id AND author_session_id = NEW.author_session_id
       AND idempotency_key = NEW.idempotency_key AND fingerprint != NEW.fingerprint
-  ) THEN RAISE(ABORT, 'room_identity') END;
+  );
 END;
 
 CREATE TRIGGER IF NOT EXISTS room_entry_apply AFTER INSERT ON room_entries
