@@ -48,6 +48,14 @@ describe('the order the reader is looking at', () => {
   // Regression: repository headers jumped even while session order was held.
   // Snapshot/response order must not override the canonical root ordering.
   it('keeps repository headers fixed across reordered poll answers and search', async () => {
+    const expectProjectLocations = (region: HTMLElement) => {
+      for (const name of ['a', 'b']) {
+        // The bold label and project name are separate text nodes.
+        const project = within(region).getByText((_, element) => element?.textContent === `Project: ${name}`);
+        expect(project).toBeVisible();
+        expect(within(project).getByText('Project:')).toHaveClass('font-bold');
+      }
+    };
     const a = listSession({ ...row('a', 12), workspace: { root: '/repo/a' } });
     const b = listSession({ ...row('b', 11), workspace: { root: '/repo/b' } });
     const view = renderSessionsScreen({ machines: [{ sessions: [a, b] }] });
@@ -72,8 +80,7 @@ describe('the order the reader is looking at', () => {
     const results = screen.getByRole('region', { name: 'Matching sessions' });
     expect(projectOrder(list)).toEqual(['/repo/a', '/repo/b']);
     expect(projectOrder(results)).toEqual([]);
-    expect(within(results).getByText('Project: a')).toBeVisible();
-    expect(within(results).getByText('Project: b')).toBeVisible();
+    expectProjectLocations(results);
     act(() => view.setQuery(''));
     await settle(50);
     // Clearing the field keeps flat recents without changing the main list.
@@ -83,8 +90,7 @@ describe('the order the reader is looking at', () => {
     ]);
     const recents = screen.getByRole('region', { name: 'Recent sessions' });
     expect(projectOrder(recents)).toEqual([]);
-    expect(within(recents).getByText('Project: a')).toBeVisible();
-    expect(within(recents).getByText('Project: b')).toBeVisible();
+    expectProjectLocations(recents);
   });
 
   it('uses the same repository order for a cached first paint and its revalidation', async () => {
