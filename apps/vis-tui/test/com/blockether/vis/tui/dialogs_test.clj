@@ -441,22 +441,25 @@
                    (expect (= 0 (:selected up)))
                    (expect (= 49 (:selected end))))))
 
-(defdescribe session-dialog-wheel-test
-             (it "session picker coalesces wheel floods and moves selection"
-                 (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-                       (term/virtual-screen)
+(defdescribe
+  session-dialog-wheel-test
+  (it "session picker coalesces wheel floods and moves selection"
+      (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+            (term/virtual-screen)
 
-                       sessions
-                       (mapv (fn [idx]
-                               {"id" idx "title" (str "Session " idx) "turn_count" idx})
-                             (range 20))]
+            sessions
+            ;; Rows sort newest first (cd5b30200). Session 0 is the newest, so the
+            ;; row order is 0..19 and five wheel notches select Session 5.
+            (mapv
+              (fn [idx]
+                {"id" idx "title" (str "Session " idx) "turn_count" idx "modified_at" (- 20 idx)})
+              (range 20))]
 
-                   (try (dotimes [_ 5]
-                          (.addInput terminal (wheel-down)))
-                        (.addInput terminal (KeyStroke. KeyType/Enter))
-                        (expect (= {:action :switch :id "5"}
-                                   (dlg/session-picker-dialog! screen sessions nil)))
-                        (finally (.stopScreen screen))))))
+        (try (dotimes [_ 5]
+               (.addInput terminal (wheel-down)))
+             (.addInput terminal (KeyStroke. KeyType/Enter))
+             (expect (= {:action :switch :id "5"} (dlg/session-picker-dialog! screen sessions nil)))
+             (finally (.stopScreen screen))))))
 
 (defdescribe session-picker-paging-test
              (it "session picker pages through rows and back to the beginning"
