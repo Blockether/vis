@@ -1816,7 +1816,47 @@
                         :ok)))]
 
         (expect (= :ok result))
-        (expect (= 2 @attempts)))))
+        (expect (= 2 @attempts))))
+  ;; Regression: a model pick made during a turn was lost on a memory store. Its debounced
+  ;; write met a turn write, failed with SQLITE_LOCKED and was dropped.
+  (it
+    "makes a statement write wait for a running Vis write on a memory store"
+    (let [s
+          (h/store)
+
+          sid
+          (str (h/store-session! s {:channel :cli}))
+
+          write-tx!
+          (private-core-fn "sqlite-write-tx!")
+
+          held
+          (CountDownLatch. 1)
+
+          release
+          (CountDownLatch. 1)
+
+          holder
+          (future (write-tx! s
+                             (fn [tx]
+                               (jdbc/execute! (:datasource tx)
+                                              (sql/format {:update :session_state
+                                                           :set {:title "held"}
+                                                           :where [:= :session_soul_id sid]}))
+                               (.countDown held)
+                               (.await release 5 TimeUnit/SECONDS))))]
+
+      (expect (true? (.await held 5 TimeUnit/SECONDS)))
+      (let [writer (future (try (persistance/db-set-session-model-pref! s sid "fixture" "large")
+                                nil
+                                (catch Throwable t t)))]
+        ;; Give the writer time to meet the held store before the holder commits.
+        (Thread/sleep 200)
+        (.countDown release)
+        @holder
+        (expect (nil? @writer)))
+      (expect (= {:provider "fixture" :model "large"}
+                 (persistance/db-get-session-model-pref s sid))))))
 
 ;; Session
 

@@ -61,12 +61,19 @@
 
 (defonce ^:private sqlite-write-lock (Object.))
 
+(defn- run-statement!
+  "Run the statement thunk `run`. On a shared-cache memory store, hold the Vis write lock.
+   There, a writer that overlaps a reader or another writer fails at once with
+   SQLITE_LOCKED, and the busy timeout does not wait. WAL-backed files keep concurrent
+   statements."
+  [db-info run]
+  (if (= :memory (:mode db-info)) (locking sqlite-write-lock (run)) (run)))
+
 (defn- query-sql!
   [db-info statement]
-  ;; Shared-cache memory stores cannot overlap a table reader with a writer.
-  ;; WAL-backed files retain concurrent reads; both paths use the existing writer boundary.
-  (let [run #(jdbc/execute! (ds db-info) statement {:builder-fn rs/as-unqualified-lower-maps})]
-    (if (= :memory (:mode db-info)) (locking sqlite-write-lock (run)) (run))))
+  (run-statement!
+    db-info
+    #(jdbc/execute! (ds db-info) statement {:builder-fn rs/as-unqualified-lower-maps})))
 
 (defn query!
   "Run a HoneySQL map and return rows with unqualified lower-case keys."
@@ -75,7 +82,7 @@
 
 (defn query-one! [db-info q] (first (query! db-info q)))
 
-(defn execute! [db-info q] (jdbc/execute! (ds db-info) (sql/format q)))
+(defn execute! [db-info q] (run-statement! db-info #(jdbc/execute! (ds db-info) (sql/format q))))
 
 (defn- ->segments-json
   "Timed transcript lines as the JSON its column holds, or nil when a recording has
