@@ -655,6 +655,7 @@
       (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
         (doseq [rule ["An extension result is a frozen record of its public fields"
                       "without methods. Its declared sequences iterate"
+                      "For a plain dict, use `dataclasses.asdict(r)`, not `dict(r)`."
                       "A wrong name raises an error that lists the real fields"]]
           (expect (str/includes? text rule) rule))))
   (it
@@ -835,7 +836,10 @@
       ;; 12.1k → 11.55k for the ASD-STE100 rewrite: every rule stays, in short plain sentences
       ;; without hard-wrapped continuation lines, and duplicated wording is merged. It lands
       ;; at 11 499.
-      (expect (< (count text) 11550))
+      ;; 11.55k → 11.65k: e2e runs called `dict(r)` on a record, so a rule names
+      ;; `dataclasses.asdict(r)`, and the discovery table says "Skip discovery." again.
+      ;; It lands at 11 584.
+      (expect (< (count text) 11650))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "each hit is a `patch` anchor"
                          "`patch(path, edits)`"])]
