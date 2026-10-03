@@ -1,5 +1,5 @@
 (ns com.blockether.vis.native-rooms-test
-  "Two owned native gateways exchange Council traffic through the bundled Worker and D1."
+  "Owned gateways exchange Council traffic through a local or deployed Worker and D1."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
@@ -13,6 +13,12 @@
            [java.util.concurrent CountDownLatch Executors TimeUnit]))
 
 (set! *warn-on-reflection* true)
+
+(def ^:dynamic *deployment*
+  "Optional live fixture: `{:relay-url :admin-token :guest-port :guest-root :provider-port}`.
+   Set it with `alter-var-root` in a REPL, then run the var with `lazytest.repl/run-test-var`.
+   A namespace reload resets it. Use only owned, isolated gateways and an authenticated relay."
+  nil)
 
 (defn- request!
   [port method path body]
@@ -74,7 +80,9 @@
         (Executors/newCachedThreadPool)
 
         server
-        (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+        (HttpServer/create (InetSocketAddress. "127.0.0.1"
+                                               (int (or (:provider-port *deployment*) 0)))
+                           0)]
 
     (.createContext
       server
@@ -162,11 +170,14 @@
           processes
           (atom [])
 
+          room-cleanup
+          (atom nil)
+
           provider
           (provider!)
 
           admin
-          (apply str (repeat 43 "a"))]
+          (or (:admin-token *deployment*) (apply str (repeat 43 "a")))]
 
       (try
         (let [relay-pb
@@ -185,11 +196,14 @@
               (swap! processes conj relay)
 
               relay-url
-              (with-open [reader (io/reader (.getInputStream relay))]
-                (deref (future (.readLine ^java.io.BufferedReader reader)) 60000 nil))
+              (or (:relay-url *deployment*)
+                  (with-open [reader (io/reader (.getInputStream relay))]
+                    (deref (future (.readLine ^java.io.BufferedReader reader)) 60000 nil)))
 
               _
-              (when-not (and relay-url (str/starts-with? relay-url "http://127.0.0.1:"))
+              (when-not (and relay-url
+                             (or (:relay-url *deployment*)
+                                 (str/starts-with? relay-url "http://127.0.0.1:")))
                 (throw (ex-info "Local Rooms Worker did not start" {})))
 
               owner
@@ -199,10 +213,13 @@
               (swap! processes conj (:process owner))
 
               guest
-              (gateway! guest-dir (:port provider))
+              (if-let [port (:guest-port *deployment*)]
+                {:port port}
+                (gateway! guest-dir (:port provider)))
 
               _
-              (swap! processes conj (:process guest))
+              (when-let [process (:process guest)]
+                (swap! processes conj process))
 
               a
               (:port owner)
@@ -222,6 +239,9 @@
               rid
               (get room "room_id")
 
+              _
+              (reset! room-cleanup [a rid])
+
               invite
               (ok! a :post (str "/v1/council/rooms/" rid "/invites") {})
 
@@ -236,7 +256,11 @@
                    "id")
 
               sb
-              (get (ok! b :post "/v1/sessions" {:channel "api" :root (.getAbsolutePath guest-dir)})
+              (get (ok! b
+                        :post
+                        "/v1/sessions"
+                        {:channel "api"
+                         :root (or (:guest-root *deployment*) (.getAbsolutePath guest-dir))})
                    "id")
 
               ca
@@ -300,8 +324,12 @@
                (str "/v1/council/rooms/" rid "/members/" (get-in joined ["machine" "machine_id"]))
                nil)
           (expect (= [] (get (ok! b :get "/v1/council/rooms" nil) "rooms")))
-          (expect (not= rid (get (ok! b :get cb nil) "default_group_id"))))
-        (finally ((:stop! provider))
-                 (doseq [process (reverse @processes)]
-                   (#'binary/kill-tree! process))
-                 (#'binary/delete-tree! dir))))))
+          (expect (not= rid (get (ok! b :get cb nil) "default_group_id")))
+          (ok! a :delete (str "/v1/council/rooms/" rid) nil)
+          (reset! room-cleanup nil))
+        (finally (try (when-let [[port room-id] @room-cleanup]
+                        (ok! port :delete (str "/v1/council/rooms/" room-id) nil))
+                      (finally ((:stop! provider))
+                               (doseq [process (reverse @processes)]
+                                 (#'binary/kill-tree! process))
+                               (#'binary/delete-tree! dir))))))))

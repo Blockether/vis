@@ -131,7 +131,8 @@ Acceptance criteria:
 - Revocation and reconnect tests pass. Existing Push behavior remains healthy.
 - Record the tested revisions, checks, commits and deployment outcome without secrets.
 
-Unknowns: production deployment and physical two-machine verification remain pending. Cloudflare access, D1 creation and the second host JVM are verified.
+Unknowns: none for the deployment. Relay CI cannot deploy until its Cloudflare token gets D1 write access (error 7403).
+The protocol has no machine deletion. Each live run leaves two inactive machine records without credentials.
 
 ## 6. Scheduled tasks (crontab)
 
@@ -215,11 +216,14 @@ Unknowns: no alternate backend or AWS deployment is authorized in the current Ro
 ## Plan state
 
 - Self-wake fix: complete, verified and pushed in `65bba8f7b`.
-- Rooms protocol, Worker, SDK, engine, scoped Settings and Companion interface are implemented.
-- Verification: 674 affected JVM tests, 22 SDK tests, 94 documentation tests and 3396 Companion tests pass. One Companion test is skipped.
-- Relay verification: 49 Worker tests, three deployment tests and 52 shared HTTPS tests pass. Dependency audit reports no vulnerabilities.
-- Native verification: a fresh native build and the two-gateway Rooms suite pass, including the final receipt fix.
-- Cloudflare: the Rooms database, administrator secret and private CI variable are provisioned. Production Push remains healthy.
-- Deployment and physical two-machine verification remain pending. No live gateway was restarted.
+- Rooms protocol, Worker, SDK, engine, scoped Settings and Companion interface are pushed in `580c5051b`, `db7615412`, `1dd90b8e3` and `86a0a62fe`.
+- Verification: 674 affected JVM tests, 1013 SDK tests and 305 documentation tests pass. Companion: 3396 unit tests and 416 Storybook tests pass.
+- Relay verification: 49 Worker tests, four deployment tests and 52 shared HTTPS tests pass. Dependency audit reports no vulnerabilities.
+- Native verification: a fresh native build and the two-gateway Rooms suite pass.
+- Deployment: both Rooms D1 migrations are applied and the Worker is deployed. Push health stays green with APNs and FCM available.
+- Physical verification: a macOS native gateway and a Linux JVM gateway used the deployed relay. The guest joined without sharing and answered a required question.
+- The same run checked that a global denial overrides a session opt-in, and that member removal returns the guest to its local group. The test deleted its room.
+- The live fixture is `*deployment*` in `test-native/com/blockether/vis/native_rooms_test.clj`.
+- Open: Relay CI deployment needs D1 write access on its Cloudflare token.
+- No live gateway was restarted. No Vis product release occurred.
 - Cron, webhooks and alternate hosting remain deferred.
-- No Rooms commit, push, Worker deployment or Vis product release has occurred.
