@@ -2437,6 +2437,7 @@ export function DialogHeader({
   titleId,
   subtitle,
   isTitleHidden = false,
+  isTitleTruncated = false,
   actions,
   closeLabel,
   onClose,
@@ -2450,6 +2451,8 @@ export function DialogHeader({
   subtitle?: ReactNode;
   /** Keep the title accessible without a visible headline above the subtitle. */
   isTitleHidden?: boolean;
+  /** Keep a filename on one line. The full title remains accessible. */
+  isTitleTruncated?: boolean;
   /**
    * What this band OFFERS, standing between the name and the way out: `BandButton`
    * cells, and nothing else. A dialog's own verbs used to be a docked footer under
@@ -2502,16 +2505,13 @@ export function DialogHeader({
       } ${isStacked ? 'border-t border-dialog-title-foreground/20' : ''} ${className}`}
     >
       <div className={`min-w-0 flex-1 self-center py-1.5 ${LIST_EDGE}`}>
-        {/* A title can be a whole QUESTION from `vis.ask`, and a question clipped to
-            one line is no longer one anybody can answer. So it wraps — bounded at
-            three lines, which is the depth `HumanInputPrompt` was fixed to and pins.
-            The band's height is a minimum, not a cap. */}
+        {/* File names keep one row. Questions can wrap to three lines. */}
         <h2
           id={titleId}
           className={
             isTitleHidden
               ? 'sr-only'
-              : 'line-clamp-3 font-mono text-head font-semibold tracking-normal'
+              : `font-mono text-title font-semibold tracking-normal ${isTitleTruncated ? 'truncate' : 'line-clamp-3'}`
           }
           title={typeof title === 'string' ? title : undefined}
         >

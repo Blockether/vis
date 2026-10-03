@@ -649,6 +649,7 @@ export function ImageViewer({
           a check while the pen is active. */}
       <DialogHeader
         title={shown.name}
+        isTitleTruncated
         closeLabel={`Close ${shown.name}`}
         onClose={onClose}
         isUnderNotch

@@ -767,6 +767,7 @@ function DetailOverlay({
         isUnderNotch
         isStacked
         title={name}
+        isTitleTruncated
         subtitle={shareStatus || subtitle}
         actions={
           shareAction || actions ? (

@@ -61,6 +61,18 @@ export const ZoomControls: Story = {
   },
 };
 
+/** Long file names keep the same compact header as short names. */
+export const LongFileName: Story = {
+  args: { name: STORY_PICTURES[1].name, src: STORY_PICTURES[1].src },
+  play: async ({ args, canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    const title = page.getByRole('heading', { name: args.name });
+    await expect(title).toHaveAttribute('title', args.name);
+    await userEvent.click(page.getByRole('button', { name: `Close ${args.name}` }));
+    await expect(args.onClose).toHaveBeenCalledOnce();
+  },
+};
+
 export const DrawingPointer: Story = {
   ...Drawing,
   tags: ['!test'],

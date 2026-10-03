@@ -111,6 +111,17 @@ describe('every dialog header is the one dialog header', () => {
     expect(title.className).not.toContain('truncate');
   });
 
+  it('keeps a filename on one line without losing its full name', () => {
+    const name = 'vis-memory-overlay-full-size-scrolled-upright.png';
+    render(<DialogHeader title={name} isTitleTruncated closeLabel={`Close ${name}`} onClose={() => {}} />);
+
+    const title = screen.getByRole('heading', { name });
+    expect(title).toHaveClass('truncate');
+    expect(title).not.toHaveClass('line-clamp-3');
+    expect(title).toHaveAttribute('title', name);
+    expect(screen.getByRole('button', { name: `Close ${name}` })).toBeVisible();
+  });
+
   // Regression, user report from a phone ("the headline has wrong height and the …
   // height and width of the x button is not consistent with other … places", about the
   // image viewer): the band cleared the notch with padding on the SAME box that spells

@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, within } from 'storybook/test';
 import { useRef, useState, type ReactNode } from 'react';
-import { STORY_MACHINES, STORY_SESSION } from '../dev/story-data';
+import { STORY_MACHINES, STORY_PICTURES, STORY_SESSION } from '../dev/story-data';
 import { HUMAN_INPUT_CHOICE_MARKS } from '../lib/human-input';
 import { Markdown } from './ChatContent';
 import { OverlayScreen } from './DocArtifact';
@@ -1247,6 +1247,25 @@ export const Band: Story = {
       <Group of="Stacked over another band, and clearing the notch">
         <div className="w-full">
           <DialogHeader title="fleet.csv" isStacked closeLabel="Close fleet.csv" onClose={noop} />
+        </div>
+      </Group>
+      <Group of="Long file names, with and without details">
+        <div className="w-full">
+          <DialogHeader
+            title={STORY_PICTURES[1].name}
+            isTitleTruncated
+            closeLabel={`Close ${STORY_PICTURES[1].name}`}
+            onClose={noop}
+          />
+        </div>
+        <div className="w-full">
+          <DialogHeader
+            title={STORY_PICTURES[1].name}
+            isTitleTruncated
+            subtitle={STORY_PICTURES[1].meta}
+            closeLabel={`Close ${STORY_PICTURES[1].name}`}
+            onClose={noop}
+          />
         </div>
       </Group>
     </Sheet>

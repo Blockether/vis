@@ -84,6 +84,7 @@ export function OverlayScreen({
     >
       <DialogHeader
         title={title}
+        isTitleTruncated
         subtitle={subtitle}
         actions={actions}
         closeLabel={`Close ${title}`}
