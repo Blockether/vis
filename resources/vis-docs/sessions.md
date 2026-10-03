@@ -60,7 +60,7 @@ The mutation count always shows, also when it is 0, so you can see at once if th
 Open the digest to see the thinking, code and Activity of these steps. Failures, files and images stay visible when the digest is closed.
 The Interrupted message of a stopped step shows only in the open digest.
 
-When the steps open live views, a closed row also shows a live button. Select it to open the newest running live view, or else the newest recording.
+When the steps open live views, a closed row ends its counts with **live**, for example `2 steps · 1 running · live`. Select **live** to open the newest running live view, or else the newest recording.
 
 To see each step as a separate Activity, turn off **Compact mode** in Settings, under **Responses**.
 The terminal and each app keep their own choice.

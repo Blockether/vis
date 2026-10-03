@@ -2675,9 +2675,9 @@ function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
  * THE ROW THAT STANDS FOR THE STEPS UNDER A NOTE. It counts the steps, then what their calls
  * did (`activityCostParts`), then the calls that are running, failed or cancelled. It shows
  * their measured time on the right. A failure colors the chevron. A stop is a failure too,
- * so a cancelled call or an interrupted step also colors it. A closed row also holds the
- * live control of its steps. Opening the row shows the thinking, code and Activity of the
- * steps. Mirrors the TUI (`render/step-digest-entries`).
+ * so a cancelled call or an interrupted step also colors it. A closed row ends its counts
+ * with `· live`, the live control of its steps. Opening the row shows the thinking, code
+ * and Activity of the steps. Mirrors the TUI (`render/step-digest-entries`).
  */
 function StepDigest({
   chunks,
@@ -2692,7 +2692,7 @@ function StepDigest({
   live: boolean;
   isOpen: boolean;
   onToggle: () => void;
-  /** The live control of a closed row, between the counts and the time. */
+  /** The live control of a closed row: one more part of the counts, right after them. */
   children?: ReactNode;
 }) {
   const forms = chunks.flatMap((chunk) => (chunk.kind === 'code' ? chunk.forms : chunk.cards));
@@ -2722,12 +2722,12 @@ function StepDigest({
     activity.counts.cancelled > 0 ||
     forms.some((form) => form.error != null);
   return (
-    <div className="flex min-w-0 items-center gap-2">
+    <div className="flex min-w-0 items-center">
       <Disclosure
         tone="chronology"
         density="comfortable"
         isOpen={isOpen}
-        className={failed ? 'text-err-ink!' : ''}
+        className={`w-auto! ${failed ? 'text-err-ink!' : ''}`}
         aria-label={`${isOpen ? 'Collapse' : 'Expand'} steps: ${parts.map((part) => part.text).join(' · ')}`}
         data-step-digest
         onClick={onToggle}
@@ -2735,17 +2735,18 @@ function StepDigest({
         <ActivityTally parts={parts} />
       </Disclosure>
       {children}
+      {/* The live control continues the counts, so only the time stands at the right. */}
       {duration && (
-        <span className="shrink-0 font-mono text-ui text-code-duration">{duration}</span>
+        <span className="ml-auto shrink-0 pl-2 font-mono text-ui text-code-duration">{duration}</span>
       )}
     </div>
   );
 }
 
 /**
- * THE LIVE VIEWS OF A CLOSED DIGEST, as one control on its row. While views run, it counts
- * them and opens the newest one. Otherwise it counts the recordings and opens the newest
- * one. Mirrors the TUI (`render/step-digest-entries`).
+ * THE LIVE VIEWS OF A CLOSED DIGEST, as one more part of its counts: `· live`, in their own
+ * size and ink. While views run, it opens the newest one. Otherwise it opens the newest
+ * recording. Mirrors the TUI (`render/step-digest-entries`).
  */
 function DigestLive({
   views,
@@ -2767,16 +2768,23 @@ function DigestLive({
   );
   const close = useCallback(() => setOpened(false), [setOpened]);
   if (!view && !record) return null;
-  const label = view ? `${views.length} live running` : `${records.length} live`;
   return (
     <>
-      <TextButton
-        className="shrink-0 self-stretch"
-        aria-label={`Open ${label}: ${view ? view.title : liveRunName(record?.filename)}`}
-        onClick={() => setOpened(true)}
-      >
-        {label}
-      </TextButton>
+      {/* A flex item drops a plain leading space, so the separator uses no-break spaces. */}
+      <BandTally>
+        {'\u00a0·\u00a0'}
+        <TextButton
+          isTally
+          aria-label={
+            view
+              ? `Open running live view: ${view.title}`
+              : `Open live recording: ${liveRunName(record?.filename)}`
+          }
+          onClick={() => setOpened(true)}
+        >
+          live
+        </TextButton>
+      </BandTally>
       {opened && view && <LiveView views={[view]} client={client} sid={sid} onClose={close} />}
       {opened && !view && record && (
         <LiveRunDialog client={client} sid={sid} attachment={record} onClose={close} />

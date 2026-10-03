@@ -106,15 +106,28 @@ export const Running: Story = {
   globals: { viewport: { value: 'desktop', isRotated: false } },
   play: async ({ canvas, canvasElement }) => {
     // A closed digest folds the live run into one control on its row, and it opens the run.
-    const control = canvas.getByRole('button', { name: 'Open 1 live running: Jenkins build pool' });
-    await expect(control).toHaveTextContent('1 live running');
+    const control = canvas.getByRole('button', { name: 'Open running live view: Jenkins build pool' });
+    await expect(control).toHaveTextContent(/^live$/);
+    // Regression: the control continues the counts after a separator, in their own font.
+    const part = control.parentElement!;
+    const toggle = part.previousElementSibling!;
+    await expect(part.textContent).toBe('\u00a0·\u00a0live');
+    await expect(toggle.hasAttribute('data-step-digest')).toBe(true);
+    await expect(
+      Math.abs(part.getBoundingClientRect().left - toggle.getBoundingClientRect().right),
+    ).toBeLessThan(1);
+    const counts = getComputedStyle(toggle.querySelector('span')!);
+    const word = getComputedStyle(control);
+    for (const key of ['color', 'fontFamily', 'fontSize', 'fontWeight'] as const) {
+      await expect(word[key], key).toBe(counts[key]);
+    }
     await expect(canvas.queryByRole('button', { name: 'Open run Jenkins build pool' })).toBeNull();
     await userEvent.click(control);
     const opened = within(document.body);
     await expect(opened.getByRole('button', { name: 'Build log' })).toBeInTheDocument();
     await userEvent.click(opened.getByRole('button', { name: 'Close Jenkins build pool' }));
     await openStepDigests(canvasElement);
-    await expect(canvas.queryByRole('button', { name: /^Open 1 live running/ })).toBeNull();
+    await expect(canvas.queryByRole('button', { name: /^Open running live view/ })).toBeNull();
     const title = canvas.getByText('Jenkins build pool');
     const liveFrame = await expectLiveFrame(title);
     const activitySurface = title.closest<HTMLElement>('[data-execution-group]')!;

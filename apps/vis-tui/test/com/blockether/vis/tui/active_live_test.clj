@@ -113,8 +113,8 @@
   closed-digest-live-button
   (it "folds a live view into one button on the closed digest row"
       ;; A closed digest hides its LIVE rows. The button on its row opens the live view.
-      (doseq [[pane label] [[(review-pane) " 1 live running "]
-                            [(lv/settled (review-pane) {:reason :completed} 2000) " 1 live "]]]
+      (doseq [[pane label] [[(review-pane) "live"]
+                            [(lv/settled (review-pane) {:reason :completed} 2000) "live"]]]
         (render/invalidate-cache!)
         (let [payload (render/progress->lines-data
                         review-progress
@@ -130,7 +130,7 @@
           (expect (= {:view-id (lv/view-id pane) :label label}
                      (select-keys (get-in payload [:line-meta row :digest-live])
                                   [:view-id :label])))
-          (expect (str/includes? (nth lines row) (str/trim label)))
+          (expect (str/includes? (nth lines row) (str " · " label)))
           (expect (not-any? #(str/includes? % "Build verification") lines))
           (expect (not-any? #(= :activity-header (:kind %)) (:line-meta payload)))
           (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. 80 12))
@@ -153,6 +153,19 @@
                 (expect (= (count label) width))
                 (expect (= (get-in toggle [:bounds :row]) button-row))
                 (expect (= button (.lookup interactions/hit-map (int col) (int button-row))))
+                ;; Regression, user report: `live` keeps the font of the counts before it.
+                (let [cell (fn [c]
+                             (.getBackCharacter ts (int c) (int button-row)))
+                      ^TextCharacter word (cell col)
+                      ^TextCharacter counts (cell (+ 2 (long (get-in toggle [:bounds :col]))))]
+
+                  (expect (= label
+                             (apply str
+                               (map #(.getCharacterString ^TextCharacter (cell %))
+                                    (range col (+ (long col) (long width)))))))
+                  (expect (= (.getForegroundColor counts) (.getForegroundColor word)))
+                  (expect (= (.getBackgroundColor counts) (.getBackgroundColor word)))
+                  (expect (= (.getModifiers counts) (.getModifiers word))))
                 (expect (= :toggle-details
                            (:kind (.lookup interactions/hit-map
                                            (int (get-in toggle [:bounds :col]))

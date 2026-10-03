@@ -2590,14 +2590,14 @@ describe('steps between progress notes', () => {
     const painted = render(
       <IterationTrace whole showCode iterations={recorded} client={client} sid="s1" />,
     );
-    const control = painted.getByRole('button', { name: 'Open 1 live: Release' });
-    expect(control).toHaveTextContent('1 live');
+    const control = painted.getByRole('button', { name: 'Open live recording: Release' });
+    expect(control).toHaveTextContent(/^live$/);
     expect(painted.queryByRole('button', { name: 'Open run Release' })).toBeNull();
     fireEvent.click(control);
     fireEvent.click(painted.getByRole('button', { name: 'Close Release' }));
     expect(painted.queryByRole('button', { name: 'Close Release' })).toBeNull();
     fireEvent.click(digests(painted.container)[0]);
-    expect(painted.queryByRole('button', { name: 'Open 1 live: Release' })).toBeNull();
+    expect(painted.queryByRole('button', { name: 'Open live recording: Release' })).toBeNull();
     expect(painted.getByRole('button', { name: 'Open run Release' })).toBeInTheDocument();
   });
 

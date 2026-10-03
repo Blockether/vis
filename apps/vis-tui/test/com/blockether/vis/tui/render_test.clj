@@ -10940,16 +10940,24 @@ print(paths)"
             (render (assoc-in steps [0 :forms 0 :runs 0 :reason] :completed) {})]
 
         ;; A running view wins over an older recording, and it colors the row.
-        (expect (= {:view-id "build" :label " 1 live running "}
+        (expect (= {:view-id "build" :label "live"}
                    (select-keys (get-in (digest-row closed) [:meta :digest-live])
                                 [:view-id :label :artifact])))
+        ;; Regression, user report: `live` ends the counts after a dot, as text of the row itself.
         (expect (str/includes? (:line (digest-row closed))
-                               "▸ 2 steps · 1 mutation · 3 observations   1 live running "))
+                               "▸ 2 steps · 1 mutation · 3 observations · live"))
+        (let [{:keys [line meta]}
+              (digest-row closed)
+
+              col
+              (long (get-in meta [:digest-live :col]))]
+
+          (expect (= "live" (subs line (inc col) (+ col 5)))))
         (expect (= :running (get-in (digest-row closed) [:meta :status-tone])))
         (expect (not (str/includes? (text closed) "Build · 3 lines")))
         (expect (not (str/includes? (text closed) "LIVE Release")))
-        ;; With no running view, the row counts every view and opens the newest recording.
-        (expect (= " 2 live " (get-in (digest-row settled) [:meta :digest-live :label])))
+        ;; With no running view, the row opens the newest recording.
+        (expect (= "live" (get-in (digest-row settled) [:meta :digest-live :label])))
         (expect (= "Release.live.ndjson"
                    (get-in (digest-row settled) [:meta :digest-live :artifact :filename])))
         (expect (nil? (get-in (digest-row settled) [:meta :status-tone])))

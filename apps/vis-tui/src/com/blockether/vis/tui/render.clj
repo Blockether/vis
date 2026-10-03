@@ -1814,6 +1814,22 @@
           (dotimes [dc width]
             (p/underline-cell! g (+ col (long dc)) y t/link-chrome-hover-fg)))))))
 
+(defn- live-target
+  "What a live control opens: its recording, or else its live view."
+  [meta]
+  (if-let [artifact (:artifact meta)]
+    {:kind :artifact :artifact artifact :session-id (:session-id meta) :live-card? true}
+    {:kind :live-reopen :view-id (:view-id meta)}))
+
+(defn- live-target-hovered?
+  "True when the pointer is on a control that opens the same `target`."
+  [target]
+  (let [hovered (.hovered interactions/hit-map)]
+    (and (= (:kind target) (:kind hovered))
+         (if (:artifact target)
+           (= (interactions/label-key target) (interactions/label-key hovered))
+           (= (:view-id target) (:view-id hovered))))))
+
 (defn- draw-live-button!
   [g meta x y iw right-inset viewport-top]
   (let [label
@@ -1826,18 +1842,10 @@
         (+ (long x) (max 0 (- (long iw) (long right-inset) width)))
 
         target
-        (if-let [artifact (:artifact meta)]
-          {:kind :artifact :artifact artifact :session-id (:session-id meta) :live-card? true}
-          {:kind :live-reopen :view-id (:view-id meta)})
-
-        hovered
-        (.hovered interactions/hit-map)
+        (live-target meta)
 
         hovered?
-        (and (= (:kind target) (:kind hovered))
-             (if (:artifact target)
-               (= (interactions/label-key target) (interactions/label-key hovered))
-               (= (:view-id target) (:view-id hovered))))]
+        (live-target-hovered? target)]
 
     (p/clear-styles! g)
     (p/set-colors! g
@@ -1850,6 +1858,30 @@
                (assoc target
                  :enabled? true
                  :bounds {:row (+ (long viewport-top) (long y)) :col col :width width}))))
+
+(defn- draw-digest-live!
+  "The `live` word that ends the counts of a closed digest row. The row already painted it in
+   its own font, so this only claims its cells. It registers after the row's toggle, and the
+   last region over a cell wins the press. Under the pointer the word underlines, like a file
+   path on a band."
+  [g meta x y iw viewport-top]
+  (let [col
+        (+ (long x) (long (:col meta)))
+
+        width
+        (min (long (p/display-width (:label meta))) (max 0 (- (+ (long x) (long iw)) col)))
+
+        target
+        (live-target meta)]
+
+    (when (pos? width)
+      (when (live-target-hovered? target)
+        (dotimes [dc width]
+          (p/underline-cell! g (+ col (long dc)) y t/link-chrome-hover-fg)))
+      (.register interactions/hit-map
+                 (assoc target
+                   :enabled? true
+                   :bounds {:row (+ (long viewport-top) (long y)) :col col :width width})))))
 
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
@@ -2488,18 +2520,14 @@
                                   :session-id (:session-id meta)
                                   :node-id (:node-id meta)
                                   :collapsed? (:collapsed? meta)})
-                      ;; The live button sits on the row and wins its own cells.
-                      (when-let [{:keys [col label] :as live} (:digest-live meta)]
-                        (draw-live-button!
-                          g
-                          (assoc live
-                            :right-suffix label
-                            :session-id (:session-id meta))
-                          x
-                          y
-                          iw
-                          (max 0 (- (long iw) (long col) (long (p/display-width label))))
-                          viewport-top)))
+                      ;; The live word of the row wins its own cells.
+                      (when-let [live (:digest-live meta)]
+                        (draw-digest-live! g
+                                           (assoc live :session-id (:session-id meta))
+                                           x
+                                           y
+                                           iw
+                                           viewport-top)))
                     ;; Activity continues the Code surface, with independent disclosure.
                     (str/starts-with? line activity-marker)
                     (let [raw (subs line 1)
@@ -8462,8 +8490,8 @@
    (`activity-cost-text`), then their running, failed and cancelled calls. It shows their
    measured time on the right. A failed step colors it red, and a running step colors it
    yellow. A stop is a failure too, so a cancelled call or an interrupted step also colors it
-   red. A closed row also has a live button. It opens the newest running live view
-   of the steps, or else their newest recording."
+   red. A closed row ends its counts with `· live`, in the same font. It opens the newest
+   running live view of the steps, or else their newest recording."
   [{:keys [forms node-id open? steps lives]} content-w session-id]
   (let [activities
         (keep :activity forms)
@@ -8485,12 +8513,7 @@
 
         live
         (when-let [target (and (not open?) (or (peek running-lives) (peek (vec lives))))]
-          (assoc (select-keys target [:view-id :artifact])
-            :label (str " "
-                        (if (seq running-lives)
-                          (str (count running-lives) " live running")
-                          (str (count lives) " live"))
-                        " ")))
+          (assoc (select-keys target [:view-id :artifact]) :label "live"))
 
         duration-ms
         (reduce + 0 (filter number? (map :duration-ms forms)))
@@ -8517,14 +8540,17 @@
         right-w
         (if duration (+ 2 (long (p/display-width duration))) 0)
 
+        live-tail
+        (when live (str " · " (:label live)))
+
         live-w
-        (if live (+ 2 (long (p/display-width (:label live)))) 0)
+        (p/display-width (str live-tail))
 
         left
-        (ellipsize-cols summary (max 1 (- (long max-w) right-w live-w)))
+        (ellipsize-cols summary (max 1 (- (long max-w) right-w (long live-w))))
 
         text
-        (str left (when live (str "  " (:label live))))
+        (str left live-tail)
 
         tone
         (cond (or (:failed states)
@@ -8550,7 +8576,10 @@
                      :collapsed? (not open?)
                      :status-tone tone}
               live
-              (assoc :digest-live (assoc live :col (+ 2 (long (p/display-width left))))))}]))
+              (assoc :digest-live
+                (assoc live
+                  :col (- (long (p/display-width text))
+                          (long (p/display-width (:label live)))))))}]))
 
 (defn- render-step-digests
   "Summarized steps: each progress note stays, and its steps fold into one digest row.

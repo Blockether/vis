@@ -1324,11 +1324,17 @@ export function MetaButton({
  * beside the total it interrupts. A caption drops to the step a band counts in under a
  * pointer, so prose left at the body's step would end that run a size too large and off
  * the baseline of the words it belongs to.
+ *
+ * `isTally` is the same prose ENDING A TALLY: the live control after the counts of a
+ * closed digest row. It sets no size and no ink, so it takes both from the `BandTally`
+ * around it, and it underlines itself under the pointer. Its 44px touch reach lives in a
+ * pseudo-element, as for `isBand`.
  */
 export function TextButton({
   isToken = false,
   isBand = false,
   isCaption = false,
+  isTally = false,
   className = '',
   children,
   ...props
@@ -1336,16 +1342,20 @@ export function TextButton({
   isToken?: boolean;
   isBand?: boolean;
   isCaption?: boolean;
+  isTally?: boolean;
 }) {
   const face = isBand
     ? 'relative select-none whitespace-nowrap font-bold uppercase tracking-[0.06em] text-white after:absolute after:inset-x-0 after:-inset-y-3.5 after:content-[""] enabled:hover:underline focus-visible:underline disabled:opacity-60 mouse:after:content-none'
-    : `px-1 text-dialog-foreground enabled:hover:text-accent-ink focus-visible:bg-hover ${
-        isToken ? 'truncate underline decoration-dotted underline-offset-2' : ''
-      }`;
+    : isTally
+      ? 'relative select-none whitespace-nowrap after:absolute after:inset-x-0 after:-inset-y-3.5 after:content-[""] enabled:hover:underline focus-visible:underline mouse:after:content-none'
+      : `px-1 text-dialog-foreground enabled:hover:text-accent-ink focus-visible:bg-hover ${
+          isToken ? 'truncate underline decoration-dotted underline-offset-2' : ''
+        }`;
+  const size = isTally ? '' : isCaption ? 'text-ui mouse:text-chip' : 'text-ui';
   return (
     <button
       type="button"
-      className={`min-w-0 text-left font-mono ${isCaption ? 'text-ui mouse:text-chip' : 'text-ui'} transition-colors duration-150 focus-visible:outline-none disabled:cursor-not-allowed motion-reduce:transition-none ${face} ${className}`}
+      className={`min-w-0 text-left font-mono ${size} transition-colors duration-150 focus-visible:outline-none disabled:cursor-not-allowed motion-reduce:transition-none ${face} ${className}`}
       {...props}
     >
       {children}
