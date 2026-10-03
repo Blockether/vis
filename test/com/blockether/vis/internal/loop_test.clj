@@ -5190,39 +5190,42 @@
 
 (defdescribe
   failed-tool-replay-test
-  (it "replays only the failure message instead of the failed call's source and signed thinking"
-      (let [source
-            (str "print('" (apply str (repeat 200 "large input ")) "')")
+  (it
+    "replays a bounded preview of a long failed call without its signed thinking"
+    (let [source
+          (str "print('" (apply str (repeat 200 "large input ")) "')")
 
-            [pos rec]
-            (stub-tool-iter {:id 1})
+          [pos rec]
+          (stub-tool-iter {:id 1})
 
-            failed
-            (-> rec
-                (assoc-in [:assistant-message :content 1 :input] {"code" source})
-                (assoc :tool-calls [{:id "tc-1" :name "python_execution" :input {"code" source}}]
-                       :forms-vec [{:scope "t1/i1"
-                                    :svar/tool-call-id "tc-1"
-                                    :src source
-                                    :error {:message "patch refused — nothing was written"}}]))
+          failed
+          (-> rec
+              (assoc-in [:assistant-message :content 1 :input] {"code" source})
+              (assoc :tool-calls [{:id "tc-1" :name "python_execution" :input {"code" source}}]
+                     :forms-vec [{:scope "t1/i1"
+                                  :svar/tool-call-id "tc-1"
+                                  :src source
+                                  :error {:message "patch refused — nothing was written"}}]))
 
-            target
-            {:provider :lmstudio :model "google/gemma-4-12b-qat"}
+          target
+          {:provider :lmstudio :model "google/gemma-4-12b-qat"}
 
-            suffix
-            (conversation-suffix [[pos failed]] target)
+          suffix
+          (conversation-suffix [[pos failed]] target)
 
-            prior-turn
-            (conversation-suffix [[pos (assoc failed :preserved-thinking/replay? false)]] target)]
+          prior-turn
+          (conversation-suffix [[pos (assoc failed :preserved-thinking/replay? false)]] target)]
 
-        (doseq [messages [suffix prior-turn]]
+      (doseq [messages [suffix prior-turn]]
+        (let [content (:content (first messages))]
           (expect (= 1 (count messages)))
           (expect (= "user" (:role (first messages))))
-          (expect (string? (:content (first messages))))
-          (expect (str/includes? (:content (first messages)) "patch refused — nothing was written"))
-          (expect (not (str/includes? (:content (first messages)) source))))))
+          (expect (string? content))
+          (expect (str/includes? content "patch refused — nothing was written"))
+          (expect (str/includes? content (str "```python\n" (subs source 0 160) "…\n```")))
+          (expect (not (str/includes? content source)))))))
   (it
-    "retains the successful call's source and output when another call failed"
+    "retains the successful call and names the failed call beside its error"
     (let [[pos rec]
           (stub-tool-iter {:id 1})
 
@@ -5249,13 +5252,71 @@
           suffix
           (conversation-suffix [[pos mixed]] {:provider :lmstudio :model "google/gemma-4-12b-qat"})
 
-          rendered
-          (pr-str suffix)]
+          content
+          (:content (first suffix))]
 
-      (expect (str/includes? rendered "Permission denied"))
-      (expect (str/includes? rendered "print('ok')"))
-      (expect (str/includes? rendered "ok"))
-      (expect (not (str/includes? rendered failed-source))))))
+      (expect (= 1 (count suffix)))
+      (expect (str/includes? content "```python\nprint('ok')\n```\nok"))
+      (expect (str/includes?
+                content
+                (str "```python\n" failed-source "\n```\n✗ error: Permission denied")))))
+  (it
+    "shows the failed call beside its error so the model does not repeat it"
+    ;; Real GPT runs repeated a failed Council read 4 to 8 times: the replay showed
+    ;; the error without the call that caused it.
+    (let
+      [[pos rec]
+       (stub-tool-iter {:id 1})
+
+       source
+       "print(await council.read(thread_id=reply_entry_id))"
+
+       error-message
+       "Council entry_id=2 is a reply in thread_id=1. Use thread_id=1 to read or continue this thread."
+
+       failed
+       (assoc rec
+         :tool-calls [{:id "tc-1" :name "python_execution" :input {"code" source}}]
+         :forms-vec [{:scope "t1/i4"
+                      :svar/tool-call-id "tc-1"
+                      :src source
+                      :error {:message error-message
+                              :data {:phase :python/host :line 1 :column 7}}}])
+
+       suffix
+       (conversation-suffix [[pos failed]] {:provider :lmstudio :model "google/gemma-4-12b-qat"})]
+
+      (expect (= 1 (count suffix)))
+      (expect (str/includes? (:content (first suffix))
+                             (str "```python\n" source "\n```\n✗ host error: " error-message)))))
+  (it "keeps the first lines and the failing line of a long failed block"
+      (let [[pos rec]
+            (stub-tool-iter {:id 1})
+
+            lines
+            (mapv #(str "step_" % "()") (range 1 13))
+
+            source
+            (str/join "\n" lines)
+
+            failed
+            (assoc rec
+              :tool-calls [{:id "tc-1" :name "python_execution" :input {"code" source}}]
+              :forms-vec [{:scope "t1/i2"
+                           :svar/tool-call-id "tc-1"
+                           :src source
+                           :error {:message "step 10 failed"
+                                   :data {:phase :python/host :line 10}}}])
+
+            content
+            (:content (first (conversation-suffix [[pos failed]]
+                                                  {:provider :lmstudio
+                                                   :model "google/gemma-4-12b-qat"})))]
+
+        (expect (str/includes? content
+                               (str "```python\n" (str/join "\n" (subvec lines 0 6))
+                                    "\n# … 3 lines not shown\nstep_10()\n# … 2 lines not shown\n```"
+                                    "\n✗ host error: step 10 failed"))))))
 
 (defdescribe conversation-suffix-mismatch-test
              ;; The session-c4b630c7 regression: the health gate demoted lmstudio so the

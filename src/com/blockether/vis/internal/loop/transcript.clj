@@ -1230,6 +1230,65 @@
                                             " read_attachment(id) opens it)."))))
                         (recur more (conj out line))))))))))
 
+(def ^:private FAILED_SOURCE_LINES
+  "Leading lines of a failed form's source that replay beside its error."
+  6)
+
+(def ^:private FAILED_SOURCE_WIDTH "Characters of each failed-source line that replays." 160)
+
+(defn- failed-source-preview
+  "Bounded source of a failed form for the model replay. Without it, the model sees
+   an error but not the call that caused it, and it can run the same call again. The
+   preview keeps the first lines and the failing `line`, cuts each line at
+   `FAILED_SOURCE_WIDTH` characters and names each omitted run in a Python comment,
+   so a long failed patch does not return whole on every later request."
+  [src line]
+  (let [lines
+        (str/split-lines (str/trimr (str src)))
+
+        n
+        (count lines)
+
+        failing
+        (when (and (integer? line) (<= 1 (long line) n)) (dec (long line)))
+
+        shown
+        (into (sorted-set)
+              (cond-> (range (min n (long FAILED_SOURCE_LINES)))
+                failing
+                (concat [failing])))
+
+        clip
+        (fn [s]
+          (if (> (count s) (long FAILED_SOURCE_WIDTH)) (str (subs s 0 FAILED_SOURCE_WIDTH) "…") s))
+
+        omitted
+        (fn [k]
+          (str "# … " k (if (= 1 k) " line" " lines") " not shown"))]
+
+    (loop [[i & more]
+           (seq shown)
+
+           next-line
+           0
+
+           out
+           []]
+
+      (if (nil? i)
+        (str/join "\n"
+                  (cond-> out
+                    (< next-line n)
+                    (conj (omitted (- n next-line)))))
+        (recur more
+               (inc (long i))
+               (cond-> out
+                 (< next-line (long i))
+                 (conj (omitted (- (long i) next-line)))
+
+                 true
+                 (conj (clip (nth lines i)))))))))
+
 (defn- iteration-results-message
   "Render ONE prior tool-call iteration as the `tool_result` user message that
    answers its `tool_use`(s): the canonical stdout projection, plus errors and
@@ -1240,7 +1299,8 @@
    Falls back to a plain text user message when no tool calls are recorded.
    `:echo-source?` on the record also prefixes each form's output with the source
    that produced it, for the degraded replays where the assistant message
-   carrying that source never reaches the wire."
+   carrying that source never reaches the wire. A failed form shows a bounded
+   preview of its source."
   [iter-record]
   (let [;; ONE scope source: the `forms-vec` (each carrying stdout/error facts).
         ;; Falls back to scoped `:blocks` forms.
@@ -1299,10 +1359,12 @@
         (fn [f]
           (let [out (form-output f)]
             (if-let [src (and (:echo-source? iter-record)
-                              (not (:error f))
                               (not (:summary? f))
                               (not-empty (str/trim (str (:src f)))))]
-              (str "```python\n" src "\n```" (when out (str "\n" out)))
+              (str "```python\n" (if (:error f)
+                                   (failed-source-preview (:src f) (get-in f [:error :data :line]))
+                                   src)
+                   "\n```" (when out (str "\n" out)))
               out)))
 
         ;; ctx structural delta (executable `ctx["a"]["b"] = …` / `del ctx[…]`),
@@ -1735,11 +1797,11 @@
 
          group-of
          (fn [[pos iter-rec :as entry]]
-           (let [;; A failed call already has a diagnostic message. Replaying its
-                 ;; tool_use would resend the full source, including long failed
-                 ;; patches, on every later request. Plain text keeps successful
-                 ;; forms' source and output while omitting failed source and
-                 ;; signed thinking; no orphaned tool_result reaches the provider.
+           (let [;; Replaying a failed call's tool_use would resend its full source,
+                 ;; including long failed patches, on every later request. Plain text
+                 ;; keeps successful forms' source and output and a bounded preview
+                 ;; of failed source, without signed thinking; no orphaned
+                 ;; tool_result reaches the provider.
                  failed?
                  (some :error
                        (or (:forms-vec iter-rec)
@@ -1779,8 +1841,8 @@
                ;; A turn boundary is the conversation itself: the user message
                ;; that opened a prior turn, or the answer that closed it.
                (:turn/boundary iter-rec) (vec (:turn/messages iter-rec))
-               ;; A failed tool has a message instead of another copy of its
-               ;; model-authored code; retain any successful output as text.
+               ;; A failed tool replays its message with a bounded preview of its
+               ;; code; retain any successful output as text.
                failed? (if results (+img [results]) (vec img))
                ;; Same provider+model, valid signature → verbatim replay
                ;; with the full thinking chain.

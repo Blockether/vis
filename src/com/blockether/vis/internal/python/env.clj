@@ -1815,7 +1815,7 @@
 
         msg
         (if host?
-          tool-message
+          (str breaker tool-message)
           (str breaker
                hint
                error-text

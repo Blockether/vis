@@ -1641,6 +1641,26 @@ Follow every fixture step without truncation."}]))
                                  (get-in out [:error :message])))
                       (expect (= :python/host (get-in out [:error :data :phase])))
                       (expect (= :apropos (get-in out [:error :data :symbol]))))))
+  (it "warns from the third identical host failure, as for other errors"
+      (tpc/with-own [ctx {}]
+                    (let [tool-message
+                          "apropos: invalid regex at index 0: Unclosed character class."
+
+                          [first-error second-error third-error]
+                          (mapv (fn [_]
+                                  (:error (ep/run-python-block ctx "apropos('[')" "t1/i1")))
+                                (range 3))]
+
+                      (expect (= tool-message (:message first-error)))
+                      (expect (= tool-message (:message second-error)))
+                      (expect (nil? (get-in second-error [:data :repeated-failures])))
+                      (expect (= (str
+                                   "This is failure 3 in a row with the SAME error. "
+                                   "Stop repeating it: change the approach, use a different tool, "
+                                   "or tell the USER what is blocking you.\n\n" tool-message)
+                                 (:message third-error)))
+                      (expect (= 3 (get-in third-error [:data :repeated-failures])))
+                      (expect (= :python/host (get-in third-error [:data :phase]))))))
   (it "preserves the original trace in host diagnostics, not the model-facing message"
       (let [err (try ((#'ep/discovery-tool 'apropos re-pattern) "[")
                      (catch clojure.lang.ExceptionInfo e e))]
