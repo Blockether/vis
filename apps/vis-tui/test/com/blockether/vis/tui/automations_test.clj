@@ -23,6 +23,10 @@
    "secrets" {"webhook" true "callback" false}
    "last_run" {"status" "completed" "created_at" 1767250800000}})
 
+(def ^:private relay-url "https://relay.example.com/hooks/i-1/a-1")
+
+(def ^:private relay-automation (assoc-in webhook-automation ["webhook" "url"] relay-url))
+
 (def ^:private plain-automation
   {"id" "a-2"
    "name" "Daily digest"
@@ -85,6 +89,14 @@
                             "the session, Push, a callback to https://gateway.example.com/done"))
                   (expect (str/includes? md "- Webhook path: `/v1/hooks/a-1`"))
                   (expect (str/includes? md "Label the new issue."))))
+            (it "shows the public relay URL before the gateway path"
+                (let [md
+                      (automations/detail-markdown relay-automation)
+
+                      url-line
+                      (str "- Webhook URL: `" relay-url "`")]
+
+                  (expect (str/includes? md (str url-line "\n- Webhook path: `/v1/hooks/a-1`")))))
             (it "says none for a missing next run and last run"
                 (let [md (automations/detail-markdown plain-automation)]
                   (expect (str/includes? md "- Next run: none"))
@@ -99,16 +111,18 @@
                   (expect (str/includes? md "| manual | completed | a \\| b c |"))))
             (it "says when no run exists"
                 (expect (= "No runs yet." (automations/runs-markdown [])))))
-  (describe "secret-markdown"
-            (it "shows the secret once with its use"
-                (let [md (automations/secret-markdown "webhook" "whsec_x" webhook-automation true)]
-                  (expect (str/includes? md "`whsec_x`"))
-                  (expect (str/includes? md "only once"))
-                  (expect (str/includes? md "`/v1/hooks/a-1`"))
-                  (expect (str/includes? md "on the clipboard")))
-                (expect (str/includes?
-                          (automations/secret-markdown "callback" "s" webhook-automation false)
-                          "webhook-signature")))))
+  (describe
+    "secret-markdown"
+    (it "shows the secret once with its use"
+        (let [md (automations/secret-markdown "webhook" "whsec_x" webhook-automation true)]
+          (expect (str/includes? md "`whsec_x`"))
+          (expect (str/includes? md "only once"))
+          (expect (str/includes? md "`/v1/hooks/a-1`"))
+          (expect (str/includes? md "on the clipboard")))
+        (expect (str/includes? (automations/secret-markdown "webhook" "s" relay-automation false)
+                               (str "Sign each webhook to `" relay-url "`")))
+        (expect (str/includes? (automations/secret-markdown "callback" "s" webhook-automation false)
+                               "webhook-signature")))))
 
 (defdescribe gateway-test
              (it "reads the automations and reports the gateway error message"

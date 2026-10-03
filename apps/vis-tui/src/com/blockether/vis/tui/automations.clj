@@ -171,6 +171,8 @@
          (if last-run
            (str (get last-run "status") " at " (time-label (get last-run "created_at")))
            "none")
+         (when-let [url (get-in automation ["webhook" "url"])]
+           (str "\n- Webhook URL: `" url "`"))
          (when-let [path (get-in automation ["webhook" "path"])]
            (str "\n- Webhook path: `" path "`"))
          "\n\n```text\n"
@@ -208,7 +210,7 @@
        "`\n\n"
        (if (= "webhook" kind)
          (str "Sign each webhook to `"
-              (get-in automation ["webhook" "path"])
+              (or (get-in automation ["webhook" "url"]) (get-in automation ["webhook" "path"]))
               "` with this secret. The old secret no longer works.")
          "Check the `webhook-signature` header of each callback with this secret.")
        (when copied? "\n\nThe secret is on the clipboard.")))

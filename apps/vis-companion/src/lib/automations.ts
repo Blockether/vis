@@ -56,7 +56,8 @@ export interface Automation {
   created_at: number;
   updated_at: number;
   next_run_at: number | null;
-  webhook: { path: string } | null;
+  /** `url` is the public relay address. Without it, senders call `path` on the gateway. */
+  webhook: { path: string; url?: string } | null;
   secrets: { webhook: boolean; callback: boolean };
   last_run: AutomationRun | null;
 }

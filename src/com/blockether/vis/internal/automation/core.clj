@@ -187,6 +187,14 @@
    "error" (:error run)
    "is_silent" (boolean (:is_silent run))})
 
+(defonce ^:private relay-base (atom nil))
+
+(defn set-relay-base!
+  "Set the public relay inbox address, `<relay>/hooks/<inbox-id>`, or nil.
+   Webhook URLs add the automation ID to it."
+  [url]
+  (reset! relay-base url))
+
 (defn ->wire
   "The contract shape of one stored automation. Secrets never appear."
   [{:keys [id definition created_at updated_at webhook_secret callback_secret] :as row} last-run
@@ -196,7 +204,11 @@
           "created_at" created_at
           "updated_at" updated_at
           "next_run_at" (next-run-at row now)
-          "webhook" (when (webhook-trigger definition) {"path" (str "/v1/hooks/" id)})
+          "webhook" (when (webhook-trigger definition)
+                      (let [base @relay-base]
+                        (cond-> {"path" (str "/v1/hooks/" id)}
+                          base
+                          (assoc "url" (str base "/" id)))))
           "secrets" {"webhook" (some? webhook_secret) "callback" (some? callback_secret)}
           "last_run" (some-> last-run
                              (run->wire (get definition "name")))}))

@@ -199,14 +199,37 @@ A webhook trigger starts a run when another service sends a signed request.
    `When GitHub reports a new pull request for main, review it in a new session.`
 2. Open the automation in the [automation views](#manage-automations). Select **Create webhook
    secret** and copy the secret. Vis shows it only once.
-3. Copy the webhook address. The app shows it as **Webhook address**. It is the gateway address
-   followed by `/v1/hooks/<automation-id>`.
+3. Copy the webhook address. The app shows it as **Webhook address**, and the TUI shows it in
+   **Details**. With the relay, the address is on the relay. Without it, the address is the
+   gateway address followed by `/v1/hooks/<automation-id>`.
 4. In the other service, add a webhook with this address, the content type `application/json` and
    the secret.
 
-The other service must reach your gateway at this address. A gateway on a laptop is usually not
-reachable from the internet. [Running a gateway](gateway-service.md) explains how to run a gateway
-on a server.
+The other service must reach the webhook address. A gateway on a laptop is usually not reachable
+from the internet, so Vis receives the webhook through the
+[relay](#receive-webhooks-through-the-relay). A gateway on a server can also receive webhooks
+directly. [Running a gateway](gateway-service.md) explains how to run a gateway on a server.
+
+### Receive webhooks through the relay
+
+The relay is the service that also sends Push notifications to the app. It keeps a private inbox
+for each gateway. A sender calls the inbox address, and the relay stores the request. The gateway
+collects the stored requests, checks each signature and starts the runs.
+
+- The gateway creates its inbox when an enabled automation has a webhook trigger and a webhook
+  secret. The `automations` setting must also be on.
+- The webhook address on the relay is `<relay>/hooks/<inbox-id>/<automation-id>`.
+- The relay answers the sender with `202` and `"status": "stored"`. The sender does not see the
+  result of the signature check.
+- The gateway asks for new requests every 5 to 60 seconds. A run can start up to one minute after
+  the request arrives.
+- The timestamp check uses the time when the relay received the request.
+
+By default, Vis uses the publisher's relay at `https://vis.relay.blockether.com`. The relay
+operator can read the stored requests, so do not put secrets in a webhook body. The relay deletes a
+request when the gateway collects it, or after 7 days. To use your own relay, set
+`VIS_PUSH_RELAY_URL` or put `{:url "https://relay.example.com"}` in `~/.vis/relay.edn`. An empty
+value turns off the relay for webhooks and for Push.
 
 ### Signatures
 
@@ -273,6 +296,7 @@ instructions. The payload fills only the prompt. It cannot choose the target, th
 
 | Answer | Meaning |
 |---|---|
+| `202` and `"status": "stored"` | The relay stored the request for the gateway. |
 | `202` and `"status": "accepted"` | Vis queued a run. `run_id` names the run. |
 | `202` and `"status": "ignored"` | Vis started no run. The `reason` is `disabled`, `event` or `filter`. |
 | `200` and `"status": "duplicate"` | Vis already received this delivery. |
@@ -283,6 +307,10 @@ instructions. The payload fills only the prompt. It cannot choose the target, th
 
 Vis drops a repeated delivery by its delivery ID. It reads the ID from `X-GitHub-Delivery`,
 `webhook-id`, `X-Gitlab-Event-UUID`, `Idempotency-Key` or `X-Request-Id`.
+
+The relay answers `404` for an unknown inbox. It answers `429` when the inbox is full or receives
+more than 120 requests in one minute. A request with a bad signature starts no run, and only the
+gateway log shows the reason.
 
 ## Manage automations
 
@@ -316,6 +344,10 @@ stops working at once, so update the other service right after the change.
 | Webhook timestamp window | 300 seconds |
 | One payload value in a prompt | 4000 bytes |
 | Callback attempts | 6, each with a 10-second timeout |
+| Requests that wait in a relay inbox | 100, together at most 8 MiB |
+| Time that the relay keeps a request | 7 days |
+| Webhook requests for each relay inbox | 120 in one minute |
+| Time until the relay deletes an unused inbox | 30 days |
 
 ## HTTP reference
 
@@ -335,6 +367,16 @@ for example `get_automations` and `post_automation_run`.
 | `GET /v1/automations/runs` | Lists runs. Filter with `automation_id`, `status`, `session_id` and `limit`. |
 | `GET /v1/automations/runs/{run_id}` | Reads one run. |
 | `POST /v1/hooks/{id}` | Receives a webhook. |
+
+The relay has its own routes. The gateway uses them, so you need them only for your own relay
+client.
+
+| Method and path | What it does |
+|---|---|
+| `POST /hooks/{inbox_id}/{id}` | Stores a webhook request. Senders call this route. |
+| `POST /v1/hooks/inboxes` | Creates an inbox. The answer has `inbox_id` and `token`. |
+| `GET /v1/hooks/inbox` | Returns up to 20 stored requests. It needs `Authorization: Bearer <token>`. |
+| `POST /v1/hooks/inbox/ack` | Deletes the stored requests with the given `ids`. It needs the same token. |
 
 This body creates the automation from the first example:
 

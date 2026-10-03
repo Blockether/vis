@@ -1,6 +1,7 @@
 # vis-companion-relay
 
-A Cloudflare Worker for Companion push notifications and shared Council rooms.
+A Cloudflare Worker for Companion push notifications, shared Council rooms and
+webhook inboxes for automations.
 The publisher keeps APNs and FCM credentials in the Worker. Each gateway uses
 a delivery grant instead of receiving those credentials.
 
@@ -16,7 +17,7 @@ gateway -> POST /v1/push    Bearer <grant>   => relay authenticates and sends
 ## Grant storage
 
 Push has no device-token database. It uses no D1, KV, Durable Object, cron or queue.
-Rooms uses separate D1 tables and authentication. Each Push grant contains the device token, platform, environment and
+Rooms and webhook inboxes use separate D1 tables and authentication. Each Push grant contains the device token, platform, environment and
 expiry, encrypted with AES-256-GCM using a Worker secret (`src/seal.ts`):
 
 ```
@@ -146,7 +147,7 @@ npx wrangler deploy --config .wrangler/rooms-deploy.json
 
 Do not deploy the base configuration over an enabled Rooms deployment. It has no private database binding.
 The helper preserves Push configuration and adds the `ROOMS_DB` binding.
-`ROOMS_DATABASE_NAME` defaults to `vis-council-rooms`. Migrations add only Rooms tables, indexes and triggers.
+`ROOMS_DATABASE_NAME` defaults to `vis-council-rooms`. Migrations add only Rooms and webhook inbox tables, indexes and triggers.
 
 In Companion Settings, register a creator machine with the relay URL and administrator token.
 Create a room, then share an invitation with another machine.
@@ -167,6 +168,39 @@ Messages that it sent to other rooms keep a machine record without a credential.
 
 `npm run dev` uses `--remote` because local workerd lacks the HTTP/2 support
 required by APNs.
+
+### Enable webhook inboxes
+
+Webhook inboxes let a gateway without a public address receive automation webhooks.
+They use the `ROOMS_DB` database in their own tables and need no administrator token.
+The operator can read the stored requests until the gateway collects them.
+
+| route | who calls it | answer |
+| --- | --- | --- |
+| `POST /hooks/{inbox_id}/{automation_id}` | a webhook sender | `202 {status:"stored"}` |
+| `POST /v1/hooks/inboxes` | a gateway | `201 {inbox_id, token}` |
+| `GET /v1/hooks/inbox` | a gateway, `Authorization: Bearer <token>` | `200 {requests}` with base64 bodies |
+| `POST /v1/hooks/inbox/ack` | a gateway, `Authorization: Bearer <token>` | `200 {acked}` |
+
+The relay stores the raw body and the headers that a signature check needs. It does not check
+signatures. The gateway checks them, starts the runs and acknowledges each request.
+The database stores a hash of the inbox token, not the token.
+
+| Check | Limit or behavior |
+| --- | --- |
+| Inbox creation | `HOOKS_CREATE_LIMIT`: 5/min per address |
+| Inbox reads and acknowledgements | `HOOKS_INBOX_LIMIT`: 240/min per inbox |
+| Stored requests | `HOOKS_SENDER_LIMIT`: 120/min per inbox |
+| Request body | 1 MiB, the gateway webhook limit |
+| Pending requests | 100 requests or 8 MiB per inbox, then `429 inbox_full` |
+| One page | 20 requests or 4 MiB |
+| Retention | 7 days for a request, 30 days for an inbox without reads |
+
+The hourly cron trigger deletes expired requests and unused inboxes.
+`automations.json` is the [canonical protocol](../../packages/vis-contract/resources/vis-contract/schema/automations.json).
+Its `x-vis-limits` and `relay_*` definitions set these limits, headers and bodies.
+Apply the migrations with the commands above before you deploy the hooks routes.
+Without `ROOMS_DB` or the three rate limiters, the hooks routes answer `503 hooks_unconfigured`.
 
 ### Rotating encryption keys
 
@@ -216,5 +250,6 @@ npm test
 
 Push tests mock provider requests and rate limiters. WebCrypto verifies ES256/RS256 signatures.
 Rooms tests run real HTTP requests against local workerd and D1, including concurrent invitation redemption and publication retries.
+Hooks tests do the same for storage, paging, acknowledgement and cleanup, and validate each answer against `automations.json`.
 The suite needs no Cloudflare account or external provider calls.
 The native Rooms suite starts two isolated Vis gateways against the same local Worker.

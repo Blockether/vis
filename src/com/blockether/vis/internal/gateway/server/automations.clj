@@ -2,6 +2,7 @@
   "Automation routes. `/v1/hooks/:automation-id` is the only route without the
    gateway token: the webhook secret of the automation authenticates it."
   (:require [com.blockether.vis.internal.automation.core :as automation]
+            [com.blockether.vis.internal.automation.relay :as automation-relay]
             [com.blockether.vis.internal.automation.runner :as runner]
             [com.blockether.vis.internal.gateway.server.http :as http]
             [com.blockether.vis.internal.loop :as lp])
@@ -81,10 +82,13 @@
    [:post "/v1/automations/:automation-id/run"] (respond
                                                   (fn [_ db params]
                                                     (runner/run-now! db (:automation-id params))))
-   [:post "/v1/automations/:automation-id/secrets"] (respond (fn [request db params]
-                                                               (automation/rotate-secret!
-                                                                 db
-                                                                 (:automation-id params)
-                                                                 (get (json-body request) "kind")
-                                                                 (now))))
+   [:post "/v1/automations/:automation-id/secrets"]
+   (respond (fn [request db params]
+              (let [created (automation/rotate-secret! db
+                                                       (:automation-id params)
+                                                       (get (json-body request) "kind")
+                                                       (now))]
+                ;; A first webhook secret is the moment the relay address becomes useful.
+                (when (= "webhook" (get created "kind")) (automation-relay/refresh! db))
+                created)))
    [:post "/v1/hooks/:automation-id"] hook})

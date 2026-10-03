@@ -53,6 +53,28 @@ describe('Automations workspace', () => {
     expect(screen.getByText(/^Failed · Webhook · /)).toBeVisible();
   });
 
+  it('prefers the public relay address of a webhook', async () => {
+    const story = storyAutomationsClient();
+    const relayUrl = 'https://relay.example.com/hooks/AAAAAAAAAAAAAAAAAAAAAA/auto-review';
+    const client = {
+      ...story,
+      automations: async () => {
+        const page = await story.automations();
+        return {
+          ...page,
+          automations: page.automations.map((automation) =>
+            automation.webhook
+              ? { ...automation, webhook: { ...automation.webhook, url: relayUrl } }
+              : automation,
+          ),
+        };
+      },
+    };
+    await openAutomation('Review new pull requests', client);
+    expect(screen.getByText(relayUrl)).toBeVisible();
+    expect(screen.queryByText('http://gateway.example.com/v1/hooks/auto-review')).toBeNull();
+  });
+
   it('asks before it replaces a secret and shows the new secret only once', async () => {
     const client = await openAutomation('Review new pull requests');
     const create = vi.spyOn(client, 'createAutomationSecret');
