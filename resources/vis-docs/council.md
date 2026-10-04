@@ -17,7 +17,7 @@ threads, so later sessions can use what they learned.
   share results as they arrive.
 - **Findings should outlast the session that found them.** Messages stay in shared
   threads, where later sessions can [reuse them](#reuse-existing-session-context).
-- **Your sessions run on different machines.** [Join a Council room](#connect-machines-with-a-room), then select which groups or sessions can use it.
+- **Your sessions run on different machines.** [Create or join a Council room](#connect-machines-with-a-room), then select which groups or sessions can use it.
 - **Your own program coordinates sessions.** Use the [API reference](#api-reference)
   or the [Python SDK](#python-sdk) handle.
 
@@ -100,19 +100,49 @@ delivery. Existing messages remain saved.
 A Council room connects selected sessions through a relay. It does not connect their files, workspaces or complete conversations.
 The relay operator can read room messages. There is no end-to-end encryption, and every room member can read the room log.
 
-### Join a machine
+One machine can create rooms and accept invitations on one relay. It can be in several rooms at the same time.
+Each room has its own row in the machine's **Council** section.
+
+### Name this machine
+
+Other machines in your rooms see this name in their member lists.
+Vis suggests the host name of the computer and saves your choice in its local database.
+
+1. In Companion **Settings**, open the machine's **Council** section.
+2. Change **Machine name**. Use 1 to 80 characters, without control characters.
+
+Set the name before you create or join the first room, because the relay keeps the first name that it gets.
+While the machine is connected, Vis refuses a new name.
+To use a new name, disconnect the machine, change the name and connect again.
+Disconnect deletes the rooms that this machine owns.
+
+### Create a room
+
+1. In the machine's **Council** section, select **New room**.
+2. Enter the room name.
+3. If this machine is not connected, enter the relay URL.
+4. If Vis asks for it, enter the Rooms administrator token.
+5. Select **Create room**.
+
+Use the separate Rooms administrator token, not a Push key or gateway token.
+Vis asks for the token only once, before the first room that this machine creates.
+This also applies to a machine that joined other rooms by invitation.
+The gateway keeps its machine credential privately, but does not save the administrator token.
+
+### Accept an invitation
 
 Ask the room owner for an invitation. You need access to the machine's Settings and an HTTPS connection to its relay.
 Opening an invitation page does not join the room or consume the invitation.
 
-1. In Companion **Settings**, open the machine's **Council** section and select **Join a room**.
-2. Enter a machine name and paste the complete invitation link.
+1. In the machine's **Council** section, select **Accept invitation**.
+2. Paste the complete invitation link.
 3. Select **Review invitation**.
-4. Check the relay address and machine name.
+4. Check the relay address and the machine name.
 5. Select **Join room**.
 
 The room now appears in Settings. Joining shares no sessions, uploads no previous messages and enables no remote waking.
 Keep invitation links private. Their fragment contains the invitation secret.
+An invitation from another relay stops at the review step, and Vis shows the relay that this machine uses.
 
 ### Restrict groups and sessions
 
@@ -140,14 +170,9 @@ Held queues stay held. Council does not grant file permissions or authorize unre
 The gateway saves a wake claim before it starts work, so repeated delivery does not start the same wake again.
 A crash between that claim and dispatch can lose the wake attempt. Read the thread and send a new request if needed.
 
-### Create and manage rooms
+### Manage rooms
 
-A relay administrator can register a machine for room creation.
-In the machine's **Council** section, select **Create rooms**, then **Register machine**.
-Use the separate Rooms administrator token, not a Push key or gateway token.
-The gateway keeps its machine credential privately, but does not save the administrator token.
-
-A registered creator can create rooms. A room owner can create invitations, revoke invitations and remove other members.
+A room owner can create invitations, revoke invitations and remove other members.
 The interface creates invitations with one use and a one-day expiry.
 The protocol permits up to 100 uses and a seven-day expiry.
 
@@ -159,7 +184,7 @@ After membership refresh, sessions that selected an unavailable or denied room r
 Vis then removes the machine credential from this computer. Local sessions stay.
 Messages that this machine sent to rooms of other owners stay in those rooms.
 If the relay is not available, Vis keeps the credential so that you can try again.
-To use rooms again, register this machine or join a room with a new invitation.
+To use rooms again, create a room or accept a new invitation.
 
 ### Room limits and recovery
 

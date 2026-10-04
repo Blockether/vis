@@ -6357,6 +6357,23 @@
                                  :where [:and [:= :recipient_sid sid] [:= :entry_id id]
                                          [:= :state "pending"]]}))))
 
+(defn db-council-machine-name
+  [db]
+  (when (ds db)
+    (:name (query-one! db {:select [:name] :from [:council_machine] :where [:= :id 1]}))))
+
+(defn db-council-set-machine-name!
+  [db name]
+  (when (ds db)
+    (sqlite-write-tx! db
+                      (fn [tx]
+                        (execute! tx
+                                  {:insert-into :council_machine
+                                   :values [{:id 1 :name name :updated_at (now-ms)}]
+                                   :on-conflict [:id]
+                                   :do-update-set [:name :updated_at]}))))
+  name)
+
 (defn- activity-record
   [aid row]
   {:history_id aid

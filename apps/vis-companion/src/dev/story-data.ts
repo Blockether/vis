@@ -2479,6 +2479,17 @@ export function storySettingsFetch(populated = false): typeof fetch {
     source: 'default',
     is_override: false,
   };
+  const machineName = {
+    id: 'council_machine_name',
+    label: 'Machine name',
+    description: 'Other machines in your rooms see this name.',
+    type: 'string',
+    value: 'Studio-Mac',
+    max_length: 80,
+    editor: 'text',
+    source: 'default',
+    is_override: false,
+  };
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const url = new URL(href);
@@ -2490,9 +2501,10 @@ export function storySettingsFetch(populated = false): typeof fetch {
     if (url.pathname === '/v1/council/rooms') body = { configured: false, rooms: [] } satisfies RoomsStatus;
     if (url.pathname === '/v1/settings' && init?.method === 'POST') {
       const request = JSON.parse(String(init.body));
-      if (request.id === agentName.id) {
-        agentName.value = String(request.value);
-        body = agentName;
+      const text = [agentName, machineName].find((item) => item.id === request.id);
+      if (text) {
+        text.value = String(request.value);
+        body = text;
       } else {
         const feature = [...council, ...features].find((item) => item.id === request.id);
         if (feature) feature.enabled = !feature.enabled;
@@ -2504,7 +2516,7 @@ export function storySettingsFetch(populated = false): typeof fetch {
         revision: 'story-settings',
         groups: [
           { id: 'agent', title: 'Agent', toggles: [agentName] },
-          { id: 'council', title: 'Council', toggles: council },
+          { id: 'council', title: 'Council', toggles: [...council, machineName] },
           { id: 'experimental', title: 'Experimental', toggles: features },
         ],
       };

@@ -2,7 +2,8 @@
   "Human-controlled machine membership. The gateway owns credentials, not the Companion."
   (:require [clojure.walk :as walk]
             [com.blockether.vis.internal.council.rooms :as rooms]
-            [com.blockether.vis.internal.gateway.server.http :as http]))
+            [com.blockether.vis.internal.gateway.server.http :as http]
+            [com.blockether.vis.internal.loop :as lp]))
 
 (defn- handler
   [operation]
@@ -20,10 +21,10 @@
                  (rooms/status!)
 
                  :register
-                 (rooms/register! body)
+                 (rooms/register! (lp/db-info) body)
 
                  :join
-                 (rooms/join! body)
+                 (rooms/join! (lp/db-info) body)
 
                  :create
                  (rooms/create! body)

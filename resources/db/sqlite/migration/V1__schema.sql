@@ -1000,6 +1000,13 @@ CREATE TABLE council_ping (
 
 CREATE INDEX idx_council_ping_entry ON council_ping(entry_id, recipient_sid);
 
+-- One row: the name that Council Rooms shows for this machine.
+CREATE TABLE council_machine (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
+  updated_at INTEGER NOT NULL
+);
+
 -- One register row per complaint; content, group and origin live on council_entry.
 -- Source identities are retained even when execution history is pruned.
 CREATE TABLE improve (

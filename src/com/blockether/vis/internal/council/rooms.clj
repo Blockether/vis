@@ -11,7 +11,8 @@
             [com.blockether.vis.internal.council.transport :as transport]
             [com.blockether.vis.internal.persistance.core :as store]
             [com.blockether.vis.internal.util :as util])
-  (:import (java.nio.file Files Path LinkOption CopyOption StandardCopyOption)
+  (:import (java.net InetAddress)
+           (java.nio.file Files Path LinkOption CopyOption StandardCopyOption)
            (java.nio.file.attribute FileAttribute PosixFilePermissions)))
 
 (set! *warn-on-reflection* true)
@@ -174,6 +175,59 @@
   (let [state (or (read-state) (transport/fail! 409 "rooms_unconfigured"))]
     (transport/call! state method template params body query)))
 
+(def machine-name-id
+  "The setting id of the name that rooms show for this machine."
+  "council_machine_name")
+
+(def machine-name-length
+  "The longest machine name that the relay accepts."
+  (get-in transport/schema ["$defs" "machine_registration" "properties" "name" "maxLength"]))
+
+(defn- machine-name? [value] (document/valid? "rooms" "machine_registration/properties/name" value))
+
+(defonce ^:private host-label
+  (delay (let [label (some-> (or (try (.getHostName (InetAddress/getLocalHost))
+                                      (catch Exception _ nil))
+                                 (System/getenv "HOSTNAME")
+                                 (System/getenv "COMPUTERNAME"))
+                             str/trim
+                             (str/split #"\.")
+                             first)]
+           (when (and (machine-name? label) (not (re-matches #"[0-9]+" label))) label))))
+
+(defn default-machine-name
+  "This computer's host name without its domain, or Vis when the host has no usable name."
+  []
+  (or @host-label "Vis"))
+
+(defn machine-name
+  "The name that rooms show for this machine. A connected machine has the name that the
+   relay holds. Otherwise the saved name applies. The first use saves the host name."
+  [db]
+  (let [saved
+        (store/db-council-machine-name db)
+
+        value
+        (or (get-in (read-state) [:machine :name]) saved (default-machine-name))]
+
+    (when (not= saved value) (store/db-council-set-machine-name! db value))
+    value))
+
+(defn set-machine-name!
+  "Save the name for the next room or invitation, and return it. The relay cannot rename a
+   machine, so a connected machine keeps its name until it disconnects."
+  [db value]
+  (let [value (when (string? value) (str/trim value))]
+    (when-not (machine-name? value)
+      (throw (ex-info
+               (str "Use 1 to " machine-name-length " characters, without control characters.")
+               {:status 400 :type :invalid-setting-value :id machine-name-id})))
+    (when-let [connected (get-in (read-state) [:machine :name])]
+      (when (not= connected value)
+        (throw (ex-info "Disconnect from Rooms before you change the machine name."
+                        {:status 409 :type :machine-name-locked :id machine-name-id}))))
+    (store/db-council-set-machine-name! db value)))
+
 (defn status!
   "Return safe membership metadata. No key, invite, cursor or transcript is included."
   []
@@ -191,13 +245,18 @@
     {:configured false :rooms []}))
 
 (defn register!
-  [{:keys [relay_url name admin_token] :as body}]
+  "Register this machine with the rooms administrator token and save its name. A machine that
+   joined through an invitation also gets the right to create rooms."
+  [db {:keys [relay_url name admin_token] :as body}]
   (transport/validate! "gateway_register" body)
   (let [state
         (ensure-identity! relay_url name)
 
-        machine
-        (transport/call! (assoc state :credential admin_token)
+        admin
+        (assoc state :credential admin_token)
+
+        registered
+        (transport/call! admin
                          :post
                          "/v1/rooms/machines"
                          {}
@@ -205,13 +264,25 @@
                           :name name
                           :credential (:credential state)
                           :can_create_rooms true}
-                         {})]
+                         {})
+
+        machine
+        (if (:can_create_rooms registered)
+          registered
+          (transport/call! admin
+                           :patch
+                           "/v1/rooms/machines/{machine_id}"
+                           {:machine_id (:machine_id state)}
+                           {:can_create_rooms true}
+                           {}))]
 
     (update-state! #(assoc % :machine machine))
+    (store/db-council-set-machine-name! db (:name machine))
     (status!)))
 
 (defn join!
-  [{:keys [invite_url machine_name] :as body}]
+  "Join the room of an invitation and save the machine name. One machine can be in many rooms."
+  [db {:keys [invite_url machine_name] :as body}]
   (transport/validate! "gateway_join" body)
   (let [{:keys [relay_url token]}
         (transport/invite-parts invite_url)
@@ -245,6 +316,7 @@
                {})]
 
     (update-state! #(assoc % :machine (:machine result)))
+    (store/db-council-set-machine-name! db (get-in result [:machine :name]))
     (status!)
     result))
 

@@ -1375,7 +1375,7 @@
                        ["CREATE TABLE session_attachment (id TEXT PRIMARY KEY NOT NULL)"])
         (jdbc/execute! (:datasource s1)
                        ["ALTER TABLE session_state DROP COLUMN prompt_cache_state"])
-        (doseq [table ["council_ping" "council_entry"]]
+        (doseq [table ["council_machine" "council_ping" "council_entry"]]
           (jdbc/execute! (:datasource s1) [(str "DROP TABLE " table)]))
         (doseq [column ["council_input" "council_publications"]]
           (jdbc/execute! (:datasource s1)
@@ -1403,6 +1403,7 @@
                             ["council_input" "council_publications"]))
             (expect (contains? (table-columns s2 "council_entry") "thread_id"))
             (expect (contains? (table-columns s2 "council_ping") "activation_id"))
+            (expect (contains? (table-columns s2 "council_machine") "name"))
             (expect
               (=
                 3

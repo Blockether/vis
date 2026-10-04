@@ -43,14 +43,20 @@ function relayHost(url: string | undefined) {
 
 /**
  * This machine's room membership, under the Council settings of machine Settings.
- * Joining a machine never changes the room selected by a group or session.
+ * The Machine name setting above names this machine in each room that it creates or joins,
+ * and one machine can be in many rooms. Joining a room never changes the room that a group
+ * or session selects.
  */
-export function CouncilRooms({ client, onChanged }: { client: GatewayClient; onChanged: () => void | Promise<void> }) {
+export function CouncilRooms({ client, machineName, onChanged }: {
+  client: GatewayClient;
+  /** The Machine name setting. A connected machine keeps the name that its relay holds. */
+  machineName: string;
+  onChanged: () => void | Promise<void>;
+}) {
   const [status, setStatus] = useState<RoomsStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState<'join' | 'setup' | null>(null);
-  const [machineName, setMachineName] = useState('');
+  const [form, setForm] = useState<'create' | 'join' | null>(null);
   const [link, setLink] = useState('');
   const [review, setReview] = useState<string | null>(null);
   const [relay, setRelay] = useState('');
@@ -89,32 +95,38 @@ export function CouncilRooms({ client, onChanged }: { client: GatewayClient; onC
     } finally { setBusy(false); }
   };
 
-  const name = machineName.trim();
+  // A connected machine keeps the name that its relay holds.
+  const name = (status?.machine?.name ?? machineName).trim();
 
   // Secrets leave the screen with the form that asked for them.
   const closeForm = () => {
     setForm(null);
     setReview(null);
     setLink('');
+    setRoomName('');
     setAdminToken('');
   };
 
-  const toggleForm = (next: 'join' | 'setup') => {
+  const toggleForm = (next: 'create' | 'join') => {
     const isOpen = form === next;
     closeForm();
     setError(null);
-    if (isOpen) return;
-    setForm(next);
-    if (!name && status?.machine) setMachineName(status.machine.name);
+    if (!isOpen) setForm(next);
   };
 
   const reviewInvite = () => {
     try {
       const url = new URL(link);
-      if (!name || url.pathname !== '/rooms/join' || !url.hash.startsWith('#invite=')) throw new Error();
+      if (url.pathname !== '/rooms/join' || !url.hash.startsWith('#invite=')) throw new Error();
+      // The gateway keeps one relay for each machine and refuses an invitation from another relay.
+      const current = relayHost(status?.relay_url);
+      if (status?.relay_url && current !== url.host) {
+        setError(`This invitation is for another relay. This machine uses ${current}.`);
+        return;
+      }
       setReview(url.origin);
       setError(null);
-    } catch { setError('Enter a complete invite link and a machine name.'); }
+    } catch { setError('Enter a complete invitation link.'); }
   };
 
   const confirmRow = confirmation && (
@@ -141,18 +153,24 @@ export function CouncilRooms({ client, onChanged }: { client: GatewayClient; onC
   }
 
   const machine = status.machine;
+  // A machine that joined through an invitation needs the administrator token once.
+  const canCreate = machine?.can_create_rooms === true;
+  const relayUrl = status.relay_url ?? relay.trim();
   return (
     <div className="divide-y divide-dialog-edge">
       {error && <div className="px-3 py-3 sm:px-4"><Banner kind="err">{error}</Banner></div>}
       {confirmation?.key === 'machine' ? confirmRow : (
         <RoomRow
           label="Rooms"
-          description={machine ? `Connected as ${machine.name} via ${relayHost(status.relay_url)}` : 'Not connected'}
+          description={machine ? `Connected via ${relayHost(status.relay_url)}` : 'Not connected'}
         >
-          <Button density="panel" variant="secondary" aria-expanded={form === 'join'} disabled={busy} onClick={() => toggleForm('join')}>
-            Join a room
+          <Button density="panel" variant="secondary" aria-expanded={form === 'create'} disabled={busy} onClick={() => toggleForm('create')}>
+            New room
           </Button>
-          {status.configured ? (
+          <Button density="panel" variant="secondary" aria-expanded={form === 'join'} disabled={busy} onClick={() => toggleForm('join')}>
+            Accept invitation
+          </Button>
+          {status.configured && (
             <Button density="panel" variant="secondary" disabled={busy} onClick={() => setConfirmation({
               key: 'machine',
               question: `Disconnect ${machine?.name ?? 'this machine'}?`,
@@ -160,12 +178,48 @@ export function CouncilRooms({ client, onChanged }: { client: GatewayClient; onC
               confirmLabel: 'Yes, disconnect',
               run: () => client.disconnectRooms(),
             })}>Disconnect</Button>
-          ) : (
-            <Button density="panel" variant="secondary" aria-expanded={form === 'setup'} disabled={busy} onClick={() => toggleForm('setup')}>
-              Create rooms
-            </Button>
           )}
         </RoomRow>
+      )}
+      {form === 'create' && (
+        <form className="space-y-3 bg-panel-2 px-3 py-3 sm:px-4" onSubmit={(event) => {
+          event.preventDefault();
+          void run(async () => {
+            try {
+              if (!canCreate) await client.registerRooms(relayUrl, name, adminToken);
+              await client.createRoom(roomName.trim());
+              closeForm();
+            } finally { setAdminToken(''); }
+          });
+        }}>
+          <FormLabel label="Room name">
+            <Input aria-label="New room name" value={roomName} maxLength={80} onChange={(event) => setRoomName(event.target.value)} />
+          </FormLabel>
+          {!status.configured && (
+            <FormLabel label="Relay URL">
+              <Input
+                aria-label="Rooms relay URL"
+                value={relay}
+                inputMode="url"
+                autoCapitalize="none"
+                autoCorrect="off"
+                placeholder="https://gateway.example.com"
+                onChange={(event) => setRelay(event.target.value)}
+              />
+            </FormLabel>
+          )}
+          {!canCreate && (
+            <FormLabel label="Rooms administrator token" hint="Use the Rooms token, not a Push key. The gateway does not save it.">
+              <Input aria-label="Rooms administrator token" type="password" autoComplete="off" value={adminToken} onChange={(event) => setAdminToken(event.target.value)} />
+            </FormLabel>
+          )}
+          <FormActions>
+            <Button type="button" variant="secondary" disabled={busy} onClick={closeForm}>Cancel</Button>
+            <Button type="submit" disabled={busy || !roomName.trim() || !name || (!canCreate && (!relayUrl || !adminToken))}>
+              Create room
+            </Button>
+          </FormActions>
+        </form>
       )}
       {form === 'join' && (
         <form className="space-y-3 bg-panel-2 px-3 py-3 sm:px-4" onSubmit={(event) => {
@@ -188,14 +242,9 @@ export function CouncilRooms({ client, onChanged }: { client: GatewayClient; onC
               </Text>
             </div>
           ) : (
-            <>
-              <FormLabel label="Machine name">
-                <Input aria-label="Room machine name" value={machineName} maxLength={100} onChange={(event) => setMachineName(event.target.value)} />
-              </FormLabel>
-              <FormLabel label="Invitation link" hint="Keep it private. It contains the invitation secret.">
-                <Input type="password" aria-label="Room invite link" autoComplete="off" value={link} onChange={(event) => setLink(event.target.value)} />
-              </FormLabel>
-            </>
+            <FormLabel label="Invitation link" hint="Keep it private. It contains the invitation secret.">
+              <Input type="password" aria-label="Room invite link" autoComplete="off" value={link} onChange={(event) => setLink(event.target.value)} />
+            </FormLabel>
           )}
           <FormActions>
             <Button type="button" variant="secondary" disabled={busy} onClick={review ? () => setReview(null) : closeForm}>
@@ -203,58 +252,6 @@ export function CouncilRooms({ client, onChanged }: { client: GatewayClient; onC
             </Button>
             <Button type="submit" disabled={busy || !link || !name}>{review ? 'Join room' : 'Review invitation'}</Button>
           </FormActions>
-        </form>
-      )}
-      {form === 'setup' && (
-        <form className="space-y-3 bg-panel-2 px-3 py-3 sm:px-4" onSubmit={(event) => {
-          event.preventDefault();
-          void run(async () => {
-            try {
-              await client.registerRooms(relay, name, adminToken);
-              closeForm();
-            } finally { setAdminToken(''); }
-          });
-        }}>
-          <FormLabel label="Machine name">
-            <Input aria-label="Room machine name" value={machineName} maxLength={100} onChange={(event) => setMachineName(event.target.value)} />
-          </FormLabel>
-          <FormLabel label="Relay URL">
-            <Input
-              aria-label="Rooms relay URL"
-              value={relay}
-              inputMode="url"
-              autoCapitalize="none"
-              autoCorrect="off"
-              placeholder="https://gateway.example.com"
-              onChange={(event) => setRelay(event.target.value)}
-            />
-          </FormLabel>
-          <FormLabel label="Rooms administrator token" hint="Use the Rooms token, not a Push key. The gateway does not save it.">
-            <Input aria-label="Rooms administrator token" type="password" autoComplete="off" value={adminToken} onChange={(event) => setAdminToken(event.target.value)} />
-          </FormLabel>
-          <FormActions>
-            <Button type="button" variant="secondary" disabled={busy} onClick={closeForm}>Cancel</Button>
-            <Button type="submit" disabled={busy || !relay || !name || !adminToken}>Register machine</Button>
-          </FormActions>
-        </form>
-      )}
-      {machine?.can_create_rooms && (
-        <form className="flex min-w-0 items-center gap-2 px-3 py-2 sm:px-4" onSubmit={(event) => {
-          event.preventDefault();
-          void run(async () => {
-            await client.createRoom(roomName.trim());
-            setRoomName('');
-          });
-        }}>
-          <Input
-            aria-label="New room name"
-            placeholder="New room name"
-            className="flex-1"
-            value={roomName}
-            maxLength={100}
-            onChange={(event) => setRoomName(event.target.value)}
-          />
-          <Button type="submit" density="panel" variant="secondary" disabled={busy || !roomName.trim()}>Create room</Button>
         </form>
       )}
       {status.rooms.map((room) => {

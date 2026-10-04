@@ -236,6 +236,8 @@
   (db-council-delivered! [db-info sid ids])
   (db-council-interrupt! [db-info sid activation])
   (db-council-unavailable! [db-info sid id])
+  (db-council-machine-name [db-info])
+  (db-council-set-machine-name! [db-info name])
   ;; --- Activity ---
   (db-activity-apply! [db-info sid aid event])
   (db-activity-settle! [db-info aid outcome summary])

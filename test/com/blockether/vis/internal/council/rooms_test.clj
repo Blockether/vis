@@ -9,6 +9,7 @@
             [com.blockether.vis.internal.council.rooms :as rooms]
             [com.blockether.vis.internal.council.transport :as transport]
             [com.blockether.vis.internal.gateway.server.settings :as settings-api]
+            [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance.core :as store]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [lazytest.core :refer [defdescribe describe it expect]])
@@ -65,6 +66,9 @@
                     config/load-project-config-raw
                     (constantly {})
 
+                    lp/db-info
+                    (constantly db)
+
                     transport/call!
                     (fn [state method path params body query]
                       (swap! calls conj
@@ -99,7 +103,8 @@
 
                         nil))]
 
-        (rooms/register! {:relay_url "https://gateway.example.com"
+        (rooms/register! db
+                         {:relay_url "https://gateway.example.com"
                           :name "Laptop"
                           :admin_token (apply str (repeat 43 "a"))})
         (f {:db db :sid sid :gid gid :pid pid :room-id room-id :home home :calls calls}))
@@ -352,8 +357,11 @@
               (= {"council" "next_turn"
                   "council_room" "next_call"
                   "council_room_wake" "next_call"
-                  (rooms/access-id room-id) "next_call"}
+                  (rooms/access-id room-id) "next_call"
+                  rooms/machine-name-id "immediate"}
                  (into {} (map (juxt #(get % "id") #(get % "applies"))) (get council "toggles"))))
+            (expect (= [rooms/machine-name-id "Laptop"]
+                       ((juxt #(get % "id") #(get % "value")) (last (get council "toggles")))))
             (expect (= [council]
                        (filter #(some #{"council"}
                                       (map (fn [row]
@@ -367,3 +375,99 @@
                    (rooms/register-settings! [])
                    (expect (nil? (toggles/toggle-spec (rooms/access-id room-id))))
                    (expect (some? (toggles/toggle-spec "council_room_wake")))))))
+
+(defdescribe
+  rooms-machine-name
+  (describe
+    "machine name"
+    (it "saves the host name on first use and keeps it after the host changes"
+        (with-room (fn [{:keys [db]}]
+                     (rooms/delete-machine!)
+                     (h/raw-query db {:delete-from :council_machine})
+                     (with-redefs [rooms/default-machine-name (constantly "Workstation")]
+                       (expect (= "Workstation" (rooms/machine-name db)))
+                       (expect (= "Workstation" (store/db-council-machine-name db))))
+                     (with-redefs [rooms/default-machine-name (constantly "Other-host")]
+                       (expect (= "Workstation" (rooms/machine-name db)))))))
+    (it "saves a trimmed name and rejects a name that the relay refuses"
+        (with-room (fn [{:keys [db]}]
+                     (rooms/delete-machine!)
+                     (expect (= "Desk" (rooms/set-machine-name! db "  Desk  ")))
+                     (expect (= "Desk" (rooms/machine-name db)))
+                     (doseq [value [nil 7 "" "   " "Bad\u0007name"
+                                    (apply str (repeat (inc rooms/machine-name-length) "a"))]]
+                       (expect (= 400
+                                  (try (rooms/set-machine-name! db value)
+                                       nil
+                                       (catch clojure.lang.ExceptionInfo e
+                                         (:status (ex-data e)))))))
+                     (expect (= "Desk" (store/db-council-machine-name db))))))
+    (it "keeps the relay name while the machine is connected"
+        (with-room (fn [{:keys [db]}]
+                     (expect (= "Laptop" (store/db-council-machine-name db)))
+                     (expect (= "Laptop" (rooms/machine-name db)))
+                     (expect (= "Laptop" (rooms/set-machine-name! db "Laptop")))
+                     (expect (= {:status 409 :type :machine-name-locked}
+                                (try (rooms/set-machine-name! db "Desk")
+                                     nil
+                                     (catch clojure.lang.ExceptionInfo e
+                                       (select-keys (ex-data e) [:status :type])))))
+                     (expect (= "Laptop" (store/db-council-machine-name db))))))
+    (it "lets a machine that joined by invitation create rooms after registration"
+        (with-room
+          (fn [{:keys [db calls]}]
+            (expect (not-any? #(= :patch (:method %)) @calls))
+            (reset! calls [])
+            (let [machine (atom nil)]
+              (with-redefs [transport/call!
+                            (fn [state method path _ body _]
+                              (swap! calls conj {:method method :path path :body body})
+                              (case [method path]
+                                [:post "/v1/rooms/machines"]
+                                (reset! machine {:machine_id (:machine_id state)
+                                                 :name "Laptop"
+                                                 :can_create_rooms false
+                                                 :created_at 1})
+
+                                [:patch "/v1/rooms/machines/{machine_id}"]
+                                (swap! machine assoc :can_create_rooms (:can_create_rooms body))
+
+                                [:get "/v1/rooms/machine"]
+                                @machine
+
+                                [:get "/v1/rooms"]
+                                []))]
+                (let [status (rooms/register! db
+                                              {:relay_url "https://gateway.example.com"
+                                               :name "Laptop"
+                                               :admin_token (apply str (repeat 43 "a"))})]
+                  (expect (true? (get-in status [:machine :can_create_rooms])))
+                  (expect (= [[:post "/v1/rooms/machines"]
+                              [:patch "/v1/rooms/machines/{machine_id}"]]
+                             (take 2 (map (juxt :method :path) @calls))))
+                  (expect (= {:can_create_rooms true} (:body (second @calls))))))))))
+    (it "reads and changes the machine name through the global settings"
+        (with-room
+          (fn [{:keys [pid]}]
+            (let [put!
+                  (fn [params]
+                    (#'settings-api/set-setting-handler
+                     {:query-params (merge {"id" rooms/machine-name-id "action" "value"} params)}))
+
+                  body
+                  (fn [response]
+                    (json/read-json (:body response)))]
+
+              (expect (= "Laptop"
+                         (get (body (#'settings-api/get-setting-handler
+                                     {:path-params {:id rooms/machine-name-id}}))
+                              "value")))
+              (expect (= 409 (:status (put! {"value" "Desk"}))))
+              (expect (= 400 (:status (put! {"action" "toggle"}))))
+              (expect (= 400 (:status (put! {"value" "Desk" "scope" "project" "target_id" pid}))))
+              (rooms/delete-machine!)
+              (with-redefs [rooms/default-machine-name (constantly "Workstation")]
+                (expect (= "Desk" (get (body (put! {"value" "Desk"})) "value")))
+                (let [reset (body (put! {"action" "inherit"}))]
+                  (expect (= "Workstation" (get reset "value")))
+                  (expect (false? (get reset "is_override")))))))))))

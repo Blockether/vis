@@ -566,7 +566,13 @@ export function MachineSettings({
               </div>
             )}
             {/* Room membership is part of Council, so it stands under the Council switches. */}
-            {group.id === 'council' && <CouncilRooms client={client} onChanged={load} />}
+            {group.id === 'council' && (
+              <CouncilRooms
+                client={client}
+                machineName={String(group.toggles.find((toggle) => toggle.id === 'council_machine_name')?.value ?? '')}
+                onChanged={load}
+              />
+            )}
           </SettingsPanel>
         ))
       )}

@@ -130,6 +130,40 @@
              (http/error-response 400 :invalid-setting-value (ex-message e) :id "agent_name")
              (throw e))))))
 
+(defn- machine-name-setting
+  "The name that Council Rooms shows for this machine. One gateway is one machine."
+  []
+  (let [value
+        (rooms/machine-name (lp/db-info))
+
+        default
+        (rooms/default-machine-name)]
+
+    {:id rooms/machine-name-id
+     :label "Machine name"
+     :description "Other machines in your rooms see this name."
+     :type "string"
+     :value value
+     :max-length rooms/machine-name-length
+     :editor "text"
+     :own-value value
+     :is-override (not= value default)
+     :inherited-value default
+     :inherited-source "default"
+     :applies "immediate"
+     :scopes ["global"]}))
+
+(defn- set-machine-name-setting
+  "Save the machine name. The inherit action gives the host name again."
+  [action value]
+  (if-not (#{"value" "inherit"} action)
+    (http/error-response 400
+                         :invalid-setting-action
+                         "Machine name takes the value or inherit action.")
+    (do (rooms/set-machine-name! (lp/db-info)
+                                 (if (= "inherit" action) (rooms/default-machine-name) value))
+        (http/json-response (machine-name-setting)))))
+
 (defn- extension-rows
   "Row id -> `[extension position]` for each extension loaded where `target` runs.
    An extension's own section holds its engine choice, its settings and its packaged skills."
@@ -267,7 +301,10 @@
                              :toggles (mapv toggle-json (sort-by #(second (owners (:id %))) specs))}
                             {:id (name group)
                              :title (group-title group local?)
-                             :toggles (mapv toggle-json specs)})))
+                             ;; The machine name stands last, above the room actions.
+                             :toggles (cond-> (mapv toggle-json specs)
+                                        (and (= :council group) (not local?))
+                                        (conj (machine-name-setting)))})))
                    grouped)}))
 
 (defn- list-settings-handler
@@ -356,6 +393,8 @@
                                              (scoped-policy/settings (lp/db-info) target))))
           (and (= id "agent_name") (= "global" (:scope target))) (http/json-response
                                                                    (agent-name-setting))
+          (and (= id rooms/machine-name-id) (= "global" (:scope target))) (http/json-response
+                                                                            (machine-name-setting))
           (and spec
                (some #{(:scope target)} (:scopes spec))
                (or (not (#{:skills :mcp} (:group spec))) (resources id)))
@@ -391,6 +430,10 @@
               (if (= "global" (:scope target))
                 (set-agent-name-setting action {:raw (get body "value")})
                 (http/error-response 400 :invalid-setting-scope "Agent name is global"))
+              (= id rooms/machine-name-id)
+              (if (= "global" (:scope target))
+                (set-machine-name-setting action (get body "value"))
+                (http/error-response 400 :invalid-setting-scope "Machine name is global"))
               :else
               (http/json-response
                 (toggle-json
