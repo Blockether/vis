@@ -15,6 +15,8 @@ export interface FleetMachine {
   sessions: Session[] | null;
   /** Last load failure. Set means offline/unauthorized; the row degrades. */
   error: string | null;
+  /** Three failed attempts hide the machine until it answers, including across app restarts. */
+  isHidden?: boolean;
   /**
    * THE FAILURE ABOVE IS WHAT THIS DEVICE REMEMBERED, not what it measured in this run.
    *
@@ -219,16 +221,10 @@ export function searchFanout(
  * own section all read this value rather than each deriving a loading state of its own
  * from `sessions`, `answered` and `error`, which is how they came to disagree.
  *
- * The rule, once: rows are paint, an answer is the gateway speaking in this run.
- * `sessions` turns non-null the moment the window this device saved is seeded on mount,
- * so a warm start paints rows that may be hours old while the machine is still
- * `reading` — that first paint is the point of saving them, and it is why the question
- * cannot be asked of `sessions`. A remembered outage is not an answer either: it is what
- * the previous run wrote down and kept for up to thirty days, and `load` already has a
- * read of that machine in flight behind it — painting it as a failure meant a laptop woken
- * an hour ago opened the app wearing `Reconnect` before anything had been asked, which is
- * why its tile says `Connecting…`. A machine whose read failed in this run has answered
- * the only way it can, so it is `down` and nothing is waiting on it.
+ * Cached rows do not prove that a machine is reachable in this run.
+ * A remembered failure shows `Connecting…` until a new attempt finishes.
+ * After three failures, the switch hides the tile until a response restores it.
+ * A failed attempt in this run sets `down`. A successful response sets `settled`.
  */
 export type MachineRead = 'reading' | 'settled' | 'down';
 

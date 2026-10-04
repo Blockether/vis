@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { clearMachineOutage, machineOutage, rememberMachineOutage } from './fleet-outage';
+import {
+  clearMachineOutage,
+  isMachineHidden,
+  machineOutage,
+  rememberMachineOutage,
+} from './fleet-outage';
 
 const TOWER = 'http://tower.example.com:4577';
 const VPS = 'http://vps.example.com:4577';
@@ -47,17 +52,60 @@ describe('what this device found dark', () => {
     expect(machineOutage(VPS)).toBe('HTTP 502');
   });
 
-  // A machine unpaired months ago must not keep a row here for the life of the install.
-  it('forgets a verdict nothing has confirmed for a month', () => {
+  it('keeps an outage until the machine answers, regardless of its age', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
-    rememberMachineOutage(TOWER, 'Failed to fetch');
+    for (let attempt = 0; attempt < 3; attempt += 1)
+      rememberMachineOutage(TOWER, 'Failed to fetch');
 
-    vi.setSystemTime(new Date('2026-03-01T00:00:00Z'));
-    // The sweep runs on the next write, so the stale row leaves with it.
+    vi.setSystemTime(new Date('2027-03-01T00:00:00Z'));
     rememberMachineOutage(VPS, 'Failed to fetch');
-    expect(machineOutage(TOWER)).toBeNull();
+    expect(machineOutage(TOWER)).toBe('Failed to fetch');
+    expect(isMachineHidden(TOWER)).toBe(true);
     expect(machineOutage(VPS)).toBe('Failed to fetch');
+  });
+
+  it('persists consecutive failures across cold starts and hides on the third', async () => {
+    expect(rememberMachineOutage(TOWER, 'Failed to fetch')).toBe(1);
+    expect(isMachineHidden(TOWER)).toBe(false);
+    expect(rememberMachineOutage(TOWER, 'silent for 15s')).toBe(2);
+    expect(isMachineHidden(TOWER)).toBe(false);
+
+    vi.resetModules();
+    const relaunched = await import('./fleet-outage');
+    expect(relaunched.rememberMachineOutage(TOWER, 'Failed to fetch')).toBe(3);
+    expect(relaunched.isMachineHidden(TOWER)).toBe(true);
+    expect(relaunched.isMachineHidden(VPS)).toBe(false);
+
+    vi.resetModules();
+    const reopened = await import('./fleet-outage');
+    expect(reopened.isMachineHidden(TOWER)).toBe(true);
+    expect(reopened.rememberMachineOutage(TOWER, 'Failed to fetch')).toBe(3);
+  });
+
+  it('resets the hiding threshold after recovery, including across cold starts', async () => {
+    for (let attempt = 0; attempt < 3; attempt += 1)
+      rememberMachineOutage(TOWER, 'Failed to fetch');
+    expect(isMachineHidden(TOWER)).toBe(true);
+    clearMachineOutage(TOWER);
+    expect(isMachineHidden(TOWER)).toBe(false);
+
+    vi.resetModules();
+    const relaunched = await import('./fleet-outage');
+    expect(relaunched.rememberMachineOutage(TOWER, 'Failed to fetch')).toBe(1);
+    expect(relaunched.isMachineHidden(TOWER)).toBe(false);
+    expect(relaunched.rememberMachineOutage(TOWER, 'Failed to fetch')).toBe(2);
+    expect(relaunched.isMachineHidden(TOWER)).toBe(false);
+    expect(relaunched.rememberMachineOutage(TOWER, 'Failed to fetch')).toBe(3);
+    expect(relaunched.isMachineHidden(TOWER)).toBe(true);
+  });
+
+  it('does not restore a hidden machine when other machines fail', () => {
+    for (let attempt = 0; attempt < 3; attempt += 1)
+      rememberMachineOutage(TOWER, 'Failed to fetch');
+    for (let index = 0; index < 40; index += 1)
+      rememberMachineOutage(`http://gateway.example.com:${8000 + index}`, 'Failed to fetch');
+    expect(isMachineHidden(TOWER)).toBe(true);
   });
 
   it('survives a store holding something else entirely', () => {

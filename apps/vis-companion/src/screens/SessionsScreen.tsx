@@ -48,7 +48,12 @@ import {
 import { usePullToSearch, type PullPhase } from '../lib/pull-to-search';
 import { ProjectFolderSheet } from '../components/ProjectFolderSheet';
 import { useDeskRail, useFitRows, useMouseDensity } from '../lib/fit-rows';
-import { clearMachineOutage, machineOutage, rememberMachineOutage } from '../lib/fleet-outage';
+import {
+  clearMachineOutage,
+  isMachineHidden,
+  machineOutage,
+  rememberMachineOutage,
+} from '../lib/fleet-outage';
 import {
   draftMessageHasUnsent,
   draftMessageKey,
@@ -233,24 +238,20 @@ function warmTranscript(conn: GatewayConn, session: Session): void {
   clientFor(conn).warmTranscript(session);
 }
 
-// Persist known outages across remounts and start those machines drained until they
-// answer again.
-
-// Confirm an outage after two misses for a machine that previously answered; a cold
-// machine with no rows can fail immediately.
-const fleetMisses = new Map<string, number>();
-
-// Two consecutive failed reads confirm an outage.
+// Keep the current list through one failed read of a machine that previously answered.
+// The durable counter also hides its tab after three consecutive failures.
 const OUTAGE_CONFIRMING_MISSES = 2;
 
 // Reconcile paired machines with cached rows and remembered outage state.
 function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetMachine[] {
   return reconcileMachines(conns, previous).map((machine) => {
     if (machine.error !== null) return machine;
-    const outage = machineOutage(machineKey(machine.conn));
+    const key = machineKey(machine.conn);
+    const outage = machineOutage(key);
+    const isHidden = isMachineHidden(key);
     // Cached rows are paint data, not proof of current reachability.
     if (machine.sessions !== null)
-      return outage ? { ...machine, error: outage, isRemembered: true } : machine;
+      return outage ? { ...machine, error: outage, isRemembered: true, isHidden } : machine;
     const api = clientFor(machine.conn);
     // Seed machine-wide totals alongside cached rows.
     const overview = machine.overview ?? api.cachedProjectsOverview();
@@ -261,6 +262,7 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
       sessions: cached ?? null,
       error: outage,
       isRemembered: outage !== null,
+      isHidden,
       overview,
     };
   });
@@ -611,7 +613,6 @@ export function SessionsScreen({
       const alive = () => {
         searchSilentRef.current.delete(key);
         clearMachineOutage(key);
-        fleetMisses.delete(key);
       };
       try {
         // A poll that answers with the rows already on screen is NOT NEWS. Patching
@@ -664,6 +665,7 @@ export function SessionsScreen({
             error: null,
             answered: true,
             isRemembered: false,
+            isHidden: false,
           }));
         };
         const next = await api.listSessions(probe?.signal ?? signal);
@@ -682,25 +684,24 @@ export function SessionsScreen({
         const failure =
           probe?.signal.aborted && silence !== null ? silence : (cause as Error).message;
         const held = machinesRef.current.find((machine) => machineKey(machine.conn) === key);
-        // ONE MISSED READ IS NOT AN OUTAGE (see `fleetMisses`): a machine that was
-        // answering a moment ago gets the next read before this device calls it dark.
-        const misses = (fleetMisses.get(key) ?? 0) + 1;
-        fleetMisses.set(key, misses);
+        const misses = rememberMachineOutage(key, failure);
+        // Keep a previously active list through one miss, but save every failed attempt.
         if (misses < OUTAGE_CONFIRMING_MISSES && held?.answered && held.error === null)
           return failure;
-        rememberMachineOutage(key, failure);
+        const isHidden = isMachineHidden(key);
         // A FAILURE THAT SAYS NOTHING NEW IS NOT NEWS EITHER (same rule as `settle`).
         // Re-patching an unchanged verdict handed the list a new fleet array on every
         // poll — and with it a re-anchored scroll position and every memo built from the
         // fleet — for a machine that has not been on screen since it went dark.
         // A REMEMBERED failure is not this same verdict: this read is what CONFIRMS the
         // darkness in THIS run, and the shell's offline gate waits for exactly that.
-        if (held?.error !== failure || held.isRemembered)
+        if (held?.error !== failure || held.isRemembered || held.isHidden !== isHidden)
           patchMachine(key, (machine) => ({
             ...machine,
             error: failure,
             answered: false,
             isRemembered: false,
+            isHidden,
           }));
         return failure;
       } finally {
@@ -763,22 +764,8 @@ export function SessionsScreen({
         noteExpiry.current.delete(key);
       }
       setRetries((current) => new Map(current).set(key, 'busy'));
-      // The deadline CANCELS the probe and answers the press by itself: a blackholed
-      // socket only ends when someone aborts it, and a transport that ignores the
-      // cancellation must not be able to hold the word inside the tile.
-      const deadline = new AbortController();
-      let giveUp: number | undefined;
-      const expired = new Promise<true>((resolve) => {
-        giveUp = window.setTimeout(() => resolve(true), RETRY_TIMEOUT_MS);
-      });
-      const failed = await Promise.race([
-        loadMachine(conn, deadline.signal).then((failure) => failure !== null),
-        expired,
-      ]);
-      if (giveUp !== undefined) window.clearTimeout(giveUp);
-      // A probe that lost the race is over: its late answer must not repaint a tile
-      // the reader has already been told about.
-      deadline.abort();
+      // A retry deadline is a failed attempt, not a cancellation of the screen's work.
+      const failed = (await loadMachine(conn, undefined, RETRY_TIMEOUT_MS)) !== null;
       setRetries((current) => {
         const next = new Map(current);
         if (failed) next.set(key, 'failed');
@@ -817,17 +804,10 @@ export function SessionsScreen({
       const key = machineKey(conn);
       if (reconnecting.current.has(key)) return;
       const deadline = new AbortController();
-      let giveUp: number | undefined;
-      const done = () => {
-        if (giveUp !== undefined) window.clearTimeout(giveUp);
+      reconnecting.current.set(key, () => deadline.abort());
+      void loadMachine(conn, deadline.signal, RECONNECT_TIMEOUT_MS).finally(() => {
         reconnecting.current.delete(key);
-      };
-      reconnecting.current.set(key, () => {
-        deadline.abort();
-        done();
       });
-      giveUp = window.setTimeout(() => deadline.abort(), RECONNECT_TIMEOUT_MS);
-      void loadMachine(conn, deadline.signal).finally(done);
     },
     [loadMachine],
   );
@@ -1511,9 +1491,9 @@ export function SessionsScreen({
     ? (machines.find((machine) => machineKey(machine.conn) === scope) ?? null)
     : null;
 
-  // Connectivity never changes positions. The app supplies the server's cached order.
+  // Hide repeated failures without changing the saved order or stopping recovery probes.
   const switcherMachines = useMemo(() => {
-    const ordered = [...machines];
+    const ordered = machines.filter((machine) => !machine.isHidden);
     const primaryIndex = primaryKey
       ? ordered.findIndex((machine) => machineKey(machine.conn) === primaryKey)
       : -1;
@@ -1877,13 +1857,8 @@ export function SessionsScreen({
           const key = machineKey(machine.conn);
           const tally = tallies.get(key);
           const name = machineLabel(machine.conn);
-          // A machine that is not answering cannot scope the screen to stale rows.
-          // Keep its name in place; its error-toned tile retries the connection,
-          // and the transport reason remains available in the title. Everything else
-          // here is `MachineRead`'s rule, which the footer and the sections read too:
-          // only a failure measured in this run earns the retry, and a machine with
-          // cached rows or a remembered outage is being connected to right now.
-          // Cached unread activity may still tint it.
+          // Before the hiding threshold, a failed machine remains available for retry.
+          // A successful response restores a hidden machine to its saved position.
           const read = machineRead(machine);
           const isDown = read === 'down';
           const isChecking = read === 'reading';
@@ -1925,9 +1900,7 @@ export function SessionsScreen({
       </MachineSwitcher>
     </div>
   );
-  // The search asks the machine the switch has picked. With more than one machine, the
-  // dialog offers that choice as a picker beside its project and groups. A machine that
-  // is not answering has nothing to search: it stays listed there, but cannot be chosen.
+  // Search uses the same visible machines as the switch. A failed machine cannot be chosen.
   const searchMachine =
     switcherMachines.length > 1
       ? {
