@@ -2256,6 +2256,7 @@ class ExecutionLayer(ABC):
             body=body,
         )
         return response.json()
+
     def post_council_rooms_join(
         self,
         *,

@@ -135,6 +135,7 @@ def test_machine_rename_keeps_the_identity():
     with pytest.raises(ValueError):
         client.rename("Bad\nname")
 
+
 def test_unknown_fields_invalid_responses_and_redirects_fail_closed():
     machine = identity()
     room, sid = str(uuid4()), str(uuid4())
