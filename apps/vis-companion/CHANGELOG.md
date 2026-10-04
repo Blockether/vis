@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.29 (7207) — 2026-10-04
+<!-- commit: 0b3d4e012ba3f0b9adbe7105088eca874308a42f -->
+
+- Keep the code block check without grep details
+- Match bold project labels in ordering tests
+- Keep project and group statuses on one line
+- Remove the Activity limit and grep details
+- Enforce shared dropdowns across the app
+- Keep mobile group headings stacked
+- Keep touch pickers closed and style search labels
+- Drop the step count from the digest row
+- Ask the live-view story for the new live label
+- Expect Council IDs in the Activity summary
+- Allow the project header shadow in conventions
+- Show live as the last part of the digest counts
+- Stop folding earlier steps in Compact mode
+- Create and edit automations in the app
+- Count a stopped step as a failure again
+- Clarify project and group hierarchy
+- Show what the steps did on the digest row
+- Receive webhooks through a relay inbox
+- Show a stopped step as cancelled, not failed
+- Rename and move projects from their menus
+
 ## 0.2.29 (7177) — 2026-10-03
 <!-- commit: 16bdb1baf267897ab2850898e933ae39e9a87d3e -->
 
