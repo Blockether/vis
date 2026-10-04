@@ -44,13 +44,14 @@ function ReadActivityPreview({ client }: { client: GatewayClient }) {
   );
 }
 
-it('opens the simplified preview from a filename-only read activity', async () => {
+it('opens the preview from a read activity with its Read label', async () => {
   const client = gateway();
   render(<ReadActivityPreview client={client} />);
   fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
   fireEvent.click(screen.getByRole('button', { name: /Read ×2/ }));
   const row = document.querySelector<HTMLElement>('[data-activity-row]')!;
-  expect(within(row).queryByText('Read')).toBeNull();
+  // The file link keeps the same Read label as other Activity rows.
+  expect(within(row).getByText('Read')).toBeVisible();
   fireEvent.click(within(row).getByRole('button', { name: 'Open ~/vis/PLAN.md' }));
 
   const dialog = screen.getByRole('dialog', { name: 'PLAN.md' });
