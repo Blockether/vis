@@ -109,66 +109,85 @@
                      (keep #(get-in % [:live-entry :kind]) (:line-meta payload))))))))
 
 (defdescribe
-  closed-digest-live-button
-  (it "folds a live view into one button on the closed digest row"
-      ;; A closed digest hides its LIVE rows. The button on its row opens the live view.
-      (doseq [[pane label] [[(review-pane) "live"]
-                            [(lv/settled (review-pane) {:reason :completed} 2000) "live"]]]
-        (render/invalidate-cache!)
-        (let [payload (render/progress->lines-data
-                        review-progress
-                        76
-                        {:show-thinking true :show-iterations true}
-                        {:session-id "inline-review"
-                         :now-ms 1000
-                         :live-runs (when-not (lv/dormant? pane) [(lv/transcript-run pane)])
-                         :runs (when (lv/dormant? pane) [(lv/run-row pane)])})
-              lines (:lines payload)
-              row (first (keep-indexed #(when (:digest-live %2) %1) (:line-meta payload)))]
+  digest-live-button
+  (it
+    "keeps the live button on closed and open digest rows"
+    ;; Regression: expanding the steps keeps the header control beside the receipt control.
+    (doseq [[pane label]
+            [[(review-pane) "live"] [(lv/settled (review-pane) {:reason :completed} 2000) "live"]]
 
-          (expect (= {:view-id (lv/view-id pane) :label label}
-                     (select-keys (get-in payload [:line-meta row :digest-live])
-                                  [:view-id :label])))
-          (expect (str/includes? (nth lines row) (str " · " label)))
-          (expect (not-any? #(str/includes? % "Build verification") lines))
-          (expect (not-any? #(= :activity-header (:kind %)) (:line-meta payload)))
-          (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. 80 12))
-                      ts (doto (TerminalScreen. terminal) (.startScreen))]
+            open?
+            [false true]]
 
-            (binding [interactions/hit-map (interactions/create-hit-map)]
-              (.beginFrame interactions/hit-map)
-              (render/draw-chat-bubble!
-                (.newTextGraphics ts)
-                {:role :assistant :text "" :prewrapped-lines lines :line-meta (:line-meta payload)}
-                0 0
-                76 {:viewport-top 0 :viewport-h 12})
-              (.commitFrame interactions/hit-map)
-              (let [regions (.current interactions/hit-map)
-                    button (first (filter #(= :live-reopen (:kind %)) regions))
-                    toggle (first (filter #(str/ends-with? (str (:node-id %)) ":digest") regions))
-                    {:keys [col width] button-row :row} (:bounds button)]
+      (render/invalidate-cache!)
+      (let [payload
+            (render/progress->lines-data
+              review-progress
+              76
+              {:show-thinking true :show-iterations true}
+              {:session-id "inline-review"
+               :now-ms 1000
+               :detail-expansions {["inline-review" "iteration:i1:digest"] open?}
+               :live-runs (when-not (lv/dormant? pane) [(lv/transcript-run pane)])
+               :runs (when (lv/dormant? pane) [(lv/run-row pane)])})
 
-                (expect (= (lv/view-id pane) (:view-id button)))
-                (expect (= (count label) width))
-                (expect (= (get-in toggle [:bounds :row]) button-row))
-                (expect (= button (.lookup interactions/hit-map (int col) (int button-row))))
-                ;; Regression, user report: `live` keeps the font of the counts before it.
-                (let [cell (fn [c]
-                             (.getBackCharacter ts (int c) (int button-row)))
-                      ^TextCharacter word (cell col)
-                      ^TextCharacter counts (cell (+ 2 (long (get-in toggle [:bounds :col]))))]
+            lines
+            (:lines payload)
 
-                  (expect (= label
-                             (apply str
-                               (map #(.getCharacterString ^TextCharacter (cell %))
-                                    (range col (+ (long col) (long width)))))))
-                  (expect (= (.getForegroundColor counts) (.getForegroundColor word)))
-                  (expect (= (.getBackgroundColor counts) (.getBackgroundColor word)))
-                  (expect (= (.getModifiers counts) (.getModifiers word))))
-                (expect (= :toggle-details
-                           (:kind (.lookup interactions/hit-map
-                                           (int (get-in toggle [:bounds :col]))
-                                           (int button-row))))))))))))
+            row
+            (first (keep-indexed #(when (:digest-live %2) %1) (:line-meta payload)))]
+
+        (expect (= {:view-id (lv/view-id pane) :label label}
+                   (select-keys (get-in payload [:line-meta row :digest-live]) [:view-id :label])))
+        (expect (str/includes? (nth lines row) (str " · " label)))
+        (expect (= open? (boolean (some #(str/includes? % "Build verification") lines))))
+        (expect (= open? (boolean (some #(= :activity-header (:kind %)) (:line-meta payload)))))
+        (with-open [terminal
+                    (DefaultVirtualTerminal. (TerminalSize. 80 44))
+
+                    ts
+                    (doto (TerminalScreen. terminal) (.startScreen))]
+
+          (binding [interactions/hit-map (interactions/create-hit-map)]
+            (.beginFrame interactions/hit-map)
+            (render/draw-chat-bubble!
+              (.newTextGraphics ts)
+              {:role :assistant :text "" :prewrapped-lines lines :line-meta (:line-meta payload)}
+              0 0
+              76 {:viewport-top 0 :viewport-h 44})
+            (.commitFrame interactions/hit-map)
+            (let [regions (.current interactions/hit-map)
+                  toggle (first (filter #(str/ends-with? (str (:node-id %)) ":digest") regions))
+                  buttons (filter #(= :live-reopen (:kind %)) regions)
+                  button (first (filter #(= (get-in toggle [:bounds :row])
+                                            (get-in % [:bounds :row]))
+                                        buttons))
+                  {:keys [col width] button-row :row} (:bounds button)]
+
+              (expect (= (if open? 2 1) (count buttons)))
+              (expect (= (not open?) (:collapsed? toggle)))
+              (expect (every? #(= (lv/view-id pane) (:view-id %)) buttons))
+              (expect (= (lv/view-id pane) (:view-id button)))
+              (expect (= (count label) width))
+              (expect (= (get-in toggle [:bounds :row]) button-row))
+              (expect (= button (.lookup interactions/hit-map (int col) (int button-row))))
+              ;; Regression, user report: `live` keeps the font of the counts before it.
+              (let [cell (fn [c]
+                           (.getBackCharacter ts (int c) (int button-row)))
+                    ^TextCharacter word (cell col)
+                    ^TextCharacter counts (cell (+ 2 (long (get-in toggle [:bounds :col]))))]
+
+                (expect (= label
+                           (apply str
+                             (map #(.getCharacterString ^TextCharacter (cell %))
+                                  (range col (+ (long col) (long width)))))))
+                (expect (= (.getForegroundColor counts) (.getForegroundColor word)))
+                (expect (= (.getBackgroundColor counts) (.getBackgroundColor word)))
+                (expect (= (.getModifiers counts) (.getModifiers word))))
+              (expect (= :toggle-details
+                         (:kind (.lookup interactions/hit-map
+                                         (int (get-in toggle [:bounds :col]))
+                                         (int button-row))))))))))))
 
 (defn paint-review!
   "Paint the real transcript inside a clipped terminal viewport for #222 review."
@@ -247,7 +266,9 @@
                   baseline (grid terminal cols 44)
                   regions (.current interactions/hit-map)
                   copies (filter #(= :copy-disclosure (:kind %)) regions)
-                  row (get-in (first (filter #(= :live-reopen (:kind %)) regions)) [:bounds :row])
+                  ;; The open digest has a live control before the receipt's button.
+                  live-buttons (filter #(= :live-reopen (:kind %)) regions)
+                  row (get-in (last live-buttons) [:bounds :row])
                   label (if (lv/settled? pane) " Recorded " " LIVE ")
                   button-w (count label)
                   right (let [{:keys [col width]} (:bounds (first copies))]
@@ -275,13 +296,23 @@
                               (:kind (.lookup interactions/hit-map (int x) (int row))))))
               (.setHovered interactions/hit-map hit)
               (paint!)
-              (let [hovered (grid terminal cols 44)]
+              (let [hovered (grid terminal cols 44)
+                    without-live-buttons (fn [cells]
+                                           (reduce (fn [cells {:keys [bounds]}]
+                                                     (let [{:keys [row col width]} bounds]
+                                                       (reduce #(assoc-in %1 [row %2] nil)
+                                                               cells
+                                                               (range col (+ col width)))))
+                                                   cells
+                                                   live-buttons))]
+
                 (doseq [^TextCharacter cell (subvec (nth hovered row) col right)]
                   (expect (= theme/header-active-tab-fg (.getForegroundColor cell)))
                   (expect (= theme/header-active-tab-accent (.getBackgroundColor cell)))
                   (expect (.isBold cell)))
                 (expect (= (subvec (nth baseline row) 0 col) (subvec (nth hovered row) 0 col)))
-                (expect (= (assoc baseline row nil) (assoc hovered row nil))))
+                ;; Controls for the same view can highlight together; other cells stay unchanged.
+                (expect (= (without-live-buttons baseline) (without-live-buttons hovered))))
               (.setHovered interactions/hit-map nil)
               (paint!)
               (expect (= baseline (grid terminal cols 44)))))))
@@ -289,40 +320,41 @@
 
 (defdescribe
   inline-live-view-has-an-extra-bottom-padding-row
-  (it
-    "inline live view has an extra bottom padding row"
-    ;; A compact receipt retains exactly one blank padding row below its title.
-    (doseq [cols
-            [40 80 120]
+  (it "inline live view has an extra bottom padding row"
+      ;; A compact receipt retains exactly one blank padding row below its title.
+      (doseq [cols
+              [40 80 120]
 
-            pane
-            [(review-pane) (lv/minimized (review-pane)) (lv/armed (review-pane))
-             (lv/reopened (lv/settled (review-pane) {:reason :completed} 2000))]]
+              pane
+              [(review-pane) (lv/minimized (review-pane)) (lv/armed (review-pane))
+               (lv/reopened (lv/settled (review-pane) {:reason :completed} 2000))]]
 
-      (with-open [terminal
-                  (DefaultVirtualTerminal. (TerminalSize. cols 44))
+        (with-open [terminal
+                    (DefaultVirtualTerminal. (TerminalSize. cols 44))
 
-                  ts
-                  (doto (TerminalScreen. terminal) (.startScreen))]
+                    ts
+                    (doto (TerminalScreen. terminal) (.startScreen))]
 
-        (binding [interactions/hit-map (interactions/create-hit-map)]
-          (let [payload (paint-review! ts pane)
-                lines (:lines payload)
-                index-of (fn [kind]
-                           (first (keep-indexed #(when (= kind (get-in %2 [:live-entry :kind])) %1)
-                                                (:line-meta payload))))
-                title-index (index-of :inline-title)
-                padding (nth lines (inc title-index))
-                header (first (filter #(= :live-reopen (:kind %)) (.current interactions/hit-map)))
-                {:keys [row col width]} (:bounds header)
-                padding-row (inc row)]
+          (binding [interactions/hit-map (interactions/create-hit-map)]
+            (let [payload (paint-review! ts pane)
+                  lines (:lines payload)
+                  index-of (fn [kind]
+                             (first (keep-indexed #(when (= kind (get-in %2 [:live-entry :kind]))
+                                                     %1)
+                                                  (:line-meta payload))))
+                  title-index (index-of :inline-title)
+                  padding (nth lines (inc title-index))
+                  ;; The receipt follows the persistent control on the digest row.
+                  header (last (filter #(= :live-reopen (:kind %)) (.current interactions/hit-map)))
+                  {:keys [row col width]} (:bounds header)
+                  padding-row (inc row)]
 
-            (expect (= (subs (nth lines title-index) 0 1) padding))
-            (expect (not= padding (nth lines (+ title-index 2))))
-            (doseq [^TextCharacter cell
-                    (subvec (nth (grid terminal cols 44) padding-row) col (+ col width))]
-              (expect (= " " (.getCharacterString cell)))
-              (expect (= theme/code-block-bg (.getBackgroundColor cell))))))))))
+              (expect (= (subs (nth lines title-index) 0 1) padding))
+              (expect (not= padding (nth lines (+ title-index 2))))
+              (doseq [^TextCharacter cell
+                      (subvec (nth (grid terminal cols 44) padding-row) col (+ col width))]
+                (expect (= " " (.getCharacterString cell)))
+                (expect (= theme/code-block-bg (.getBackgroundColor cell))))))))))
 
 (defdescribe
   running-grid-and-clipped-clicks

@@ -1442,7 +1442,9 @@
                   (if recorded? :artifact :live-reopen)
 
                   button
-                  (first (filter #(= kind (:kind %)) (.current interactions/hit-map)))
+                  ;; The digest also opens this view; select the control on the LIVE receipt.
+                  (first (filter #(and (= kind (:kind %)) (= live-y (get-in % [:bounds :row])))
+                                 (.current interactions/hit-map)))
 
                   {:keys [row col width]}
                   (:bounds button)]
