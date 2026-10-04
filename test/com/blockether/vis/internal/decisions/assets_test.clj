@@ -140,7 +140,9 @@
           (expect (seq (:requires artifact))))
         (expect (= :decisions/unknown-model (:type (error-data #(assets/entry "unknown")))))))
   (it "publishes every complete GLiNER2.5 model with distinct pinned artifacts"
-      (expect (= (conj (set (keys assets/gliner-architectures)) "laya-typed-decisions")
+      (expect (= (-> (set (keys assets/gliner-architectures))
+                     (into (keys assets/decision2-architectures))
+                     (conj "laya-typed-decisions"))
                  (set (map :id (assets/manifest)))))
       (expect (= #{"gliner2.5-base" "gliner2.5-small" "gliner2.5-multi" "gliner2.5-decide"
                    "gliner2.5-decide-1b" "gliner2.5-multi-decide"}
@@ -176,6 +178,31 @@
                         url
                         "https://github.com/Blockether/vis/releases/download/assets-pack/")))
             (expect (seq (:requires artifact)))))))
+  (it "publishes Decision 2.0 with external FP32 weights and a separate decision head"
+      (let [id
+            "decision2.0-eos-0.8b"
+
+            revision
+            "3594047d69f476f1d01cf84c593e213fc3a4dfe0"
+
+            model
+            (assets/entry id)]
+
+        (expect (= #{id} (set (keys assets/decision2-architectures))))
+        (expect (= revision (:revision model)))
+        (expect (= "Apache-2.0" (:license model)))
+        (expect (= (str "https://huggingface.co/vllm-sr/Decision-2.0-Eos-0.8B/tree/" revision)
+                   (:source-url model)))
+        (expect (= (assets/inference-required id) (:requires (assets/artifact model :inference))))
+        (expect (= #{"backbone/config.json" "backbone/model.safetensors" "decision_config.json"
+                     "decision_head.safetensors" "tokenizer.json" "tokenizer_config.json"
+                     "PROVENANCE.json" "LICENSE.txt"}
+                   (set (:requires (assets/artifact model :training)))))
+        (doseq [kind [:inference :training]]
+          (let [artifact (assets/artifact model kind)]
+            (expect (re-matches #"[0-9a-f]{64}" (:sha256 artifact)))
+            (expect (< 0 (:bytes artifact) 2000000000))
+            (expect (nil? (:parts artifact)))))))
   (it "splits every archive above the release asset limit into verified parts"
       (expect (seq (:parts (assets/artifact (assets/entry "gliner2.5-decide-1b") :training))))
       (expect (seq (:parts (assets/artifact (assets/entry "gliner2.5-decide-1b") :inference))))

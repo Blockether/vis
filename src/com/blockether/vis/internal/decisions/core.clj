@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.decisions.core
-  "Typed Laya and GLiNER inference over verified local FP32 bundles; no downloads."
+  "Typed Laya, GLiNER and Decision 2.0 inference over verified local FP32 bundles; no downloads."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -15,6 +15,7 @@
             OrtSession$SessionOptions]
            [charred JSONReader$JSONObj]
            [java.io File]
+           [java.math MathContext RoundingMode]
            [java.util LinkedHashMap]))
 
 (set! *warn-on-reflection* true)
@@ -191,6 +192,7 @@
     {:id id
      :type type
      :instruction (text instruction)
+     :instructions instruction
      :criteria criteria
      :options (options type criteria)}))
 
@@ -361,6 +363,213 @@
       :ids ids
       :markers markers)))
 
+(def ^:private ^:const max-decision2-input-tokens
+  "Longest Decision 2.0 question. The cache reserves 1.5 times the FP32 weights. A 2048-token CPU
+   run peaked at 3.0 GB, but a 4096-token run peaked at 5.6 GB, about 1.9 times the weights."
+  2048)
+
+(def ^:private decision2-prompt-version "decision2-segmented-options-global-query-v1")
+
+(def ^:private decision2-suffix
+  "\n\nSelect the single option best supported by the context and instructions.\nDecision:")
+
+(defn- python-string
+  "Escape a string like Python `json.dumps(..., ensure_ascii=False)`."
+  ^String [^String value]
+  (let [out (StringBuilder. (+ 2 (.length value)))]
+    (.append out \")
+    (dotimes [i (.length value)]
+      (let [c (.charAt value i)]
+        (case c
+          \"
+          (.append out "\\\"")
+
+          \\
+          (.append out "\\\\")
+
+          \newline
+          (.append out "\\n")
+
+          \return
+          (.append out "\\r")
+
+          \tab
+          (.append out "\\t")
+
+          \backspace
+          (.append out "\\b")
+
+          \formfeed
+          (.append out "\\f")
+
+          (if (< (int c) 0x20) (.append out (format "\\u%04x" (int c))) (.append out c)))))
+    (.toString (.append out \"))))
+
+(defn- python-float
+  "Format a finite double like Python `repr`: shortest digits, fixed or exponent notation."
+  ^String [^double value]
+  (when (or (Double/isNaN value) (Double/isInfinite value))
+    (invalid! "Decision 2.0 JSON numbers must be finite"))
+  (if (zero? value)
+    (if (neg? (Math/copySign 1.0 value)) "-0.0" "0.0")
+    (let [magnitude
+          (Math/abs value)
+
+          ^BigDecimal shortest
+          (.stripTrailingZeros (BigDecimal. (Double/toString magnitude)))
+
+          ;; Java can print two digits where one digit also round-trips; Python prints one.
+          ^BigDecimal decimal
+          (or (when (= 2 (.precision shortest))
+                (->> [RoundingMode/FLOOR RoundingMode/CEILING]
+                     (map #(.round shortest (MathContext. 1 ^RoundingMode %)))
+                     (filter #(== magnitude (.doubleValue ^BigDecimal %)))
+                     (sort-by #(.abs (.subtract (BigDecimal. magnitude) ^BigDecimal %)))
+                     first))
+              shortest)
+
+          digits
+          (str (.unscaledValue decimal))
+
+          exponent
+          (- (dec (count digits)) (.scale decimal))]
+
+      (str (when (neg? value) "-")
+           (cond (or (<= 16 exponent) (< exponent -4)) (str (subs digits 0 1)
+                                                            (when (< 1 (count digits))
+                                                              (str "." (subs digits 1)))
+                                                            (if (neg? exponent) "e-" "e+")
+                                                            (format "%02d" (Math/abs exponent)))
+                 (neg? exponent) (str "0." (str/join (repeat (dec (- exponent)) "0")) digits)
+                 (<= (count digits) (inc exponent))
+                 (str digits (str/join (repeat (- (inc exponent) (count digits)) "0")) ".0")
+                 :else (str (subs digits 0 (inc exponent)) "." (subs digits (inc exponent))))))))
+
+(defn- code-point-compare
+  "Order object keys like Python: by code point, not by UTF-16 unit."
+  [^String a ^String b]
+  (let [^ints x
+        (.toArray (.codePoints a))
+
+        ^ints y
+        (.toArray (.codePoints b))
+
+        n
+        (min (alength x) (alength y))]
+
+    (loop [i 0]
+      (cond (= i n) (compare (alength x) (alength y))
+            (= (aget x i) (aget y i)) (recur (inc i))
+            :else (compare (aget x i) (aget y i))))))
+
+(defn- canonical-json
+  "Decision 2.0 canonical JSON: sorted keys, compact separators and raw Unicode."
+  ^String [value]
+  (cond (string? value) (python-string value)
+        (instance? java.util.Map value)
+        (str "{"
+             (str/join ","
+                       (map (fn [[k v]]
+                              (str (python-string (str k)) ":" (canonical-json v)))
+                            (sort-by #(str (key %)) code-point-compare value)))
+             "}")
+        (instance? java.util.List value) (str "[" (str/join "," (map canonical-json value)) "]")
+        (nil? value) "null"
+        (boolean? value) (str value)
+        (or (double? value) (float? value) (decimal? value)) (python-float (double value))
+        (integer? value) (str value)
+        :else (invalid! "Decision 2.0 values must be JSON values")))
+
+(defn- decision2-payload [value] (if (string? value) value (canonical-json value)))
+
+(defn- decision2-options
+  "Upstream Decision 2.0 option keys and raw descriptions, in prompt order."
+  [{:keys [id type criteria]}]
+  (let [entries
+        #(mapv (fn [[label description]]
+                 [label description])
+               %)
+
+        options
+        (case type
+          "choice"
+          (if (instance? java.util.Map criteria)
+            (entries criteria)
+            (mapv (fn [label]
+                    [label nil])
+                  criteria))
+
+          "score"
+          (mapv (fn [i description]
+                  [(str i) description])
+                (range)
+                criteria)
+
+          "noul"
+          (let [criteria (or criteria {})]
+            (when-not (every? #{"false" "true"} (keys criteria))
+              (invalid! (str "Decision 2.0 noul criteria accept only false and true for " id)))
+            (if (< (count criteria) 2)
+              [["false" (get criteria "false" "No")] ["true" (get criteria "true" "Yes")]]
+              (entries criteria))))]
+
+    (when-not (<= 2 (count options) (if (= type "score") 10 64))
+      (invalid! (str "Decision 2.0 needs " (if (= type "score") "2–10 score levels" "2–64 options")
+                     " for " id)))
+    options))
+
+(defn- decision2-sequence-item
+  "Tokenize the prompt segments separately, like upstream, and mark the option endpoints."
+  [^HuggingFaceTokenizer tokenizer config state item]
+  (let [options
+        (decision2-options item)
+
+        prefix
+        (str "Context:\n"
+             (decision2-payload state)
+             "\n\nTask type: "
+             (:type item)
+             "\nQuestion:\n"
+             (decision2-payload (:instructions item))
+             "\nOptions:")
+
+        [ids markers]
+        (reduce (fn [[ids markers] [label description]]
+                  (let [part (raw-token-ids tokenizer
+                                            (str "\n<option>\n"
+                                                 (canonical-json {"key" label
+                                                                  "description" description})
+                                                 "\n</option>"))]
+                    (when (empty? part)
+                      (invalid! (str "Decision 2.0 option produced no token for " (:id item))))
+                    (let [ids (into ids part)]
+                      [ids (conj markers (dec (count ids)))])))
+                [(raw-token-ids tokenizer prefix) []]
+                options)
+
+        ids
+        (into ids (raw-token-ids tokenizer decision2-suffix))
+
+        input-tokens
+        (count ids)
+
+        max-input-tokens
+        (long (get config "max_input_tokens"))]
+
+    (when (> input-tokens max-input-tokens)
+      (throw (ex-info (str "Decision 2.0 input has " input-tokens
+                           " tokens; the per-question limit is " max-input-tokens
+                           ". Shorten the state, question instructions or criteria. "
+                           "Input is not truncated.")
+                      {:type :decisions/input-too-long
+                       :input-tokens input-tokens
+                       :max-input-tokens max-input-tokens})))
+    (assoc item
+      :options options
+      :ids ids
+      :markers markers
+      :query (dec input-tokens))))
+
 (defn- tensor-batch
   [items pad-id]
   (let [width
@@ -476,6 +685,44 @@
        "confidence" (round4 (max (second probabilities) (- 1.0 (second probabilities))))
        "action" action-result})))
 
+(defn- decision2-answer
+  "Answer at temperature 1 with upstream probabilities; an exact tie selects the first label."
+  [{:keys [type criteria options]} logits]
+  (let [probabilities
+        (softmax logits)
+
+        labels
+        (mapv first options)
+
+        peak
+        (double (reduce max probabilities))
+
+        winner
+        (first (keep-indexed (fn [i p]
+                               (when (<= (- peak (double p)) 1.0e-8) i))
+                             probabilities))
+
+        conf
+        (round4 (confidence probabilities))]
+
+    (case type
+      "choice"
+      {"type" type
+       "choice" (nth labels winner)
+       "probabilities" (zipmap labels (map round4 probabilities))
+       "confidence" conf}
+
+      "score"
+      {"type" type
+       "score" (round4 (reduce + (map-indexed #(* %1 %2) probabilities)))
+       "legend" (zipmap labels criteria)
+       "probabilities" (zipmap labels (map round4 probabilities))
+       "confidence" conf}
+
+      "noul"
+      (let [truth (double (nth probabilities (.indexOf ^java.util.List labels "true")))]
+        {"type" type "noul" (round4 truth) "confidence" (round4 (max truth (- 1.0 truth)))}))))
+
 (defn- run-batch
   [^OrtEnvironment environment ^OrtSession session items special config]
   (let [batch (tensor-batch items (get special "[PAD]"))]
@@ -558,6 +805,40 @@
         (mapv #(run-gliner-chunk environment session % special) groups)]
 
     {:answers (into {} (map :answers) results) :logits (into {} (map :logits) results)}))
+
+(defn- run-decision2
+  "Run each question alone: causal layers need no padding mask, and memory stays bounded."
+  [^OrtEnvironment environment ^OrtSession session items]
+  (into {}
+        (map
+          (fn [{:keys [id ids markers query options] :as item}]
+            (with-open [^OnnxTensor input
+                        (tensor environment [(long-array ids)])
+
+                        ^OnnxTensor candidates
+                        (tensor environment [(long-array markers)])
+
+                        ^OnnxTensor queries
+                        (OnnxTensor/createTensor environment ^Object (long-array [query]))
+
+                        ^OrtSession$Result outputs
+                        (.run session
+                              {"input_ids" input
+                               "candidate_positions" candidates
+                               "query_positions" queries})]
+
+              (let [^"[[F" logits
+                    (.getValue ^OnnxValue (.get ^java.util.Optional (.get outputs "logits")))
+
+                    values
+                    (vec (aget logits 0))]
+
+                (when-not (and (= (count options) (count values))
+                               (every? #(Double/isFinite (double %)) values))
+                  (throw (ex-info "Decision 2.0 graph returned invalid option logits"
+                                  {:type :decisions/invalid-bundle})))
+                [id (decision2-answer item values)]))))
+        items))
 
 (def ^:private session-threads 4)
 
@@ -656,10 +937,60 @@
                          (try (.close session) (finally (.close tokenizer))))}))
            (catch Throwable e (.close tokenizer) (throw e))))))
 
+(defn- open-decision2-model!
+  [model ^File dir]
+  (let [provenance
+        (wire/parse-json (slurp (io/file dir "PROVENANCE.json")))
+
+        decision-config
+        (wire/parse-json (slurp (io/file dir "decision_config.json")))
+
+        limit
+        (get provenance "max_input_tokens")]
+
+    (when-not (and (= "onnx" (get provenance "format"))
+                   (= "fp32" (get provenance "precision"))
+                   (= "decision2" (get provenance "family"))
+                   (= (:id model) (get provenance "model"))
+                   (= (:revision model) (get provenance "revision"))
+                   (= (get assets/decision2-architectures (:id model))
+                      (get provenance "architecture")
+                      (get decision-config "architecture"))
+                   (= decision2-prompt-version
+                      (get provenance "prompt_version")
+                      (get decision-config "prompt_version"))
+                   (integer? limit)
+                   (<= 128 (long limit)))
+      (throw (ex-info "Decision 2.0 bundle is not a compatible FP32 export"
+                      {:type :decisions/invalid-bundle :model (:id model)})))
+    (let [_
+          (runtime/ensure-ort!)
+
+          ^OrtEnvironment environment
+          (OrtEnvironment/getEnvironment)
+
+          ^HuggingFaceTokenizer tokenizer
+          (HuggingFaceTokenizer/newInstance (.toPath (io/file dir "tokenizer/tokenizer.json")))]
+
+      (try (with-open [^OrtSession$SessionOptions options
+                       (doto (OrtSession$SessionOptions.) (.setIntraOpNumThreads session-threads))]
+             (let [^OrtSession session (.createSession environment
+                                                       (.getAbsolutePath (io/file dir "model.onnx"))
+                                                       options)]
+               {:family :decision2
+                :environment environment
+                :session session
+                :tokenizer tokenizer
+                :config {"max_input_tokens" (min (long limit) max-decision2-input-tokens)}
+                :close (fn []
+                         (try (.close session) (finally (.close tokenizer))))}))
+           (catch Throwable e (.close tokenizer) (throw e))))))
+
 (defn- open-model!
   [model ^File dir]
   (cond (= "laya-typed-decisions" (:id model)) (open-laya-model! model dir)
         (contains? assets/gliner-architectures (:id model)) (open-gliner-model! model dir)
+        (contains? assets/decision2-architectures (:id model)) (open-decision2-model! model dir)
         :else (throw (ex-info "Unsupported decision inference family"
                               {:type :decisions/invalid-bundle :model (:id model)}))))
 
@@ -678,11 +1009,16 @@
         (weight-bytes dir)
         #(open-model! model dir)
         (fn [{:keys [family environment session tokenizer special config]}]
-          (let [gliner? (= family :gliner)
-                input-names (if gliner?
+          (let [input-names (case family
+                              :gliner
                               #{"input_ids" "attention_mask" "label_indices"}
+
+                              :decision2
+                              #{"input_ids" "candidate_positions" "query_positions"}
+
                               #{"input_ids" "attention_mask" "marker_pos" "marker_mask" "qtype"})
-                output-names (if gliner? #{"logits"} #{"logits" "act_logits"})]
+                output-names
+                (if (#{:gliner :decision2} family) #{"logits"} #{"logits" "act_logits"})]
 
             (when-not (and (= input-names (set (.getInputNames ^OrtSession session)))
                            (= output-names (set (.getOutputNames ^OrtSession session))))
@@ -693,19 +1029,31 @@
                                    "instructions" "Choose one option"
                                    "criteria" {"a" "First" "b" "Second"}})
                   item
-                  (if gliner?
+                  (case family
+                    :gliner
                     (gliner-sequence-item tokenizer config "Decision import validation" probe)
+
+                    :decision2
+                    (decision2-sequence-item tokenizer config "Decision import validation" probe)
+
                     (sequence-item tokenizer special config "Decision import validation" probe))
-                  answers (if gliner?
+                  answers (case family
+                            :gliner
                             (:answers (run-gliner-batch environment session [item] special))
+
+                            :decision2
+                            (run-decision2 environment session [item])
+
                             (run-batch environment session [item] special config))
                   result (get answers "probe")
-                  probability (get-in result ["action" "act_probability"])]
+                  probability (if (= family :decision2)
+                                (get-in result ["probabilities" "b"])
+                                (get-in result ["action" "act_probability"]))]
 
               (when-not (and (number? (get-in result ["probabilities" "a"]))
                              (number? probability)
                              (Double/isFinite (double probability)))
-                (throw (ex-info "Decision FP32 graph failed the two-head probe"
+                (throw (ex-info "Decision FP32 graph failed the classifier probe"
                                 {:type :decisions/invalid-bundle})))))))
       (finally (cache/release-idle!)))))
 
@@ -784,13 +1132,22 @@
             (weight-bytes dir)
             #(open-model! model dir)
             (fn [{:keys [family environment session tokenizer special config]}]
-              (let [gliner? (= family :gliner)
-                    items (mapv (if gliner?
+              (let [items (mapv (case family
+                                  :gliner
                                   #(gliner-sequence-item tokenizer config state %)
+
+                                  :decision2
+                                  #(decision2-sequence-item tokenizer config state %)
+
                                   #(sequence-item tokenizer special config state %))
                                 items)
-                    answers (if gliner?
+                    answers (case family
+                              :gliner
                               (:answers (run-gliner-batch environment session items special))
+
+                              :decision2
+                              (run-decision2 environment session items)
+
                               (run-batch environment session items special config))]
 
                 {"model" engine

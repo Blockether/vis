@@ -31,6 +31,9 @@
    "gliner2.5-decide-1b" "span"
    "gliner2.5-multi-decide" "boundary"})
 
+(def decision2-architectures
+  {"decision2.0-eos-0.8b" "qwen3.5-text-endpoints-global-query-shared-bilinear-mlp"})
+
 (defn inference-required
   "Files required by one explicitly named FP32 inference family."
   [model-id]
@@ -39,6 +42,9 @@
          "tokenizer/tokenizer_config.json" "PROVENANCE.json" "LICENSE.txt"]
         (contains? gliner-architectures model-id)
         ["model.onnx" "config.json" "encoder_config/config.json" "tokenizer/tokenizer.json"
+         "tokenizer/tokenizer_config.json" "PROVENANCE.json" "LICENSE.txt"]
+        (contains? decision2-architectures model-id)
+        ["model.onnx" "model.onnx.data" "decision_config.json" "tokenizer/tokenizer.json"
          "tokenizer/tokenizer_config.json" "PROVENANCE.json" "LICENSE.txt"]
         :else (throw (ex-info "Unsupported decision model family"
                               {:type :decisions/invalid-bundle :model model-id}))))
@@ -321,25 +327,41 @@
           files
           (disj names "PROVENANCE.json" "LICENSE.txt")
 
-          gliner?
-          (contains? gliner-architectures model-id)]
+          family
+          (cond (contains? gliner-architectures model-id) "gliner2.5"
+                (contains? decision2-architectures model-id) "decision2")]
 
-      (when-not (and (= "inference" (get provenance "kind"))
-                     (= "onnx" (get provenance "format"))
-                     (= "fp32" (get provenance "precision"))
-                     (= "Apache-2.0" (get provenance "license"))
-                     (if gliner?
-                       (and (= "gliner2.5" (get provenance "family"))
-                            (= (get gliner-architectures model-id) (get provenance "architecture")))
-                       (nil? (get provenance "family")))
-                     (re-matches #"(?:[0-9a-f]{40}|[0-9a-f]{64})" (str (get provenance "revision")))
-                     (= listed files)
-                     (every? #(or (= % "model.onnx")
-                                  (= % "model.onnx.data")
-                                  (= % (if gliner? "config.json" "rl_agent_config.json"))
-                                  (and gliner? (= % "encoder_config/config.json"))
-                                  (re-matches #"tokenizer/[A-Za-z0-9_.-]+\.(?:json|txt)" %))
-                             listed))
+      (when-not
+        (and (= "inference" (get provenance "kind"))
+             (= "onnx" (get provenance "format"))
+             (= "fp32" (get provenance "precision"))
+             (= "Apache-2.0" (get provenance "license"))
+             (case family
+               "gliner2.5"
+               (and (= family (get provenance "family"))
+                    (= (get gliner-architectures model-id) (get provenance "architecture")))
+
+               "decision2"
+               (and (= family (get provenance "family"))
+                    (= (get decision2-architectures model-id) (get provenance "architecture")))
+
+               (nil? (get provenance "family")))
+             (re-matches #"(?:[0-9a-f]{40}|[0-9a-f]{64})" (str (get provenance "revision")))
+             (= listed files)
+             (every? #(or (= % "model.onnx")
+                          (= % "model.onnx.data")
+                          (= %
+                             (case family
+                               "gliner2.5"
+                               "config.json"
+
+                               "decision2"
+                               "decision_config.json"
+
+                               "rl_agent_config.json"))
+                          (and (= family "gliner2.5") (= % "encoder_config/config.json"))
+                          (re-matches #"tokenizer/[A-Za-z0-9_.-]+\.(?:json|txt)" %))
+                     listed))
         (throw (ex-info "Only a complete supported FP32 decision bundle may be uploaded"
                         {:type :decisions/invalid-archive})))
       (spit (io/file dir ".vis-verified") (str expected-sha "\n"))

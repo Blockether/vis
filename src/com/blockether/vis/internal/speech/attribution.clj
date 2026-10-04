@@ -168,9 +168,13 @@
                  (:sha256 artifact)
                  "`)")))
         ["- Training checkpoints are installed only when explicitly requested."
-         "- The vis-decisions extension supplies training dependencies."
-         "- Model scores do not authorize autonomous actions; evaluate both decision"
-         "  heads on held-out examples before relying on them."]))))
+         "- The vis-decisions extension supplies training dependencies."]
+        ;; Decision 2.0 has no action head, so only one head needs evaluation.
+        (if (contains? decisions/decision2-architectures (:id entry))
+          ["- Model scores do not authorize autonomous actions; evaluate the decision"
+           "  head on held-out examples before relying on it."]
+          ["- Model scores do not authorize autonomous actions; evaluate both decision"
+           "  heads on held-out examples before relying on them."])))))
 
 (defn markdown
   "The entire `THIRD_PARTY_MODELS.md`, rendered from both manifests."

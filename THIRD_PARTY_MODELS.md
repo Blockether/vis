@@ -24,6 +24,7 @@ This file is generated from `resources/vis-models/manifest.edn` and
 | `gliner2.5-decide` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
 | `gliner2.5-decide-1b` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
 | `gliner2.5-multi-decide` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
+| `decision2.0-eos-0.8b` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
 
 ## `parakeet-tdt-0.6b-v3-int8`
 
@@ -262,3 +263,20 @@ GLiNER2.5 multi-Decide by Fastino, Apache-2.0. Multilingual full boundary-head c
 - The vis-decisions extension supplies training dependencies.
 - Model scores do not authorize autonomous actions; evaluate both decision
   heads on held-out examples before relying on them.
+
+## `decision2.0-eos-0.8b`
+
+Decision model - Apache-2.0 - commercial use permitted - hosted by Vis.
+
+Decision 2.0 Eos 0.8B by vLLM Semantic Router, Apache-2.0, fine-tuned from Decision 1.0 Eos 0.8B and Qwen3.5 0.8B. Full Qwen3.5 backbone and decision-head checkpoint, and FP32 ONNX export by Vis. Choice, score and yes/no decisions without an action head; not approved for autonomous actions.
+
+- Upstream: <https://huggingface.co/vllm-sr/Decision-2.0-Eos-0.8B/tree/3594047d69f476f1d01cf84c593e213fc3a4dfe0>
+- Pinned revision: `3594047d69f476f1d01cf84c593e213fc3a4dfe0`
+- Installs into: `~/.vis/models/decisions/decision2.0-eos-0.8b/3594047d69f476f1d01cf84c593e213fc3a4dfe0/`
+- Downloaded from the shared Vis assets-pack release (verified by SHA-256):
+  - inference: <https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-eos-0.8b-fp32.zip> (1763 MB, SHA-256 `0d6761151d36999def1ed27d6a345b23631ff5c4a53357cb9ca54fe723528afa`)
+  - training: <https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-eos-0.8b-training.zip> (1525 MB, SHA-256 `40cf3908b994a7244a25654ac0eb32f940b9bb94b095130907516c7cfbe5173f`)
+- Training checkpoints are installed only when explicitly requested.
+- The vis-decisions extension supplies training dependencies.
+- Model scores do not authorize autonomous actions; evaluate the decision
+  head on held-out examples before relying on it.

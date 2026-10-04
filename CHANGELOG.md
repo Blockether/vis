@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   Windows and Linux, and `vis-agent desktop --track beta` opens the newest beta's app.
   `vis-agent update --track beta` refreshes an installed beta app with the engine. Beta
   and stable apps are cached separately, so opening one track keeps the other's app.
+- Vis supports the Decision 2.0 Eos 0.8B decision model from vLLM Semantic Router as
+  `decision2.0-eos-0.8b`. It makes choice, score and yes/no decisions on inputs of up to
+  2,048 tokens, and it has no action head. The shared assets release has its FP32 ONNX
+  bundle and its training checkpoint. Version 0.2.0 of the vis-decisions extension trains
+  it and exports new bundles.
 
 ### Changed
 - Documentation is easier to find. `apropos()` also matches documentation pages

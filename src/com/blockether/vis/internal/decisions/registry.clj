@@ -19,7 +19,9 @@
   [name]
   (and (string? name)
        (boolean (re-matches #"[a-z][a-z0-9-]{0,63}" name))
-       (not (contains? (conj (set (keys assets/gliner-architectures)) "laya-typed-decisions")
+       (not (contains? (-> (set (keys assets/gliner-architectures))
+                           (into (keys assets/decision2-architectures))
+                           (conj "laya-typed-decisions"))
                        name))))
 
 (defn- record

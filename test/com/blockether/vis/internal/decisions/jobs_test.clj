@@ -326,6 +326,38 @@
               (expect (= (vec (keys assets/gliner-architectures)) @selected)))))))))
 
 (defdescribe
+  decision2-jobs-report-no-action-accuracy
+  (it
+    "decision2 jobs complete without action accuracy, and other families still need it"
+    (fixture
+      (fn [_ _ baseline]
+        (let [digest (apply str (repeat 64 "c"))]
+          (with-redefs [assets/entry (fn [id]
+                                       {:id id})
+                        assets/artifact (fn [model _]
+                                          {:id (:id model)})
+                        assets/install-dir (fn [_ _]
+                                             (.getPath baseline))
+                        assets/installed? (fn [& _]
+                                            true)
+                        registry/register! (fn [_ _ _]
+                                             {"model_ref" (str "sha256-" digest)})
+                        decisions/validate-runtime! (fn [& _])]
+
+            (binding [jobs/*execute!*
+                      (fn [spec _ _]
+                        (spit (get (wire/parse-json (slurp spec)) "archive") "fp32-only")
+                        {"sha256" digest "bytes" 9 "decision_accuracy" 0.75 "action_accuracy" nil})]
+              (let [created (jobs/create! (assoc request "model_id" "decision2.0-eos-0.8b"))
+                    done (await-status (get created "job_id") "completed")]
+
+                (expect (= {"decision_accuracy" 0.75 "action_accuracy" nil} (get done "metrics"))))
+              (let [created (jobs/create! (assoc request "model_id" "gliner2.5-base"))
+                    failed (await-status (get created "job_id") "failed")]
+
+                (expect (= "failed" (get failed "status")))))))))))
+
+(defdescribe
   gliner-jobs-fail-closed-without-their-interpreter-or-valid-model
   (it "gliner jobs fail closed without their interpreter or valid model"
       (fixture

@@ -14,9 +14,9 @@ heads. Then decide when a human must review a result before you rely on it.
 - **You also need a rating or a direct answer**, such as how urgent the request is
   and whether the item can be refunded. Ask `score` and `noul` questions in the same
   call.
-- **You must decide when a person should review a result.** Each answer includes an
-  action-versus-escalation score. Evaluate it on your own labels before you rely on
-  it.
+- **You must decide when a person should review a result.** Laya and GLiNER2.5 answers
+  include an action-versus-escalation score. Evaluate it on your own labels before you
+  rely on it.
 - **Your requests use languages other than English.** Choose a multilingual
   [GLiNER2.5 model](#choose-and-train-a-gliner2-5-model).
 - **Your gateway has little memory or CPU.** Choose the small
@@ -24,6 +24,8 @@ heads. Then decide when a human must review a result before you rely on it.
 - **The smaller models do not classify your English requests well enough.** If your
   computers have enough memory, evaluate the larger
   [GLiNER2.5 Decide 1B model](#choose-and-train-a-gliner2-5-model).
+- **The GLiNER2.5 models do not answer your questions well enough, and you need no action
+  score.** Evaluate the [Decision 2.0 model](#choose-and-train-decision-2-0) on your own labels.
 - **The baseline does not fit your data.** [Train with your own
   labels](#train-locally-with-the-python-sdk), then [publish a verified version and
   select it](#publish-explicitly-and-select-a-version).
@@ -41,7 +43,7 @@ SDK](python-sdk.md) instead.
 The `assets-pack` release contains pinned FP32 inference bundles and complete checkpoints.
 It also keeps the existing voice assets. Starting a gateway never downloads weights.
 The [vis-decisions extension](https://github.com/Blockether/vis-decisions) supplies the Python client and training runtime.
-Both model families use one environment with Transformers 5.
+All model families use one environment with Transformers 5.
 
 Install Vis, then download the pinned inference bundle on the machine running your
 gateway:
@@ -60,7 +62,7 @@ vis-agent decisions models download --model laya-typed-decisions --training
 
 The command prints the inference and training directories. It does not download Python dependencies.
 Install the vis-decisions runtime while you have network access.
-Its pinned environment supports both Laya and GLiNER, so you do not need separate environments.
+Its pinned environment supports Laya, GLiNER2.5 and Decision 2.0, so you do not need separate environments.
 Allow several gigabytes for checkpoints, FP32 bundles, dependencies and exported versions. Review model licenses and
 provenance in
 [`THIRD_PARTY_MODELS.md`](https://github.com/Blockether/vis/blob/main/THIRD_PARTY_MODELS.md).
@@ -120,6 +122,10 @@ GLiNER does not truncate the state or question. The gateway rejects a sequence a
 limit before model inference. A sequence exactly at the limit is accepted. Character counts
 cannot predict this boundary because each model uses its own tokenizer.
 
+Decision 2.0 has a fixed limit of 2,048 tokens for each question. The state, question type,
+instructions, option keys, option descriptions and prompt text share that budget. Decision 2.0
+also does not truncate input. The gateway rejects a longer question before model inference.
+
 For overlong input, `Decisions.infer` raises `GatewayError` with `status == 400` and
 `code == "input-too-long"`. Its `input_tokens` attribute gives the rejected sequence's token
 count. Its `max_input_tokens` attribute gives the configured limit. The error also tells you
@@ -148,7 +154,7 @@ To use training tools in Vis, add this [extension declaration](extension-package
 extensions:
   vis-decisions:
     source: https://github.com/Blockether/vis-decisions
-    version: "0.1.0"
+    version: "0.2.0"
 ```
 
 Then open a session in that project. For example, ask:
@@ -297,6 +303,38 @@ labeled examples. Here, GLiNER inference covers decision classification and act/
 or JSON extraction. Export and training use a lot of CPU, RAM and disk. Do not use these weights for
 autonomous actions without representative, held-out validation.
 
+### Choose and train Decision 2.0
+
+Decision 2.0 Eos 0.8B is a decision model from vLLM Semantic Router. It reads the state, the
+instructions and each option with its description. Then it selects one option. Its model ID is
+`decision2.0-eos-0.8b`. The FP32 bundle download is 1.76 GB, and the checkpoint download is 1.52 GB.
+
+Decision 2.0 answers `choice`, `score` and `noul` questions. It has no action head, so its answers
+have no `action` field. Use your own review rule to decide when a person checks a result. A
+`choice` question needs 2 to 64 options. A `score` question needs 2 to 10 levels.
+
+Check these resources before you choose it:
+
+- While the model is loaded, the gateway reserves 4,312 MB of memory. The default
+  `VIS_DECISION_MEMORY_BUDGET_MB` of 8,192 MB is enough for this model alone.
+- On an Apple M4 Max with 4 CPU threads, a question at the 2,048-token limit took about 6 seconds.
+- Allow at least 15 GB of free disk for the checkpoint, a trained version and its upload archive.
+
+Download the FP32 bundle for the gateway. For training, also download the complete checkpoint:
+
+```bash
+vis-agent decisions models download --model decision2.0-eos-0.8b
+vis-agent decisions models download --model decision2.0-eos-0.8b --training
+```
+
+Training uses the same JSONL rows as GLiNER2.5. The `action` field is optional and not used. For a
+`noul` question, set `target` to `0` for false or `1` for true. Use the GLiNER2.5 training
+settings, for example `{"epochs":1,"max_steps":100,"encoder_lr":0.00001,"task_lr":0.0005}`.
+
+Set only `min_decision_accuracy` in `policy.json`. The trainer rejects a policy with
+`min_action_accuracy`. Then call `Trainer.train` as in the GLiNER2.5 example. The validation
+report and the gateway job metrics give `action_accuracy` as `null`.
+
 ### Resume or continue training
 
 Long training can fail or stop before it finishes. To keep its progress, add `checkpoint_steps`
@@ -397,7 +435,7 @@ files as model assets.
 ## Train on the gateway instead
 
 Set `VIS_DECISION_TRAINING_PYTHON` to the Python 3.12 executable in your prepared vis-decisions environment.
-Both model families use this interpreter. The gateway never downloads training dependencies.
+All model families use this interpreter. The gateway never downloads training dependencies.
 Set `VIS_DECISION_TRAINING_DATA_ROOT` to a directory of approved JSONL/JSON files on the gateway.
 Before starting, download the selected model's pinned checkpoint with `--training`.
 

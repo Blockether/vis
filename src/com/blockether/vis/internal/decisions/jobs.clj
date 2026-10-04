@@ -22,7 +22,9 @@
 (def ^:private max-saved-jobs 4)
 
 (def ^:private training-models
-  (conj (set (keys assets/gliner-architectures)) "laya-typed-decisions"))
+  (-> (set (keys assets/gliner-architectures))
+      (into (keys assets/decision2-architectures))
+      (conj "laya-typed-decisions")))
 
 (def ^:private inputs
   {"train_data" ["train.jsonl" 16777216]
@@ -254,16 +256,19 @@
 (def ^:dynamic *execute!* execute-process!)
 
 (defn- valid-result?
-  [result ^File archive]
-  (and (map? result)
-       (re-matches #"[0-9a-f]{64}" (str (get result "sha256")))
-       (integer? (get result "bytes"))
-       (= (long (get result "bytes")) (.length archive))
-       (every?
-         (fn [name]
-           (let [value (get result name)]
-             (and (number? value) (<= 0.0 (double value) 1.0) (Double/isFinite (double value)))))
-         ["decision_accuracy" "action_accuracy"])))
+  [result ^File archive model-id]
+  (let [score?
+        (fn [value]
+          (and (number? value) (<= 0.0 (double value) 1.0) (Double/isFinite (double value))))]
+    (and (map? result)
+         (re-matches #"[0-9a-f]{64}" (str (get result "sha256")))
+         (integer? (get result "bytes"))
+         (= (long (get result "bytes")) (.length archive))
+         (score? (get result "decision_accuracy"))
+         ;; Decision 2.0 has no action head, so its trainer reports no action accuracy.
+         (if (contains? assets/decision2-architectures model-id)
+           (nil? (get result "action_accuracy"))
+           (score? (get result "action_accuracy"))))))
 
 (defn- cleanup-inference!
   [id]
@@ -287,7 +292,7 @@
       (let [result (*execute!* (io/file dir "spec.json") #(progress! id %) #(cancelled? id))]
         (when (cancelled? id)
           (throw (ex-info "Decision training was cancelled" {:type :decisions/cancelled})))
-        (when-not (valid-result? result archive)
+        (when-not (valid-result? result archive (get (read-status id) "model_id"))
           (throw (ex-info "Decision trainer result is incomplete"
                           {:type :decisions/training-failed})))
         (locking lock
