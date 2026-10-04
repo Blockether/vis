@@ -40,7 +40,7 @@ SDK](python-sdk.md) instead.
 
 This guide builds on three pages. [Configuration](configuration.md) declares the training extension
 for a project. A [session](sessions.md) in that project runs the training tools. Your application
-connects as [Python SDK basics](python-sdk.md) describes.
+connects as [Python SDK](python-sdk.md) describes.
 
 ## Download the baseline
 
@@ -506,7 +506,7 @@ leaves existing versions and aliases unchanged. Metrics on a small sample do
 
 ## See also
 
-- [Python SDK basics](python-sdk.md) — connect to a gateway with your credentials.
+- [Python SDK](python-sdk.md) — connect to a gateway with your credentials.
 - [Configuration](configuration.md) — declare the training extension for a project.
 - [Sessions](sessions.md) — open the session in which Vis trains a model.
 - [Running a gateway](gateway-service.md) — secure and operate the service.

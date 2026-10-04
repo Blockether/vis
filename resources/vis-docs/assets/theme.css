@@ -1039,6 +1039,66 @@ button.primary:hover {
   }
 }
 
+/* Paired examples. Without JavaScript, the page shows both variants, each with
+   its label. With JavaScript, the switch shows one variant. `scripting: enabled`
+   hides the HTTP default before docs.js runs, so the page does not jump. */
+.variant-switch {
+  display: inline-flex;
+  margin: 0 0 1.1rem;
+  border: 1px solid var(--line);
+}
+.variant-switch[hidden] {
+  display: none;
+}
+.variant-switch button {
+  background: var(--bg);
+  color: var(--dim);
+}
+.variant-switch button + button {
+  border-left-color: var(--line);
+}
+.variant-switch button[aria-pressed='true'] {
+  background: var(--code-bg);
+  color: var(--fg);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--primary);
+}
+.content [data-variant] {
+  margin: 1.25rem 0;
+  padding-left: 1rem;
+  border-left: 2px solid var(--line);
+}
+.content .variant-label {
+  margin: 0 0 0.5rem;
+  color: var(--dim);
+  font-size: var(--text-small);
+  font-weight: 600;
+}
+@media (scripting: enabled) {
+  .content [data-variant] {
+    margin: 0;
+    padding-left: 0;
+    border-left: 0;
+  }
+  .content [data-variant='http'],
+  .content .variant-label {
+    display: none;
+  }
+}
+:root[data-docs-variant] .content [data-variant] {
+  margin: 0;
+  padding-left: 0;
+  border-left: 0;
+}
+:root[data-docs-variant] .content .variant-label,
+:root[data-docs-variant='python'] .content [data-variant='http'],
+:root[data-docs-variant='http'] .content [data-variant='python'] {
+  display: none;
+}
+:root[data-docs-variant='http'] .content [data-variant='http'] {
+  display: block;
+}
+
 /* Screenshot galleries: native scrolling, with optional keyboard and button controls. */
 .screenshot-gallery {
   margin: 1.5rem 0 2.5rem;

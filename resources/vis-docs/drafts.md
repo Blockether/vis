@@ -18,8 +18,7 @@ experimental and off by default.**
   checkout](#recover-a-session-opened-in-the-wrong-draft).
 - **Your team needs its own check before a draft is approved.** An extension can
   [guard approvals with a hook](#hooks-for-extensions).
-- **Your own program must turn on drafts or read the draft state.** Use [Drafts in
-  Python](python-drafts.md) or [Drafts over HTTP](http-drafts.md).
+- **Your own program must turn on drafts or read the draft state.** Use [Drafts API](drafts-api.md).
 
 Read-only questions and analysis do not need a draft.
 
@@ -277,7 +276,6 @@ stops the operation. Each approval-created draft commit also crosses
 
 ## See also
 
-- [Drafts in Python](python-drafts.md) — turn on drafts and read the draft state from a Python program.
-- [Drafts over HTTP](http-drafts.md) — the same operations as HTTP requests.
+- [Drafts API](drafts-api.md) — turn on drafts and read the draft state from your own program.
 - [Configuration](configuration.md) — the `draft_backend` toggle and the `draft` policy of extra roots.
 - [Extending Vis](extending.md) — op hooks on `draft/create`, `draft/approve` and `draft/discard`.

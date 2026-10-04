@@ -1,6 +1,7 @@
-"""Keep each Python SDK page and its HTTP API mirror page in step.
+"""Keep the Python and HTTP variants of each merged API page in step.
 
-`docs-modules-test` in the docs core test checks that both pages have the same `##` headings.
+A merged page holds paired `<div data-variant="python">` and `<div data-variant="http">`
+blocks. The site shows both behind one switch; `doc` gives the agent the Python variant.
 """
 
 import inspect
@@ -54,52 +55,80 @@ def _sdk_methods():
 
 
 _PAGES = sorted(_DOCS.glob("*.md"))
-# `python-sdk.md` and `http-api.md` are the two basics pages. `python-sandbox.md` is a concept.
-_BASICS = {"python-sdk.md", "python-sandbox.md", "http-api.md"}
+_VARIANT_OPEN = re.compile(r'<div data-variant="([a-z]+)">')
+_FENCE = re.compile(r"^\s*(?:```|~~~)")
+
+
+def _variant_text(md, variant):
+    """`md` as a reader of `variant` gets it: lines outside every block, and the
+    lines of the `variant` blocks without their tags. A tag in fenced code is text."""
+    kept, fenced, current = [], False, None
+    for line in md.splitlines():
+        fence = bool(_FENCE.match(line))
+        opening = None if (fenced or fence or current) else _VARIANT_OPEN.fullmatch(line.strip())
+        closing = current and not fenced and not fence and line.strip() == "</div>"
+        if opening:
+            current = opening[1]
+        elif closing:
+            current = None
+        elif current in (None, variant):
+            kept.append(line)
+        if fence:
+            fenced = not fenced
+    return "\n".join(kept)
+
+
+# A merged page is `<topic>-api.md` with paired variant blocks. `http-api.md` is a basics
+# page and `extension-api.md` has no variants, so neither one is a topic here.
 _CONCEPTS = sorted(
-    page.name.removeprefix(prefix).removesuffix(".md")
+    page.name.removesuffix("-api.md")
     for page in _PAGES
-    for prefix in ("python-", "http-")
-    if page.name.startswith(prefix) and page.name not in _BASICS
+    if page.name.endswith("-api.md") and 'data-variant="python"' in page.read_text()
 )
 
 
 def test_pages_name_gateway_routes_only_on_http_pages():
+    # An empty topic list once turned the parametrized cases below into zero cases.
+    assert len(_CONCEPTS) == 7, f"merged API pages found: {_CONCEPTS}"
     for page in _PAGES:
-        if not page.name.startswith("http-"):
-            assert not _ROUTE.search(page.read_text()), f"{page.name} names a route"
-    assert "automations" in _CONCEPTS
+        if page.name == "http-api.md":
+            continue
+        # Only the HTTP variant of a merged page may name a route.
+        text = _variant_text(page.read_text(), "python")
+        assert not _ROUTE.search(text), f"{page.name} names a route outside its HTTP variant"
 
 
 @pytest.mark.parametrize("concept", sorted(set(_CONCEPTS)))
-def test_each_concept_has_a_python_page_and_an_http_page(concept):
-    assert _CONCEPTS.count(concept) == 2, f"{concept}: only one mirror page"
+def test_each_merged_page_has_both_variants_and_a_concept_page(concept):
+    page = (_DOCS / f"{concept}-api.md").read_text()
+    for variant in ("python", "http"):
+        assert f'data-variant="{variant}"' in page, f"{concept}-api.md: no {variant} variant"
     assert (_DOCS / f"{concept}.md").exists(), f"{concept}: no concept page"
 
 
 @pytest.mark.parametrize("concept", sorted(set(_CONCEPTS)))
-def test_python_and_http_pages_cover_the_same_routes(concept):
-    python = (_DOCS / f"python-{concept}.md").read_text()
-    http = (_DOCS / f"http-{concept}.md").read_text()
+def test_python_and_http_variants_cover_the_same_routes(concept):
+    page = (_DOCS / f"{concept}-api.md").read_text()
+    python, http = _variant_text(page, "python"), _variant_text(page, "http")
     audiences, methods = _audiences(), _sdk_methods()
     routes = {(verb, _shape(path)) for verb, path in _ROUTE.findall(http)}
-    assert routes, f"http-{concept}.md names no route"
+    assert routes, f"{concept}-api.md names no route in its HTTP variant"
     unknown = sorted(route for route in routes if route not in audiences)
-    assert not unknown, f"http-{concept}.md: unknown routes {unknown}"
+    assert not unknown, f"{concept}-api.md: unknown routes {unknown}"
     sdk_routes = {route for route in routes if audiences[route] == "sdk"}
     without_call = sorted(
         route for route in sdk_routes if route not in methods and route not in _TYPED
     )
     assert not without_call, (
-        f"http-{concept}.md: routes without an SDK call {without_call}"
+        f"{concept}-api.md: routes without an SDK call {without_call}"
     )
     expected = {methods[route] for route in sdk_routes if route in methods}
     named = {
         name for name in set(methods.values()) if re.search(rf"\b{name}\(", python)
     }
     assert named == expected, (
-        f"{concept}: only on the HTTP page {sorted(expected - named)}, "
-        f"only on the Python page {sorted(named - expected)}"
+        f"{concept}: only in the HTTP variant {sorted(expected - named)}, "
+        f"only in the Python variant {sorted(named - expected)}"
     )
     typed = sorted(
         name
@@ -108,4 +137,4 @@ def test_python_and_http_pages_cover_the_same_routes(concept):
         and route not in methods
         and not re.search(rf"\.{name}\(", python)
     )
-    assert not typed, f"python-{concept}.md: typed calls missing {typed}"
+    assert not typed, f"{concept}-api.md: typed calls missing from the Python variant {typed}"

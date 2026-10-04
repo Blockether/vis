@@ -14,9 +14,8 @@ callbacks and host operations.
 - **Your extension needs a service from Vis**, such as [durable
   state](#durable-state), [environment variables](#environment), [session
   context](#session-context) or [another session tool](#call-other-session-tools).
-- **Your own program must read or export Activity history.** Read [Sessions in
-  Python](python-sessions.md#read-activity-history) or [Sessions over
-  HTTP](http-sessions.md#read-activity-history).
+- **Your own program must read or export Activity history.** Read [Sessions
+  API](sessions-api.md#read-activity-history).
 
 Start with the [tutorial](extending.md) for a complete entry file or [Extension
 design](extension-design.md) for authoring and test guidance.
@@ -510,8 +509,7 @@ Vis does not discard saved Activity.
 
 For clients, a projection's optional `history` object identifies its durable record and carries the
 revision, total invocation count and page cursor. A client reads the history in pages with the
-[Python SDK](python-sessions.md#read-activity-history) or the [HTTP
-API](http-sessions.md#read-activity-history). `q` searches all saved details. Follow
+[Sessions API](sessions-api.md#read-activity-history). `q` searches all saved details. Follow
 `history.next_after` until it is `null`. Pages contain at most 32 invocations and 1 MiB, without
 shortening their details. Synthetic group headings do not count as invocations.
 
@@ -1064,5 +1062,5 @@ Ordinary `open()` uses the extension's permissions too, not the model's jail.
 - [Extension design](extension-design.md) — choosing and documenting tool behavior.
 - [Installing and sharing extensions](extension-packages.md) — installation and reload.
 - [Extension troubleshooting](extension-troubleshooting.md) — loading and call errors.
-- [Sessions in Python](python-sessions.md#read-activity-history) — read the saved Activity of a
-  session from a program.
+- [Sessions API](sessions-api.md#read-activity-history) — read the saved Activity of a session from
+  a program.

@@ -12,8 +12,8 @@ Your project files and tools stay on the computer running it.
   SSH tunnel or HTTPS.
 - **Scripts and SDK clients need a service that is always running.** [Keep it
   running on Linux](#keep-it-running-on-linux) under a service manager.
-- **Your own program must call the gateway.** Read [Python SDK basics](python-sdk.md) or [HTTP API
-  basics](http-api.md).
+- **Your own program must call the gateway.** Read [Python SDK](python-sdk.md) or [HTTP
+  API](http-api.md).
 - **A client cannot connect, or a task stops making progress.** See [Troubleshoot a
   connection](#troubleshoot-a-connection) and [Collect evidence when work stops
   progressing](#collect-evidence-when-work-stops-progressing).
@@ -306,7 +306,7 @@ for cleanup rules. Review the files before sharing them.
 - [Getting started](index.md) — install Vis and connect an app for the first time.
 - [Sessions](sessions.md) — the sessions that every connected client shows.
 - [Configuration](configuration.md) — the settings that the gateway reads.
-- [Python SDK basics](python-sdk.md) — connect a script or wrap an owned local agent.
-- [HTTP API basics](http-api.md) — authenticate requests from any language and read gateway errors.
+- [Python SDK](python-sdk.md) — connect a script or wrap an owned local agent.
+- [HTTP API](http-api.md) — authenticate requests from any language and read gateway errors.
 - [Native builds for JVM extensions](jvm-native-image.md) — only when adding Java/Clojure capabilities to the engine.
 - [Process jail and network policy](jail.md) — limit what the service's tools can access.

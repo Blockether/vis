@@ -19,8 +19,7 @@ threads, so later sessions can use what they learned.
   threads, where later sessions can [reuse them](#reuse-existing-session-context).
 - **Your sessions run on different machines.** [Create or join a Council room](#connect-machines-with-a-room), then select which groups or sessions can use it.
 - **You send a room invitation to another person.** [Keep the link safe](#keep-invitations-safe), because anyone with the link can join the room.
-- **Your own program coordinates sessions.** Use [Council in Python](python-council.md)
-  or [Council over HTTP](http-council.md).
+- **Your own program coordinates sessions.** Use [Council API](council-api.md).
 
 Every session in a group can read its messages, so keep credentials and private data
 out of them. See [Groups and settings](#groups-and-settings).
@@ -218,9 +217,8 @@ Room messages and session titles are shared data. Do not put credentials or priv
 
 ## Sandbox calls
 
-The rest of this page describes the calls behind those conversations. The async
-examples run in the agent's Python sandbox. To call Council from your own program,
-read [Council in Python](python-council.md) or [Council over HTTP](http-council.md).
+The rest of this page describes the calls behind those conversations. The async examples run in the
+agent's Python sandbox. To call Council from your own program, read [Council API](council-api.md).
 You do not need these calls to use Council through chat.
 
 ### Reuse existing session context
@@ -444,8 +442,7 @@ There is no separate agent scheduler or synchronous call between sessions.
 
 ## See also
 
-- [Council in Python](python-council.md) — publish, read and manage rooms from a Python program.
-- [Council over HTTP](http-council.md) — the same operations as HTTP requests.
+- [Council API](council-api.md) — publish, read and manage rooms from your own program.
 - [Configuration](configuration.md) — persistent feature toggles.
 - [Python sandbox](python-sandbox.md) — host tools and session context.
 - [Running a gateway](gateway-service.md) — gateway scope and authentication.

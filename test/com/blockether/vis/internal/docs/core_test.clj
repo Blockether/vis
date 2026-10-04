@@ -4,8 +4,9 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.docs.core :as docs]
+            [com.blockether.vis.internal.docs.corpus :as dc]
             [com.blockether.vis.test-prose :as prose]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defn- rendered-theme
   [html mode]
@@ -33,8 +34,12 @@
               (do (expect (str/includes? html "src=\"assets/prism.min.js\" defer"))
                   (expect (str/includes? html "src=\"assets/docs.js\" defer"))
                   (expect (not (str/includes? html "<script>"))))
+              ;; Live pages inline the same docs.js that static pages load.
               (do (expect (str/includes? html "Prism.languages.python="))
-                  (expect (str/includes? html "Prism.highlightAll();</script>"))))
+                  (expect (str/includes? html
+                                         (str "\n"
+                                              (slurp (io/resource "vis-docs/assets/docs.js"))
+                                              "</script>")))))
             (expect (re-find #"\.content p img\s*\{\s*max-width: 100%;\s*height: auto;\s*\}" css))
             (expect (re-find #"\.content pre code\.language-python\s*\{\s*font-size: 0\.75rem;\s*\}"
                              css))))))
@@ -798,57 +803,79 @@
                     css)
                   "Ordered markers must not depend on the browser's native separator width.")))))
 
-(defdescribe handle-md-redirect-test
-             (it "GET /docs/<slug>.md permanent-redirects to /docs/<slug>"
-                 (let [resp (docs/handle {:uri "/docs/skills.md" :headers {}})]
-                   (expect (= 301 (:status resp)))
-                   (expect (= "/docs/skills" (get-in resp [:headers "location"])))))
-             (it "redirects old app-guide URLs to getting started without replacing their fragments"
-                 (doseq [uri ["/docs/gateway" "/docs/gateway/" "/docs/gateway.md"
-                              "/docs/gateway.html"]]
-                   (expect (= {:status 301 :headers {"location" "/docs"} :body ""}
-                              (docs/handle {:uri uri :headers {}}))
-                           uri)))
-             (it "redirects merged session pages to Sessions without replacing their fragments"
-                 (doseq [page
-                         ["queue-and-cancel" "exporting-sessions"]
+(defdescribe
+  handle-md-redirect-test
+  (it "GET /docs/<slug>.md permanent-redirects to /docs/<slug>"
+      (let [resp (docs/handle {:uri "/docs/skills.md" :headers {}})]
+        (expect (= 301 (:status resp)))
+        (expect (= "/docs/skills" (get-in resp [:headers "location"])))))
+  (it "redirects old app-guide URLs to getting started without replacing their fragments"
+      (doseq [uri ["/docs/gateway" "/docs/gateway/" "/docs/gateway.md" "/docs/gateway.html"]]
+        (expect (= {:status 301 :headers {"location" "/docs"} :body ""}
+                   (docs/handle {:uri uri :headers {}}))
+                uri)))
+  (it "redirects merged session pages to Sessions without replacing their fragments"
+      (doseq [page
+              ["queue-and-cancel" "exporting-sessions"]
 
-                         suffix
-                         ["" "/" ".md" ".html"]
+              suffix
+              ["" "/" ".md" ".html"]
 
-                         :let [uri
-                               (str "/docs/" page suffix)]]
+              :let [uri
+                    (str "/docs/" page suffix)]]
 
-                   (expect (= {:status 301 :headers {"location" "/docs/sessions"} :body ""}
-                              (docs/handle {:uri uri :headers {}}))
-                           uri)))
-             (it "redirects renamed pages to their new slugs without replacing their fragments"
-                 (doseq [[page target]
-                         {"motivation" "/docs/rationale"
-                          "token-optimization" "/docs/context-management"
-                          "context-and-prompts" "/docs/project-instructions"}
+        (expect (= {:status 301 :headers {"location" "/docs/sessions"} :body ""}
+                   (docs/handle {:uri uri :headers {}}))
+                uri)))
+  (it "redirects renamed pages to their new slugs without replacing their fragments"
+      (doseq [[page target]
+              {"motivation" "/docs/rationale"
+               "token-optimization" "/docs/context-management"
+               "context-and-prompts" "/docs/project-instructions"}
 
-                         suffix
-                         ["" "/" ".md" ".html"]
+              suffix
+              ["" "/" ".md" ".html"]
 
-                         :let [uri
-                               (str "/docs/" page suffix)]]
+              :let [uri
+                    (str "/docs/" page suffix)]]
 
-                   (expect (= {:status 301 :headers {"location" target} :body ""}
-                              (docs/handle {:uri uri :headers {}}))
-                           uri)))
-             (it "redirects the removed Java and Clojure SDK guide to HTTP API basics"
-                 (doseq [suffix
-                         ["" "/" ".md" ".html"]
+        (expect (= {:status 301 :headers {"location" target} :body ""}
+                   (docs/handle {:uri uri :headers {}}))
+                uri)))
+  (it "redirects the removed Java and Clojure SDK guide to HTTP API basics"
+      (doseq [suffix
+              ["" "/" ".md" ".html"]
 
-                         :let [uri
-                               (str "/docs/jvm-sdk" suffix)]]
+              :let [uri
+                    (str "/docs/jvm-sdk" suffix)]]
 
-                   (expect (= {:status 301 :headers {"location" "/docs/http-api"} :body ""}
-                              (docs/handle {:uri uri :headers {}}))
-                           uri)))
-             (it "an unknown .md path still falls through as nil"
-                 (expect (nil? (docs/handle {:uri "/docs/nope-zzz.md" :headers {}})))))
+        (expect (= {:status 301 :headers {"location" "/docs/http-api"} :body ""}
+                   (docs/handle {:uri uri :headers {}}))
+                uri)))
+  (it "redirects merged Python and HTTP pages to their API page and variant"
+      (doseq [topic
+              ["automations" "configuration" "context-management" "council" "drafts"
+               "project-instructions" "sessions"]
+
+              variant
+              ["python" "http"]
+
+              suffix
+              ["" "/" ".md" ".html"]
+
+              :let [uri
+                    (str "/docs/" variant "-" topic suffix)
+
+                    target
+                    (str "/docs/" topic "-api?variant=" variant)]]
+
+        (expect (= {:status 301 :headers {"location" target} :body ""}
+                   (docs/handle {:uri uri :headers {}}))
+                uri)
+        (expect (= 200 (:status (docs/handle {:uri (str "/docs/" topic "-api") :headers {}})))
+                target)))
+  (it "an unknown .md path still falls through as nil"
+      (expect (nil? (docs/handle {:uri "/docs/nope-zzz.md" :headers {}})))))
 
 (defdescribe
   collect-memoization-test
@@ -977,6 +1004,69 @@
   (let [tail (second (str/split md #"(?m)^## When to use$" 2))]
     (re-seq #"(?m)^[-*+] " (first (str/split (str tail) #"(?m)^## " 2)))))
 
+(def ^:private variant-names
+  "The variants a paired page can give, in the order a pair gives them."
+  ["python" "http"])
+
+(defn- variant-breaks
+  "PURE: every way the variant blocks of `md` break the page contract, as
+   reader-facing lines without the page name. Commonmark renders the Markdown in
+   a block only after a blank line, and a heading in a block would give one
+   variant a table-of-contents entry that the other hides."
+  [^String md]
+  (let [lines
+        (map-indexed (fn [i line]
+                       (assoc line :n (inc (long i))))
+                     (dc/variant-lines md))
+
+        body?
+        (fn [{:keys [variant tag fenced?]}]
+          (and variant (not tag) (not fenced?)))
+
+        order
+        (->> lines
+             (keep (fn [{:keys [variant tag text]}]
+                     (cond (= :open tag) variant
+                           (and (nil? variant) (not (str/blank? text))) :shared)))
+             (partition-by #{:shared})
+             (mapcat #(if (= :shared (first %)) [:shared] %)))]
+
+    (concat (for [{:keys [n tag variant]}
+                  lines
+
+                  :when (and (= :open tag) (not (some #{variant} variant-names)))]
+
+              (str "line " n " opens the unknown variant " (pr-str variant)))
+            (for [[a b]
+                  (partition 2 1 lines)
+
+                  :when (or (and (= :open (:tag a)) (not (str/blank? (:text b))))
+                            (and (= :close (:tag b)) (not (str/blank? (:text a)))))]
+
+              (str "line " (:n a) " needs a blank line between the variant tag and the Markdown"))
+            (for [{:keys [n text] :as line}
+                  lines
+
+                  :when (and (body? line) (re-matches #"#{1,6} .*" text))]
+
+              (str "line " n " is a heading inside a variant block"))
+            (for [{:keys [n text] :as line}
+                  lines
+
+                  :when (and (body? line) (str/includes? text "<div data-variant="))]
+
+              (str "line " n " opens a variant block inside another one"))
+            (let [{:keys [variant tag]} (last lines)]
+              (when (and variant (not= :close tag))
+                ["a variant block is not closed at the end of the page"]))
+            (for [[a b]
+                  (partition 2 1 (concat [:shared] order [:shared]))
+
+                  :when (or (and (= "python" a) (not= "http" b))
+                            (and (= "http" b) (not= "python" a)))]
+
+              (str "a " (pr-str a) " block is followed by " (pr-str b) ", not by its pair")))))
+
 (defn- page-canon
   "PURE: every way `page` breaks the page contract, as reader-facing lines.
    `anchors` is `{slug #{anchor-id}}` for the whole site, so a cross-page
@@ -1066,6 +1156,7 @@
         (say "the fence on line " line
              " declares " (if (str/blank? lang) "no language" (pr-str lang))))
       (map say (prose/breaks md))
+      (map say (variant-breaks md))
       (when (str/blank? (str blurb)) [(say "has no `:blurb` in vis-docs/site.edn")])
       (for [[_ target frag]
             (re-seq #"\]\((?!https?:|/|#)([A-Za-z0-9._-]+\.md)(#[A-Za-z0-9._-]+)?\)" md)
@@ -1132,72 +1223,86 @@
   (it "leaves the intro module alone"
       (expect (empty? (when-to-use-breaks (canon-fixture "Intro" "Rationale" []))))))
 
-(defn- h2-headings
-  "The `##` heading texts of `md`, outside code fences, in page order."
-  [md]
-  (keep (fn [[_ lvl text]]
-          (when (= 2 lvl) text))
-        (:headings (scan md))))
-
 (defn- links-to?
   "True when `md` links the page `slug`."
   [md slug]
   (str/includes? md (str "(" slug ".md")))
 
 (defdescribe
+  variant-canon-test
+  "A Feature API page gives each example as a Python block and then an HTTP block.
+   Commonmark renders the Markdown in a block only after a blank line."
+  (let [pair (str "<div data-variant=\"python\">\n\nPython text.\n\n</div>\n\n"
+                  "<div data-variant=\"http\">\n\nHTTP text.\n\n</div>\n")]
+    (it "accepts paired blocks with blank lines around their Markdown"
+        (expect (empty? (variant-breaks (str "# Page\n\nLead.\n\n" pair "\nShared.\n\n" pair)))))
+    (it "accepts the markup as an example inside fenced code"
+        (expect (empty? (variant-breaks
+                          "```markdown\n<div data-variant=\"ruby\">\n## Heading\n</div>\n```\n"))))
+    (describe
+      "flags"
+      (it "Markdown right after a tag"
+          (expect (seq (variant-breaks (str/replace-first pair "\">\n\n" "\">\n")))))
+      (it "Markdown right before a closing tag"
+          (expect (seq (variant-breaks
+                         (str/replace-first pair "text.\n\n</div>" "text.\n</div>")))))
+      (it "a heading inside a block"
+          (expect (seq (variant-breaks (str/replace-first pair "Python text." "## Python")))))
+      (it "an unknown variant"
+          (expect (seq (variant-breaks (str/replace pair "\"http\"" "\"curl\"")))))
+      (it "a Python block without its HTTP pair"
+          (expect (seq (variant-breaks (str (first (str/split pair #"(?=<div data-variant=\"http)"))
+                                            "\nShared.\n")))))
+      (it "an HTTP block before its Python pair"
+          (expect (seq (variant-breaks (str/join "\n" (reverse (str/split pair #"(?=<div)")))))))
+      (it "a block that is never closed"
+          (expect (seq (variant-breaks "<div data-variant=\"python\">\n\nText.\n")))))))
+
+(defdescribe
   docs-modules-test
   "The manual reads in modules: the intro, the concepts, the programmatic access to
-   those concepts and the guides built on both. A Python SDK page and its HTTP API
-   page cover one concept with the same headings, so a reader can change between
-   them at any section."
+   those concepts and the guides built on both. A Feature API page gives each
+   example in Python and as HTTP requests, so a reader changes between them with
+   one switch."
   (it "orders the modules and the programmatic groups"
       (let [{:keys [pages]} (docs/collect)]
         (expect (= ["Intro" "Concepts" "Programmatic access" "Guides" "Extensions" "Reference"]
                    (distinct (map :section pages))))
         (expect (= ["rationale" "index"] (mapv :slug (filter :intro? pages))))
-        (expect (= ["Python SDK" "HTTP API"] (distinct (keep :group pages))))))
-  (it
-    "mirrors each Python SDK page with an HTTP API page that has the same headings"
-    (let [{:keys [pages]}
-          (docs/collect)
+        (expect (= ["Basics" "Feature APIs"] (distinct (keep :group pages))))
+        (expect (= ["python-sdk" "http-api"]
+                   (mapv :slug (filter #(= "Basics" (:group %)) pages))))))
+  (it "gives each concept that a program drives one API page with both variants"
+      (let [{:keys [pages]}
+            (docs/collect)
 
-          in-group
-          (fn [group]
-            (filter #(= group (:group %)) pages))
+            concept-md
+            (into {} (comp (filter #(= "Concepts" (:section %))) (map (juxt :slug :md))) pages)
 
-          sdk
-          (in-group "Python SDK")
+            api-pages
+            (filter #(= "Feature APIs" (:group %)) pages)]
 
-          http
-          (in-group "HTTP API")
+        (expect (seq api-pages))
+        (doseq [{:keys [slug variants]}
+                api-pages
 
-          concept-md
-          (into {} (comp (filter #(= "Concepts" (:section %))) (map (juxt :slug :md))) pages)]
+                :let [concept
+                      (str/replace slug #"-api$" "")]]
 
-      (expect (= "python-sdk" (:slug (first sdk))))
-      (expect (= "http-api" (:slug (first http))))
-      (expect (= (map #(subs (:slug %) (count "python-")) (rest sdk))
-                 (map #(subs (:slug %) (count "http-")) (rest http))))
-      (doseq [[py ht]
-              (map vector (rest sdk) (rest http))
-
-              :let [concept
-                    (subs (:slug py) (count "python-"))
-
-                    md
-                    (concept-md concept)]]
-
-        (expect (some? md) (:slug py))
-        (expect (= (h2-headings (:md py)) (h2-headings (:md ht))) (:slug py))
-        (expect (links-to? (str md) (:slug py)) concept)
-        (expect (links-to? (str md) (:slug ht)) concept))))
-  (it "names gateway routes only on the HTTP API pages"
-      (doseq [{:keys [slug group md]}
+          (expect (str/ends-with? slug "-api") slug)
+          (expect (= variant-names variants) slug)
+          (expect (links-to? (str (concept-md concept)) slug) concept))
+        (expect (= (set (map :slug api-pages))
+                   (set (map :slug (filter (comp seq :variants) pages))))
+                "only Feature API pages give paired variants")))
+  (it "names gateway routes only in HTTP blocks and on HTTP API basics"
+      (doseq [{:keys [slug md]}
               (:pages (docs/collect))
 
-              :when (not= "HTTP API" group)]
+              :when (not= "http-api" slug)]
 
-        (expect (not (re-find #"\b(GET|POST|PUT|PATCH|DELETE) /" md)) slug)))
+        (expect (not (re-find #"\b(GET|POST|PUT|PATCH|DELETE) /" (dc/variant-text md "python")))
+                slug)))
   (it "builds every guide on a concept page and a programmatic page"
       (let [{:keys [pages]}
             (docs/collect)

@@ -17,8 +17,8 @@ apps and the command line.
   each state.
 - **You need a conversation from last week.** [Find the
   session](#find-a-saved-session) by its title or by something said in it.
-- **Your program must create sessions, send messages or find saved sessions.** Read [Sessions in
-  Python](python-sessions.md) or [Sessions over HTTP](http-sessions.md).
+- **Your program must create sessions, send messages or find saved sessions.** Read [Sessions
+  API](sessions-api.md).
 - **You want to try another approach without losing this conversation.** [Fork
   the session](#fork-a-session).
 - **The last few turns went wrong and you want to go back.** [Fork from an earlier
@@ -332,5 +332,4 @@ vis-agent sessions export 3a7b2c1d --html report.html
 - [Council](council.md) — ask another session for help or a second review.
 - [Reporting a bug](reporting-bugs.md) — remove private information before you share an export.
 - [Project instructions](project-instructions.md) — slash commands and shell shortcuts you can queue.
-- [Sessions in Python](python-sessions.md) — create, follow and manage sessions from a Python program.
-- [Sessions over HTTP](http-sessions.md) — the same operations as HTTP requests from any language.
+- [Sessions API](sessions-api.md) — create, follow and manage sessions from your own program.

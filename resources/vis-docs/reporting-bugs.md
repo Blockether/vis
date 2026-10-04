@@ -58,8 +58,8 @@ If the report needs a transcript to show the bug, export it and redact it:
 vis-agent sessions export <SESSION-ID> --md > /tmp/report.md
 ```
 
-To export from your own code, read [Export a session](python-sessions.md#export-a-session) in Python
-or [over HTTP](http-sessions.md#export-a-session).
+To export from your own code, read [Export a session](sessions-api.md#export-a-session) in the
+Sessions API.
 
 Exports are not redacted. Before you share an export, do these steps:
 
@@ -93,5 +93,5 @@ to the affected part.
 ## See also
 
 - [Sessions](sessions.md#export-a-session) — create a transcript export.
-- [Sessions in Python](python-sessions.md#export-a-session) — export a transcript from a script.
+- [Sessions API](sessions-api.md#export-a-session) — export a transcript from a script.
 - [Configuration](configuration.md) — identify relevant settings.

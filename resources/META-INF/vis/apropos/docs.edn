@@ -9,21 +9,14 @@
  {:kind "doc" :name "jvm-native-image" :resource "vis-docs/jvm-native-image.md"}
  {:kind "doc" :name "distributions" :resource "vis-docs/distributions.md"}
  {:kind "doc" :name "python-sdk" :resource "vis-docs/python-sdk.md"}
- {:kind "doc" :name "python-sessions" :resource "vis-docs/python-sessions.md"}
- {:kind "doc" :name "python-context-management" :resource "vis-docs/python-context-management.md"}
- {:kind "doc" :name "python-project-instructions" :resource "vis-docs/python-project-instructions.md"}
- {:kind "doc" :name "python-drafts" :resource "vis-docs/python-drafts.md"}
- {:kind "doc" :name "python-council" :resource "vis-docs/python-council.md"}
- {:kind "doc" :name "python-automations" :resource "vis-docs/python-automations.md"}
- {:kind "doc" :name "python-configuration" :resource "vis-docs/python-configuration.md"}
  {:kind "doc" :name "http-api" :resource "vis-docs/http-api.md"}
- {:kind "doc" :name "http-sessions" :resource "vis-docs/http-sessions.md"}
- {:kind "doc" :name "http-context-management" :resource "vis-docs/http-context-management.md"}
- {:kind "doc" :name "http-project-instructions" :resource "vis-docs/http-project-instructions.md"}
- {:kind "doc" :name "http-drafts" :resource "vis-docs/http-drafts.md"}
- {:kind "doc" :name "http-council" :resource "vis-docs/http-council.md"}
- {:kind "doc" :name "http-automations" :resource "vis-docs/http-automations.md"}
- {:kind "doc" :name "http-configuration" :resource "vis-docs/http-configuration.md"}
+ {:kind "doc" :name "sessions-api" :resource "vis-docs/sessions-api.md"}
+ {:kind "doc" :name "context-management-api" :resource "vis-docs/context-management-api.md"}
+ {:kind "doc" :name "project-instructions-api" :resource "vis-docs/project-instructions-api.md"}
+ {:kind "doc" :name "drafts-api" :resource "vis-docs/drafts-api.md"}
+ {:kind "doc" :name "council-api" :resource "vis-docs/council-api.md"}
+ {:kind "doc" :name "automations-api" :resource "vis-docs/automations-api.md"}
+ {:kind "doc" :name "configuration-api" :resource "vis-docs/configuration-api.md"}
  {:kind "doc" :name "decision-models" :resource "vis-docs/decision-models.md"}
  {:kind "doc" :name "gateway-service" :resource "vis-docs/gateway-service.md"}
  {:kind "doc" :name "configuration" :resource "vis-docs/configuration.md"}

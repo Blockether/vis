@@ -17,8 +17,7 @@ into a summary without deleting your session history.
   address.** See [One tool, many functions](#one-tool-many-functions) and
   [Addresses, not copies](#addresses-not-copies).
 - **Your own program must show the context budget, the usage or the cost of a session.** Use
-  [Context management in Python](python-context-management.md) or [Context management over
-  HTTP](http-context-management.md).
+  [Context management API](context-management-api.md).
 
 ## Folding settled work
 
@@ -165,9 +164,8 @@ print(defs("summarize_rows", details=True))
 
 ## See also
 
-- [Context management in Python](python-context-management.md) — context, usage and cache health from a
-  Python program.
-- [Context management over HTTP](http-context-management.md) — the same operations as HTTP requests.
+- [Context management API](context-management-api.md) — context, usage and cache health from your
+  own program.
 - [Python sandbox](python-sandbox.md) — the interpreter the model's programs run in.
 - [Extending Vis](extending.md) — turning a recurring helper into a tool.
 - [Skills](skills.md) — instructions loaded when needed rather than included in every request.

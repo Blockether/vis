@@ -1,7 +1,10 @@
-# Configuration over HTTP
+# Configuration API
 
-Read and change Vis settings with HTTP requests from any language. The routes change the same
-settings as the Settings views, for the gateway, a project, a group or one session.
+Read and change Vis settings from your own program. The program changes the same settings as the
+Settings views, for the gateway, a project, a group or one session.
+
+The examples use the [Python SDK](python-sdk.md). To see the same steps as [HTTP API](http-api.md)
+requests, select **HTTP** at the top of the page.
 
 ## When to use
 
@@ -14,15 +17,42 @@ settings as the Settings views, for the gateway, a project, a group or one sessi
 - **You edited an extension and the gateway must load the new code.** [Reload
   extensions](#reload-extensions).
 
-To learn the settings and the configuration files, read [Configuration](configuration.md). To use
-typed calls from Python, read [Configuration in Python](python-configuration.md).
+To learn the settings and the configuration files, read [Configuration](configuration.md). To send
+the same requests from another language, select **HTTP** at the top of the page.
 
 ## Before you start
+
+<div data-variant="python">
+
+Connect a `GatewayClient` as in [Connect to a gateway and run a
+task](python-sdk.md#connect-to-a-gateway-and-run-a-task). The examples are calls on that `client`.
+
+</div>
+
+<div data-variant="http">
 
 Define the `vis_api` function from [Authenticate requests](http-api.md#authenticate-requests). The
 examples use it.
 
+</div>
+
 ## Operations
+
+<div data-variant="python">
+
+`GatewayClient` has one method for each settings route.
+
+| Task | Method |
+|---|---|
+| Read the settings of a target | `get_settings(query=...)` |
+| Read one setting | `get_setting(id, query=...)` |
+| Change one setting | `post_settings(body=...)` |
+| Change many settings at once | `patch_settings(body=...)` |
+| Reload extensions | `post_extensions_reload(body=...)` |
+
+</div>
+
+<div data-variant="http">
 
 | Task | Method and path |
 |---|---|
@@ -32,10 +62,22 @@ examples use it.
 | Change many settings at once | `PATCH /v1/settings` |
 | Reload extensions | `POST /v1/extensions/reload` |
 
+</div>
+
 ## How settings requests work
 
-Your program reads and changes the same settings as the Settings views. The [Python
-SDK](python-configuration.md) sends the same JSON and gets the same answers.
+<div data-variant="python">
+
+The methods send and receive the JSON of the HTTP routes. You give a body or a query as a Python
+`dict`. To read the scopes, the catalog fields and the status codes, select **HTTP** at the top of
+the page. A failed request raises `GatewayError` with that status.
+
+</div>
+
+<div data-variant="http">
+
+Your program reads and changes the same settings as the Settings views. The Python SDK sends the
+same JSON and gets the same answers.
 
 A request names its target with `scope` and `target_id`. The `scope` is `global`, `project`, `group`
 or `session`. Without a scope, a request uses the global settings, never the session that you see.
@@ -62,7 +104,26 @@ extension that never loaded has a group with no rows.
 | `404` | The target, the context session or the setting ID does not exist. |
 | `409` | The `revision` of a batch is stale. Read the catalog again. |
 
+</div>
+
 ## Read settings
+
+<div data-variant="python">
+
+```python
+catalog = client.get_settings(query={"scope": "session", "target_id": session_id})
+for group in catalog["groups"]:
+    for row in group["toggles"]:
+        print(row["id"], row.get("enabled", row.get("value")), row["source"])
+
+print(client.get_setting("agent_name")["value"])
+```
+
+`get_session(session_id)` also returns the resolved `agent_name` of a session.
+
+</div>
+
+<div data-variant="http">
 
 ```bash
 vis_api "$VIS_GATEWAY_URL/v1/settings?scope=session&target_id=$SESSION_ID"
@@ -71,7 +132,26 @@ vis_api "$VIS_GATEWAY_URL/v1/settings/agent_name"
 
 `GET /v1/sessions/{sid}` also returns the resolved `agent_name` of a session.
 
+</div>
+
 ## Change one setting
+
+<div data-variant="python">
+
+```python
+client.post_settings(body={"id": "agent_name", "action": "value", "value": "Ada"})
+client.post_settings(
+    body={"scope": "session", "target_id": session_id, "id": "refusal_fallback", "action": "toggle"}
+)
+```
+
+The `action` is `value`, `toggle`, `cycle` or `inherit`. A `value` action needs `value`, also when
+the value is `False`. `inherit` removes one key at this scope, not a parent map. The answer is the
+changed row.
+
+</div>
+
+<div data-variant="http">
 
 ```bash
 vis_api -X POST "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/json' \
@@ -82,7 +162,30 @@ The `action` is `value`, `toggle`, `cycle` or `inherit`. A `value` action needs 
 the value is `false`. `inherit` removes one key at this scope, not a parent map. The answer is the
 changed row.
 
+</div>
+
 ## Change many settings
+
+<div data-variant="python">
+
+```python
+catalog = client.get_settings(query={"scope": "session", "target_id": session_id})
+client.patch_settings(
+    body={
+        "scope": "session",
+        "target_id": session_id,
+        "revision": catalog["revision"],
+        "changes": [
+            {"id": "refusal_fallback", "action": "value", "value": False},
+            {"id": "provider_fallback", "action": "inherit"},
+        ],
+    }
+)
+```
+
+</div>
+
+<div data-variant="http">
 
 Save the batch as `changes.json`, with the `revision` from your last read:
 
@@ -103,16 +206,31 @@ vis_api -X PATCH "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/js
   --data @changes.json
 ```
 
+</div>
+
 A batch has 1 to 256 changes for one target. Each change has a unique `id` and the action `value` or
 `inherit`. Vis applies the whole batch or none of it. Optional `channel` and `context_session_id`
 work as in a read. The answer is the full catalog with its new `revision`.
 
 ## Reload extensions
 
+<div data-variant="python">
+
+```python
+result = client.post_extensions_reload(body={"scope": "project", "target_id": project_id})
+print(result["loaded"], result["failed"])
+```
+
+</div>
+
+<div data-variant="http">
+
 ```bash
 vis_api -X POST "$VIS_GATEWAY_URL/v1/extensions/reload" -H 'content-type: application/json' \
   --data '{"scope": "global"}'
 ```
+
+</div>
 
 Vis runs the extension files of the target again. A global target reloads machine extensions only.
 Reading the catalog never runs extension code. An older gateway without this route answers 404.
@@ -120,5 +238,5 @@ Reading the catalog never runs extension code. An older gateway without this rou
 ## See also
 
 - [Configuration](configuration.md) — every setting, configuration file and scope.
-- [Configuration in Python](python-configuration.md) — the same operations as typed Python calls.
-- [HTTP API basics](http-api.md) — authentication, the OpenAPI document and gateway errors.
+- [Python SDK](python-sdk.md) — install the SDK, connect a client and handle gateway errors.
+- [HTTP API](http-api.md) — authentication, the OpenAPI document and gateway errors.

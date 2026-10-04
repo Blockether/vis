@@ -5,9 +5,13 @@
    Invalid static records fail at load; invalid dynamic records are logged and dropped.
 
    `entries` is the whole corpus in source order, deduplicated by EXACT name; `pages`
-   is the documentation subset the docs site renders. `apropos` applies one regular
-   expression to record names, reading a hyphenated name also as words, and to the
-   outline of pages and skills: title, opening, headings, `When to use` problems.
+   is the documentation subset the docs site renders. A page can give an example
+   twice, as a Python and an HTTP variant. `entries` gives the agent only the
+   Python variant, without the markup. `pages` keeps both for the site.
+
+   `apropos` applies one regular expression to record names, reading a hyphenated
+   name also as words, and to the outline of pages and skills: title, opening,
+   headings, `When to use` problems.
    It preserves corpus order. There is no ranking, tokenization, search index or
    classpath discovery. `doc` retrieves the same record by name and prints its
    whole text."
@@ -280,11 +284,11 @@
                      :data {:source id :name (:name entry) :explain {:valid false :value entry}}})
           false)))
 
-(defn entries
+(defn- whole-entries
   "The whole corpus, read from its plain ordered sources and deduplicated by name
    (first wins). Every entry travels WHOLE, in the one shape `:vis.doc/record`
-   declares. A source that throws contributes nothing — discovery must never be the
-   reason an environment fails to build."
+   declares, and a page keeps every variant. A source that throws contributes
+   nothing — discovery must never be the reason an environment fails to build."
   []
   (into []
         (comp (mapcat (fn [[id entries-fn]]
@@ -294,12 +298,110 @@
               (dedupe-by-name))
         @sources))
 
-(defn pages
-  "Every documentation PAGE, in manifest order and whole — the corpus filtered to the
-   `doc` kind. The docs site renders from THIS: one read, one validation, one order,
-   and no second reader of the same resources."
+;; Paired variants — the site shows each one, the agent reads Python
+
+(def agent-variant
+  "The variant of a paired page that `apropos` and `doc` give the agent. A page
+   can give one example twice, in a `<div data-variant=\"python\">` block and then
+   a `<div data-variant=\"http\">` block. The site shows both, with a switch. The
+   agent writes Python, so it gets the Python block without the markup."
+  "python")
+
+(def ^:private variant-open
+  "The line that opens a variant block. The tag stands alone on its line."
+  #"<div data-variant=\"([a-z]+)\">")
+
+(defn- fence?
+  "Whether `line` opens or closes a fenced code block."
+  [line]
+  (some? (re-find #"^\s*(?:```|~~~)" line)))
+
+(defn variant-lines
+  "PURE: each line of `md` as `{:text line :variant name :tag kind :fenced? bool}`.
+   `:variant` names the block that holds the line, and is nil outside every block.
+   `:tag` is `:open` or `:close` on the markup lines of a block. A line in fenced
+   code is never a tag, so a page can show the markup in an example."
+  [md]
+  (loop [[line & more]
+         (str/split-lines (str md))
+
+         fenced?
+         false
+
+         variant
+         nil
+
+         acc
+         (transient [])]
+
+    (if (nil? line)
+      (persistent! acc)
+      (let [fence-line?
+            (fence? line)
+
+            open
+            (when-not (or fenced? fence-line? variant)
+              (second (re-matches variant-open (str/trim line))))
+
+            close?
+            (and (some? variant) (not fenced?) (not fence-line?) (= "</div>" (str/trim line)))]
+
+        (recur more
+               (if fence-line? (not fenced?) fenced?)
+               (cond open open
+                     close? nil
+                     :else variant)
+               (conj! acc
+                      (cond open {:text line :variant open :tag :open}
+                            close? {:text line :variant variant :tag :close}
+                            :else
+                            {:text line :variant variant :fenced? (or fenced? fence-line?)})))))))
+
+(defn variants
+  "PURE: the names of the variant blocks in `md`, in page order, each one once."
+  [md]
+  (if (str/includes? (str md) "data-variant=")
+    (into [] (comp (filter #(= :open (:tag %))) (map :variant) (distinct)) (variant-lines md))
+    []))
+
+(defn variant-text
+  "PURE: `md` as a reader of `variant` gets it. Lines outside every block stay.
+   A `variant` block keeps its lines without its tags. Other blocks go. A blank
+   line next to a removed line merges with its neighbour, so no gap stays. Text
+   without a block comes back unchanged."
+  [md variant]
+  (let [md (str md)]
+    (if-not (str/includes? md "data-variant=")
+      md
+      (let [{:keys [out]}
+            (reduce (fn [{:keys [out squeeze?] :as acc} {:keys [text tag fenced?] :as line}]
+                      (let [blank? (and (not fenced?) (str/blank? text))]
+                        (cond (or tag (not (contains? #{nil variant} (:variant line))))
+                              (assoc acc :squeeze? true)
+                              (and squeeze? blank? (or (empty? out) (str/blank? (peek out)))) acc
+                              :else {:out (conj out text) :squeeze? (and squeeze? blank?)})))
+                    {:out [] :squeeze? false}
+                    (variant-lines md))]
+        (str (str/join "\n" out) (when (str/ends-with? md "\n") "\n"))))))
+
+(defn- agent-entry
+  "`entry` as the agent reads it: a documentation page in its `agent-variant`."
+  [entry]
+  (if (= "doc" (:kind entry)) (update entry :text variant-text agent-variant) entry))
+
+(defn entries
+  "The corpus that `apropos` and `doc` read, in source order and deduplicated by
+   name (first wins). A documentation page arrives in its `agent-variant` only,
+   so every agent-facing read, search included, shares ONE filter."
   []
-  (filterv #(= "doc" (:kind %)) (entries)))
+  (mapv agent-entry (whole-entries)))
+
+(defn pages
+  "Every documentation PAGE, in manifest order and whole, with every variant — the
+   `doc` kind of the corpus. The docs site renders from THIS: one read, one
+   validation, one order, and no second reader of the same resources."
+  []
+  (filterv #(= "doc" (:kind %)) (whole-entries)))
 
 ;; Search — one regular expression over names and page outlines
 
@@ -307,11 +409,6 @@
   "The kinds `search` also finds by their outline. A callable is found by its name
    alone, so a word its contract happens to use never floods a search."
   #{"doc" "skill"})
-
-(defn- fence?
-  "Whether `line` opens or closes a fenced code block."
-  [line]
-  (some? (re-find #"^\s*(?:```|~~~)" line)))
 
 (defn- problems
   "The bold statements that open the items of a `When to use` list, each as ONE

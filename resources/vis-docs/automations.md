@@ -15,9 +15,8 @@ notification or at an address that you choose. **Automations are off by default.
   address that you choose.
 - **You want to test, pause or remove an automation.** [Manage your
   automations](#manage-automations) in the TUI or the app.
-- **Your own program must create and control automations.** Read [Automations in
-  Python](python-automations.md) or [Automations over HTTP](http-automations.md). Both have the same
-  operations.
+- **Your own program must create and control automations.** Read [Automations
+  API](automations-api.md).
 
 To follow a task while it runs, use [Sessions](sessions.md). To ask another session for help or a
 second review, use [Council](council.md).
@@ -36,7 +35,7 @@ Automations support these features:
 - **Targets.** An existing session, a new session for each run or a temporary session.
 - **Delivery.** Phone notifications and signed callbacks. `[SILENT]` reports only changes.
 - **Control.** Manual runs, pause and resume, secrets and the last 200 runs of each automation.
-- **Access.** A chat, the TUI, the app, the [Python SDK](python-automations.md) and the [HTTP API](http-automations.md).
+- **Access.** A chat, the TUI, the app and the [Automations API](automations-api.md).
 
 Each automation has these parts:
 
@@ -92,8 +91,7 @@ Vis records the status and the answer of each run. You find the result in these 
 - **The session.** With the `session` and `new` targets, the answer stays in the session as a
   normal turn.
 - **Runs.** The [automation views](#manage-automations) show the last 200 runs of each automation.
-  Your program reads them with the [Python SDK](python-automations.md#read-runs) or the [HTTP
-  API](http-automations.md#read-runs).
+  Your program reads them with the [Automations API](automations-api.md#read-runs).
 - **A notification.** Push is on by default. The Vis app on your phone shows a notification for
   each run that Vis did not skip.
 - **A callback.** Vis sends each run event to an address that you choose. See [Receive
@@ -161,10 +159,9 @@ machine and select **New automation**. Fill in the name, the prompt and the trig
 **Create automation**. To change an automation, open it and select **Edit**. The form keeps the
 [filters](#filter-events) of a webhook trigger. To change them, ask Vis in a chat.
 
-To create automations from your own program, use the [Python
-SDK](python-automations.md#create-an-automation) or the [HTTP
-API](http-automations.md#create-an-automation).
-[How automations work](#how-automations-work) lists the parts of an automation.
+To create automations from your own program, use the [Automations
+API](automations-api.md#create-an-automation). [How automations work](#how-automations-work) lists
+the parts of an automation.
 
 ## Manage automations
 
@@ -270,9 +267,8 @@ The `github` and `generic` kinds use the whole secret as the HMAC key. The `stan
 base64-decoded part after `whsec_`. A `standard` or `generic` timestamp is in seconds. It must be
 within 300 seconds of the gateway clock.
 
-To send a signed request from your own code, see [Automations in
-Python](python-automations.md#send-a-webhook) or [Automations over
-HTTP](http-automations.md#send-a-webhook).
+To send a signed request from your own code, see [Automations
+API](automations-api.md#send-a-webhook).
 
 ### Filter events
 

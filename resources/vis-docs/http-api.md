@@ -13,8 +13,8 @@ its tasks.
   document](#get-the-openapi-document).
 - **A request fails with an error status.** [Handle gateway errors](#handle-gateway-errors).
 
-To use typed calls from Python, read [Python SDK basics](python-sdk.md). To install and run the
-gateway, read [Running a gateway](gateway-service.md).
+To use typed calls from Python, read [Python SDK](python-sdk.md). To install and run the gateway,
+read [Running a gateway](gateway-service.md).
 
 ## Before you start
 
@@ -73,20 +73,21 @@ An error answer has a JSON body with `error.type` and `error.message`:
 
 ## Find the requests for a feature
 
-Each concept page has an HTTP page with the same operations as its Python page.
+Each concept page has an API page. The API page shows the Python calls first. To see the same
+steps as HTTP requests, select **HTTP** at the top of the API page.
 
-| Concept | HTTP page |
+| Concept | API page |
 |---|---|
-| [Sessions](sessions.md) | [Sessions over HTTP](http-sessions.md) |
-| [Context management](context-management.md) | [Context management over HTTP](http-context-management.md) |
-| [Project instructions](project-instructions.md) | [Project instructions over HTTP](http-project-instructions.md) |
-| [Drafts](drafts.md) | [Drafts over HTTP](http-drafts.md) |
-| [Council](council.md) | [Council over HTTP](http-council.md) |
-| [Automations](automations.md) | [Automations over HTTP](http-automations.md) |
-| [Configuration](configuration.md) | [Configuration over HTTP](http-configuration.md) |
+| [Sessions](sessions.md) | [Sessions API](sessions-api.md) |
+| [Context management](context-management.md) | [Context management API](context-management-api.md) |
+| [Project instructions](project-instructions.md) | [Project instructions API](project-instructions-api.md) |
+| [Drafts](drafts.md) | [Drafts API](drafts-api.md) |
+| [Council](council.md) | [Council API](council-api.md) |
+| [Automations](automations.md) | [Automations API](automations-api.md) |
+| [Configuration](configuration.md) | [Configuration API](configuration-api.md) |
 
 ## See also
 
-- [Python SDK basics](python-sdk.md) — the same gateway with typed Python calls.
-- [Sessions over HTTP](http-sessions.md) — send messages, follow progress and manage sessions.
+- [Python SDK](python-sdk.md) — the same gateway with typed Python calls.
+- [Sessions API](sessions-api.md) — send messages, follow progress and manage sessions.
 - [Running a gateway](gateway-service.md) — install, secure and troubleshoot the gateway.

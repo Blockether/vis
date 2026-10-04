@@ -24,7 +24,7 @@ Use this guide for installation and task examples.
 - **Your program must work with sessions, Council, automations or settings.** [Find the calls for a
   feature](#find-the-calls-for-a-feature).
 
-For a program in another language, read [HTTP API basics](http-api.md).
+For a program in another language, read [HTTP API](http-api.md).
 
 ## Install the SDK
 
@@ -285,7 +285,7 @@ then sends the token with each request. The client also has one generated method
 route. The method name is the HTTP method and the words of the route path, for example
 `get_session_usage()`. Each generated method returns the parsed JSON answer.
 
-To follow the progress of a turn, read [Follow progress](python-sessions.md#follow-progress).
+To follow the progress of a turn, read [Follow progress](sessions-api.md#follow-progress).
 
 ## Give the agent your functions
 
@@ -485,22 +485,23 @@ client and its session handles use one calling thread.
 
 ## Find the calls for a feature
 
-Each concept page has a Python page with the same operations as its HTTP page.
+Each concept page has an API page. The API page shows the Python calls first. To see the same
+steps as HTTP requests, select **HTTP** at the top of the API page.
 
-| Concept | Python page |
+| Concept | API page |
 |---|---|
-| [Sessions](sessions.md) | [Sessions in Python](python-sessions.md) |
-| [Context management](context-management.md) | [Context management in Python](python-context-management.md) |
-| [Project instructions](project-instructions.md) | [Project instructions in Python](python-project-instructions.md) |
-| [Drafts](drafts.md) | [Drafts in Python](python-drafts.md) |
-| [Council](council.md) | [Council in Python](python-council.md) |
-| [Automations](automations.md) | [Automations in Python](python-automations.md) |
-| [Configuration](configuration.md) | [Configuration in Python](python-configuration.md) |
+| [Sessions](sessions.md) | [Sessions API](sessions-api.md) |
+| [Context management](context-management.md) | [Context management API](context-management-api.md) |
+| [Project instructions](project-instructions.md) | [Project instructions API](project-instructions-api.md) |
+| [Drafts](drafts.md) | [Drafts API](drafts-api.md) |
+| [Council](council.md) | [Council API](council-api.md) |
+| [Automations](automations.md) | [Automations API](automations-api.md) |
+| [Configuration](configuration.md) | [Configuration API](configuration-api.md) |
 
 ## See also
 
-- [HTTP API basics](http-api.md) — the same gateway from any language.
-- [Sessions in Python](python-sessions.md) — send messages, follow progress and manage sessions.
+- [HTTP API](http-api.md) — the same gateway from any language.
+- [Sessions API](sessions-api.md) — send messages, follow progress and manage sessions.
 - [Running a gateway](gateway-service.md) — install and secure a shared agent service.
 - [Decision models](decision-models.md) — download Laya, train both heads and publish a verified FP32 version.
 - [Native builds for JVM extensions](jvm-native-image.md) — rebuild Vis only when adding Java/Clojure capabilities.

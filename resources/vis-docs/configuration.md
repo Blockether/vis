@@ -26,9 +26,7 @@ when you want settings shared across projects or checked into a repository.
 - **Python HTTPS requests fail a strict certificate check, or packages must come
   from a private index.** See [Python TLS validation](#python-tls-validation) and
   [Python package index](#python-package-index).
-- **Your own program must read or change settings.** Read [Configuration in
-  Python](python-configuration.md) or [Configuration over HTTP](http-configuration.md). Both have the
-  same operations.
+- **Your own program must read or change settings.** Read [Configuration API](configuration-api.md).
 
 Use [Project instructions](project-instructions.md) for rules about working in your
 codebase, and the [process jail](jail.md) to limit what commands can access.
@@ -64,12 +62,10 @@ file by hand, reopen the session to show the new name. The name changes the next
 prompt. It does not change product branding, session titles or a full custom prompt, which keeps its
 own identity.
 
-Programs read and save the name like any other setting, with the [Python
-SDK](python-configuration.md#change-one-setting) or the [HTTP
-API](http-configuration.md#change-one-setting). An invalid name
-returns 400 without changing the saved value. The settings list shows the name as a `string` row in
-the Agent group. Session details include the resolved `agent_name`, so reconnecting clients receive
-the current value.
+Programs read and save the name like any other setting, with the [Configuration
+API](configuration-api.md#change-one-setting). An invalid name returns 400 without changing the
+saved value. The settings list shows the name as a `string` row in the Agent group. Session details
+include the resolved `agent_name`, so reconnecting clients receive the current value.
 
 ## Configuration files
 

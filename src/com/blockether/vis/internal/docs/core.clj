@@ -18,11 +18,19 @@
        covers, so a reader who stops there still knows what they found.
      * The `:nav` of `vis-docs/site.edn` is the reading order, in modules: `Intro`
        (Rationale and Getting started, the `:intro?` module), `Concepts` (one page
-       for each feature), `Programmatic access` (the `Python SDK` and `HTTP API`
+       for each feature), `Programmatic access` (the `Basics` and `Feature APIs`
        groups), `Guides` (tasks built on the concepts and the programmatic pages),
        `Extensions` and `Reference`. A Concepts page `X` that a program can drive
-       has the mirror pages `python-X` and `http-X`, with the same `##` headings in
-       the same order. Only the `http-` pages name gateway routes.
+       has one page `X-api` in `Feature APIs`, and `X` links it.
+     * PAIRED VARIANTS: an `X-api` page gives each example twice. A
+       `<div data-variant=\"python\">` block comes first, and a
+       `<div data-variant=\"http\">` block follows it at once. Each tag and its
+       `</div>` stand alone on their lines, with a blank line between the tag and
+       the Markdown, or commonmark does not render that Markdown. A block holds no
+       heading, so both variants share one table of contents. The site shows one
+       variant and a switch (see `variant-html`). `doc` gives the agent only the
+       Python blocks (see `doc-corpus/variant-text`). Only HTTP blocks and the
+       `http-api` page name gateway routes.
      * A page outside the intro module documents a feature, so its FIRST `##` is
        `When to use`: two or more problems a reader brings, each tied to the part
        of the page that solves it, and the page to read instead when a
@@ -221,8 +229,13 @@
                    :intro? (boolean intro?)
                    :blurb blurb
                    :md md
+                   ;; What an agent reads. The published `<slug>.md` and `llms-full.txt`
+                   ;; give the same Python variant as `doc`. `:md` stays the whole page,
+                   ;; because the site shows both variants.
+                   :agent-md (doc-corpus/variant-text md doc-corpus/agent-variant)
                    :html html
-                   :toc toc})))]
+                   :toc toc
+                   :variants (doc-corpus/variants md)})))]
 
     (when-let [unreachable (seq (remove (set (map :slug pages)) (keys by-name)))]
       (throw (ex-info "A documentation page the site never navigates to"
@@ -338,6 +351,48 @@
                 "</a>"))
          "</nav>")))
 
+;; paired variants — one switch shows the Python or the HTTP examples
+
+(def ^:private variant-labels
+  "The site label of each variant that a page can give, in switch order. The
+   first one is the default before `docs.js` reads the reader's choice."
+  [["python" "Python"] ["http" "HTTP"]])
+
+(defn- variant-html
+  "The rendered body of a page with paired variants, ready for a reader. Each block
+   starts with its visible label, so a reader without JavaScript sees both
+   variants and can tell them apart. The switch follows the H1. It stays `hidden`
+   until `docs.js` shows it, hides the labels and shows one variant."
+  ^String [^String html]
+  (let [label-of
+        (into {} variant-labels)
+
+        labeled
+        (str/replace
+          html
+          #"<div data-variant=\"([a-z]+)\">"
+          (fn [[tag variant]]
+            (str tag "<p class=\"variant-label\">" (esc (get label-of variant variant)) "</p>")))
+
+        switch
+        (str "<div class=\"variant-switch\" role=\"group\" aria-label=\"Show examples for\" hidden>"
+             (apply str
+               (for [[variant label] variant-labels]
+                 (str "<button type=\"button\" data-variant-choice=\""
+                      variant
+                      "\" aria-pressed=\""
+                      (= variant (ffirst variant-labels))
+                      "\">"
+                      (esc label)
+                      "</button>")))
+             "</div>")
+
+        at
+        (some-> (str/index-of labeled "</h1>")
+                (+ (count "</h1>")))]
+
+    (if at (str (subs labeled 0 at) switch (subs labeled at)) (str switch labeled))))
+
 (defn- toc-html
   [toc]
   (when (seq toc)
@@ -391,7 +446,12 @@
 
 (defn- search-entries
   "The flat index a reader's query runs over: one row per page section with the
-   URL that reaches it in `mode`."
+   URL that reaches it in `mode`.
+
+   A row holds BOTH variants of a paired page. A reader can change to either
+   variant, so a Python method and an HTTP route must both find their section.
+   One row for each section keeps one result for each section. The link keeps
+   the reader's variant choice, and the switch is at the top of the page."
   [{:keys [pages]} mode]
   (into []
         (for [{:keys [slug title section html]}
@@ -414,9 +474,14 @@
 
 (def ^:private prism-js (delay (slurp (io/resource "vis-transcript/prism.min.js"))))
 
+(def ^:private docs-js
+  "The page behaviour of both modes. Live pages inline it, so an upgraded gateway
+   never serves a stale cached copy."
+  (delay (slurp (io/resource "vis-docs/assets/docs.js"))))
+
 (defn page-html
   "Full HTML document for one page. `mode` ∈ #{:static :live}."
-  [{:keys [site] :as site-data} {:keys [slug title html toc] :as _page} mode]
+  [{:keys [site] :as site-data} {:keys [slug title html toc variants] :as _page} mode]
   (let [home? (= slug "index")]
     (str
       "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
@@ -498,7 +563,9 @@
       "</aside>"
       "<main class=\"main\"><article class=\"content\">"
       (when home? (str "<h1>" (esc title) "</h1>"))
-      (rewrite-md-links html mode)
+      (cond-> (rewrite-md-links html mode)
+        (seq variants)
+        variant-html)
       "<div class=\"foot\">"
       "<a class=\"bk\" href=\"https://blockether.com\" title=\"Blockether\">"
       "<img class=\"bk-mark\" src=\""
@@ -513,7 +580,7 @@
       "</div>"
       (if (= mode :static)
         "<script src=\"assets/prism.min.js\" defer></script><script src=\"assets/docs.js\" defer></script>"
-        (str "<script>" @prism-js "\nPrism.highlightAll();</script>"))
+        (str "<script>" @prism-js "\n" @docs-js "</script>"))
       "<script type=\"module\" src=\""
       (asset mode "select-init.js")
       "\"></script>"
@@ -626,14 +693,24 @@
 
 (def ^:private moved-pages
   "Slugs of merged or removed pages, mapped to the route that replaces them.
-   The redirect has no fragment, so a browser keeps the anchor of an old bookmark."
-  {"context-and-prompts" "/docs/project-instructions"
-   "exporting-sessions" "/docs/sessions"
-   "gateway" "/docs"
-   "jvm-sdk" "/docs/http-api"
-   "motivation" "/docs/rationale"
-   "queue-and-cancel" "/docs/sessions"
-   "token-optimization" "/docs/context-management"})
+   The redirect has no fragment, so a browser keeps the anchor of an old bookmark.
+   A `python-X` or `http-X` page merged into `X-api` with the same headings. Its
+   redirect names the variant, and `docs.js` shows that variant."
+  (into {"context-and-prompts" "/docs/project-instructions"
+         "exporting-sessions" "/docs/sessions"
+         "gateway" "/docs"
+         "jvm-sdk" "/docs/http-api"
+         "motivation" "/docs/rationale"
+         "queue-and-cancel" "/docs/sessions"
+         "token-optimization" "/docs/context-management"}
+        (for [topic
+              ["automations" "configuration" "context-management" "council" "drafts"
+               "project-instructions" "sessions"]
+
+              variant
+              ["python" "http"]]
+
+          [(str variant "-" topic) (str "/docs/" topic "-api?variant=" variant)])))
 
 (defn handle
   "Ring handler for the docs site. Returns nil for paths it does not own (so the

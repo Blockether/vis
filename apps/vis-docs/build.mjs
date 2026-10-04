@@ -40,7 +40,7 @@ for (const page of pages) {
   );
   await writeFile(file, dom.serialize());
   dom.window.close();
-  await writeFile(new URL(page.slug + '.md', dist), page.md);
+  await writeFile(new URL(page.slug + '.md', dist), page['agent-md']);
 }
 const pythonApi = await buildPythonApi(dist);
 await writeFile(
@@ -72,7 +72,7 @@ await writeFile(
 await writeFile(
   new URL('llms-full.txt', dist),
   '# Vis documentation\n\n' +
-    pages.map((page) => `Source: ${origin}/${page.slug}.md\n\n${page.md}`).join('\n\n---\n\n') +
+    pages.map((page) => `Source: ${origin}/${page.slug}.md\n\n${page['agent-md']}`).join('\n\n---\n\n') +
     `\n\nGenerated Python SDK API reference: ${origin}/python-sdk-api/\n` +
     `\nLive extension catalog: ${origin}/extensions/llms.txt\n`,
 );
@@ -148,7 +148,8 @@ await writeFile(
 // sessions are now part of Sessions. The Java and Clojure SDK guide is removed, so its
 // bookmarks open HTTP API basics, which any JVM program can call. The motivation, token and
 // prompt pages are renamed to Rationale, Context management and Project instructions.
-// Keep bookmarks working.
+// Each python-<topic> and http-<topic> pair is now one <topic>-api page with a variant
+// switch. Keep bookmarks working.
 await writeFile(
   new URL('_redirects', dist),
   '/ /index.html 200\n/gateway / 301\n/gateway.html / 301\n/gateway.md /index.md 301\n' +
@@ -166,7 +167,35 @@ await writeFile(
     '/context-and-prompts.html /project-instructions.html 301\n' +
     '/context-and-prompts.md /project-instructions.md 301\n' +
     '/python-sdk-api /python-sdk-api/blockether/vis.html 301\n' +
-    '/python-sdk-api/ /python-sdk-api/blockether/vis.html 301\n',
+    '/python-sdk-api/ /python-sdk-api/blockether/vis.html 301\n' +
+    '/python-sessions /sessions-api.html 301\n/python-sessions.html /sessions-api.html 301\n' +
+    '/python-sessions.md /sessions-api.md 301\n' +
+    '/http-sessions /sessions-api.html 301\n/http-sessions.html /sessions-api.html 301\n' +
+    '/http-sessions.md /sessions-api.md 301\n' +
+    '/python-context-management /context-management-api.html 301\n/python-context-management.html /context-management-api.html 301\n' +
+    '/python-context-management.md /context-management-api.md 301\n' +
+    '/http-context-management /context-management-api.html 301\n/http-context-management.html /context-management-api.html 301\n' +
+    '/http-context-management.md /context-management-api.md 301\n' +
+    '/python-project-instructions /project-instructions-api.html 301\n/python-project-instructions.html /project-instructions-api.html 301\n' +
+    '/python-project-instructions.md /project-instructions-api.md 301\n' +
+    '/http-project-instructions /project-instructions-api.html 301\n/http-project-instructions.html /project-instructions-api.html 301\n' +
+    '/http-project-instructions.md /project-instructions-api.md 301\n' +
+    '/python-drafts /drafts-api.html 301\n/python-drafts.html /drafts-api.html 301\n' +
+    '/python-drafts.md /drafts-api.md 301\n' +
+    '/http-drafts /drafts-api.html 301\n/http-drafts.html /drafts-api.html 301\n' +
+    '/http-drafts.md /drafts-api.md 301\n' +
+    '/python-council /council-api.html 301\n/python-council.html /council-api.html 301\n' +
+    '/python-council.md /council-api.md 301\n' +
+    '/http-council /council-api.html 301\n/http-council.html /council-api.html 301\n' +
+    '/http-council.md /council-api.md 301\n' +
+    '/python-automations /automations-api.html 301\n/python-automations.html /automations-api.html 301\n' +
+    '/python-automations.md /automations-api.md 301\n' +
+    '/http-automations /automations-api.html 301\n/http-automations.html /automations-api.html 301\n' +
+    '/http-automations.md /automations-api.md 301\n' +
+    '/python-configuration /configuration-api.html 301\n/python-configuration.html /configuration-api.html 301\n' +
+    '/python-configuration.md /configuration-api.md 301\n' +
+    '/http-configuration /configuration-api.html 301\n/http-configuration.html /configuration-api.html 301\n' +
+    '/http-configuration.md /configuration-api.md 301\n',
 );
 // A mismatch must fail the build, not silently introduce another theme.
 const source = await readFile(

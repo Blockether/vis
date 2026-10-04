@@ -22,10 +22,11 @@ from test_engine import real_client, sdk_fixture
 def _recipe_source(name):
     """The source of the executable example `name` on a Python SDK page."""
     pattern = re.compile(rf"```python\n# {re.escape(name)}.py\n(.*?)\n```", re.S)
-    documents = (Path(__file__).parents[3] / "resources/vis-docs").glob("python-*.md")
-    matches = [
-        match for doc in sorted(documents) if (match := pattern.search(doc.read_text()))
-    ]
+    docs = Path(__file__).parents[3] / "resources/vis-docs"
+    # A recipe lives on a Python SDK page or in the Python variant of a merged
+    # <topic>-api page. The HTTP variant never holds a Python fence.
+    documents = sorted([*docs.glob("python-*.md"), *docs.glob("*-api.md")])
+    matches = [match for doc in documents if (match := pattern.search(doc.read_text()))]
     assert matches, f"Missing executable example: {name}"
     return matches[0][1]
 

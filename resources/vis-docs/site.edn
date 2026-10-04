@@ -49,74 +49,46 @@
      :title "Configuration"}]
    :section "Concepts"}
   {:groups
-   [{:group "Python SDK"
+   [{:group "Basics"
      :pages
      [{:blurb
        "Install the SDK, run a private agent in your project, connect to a gateway and handle its errors."
        :page "python-sdk"
        :title "Python SDK basics"}
       {:blurb
-       "Create sessions, send messages, follow progress, answer forms and manage saved sessions from Python."
-       :page "python-sessions"
-       :title "Sessions in Python"}
-      {:blurb
-       "Read the context budget, the usage and the cache health of a session from Python."
-       :page "python-context-management"
-       :title "Context management in Python"}
-      {:blurb
-       "Run prompt templates and skills, and set, read or control session goals from a Python program."
-       :page "python-project-instructions"
-       :title "Project instructions in Python"}
-      {:blurb
-       "Turn on drafts, read the draft state of a session and control draft work from Python."
-       :page "python-drafts"
-       :title "Drafts in Python"}
-      {:blurb
-       "Publish and read Council messages, wake idle sessions and manage rooms from a Python program."
-       :page "python-council"
-       :title "Council in Python"}
-      {:blurb
-       "Create, change, start and delete automations, and read their runs from a Python program."
-       :page "python-automations"
-       :title "Automations in Python"}
-      {:blurb
-       "Read and change settings for the gateway, a project, a group or a session from Python."
-       :page "python-configuration"
-       :title "Configuration in Python"}]}
-    {:group "HTTP API"
-     :pages
-     [{:blurb
        "Get the OpenAPI document, authenticate requests and handle gateway errors from any language."
        :page "http-api"
-       :title "HTTP API basics"}
+       :title "HTTP API basics"}]}
+    {:group "Feature APIs"
+     :pages
+     [{:blurb
+       "Create sessions, send messages, follow progress, answer forms and manage saved sessions from Python or with HTTP requests."
+       :page "sessions-api"
+       :title "Sessions API"}
       {:blurb
-       "Create sessions, send messages, follow events and manage saved sessions with HTTP requests."
-       :page "http-sessions"
-       :title "Sessions over HTTP"}
+       "Read the context budget, the usage and the cache health of a session from Python or with HTTP requests."
+       :page "context-management-api"
+       :title "Context management API"}
       {:blurb
-       "Read the context budget, the usage and the cache health of a session with HTTP requests."
-       :page "http-context-management"
-       :title "Context management over HTTP"}
+       "Run prompt templates and skills, and set, read or control session goals from Python or with HTTP requests."
+       :page "project-instructions-api"
+       :title "Project instructions API"}
       {:blurb
-       "Run prompt templates and skills, and set, read or control goals with HTTP requests."
-       :page "http-project-instructions"
-       :title "Project instructions over HTTP"}
+       "Turn on drafts, read the draft state of a session and control draft work from Python or with HTTP requests."
+       :page "drafts-api"
+       :title "Drafts API"}
       {:blurb
-       "Turn on drafts, read the draft state of a session and control draft work with HTTP requests."
-       :page "http-drafts"
-       :title "Drafts over HTTP"}
+       "Publish and read Council messages, wake idle sessions and manage rooms from Python or with HTTP requests."
+       :page "council-api"
+       :title "Council API"}
       {:blurb
-       "Publish and read Council messages, wake sessions and manage rooms with HTTP requests."
-       :page "http-council"
-       :title "Council over HTTP"}
+       "Create, change, start and delete automations, and read their runs from Python or with HTTP requests."
+       :page "automations-api"
+       :title "Automations API"}
       {:blurb
-       "Create, change, start and delete automations, and read their runs with HTTP requests."
-       :page "http-automations"
-       :title "Automations over HTTP"}
-      {:blurb
-       "Read and change settings for the gateway, a project, a group or a session with HTTP requests."
-       :page "http-configuration"
-       :title "Configuration over HTTP"}]}]
+       "Read and change settings for the gateway, a project, a group or a session from Python or with HTTP requests."
+       :page "configuration-api"
+       :title "Configuration API"}]}]
    :section "Programmatic access"}
   {:pages
    [{:blurb

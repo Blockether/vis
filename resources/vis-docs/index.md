@@ -288,30 +288,24 @@ Each concept page explains one feature: what it does, when to use it and how to 
 
 ### Programmatic access
 
-Use these pages to drive the same features from your own code. Each concept page that a program can
-use has a Python page and an HTTP page with the same sections.
+Use these pages to drive the same features from your own code. Start with the basics page for
+Python or for HTTP. Then read the API page for the feature. Each API page shows the Python examples.
+To see the same steps as HTTP requests, select **HTTP** at the top of the page.
 
-**Python SDK**
+**Basics**
 
 - [Python SDK basics](python-sdk.md) — install the SDK, run a private agent and connect to a gateway.
-- [Sessions in Python](python-sessions.md) — sessions, messages, progress and saved work from Python.
-- [Context management in Python](python-context-management.md) — context budget, usage and cache health from Python.
-- [Project instructions in Python](python-project-instructions.md) — prompt templates, skills and goals from Python.
-- [Drafts in Python](python-drafts.md) — draft settings and draft state from Python.
-- [Council in Python](python-council.md) — Council messages, wakes and rooms from Python.
-- [Automations in Python](python-automations.md) — automations, runs, secrets and webhooks from Python.
-- [Configuration in Python](python-configuration.md) — settings and extension reloads from Python.
-
-**HTTP API**
-
 - [HTTP API basics](http-api.md) — authenticate requests, read the OpenAPI document and handle errors.
-- [Sessions over HTTP](http-sessions.md) — sessions, messages, progress and saved work with HTTP requests.
-- [Context management over HTTP](http-context-management.md) — context budget, usage and cache health with HTTP requests.
-- [Project instructions over HTTP](http-project-instructions.md) — prompt templates, skills and goals with HTTP requests.
-- [Drafts over HTTP](http-drafts.md) — draft settings and draft state with HTTP requests.
-- [Council over HTTP](http-council.md) — Council messages, wakes and rooms with HTTP requests.
-- [Automations over HTTP](http-automations.md) — automations, runs, secrets and webhooks with HTTP requests.
-- [Configuration over HTTP](http-configuration.md) — settings and extension reloads with HTTP requests.
+
+**Feature APIs**
+
+- [Sessions API](sessions-api.md) — sessions, messages, progress and saved work from Python or HTTP.
+- [Context management API](context-management-api.md) — context budget, usage and cache health from Python or HTTP.
+- [Project instructions API](project-instructions-api.md) — prompt templates, skills and goals from Python or HTTP.
+- [Drafts API](drafts-api.md) — draft settings and draft state from Python or HTTP.
+- [Council API](council-api.md) — Council messages, wakes and rooms from Python or HTTP.
+- [Automations API](automations-api.md) — automations, runs, secrets and webhooks from Python or HTTP.
+- [Configuration API](configuration-api.md) — settings and extension reloads from Python or HTTP.
 
 ### Guides
 

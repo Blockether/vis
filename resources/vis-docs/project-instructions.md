@@ -29,9 +29,8 @@ restart.
   style](#progress-notes-and-writing-style). It explains how Vis chooses the language of a reply.
 - **You want to run a shell command without involving the model.** Start the message
   with [`!`](#shell-shortcuts-and).
-- **Your own program must run templates, skills or goals.** Use [Project instructions in
-  Python](python-project-instructions.md) or [Project instructions over
-  HTTP](http-project-instructions.md).
+- **Your own program must run templates, skills or goals.** Use [Project instructions
+  API](project-instructions-api.md).
 
 Use a [skill](skills.md) for a procedure that Vis should read only when a task needs
 it.
@@ -105,8 +104,8 @@ Each interface shows the progress notes and the final answer in its own place:
 | Terminal | Above the code of each step | After the last step |
 | Desktop and Companion apps | Above the code of each step | After the last step |
 | Phone and desktop alerts | No alert | The alert shows the answer |
-| [Python SDK](python-sessions.md#follow-progress) | In the event stream after `send()` | In the turn record from `run()` or `turn.wait()` |
-| [HTTP API](http-sessions.md#follow-progress) | In the event stream after the turn request | In the turn record |
+| [Python SDK](sessions-api.md#follow-progress) | In the event stream after `send()` | In the turn record from `run()` or `turn.wait()` |
+| [HTTP API](sessions-api.md#follow-progress) | In the event stream after the turn request | In the turn record |
 
 Your [notification settings](distributions.md#notifications-on-the-desktop) control the alerts.
 Keep project-specific rules in `AGENTS.md`. Examples are test commands, code conventions, files
@@ -227,9 +226,8 @@ A goal is `active`, `paused`, `blocked`, `budget_limited`, `complete` or `cancel
 Resuming continues from the saved time, and a new goal starts again from zero. Companion updates the
 clock every second while goal details are open.
 
-Your own program can set, read and control goals. Read [Project instructions in
-Python](python-project-instructions.md#set-a-goal) or [Project instructions over
-HTTP](http-project-instructions.md#set-a-goal).
+Your own program can set, read and control goals. Read [Project instructions
+API](project-instructions-api.md#set-a-goal).
 
 ## Skills: /skill:name
 
@@ -254,8 +252,7 @@ Shell shortcuts need the **Shell commands** toggle enabled in settings.
 ## See also
 
 - [Skills](skills.md) — instructions loaded on demand.
-- [Project instructions in Python](python-project-instructions.md) — templates, skills and goals from a
-  Python program.
-- [Project instructions over HTTP](http-project-instructions.md) — the same operations as HTTP requests.
+- [Project instructions API](project-instructions-api.md) — templates, skills and goals from your
+  own program.
 - [Configuration → System prompt](configuration.md#system-prompt) — the equivalent config keys.
 - [Extension API → Slash commands](extension-api.md#slash-commands) — commands provided by extensions.

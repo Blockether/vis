@@ -1,5 +1,48 @@
-/* The static docs load the bundled highlighter before this deferred script. */
+/* Both docs modes load the bundled highlighter before this script. */
 Prism.highlightAll();
+
+/* A page with paired examples shows its Python or its HTTP variant. The page
+   renders both with labels, so it stays readable without JavaScript. This
+   script shows the switch, hides the labels and shows one variant. */
+const VARIANTS = ['python', 'http'];
+const VARIANT_KEY = 'vis-docs-variant';
+const variantSwitch = document.querySelector('.variant-switch');
+if (variantSwitch) {
+  const known = (value) => (VARIANTS.includes(value) ? value : null);
+  const stored = () => {
+    try {
+      return localStorage.getItem(VARIANT_KEY);
+    } catch {
+      return null;
+    }
+  };
+  const store = (variant) => {
+    try {
+      localStorage.setItem(VARIANT_KEY, variant);
+    } catch {
+      /* Without storage, the choice holds only for this page. */
+    }
+  };
+  const show = (variant) => {
+    document.documentElement.dataset.docsVariant = variant;
+    for (const button of variantSwitch.querySelectorAll('[data-variant-choice]')) {
+      button.setAttribute('aria-pressed', String(button.dataset.variantChoice === variant));
+    }
+  };
+  /* A link to an old `python-X` or `http-X` page names its variant. */
+  const linked = known(new URLSearchParams(window.location.search).get('variant'));
+  if (linked) store(linked);
+  /* An unknown stored value must never hide both variants, so it falls back to Python. */
+  show(linked || known(stored()) || VARIANTS[0]);
+  variantSwitch.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-variant-choice]');
+    const variant = button && known(button.dataset.variantChoice);
+    if (!variant) return;
+    store(variant);
+    show(variant);
+  });
+  variantSwitch.hidden = false;
+}
 
 /* Scrolling and full-size image links still work without JavaScript. */
 for (const gallery of document.querySelectorAll('[data-screenshot-gallery]')) {

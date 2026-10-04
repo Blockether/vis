@@ -16,9 +16,8 @@ The view appears in the terminal or Companion app and can be stopped at any time
 - **The person watching needs to act or stop.** Add
   [buttons](#add-spinners-and-buttons), and handle [interruption](#interruption)
   when they stop watching.
-- **Your own program must list, read or interrupt live views.** Read [Sessions in
-  Python](python-sessions.md#watch-live-views) or [Sessions over
-  HTTP](http-sessions.md#watch-live-views).
+- **Your own program must list, read or interrupt live views.** Read [Sessions
+  API](sessions-api.md#watch-live-views).
 
 For a tool's ordinary status, choose [Activity
 presentation](extension-api.md#activity-presentation) instead. Use a live view when
@@ -364,9 +363,9 @@ output is focused moves focus to search. Without a record loader, the panel
 explicitly limits search to loaded lines. In the TUI, an empty query browses the
 record, Enter opens a full wrapped line, and Escape cancels an in-flight read.
 
-A client reads the record of a log node in pages with the [Python SDK](python-sessions.md#watch-live-views)
-or the [HTTP API](http-sessions.md#watch-live-views). A request names the log node and takes `query`, `from`
-and `limit`. `from` is a zero-based match offset. An empty query matches all lines.
+A client reads the record of a log node in pages with the [Sessions
+API](sessions-api.md#watch-live-views). A request names the log node and takes `query`, `from` and
+`limit`. `from` is a zero-based match offset. An empty query matches all lines.
 
 The response includes `lines`, `line_numbers`, `matched` and `total`. The gateway caps pages at the
 default log-window size. It streams the record and keeps only the requested result page. Styled
@@ -565,10 +564,9 @@ Companion app's Interrupt button opens the same input.
   loop does not check the flag.
 - From the producer, `view.close(reason="interrupted", summary="Stopped monitoring")`
   closes the owned view. It does not kill threads or remote jobs.
-- From an independent client, interrupt the view with the [Python
-  SDK](python-sessions.md#watch-live-views) or the [HTTP API](http-sessions.md#watch-live-views). The action is
-  `interrupt`, not `cancel`. The producer must still handle `view.is_interrupted` or
-  `vis.Interrupted` and clean up its resources.
+- From an independent client, interrupt the view with the [Sessions
+  API](sessions-api.md#watch-live-views). The action is `interrupt`, not `cancel`. The producer must
+  still handle `view.is_interrupted` or `vis.Interrupted` and clean up its resources.
 
 ## Closing
 
@@ -613,5 +611,5 @@ output. `vis.testing.assert_tree(actual, expected)` reports nested differences.
 
 - [Extending Vis](extending.md) — the extension that opens a view.
 - [Forms and user input](human-input.md) — the same layout builders, used for questions.
-- [Sessions in Python](python-sessions.md#watch-live-views) — list, read and interrupt live views
-  from a program.
+- [Sessions API](sessions-api.md#watch-live-views) — list, read and interrupt live views from a
+  program.

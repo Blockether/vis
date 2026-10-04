@@ -57,9 +57,8 @@ Read the manual at [vis.blockether.com](https://vis.blockether.com/). The same p
   [Context management](resources/vis-docs/context-management.md), [Drafts](resources/vis-docs/drafts.md),
   [Council](resources/vis-docs/council.md) and [Automations](resources/vis-docs/automations.md).
 - **Programmatic access** — the same concepts from your own code. Start with
-  [Python SDK basics](resources/vis-docs/python-sdk.md) or [HTTP API basics](resources/vis-docs/http-api.md). Each has one
-  page for each concept, for example [Sessions in Python](resources/vis-docs/python-sessions.md) and
-  [Sessions over HTTP](resources/vis-docs/http-sessions.md).
+  [Python SDK basics](resources/vis-docs/python-sdk.md) or [HTTP API basics](resources/vis-docs/http-api.md). Then
+  read the API page for each concept, for example [Sessions API](resources/vis-docs/sessions-api.md).
 - **Guides** — tasks that use the concepts and the programmatic pages, for example
   [Running a gateway](resources/vis-docs/gateway-service.md).
 - **Extensions** — add your own tools and checks with [Extending Vis](resources/vis-docs/extending.md).
@@ -192,12 +191,12 @@ covers requirements, startup time and memory use.
 Start with [Python SDK basics](resources/vis-docs/python-sdk.md) to run a task using
 `Agent(project=".")`, continue the conversation or connect to a shared gateway.
 Then read the page for the concept that you need, for example
-[Sessions in Python](resources/vis-docs/python-sessions.md) or [Automations in Python](resources/vis-docs/python-automations.md).
+[Sessions API](resources/vis-docs/sessions-api.md) or [Automations API](resources/vis-docs/automations-api.md).
 Browse the generated [Python API reference](https://vis.blockether.com/python-sdk-api/)
 for classes, methods, signatures and types. It follows `main` and can include
 unreleased APIs not yet available on PyPI.
-From other languages, start with [HTTP API basics](resources/vis-docs/http-api.md). Each Python page has
-an HTTP page with the same sections, for example [Sessions over HTTP](resources/vis-docs/http-sessions.md).
+From other languages, start with [HTTP API basics](resources/vis-docs/http-api.md). Each API page shows the
+same steps as HTTP requests, for example [Sessions API](resources/vis-docs/sessions-api.md).
 For a shared engine, [run a gateway](resources/vis-docs/gateway-service.md). No native build is needed.
 
 ## Add your own tools and checks
