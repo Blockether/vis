@@ -58,9 +58,9 @@ Plain writes inside Python blocks have a different boundary. The extensions insp
 after the block, including a block that raises an exception. They can then repair invalid files and
 report corrections in the next context. These checks do not intercept each write or roll back a block.
 
-The Clojure repair engine runs in Python, but full validation still needs the Clojure reader on a
-JVM. A repair is not accepted without that validation. Clojure and Python formatters change layout,
-not program structure.
+The Clojure extension checks and repairs files in Python, without a JVM. A Python port of the
+Clojure reader must accept each repair. Clojure and Python formatters change layout, not program
+structure.
 
 ## Sandbox state after a restart
 
