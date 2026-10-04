@@ -20,7 +20,6 @@ Current paths:
 - Engine: `src/com/blockether/vis/internal/automation/` and `gateway/server/automations.clj`.
 - Storage: `resources/db/sqlite/migration/V1__schema.sql`, `persistance/core.clj` and `persistance/sqlite/core.clj`.
 - Clients: `packages/vis-agent/src/blockether/vis/engine/_client.py`, `apps/vis-companion/src/` and `apps/vis-tui/`.
-- Relay: `apps/vis-companion-relay/src/hooks/`.
 
 Decisions:
 
@@ -28,12 +27,13 @@ Decisions:
 - Rooms and Council are not delivery targets. The session, Push and signed callbacks report the result.
 - The setting `automations` is off by default. An explicit `false` on a project, group or session blocks runs there.
 - A run that an automation started cannot create, change or delete automations.
-- Public webhooks arrive through the existing relay. The gateway keeps every secret and checks every signature.
+- Webhooks arrive only at the gateway route `POST /v1/hooks/{automation_id}`. The relay does not carry webhooks.
+- The gateway keeps every secret and checks every signature.
 
 Rejected alternatives:
 
 - Separate toggles for webhooks and agent management: one toggle and one fixed rule are easier to understand.
-- A public port on the gateway: the relay inbox needs no inbound port and no tunnel.
+- A webhook inbox on the relay: webhooks belong in the gateway. Commit `5f2a59a4a` added the inbox, and phase 4 removes it.
 - Script filters and script-only jobs: they run code for a webhook and need a separate security decision.
 - Council or Room delivery: it adds a second result channel without a new capability.
 
@@ -87,13 +87,13 @@ Acceptance criteria: route tests for each status; a repeated delivery returns th
 
 Unknowns: event coalescing (later).
 
-## 4. Relay inbox
+## 4. Remove the relay inbox
 
-Rationale: GitHub and other services reach a machine without an open port.
+Rationale: webhooks belong in the gateway, not in the relay. A sender must reach the gateway route directly.
 
-Data: a `hooks` module in the Worker with a D1 table. The relay stores the raw request. The gateway polls with an inbox credential, checks the signature and acknowledges.
+Data: remove the Worker `hooks` module, its D1 tables, the gateway poller and the `webhook.url` field. The wire shape keeps `webhook.path`.
 
-Acceptance criteria: Worker tests on workerd and D1; deployment; a signed request reaches a local gateway through the deployed relay.
+Acceptance criteria: relay, engine, TUI and Companion tests pass without the inbox. The deployed relay answers `404` on the inbox routes and has no hook tables.
 
 Unknowns: relay CI still lacks D1 write permission. A manual deployment works.
 
@@ -107,9 +107,9 @@ Unknowns: none.
 
 ## 6. End-to-end verification
 
-Data: a native suite with an owned gateway, a stub model, a local callback receiver and the deployed relay.
+Data: a native suite with an owned gateway, a stub model and a local callback receiver.
 
-Acceptance criteria: the schedule, webhook, relay and callback paths pass on a fresh native build.
+Acceptance criteria: the schedule, webhook and callback paths pass on a fresh native build.
 
 Unknowns: none.
 
@@ -118,6 +118,6 @@ Unknowns: none.
 - Phase 1: done. Cron tests with Europe/Warsaw DST, scheduler, route, contract and SDK tests pass. An isolated source gateway starts and answers the automation routes.
 - Phase 2: done. A local receiver checks the Standard Webhooks signature. A failed callback retries, then arrives once, or stops after 6 attempts. `[SILENT]` sends nothing.
 - Phase 3: done. Route and runner tests cover each webhook status, a repeated delivery and the untrusted-content note.
-- Phase 4: done. Worker tests on Miniflare D1 pass (hooks 9 of 9, suite 59 of 59). Migration `0003_hooks.sql` is applied, and the relay with commit `5f2a59a4a` is deployed by hand. A live check against `https://vis.relay.blockether.com` used the gateway poller: the webhook URL appears 0.1 s after the first webhook secret, and a signed request runs 0.5 s after the relay stores it. A bad signature starts no run. The relay CI deploy still stops at the D1 migration with Cloudflare code 7403.
+- Phase 4: done. Commit `2687ca926` removes the relay inbox. Relay tests pass (deploy 4 of 4, suite 50 of 50). The relay is deployed by hand: the four inbox routes answer `404`, and Push and Rooms still answer. The two hook tables are dropped from production D1. They held 3 test inboxes and no requests. The relay CI deploy still stops at the D1 migration with Cloudflare code 7403.
 - Phase 5: done. The model tool `automations.*` has Activity presentation and refuses changes during an automation run. The TUI Automations view (command palette) runs, pauses, resumes, lists runs, creates one-time secrets and deletes. The Companion Automations screen does the same and also creates and edits automations in a form. The form sends only the changed fields and keeps webhook filters. Companion unit tests (lib 19, screen 14), Storybook tests (9) and the guide page contract pass.
-- Phase 6: done. `native_automations_test` passes 4 of 4 cases on a fresh native build of the source at `b16e1b212`, with the local relay and with `https://vis.relay.blockether.com`. The cases cover one-time and cron schedules, a GitHub webhook with forged and repeated deliveries, a relay webhook and a signed callback. The suite found a wait of up to 60 s before the first relay poll after a new webhook secret. Commit `b16e1b212` fixes it and adds a regression test. `native_rooms_test` passes with the shared relay fixture.
+- Phase 6: done. `native_automations_test` passes 4 of 4 cases on a fresh native build with commit `2687ca926`. The cases cover one-time and cron schedules, a GitHub webhook with forged and repeated deliveries, a Standard Webhooks request with a forged signature and a signed callback. Each webhook goes directly to the gateway route. `native_rooms_test` passes with the restored relay fixture.
