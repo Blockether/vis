@@ -23,6 +23,25 @@ describe('session status colors', () => {
   });
 });
 
+describe('project heading borders', () => {
+  // Regression: adjacent collapsed projects added their lower and upper borders together.
+  it.each([false, true])('uses one shared edge before a project (expanded: %s)', (isExpanded) => {
+    const { container } = render(
+      <>
+        <section><SectionHeader>First project</SectionHeader></section>
+        <section><SectionHeader isExpanded={isExpanded}>Next project</SectionHeader></section>
+      </>,
+    );
+    const headers = container.querySelectorAll('header');
+    expect(headers).toHaveLength(2);
+    headers.forEach((header) => {
+      expect(header).toHaveClass('border-t', 'border-project-header-border');
+      expect(header).not.toHaveClass('border-y');
+      expect(header).not.toHaveClass('border-b');
+    });
+  });
+});
+
 describe('project heading height', () => {
   it('updates the sticky offset when counts wrap and releases the observer on unmount', () => {
     const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(62);

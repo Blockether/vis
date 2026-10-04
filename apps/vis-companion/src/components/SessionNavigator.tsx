@@ -22,10 +22,11 @@ const HEADER_TYPE = 'text-title';
 
 /**
  * Project headings stay taller than their groups and session rows.
+ * The next header supplies the lower rule, so adjacent headings share one border.
  * A soft lower shadow separates each sticky heading from the content below.
  */
 const HEADER_BAND =
-  'min-h-14 items-stretch mouse:min-h-12 z-10 border-y border-project-header-border shadow-project [--dialog-hint:var(--footer-strong)]';
+  'min-h-14 items-stretch mouse:min-h-12 z-10 border-t border-project-header-border shadow-project [--dialog-hint:var(--footer-strong)]';
 
 /**
  * The session list's pull gesture takes over the app bar with the action a release would take.
