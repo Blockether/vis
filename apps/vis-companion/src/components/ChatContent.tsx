@@ -2708,6 +2708,7 @@ function StepDigest({
         : [],
     ),
   ];
+  if (!parts.length) parts.push({ text: 'RAW EXECUTION', tone: '' });
   // Total measured time of the steps, not wall time across concurrent calls.
   const measured = forms.reduce(
     (total, form) => total + (formatDuration(form.duration_ms) == null ? 0 : form.duration_ms!),

@@ -2498,12 +2498,12 @@ describe('steps between progress notes', () => {
     const [first, second] = digests(painted.container);
     const noted = painted.getByText(note);
     expect(digests(painted.container).map((row) => row.getAttribute('aria-label'))).toEqual([
-      'Expand steps',
-      'Expand steps',
+      'Expand steps: RAW EXECUTION',
+      'Expand steps: RAW EXECUTION',
     ]);
     // Regression, user report: the row names what the calls did, not how many steps ran.
     const counted = digests(painted.container).map((row) => row.textContent);
-    expect(counted.filter((text) => /\bsteps?\b/.test(text ?? ''))).toEqual([]);
+    expect(counted).toEqual(['RAW EXECUTION', 'RAW EXECUTION']);
     // The measured time of the steps stands on the right of each row.
     expect(digests(painted.container).map((row) => row.nextElementSibling?.textContent)).toEqual([
       '20ms',
@@ -2514,6 +2514,38 @@ describe('steps between progress notes', () => {
     expect(traces(painted.container)).toHaveLength(0);
     expect(bands(painted.container)).toEqual([]);
     expect(painted.container.textContent).not.toContain('read_first()');
+  });
+
+  // Regression: a step without Activity counters showed only a chevron and its duration.
+  it.each(
+    [false, true].flatMap((live) =>
+      (['absent', 'empty', 'generic'] as const).map((kind) => ({ live, kind })),
+    ),
+  )('labels $kind Activity as RAW EXECUTION (live: $live)', ({ live, kind }) => {
+    const activity: ActivityProjection | undefined =
+      kind === 'absent'
+        ? undefined
+        : {
+            ...read,
+            counts: { running: 0, succeeded: kind === 'generic' ? 1 : 0, failed: 0, cancelled: 0 },
+            rows: kind === 'empty' ? [] : read.rows.map((row) => ({ ...row, signal: 'generic' })),
+          };
+    const painted = render(
+      <IterationTrace
+        whole
+        showCode
+        live={live}
+        iterations={[{ id: 'raw', forms: [{ source: 'print(1)', duration_ms: 45, activity }] }]}
+      />,
+    );
+    const digest = painted.getByRole('button', { name: 'Expand steps: RAW EXECUTION' });
+    expect(digest.textContent).toBe('RAW EXECUTION');
+    expect(digest.parentElement).toHaveTextContent('45ms');
+    fireEvent.click(digest);
+    expect(digest).toHaveAttribute('aria-label', 'Collapse steps: RAW EXECUTION');
+    expect(digest).toHaveAttribute('aria-expanded', 'true');
+    expect(digest.textContent).toBe('RAW EXECUTION');
+    expect(traces(painted.container)).toHaveLength(1);
   });
 
   it('opens a digest to show the thinking, code and Activity of its steps', () => {

@@ -7392,13 +7392,35 @@ h = 8"
                                  ["verification" "1 ver"] ["external" "1 external action"]]]
         (expect (= expected (#'render/activity-cost-text {:rows [{:signal signal}]})))))
   (it "omits empty counters and separators from step summaries"
-      (doseq [[state expected] [["succeeded" "▸ "] ["running" "▸ 1 running"] ["failed" "▸ 1 failed"]
-                                ["cancelled" "▸ 1 cancelled"]]]
+      (doseq [[state expected] [["succeeded" "▸ RAW EXECUTION"] ["running" "▸ 1 running"]
+                                ["failed" "▸ 1 failed"] ["cancelled" "▸ 1 cancelled"]]]
         (let [entries (#'render/step-digest-entries
                        {:forms [{:activity {:rows [{:signal "generic" :state state}]}}]}
                        80
                        "s1")]
           (expect (= expected (subs (:line (second entries)) 1))))))
+  ;; Regression: a step without Activity counters showed only a chevron and its duration.
+  (it "labels raw execution in open and closed step summaries"
+      (doseq [activity
+              [nil {:rows []} {:rows [{:signal "generic" :state "succeeded"}]}]
+
+              open?
+              [false true]]
+
+        (let [entry
+              (second (#'render/step-digest-entries
+                       {:forms [{:code "print(1)" :duration-ms 45 :activity activity}]
+                        :node-id "raw"
+                        :open? open?}
+                       80
+                       "s1"))
+
+              text
+              (subs (:line entry) 1)]
+
+          (expect (str/starts-with? text (str (if open? "▾ " "▸ ") "RAW EXECUTION")))
+          (expect (str/ends-with? text "45ms"))
+          (expect (= (not open?) (get-in entry [:meta :collapsed?]))))))
   (it "counts the calls that reached outside the machine"
       (let [cost @#'render/activity-cost-text]
         (expect (= "1 observation · 1 external action"

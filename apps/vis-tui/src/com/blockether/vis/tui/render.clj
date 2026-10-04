@@ -8480,17 +8480,18 @@
         duration
         (when (pos? (long duration-ms)) (vis/format-duration duration-ms))
 
+        parts
+        (remove str/blank?
+          (cons (activity-cost-text {:rows rows})
+                (for [state
+                      [:running :failed :cancelled]
+
+                      :when (get states state)]
+
+                  (str (get states state) " " (name state)))))
+
         summary
-        (str (if open? "▾ " "▸ ")
-             (str/join " · "
-                       (remove str/blank?
-                         (cons (activity-cost-text {:rows rows})
-                               (for [state
-                                     [:running :failed :cancelled]
-
-                                     :when (get states state)]
-
-                                 (str (get states state) " " (name state)))))))
+        (str (if open? "▾ " "▸ ") (if (seq parts) (str/join " · " parts) "RAW EXECUTION"))
 
         max-w
         (max 1 (dec (long content-w)))
