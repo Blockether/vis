@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, userEvent } from 'storybook/test';
+import { expect, fn, userEvent, within } from 'storybook/test';
 
 import { STORY_LIVE_VIEW } from '../dev/story-data';
 import { LiveViewPanel } from './LiveView';
@@ -205,4 +205,164 @@ export const PhoneJobs: Story = {
 export const RecordedJobs: Story = {
   ...DesktopJobs,
   args: { ...releaseJobs.args, isSettled: true, onSelect: undefined },
+};
+
+/** Where a box starts, in CSS pixels: every column below is compared through it. */
+const leftOf = (element: Element) => element.getBoundingClientRect().left;
+
+// Regression, reported from the phone: one live view drew its words in six columns. A group
+// head moved its name by the width of an optional mark, a matrix leg indented its name but
+// not its mark, and the status headline stood two pixels right of the rows under it.
+const matrixJobs: Story = {
+  args: {
+    onSelect: fn(),
+    view: {
+      ...meta.args.view,
+      title: 'Beta Native · run 37214221737',
+      description: 'main · Beta Native · workflow_run',
+      nodes: [
+        {
+          id: 'run',
+          type: 'status',
+          text: 'Stopped watching: job failed',
+          detail:
+            'native / native · vis-agent-macos-arm64.tar.gz failed · other jobs may still be running',
+          tone: 'error',
+        },
+        { id: 'jobs-done', type: 'progress', label: 'Jobs finished', done: 6, total: 10 },
+        {
+          id: 'score',
+          type: 'stat',
+          stats: [
+            { id: 'active', label: 'running', value_text: '4', tone: 'running' },
+            { id: 'passed', label: 'passed', value_text: '5', tone: 'ok' },
+            { id: 'waiting', label: 'queued', value_text: '0', tone: 'idle' },
+            { id: 'elapsed', label: 'elapsed', value_text: '7m 18s', tone: 'idle' },
+          ],
+        },
+        {
+          id: 'jobs',
+          type: 'table',
+          columns: [
+            { id: 'job', label: 'Job', align: 'left' },
+            { id: 'state', label: 'Now', align: 'left' },
+            { id: 'took', label: 'Took', align: 'left' },
+          ],
+          rows: [
+            {
+              id: 'prepare',
+              cells: ['prepare a beta from green main CI', 'success', '9s'],
+              tone: 'ok',
+            },
+            {
+              id: 'pickup',
+              cells: ['macOS builder pickup', 'success', '4s'],
+              tone: 'ok',
+              parent: 'native / native',
+            },
+            {
+              id: 'linux-arm64',
+              cells: ['vis-agent-linux-arm64.tar.gz', 'in progress', '7m 04s'],
+              tone: 'running',
+              parent: 'native / native',
+            },
+            {
+              id: 'linux-x64',
+              cells: ['vis-agent-linux-x64.tar.gz', 'in progress', '7m 07s'],
+              tone: 'running',
+              parent: 'native / native',
+            },
+            {
+              id: 'macos-arm64',
+              cells: ['vis-agent-macos-arm64.tar.gz', 'failure', '6m 58s'],
+              tone: 'error',
+              parent: 'native / native',
+            },
+            {
+              id: 'web',
+              cells: ['vis-web.tar.gz', 'success', '2m 11s'],
+              tone: 'ok',
+              parent: 'native / web',
+            },
+            {
+              id: 'windows',
+              cells: ['Package Windows x64', 'in progress', '3m 40s'],
+              tone: 'running',
+              parent: 'desktop',
+            },
+          ],
+          max_rows: 20,
+          order: 'insertion',
+          is_selectable: true,
+          selected_ids: ['linux-arm64', 'linux-x64', 'windows'],
+          groups: [
+            { id: 'native / native', order: 0, tone: 'error', is_open: true },
+            { id: 'native / web', order: 1 },
+            { id: 'desktop', order: 2 },
+          ],
+        },
+        {
+          id: 'timeline',
+          type: 'steps',
+          label: 'Timeline',
+          steps: [
+            { id: 'earlier', label: '15 earlier steps · 2m 07s', tone: 'idle' },
+            {
+              id: 'oidc',
+              label: 'Package Windows x64 · Log in to Azure with GitHub OIDC',
+              tone: 'ok',
+            },
+            {
+              id: 'sign',
+              label: 'Package Windows x64 · Sign and package Windows with Pake',
+              tone: 'running',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  play: async ({ canvas }) => {
+    const same = async (actual: number, expected: number) =>
+      await expect(Math.abs(actual - expected)).toBeLessThanOrEqual(0.5);
+    // A top-level job sets the two columns: its mark, then the words of its row.
+    const job = canvas.getByRole('button', { name: 'Select prepare a beta from green main CI' });
+    const mark = leftOf(job.querySelector('svg')!);
+    const text = leftOf(within(job).getByText('prepare a beta from green main CI'));
+    const step = text - mark;
+    await expect(step).toBeGreaterThan(0);
+
+    const headline = canvas.getByText('Stopped watching: job failed');
+    await same(leftOf(headline.closest('div')!.querySelector('svg')!), mark);
+    await same(leftOf(headline), text);
+
+    const timeline = canvas.getByText('Package Windows x64 · Log in to Azure with GitHub OIDC');
+    await same(leftOf(timeline.closest('li')!.querySelector('svg')!), mark);
+    await same(leftOf(timeline), text);
+
+    // A head keeps its chevron on the mark column and its name on the words column,
+    // whether or not it carries the mark that says a leg failed.
+    for (const name of ['native / native', 'native / web', 'desktop']) {
+      const head = canvas.getByRole('button', { name });
+      await same(leftOf(head.querySelector('svg')!), mark);
+      await same(leftOf(within(head).getByText(name)), text);
+    }
+
+    // A leg moves one whole step in: its mark under the head's name, its name one step on.
+    for (const name of ['macOS builder pickup', 'vis-agent-macos-arm64.tar.gz']) {
+      const leg = canvas.getByRole('button', { name: `Select ${name}` });
+      await same(leftOf(leg.querySelector('svg')!), text);
+      await same(leftOf(within(leg).getByText(name)), text + step);
+    }
+  },
+};
+
+export const PhoneMatrixJobs: Story = {
+  ...matrixJobs,
+  globals: { viewport: { value: 'phone', isRotated: false } },
+};
+
+export const DesktopMatrixJobs: Story = {
+  ...matrixJobs,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
 };

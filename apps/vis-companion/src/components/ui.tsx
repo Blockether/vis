@@ -798,6 +798,7 @@ export function Disclosure({
   tone = 'muted',
   bleed = false,
   inlineChevron = false,
+  alignsWithMarks = false,
   tally,
   density = 'default',
   className = '',
@@ -820,6 +821,12 @@ export function Disclosure({
   bleed?: boolean;
   /** Keep the chevron immediately after the label, not at either row edge. */
   inlineChevron?: boolean;
+  /**
+   * Puts the label on the words column of rows that start with a 12px mark and an 8px
+   * gap. The chevron then keeps that 20px step, not its own 18px step, so a live table
+   * can show heads and rows in one column.
+   */
+  alignsWithMarks?: boolean;
   /** Optional metadata after the chevron, so hiding it never shifts the label or icon. */
   tally?: ReactNode;
   /** Compact operation rows or comfortable 44px touch / 28px mouse controls. */
@@ -850,7 +857,7 @@ export function Disclosure({
       type="button"
       data-disclosure-toggle
       aria-expanded={isOpen}
-      className={`flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-left font-mono ${size} transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none ${tone === 'caption' ? 'w-auto' : bleed ? 'w-[calc(100%_+_0.5rem)]' : 'w-full'} ${bleed ? '-ml-2 px-2' : ''} ${ink} ${className}`}
+      className={`flex min-w-0 cursor-pointer select-none items-center ${alignsWithMarks ? 'gap-2' : 'gap-1.5'} text-left font-mono ${size} transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none ${tone === 'caption' ? 'w-auto' : bleed ? 'w-[calc(100%_+_0.5rem)]' : 'w-full'} ${bleed ? '-ml-2 px-2' : ''} ${ink} ${className}`}
       {...props}
     >
       {!inlineChevron && tone !== 'execution' && tone !== 'thinking' && (

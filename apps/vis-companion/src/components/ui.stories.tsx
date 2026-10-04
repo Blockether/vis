@@ -564,6 +564,9 @@ export const Rows: Story = {
         <Disclosure className="w-full" isOpen tone="execution" inlineChevron>
           RESULT
         </Disclosure>
+        <Disclosure className="w-full" isOpen={false} tone="branch" alignsWithMarks>
+          native / native
+        </Disclosure>
         <div className="w-full" role="listbox" aria-label="Reasoning effort">
           <OptionRow className="w-full" isActive>
             Reasoning, high

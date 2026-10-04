@@ -213,10 +213,13 @@ function ViewState({ view, isSettled }: { view: LiveViewModel; isSettled: boolea
  * The headline owns the whole column and its detail sits UNDER it. Sharing one
  * line cost the headline every character the detail claimed: on a phone, "1 of 2
  * jobs finished" beside a workflow and a job name broke to one word per line.
+ *
+ * The headline's mark is 14px, so its gap is 6px: its words then start 20px in, on the
+ * column of the rows under it, which start with a 12px mark and an 8px gap.
  */
 function StatusRow({ node }: { node: LiveStatusNode }) {
   return (
-    <div className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-2 gap-y-1 font-mono text-title">
+    <div className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-1.5 gap-y-1 font-mono text-title">
       <ToneMark tone={node.tone} className="size-3.5" />
       <p className={`min-w-0 ${PROSE} ${TONE_INK[node.tone]}`}>
         <InlineMarkdown>{node.text}</InlineMarkdown>
@@ -678,15 +681,7 @@ function tableShape(node: LiveTableNode) {
 }
 
 /** The row as a phone reads it: the name, the value beside it, the rest beneath. */
-function RowFace({
-  node,
-  row,
-  isIndented,
-}: {
-  node: LiveTableNode;
-  row: LiveRow;
-  isIndented: boolean;
-}) {
+function RowFace({ node, row }: { node: LiveTableNode; row: LiveRow }) {
   const { valueAt, detailAt } = tableShape(node);
   const value = valueAt >= 0 ? (row.cells[valueAt] ?? '') : '';
   const detail = detailAt
@@ -695,7 +690,7 @@ function RowFace({
     .join(' · ');
   const name = row.cells[0] ?? '';
   return (
-    <span className={`block min-w-0 ${isIndented ? 'pl-3' : ''}`}>
+    <span className="block min-w-0">
       <span className="flex min-w-0 items-baseline gap-2">
         <span className="min-w-0 flex-1 truncate">
           <InlineMarkdown>{name}</InlineMarkdown>
@@ -827,7 +822,9 @@ function TableRows({
               // COUNTED from the rows right here: a producer DECLARES a group through the
               // live interface and every surface renders that declaration the same way,
               // instead of a label smuggled through the field that IDENTIFIES the group.
-              // The mark is how a head says a leg failed without being opened at all.
+              // The mark is how a head says a leg failed without being opened at all. It
+              // FOLLOWS the name: in front of it, the mark moved the name off the column
+              // of the rows, and heads with and without one started in two places.
               const held = `${item.count} row${item.count === 1 ? '' : 's'}`;
               return (
                 <tr key={`group:${item.id}`}>
@@ -835,6 +832,7 @@ function TableRows({
                     <Disclosure
                       isOpen={item.isOpen}
                       tone="branch"
+                      alignsWithMarks
                       aria-label={item.label}
                       onClick={() =>
                         setToggledGroups((was) => {
@@ -845,14 +843,14 @@ function TableRows({
                         })
                       }
                     >
-                      {item.tone ? <ToneMark tone={item.tone} /> : null}
-                      <span className={`min-w-0 flex-1 truncate ${rowInk(item.tone ?? 'idle')}`}>
+                      <span className={`min-w-0 truncate ${rowInk(item.tone ?? 'idle')}`}>
                         {item.label}
                       </span>
+                      {item.tone ? <ToneMark tone={item.tone} /> : null}
                       {/* The count keeps a step of its own between it and the name, so a
                           head too long for the band trims the NAME and still reads as two
                           things instead of one run-on line. */}
-                      <span className="shrink-0 pl-2 font-normal text-meta text-dialog-hint">
+                      <span className="ml-auto shrink-0 pl-2 font-normal text-meta text-dialog-hint">
                         {held}
                       </span>
                     </Disclosure>
@@ -862,6 +860,10 @@ function TableRows({
             }
             const row = item.row;
             const isSelected = selected.has(row.id);
+            // A LEG moves one whole step in, mark and words together, so its mark stands
+            // under its head's name. Indenting only the words left the mark on the outer
+            // column, with a wider gap after it than any other row has.
+            const mark = row.parent ? 'size-3 ml-5' : 'size-3';
             return (
               <SelectableTableRow
                 key={row.id}
@@ -882,15 +884,15 @@ function TableRows({
                       aria-pressed={isSelected}
                       aria-label={`Select ${row.cells[0] || row.id}`}
                     >
-                      <ToneMark tone={row.tone} />
+                      <ToneMark tone={row.tone} className={mark} />
                       <span className="min-w-0 flex-1 font-mono text-ui">
-                        <RowFace node={node} row={row} isIndented={Boolean(row.parent)} />
+                        <RowFace node={node} row={row} />
                       </span>
                     </ListRow>
                   ) : (
                     <span className="flex min-w-0 items-start gap-2 px-(--live-view-inset) py-1.5">
-                      <ToneMark tone={row.tone} />
-                      <RowFace node={node} row={row} isIndented={Boolean(row.parent)} />
+                      <ToneMark tone={row.tone} className={mark} />
+                      <RowFace node={node} row={row} />
                     </span>
                   )}
                 </td>
@@ -1037,6 +1039,7 @@ function NodeCell({
         <Disclosure
           isOpen={isOpen}
           tone="branch"
+          alignsWithMarks
           density="comfortable"
           aria-label={label}
           aria-controls={isOpen ? contentId : undefined}
@@ -1051,7 +1054,7 @@ function NodeCell({
         node.label && node.type !== 'button' && <NodeLabel>{node.label}</NodeLabel>
       )}
       {(!isDisclosure || isOpen) && (
-        <div id={contentId} className={`min-w-0 ${isDisclosure ? 'pl-4.5' : ''}`}>
+        <div id={contentId} className={`min-w-0 ${isDisclosure ? 'pl-5' : ''}`}>
           {node.type === 'group' && (
             <ViewLayout direction={node.direction}>
               {node.fields.map((child) => (

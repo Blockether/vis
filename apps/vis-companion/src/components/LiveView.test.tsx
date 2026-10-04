@@ -311,6 +311,30 @@ describe('selecting a table row', () => {
     expect(count.className).toContain('shrink-0');
     expect(count.className).toContain('pl-2');
   });
+  // Regression, reported from the phone: the live table drew its words in six columns. A
+  // head's mark pushed its name off the column of the rows, and a leg indented its name but
+  // not its mark. The browser story `PhoneMatrixJobs` measures the columns; this test keeps
+  // the structure that gives them.
+  it('keeps every head name on one column and moves a leg mark with its name', () => {
+    const view = matrixView([]);
+    hostsTable(view).groups = [{ id: 'Release apps', tone: 'error', is_open: true }];
+    paint({ view, onSelect: vi.fn() });
+
+    const head = screen.getByRole('button', { name: 'Release apps' });
+    const [chevron, mark] = [...head.querySelectorAll('svg')];
+    const name = within(head).getByText('Release apps');
+    // The chevron keeps the step of a row mark, and the failure mark follows the name.
+    expect(head.className).toContain('gap-2');
+    expect(chevron.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(name.compareDocumentPosition(mark) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    // A leg indents its mark, and its name follows the mark: the words never indent alone.
+    const leg = screen.getByRole('button', { name: 'Select iOS' });
+    expect(leg.querySelector('svg')?.getAttribute('class')).toContain('ml-5');
+    expect(leg.innerHTML).not.toContain('pl-3');
+    const job = screen.getByRole('button', { name: 'Select Publish docs' });
+    expect(job.querySelector('svg')?.getAttribute('class')).not.toContain('ml-5');
+  });
   // Regression, session 641fbdc0-44a9-46dd-86c9-3e8b9bdf878b: a parent with a single leg
   // stayed flat beside its folded neighbors, so one table showed two shapes and the lone
   // rows were the only ones still repeating their parent's name.
