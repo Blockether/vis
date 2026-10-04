@@ -220,6 +220,16 @@
                    (.update d (util/utf8 "vis"))
                    (expect (= (util/sha256-hex "vis") (util/bytes->hex (.digest d)))))))
 
+(defdescribe
+  secret-bytes-test
+  (it "matches the RFC 4231 HMAC-SHA256 test vector"
+      (expect (= "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+                 (util/bytes->hex (util/hmac-sha256 (util/utf8 "Jefe")
+                                                    (util/utf8 "what do ya want for nothing?"))))))
+  (it "hands out fresh random bytes of the asked length"
+      (expect (= 32 (alength (util/random-bytes 32))))
+      (expect (not (java.util.Arrays/equals (util/random-bytes 32) (util/random-bytes 32))))))
+
 (defdescribe env-val-test
              (it "answers nil for a variable no environment sets"
                  (expect (nil? (util/env-val "VIS_A_VARIABLE_NOTHING_SETS")))))
@@ -233,7 +243,9 @@
    "a SHA-256 digest (util/sha256, util/sha256-digest)" #"MessageDigest/getInstance\s+\"SHA-256\""
    "a blank-string predicate (util/non-blank-string?)"
    #"\(and\s+\(string\?\s+[^)]+\)\s+\(not\s+\(str/blank\?"
-   "UTF-8 bytes (util/utf8)" #"\.getBytes\s+[^\s)]+\s+(?:StandardCharsets/UTF_8|\"UTF-8\")"})
+   "UTF-8 bytes (util/utf8)" #"\.getBytes\s+[^\s)]+\s+(?:StandardCharsets/UTF_8|\"UTF-8\")"
+   "an HMAC-SHA256 (util/hmac-sha256)" #"Mac/getInstance\s+\"HmacSHA256\""
+   "secure random bytes (util/random-bytes)" #"\.nextBytes"})
 
 (defdescribe shared-primitives-test
              (it "leaves every re-rolled primitive of the engine to internal.util"

@@ -13,7 +13,6 @@
             [com.blockether.vis.internal.util :as util])
   (:import (java.nio.file Files Path LinkOption CopyOption StandardCopyOption)
            (java.nio.file.attribute FileAttribute PosixFilePermissions)
-           (java.security SecureRandom)
            (java.util Base64)))
 
 (set! *warn-on-reflection* true)
@@ -84,11 +83,7 @@
 
 (defn- update-state! [f] (locking state-lock (save-state! (f (read-state)))))
 
-(defn- secret
-  []
-  (let [data (byte-array 32)]
-    (.nextBytes (SecureRandom.) data)
-    (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) data)))
+(defn- secret [] (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) (util/random-bytes 32)))
 
 (defn access-id [room-id] (str "council_room_" (str/replace room-id "-" "") "_access"))
 

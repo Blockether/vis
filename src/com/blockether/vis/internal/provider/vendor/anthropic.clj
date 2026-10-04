@@ -20,7 +20,6 @@
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.provider.oauth :as oauth])
   (:import [java.net URLDecoder URLEncoder]
-           [java.security SecureRandom]
            [java.time Instant]
            [java.util Base64]))
 
@@ -47,14 +46,6 @@
 
 ;; base-url + default-models come from svar (single source of truth).
 (def ^:private ^:const refresh-margin-ms 300000)
-
-(def ^:private secure-random (delay (SecureRandom.)))
-
-(defn- random-bytes
-  [n]
-  (let [bytes (byte-array n)]
-    (.nextBytes ^SecureRandom @secure-random bytes)
-    bytes))
 
 (defn- base64url [^bytes bytes] (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) bytes))
 
@@ -110,13 +101,13 @@
   "Create Anthropic Claude subscription OAuth PKCE flow data."
   []
   (let [verifier
-        (base64url (random-bytes 32))
+        (base64url (util/random-bytes 32))
 
         challenge
         (base64url (sha256 verifier))
 
         state
-        (base64url (random-bytes 32))
+        (base64url (util/random-bytes 32))
 
         query
         (query-string {:code "true"

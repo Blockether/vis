@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.automation.webhook-test
   (:require [com.blockether.vis.internal.automation.webhook :as webhook]
+            [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import (java.nio.charset StandardCharsets)
            (java.util HexFormat)))
@@ -75,7 +76,7 @@
           "{\"a\":1}"
 
           signature
-          (hex (webhook/hmac (utf8 secret) (utf8 (str "1614265330." body))))]
+          (hex (util/hmac-sha256 (utf8 secret) (utf8 (str "1614265330." body))))]
 
       (it "accepts the HMAC of the timestamp and the body"
           (expect (nil? (verify "generic"

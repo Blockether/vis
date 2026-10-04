@@ -24,7 +24,6 @@
             [com.blockether.vis.internal.provider.oauth :as oauth]
             [taoensso.telemere :as tel])
   (:import [java.net URLDecoder URLEncoder]
-           [java.security SecureRandom]
            [java.util Base64]))
 
 ;; Constants
@@ -53,23 +52,6 @@
 
 ;; Encoding / crypto helpers
 
-(def ^:private secure-random (delay (SecureRandom.)))
-
-(defn- random-bytes
-  [n]
-  (let [bytes (byte-array n)]
-    (.nextBytes ^SecureRandom @secure-random bytes)
-    bytes))
-
-(defn- bytes->hex
-  [^bytes bytes]
-  (let [sb (StringBuilder. (* 2 (alength bytes)))]
-    (doseq [b bytes]
-      (let [v (bit-and 0xff (int b))]
-        (when (< v 16) (.append sb \0))
-        (.append sb (Integer/toHexString v))))
-    (str sb)))
-
 (defn- base64url [^bytes bytes] (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) bytes))
 
 (defn- sha256 [^String s] (util/sha256 (util/utf8 s)))
@@ -77,14 +59,14 @@
 (defn- generate-pkce
   []
   (let [verifier
-        (base64url (random-bytes 32))
+        (base64url (util/random-bytes 32))
 
         challenge
         (base64url (sha256 verifier))]
 
     {:verifier verifier :challenge challenge}))
 
-(defn- create-state [] (bytes->hex (random-bytes 16)))
+(defn- create-state [] (util/bytes->hex (util/random-bytes 16)))
 
 (defn- url-encode [v] (URLEncoder/encode (str v) "UTF-8"))
 

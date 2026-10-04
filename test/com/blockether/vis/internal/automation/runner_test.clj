@@ -4,6 +4,7 @@
             [com.blockether.vis.internal.automation.runner :as runner]
             [com.blockether.vis.internal.automation.webhook :as webhook]
             [com.blockether.vis.internal.persistance.core :as ps]
+            [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (com.sun.net.httpserver HttpExchange HttpHandler HttpServer)
            (java.net InetSocketAddress)
@@ -227,7 +228,7 @@
   {"x-github-event" event
    "x-github-delivery" delivery
    "x-hub-signature-256"
-   (str "sha256=" (.formatHex (HexFormat/of) (webhook/hmac (utf8 secret) (utf8 body))))})
+   (str "sha256=" (.formatHex (HexFormat/of) (util/hmac-sha256 (utf8 secret) (utf8 body))))})
 
 (defdescribe
   webhook-test

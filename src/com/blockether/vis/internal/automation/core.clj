@@ -10,7 +10,6 @@
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.util :as util])
   (:import (java.net URI URISyntaxException)
-           (java.security SecureRandom)
            (java.util Base64 UUID)))
 
 (def ^:private schema (document/schema-document "automations"))
@@ -204,9 +203,7 @@
 (defn new-secret
   "A Standard Webhooks secret: `whsec_` and 32 random bytes in base64."
   []
-  (let [data (byte-array 32)]
-    (.nextBytes (SecureRandom.) data)
-    (str "whsec_" (.encodeToString (Base64/getEncoder) data))))
+  (str "whsec_" (.encodeToString (Base64/getEncoder) (util/random-bytes 32))))
 
 (defn- last-run
   [db automation-id]

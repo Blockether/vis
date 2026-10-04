@@ -20,11 +20,11 @@
            [java.net URI]
            [java.nio ByteBuffer]
            [java.nio.file Files]
-           [java.security KeyFactory KeyPair KeyPairGenerator PrivateKey SecureRandom Signature]
+           [java.security KeyFactory KeyPair KeyPairGenerator PrivateKey Signature]
            [java.security.interfaces ECPublicKey]
            [java.security.spec ECGenParameterSpec X509EncodedKeySpec PKCS8EncodedKeySpec]
            [java.util Arrays Base64]
-           [javax.crypto Cipher KeyAgreement Mac]
+           [javax.crypto Cipher KeyAgreement]
            [javax.crypto.spec GCMParameterSpec SecretKeySpec]))
 
 ;; The aes128gcm content-coding reserves a two-byte delimiter and a 16-byte
@@ -304,19 +304,6 @@
   []
   (:is-configured (config)))
 
-(defn- hmac
-  "Compute HMAC-SHA256, the primitive used by VAPID and Web Push HKDF."
-  ^bytes [^bytes key ^bytes data]
-  (let [mac (doto (Mac/getInstance "HmacSHA256") (.init (SecretKeySpec. key "HmacSHA256")))]
-    (.doFinal mac data)))
-
-(defn- random-bytes
-  "Return cryptographically random bytes of the requested length."
-  ^bytes [^long length]
-  (let [bytes (byte-array length)]
-    (.nextBytes (SecureRandom.) bytes)
-    bytes))
-
 (defn- ecdh-secret
   "Derive the shared secret for one ephemeral EC private/public-key pair."
   ^bytes [^PrivateKey private ^ECPublicKey public]
@@ -337,7 +324,9 @@
 
     (if (>= (alength output) length)
       (Arrays/copyOf output length)
-      (let [block (hmac prk (concat-bytes previous info (byte-array [(unchecked-byte counter)])))]
+      (let [block (util/hmac-sha256
+                    prk
+                    (concat-bytes previous info (byte-array [(unchecked-byte counter)])))]
         (recur block (concat-bytes output block) (inc counter))))))
 
 (defn- sign
@@ -448,13 +437,13 @@
         (concat-bytes (util/utf8 KEY_INFO_PREFIX) client-public server-public)
 
         ikm
-        (hkdf-expand (hmac auth shared) key-info 32)
+        (hkdf-expand (util/hmac-sha256 auth shared) key-info 32)
 
         salt
-        (random-bytes 16)
+        (util/random-bytes 16)
 
         prk
-        (hmac salt ikm)]
+        (util/hmac-sha256 salt ikm)]
 
     {:salt salt
      :cek (hkdf-expand prk (util/utf8 AES_INFO) 16)

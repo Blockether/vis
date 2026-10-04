@@ -30,7 +30,6 @@
             [com.blockether.vis.internal.provider.oauth :as oauth]
             [com.blockether.vis.internal.util :as util])
   (:import (java.net URI URLDecoder URLEncoder)
-           (java.security SecureRandom)
            (java.util Base64)))
 
 (def ^:private protocol-version-header "MCP-Protocol-Version")
@@ -45,12 +44,6 @@
   (-> (Base64/getUrlEncoder)
       .withoutPadding
       (.encodeToString bs)))
-
-(defn- rand-bytes
-  ^bytes [n]
-  (let [b (byte-array n)]
-    (.nextBytes (SecureRandom.) b)
-    b))
 
 (defn- form-encode
   ^String [m]
@@ -254,14 +247,14 @@
                             {:type :mcp/oauth-discovery :server server-name})))
 
         verifier
-        (b64url (rand-bytes 32))]
+        (b64url (util/random-bytes 32))]
 
     {:server server-name
      :as-url as-url
      :asmeta asmeta
      :verifier verifier
      :challenge (b64url (util/sha256 (util/utf8 verifier)))
-     :state (b64url (rand-bytes 16))
+     :state (b64url (util/random-bytes 16))
      :resource (get rmeta "resource")
      :scope (or (:scope auth-hint)
                 (some->> (get rmeta "scopes_supported")

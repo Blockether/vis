@@ -8,16 +8,7 @@
             [com.blockether.vis.internal.util :as util])
   (:import (java.nio.charset StandardCharsets)
            (java.security MessageDigest)
-           (java.util Arrays Base64 HexFormat)
-           (javax.crypto Mac)
-           (javax.crypto.spec SecretKeySpec)))
-
-(defn hmac
-  "HMAC-SHA256 of `data` with `key`."
-  ^bytes [^bytes key ^bytes data]
-  (let [mac (Mac/getInstance "HmacSHA256")]
-    (.init mac (SecretKeySpec. key "HmacSHA256"))
-    (.doFinal mac data)))
+           (java.util Arrays Base64 HexFormat)))
 
 (defn- concat-bytes
   ^bytes [^bytes head ^bytes tail]
@@ -33,13 +24,16 @@
     (.decode (Base64/getDecoder) (subs secret 6))
     (util/utf8 secret)))
 
+(defn- standard-mac
+  "The raw HMAC bytes of one Standard Webhooks message."
+  ^bytes [^String secret ^String message-id ^String timestamp ^bytes body]
+  (util/hmac-sha256 (standard-key secret)
+                    (concat-bytes (util/utf8 (str message-id "." timestamp ".")) body)))
+
 (defn standard-signature
   "The `v1,<base64>` signature of Standard Webhooks for one message."
   [^String secret ^String message-id ^String timestamp ^bytes body]
-  (str "v1,"
-       (.encodeToString (Base64/getEncoder)
-                        (hmac (standard-key secret)
-                              (concat-bytes (util/utf8 (str message-id "." timestamp ".")) body)))))
+  (str "v1," (.encodeToString (Base64/getEncoder) (standard-mac secret message-id timestamp body))))
 
 (defn- same-bytes? [^bytes a ^bytes b] (boolean (and a b (MessageDigest/isEqual a b))))
 
@@ -66,7 +60,8 @@
     "github"
     (let [header (str (get headers "x-hub-signature-256"))]
       (when-not (and (str/starts-with? header "sha256=")
-                     (same-bytes? (hmac (util/utf8 secret) body) (hex-bytes (subs header 7))))
+                     (same-bytes? (util/hmac-sha256 (util/utf8 secret) body)
+                                  (hex-bytes (subs header 7))))
         "signature"))
 
     "standard"
@@ -81,8 +76,7 @@
 
       (cond (not (and message-id timestamp signatures)) "signature"
             (not (fresh? timestamp now skew-seconds)) "timestamp"
-            :else (let [expected (base64-bytes
-                                   (subs (standard-signature secret message-id timestamp body) 3))]
+            :else (let [expected (standard-mac secret message-id timestamp body)]
                     (when-not (some (fn [item]
                                       (let [[version value] (str/split item #"," 2)]
                                         (and (= "v1" version)
@@ -101,8 +95,9 @@
 
       (cond (not (and timestamp signature)) "signature"
             (not (fresh? timestamp now skew-seconds)) "timestamp"
-            (not (same-bytes? (hmac (util/utf8 secret)
-                                    (concat-bytes (util/utf8 (str (str/trim timestamp) ".")) body))
+            (not (same-bytes? (util/hmac-sha256
+                                (util/utf8 secret)
+                                (concat-bytes (util/utf8 (str (str/trim timestamp) ".")) body))
                               (hex-bytes (str/trim signature))))
             "signature"
             :else nil))

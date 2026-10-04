@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.util
   "The engine's one shared leaf: the primitives every namespace kept re-rolling —
    a millisecond clock, the two blank-string idioms, a trimmed environment read,
-   UTF-8 bytes, SHA-256 and the hex fold.
+   UTF-8 bytes, SHA-256, HMAC-SHA256, secure random bytes and the hex fold.
 
    It requires NOTHING from the rest of vis and never will. That is the whole
    contract: a leaf can be required from anywhere — specs that load during
@@ -18,8 +18,10 @@
   (:import (charred JSONWriter)
            (java.io StringWriter)
            (java.nio.charset StandardCharsets)
-           (java.security MessageDigest)
-           (java.util.function BiConsumer)))
+           (java.security MessageDigest SecureRandom)
+           (java.util.function BiConsumer)
+           (javax.crypto Mac)
+           (javax.crypto.spec SecretKeySpec)))
 
 (def ^:private json-object-writer
   (reify
@@ -174,6 +176,23 @@
    markers and pairing all read the same digits for the same input."
   ^String [x]
   (bytes->hex (sha256 (if (bytes? x) x (utf8 (str x))))))
+
+(defn hmac-sha256
+  "HMAC-SHA256 of `data` with `key` — the one MAC that webhook signatures and
+   Web Push key derivation share."
+  ^bytes [^bytes key ^bytes data]
+  (let [mac (Mac/getInstance "HmacSHA256")]
+    (.init mac (SecretKeySpec. key "HmacSHA256"))
+    (.doFinal mac data)))
+
+(defn random-bytes
+  "`n` cryptographically random bytes for secrets, nonces and OAuth state. Each
+   call uses a fresh `SecureRandom`, so no generator becomes a top-level value
+   that the native image could freeze."
+  ^bytes [^long n]
+  (let [b (byte-array n)]
+    (.nextBytes (SecureRandom.) b)
+    b))
 
 ;; ── Strings ──────────────────────────────────────────────────────────────
 
