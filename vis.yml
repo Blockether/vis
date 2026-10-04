@@ -52,6 +52,12 @@ workspace:
       path: ~/vis-lang-python
       description: Sibling repo — source of the py extension; ruff formatting and lint, pytest runs and a persistent Python REPL.
       optional: true
+    # Source of the vis-decisions extension. Each user pins its release in their own
+    # vis.yml, because its training dependencies are large.
+    - id: vis-decisions
+      path: ~/vis-decisions
+      description: Sibling repo — source of the vis-decisions extension; trains Laya, GLiNER2.5 and Decision 2.0 decision models and exports their FP32 ONNX bundles.
+      optional: true
     - id: infrastructure
       path: ~/infrastructure
       description: Sibling repo — private operations automation. Nothing about it belongs in this repository.
