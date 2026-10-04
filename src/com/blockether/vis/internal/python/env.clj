@@ -1542,42 +1542,61 @@
    not come back whole."
   80)
 
+(defn- render-excerpt
+  "One source line `text` after `label` and `: `, with a caret run under the
+   offending span (`col`/`end-col`, 0-based offsets into the detabbed line — tabs
+   collapse to one space so 1 char == 1 caret column). Only `excerpt-width`
+   columns of it show around the caret."
+  [label text col end-col]
+  (let [txt
+        (str/replace (str text) "\t" " ")
+
+        n
+        (count txt)
+
+        c0
+        (if (and col (<= 0 (long col) n)) (long col) 0)
+
+        end
+        (if (and end-col (> (long end-col) c0)) (long end-col) (inc c0))
+
+        ;; Snap the caret start off leading whitespace: a `co_positions`
+        ;; quirk reports the ENCLOSING handler's column for a
+        ;; `raise … from …` inside an `except`, landing the caret start
+        ;; in the indentation gutter. Advance to the first non-space
+        ;; within the span so the caret always begins on real code (a
+        ;; no-op when the reported column already points at a token).
+        c
+        (long (or (first (filter #(not= \space (nth txt %)) (range c0 (min end n)))) c0))
+
+        ;; A long line shows `excerpt-width` columns that start half a
+        ;; window before the caret.
+        from
+        (if (> n excerpt-width) (max 0 (min (- c (quot excerpt-width 2)) (- n excerpt-width))) 0)
+
+        to
+        (min n (+ from excerpt-width))
+
+        pfx
+        (str label ": ")]
+
+    (str pfx
+         (when (pos? from) "…")
+         (subs txt from to)
+         (when (< to n) "…")
+         "\n"
+         (apply str (repeat (+ (count pfx) (if (pos? from) 1 0) (- c from)) \space))
+         (apply str (repeat (max 1 (- (min end to) c)) \^)))))
+
 (defn- render-source-context
   "Source excerpt for an eval failure: the 1-based `line` of `code`, numbered, with
-   a caret run under the offending span (`col`/`end-col`, 0-based offsets into the
-   detabbed line — tabs collapse to one space so 1 char == 1 caret column). Only
-   that line is shown, and only `excerpt-width` columns of it around the caret.
-   Returns nil when `line` is out of range, so a positionless failure leaves the
-   raw message untouched."
+   a caret run under the offending span (see `render-excerpt`). Only that line is
+   shown. Returns nil when `line` is out of range, so a positionless failure leaves
+   the raw message untouched."
   [code line col end-col]
   (let [lines (vec (str/split-lines (str code)))]
     (when (and line (<= 1 (long line) (count lines)))
-      (let [txt (str/replace (nth lines (dec (long line))) "\t" " ")
-            n (count txt)
-            c0 (if (and col (<= 0 (long col) n)) (long col) 0)
-            end (if (and end-col (> (long end-col) c0)) (long end-col) (inc c0))
-            ;; Snap the caret start off leading whitespace: a `co_positions`
-            ;; quirk reports the ENCLOSING handler's column for a
-            ;; `raise … from …` inside an `except`, landing the caret start
-            ;; in the indentation gutter. Advance to the first non-space
-            ;; within the span so the caret always begins on real code (a
-            ;; no-op when the reported column already points at a token).
-            c (long (or (first (filter #(not= \space (nth txt %)) (range c0 (min end n)))) c0))
-            ;; A long line shows `excerpt-width` columns that start half a
-            ;; window before the caret.
-            from (if (> n excerpt-width)
-                   (max 0 (min (- c (quot excerpt-width 2)) (- n excerpt-width)))
-                   0)
-            to (min n (+ from excerpt-width))
-            pfx (str line ": ")]
-
-        (str pfx
-             (when (pos? from) "…")
-             (subs txt from to)
-             (when (< to n) "…")
-             "\n"
-             (apply str (repeat (+ (count pfx) (if (pos? from) 1 0) (- c from)) \space))
-             (apply str (repeat (max 1 (- (min end to) c)) \^)))))))
+      (render-excerpt line (nth lines (dec (long line))) col end-col))))
 
 (def ^:private repeat-breaker-threshold
   "Consecutive identical (code, error) failures before the loop breaker fires.
@@ -1641,18 +1660,22 @@
   (swap! block-failure-memory dissoc session)
   nil)
 
-(defn- guest-error-position
-  "Where the failure happened in the block's own source, as `[line col]`.
+(defn- guest-error-location
+  "Where the failure happened, as `{:position [line col end-col] :helpers [...]}`.
 
-   The runtime stashes the raised exception for exactly this lookup and computes
-   the position from the deepest USER frame — walking the traceback while the
+   `:position` is in the failed block's own source, nil when no frame of that
+   block failed. `:helpers` are the frames under it in helpers that earlier blocks
+   defined, outermost first: `{:name :line :col :end_col :text :repeats}` maps and
+   `{:omitted n}` for frames a long chain leaves out. The runtime stashes the
+   raised exception for exactly this lookup — walking the traceback while the
    guest is still inside its `except` is what used to replace a model's real
    error with an internal fault."
   [session]
-  (let [pos (guest-value session "__vis_err_pos_now__()")]
-    (when (and (sequential? pos) (first pos))
-      [(long (first pos)) (when (second pos) (long (second pos)))
-       (when (nth pos 2 nil) (long (nth pos 2 nil)))])))
+  (let [location (guest-value session "__vis_err_pos_now__()")]
+    (when (sequential? location)
+      (let [[line col end-col helpers] location]
+        {:position (when line [(long line) (when col (long col)) (when end-col (long end-col))])
+         :helpers (filterv map? helpers)}))))
 
 (defn- syntax-error-position
   "`[line nil]` read out of a stringified SyntaxError, which CPython ends with
@@ -1695,6 +1718,41 @@
               :else (recur (inc i)
                            (+ seen (alength (util/utf8 (subs (str line-text) i (inc i)))))))))))
 
+(defn- render-helper-frames
+  "The helper frames under the failing line, outermost first, or nil without one.
+   Each shows the helper's name, its line counted from its `def` (the way
+   `defs(name)` shows the helper) and its source line, unindented, with a caret.
+   A recursion shows once with its count, and `{:omitted n}` stands for the frames
+   that a long chain leaves out."
+  [helpers]
+  (when (seq helpers)
+    (->> helpers
+         (map
+           (fn [{:keys [line col end_col text repeats omitted] helper-name :name}]
+             (if omitted
+               (str "… " omitted " more helper frames …")
+               (let [text
+                     (str text)
+
+                     body
+                     (str/triml text)
+
+                     shift
+                     (- (count text) (count body))
+
+                     at
+                     #(when-let [c (char-column text %)] (max 0 (- (long c) shift)))
+
+                     label
+                     (str helper-name
+                          ", line "
+                          line
+                          (when (< 1 (long (or repeats 1))) (str " (" repeats " times)")))]
+
+                 (if (str/blank? body) label (render-excerpt label body (at col) (at end_col)))))))
+         (cons "Helper frames from earlier blocks, outermost first:")
+         (str/join "\n"))))
+
 (defn map-python-error
   "Map what a block RAISED into the engine's op-error shape.
 
@@ -1734,8 +1792,17 @@
         tool-message
         (when host? (str/replace-first base #"^VisToolError:\s*" ""))
 
+        syntax-pos
+        (when (or syntax? indent?) (syntax-error-position base))
+
+        location
+        (when-not syntax-pos (guest-error-location session))
+
         pos
-        (or (when (or syntax? indent?) (syntax-error-position base)) (guest-error-position session))
+        (or syntax-pos (:position location))
+
+        helpers
+        (:helpers location)
 
         non-ascii?
         (boolean (and syntax? (re-find #"invalid character" base)))
@@ -1820,6 +1887,11 @@
                                    (char-column line-text (second pos))
                                    (char-column line-text (nth pos 2 nil)))))
 
+        ;; Frames under that line in helpers that earlier blocks defined: their
+        ;; lines number other sources, so they show apart from the excerpt.
+        helper-context
+        (when-not host? (render-helper-frames helpers))
+
         ;; The excerpt numbers its line, so the parser's own `(<file>, line N)`
         ;; stays only when the excerpt shows another line.
         error-text
@@ -1846,7 +1918,8 @@
                hint
                error-text
                (when problem (str "\n" (:message problem)))
-               (when source-context (str "\n\n" source-context))))]
+               (when source-context (str "\n\n" source-context))
+               (when helper-context (str (if source-context "\n" "\n\n") helper-context))))]
 
     {:message msg
      :data (cond-> {:phase (cond host? :python/host

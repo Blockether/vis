@@ -393,6 +393,41 @@
                 "def pick(xs):\n    return xs[10]\n\nrows = [1, 2, 3]\nprint(pick(rows))")]
         (expect (= 2 (get-in r [:error :data :line])))
         (expect (str/includes? (:message (:error r)) "return xs[10]"))))
+  (it "a helper chain three blocks deep shows the failing block's line, then each helper"
+      ;; Regression: a helper from an earlier block put ITS line number on the
+      ;; failing block's text, so the excerpt showed a line that did not fail
+      ;; (here line 2, `print('after')`).
+      (let [ctx (py-ctx)]
+        (doseq [code ["def inner_zz():\n    raise ValueError('deep')"
+                      "def middle_zz():\n    checked = True\n    return inner_zz()"
+                      "def outer_zz():\n    return middle_zz()"]]
+          (expect (nil? (:error (ep/run-python-block ctx code)))))
+        (let [err (:error (ep/run-python-block ctx
+                                               "result = outer_zz()\nprint('after')\ndone = True"))]
+          (expect (= 1 (get-in err [:data :line])))
+          (expect (str/ends-with? (:message err)
+                                  (str "\n\n1: result = outer_zz()\n"
+                                       "            ^^^^^^^^^^\n"
+                                       "Helper frames from earlier blocks, outermost first:\n"
+                                       "outer_zz, line 2: return middle_zz()\n"
+                                       "                         ^^^^^^^^^^^\n"
+                                       "middle_zz, line 3: return inner_zz()\n"
+                                       "                          ^^^^^^^^^^\n"
+                                       "inner_zz, line 2: raise ValueError('deep')\n"
+                                       "                  ^^^^^^^^^^^^^^^^^^^^^^^^"))))))
+  (it "a recursive helper shows once, with its count"
+      (let [ctx (py-ctx)]
+        (expect
+          (nil?
+            (:error
+              (ep/run-python-block
+                ctx
+                "def down_zz(n):\n    if n:\n        return down_zz(n - 1)\n    return 1 / 0"))))
+        (let [msg (:message (:error (ep/run-python-block ctx "down_zz(30)")))]
+          (expect (str/includes? msg "1: down_zz(30)\n"))
+          (expect (str/includes? msg "down_zz, line 3 (30 times): return down_zz(n - 1)\n"))
+          (expect
+            (str/ends-with? msg "down_zz, line 4: return 1 / 0\n                        ^^^^^")))))
   (it "a compile/syntax error keeps its precise loc-based excerpt"
       (let [r
             (ep/run-python-block (py-ctx) "def h():\n    if True 1")
