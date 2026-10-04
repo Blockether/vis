@@ -100,6 +100,29 @@ async function expectLiveFrame(element: Element) {
   return frame;
 }
 
+/** Several views share one digest control, which keeps its count when the steps open. */
+export const MultipleLiveViews: Story = {
+  args: {
+    liveViews: [view, { ...view, id: 'test-pool', title: 'Integration tests' }],
+  },
+  play: async ({ canvas, canvasElement }) => {
+    const control = canvas.getByRole('button', { name: 'Open running live view: Integration tests' });
+    const digest = canvasElement.querySelector<HTMLButtonElement>('[data-step-digest]')!;
+    await expect(control).toHaveTextContent(/^2 live$/);
+    await expect(digest.parentElement).toContainElement(control);
+    await userEvent.click(digest);
+    await expect(control).toBeVisible();
+    await expect(control).toHaveTextContent(/^2 live$/);
+    await userEvent.click(control);
+    const opened = within(document.body);
+    await expect(opened.getAllByRole('button', { name: 'Close Integration tests' })).toHaveLength(1);
+    await userEvent.click(opened.getByRole('button', { name: 'Close Integration tests' }));
+    await userEvent.click(digest);
+    await expect(control).toBeVisible();
+    await expect(control).toHaveTextContent(/^2 live$/);
+  },
+};
+
 /** Regression #222: production execution surface and live actions, without a gateway. */
 export const Running: Story = {
   globals: { viewport: { value: 'desktop', isRotated: false } },
@@ -126,7 +149,12 @@ export const Running: Story = {
     await expect(opened.getByRole('button', { name: 'Build log' })).toBeInTheDocument();
     await userEvent.click(opened.getByRole('button', { name: 'Close Jenkins build pool' }));
     await openStepDigests(canvasElement);
-    await expect(canvas.queryByRole('button', { name: /^Open running live view/ })).toBeNull();
+    // Regression, user report: expanding the steps keeps their live control in the header.
+    await expect(control).toBeVisible();
+    await expect(control).toHaveTextContent(/^live$/);
+    await userEvent.click(control);
+    await expect(opened.getAllByRole('button', { name: 'Close Jenkins build pool' })).toHaveLength(1);
+    await userEvent.click(opened.getByRole('button', { name: 'Close Jenkins build pool' }));
     const title = canvas.getByText('Jenkins build pool');
     const liveFrame = await expectLiveFrame(title);
     const activitySurface = title.closest<HTMLElement>('[data-execution-group]')!;

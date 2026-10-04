@@ -10931,30 +10931,87 @@ print(paths)"
             (render (assoc-in steps [0 :forms 0 :runs 0 :reason] :completed) {})]
 
         ;; A running view wins over an older recording, and it colors the row.
-        (expect (= {:view-id "build" :label "live"}
+        (expect (= {:view-id "build" :label "2 live"}
                    (select-keys (get-in (digest-row closed) [:meta :digest-live])
                                 [:view-id :label :artifact])))
         ;; Regression, user report: `live` ends the counts after a dot, as text of the row itself.
-        (expect (str/includes? (:line (digest-row closed)) "▸ 1 mutation · 3 observations · live"))
+        (expect (str/includes? (:line (digest-row closed))
+                               "▸ 1 mutation · 3 observations · 2 live"))
         (let [{:keys [line meta]}
               (digest-row closed)
 
               col
               (long (get-in meta [:digest-live :col]))]
 
-          (expect (= "live" (subs line (inc col) (+ col 5)))))
+          (expect (= "2 live" (subs line (inc col) (+ col 7)))))
         (expect (= :running (get-in (digest-row closed) [:meta :status-tone])))
         (expect (not (str/includes? (text closed) "Build · 3 lines")))
         (expect (not (str/includes? (text closed) "LIVE Release")))
         ;; With no running view, the row opens the newest recording.
-        (expect (= "live" (get-in (digest-row settled) [:meta :digest-live :label])))
+        (expect (= "2 live" (get-in (digest-row settled) [:meta :digest-live :label])))
         (expect (= "Release.live.ndjson"
                    (get-in (digest-row settled) [:meta :digest-live :artifact :filename])))
         (expect (nil? (get-in (digest-row settled) [:meta :status-tone])))
-        ;; An open digest lists the run rows again and has no live button.
+        ;; Regression, user report: an open digest keeps its live control and lists the runs.
         (let [open (render steps (open-digests "s" "t"))]
           (expect (str/includes? (text open) "Build · 3 lines"))
-          (expect (nil? (get-in (digest-row open) [:meta :digest-live]))))))
+          (expect (= (get-in (digest-row closed) [:meta :digest-live])
+                     (get-in (digest-row open) [:meta :digest-live])))
+          (expect (str/includes? (:line (digest-row open))
+                                 "▾ 1 mutation · 3 observations · 2 live")))))
+    ;; Regression, user report: the count stays visible in both disclosure states.
+    (it
+      "keeps the live count and newest target in open and closed digests"
+      (doseq [run-count
+              [0 1 2]
+
+              open?
+              [false true]
+
+              :let [runs
+                    (mapv (fn [index]
+                            {:view-id (str "build-" index) :title "Build" :lines 3})
+                          (range run-count))
+
+                    steps
+                    [{:iteration-id "i1"
+                      :forms [(assoc (forms 0) :runs runs)]
+                      ;; A recording for a visible run does not add another live entry.
+                      :attachments (when (pos? run-count)
+                                     [{"source" "tool"
+                                       "kind" "doc"
+                                       "filename" "Build.live.ndjson"
+                                       "media_type" "application/vnd.vis.live+ndjson"
+                                       "view_id" "build-0"
+                                       "size" 2048}])}]
+
+                    entries
+                    (#'render/trace-render-entries
+                     {:iterations steps
+                      :live? true
+                      :content-w 76
+                      :session-id "s"
+                      :session-turn-id "t"
+                      :detail-expansions (if open? (open-digests "s" "t") {})
+                      :settings {}})
+
+                    row
+                    (first (filter digest? entries))
+
+                    live
+                    (get-in row [:meta :digest-live])
+
+                    label
+                    (if (= 1 run-count) "live" (str run-count " live"))]]
+
+        (expect (= (not open?) (get-in row [:meta :collapsed?])))
+        (if (zero? run-count)
+          (expect (nil? live))
+          (do (expect (= label (:label live)))
+              (expect (= (:view-id (peek runs)) (:view-id live)))
+              (expect (str/includes? (:line row) (str " · " label)))
+              (expect (= label
+                         (subs (:line row) (inc (:col live)) (+ 1 (:col live) (count label)))))))))
     ;; Regression, user report: a stop is a failure too. The digest row counts the stopped call
     ;; and turns red, but the interruption stays inside the closed digest.
     (it "counts a stopped step as a failure and keeps it inside a closed digest"

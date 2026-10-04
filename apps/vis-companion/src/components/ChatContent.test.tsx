@@ -2679,23 +2679,38 @@ describe('steps between progress notes', () => {
     expect(painted.queryByRole('button', { name: 'Expand error details' })).toBeNull();
   });
 
-  // The live views of the steps fold into one control on the row of a closed digest.
-  it('opens the recorded run of its steps from the row of a closed digest', () => {
+  // Regression, user report: opening the steps must keep their live control and count.
+  it.each([1, 2])('keeps the control for %i recorded runs when the steps open', (count) => {
+    const records = Array.from({ length: count }, (_, index) => ({
+      ...release,
+      index,
+      filename: `Release ${index + 1}.live.ndjson`,
+    }));
     const recorded = iterations.map((step) =>
-      step.id === 'step-2' ? { ...step, attachments: [release] } : step,
+      step.id === 'step-2' ? { ...step, attachments: records } : step,
     );
     const painted = render(
       <IterationTrace whole showCode iterations={recorded} client={client} sid="s1" />,
     );
-    const control = painted.getByRole('button', { name: 'Open live recording: Release' });
-    expect(control).toHaveTextContent(/^live$/);
-    expect(painted.queryByRole('button', { name: 'Open run Release' })).toBeNull();
+    const name = `Release ${count}`;
+    const label = count > 1 ? `${count} live` : 'live';
+    const control = painted.getByRole('button', { name: `Open live recording: ${name}` });
+    const digest = digests(painted.container)[0];
+    expect(control).toHaveTextContent(new RegExp(`^${label}$`));
+    expect(digest.parentElement).toContainElement(control);
+    expect(painted.queryByRole('button', { name: `Open run ${name}` })).toBeNull();
     fireEvent.click(control);
-    fireEvent.click(painted.getByRole('button', { name: 'Close Release' }));
-    expect(painted.queryByRole('button', { name: 'Close Release' })).toBeNull();
-    fireEvent.click(digests(painted.container)[0]);
-    expect(painted.queryByRole('button', { name: 'Open live recording: Release' })).toBeNull();
-    expect(painted.getByRole('button', { name: 'Open run Release' })).toBeInTheDocument();
+    fireEvent.click(painted.getByRole('button', { name: `Close ${name}` }));
+    fireEvent.click(digest);
+    expect(control).toBeVisible();
+    expect(control).toHaveTextContent(new RegExp(`^${label}$`));
+    expect(painted.getByRole('button', { name: `Open run ${name}` })).toBeInTheDocument();
+    fireEvent.click(control);
+    expect(painted.getAllByRole('button', { name: `Close ${name}` })).toHaveLength(1);
+    fireEvent.click(painted.getByRole('button', { name: `Close ${name}` }));
+    fireEvent.click(digest);
+    expect(control).toBeVisible();
+    expect(control).toHaveTextContent(new RegExp(`^${label}$`));
   });
 
   it('shows Activity and reasoning for each step when summarizing is off', () => {

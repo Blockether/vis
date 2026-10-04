@@ -2673,7 +2673,7 @@ function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
 /**
  * One summary row for the steps under a note. It names their Activity and counts failures,
  * including execution errors without failed Activity. Failures and stops color the chevron.
- * The measured time stays on the right. A closed row ends with its live control.
+ * The measured time stays on the right. The row keeps its live control when open.
  * Open the row to see thinking, code, Activity and errors. Mirrors `render/step-digest-entries`.
  */
 function StepDigest({
@@ -2687,7 +2687,7 @@ function StepDigest({
   live: boolean;
   isOpen: boolean;
   onToggle: () => void;
-  /** The live control of a closed row: one more part of the counts, right after them. */
+  /** The live control follows the counts in both disclosure states. */
   children?: ReactNode;
 }) {
   const forms = chunks.flatMap((chunk) => (chunk.kind === 'code' ? chunk.forms : chunk.cards));
@@ -2754,9 +2754,9 @@ function StepDigest({
 }
 
 /**
- * THE LIVE VIEWS OF A CLOSED DIGEST, as one more part of its counts: `· live`, in their own
- * size and ink. While views run, it opens the newest one. Otherwise it opens the newest
- * recording. Mirrors the TUI (`render/step-digest-entries`).
+ * The digest keeps its live control beside the counts, even when the steps are open.
+ * Several entries show `X live`. The control opens the newest running view, or the newest recording.
+ * Mirrors the TUI (`render/step-digest-entries`).
  */
 function DigestLive({
   views,
@@ -2777,6 +2777,7 @@ function DigestLive({
     view ? `live:${view.id}` : `run:${record?.iteration_id ?? ''}:${record?.index ?? 0}`,
   );
   const close = useCallback(() => setOpened(false), [setOpened]);
+  const count = views.length + records.length;
   if (!view && !record) return null;
   return (
     <>
@@ -2792,7 +2793,7 @@ function DigestLive({
           }
           onClick={() => setOpened(true)}
         >
-          live
+          {count > 1 ? `${count} live` : 'live'}
         </TextButton>
       </BandTally>
       {opened && view && <LiveView views={[view]} client={client} sid={sid} onClose={close} />}
@@ -2873,8 +2874,8 @@ const TraceSegment = memo(function TraceSegment({
   // thinking, code and Activity. Mirrors the TUI (`render/render-step-digests`).
   const digest = summarize && chunks.length > 0;
   const expanded = !digest || open;
-  // A closed digest folds the live views of its steps and their recordings into one
-  // control on its row. Mirrors the TUI (`render/step-digest-lives`).
+  // The digest keeps one control for its live views and recordings in both disclosure states.
+  // Mirrors the TUI (`render/step-digest-lives`).
   const lives = useMemo(() => {
     const forms = chunks.flatMap((chunk) => (chunk.kind === 'code' ? chunk.forms : []));
     const views = liveViews.filter((view) =>
@@ -2910,7 +2911,7 @@ const TraceSegment = memo(function TraceSegment({
           isOpen={open}
           onToggle={() => setOpen((value) => !value)}
         >
-          {!open && client && sid && (
+          {client && sid && (
             <DigestLive views={lives.views} records={lives.records} client={client} sid={sid} />
           )}
         </StepDigest>

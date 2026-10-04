@@ -1860,10 +1860,9 @@
                  :bounds {:row (+ (long viewport-top) (long y)) :col col :width width}))))
 
 (defn- draw-digest-live!
-  "The `live` word that ends the counts of a closed digest row. The row already painted it in
-   its own font, so this only claims its cells. It registers after the row's toggle, and the
-   last region over a cell wins the press. Under the pointer the word underlines, like a file
-   path on a band."
+  "The live label ends the counts of a digest row. The row already painted it, so this claims its cells.
+   It registers after the row's toggle. The last region over a cell wins the press.
+   The label underlines when the pointer is over it."
   [g meta x y iw viewport-top]
   (let [col
         (+ (long x) (long (:col meta)))
@@ -8452,7 +8451,7 @@
   "One summary row for the steps under a note. It names their Activity and counts failures,
    including execution errors without failed Activity. Failures and stops color the row red.
    Running steps color it yellow. The measured time stays on the right.
-   A closed row ends with its live control, which opens the newest running view or recording."
+   The live control stays when open. It opens the newest running view or recording."
   [{:keys [forms errors node-id open? lives]} content-w session-id]
   (let [activities
         (keep :activity forms)
@@ -8478,8 +8477,9 @@
         (filterv :running? lives)
 
         live
-        (when-let [target (and (not open?) (or (peek running-lives) (peek (vec lives))))]
-          (assoc (select-keys target [:view-id :artifact]) :label "live"))
+        (when-let [target (or (peek running-lives) (peek (vec lives)))]
+          (assoc (select-keys target [:view-id :artifact])
+            :label (if (> (count lives) 1) (str (count lives) " live") "live")))
 
         duration-ms
         (reduce + 0 (filter number? (map :duration-ms forms)))
