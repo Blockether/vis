@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, userEvent, within } from 'storybook/test';
+import { useState } from 'react';
+import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
 import { STORY_SESSION_SEARCH_MATCH } from '../dev/story-data';
 import { SearchMessages } from './SearchMessages';
@@ -37,8 +38,9 @@ export const Empty: Story = {
   },
 };
 
-/** Before a word is typed, the recents stand beside the pane of the first one, as in the terminal switcher. */
+/** On desktop, recent sessions stay beside the message preview before you type. */
 export const Recents: Story = {
+  globals: { viewport: { value: 'desktop', isRotated: false } },
   args: {
     results: (
       <ul className="px-3 py-3">
@@ -61,7 +63,7 @@ export const Recents: Story = {
     await expect(dialog.getByRole('region', { name: 'Recent sessions' })).toHaveTextContent('Windows runtime checks');
     const pane = within(dialog.getByRole('region', { name: 'Matching messages' }));
     await expect(pane.getByRole('heading')).toHaveTextContent('Windows runtime checks');
-    await expect(pane.getByText('Type to find matching messages.')).toBeVisible();
+    await waitFor(() => expect(pane.getByText('Type to find matching messages.')).toBeVisible());
   },
 };
 
@@ -104,4 +106,61 @@ export const WithMessages: Story = {
 export const DesktopWithMessages: Story = {
   ...WithMessages,
   globals: { viewport: { value: 'desktop', isRotated: false } },
+};
+
+// This regression needs browser layout to check responsive visibility and available space.
+export const MobilePreviewVisibility: Story = {
+  args: Recents.args,
+  tags: ['!test'],
+  globals: { viewport: { value: 'phone', isRotated: false } },
+  render: function Render(args) {
+    const [query, setQuery] = useState(args.query);
+    return (
+      <SessionSearchDialog
+        {...args}
+        query={query}
+        onQuery={setQuery}
+        messages={
+          <SearchMessages
+            title="Windows runtime checks"
+            match={query.trim() ? STORY_SESSION_SEARCH_MATCH : null}
+            query={query}
+            isSearching={false}
+            onOpen={fn()}
+            className="min-h-0 flex-1"
+          />
+        }
+      />
+    );
+  },
+  play: async ({ canvasElement }) => {
+    const dialog = within(within(canvasElement.ownerDocument.body).getByRole('dialog', { name: 'Search sessions' }));
+    const field = dialog.getByRole('searchbox', { name: 'Search session titles and messages' });
+    const pane = dialog.getByLabelText('Matching messages');
+    const list = dialog.getByRole('region', { name: 'Recent sessions' });
+    const expectHiddenPreview = async () => {
+      await expect(pane).not.toBeVisible();
+      await expect(Math.abs(list.getBoundingClientRect().bottom - list.parentElement!.getBoundingClientRect().bottom)).toBeLessThan(1);
+    };
+
+    await waitFor(() => expect(field).toBeVisible());
+    await expectHiddenPreview();
+    const fullHeight = list.getBoundingClientRect().height;
+    await userEvent.type(field, 'w');
+    await expect(pane).toBeVisible();
+    await expect(list.getBoundingClientRect().height).toBeLessThan(fullHeight);
+
+    await userEvent.click(dialog.getByRole('button', { name: 'Clear search' }));
+    await expectHiddenPreview();
+    await expect(field).toHaveFocus();
+
+    await userEvent.type(field, 'w');
+    await expect(pane).toBeVisible();
+    await userEvent.keyboard('{Backspace}');
+    await expectHiddenPreview();
+
+    await userEvent.type(field, '   ');
+    await expectHiddenPreview();
+    await userEvent.clear(field);
+  },
 };

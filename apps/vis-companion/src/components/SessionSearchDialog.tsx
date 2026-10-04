@@ -11,12 +11,10 @@ import { CloseButton, DialogFrame, Input, Modal } from './ui';
  * stays as it was, and the search stands over the app with its field, the machine
  * it asks, the sessions it found and the messages that matched.
  *
- * The dialog is always split, as the terminal's session switcher is: the sessions, and
- * beside them the messages of the one picked. That holds before a word is typed too, when
- * it lists the recent sessions as that switcher does. On a phone the dialog is the whole
- * glass and the two stack, sessions on top. From 40rem of dialog width they stand side by
- * side, split by one rule. Closing the dialog clears the query, so the next search starts
- * from the recents again.
+ * On a phone, the message preview stays hidden until the query contains text.
+ * Clearing the query hides it again, so recent sessions use the full available height.
+ * From 40rem of dialog width, sessions and messages stay side by side, even before you type.
+ * Closing the dialog clears the query, so the next search starts from recent sessions.
  */
 export function SessionSearchDialog({
   query,
@@ -73,9 +71,11 @@ export function SessionSearchDialog({
             >
               {results}
             </div>
-            {/* Stacked, the messages take the bottom 45%. Side by side they take the width
-                the sessions leave, and the rule between the two is their leading edge. */}
-            <div className="flex h-[45%] min-h-0 min-w-0 shrink-0 flex-col border-t border-dialog-edge @min-[40rem]/search:h-auto @min-[40rem]/search:flex-1 @min-[40rem]/search:border-t-0 @min-[40rem]/search:border-l">
+            {/* On narrow dialogs, show messages below the sessions only while searching.
+                Wide dialogs always show both panes side by side. */}
+            <div
+              className={`${query.trim() ? 'flex' : 'hidden'} h-[45%] min-h-0 min-w-0 shrink-0 flex-col border-t border-dialog-edge @min-[40rem]/search:flex @min-[40rem]/search:h-auto @min-[40rem]/search:flex-1 @min-[40rem]/search:border-t-0 @min-[40rem]/search:border-l`}
+            >
               {messages}
             </div>
           </div>
