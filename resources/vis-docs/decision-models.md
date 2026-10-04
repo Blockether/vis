@@ -154,7 +154,7 @@ To use training tools in Vis, add this [extension declaration](extension-package
 extensions:
   vis-decisions:
     source: https://github.com/Blockether/vis-decisions
-    version: "0.3.0"
+    version: "0.3.1"
 ```
 
 Then open a session in that project. For example, ask:
@@ -485,6 +485,10 @@ The gateway stages bounded inputs and starts an isolated offline CPU worker. It 
 checkpoint and validates a new FP32 inference version. To continue from it, pass the completed or
 failed `job_id` as `source_job_id` **with the same model_id**. Do not delete that job first. A
 resume across model families fails. It does not fall back to another checkpoint.
+
+The worker uses one CPU thread for each physical core, or for each performance core on Apple silicon.
+To choose another number, set `VIS_DECISION_TRAINING_THREADS` to a whole number from 1 to 1024.
+This needs vis-decisions 0.3.1 or newer. Older versions use at most four threads.
 
 The `checkpoint_steps` setting also saves partial checkpoints on the gateway. If a job
 reaches the time limit or fails, it keeps its last saved step. To resume, start a new job with

@@ -114,7 +114,8 @@
                       {:type :decisions/training-unavailable})))
     {:python (.getAbsolutePath (io/file python))
      :data-root (.toRealPath (.toPath (io/file root)) (make-array LinkOption 0))
-     :timeout-s (setting "VIS_DECISION_TRAINING_TIMEOUT_S" 7200 60 21600)}))
+     :timeout-s (setting "VIS_DECISION_TRAINING_TIMEOUT_S" 7200 60 21600)
+     :threads (setting "VIS_DECISION_TRAINING_THREADS" nil 1 1024)}))
 
 (defn- input-file
   ^File [^Path root request key]
@@ -191,6 +192,20 @@
                              (some? limit)
                              (assoc "max_steps" limit)))))))))
 
+(defn- worker-environment
+  "Offline worker variables. Without a configured thread count, PyTorch uses one thread for
+   each physical core, or each performance core on Apple silicon."
+  [threads]
+  (cond-> {"HOME" (System/getProperty "user.home")
+           "PATH" (or (System/getenv "PATH") "/usr/bin:/bin")
+           "LANG" "C.UTF-8"
+           "HF_HUB_OFFLINE" "1"
+           "TRANSFORMERS_OFFLINE" "1"
+           "HF_DATASETS_OFFLINE" "1"
+           "CUDA_VISIBLE_DEVICES" ""}
+    threads
+    (assoc "OMP_NUM_THREADS" (str threads))))
+
 (defn- execute-process!
   [^File spec progress cancelled]
   (let [python
@@ -208,14 +223,7 @@
         (.environment builder)]
 
     (.clear environment)
-    (doseq [[name value] {"HOME" (System/getProperty "user.home")
-                          "PATH" (or (System/getenv "PATH") "/usr/bin:/bin")
-                          "LANG" "C.UTF-8"
-                          "HF_HUB_OFFLINE" "1"
-                          "TRANSFORMERS_OFFLINE" "1"
-                          "HF_DATASETS_OFFLINE" "1"
-                          "CUDA_VISIBLE_DEVICES" ""
-                          "OMP_NUM_THREADS" "4"}]
+    (doseq [[name value] (worker-environment (:threads (:settings @active)))]
       (.put environment name value))
     (.redirectError builder java.lang.ProcessBuilder$Redirect/DISCARD)
     (let [process

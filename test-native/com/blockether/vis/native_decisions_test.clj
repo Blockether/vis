@@ -12,7 +12,8 @@
            [java.net ServerSocket]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
-           [java.security MessageDigest]))
+           [java.security MessageDigest]
+           [java.util.concurrent TimeUnit]))
 
 (defn- wait-for-gateway!
   [^Process process]
@@ -178,10 +179,82 @@
       (expect (number? (get-in result ["answers" "policy" "noul"])))
       (expect (number? (get-in result ["answers" "intent" "action" "act_probability"]))))))
 
+(defn- native-download!
+  "Install one pinned model and its training checkpoint with the native CLI. The gateway that
+   answers later never downloads; this step is the only network use."
+  [^File executable ^File home ^File store model-id]
+  (let [model
+        (assets/entry model-id)
+
+        builder
+        (doto (ProcessBuilder. ^java.util.List
+                               [(.getAbsolutePath executable)
+                                (str "-Duser.home=" (.getAbsolutePath home)) "decisions" "models"
+                                "download" "--model" model-id "--training"])
+          (.directory home)
+          (.redirectErrorStream true))
+
+        env
+        (.environment builder)]
+
+    (.putAll env (#'binary/native-environment))
+    (.put env "HOME" (.getAbsolutePath home))
+    (.put env "VIS_DECISION_MODELS_DIR" (.getAbsolutePath store))
+    (let [process
+          (.start builder)
+
+          output
+          (future (slurp (.getInputStream process)))]
+
+      (when-not (.waitFor process 3600 TimeUnit/SECONDS)
+        (.destroyForcibly process)
+        (throw (ex-info "Native model download timed out" {:model model-id})))
+      (expect (zero? (.exitValue process)) @output)
+      (doseq [kind
+              [:inference :training]
+
+              :let [dir
+                    (io/file store model-id (:revision model) (name kind))]]
+
+        (expect (str/includes? @output (str (name kind) ": " dir)) @output)
+        (expect (assets/installed? (assets/artifact model kind) (.getPath dir)))))))
+
+(defn- decision2-native-check!
+  "Answer all three question types with one installed catalog Decision 2.0 model."
+  [model-id]
+  (let [response
+        (gateway-client/request!
+          :post
+          "/v1/systemone"
+          {:body {:model model-id
+                  :state "A damaged item needs a refund."
+                  :questions {:intent {:type "choice"
+                                       :instructions "Select intent"
+                                       :criteria {:refund "A refund" :repair "A repair"}}
+                              :priority {:type "score"
+                                         :instructions "Rate urgency"
+                                         :criteria ["not urgent" "soon" "immediate"]}
+                              :policy {:type "noul" :instructions "Is refund available?"}}}
+           :timeout-ms 600000})
+
+        body
+        (json/read-json (:body response))]
+
+    (expect (= 200 (:status response)) (str body))
+    (expect (= model-id (get body "model")))
+    (expect (= model-id (get-in body ["routing" "model"])))
+    (expect (#{"refund" "repair"} (get-in body ["answers" "intent" "choice"])))
+    (expect (number? (get-in body ["answers" "priority" "score"])))
+    (expect (number? (get-in body ["answers" "policy" "noul"])))
+    ;; Decision 2.0 has no action head.
+    (expect (nil? (get-in body ["answers" "intent" "action"])))))
+
 (defdescribe
   native-decision-inference-test
   ;; Regression: the first native /v1/systemone request returned 500 because ORT's
   ;; platform libraries were not embedded; JVM inference alone could not catch it.
+  ;; Gate: -Dvis.test.decision2.download=<comma-separated Decision 2.0 IDs> installs those
+  ;; models with the native `decisions models download --training` before the gateway starts.
   (it
     "answers all three typed questions through bundled native JNI and no network"
     (let [^File home
@@ -208,7 +281,12 @@
             (.getLocalPort socket))
 
           process
-          (atom nil)]
+          (atom nil)
+
+          decision2
+          (map str/trim
+               (some-> (System/getProperty "vis.test.decision2.download")
+                       (str/split #",")))]
 
       (try
         (when source
@@ -218,6 +296,8 @@
           (Files/createSymbolicLink (.toPath dest)
                                     (.toPath (.getCanonicalFile source))
                                     (make-array FileAttribute 0)))
+        (doseq [model-id decision2]
+          (native-download! executable home store model-id))
         (let [builder
               (doto (ProcessBuilder. ^java.util.List
                                      [(.getAbsolutePath executable)
@@ -309,7 +389,9 @@
                           (System/getProperty (str "vis.test.gliner." name ".fp32.archive"))]
                     :when archive]
 
-              (gliner-native-check! name (io/file archive)))))
+              (gliner-native-check! name (io/file archive)))
+            (doseq [model-id decision2]
+              (decision2-native-check! model-id))))
         (finally (when-let [owned @process]
                    (#'binary/kill-tree! owned))
                  (#'binary/delete-tree! home))))))

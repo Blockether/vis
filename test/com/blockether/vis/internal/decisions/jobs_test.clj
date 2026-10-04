@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.decisions.jobs-test
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]]
             [com.blockether.vis.internal.config.core :as config]
@@ -441,3 +442,41 @@
                     (expect (= "gliner2.5-base" (get cancelled "model_id")))
                     (expect (not (contains? cancelled "model_ref"))))
                   (expect (= ref (get (registry/get-alias "active") "model_ref"))))))))))))
+
+(defdescribe
+  worker-gets-a-thread-count-only-when-configured
+  (it "passes VIS_DECISION_TRAINING_THREADS as OMP_NUM_THREADS and leaves the default to PyTorch"
+      (fixture
+        (fn [root _ _]
+          (let [read-env
+                config/extension-env-value
+
+                worker-env
+                (fn [threads]
+                  (let [script
+                        (io/file root (str "python-" (or threads "default")))
+
+                        dump
+                        (io/file root (str "env-" (or threads "default")))]
+
+                    (spit script (str "#!/bin/sh\nenv > '" (.getPath dump) "'\n"))
+                    (.setExecutable script true)
+                    (with-redefs [config/extension-env-value (fn [name]
+                                                               (case name
+                                                                 "VIS_DECISION_TRAINING_PYTHON"
+                                                                 (.getPath script)
+
+                                                                 "VIS_DECISION_TRAINING_THREADS"
+                                                                 threads
+
+                                                                 (read-env name)))]
+                      (expect (= "failed"
+                                 (get (await-status (get (jobs/create! request) "job_id") "failed")
+                                      "status"))))
+                    (set (str/split-lines (slurp dump)))))]
+
+            (let [configured (worker-env "12")]
+              (expect (contains? configured "OMP_NUM_THREADS=12"))
+              (expect (contains? configured "HF_HUB_OFFLINE=1")))
+            (expect (not-any? #(str/starts-with? % "OMP_NUM_THREADS=") (worker-env nil)))
+            (expect (not-any? #(str/starts-with? % "OMP_NUM_THREADS=") (worker-env "0"))))))))
