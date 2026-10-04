@@ -514,9 +514,8 @@
             (expect (= (mapv :line plain) (mapv :line entries)))
             (expect (= 15 (count (get-in header [:meta :copy-history]))))
             (expect (nil? (:error captured)))
-            ;; A 40-column band has room for the start of the cost line only.
-            (expect (str/includes? text
-                                   (if (< cols 80) "0 mutations" "0 mutations · 19 observations")))
+            ;; The observation count fits both narrow and wide bands.
+            (expect (str/includes? text "19 observations"))
             (expect (not (str/includes? text "search every operation")))
             (expect (not (str/includes? text "from run")))))))
   (it "does not offer search for an empty complete record"
@@ -7385,18 +7384,33 @@ h = 8"
       (doseq [label ["Patched" "Searched" "Ran tests"]]
         (expect (not (str/includes? receipt label))))
       (expect (str/includes? receipt "ACTIVITY"))))
+  (it "hides zero counters for absent, empty and generic activity"
+      (doseq [activity [nil {:rows []} {:rows [{:signal "generic"}]}]]
+        (expect (= "" (#'render/activity-cost-text activity)))))
+  (it "shows only the nonzero activity counter"
+      (doseq [[signal expected] [["mutation" "1 mutation"] ["observation" "1 observation"]
+                                 ["verification" "1 ver"] ["external" "1 external action"]]]
+        (expect (= expected (#'render/activity-cost-text {:rows [{:signal signal}]})))))
+  (it "omits empty counters and separators from step summaries"
+      (doseq [[state expected] [["succeeded" "▸ "] ["running" "▸ 1 running"] ["failed" "▸ 1 failed"]
+                                ["cancelled" "▸ 1 cancelled"]]]
+        (let [entries (#'render/step-digest-entries
+                       {:forms [{:activity {:rows [{:signal "generic" :state state}]}}]}
+                       80
+                       "s1")]
+          (expect (= expected (subs (:line (second entries)) 1))))))
   (it "counts the calls that reached outside the machine"
       (let [cost @#'render/activity-cost-text]
-        (expect (= "0 mutations · 1 observation · 1 external action"
+        (expect (= "1 observation · 1 external action"
                    (cost {:rows [{:signal "observation"} {:signal "external"}]})))
         (expect (= "1 mutation" (cost {:rows [{:signal "mutation"} {:signal "generic"}]})))))
   (it "counts verifications without adding their verdicts to the summary"
       (let [cost @#'render/activity-cost-text]
         (doseq [verdict [nil "passed" "failed"]]
-          (expect (= "0 mutations · 2 ver"
+          (expect (= "2 ver"
                      (cost {:rows [{:signal "verification" :presentation {:verdict verdict}}
                                    {:signal "verification" :presentation {:verdict verdict}}]}))))
-        (expect (= "0 mutations · 1 ver" (cost {:rows [{:signal "verification"}]})))))
+        (expect (= "1 ver" (cost {:rows [{:signal "verification"}]})))))
   ;; Regression, issue td-132d91: expanded Activity receipts were detached into one
   ;; shared rail, so only the newest receipt could show its detail.
   (it "keeps combined results between their program and attached Activity"
@@ -8999,9 +9013,8 @@ h = 8"
           (expect (nil? (:error captured)))
           (expect (= 1 (count (re-seq #"ACTIVITY" text))))
           (when (>= cols 80)
-            (expect (str/includes?
-                      (:line header)
-                      (if (seq retained) "6 of 7 operations" "0 mutations · 7 observations")))))))
+            (expect (str/includes? (:line header)
+                                   (if (seq retained) "6 of 7 operations" "7 observations")))))))
     (it "paints Activity for each step when summarizing is off"
         (doseq [live?
                 [false true]
@@ -9025,10 +9038,8 @@ h = 8"
                 codes
                 (filter #(str/ends-with? (str (get-in % [:meta :node-id])) ":code") painted)]
 
-            (expect (= ["0 mutations · 2 observations" "0 mutations · 2 observations"
-                        "0 mutations · 3 observations"]
-                       (mapv #(re-find #"\d+ mutations? · \d+ observations?" (str (:line %)))
-                             (bands painted))))
+            (expect (= ["2 observations" "2 observations" "3 observations"]
+                       (mapv #(re-find #"\d+ observations?" (str (:line %))) (bands painted))))
             (expect (= (if show-code? 3 0) (count codes))))))
     (it "counts inline operations as well as every retained record in the joined band"
         (doseq [cols
@@ -10705,7 +10716,7 @@ print(paths)"
         operations
         (fn [entries]
           (vec (keep #(when (= :activity-header (get-in % [:meta :kind]))
-                        (re-find #"\d+ mutations? · \d+ observations?" (str (:line %))))
+                        (re-find #"(?:\d+ mutations? · )?\d+ observations?" (str (:line %))))
                      entries)))
 
         digest?
@@ -10738,8 +10749,7 @@ print(paths)"
                 text
                 (str/join "\n" (map :line entries))]
 
-            (expect (= ["▸ 1 mutation · 3 observations" "▸ 0 mutations · 3 observations"]
-                       (digests entries)))
+            (expect (= ["▸ 1 mutation · 3 observations" "▸ 3 observations"] (digests entries)))
             (expect (= {:kind :toggle-details
                         :session-id "s"
                         :node-id "iteration:tt:i1:digest"
@@ -10753,17 +10763,15 @@ print(paths)"
             (expect (not (re-find #"\d+ steps?\b" text)))
             (expect (< (.indexOf ^String text "▸ 1 mutation")
                        (.indexOf ^String text note)
-                       (.indexOf ^String text "▸ 0 mutations"))))))
+                       (.indexOf ^String text "▸ 3 observations"))))))
     (it "opens a digest to the thinking, code and Activity of its steps"
         (doseq [live? [false true]]
           (let [entries (render* {} live? (open-digests "s" "t"))
                 text (str/join "\n" (map :line entries))
                 at #(.indexOf ^String text ^String %)]
 
-            (expect (= ["▾ 1 mutation · 3 observations" "▾ 0 mutations · 3 observations"]
-                       (digests entries)))
-            (expect (= ["1 mutation · 3 observations" "0 mutations · 3 observations"]
-                       (operations entries)))
+            (expect (= ["▾ 1 mutation · 3 observations" "▾ 3 observations"] (digests entries)))
+            (expect (= ["1 mutation · 3 observations" "3 observations"] (operations entries)))
             (expect (= 1 (count (reasoning entries))))
             ;; The note stays above its digest and does not repeat inside it.
             (expect (= 1 (count (re-seq #"Sources read" text))))
@@ -10772,8 +10780,7 @@ print(paths)"
         (doseq [live? [false true]]
           (let [entries (render* {:summarize-steps false} live? {})]
             (expect (empty? (digests entries)))
-            (expect (= ["1 mutation · 1 observation" "0 mutations · 2 observations"
-                        "0 mutations · 3 observations"]
+            (expect (= ["1 mutation · 1 observation" "2 observations" "3 observations"]
                        (operations entries)))
             (expect (= 2 (count (reasoning entries)))))))
     (it "keeps a finished turn's notes and digests instead of folding them"
@@ -10858,7 +10865,7 @@ print(paths)"
                         :session-turn-id "t"
                         :settings {}}))]
 
-          (expect (= ["▸ 1 mutation · 3 observations" "▸ 0 mutations · 3 observations"]
+          (expect (= ["▸ 1 mutation · 3 observations" "▸ 3 observations"]
                      (map #(first (str/split (subs (:line %) 1) #"\s{2,}")) rows)))
           (expect (= ["2.0s" "500ms"] (map #(peek (str/split (str/trim (:line %)) #"\s+")) rows)))
           (expect (every? #(= 75 (count (subs (:line %) 1))) rows))))

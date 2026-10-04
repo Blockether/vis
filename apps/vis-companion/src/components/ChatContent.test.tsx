@@ -1303,10 +1303,7 @@ describe('a Python evaluation without detected Activity', () => {
         />,
       );
       const digest = painted.container.querySelector<HTMLElement>('[data-step-digest]')!;
-      expect(digest).toHaveAttribute(
-        'aria-label',
-        `Expand steps: 0 mutations · 1 ${state}`,
-      );
+      expect(digest).toHaveAttribute('aria-label', `Expand steps: 1 ${state}`);
       expect(digest).toHaveClass('text-err-ink!');
       expect(digest.querySelector('.text-err-ink')).toHaveTextContent(`1 ${state}`);
       expect(digest.parentElement).toHaveTextContent('1.2s');
@@ -2499,8 +2496,8 @@ describe('steps between progress notes', () => {
     const [first, second] = digests(painted.container);
     const noted = painted.getByText(note);
     expect(digests(painted.container).map((row) => row.getAttribute('aria-label'))).toEqual([
-      'Expand steps: 0 mutations',
-      'Expand steps: 0 mutations',
+      'Expand steps',
+      'Expand steps',
     ]);
     // Regression, user report: the row names what the calls did, not how many steps ran.
     const counted = digests(painted.container).map((row) => row.textContent);
@@ -2527,7 +2524,7 @@ describe('steps between progress notes', () => {
     const [first, second] = digests(painted.container);
     expect(first).toHaveAttribute(
       'aria-label',
-      'Expand steps: 0 mutations · 1 observation',
+      'Expand steps: 1 observation',
     );
     fireEvent.click(first);
     const [band] = painted.container.querySelectorAll('.bg-thinking-surface');
@@ -2535,7 +2532,7 @@ describe('steps between progress notes', () => {
     expect(first).toHaveAttribute('aria-expanded', 'true');
     expect(first).toHaveAttribute(
       'aria-label',
-      'Collapse steps: 0 mutations · 1 observation',
+      'Collapse steps: 1 observation',
     );
     expect(second).toHaveAttribute('aria-expanded', 'false');
     expect(bands(painted.container)).toEqual([['Read the sources first.', 'One more source.']]);

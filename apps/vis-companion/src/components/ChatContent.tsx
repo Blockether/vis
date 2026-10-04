@@ -2725,7 +2725,12 @@ function StepDigest({
         density="comfortable"
         isOpen={isOpen}
         className={`w-auto! ${failed ? 'text-err-ink!' : ''}`}
-        aria-label={`${isOpen ? 'Collapse' : 'Expand'} steps: ${parts.map((part) => part.text).join(' · ')}`}
+        aria-label={[
+          `${isOpen ? 'Collapse' : 'Expand'} steps`,
+          parts.map((part) => part.text).join(' · '),
+        ]
+          .filter(Boolean)
+          .join(': ')}
         data-step-digest
         onClick={onToggle}
       >

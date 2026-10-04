@@ -108,10 +108,7 @@ export interface ActivityCostPart {
  * is none of them and stays uncounted, because "something else happened" is not
  * a number anyone can act on.
  *
- * `0 mutations` always prints. "Did this iteration change anything" is the one
- * question a closed invocation is asked, and it is about the rows that are NOT
- * there, so no row on the axis can answer it. The other three print only when they
- * happened, because their zero is a fact the page already shows.
+ * Show only nonzero counters. Omit kinds that did not occur.
  *
  * Verification counters count calls, not individual tests. Their results stay
  * in the steps rather than adding a failure count to this summary.
@@ -129,7 +126,9 @@ export function activityCostParts(activity?: ActivityProjection): readonly Activ
   const external = tally('external');
   const mutations = tally('mutation');
   return [
-    { text: noun(mutations, 'mutation'), short: `${mutations} mut`, tone: 'text-accent-ink' },
+    ...(mutations
+      ? [{ text: noun(mutations, 'mutation'), short: `${mutations} mut`, tone: 'text-accent-ink' }]
+      : []),
     ...(observations
       ? [
           {

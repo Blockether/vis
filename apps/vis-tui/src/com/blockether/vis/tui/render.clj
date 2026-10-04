@@ -5568,9 +5568,7 @@
    reached outside the machine. `generic` is none of them and stays uncounted, because
    \"something else happened\" is not a number anyone can act on.
 
-   `0 mutations` always prints. Whether this iteration changed anything is the one
-   question a receipt is asked, and it is about the rows that are NOT there, so no row
-   on the axis can answer it; the other kinds speak only when they happened.
+   Show only nonzero counters. Omit kinds that did not occur.
 
    Verification counters use `ver` and count calls, not individual tests.
    Their results stay in the steps, without a failure count in this summary."
@@ -5586,6 +5584,9 @@
         (fn [amount word]
           (str amount " " word (when-not (= 1 (long amount)) "s")))
 
+        mutations
+        (tally "mutation")
+
         observations
         (tally "observation")
 
@@ -5596,7 +5597,10 @@
         (tally "external")]
 
     (str/join " · "
-              (cond-> [(noun (tally "mutation") "mutation")]
+              (cond-> []
+                (pos? (long mutations))
+                (conj (noun mutations "mutation"))
+
                 (pos? (long observations))
                 (conj (noun observations "observation"))
 
@@ -8479,13 +8483,14 @@
         summary
         (str (if open? "▾ " "▸ ")
              (str/join " · "
-                       (concat [(activity-cost-text {:rows rows})]
+                       (remove str/blank?
+                         (cons (activity-cost-text {:rows rows})
                                (for [state
                                      [:running :failed :cancelled]
 
                                      :when (get states state)]
 
-                                 (str (get states state) " " (name state))))))
+                                 (str (get states state) " " (name state)))))))
 
         max-w
         (max 1 (dec (long content-w)))

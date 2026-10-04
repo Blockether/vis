@@ -35,7 +35,7 @@ it('merges ranges into one summary without a disclosure or changing invocation c
   const activity = reads();
   openReads(activity);
   expect(screen.getByRole('button', { name: 'Collapse Activity' })).toHaveTextContent(
-    '0 mutations · 2 observations',
+    '2 observations',
   );
   expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(1);
   const row = document.querySelector('[data-activity-row="0:read-1"]')!;

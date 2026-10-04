@@ -74,7 +74,7 @@ describe('execution grouping', () => {
     expect(code).not.toHaveTextContent('<1ms');
     expect(view.getAllByRole('button', { name: 'Expand code' })).toHaveLength(1);
     expect(view.getByRole('button', { name: 'Expand Activity' })).toHaveTextContent(
-      `0 mutations · ${count} observations`,
+      `${count} observations`,
     );
     fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
     fireEvent.click(view.getByRole('button', { name: 'Expand Activity' }));
@@ -319,7 +319,7 @@ describe('execution grouping', () => {
       expect(view.getAllByRole('button', { name: 'Expand code' })).toHaveLength(1);
       expect(view.getAllByRole('button', { name: 'Expand Activity' })).toHaveLength(1);
       const toggle = view.getByRole('button', { name: 'Expand Activity' });
-      expect(toggle).toHaveTextContent('0 mutations · 7 observations');
+      expect(toggle).toHaveTextContent('7 observations');
       fireEvent.click(toggle);
       expect(view.getAllByRole('list', { name: 'Operation groups' })).toHaveLength(1);
       fireEvent.click(view.getByRole('button', { name: /Search ×7/ }));

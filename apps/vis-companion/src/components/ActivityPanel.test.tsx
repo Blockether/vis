@@ -436,7 +436,7 @@ describe('joined Activity operation groups', () => {
       name: 'Expand Activity',
     });
     expect(initiallyShut.textContent).toContain('ACTIVITY');
-    expect(initiallyShut.textContent).toContain('0 mutations · 3 observations');
+    expect(initiallyShut.textContent).toContain('3 observations');
     expect(screen.queryByRole('button', { name: /Read ×3/ })).toBeNull();
     fireEvent.click(initiallyShut);
     const group = screen.getByRole('button', { name: /Read ×3/ });
@@ -575,7 +575,7 @@ describe('joined Activity operation groups', () => {
       />,
     );
     const receipt = screen.getByRole('button', { name: 'Expand Activity' });
-    expect(receipt.textContent).toContain('0 mutations · 10 observations');
+    expect(receipt.textContent).toContain('10 observations');
     expect(receipt.textContent).not.toContain('omitted');
   });
 
@@ -805,25 +805,47 @@ describe("one form's Activity on the phone", () => {
   });
 });
 
-// The band is named by WHAT IT COST: what changed the repository, what was only
-// read, what was checked. `0 mutations` is about the rows that are NOT there, so
-// it always prints; the other two print only when they happened.
+// The band names only the activity kinds with nonzero counts.
 describe('what the iteration cost', () => {
-  it('states the mutations, and stays quiet about a kind that did not happen', () => {
+  it('stays quiet about a kind that did not happen', () => {
     const parts = activityCostParts(activityProjection());
 
-    expect(parts.map((part) => part.text)).toEqual([
-      '0 mutations',
-      '1 observation',
-      '1 verification',
-    ]);
+    expect(parts.map((part) => part.text)).toEqual(['1 observation', '1 verification']);
     // Colour REPEATS the noun. Reading the words alone must lose nothing, so the
     // quiet count wears the margin's own ink and no tone at all.
-    expect(parts.map((part) => part.tone)).toEqual([
-      'text-accent-ink',
-      'text-code-syntax-keyword',
-      '',
-    ]);
+    expect(parts.map((part) => part.tone)).toEqual(['text-code-syntax-keyword', '']);
+  });
+
+  it.each([
+    ['mutation', '1 mutation', '1 mut'],
+    ['observation', '1 observation', '1 obs'],
+    ['verification', '1 verification', '1 ver'],
+    ['external', '1 external action', '1 ext'],
+    ['generic', '', ''],
+  ] as const)('hides zero counters for %s activity on web and phone', (signal, text, short) => {
+    const projection = activityProjection();
+    const activity = {
+      ...projection,
+      rows: [{ ...projection.rows[0], signal, state: 'succeeded' as const }],
+      counts: { running: 0, succeeded: 1, failed: 0, cancelled: 0 },
+    };
+    const parts = activityCostParts(activity);
+    expect(parts.map((part) => part.text)).toEqual(text ? [text] : []);
+    expect(parts.map((part) => part.short)).toEqual(short ? [short] : []);
+
+    render(<ActivityPanel activity={activity} />);
+    const band = screen.getByRole('button', { name: 'Expand Activity' });
+    expect(band).not.toHaveTextContent(/\b0 (mut|obs|ver|ext)/);
+    expect(band).not.toHaveTextContent('·');
+    expect(band).toHaveTextContent(text || /^ACTIVITY$/);
+    const phone = band.cloneNode(true) as HTMLElement;
+    phone.querySelectorAll('.max-sm\\:hidden').forEach((node) => node.remove());
+    expect(phone).toHaveTextContent(short || /^ACTIVITY$/);
+  });
+
+  it('leaves the counters empty when activity is absent or empty', () => {
+    expect(activityCostParts()).toEqual([]);
+    expect(activityCostParts({ ...activityProjection(), rows: [] })).toEqual([]);
   });
 
   it('leaves the failures to the marks and the state word', () => {
@@ -847,11 +869,7 @@ describe('what the iteration cost', () => {
       rows: [{ ...first, signal: 'external' as const }, ...rest],
     });
 
-    expect(parts.map((part) => part.text)).toEqual([
-      '0 mutations',
-      '1 verification',
-      '1 external action',
-    ]);
+    expect(parts.map((part) => part.text)).toEqual(['1 verification', '1 external action']);
     expect(parts.at(-1)?.tone).toBe('text-code-syntax-special');
   });
 
@@ -861,10 +879,15 @@ describe('what the iteration cost', () => {
     const [first, ...rest] = projection.rows;
     const activity = {
       ...projection,
-      rows: [first, ...rest, { ...first, id: 'call-3', sequence: 3, signal: 'external' as const }],
+      rows: [
+        first,
+        ...rest,
+        { ...first, id: 'call-3', sequence: 3, signal: 'external' as const },
+        { ...first, id: 'call-4', sequence: 4, signal: 'mutation' as const },
+      ],
     };
     expect(activityCostParts(activity).map((part) => part.short)).toEqual([
-      '0 mut',
+      '1 mut',
       '1 obs',
       '1 ver',
       '1 ext',
@@ -874,11 +897,11 @@ describe('what the iteration cost', () => {
     const band = screen.getByRole('button', { name: /^(Expand|Collapse) Activity$/ });
     // The words stay whole in the document; a phone hides what follows each abbreviation.
     expect(band).toHaveTextContent(
-      '0 mutations · 1 observation · 1 verification · 1 external action',
+      '1 mutation · 1 observation · 1 verification · 1 external action',
     );
     const phone = band.cloneNode(true) as HTMLElement;
     phone.querySelectorAll('.max-sm\\:hidden').forEach((node) => node.remove());
-    expect(phone).toHaveTextContent('0 mut · 1 obs · 1 ver · 1 ext');
+    expect(phone).toHaveTextContent('1 mut · 1 obs · 1 ver · 1 ext');
   });
 
   it.each(['passed', 'failed', undefined] as const)(
@@ -908,7 +931,6 @@ describe('what the iteration cost', () => {
       };
 
       expect(activityCostParts(activity).map((part) => part.text)).toEqual([
-        '0 mutations',
         '1 observation',
         '2 verifications',
       ]);
@@ -916,11 +938,11 @@ describe('what the iteration cost', () => {
 
       render(<ActivityPanel activity={activity} />);
       const band = screen.getByRole('button', { name: 'Expand Activity' });
-      expect(band).toHaveTextContent('0 mutations · 1 observation · 2 verifications');
+      expect(band).toHaveTextContent('1 observation · 2 verifications');
       expect(band).not.toHaveTextContent(/checks?|failing|failed/);
       const phone = band.cloneNode(true) as HTMLElement;
       phone.querySelectorAll('.max-sm\\:hidden').forEach((node) => node.remove());
-      expect(phone).toHaveTextContent('0 mut · 1 obs · 2 ver');
+      expect(phone).toHaveTextContent('1 obs · 2 ver');
 
       fireEvent.click(band);
       expect(screen.getAllByText(summary)[0]).toBeVisible();
