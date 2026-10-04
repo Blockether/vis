@@ -719,7 +719,8 @@ async function choose(picker: HTMLElement, option: string) {
 describe('explicit search locations and scopes', () => {
   // The results end in a mark that loads the next page once it is in view. jsdom lays
   // nothing out, so `reachEnd` stands in for the reader scrolling to the last row.
-  const ends = new Set<{ callback: IntersectionObserverCallback; targets: Element[] }>();
+  const ends = new Set<EndObserver>();
+  let isEndVisible = false;
   class EndObserver {
     callback: IntersectionObserverCallback;
     targets: Element[] = [];
@@ -729,10 +730,16 @@ describe('explicit search locations and scopes', () => {
     }
     observe(target: Element) {
       this.targets.push(target);
+      // Report an already visible mark even when React observes it after the scroll.
+      this.notify();
     }
     unobserve() {}
     disconnect() {
       ends.delete(this);
+    }
+    notify() {
+      if (!isEndVisible || this.targets.length === 0) return;
+      this.callback(this.targets.map((target) => ({ isIntersecting: true, target }) as never), this as never);
     }
     takeRecords() {
       return [];
@@ -740,11 +747,12 @@ describe('explicit search locations and scopes', () => {
   }
   const reachEnd = () =>
     act(() => {
-      for (const end of [...ends])
-        end.callback(end.targets.map((target) => ({ isIntersecting: true, target }) as never), end as never);
+      isEndVisible = true;
+      for (const end of [...ends]) end.notify();
     });
   const jsdomObserver = globalThis.IntersectionObserver;
   beforeEach(() => {
+    isEndVisible = false;
     globalThis.IntersectionObserver = EndObserver as never;
   });
   afterEach(() => {
@@ -861,6 +869,31 @@ describe('explicit search locations and scopes', () => {
     await choose(project, 'Empty project');
     await waitFor(() => expect(within(results).queryByText('Needle 0')).not.toBeInTheDocument());
     await screen.findByText('No matching sessions');
+  });
+
+  it('loads the next page when the end mark appears after the reader reaches it', async () => {
+    const rows = Array.from({ length: 51 }, (_, index) => listSession({ id: `hit-${index}`, title: `Needle ${index}` }));
+    const view = renderSessionsScreen({ machines: [{ sessions: rows }] });
+    restore = view.restore;
+    const fetch = globalThis.fetch;
+    let release: (() => void) | undefined;
+    globalThis.fetch = async (input, init) => {
+      const answer = await fetch(input, init);
+      if (String(input).includes('/actions/search') && !String(input).includes('after=')) {
+        return new Promise<Response>((resolve) => { release = () => resolve(answer); });
+      }
+      return answer;
+    };
+    view.setQuery('needle');
+    await waitFor(() => expect(typeof release).toBe('function'));
+    // Keep the first page pending so its end mark cannot be observed before the scroll.
+    reachEnd();
+    await act(async () => { release!(); });
+
+    const results = screen.getByRole('region', { name: 'Matching sessions' });
+    expect(await within(results).findByText('Needle 50')).toBeVisible();
+    expect(screen.getByText('51 matches')).toBeVisible();
+    expect(searchParams(view.requests, 'after').filter(Boolean)).toEqual(['50']);
   });
 
   it('discards a late continuation when the project changes without changing the query', async () => {
