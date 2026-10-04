@@ -5,7 +5,7 @@ Start agent work on a schedule or from an external event, and report the result.
 ## Context
 
 The previous plan, Council Rooms, is complete, deployed and verified on two machines (`580c5051b` to `d8183db51`).
-Its open item is the D1 write permission of the relay CI token. Git history keeps that plan.
+Git history keeps that plan. Its last open item is closed: the relay CI token can now write to D1.
 
 Hermes Agent (`NousResearch/hermes-agent`) has cron jobs and webhook routes. A job runs a prompt in a fresh session on a schedule.
 A route checks a signature, filters the event, renders a prompt from the payload and starts a run.
@@ -95,7 +95,7 @@ Data: remove the Worker `hooks` module, its D1 tables, the gateway poller and th
 
 Acceptance criteria: relay, engine, TUI and Companion tests pass without the inbox. The deployed relay answers `404` on the inbox routes and has no hook tables.
 
-Unknowns: relay CI still lacks D1 write permission. A manual deployment works.
+Unknowns: none. The relay CI token can now write to D1.
 
 ## 5. Interfaces and documentation
 
@@ -118,6 +118,6 @@ Unknowns: none.
 - Phase 1: done. Cron tests with Europe/Warsaw DST, scheduler, route, contract and SDK tests pass. An isolated source gateway starts and answers the automation routes.
 - Phase 2: done. A local receiver checks the Standard Webhooks signature. A failed callback retries, then arrives once, or stops after 6 attempts. `[SILENT]` sends nothing.
 - Phase 3: done. Route and runner tests cover each webhook status, a repeated delivery and the untrusted-content note.
-- Phase 4: done. Commit `2687ca926` removes the relay inbox. Relay tests pass (deploy 4 of 4, suite 50 of 50). The relay is deployed by hand: the four inbox routes answer `404`, and Push and Rooms still answer. The two hook tables are dropped from production D1. They held 3 test inboxes and no requests. The relay CI deploy still stops at the D1 migration with Cloudflare code 7403.
+- Phase 4: done. Commit `2687ca926` removes the relay inbox. Relay tests pass (deploy 4 of 4, suite 50 of 50). The relay is deployed by hand: the four inbox routes answer `404`, and Push and Rooms still answer. The two hook tables are dropped from production D1. They held 3 test inboxes and no requests. After the relay CI token got D1 write permission, relay CI run `37172247013` deployed `f250109d3`.
 - Phase 5: done. The model tool `automations.*` has Activity presentation and refuses changes during an automation run. The TUI Automations view (command palette) runs, pauses, resumes, lists runs, creates one-time secrets and deletes. The Companion Automations screen does the same and also creates and edits automations in a form. The form sends only the changed fields and keeps webhook filters. Companion unit tests (lib 19, screen 14), Storybook tests (9) and the guide page contract pass.
 - Phase 6: done. `native_automations_test` passes 4 of 4 cases on a fresh native build with commit `2687ca926`. The cases cover one-time and cron schedules, a GitHub webhook with forged and repeated deliveries, a Standard Webhooks request with a forged signature and a signed callback. Each webhook goes directly to the gateway route. `native_rooms_test` passes with the restored relay fixture.
