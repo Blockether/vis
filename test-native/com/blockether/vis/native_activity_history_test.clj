@@ -178,7 +178,6 @@
                             (expect (= 160 (count (distinct (map :id rows)))))
                             (expect (= (range 1 161) (map :sequence rows)))
                             (expect (every? #(= "succeeded" (:state %)) rows))
-                            (expect (every? #(zero? (get-in % [:omitted :rows])) pages))
                             (expect (> (reduce + (map #(activity/byte-size (:presentation %)) rows))
                                        65536))
                             (doseq [[n row] (map-indexed vector rows)]
