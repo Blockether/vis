@@ -325,8 +325,8 @@ describe('selecting a table row', () => {
     const name = within(head).getByText('Release apps');
     // The chevron keeps the step of a row mark, and the failure mark follows the name.
     expect(head.className).toContain('gap-2');
-    expect(chevron.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(name.compareDocumentPosition(mark) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(chevron.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(name.compareDocumentPosition(mark) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
 
     // A leg indents its mark, and its name follows the mark: the words never indent alone.
     const leg = screen.getByRole('button', { name: 'Select iOS' });
