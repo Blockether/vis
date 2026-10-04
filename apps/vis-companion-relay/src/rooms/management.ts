@@ -16,17 +16,12 @@ export async function register(
   now: number,
 ): Promise<Data> {
   const hash = await digest(body.credential);
-  const prior = await db
-    .prepare("SELECT * FROM room_machines WHERE machine_id = ?")
-    .bind(body.machine_id)
-    .first<Data>();
-  if (prior && (prior.credential_hash !== hash || prior.name !== body.name)) {
-    fail(409, "conflict", "Machine identity already exists");
-  }
   await db
     .prepare(
       `INSERT INTO room_machines (machine_id, name, credential_hash, can_create_rooms, created_at)
-    VALUES (?, ?, ?, ?, ?) ON CONFLICT(machine_id) DO NOTHING`,
+    VALUES (?, ?, ?, ?, ?) ON CONFLICT(machine_id) DO UPDATE
+    SET name = excluded.name, can_create_rooms = excluded.can_create_rooms
+    WHERE room_machines.credential_hash = excluded.credential_hash`,
     )
     .bind(body.machine_id, body.name, hash, body.can_create_rooms ? 1 : 0, now)
     .run();
@@ -91,6 +86,18 @@ export async function createRoom(
   return { ...body, created_at: now };
 }
 
+/** Delete expired and revoked invites, so that the relay keeps no hash of an unusable link. */
+export async function purgeInvites(db: Database, now: number): Promise<void> {
+  const stale = "expires_at <= ? OR revoked_at IS NOT NULL";
+  await db.batch([
+    db
+      .prepare(
+        `DELETE FROM room_redemptions WHERE invite_id IN (SELECT invite_id FROM room_invites WHERE ${stale})`,
+      )
+      .bind(now),
+    db.prepare(`DELETE FROM room_invites WHERE ${stale}`).bind(now),
+  ]);
+}
 export async function createInvite(
   db: Database,
   roomId: string,
@@ -104,6 +111,7 @@ export async function createInvite(
   ) {
     fail(400, "invalid_request", "Invite expiry must be within seven days");
   }
+  await purgeInvites(db, now);
   const hash = await digest(body.token);
   const maxUses = body.max_uses ?? 1;
   await db
@@ -145,6 +153,7 @@ export async function join(
   credential: string,
   now: number,
 ): Promise<Data> {
+  await purgeInvites(db, now);
   const credentialHash = await digest(credential);
   const found = await db
     .prepare("SELECT * FROM room_invites WHERE token_hash = ?")

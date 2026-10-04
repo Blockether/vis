@@ -2498,7 +2498,7 @@ export function storySettingsFetch(populated = false): typeof fetch {
     }
     let body: unknown = {};
     if (url.pathname === '/v1/router') body = { providers: populated ? STORY_PROVIDERS : [] };
-    if (url.pathname === '/v1/council/rooms') body = { configured: false, rooms: [] } satisfies RoomsStatus;
+    if (url.pathname === '/v1/council/rooms') body = { configured: false, relays: [] } satisfies RoomsStatus;
     if (url.pathname === '/v1/settings' && init?.method === 'POST') {
       const request = JSON.parse(String(init.body));
       const text = [agentName, machineName].find((item) => item.id === request.id);

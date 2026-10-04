@@ -12,13 +12,13 @@
                (:path-params request)
 
                body
-               (when (#{:register :join :create :invite} operation)
+               (when (#{:register :join :create :invite :disconnect} operation)
                  (walk/keywordize-keys (http/body-json request)))
 
                result
                (case operation
                  :status
-                 (rooms/status!)
+                 (rooms/status! (lp/db-info))
 
                  :register
                  (rooms/register! (lp/db-info) body)
@@ -27,12 +27,13 @@
                  (rooms/join! (lp/db-info) body)
 
                  :create
-                 (rooms/create! body)
+                 (rooms/create! (lp/db-info) body)
 
                  :disconnect
-                 (rooms/delete-machine!)
+                 (rooms/delete-machine! (lp/db-info) body)
 
-                 (rooms/manage! operation
+                 (rooms/manage! (lp/db-info)
+                                operation
                                 (:room-id params)
                                 (or (:machine-id params) (:invite-id params))
                                 body))]
@@ -48,7 +49,7 @@
 (def handlers
   {[:get "/v1/council/rooms"] (handler :status)
    [:post "/v1/council/rooms"] (handler :create)
-   [:delete "/v1/council/rooms"] (handler :disconnect)
+   [:post "/v1/council/rooms/disconnect"] (handler :disconnect)
    [:post "/v1/council/rooms/register"] (handler :register)
    [:post "/v1/council/rooms/join"] (handler :join)
    [:delete "/v1/council/rooms/:room-id"] (handler :delete)

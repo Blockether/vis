@@ -18,6 +18,7 @@ threads, so later sessions can use what they learned.
 - **Findings should outlast the session that found them.** Messages stay in shared
   threads, where later sessions can [reuse them](#reuse-existing-session-context).
 - **Your sessions run on different machines.** [Create or join a Council room](#connect-machines-with-a-room), then select which groups or sessions can use it.
+- **You send a room invitation to another person.** [Keep the link safe](#keep-invitations-safe), because anyone with the link can join the room.
 - **Your own program coordinates sessions.** Use the [API reference](#api-reference)
   or the [Python SDK](#python-sdk) handle.
 
@@ -100,8 +101,8 @@ delivery. Existing messages remain saved.
 A Council room connects selected sessions through a relay. It does not connect their files, workspaces or complete conversations.
 The relay operator can read room messages. There is no end-to-end encryption, and every room member can read the room log.
 
-One machine can create rooms and accept invitations on one relay. It can be in several rooms at the same time.
-Each room has its own row in the machine's **Council** section.
+One machine can use several relays and can be in several rooms on each relay.
+It has a separate machine identity on each relay. The machine's **Council** section groups the rooms by relay.
 
 ### Name this machine
 
@@ -111,22 +112,20 @@ Vis suggests the host name of the computer and saves your choice in its local da
 1. In Companion **Settings**, open the machine's **Council** section.
 2. Change **Machine name**. Use 1 to 80 characters, without control characters.
 
-Set the name before you create or join the first room, because the relay keeps the first name that it gets.
-While the machine is connected, Vis refuses a new name.
-To use a new name, disconnect the machine, change the name and connect again.
-Disconnect deletes the rooms that this machine owns.
+Vis sends a new name to each relay that this machine uses. The machine keeps its identity and its rooms.
+If a relay does not answer, Vis sends the name the next time that it checks that relay.
 
 ### Create a room
 
 1. In the machine's **Council** section, select **New room**.
 2. Enter the room name.
-3. If this machine is not connected, enter the relay URL.
-4. If Vis asks for it, enter the Rooms administrator token.
+3. Select the relay for the room. For a relay that this machine does not use yet, select **Another relay** and enter its URL.
+4. If Vis asks for it, enter the Rooms administrator token of that relay.
 5. Select **Create room**.
 
 Use the separate Rooms administrator token, not a Push key or gateway token.
-Vis asks for the token only once, before the first room that this machine creates.
-This also applies to a machine that joined other rooms by invitation.
+Vis asks for the token once for each relay, before the first room that this machine creates there.
+This also applies to a relay where this machine joined other rooms by invitation.
 The gateway keeps its machine credential privately, but does not save the administrator token.
 
 ### Accept an invitation
@@ -142,7 +141,22 @@ Opening an invitation page does not join the room or consume the invitation.
 
 The room now appears in Settings. Joining shares no sessions, uploads no previous messages and enables no remote waking.
 Keep invitation links private. Their fragment contains the invitation secret.
-An invitation from another relay stops at the review step, and Vis shows the relay that this machine uses.
+
+If the invitation is for a relay that this machine does not use yet, the review tells you.
+Join only if you trust the operator of that relay. Vis then creates a separate machine identity there.
+
+### Keep invitations safe
+
+An invitation link works like a temporary password for one room.
+Anyone who has the link can use it until it expires, reaches its use limit or is revoked.
+
+- Send the link only through a private channel.
+- If a link goes to the wrong person, select **Revoke invitation** before you hide the link. If a machine already joined with it, remove that machine from the room.
+- The secret is in the link fragment, after `#`. A browser does not send the fragment when it opens the link.
+- The relay saves only a SHA-256 hash of the secret. A copy of the relay database contains no usable link.
+- The relay deletes the hashes of expired and revoked invitations.
+- Vis saves only a hash of the secret as the redemption ID, not the link.
+- A machine that the owner removed cannot join again with the invitation that it used before.
 
 ### Restrict groups and sessions
 
@@ -180,17 +194,20 @@ The protocol permits up to 100 uses and a seven-day expiry.
 Both actions require confirmation. Neither action deletes local sessions.
 After membership refresh, sessions that selected an unavailable or denied room return to their local Council group.
 
-**Disconnect** deletes this machine from the relay, together with every room that it owns.
-Vis then removes the machine credential from this computer. Local sessions stay.
+Each relay row has its own **Disconnect** action. It deletes this machine from that relay, together with every room that it owns there.
+Vis then removes the machine credential for that relay from this computer. Other relays and local sessions stay.
+
 Messages that this machine sent to rooms of other owners stay in those rooms.
 If the relay is not available, Vis keeps the credential so that you can try again.
-To use rooms again, create a room or accept a new invitation.
+To use that relay again, create a room on it or accept a new invitation.
 
 ### Room limits and recovery
 
-One machine can join up to 32 rooms. Each room permits 256 machine memberships and 256 session identities.
+One machine can join up to 32 rooms on each relay. Each room permits 256 machine memberships and 256 session identities.
 A presence request carries up to 128 sessions. Presence expires without regular refresh, but membership and messages remain.
-One machine identity uses one relay address. Use separate Vis homes for independent machine identities during testing.
+
+Vis keeps one machine identity for each relay address. To test several machines on one relay, use a separate Vis home for each machine.
+If a relay does not answer, its row in Settings shows **Not available** and the rooms from the last check.
 
 An expired, consumed or revoked invitation cannot add another machine. Ask the owner for a new invitation.
 After a connection failure, retry joining with the same link on the same machine.

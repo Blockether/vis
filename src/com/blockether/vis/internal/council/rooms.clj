@@ -27,33 +27,54 @@
   [snapshot eligible? wake!]
   (reset! runtime {:snapshot snapshot :eligible? eligible? :wake! wake!}))
 
-(defn- state-path
+(defn- rooms-dir
   ^Path []
   (.toPath (io/file (or (System/getProperty "vis.rooms.home")
                         (System/getenv "VIS_HOME")
                         (str (System/getProperty "user.home") "/.vis"))
-                    "rooms"
-                    "identity.json")))
+                    "rooms")))
+
+(defn- state-path
+  "Each relay has one private file. The file name is a hash of the relay origin."
+  ^Path [relay-url]
+  (.resolve (rooms-dir) (str "relay-" (util/sha256-hex relay-url) ".json")))
+
+(defn- load-state
+  [^Path path]
+  (when (or (Files/isSymbolicLink path) (Files/isSymbolicLink (.getParent path)))
+    (transport/fail! 503 "unsafe_state"))
+  (when (Files/exists path (make-array LinkOption 0))
+    (let [value (wire/parse-json (slurp (.toFile path)))]
+      (when-not (document/valid-json? "rooms" "local_state" value)
+        (transport/fail! 503 "invalid_state"))
+      (assoc (walk/keywordize-keys (dissoc value "cursors" "redemptions"))
+        :cursors (get value "cursors")
+        :redemptions (get value "redemptions")))))
 
 (defn read-state
-  "Read private machine state. A missing file disables all background network work."
+  "Read the private machine state of one relay origin. A relay without a file gets no network work."
+  [relay-url]
+  (load-state (state-path relay-url)))
+
+(defn- identities
+  "Read the machine state of each relay, ordered by relay origin. A file must match its origin."
   []
-  (let [path (state-path)]
-    (when (or (Files/isSymbolicLink path) (Files/isSymbolicLink (.getParent path)))
-      (transport/fail! 503 "unsafe_state"))
-    (when (Files/exists path (make-array LinkOption 0))
-      (let [value (wire/parse-json (slurp (.toFile path)))]
-        (when-not (document/valid-json? "rooms" "local_state" value)
-          (transport/fail! 503 "invalid_state"))
-        (assoc (walk/keywordize-keys (dissoc value "cursors" "redemptions"))
-          :cursors (get value "cursors")
-          :redemptions (get value "redemptions"))))))
+  (let [dir (rooms-dir)]
+    (if (Files/isDirectory dir (make-array LinkOption 0))
+      (->> (with-open [paths (Files/newDirectoryStream dir "relay-*.json")]
+             (vec paths))
+           (keep (fn [^Path path]
+                   (when-let [state (load-state path)]
+                     (when (= path (state-path (:relay_url state))) state))))
+           (sort-by :relay_url)
+           vec)
+      [])))
 
 (defn- save-state!
   [value]
   (transport/validate! "local_state" value)
   (let [path
-        (state-path)
+        (state-path (:relay_url value))
 
         parent
         (.getParent path)
@@ -69,7 +90,7 @@
                                             (PosixFilePermissions/fromString "rwx------"))]))
     (let [temp (Files/createTempFile
                  parent
-                 "identity-"
+                 "pending-"
                  ".json"
                  (into-array FileAttribute [(PosixFilePermissions/asFileAttribute permissions)]))]
       (try (spit (.toFile temp) (wire/json-str value))
@@ -81,7 +102,12 @@
            value
            (finally (Files/deleteIfExists temp))))))
 
-(defn- update-state! [f] (locking state-lock (save-state! (f (read-state)))))
+(defn- update-state!
+  "Change the saved state of a known relay. A relay without a file stays unknown."
+  [relay-url f]
+  (locking state-lock
+    (when-let [state (read-state relay-url)]
+      (save-state! (f state)))))
 
 (defn- secret [] (util/base64url (util/random-bytes 32)))
 
@@ -134,16 +160,50 @@
 
 (register-settings! [])
 
+(defn- ensure-identity!
+  "Return the machine state of a relay origin. The first use creates a machine ID and credential."
+  [relay-url]
+  (locking state-lock
+    (or (read-state relay-url)
+        (save-state! {:relay_url relay-url
+                      :machine_id (str (random-uuid))
+                      :credential (secret)
+                      :rooms []
+                      :cursors {}
+                      :redemptions {}}))))
+
+(defn- unique-rooms
+  "Keep the first room of each room ID."
+  [rooms]
+  (:rooms (reduce (fn [found {:keys [room_id] :as room}]
+                    (if (contains? (:ids found) room_id)
+                      found
+                      {:ids (conj (:ids found) room_id) :rooms (conj (:rooms found) room)}))
+                  {:ids #{} :rooms []}
+                  rooms)))
+
+(defn known-rooms
+  "The saved rooms of all connected relays. Room IDs are random, so the first relay wins a duplicate."
+  []
+  (unique-rooms (mapcat :rooms (filter :machine (identities)))))
+
+(defn- room-state
+  "The state of the connected relay that holds a room, or nil."
+  [room-id]
+  (some (fn [state]
+          (when (and (:machine state) (some #(= room-id (:room_id %)) (:rooms state))) state))
+        (identities)))
+
 (defn selected-room
   "Resolve fresh restrictions. A denied or revoked room cannot receive session data."
   [db sid]
-  (when-let [state (read-state)]
-    (when (and (:machine state) (store/db-get-session db sid))
+  (when-let [rooms (seq (known-rooms))]
+    (when (store/db-get-session db sid)
       (let [values (scoped/values db sid)
             id (get values "council_room")]
 
         (when (and (not= false (get values "council"))
-                   (some #(= id (:room_id %)) (:rooms state))
+                   (some #(= id (:room_id %)) rooms)
                    (true? (get values (access-id id))))
           id)))))
 
@@ -155,25 +215,15 @@
   [db sid room-id]
   (when-not (= room-id (selected-room db sid)) (transport/fail! 403 "room_denied")))
 
-(defn- ensure-identity!
-  [relay-url name]
-  (let [base (transport/origin relay-url)]
-    (update-state! (fn [old]
-                     (when (and old (not= base (:relay_url old)))
-                       (transport/fail! 409 "relay_conflict"))
-                     (or old
-                         {:relay_url base
-                          :machine_id (str (random-uuid))
-                          :credential (secret)
-                          :name name
-                          :rooms []
-                          :cursors {}
-                          :redemptions {}})))))
-
-(defn- call!
-  [method template params body query]
-  (let [state (or (read-state) (transport/fail! 409 "rooms_unconfigured"))]
-    (transport/call! state method template params body query)))
+(defn- room-call!
+  "Call the relay that holds a room. An unknown room fails before any network call."
+  [room-id method template params body query]
+  (transport/call! (or (room-state room-id) (transport/fail! 404 "room_unknown"))
+                   method
+                   template
+                   params
+                   body
+                   query))
 
 (def machine-name-id
   "The setting id of the name that rooms show for this machine."
@@ -201,100 +251,112 @@
   (or @host-label "Vis"))
 
 (defn machine-name
-  "The name that rooms show for this machine. A connected machine has the name that the
-   relay holds. Otherwise the saved name applies. The first use saves the host name."
+  "The name that rooms show for this machine on each relay. The first use saves the host name."
   [db]
-  (let [saved
-        (store/db-council-machine-name db)
+  (or (store/db-council-machine-name db)
+      (let [value (default-machine-name)]
+        (store/db-council-set-machine-name! db value)
+        value)))
 
-        value
-        (or (get-in (read-state) [:machine :name]) saved (default-machine-name))]
-
-    (when (not= saved value) (store/db-council-set-machine-name! db value))
-    value))
+(defn- rename!
+  "Give the relay machine the saved name. The relay keeps the machine ID and credential."
+  [state name]
+  (let [machine (transport/call! state :patch "/v1/rooms/machine" {} {:name name} {})]
+    (update-state! (:relay_url state) #(assoc % :machine machine))
+    machine))
 
 (defn set-machine-name!
-  "Save the name for the next room or invitation, and return it. The relay cannot rename a
-   machine, so a connected machine keeps its name until it disconnects."
+  "Save the name that rooms show for this machine, send it to each connected relay and return it.
+   A relay that does not answer gets the name at the next status check."
   [db value]
   (let [value (when (string? value) (str/trim value))]
     (when-not (machine-name? value)
       (throw (ex-info
                (str "Use 1 to " machine-name-length " characters, without control characters.")
                {:status 400 :type :invalid-setting-value :id machine-name-id})))
-    (when-let [connected (get-in (read-state) [:machine :name])]
-      (when (not= connected value)
-        (throw (ex-info "Disconnect from Rooms before you change the machine name."
-                        {:status 409 :type :machine-name-locked :id machine-name-id}))))
-    (store/db-council-set-machine-name! db value)))
+    (store/db-council-set-machine-name! db value)
+    (doseq [state (identities)
+            :when (and (:machine state) (not= value (get-in state [:machine :name])))]
+
+      (try (rename! state value) (catch clojure.lang.ExceptionInfo _ nil)))
+    value))
+
+(defn- relay-status!
+  "Read the rooms and the machine of one relay, and send the saved name when the relay has another.
+   A relay that does not answer keeps its saved rooms and reports the error code."
+  [state name]
+  (try (let [rooms
+             (transport/call! state :get "/v1/rooms" {} nil {})
+
+             machine
+             (transport/call! state :get "/v1/rooms/machine" {} nil {})
+
+             machine
+             (if (= name (:name machine)) machine (rename! state name))]
+
+         (update-state! (:relay_url state)
+                        #(assoc %
+                           :rooms rooms
+                           :machine machine))
+         {:relay_url (:relay_url state) :machine machine :rooms rooms})
+       (catch clojure.lang.ExceptionInfo e
+         {:relay_url (:relay_url state)
+          :machine (:machine state)
+          :rooms (:rooms state)
+          :error (str (:code (ex-data e) "unavailable"))})))
 
 (defn status!
-  "Return safe membership metadata. No key, invite, cursor or transcript is included."
-  []
-  (if-let [state (read-state)]
-    (if (:machine state)
-      (let [rooms (call! :get "/v1/rooms" {} nil {})
-            machine (call! :get "/v1/rooms/machine" {} nil {})]
+  "Return safe membership metadata for each connected relay. No key, invite, cursor or transcript
+   is included."
+  [db]
+  (let [name
+        (machine-name db)
 
-        (update-state! #(assoc %
-                          :rooms rooms
-                          :machine machine))
-        (register-settings! rooms)
-        {:configured true :relay_url (:relay_url state) :machine machine :rooms rooms})
-      {:configured false :rooms []})
-    {:configured false :rooms []}))
+        relays
+        (mapv #(relay-status! % name) (filter :machine (identities)))]
+
+    (register-settings! (unique-rooms (mapcat :rooms relays)))
+    {:configured (boolean (seq relays)) :relays relays}))
 
 (defn register!
-  "Register this machine with the rooms administrator token and save its name. A machine that
-   joined through an invitation also gets the right to create rooms."
-  [db {:keys [relay_url name admin_token] :as body}]
+  "Register this machine on a relay with the rooms administrator token. The machine gets the right to
+   create rooms there, also when it joined that relay through an invitation."
+  [db {:keys [relay_url admin_token] :as body}]
   (transport/validate! "gateway_register" body)
   (let [state
-        (ensure-identity! relay_url name)
+        (ensure-identity! (transport/origin relay_url))
 
-        admin
-        (assoc state :credential admin_token)
-
-        registered
-        (transport/call! admin
+        machine
+        (transport/call! (assoc state :credential admin_token)
                          :post
                          "/v1/rooms/machines"
                          {}
                          {:machine_id (:machine_id state)
-                          :name name
+                          :name (machine-name db)
                           :credential (:credential state)
                           :can_create_rooms true}
-                         {})
+                         {})]
 
-        machine
-        (if (:can_create_rooms registered)
-          registered
-          (transport/call! admin
-                           :patch
-                           "/v1/rooms/machines/{machine_id}"
-                           {:machine_id (:machine_id state)}
-                           {:can_create_rooms true}
-                           {}))]
-
-    (update-state! #(assoc % :machine machine))
-    (store/db-council-set-machine-name! db (:name machine))
-    (status!)))
+    (update-state! (:relay_url state) #(assoc % :machine machine))
+    (status! db)))
 
 (defn join!
-  "Join the room of an invitation and save the machine name. One machine can be in many rooms."
-  [db {:keys [invite_url machine_name] :as body}]
+  "Join the room of an invitation with the saved machine name. One machine can be in many rooms on
+   many relays."
+  [db {:keys [invite_url] :as body}]
   (transport/validate! "gateway_join" body)
   (let [{:keys [relay_url token]}
         (transport/invite-parts invite_url)
 
         _
-        (ensure-identity! relay_url machine_name)
+        (ensure-identity! relay_url)
 
         key
         (util/sha256-hex token)
 
         state
-        (update-state! #(if (get-in % [:redemptions key])
+        (update-state! relay_url
+                       #(if (get-in % [:redemptions key])
                           %
                           (update %
                                   :redemptions
@@ -306,36 +368,45 @@
                                         key (str (random-uuid))))))))
 
         result
-        (call! :post
-               "/v1/rooms/join"
-               {}
-               {:request_id (get-in state [:redemptions key])
-                :invite_token token
-                :machine_id (:machine_id state)
-                :machine_name machine_name}
-               {})]
+        (transport/call! state
+                         :post
+                         "/v1/rooms/join"
+                         {}
+                         {:request_id (get-in state [:redemptions key])
+                          :invite_token token
+                          :machine_id (:machine_id state)
+                          :machine_name (machine-name db)}
+                         {})]
 
-    (update-state! #(assoc % :machine (:machine result)))
-    (store/db-council-set-machine-name! db (get-in result [:machine :name]))
-    (status!)
+    (update-state! relay_url #(assoc % :machine (:machine result)))
+    (status! db)
     result))
 
 (defn create!
-  [body]
+  "Create a room on a connected relay where this machine can create rooms."
+  [db {:keys [relay_url name] :as body}]
   (transport/validate! "gateway_create" body)
-  (let [result (call! :post
-                      "/v1/rooms"
-                      {}
-                      {:room_id (str (random-uuid))
-                       :name (:name body)
-                       :owner_machine_id (:machine_id (read-state))}
-                      {})]
-    (status!)
+  (let [state
+        (read-state (transport/origin relay_url))
+
+        _
+        (when-not (:machine state) (transport/fail! 409 "rooms_unconfigured"))
+
+        result
+        (transport/call!
+          state
+          :post
+          "/v1/rooms"
+          {}
+          {:room_id (str (random-uuid)) :name name :owner_machine_id (:machine_id state)}
+          {})]
+
+    (status! db)
     result))
 
 (defn manage!
   "Apply a declared membership operation through the authenticated machine."
-  [operation room-id id body]
+  [db operation room-id id body]
   (transport/validate! "id" room-id)
   (let [params
         {:room_id room-id}
@@ -343,55 +414,65 @@
         result
         (case operation
           :delete
-          (call! :delete "/v1/rooms/{room_id}" params nil {})
+          (room-call! room-id :delete "/v1/rooms/{room_id}" params nil {})
 
           :members
-          (call! :get "/v1/rooms/{room_id}/members" params nil {})
+          (room-call! room-id :get "/v1/rooms/{room_id}/members" params nil {})
 
           :remove
-          (call! :delete
-                 "/v1/rooms/{room_id}/members/{machine_id}"
-                 (assoc params :machine_id id)
-                 nil
-                 {})
+          (room-call! room-id
+                      :delete
+                      "/v1/rooms/{room_id}/members/{machine_id}"
+                      (assoc params :machine_id id)
+                      nil
+                      {})
 
           :revoke
-          (call! :delete
-                 "/v1/rooms/{room_id}/invites/{invite_id}"
-                 (assoc params :invite_id id)
-                 nil
-                 {})
+          (room-call! room-id
+                      :delete
+                      "/v1/rooms/{room_id}/invites/{invite_id}"
+                      (assoc params :invite_id id)
+                      nil
+                      {})
 
           :invite
           (do (transport/validate! "gateway_invite" body)
-              (call! :post
-                     "/v1/rooms/{room_id}/invites"
-                     params
-                     {:invite_id (str (random-uuid))
-                      :token (secret)
-                      :expires_at (+ (util/now-ms) (* 1000 (long (:expires_in_seconds body 86400))))
-                      :max_uses (:max_uses body 1)}
-                     {})))]
+              (room-call! room-id
+                          :post
+                          "/v1/rooms/{room_id}/invites"
+                          params
+                          {:invite_id (str (random-uuid))
+                           :token (secret)
+                           :expires_at (+ (util/now-ms)
+                                          (* 1000 (long (:expires_in_seconds body 86400))))
+                           :max_uses (:max_uses body 1)}
+                          {})))]
 
-    (when (#{:delete :remove} operation) (status!))
+    (when (#{:delete :remove} operation) (status! db))
     result))
 
 (defn delete-machine!
-  "Delete this machine from the relay, then forget its credential. A relay failure keeps the credential."
-  []
-  (locking state-lock
-    (when-let [state (read-state)]
-      (try (transport/call! state
-                            :delete
-                            "/v1/rooms/machines/{machine_id}"
-                            {:machine_id (:machine_id state)}
-                            nil
-                            {})
-           (catch clojure.lang.ExceptionInfo e (when-not (= 401 (:status (ex-data e))) (throw e))))
-      (Files/deleteIfExists (state-path))))
-  (reset! presence-cache {})
-  (register-settings! [])
-  {:configured false :rooms []})
+  "Delete this machine from one relay, then forget its credential there. A relay failure keeps the
+   credential. The machine stays on the other relays."
+  [db {:keys [relay_url] :as body}]
+  (transport/validate! "gateway_disconnect" body)
+  (let [relay (transport/origin relay_url)]
+    (locking state-lock
+      (when-let [state (read-state relay)]
+        (try (transport/call! state
+                              :delete
+                              "/v1/rooms/machines/{machine_id}"
+                              {:machine_id (:machine_id state)}
+                              nil
+                              {})
+             (catch clojure.lang.ExceptionInfo e
+               (when-not (= 401 (:status (ex-data e))) (throw e))))
+        (Files/deleteIfExists (state-path relay))))
+    (swap! presence-cache #(into {}
+                                 (remove (fn [[[cached] _]]
+                                           (= relay cached)))
+                                 %))
+    (status! db)))
 
 (defn- fleet
   [db]
@@ -428,8 +509,11 @@
   (let [sessions
         (mapv #(dissoc % :room_id) (filter #(= room-id (:room_id %)) (fleet db)))
 
+        state
+        (or (room-state room-id) (transport/fail! 404 "room_unknown"))
+
         key
-        [(str (state-path)) room-id]]
+        [(:relay_url state) room-id]]
 
     (locking presence-cache
       (let [old
@@ -439,7 +523,12 @@
             (util/now-ms)]
 
         (when (or (not= sessions (:sessions old)) (>= (- now (:at old 0)) 15000))
-          (call! :post "/v1/rooms/{room_id}/presence" {:room_id room-id} {:sessions sessions} {})
+          (transport/call! state
+                           :post
+                           "/v1/rooms/{room_id}/presence"
+                           {:room_id room-id}
+                           {:sessions sessions}
+                           {})
           (swap! presence-cache assoc key {:sessions sessions :at now}))))))
 
 (defn operation!
@@ -451,69 +540,74 @@
   (let [params {:room_id room-id}]
     (case operation
       :members
-      (call! :get "/v1/rooms/{room_id}/sessions" params nil {})
+      (room-call! room-id :get "/v1/rooms/{room_id}/sessions" params nil {})
 
       :read
-      (call! :get "/v1/rooms/{room_id}/entries" params nil (dissoc opts :group_id))
+      (room-call! room-id :get "/v1/rooms/{room_id}/entries" params nil (dissoc opts :group_id))
 
       :threads
-      (call! :get "/v1/rooms/{room_id}/threads" params nil (dissoc opts :group_id))
+      (room-call! room-id :get "/v1/rooms/{room_id}/threads" params nil (dissoc opts :group_id))
 
       :get
-      (call! :get
-             "/v1/rooms/{room_id}/entries/{entry_id}"
-             (assoc params :entry_id (:entry_id opts))
-             nil
-             {})
+      (room-call! room-id
+                  :get
+                  "/v1/rooms/{room_id}/entries/{entry_id}"
+                  (assoc params :entry_id (:entry_id opts))
+                  nil
+                  {})
 
       :publish
-      (call! :post
-             "/v1/rooms/{room_id}/entries"
-             params
-             {:session_id sid
-              :publication (assoc opts
-                             :idempotency_key (or (:idempotency_key opts) (str (random-uuid))))}
-             {})
+      (room-call! room-id
+                  :post
+                  "/v1/rooms/{room_id}/entries"
+                  params
+                  {:session_id sid
+                   :publication
+                   (assoc opts :idempotency_key (or (:idempotency_key opts) (str (random-uuid))))}
+                  {})
 
       :wake
-      (call! :post
-             "/v1/rooms/{room_id}/wake"
-             params
-             {:session_id sid :event (dissoc opts :ping :group_id)}
-             {})
+      (room-call! room-id
+                  :post
+                  "/v1/rooms/{room_id}/wake"
+                  params
+                  {:session_id sid :event (dissoc opts :ping :group_id)}
+                  {})
 
       :pending
-      (call! :get "/v1/rooms/{room_id}/pending" params nil {:session_id sid})
+      (room-call! room-id :get "/v1/rooms/{room_id}/pending" params nil {:session_id sid})
 
       :inbox
-      (call! :get "/v1/rooms/{room_id}/inbox" params nil (assoc opts :session_id sid))
+      (room-call! room-id :get "/v1/rooms/{room_id}/inbox" params nil (assoc opts :session_id sid))
 
       :receipts
-      (call! :post "/v1/rooms/{room_id}/receipts" params opts {}))))
+      (room-call! room-id :post "/v1/rooms/{room_id}/receipts" params opts {}))))
 
 (defn cursor
   [room-id sid kind]
-  (get-in (read-state) [:cursors (str room-id "/" sid "/" (name kind))] 0))
+  (get-in (room-state room-id) [:cursors (str room-id "/" sid "/" (name kind))] 0))
 
 (defn advance!
   [room-id sid kind entry-id]
-  (update-state! #(update-in %
-                             [:cursors (str room-id "/" sid "/" (name kind))]
-                             (fn [old]
-                               (max (long (or old 0)) (long entry-id))))))
+  (when-let [state (room-state room-id)]
+    (update-state! (:relay_url state)
+                   #(update-in %
+                               [:cursors (str room-id "/" sid "/" (name kind))]
+                               (fn [old]
+                                 (max (long (or old 0)) (long entry-id)))))))
 
 (defn poll!
   "Claim each idle wake before dispatch. A crash cannot repeat a paid activation."
   [db]
-  (when (:machine (read-state))
+  (when (some :machine (identities))
     (let [status
-          (status!)
+          (status! db)
 
           by-room
           (group-by :room_id (fleet db))]
 
       (doseq [{room-id :room_id}
-              (:rooms status)
+              (unique-rooms (mapcat :rooms (remove :error (:relays status))))
 
               :let [sessions
                     (get by-room room-id)]]
@@ -549,7 +643,7 @@
 (defn start!
   "Own one bounded poller for this gateway. Return its stop function."
   [db]
-  (register-settings! (:rooms (read-state)))
+  (register-settings! (known-rooms))
   (let [running
         (atom true)
 

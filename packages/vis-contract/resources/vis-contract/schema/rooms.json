@@ -49,6 +49,15 @@
       "query": null
     },
     {
+      "method": "PATCH",
+      "path": "/v1/rooms/machine",
+      "auth": "machine",
+      "request": "machine_rename",
+      "response": "machine",
+      "error": "error",
+      "query": null
+    },
+    {
       "method": "POST",
       "path": "/v1/rooms",
       "auth": "creator",
@@ -250,6 +259,7 @@
       "additionalProperties": false
     },
     "machine_registration": {
+      "$comment": "A new registration with the same credential updates the name and the room creation permission.",
       "type": "object",
       "properties": {
         "machine_id": {
@@ -285,6 +295,22 @@
       },
       "required": [
         "can_create_rooms"
+      ],
+      "additionalProperties": false
+    },
+    "machine_rename": {
+      "$comment": "A machine renames itself. Its ID and credential stay the same.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        }
+      },
+      "required": [
+        "name"
       ],
       "additionalProperties": false
     },
@@ -778,11 +804,28 @@
       "additionalProperties": false
     },
     "gateway_status": {
+      "$comment": "Each relay has its own machine identity. A relay that does not answer keeps its saved rooms and reports an error code.",
       "type": "object",
       "properties": {
         "configured": {
           "type": "boolean"
         },
+        "relays": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gateway_relay"
+          }
+        }
+      },
+      "required": [
+        "configured",
+        "relays"
+      ],
+      "additionalProperties": false
+    },
+    "gateway_relay": {
+      "type": "object",
+      "properties": {
         "relay_url": {
           "type": "string"
         },
@@ -791,15 +834,20 @@
         },
         "rooms": {
           "$ref": "#/$defs/room_list"
+        },
+        "error": {
+          "type": "string"
         }
       },
       "required": [
-        "configured",
+        "relay_url",
+        "machine",
         "rooms"
       ],
       "additionalProperties": false
     },
     "gateway_register": {
+      "$comment": "The machine name comes from the Council settings, not from this request.",
       "type": "object",
       "properties": {
         "relay_url": {
@@ -807,18 +855,12 @@
           "minLength": 1,
           "maxLength": 2048
         },
-        "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 100
-        },
         "admin_token": {
           "$ref": "#/$defs/secret"
         }
       },
       "required": [
         "relay_url",
-        "name",
         "admin_token"
       ],
       "additionalProperties": false
@@ -830,29 +872,30 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 2048
-        },
-        "machine_name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 100
         }
       },
       "required": [
-        "invite_url",
-        "machine_name"
+        "invite_url"
       ],
       "additionalProperties": false
     },
     "gateway_create": {
       "type": "object",
       "properties": {
+        "relay_url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
         "name": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 100
+          "maxLength": 80,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
         }
       },
       "required": [
+        "relay_url",
         "name"
       ],
       "additionalProperties": false
@@ -876,6 +919,20 @@
       "required": [],
       "additionalProperties": false
     },
+    "gateway_disconnect": {
+      "type": "object",
+      "properties": {
+        "relay_url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "relay_url"
+      ],
+      "additionalProperties": false
+    },
     "entry_id": {
       "$ref": "https://contract.blockether.com/vis/schema/council.json#/$defs/entry_id"
     },
@@ -890,9 +947,6 @@
         },
         "credential": {
           "$ref": "#/$defs/secret"
-        },
-        "name": {
-          "type": "string"
         },
         "machine": {
           "$ref": "#/$defs/machine"
@@ -919,7 +973,6 @@
         "relay_url",
         "machine_id",
         "credential",
-        "name",
         "rooms",
         "cursors",
         "redemptions"

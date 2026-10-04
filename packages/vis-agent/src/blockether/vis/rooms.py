@@ -273,6 +273,10 @@ class RoomsClient:
     def machine(self) -> Machine:
         return Machine(**self._request("GET", "/v1/rooms/machine"))
 
+    def rename(self, name: str) -> Machine:
+        """Rename this machine. Its ID, credential and room memberships stay the same."""
+        return Machine(**self._request("PATCH", "/v1/rooms/machine", {"name": name}))
+
     def rooms(self) -> tuple[Room, ...]:
         return tuple(Room(**item) for item in self._request("GET", "/v1/rooms"))
 

@@ -159,11 +159,14 @@ Its route catalog defines authentication, requests, queries, responses and error
 
 Opening `/rooms/join#invite=...` does not redeem an invitation. Explicit redemption is atomic and replay-safe.
 The database stores credential and invitation hashes, not their secrets.
+The relay deletes the hashes of expired and revoked invitations.
+
 Presence expires, while membership and messages remain until explicitly removed.
 Deleting a room removes its messages, invitations and memberships in one transaction.
 A machine can delete itself, and the administrator can delete any machine.
 That deletion also removes the rooms that the machine owns.
 Messages that it sent to other rooms keep a machine record without a credential.
+A machine can rename itself without a change to its ID or credential.
 
 `npm run dev` uses `--remote` because local workerd lacks the HTTP/2 support
 required by APNs.

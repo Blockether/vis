@@ -2492,20 +2492,20 @@ export class GatewayClient {
     return this.request('GET', '/v1/council/rooms', undefined, signal);
   }
 
-  disconnectRooms(): Promise<RoomsStatus> {
-    return this.request('DELETE', '/v1/council/rooms');
+  disconnectRooms(relay_url: string): Promise<RoomsStatus> {
+    return this.request('POST', '/v1/council/rooms/disconnect', { relay_url });
   }
 
-  joinRoom(invite_url: string, machine_name: string): Promise<unknown> {
-    return this.request('POST', '/v1/council/rooms/join', { invite_url, machine_name });
+  joinRoom(invite_url: string): Promise<unknown> {
+    return this.request('POST', '/v1/council/rooms/join', { invite_url });
   }
 
-  registerRooms(relay_url: string, name: string, admin_token: string): Promise<RoomsStatus> {
-    return this.request('POST', '/v1/council/rooms/register', { relay_url, name, admin_token });
+  registerRooms(relay_url: string, admin_token: string): Promise<RoomsStatus> {
+    return this.request('POST', '/v1/council/rooms/register', { relay_url, admin_token });
   }
 
-  createRoom(name: string): Promise<CouncilRoom> {
-    return this.request('POST', '/v1/council/rooms', { name });
+  createRoom(relay_url: string, name: string): Promise<CouncilRoom> {
+    return this.request('POST', '/v1/council/rooms', { relay_url, name });
   }
 
   inviteToRoom(roomId: string): Promise<RoomInvitation> {

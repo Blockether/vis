@@ -1549,11 +1549,6 @@
           "response": "json",
           "response_schema": "rooms_room",
           "request_schema": "rooms_gateway_create"
-        },
-        "delete": {
-          "request": "none",
-          "response": "json",
-          "response_schema": "rooms_gateway_status"
         }
       }
     },
@@ -1566,6 +1561,18 @@
           "response": "json",
           "response_schema": "rooms_gateway_status",
           "request_schema": "rooms_gateway_register"
+        }
+      }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/council/rooms/disconnect",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json",
+          "response_schema": "rooms_gateway_status",
+          "request_schema": "rooms_gateway_disconnect"
         }
       }
     },
@@ -2975,6 +2982,9 @@
     },
     "rooms_gateway_register": {
       "$ref": "rooms.json#/$defs/gateway_register"
+    },
+    "rooms_gateway_disconnect": {
+      "$ref": "rooms.json#/$defs/gateway_disconnect"
     },
     "rooms_gateway_join": {
       "$ref": "rooms.json#/$defs/gateway_join"

@@ -40,7 +40,7 @@ const machine = () =>
     const path = new URL(String(input), MACHINE.url).pathname;
     if (path === '/v1/mcp/servers') return Promise.resolve(json(SERVERS));
     if (path === '/v1/settings') return Promise.resolve(json({ revision: 'cached-1', groups: [] }));
-    if (path === '/v1/council/rooms') return Promise.resolve(json({ configured: false, rooms: [] }));
+    if (path === '/v1/council/rooms') return Promise.resolve(json({ configured: false, relays: [] }));
     return Promise.resolve(json({}));
   });
 

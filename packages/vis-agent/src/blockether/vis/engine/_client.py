@@ -2221,15 +2221,6 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
-    def delete_council_rooms(
-        self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
-        """DELETE /v1/council/rooms — json response."""
-        response = self._request(
-            "DELETE", "/v1/council/rooms", path={}, query=query, timeout=timeout
-        )
-        return response.json()
-
     def post_council_rooms_register(
         self,
         *,
@@ -2248,6 +2239,23 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def post_council_rooms_disconnect(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/council/rooms/disconnect — json response."""
+        response = self._request(
+            "POST",
+            "/v1/council/rooms/disconnect",
+            path={},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
     def post_council_rooms_join(
         self,
         *,

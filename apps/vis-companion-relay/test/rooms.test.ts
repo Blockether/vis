@@ -275,6 +275,7 @@ describe.sequential("Rooms through the real relay router and D1", () => {
   });
 
   it("rejects expired and revoked invites without changing membership", async () => {
+    const members = (await call("GET", `/v1/rooms/${roomId}/members`)).data;
     const expired = await invite();
     now += 60001;
     const body = {
@@ -299,6 +300,88 @@ describe.sequential("Rooms through the real relay router and D1", () => {
         })
       ).status,
     ).toBe(410);
+    const stale = await env
+      .ROOMS_DB!.prepare(
+        "SELECT COUNT(*) AS count FROM room_invites WHERE expires_at <= ? OR revoked_at IS NOT NULL",
+      )
+      .bind(now)
+      .first<{ count: number }>();
+    expect(stale?.count).toBe(0);
+    expect(
+      await env
+        .ROOMS_DB!.prepare(
+          "SELECT invite_id FROM room_invites WHERE invite_id IN (?, ?)",
+        )
+        .bind(expired.inviteId, revoked.inviteId)
+        .first(),
+    ).toBeNull();
+    expect((await call("GET", `/v1/rooms/${roomId}/members`)).data).toEqual(
+      members,
+    );
+  });
+
+  it("renames a machine and keeps its identity", async () => {
+    const renamed = await call("PATCH", "/v1/rooms/machine", guest.credential, {
+      name: "Renamed gateway",
+    });
+    expect(renamed.status, JSON.stringify(renamed.data)).toBe(200);
+    expect(renamed.data).toEqual(
+      expect.objectContaining({
+        machine_id: guest.machine_id,
+        name: "Renamed gateway",
+      }),
+    );
+    expect(
+      (await call("GET", `/v1/rooms/${roomId}/members`)).data,
+    ).toContainEqual(
+      expect.objectContaining({
+        machine_id: guest.machine_id,
+        name: "Renamed gateway",
+      }),
+    );
+    expect(
+      (
+        await call("PATCH", "/v1/rooms/machine", guest.credential, {
+          name: "Bad\nname",
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await call("PATCH", "/v1/rooms/machine", secret(), {
+          name: "Intruder",
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await call("POST", "/v1/rooms/machines", admin, {
+          ...guest,
+          name: "Admin name",
+        })
+      ).data,
+    ).toEqual(
+      expect.objectContaining({
+        machine_id: guest.machine_id,
+        name: "Admin name",
+        can_create_rooms: false,
+      }),
+    );
+    expect(
+      (
+        await call("POST", "/v1/rooms/machines", admin, {
+          ...guest,
+          credential: secret(),
+        })
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await call("PATCH", "/v1/rooms/machine", guest.credential, {
+          name: guest.name,
+        })
+      ).status,
+    ).toBe(200);
   });
 
   it("keeps machine ownership, room membership and presence separate", async () => {

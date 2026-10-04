@@ -23,6 +23,7 @@ import {
   deleteRoom,
   join,
   presence,
+  purgeInvites,
   register,
 } from "./management";
 import { getEntry, inbox, page, pending, publish, receipts } from "./entries";
@@ -58,7 +59,7 @@ async function route(
     return new Response(
       `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="referrer" content="no-referrer">
       <title>Join a Vis Council room</title><h1>Join a Vis Council room</h1>
-      <p>Copy this complete link. In Vis Settings, open Council rooms and select Join room.</p>
+      <p>Copy this complete link. In Vis Settings, find the Council section and select Accept invitation.</p>
       <p>Opening this page does not join a room. Confirm the machine and sharing scope in Vis.</p>
       <p>The relay operator can read room messages. Room membership does not give access to local files.</p></html>`,
       {
@@ -213,6 +214,17 @@ async function route(
     case "GET /v1/rooms/machine":
       result = machine(actor!);
       break;
+    case "PATCH /v1/rooms/machine": {
+      const renamed = await db
+        .prepare(
+          `UPDATE room_machines SET name = ? WHERE machine_id = ? AND NOT ${deletedMachine} RETURNING *`,
+        )
+        .bind(body.name, actor!.machine_id)
+        .first<Data>();
+      if (!renamed) fail(404, "not_found", "Machine does not exist");
+      result = machine(renamed);
+      break;
+    }
     case "POST /v1/rooms":
       result = await createRoom(db, body, actor, now);
       break;
@@ -243,6 +255,7 @@ async function route(
         )
         .bind(now, roomId, params.invite_id)
         .run();
+      await purgeInvites(db, now);
       result = { ok: true };
       break;
     case "GET /v1/rooms/{room_id}/members":

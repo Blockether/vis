@@ -41,7 +41,7 @@
 
     (= "council_room" id)
     (assoc :choice-labels
-      (into {"local" "Local Council"} (map (juxt :room_id :name)) (:rooms (rooms/read-state))))
+      (into {"local" "Local Council"} (map (juxt :room_id :name)) (rooms/known-rooms)))
 
     description
     (assoc :description description)

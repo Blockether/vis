@@ -114,6 +114,27 @@ def test_machine_deletion_uses_the_canonical_protocol():
         client.delete_machine("not-a-machine")
 
 
+def test_machine_rename_keeps_the_identity():
+    machine = identity()
+    client = RoomsClient("https://gateway.example.com", machine.credential)
+    client._opener = Responses(
+        {
+            "machine_id": machine.machine_id,
+            "name": "Desk",
+            "can_create_rooms": False,
+            "created_at": 1,
+        }
+    )
+    assert client.rename("Desk").machine_id == machine.machine_id
+    request = client._opener.requests[0]
+    assert (request.get_method(), request.full_url, json.loads(request.data)) == (
+        "PATCH",
+        "https://gateway.example.com/v1/rooms/machine",
+        {"name": "Desk"},
+    )
+    with pytest.raises(ValueError):
+        client.rename("Bad\nname")
+
 def test_unknown_fields_invalid_responses_and_redirects_fail_closed():
     machine = identity()
     room, sid = str(uuid4()), str(uuid4())

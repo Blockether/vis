@@ -241,13 +241,10 @@
               (swap! machines conj a)
 
               _
-              (ok! a
-                   :post
-                   "/v1/council/rooms/register"
-                   {:relay_url relay-url :name "Owner" :admin_token admin})
+              (ok! a :post "/v1/council/rooms/register" {:relay_url relay-url :admin_token admin})
 
               room
-              (ok! a :post "/v1/council/rooms" {:name "Native verification"})
+              (ok! a :post "/v1/council/rooms" {:relay_url relay-url :name "Native verification"})
 
               rid
               (get room "room_id")
@@ -259,10 +256,7 @@
               (swap! machines conj b)
 
               joined
-              (ok! b
-                   :post
-                   "/v1/council/rooms/join"
-                   {:invite_url (get invite "invite_url") :machine_name "Guest"})
+              (ok! b :post "/v1/council/rooms/join" {:invite_url (get invite "invite_url")})
 
               sa
               (get (ok! a :post "/v1/sessions" {:channel "api" :root (.getAbsolutePath owner-dir)})
@@ -336,15 +330,23 @@
                :delete
                (str "/v1/council/rooms/" rid "/members/" (get-in joined ["machine" "machine_id"]))
                nil)
-          (expect (= [] (get (ok! b :get "/v1/council/rooms" nil) "rooms")))
+          (expect (= []
+                     (mapcat #(get % "rooms") (get (ok! b :get "/v1/council/rooms" nil) "relays"))))
           (expect (not= rid (get (ok! b :get cb nil) "default_group_id")))
           (ok! a :delete (str "/v1/council/rooms/" rid) nil)
           (doseq [port [a b]]
-            (expect (false? (get (ok! port :delete "/v1/council/rooms" nil) "configured")))
+            (expect (false? (get
+                              (ok! port :post "/v1/council/rooms/disconnect" {:relay_url relay-url})
+                              "configured")))
             (expect (false? (get (ok! port :get "/v1/council/rooms" nil) "configured"))))
           (reset! machines []))
         (finally (doseq [port @machines]
-                   (try (request! port :delete "/v1/council/rooms" nil) (catch Exception _ nil)))
+                   (try (doseq [relay (get (ok! port :get "/v1/council/rooms" nil) "relays")]
+                          (request! port
+                                    :post
+                                    "/v1/council/rooms/disconnect"
+                                    {:relay_url (get relay "relay_url")}))
+                        (catch Exception _ nil)))
                  ((:stop! provider))
                  (doseq [process (reverse @processes)]
                    (#'binary/kill-tree! process))
