@@ -230,6 +230,30 @@
                         ["run-old" "Morning report"]]
                        (mapv (juxt #(get % "id") #(get % "automation_name"))
                              (automation/runs db {:limit 10}))))))))
+  (it "keeps runs with the same created_at in insertion order"
+      ;; A busy scheduler can claim a run and its overlap skip in one millisecond
+      ;; (CI 37188475532, runner-test/schedule-test). A random id must not order them.
+      (with-db
+        (fn [db]
+          (let [id
+                (get (automation/create! db input now) "id")
+
+                newest
+                #(mapv :id (ps/db-automation-runs db {:automation-id id :limit 10}))]
+
+            (doseq [run-id ["run-c" "run-a" "run-d" "run-b"]]
+              (ps/db-automation-claim-run! db
+                                           {:id run-id
+                                            :automation_id id
+                                            :trigger_kind "manual"
+                                            :trigger_key (str "manual:" run-id)
+                                            :status "skipped"
+                                            :created_at now
+                                            :owner_pid 1}))
+            (expect (= ["run-b" "run-d" "run-a" "run-c"] (newest)))
+            (expect (= "run-b" (:id (get (ps/db-automation-last-runs db) id))))
+            (ps/db-automation-prune-runs! db id 2)
+            (expect (= ["run-b" "run-d"] (newest)))))))
   (it "gives each change a later updated_at, also in the same millisecond"
       (with-db (fn [db]
                  (let [id (get (automation/create! db input now) "id")]

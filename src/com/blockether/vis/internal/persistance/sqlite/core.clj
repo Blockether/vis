@@ -6817,6 +6817,13 @@
    :from [[:automation_run :r]]
    :left-join [[:automation :a] [:= :a.id :r.automation_id]]})
 
+(defn- newest-runs-first
+  "Order the runs of the table alias `table` newest first. Runs with the same
+   `created_at` keep their insertion order through the SQLite `rowid`."
+  [table]
+  [[(keyword (str (name table) ".created_at")) :desc]
+   [(keyword (str (name table) ".rowid")) :desc]])
+
 (defn db-automation-run [db id] (run-row (query-one! db (assoc run-query :where [:= :r.id id]))))
 
 (defn db-automation-last-runs
@@ -6831,7 +6838,7 @@
                          {:select [:r2.id]
                           :from [[:automation_run :r2]]
                           :where [:= :r2.automation_id :a.id]
-                          :order-by [[:r2.created_at :desc] [:r2.id :desc]]
+                          :order-by (newest-runs-first :r2)
                           :limit 1}]]})))
 
 (defn db-automation-claim-run!
@@ -6861,7 +6868,7 @@
     (mapv run-row
           (query! db
                   (cond-> (assoc run-query
-                            :order-by [[:r.created_at :desc] [:r.id :desc]]
+                            :order-by (newest-runs-first :r)
                             :limit (or limit 50))
                     (seq clauses)
                     (assoc :where (into [:and] clauses)))))))
@@ -6888,10 +6895,10 @@
                                                :where [:and [:= :automation_id automation-id]
                                                        [:not-in :status ["queued" "running"]]
                                                        [:not-in :id
-                                                        {:select [:id]
-                                                         :from [:automation_run]
-                                                         :where [:= :automation_id automation-id]
-                                                         :order-by [[:created_at :desc] [:id :desc]]
+                                                        {:select [:r.id]
+                                                         :from [[:automation_run :r]]
+                                                         :where [:= :r.automation_id automation-id]
+                                                         :order-by (newest-runs-first :r)
                                                          :limit limit}]]})))))
 
 (defn db-automation-enqueue-delivery!
