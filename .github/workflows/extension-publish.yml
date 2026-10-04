@@ -99,6 +99,7 @@ jobs:
           Blockether/vis-lang-python -
           Blockether/vis-lang-clojure extension
           Blockether/vis-decisions -
+          Blockether/vis-optmem -
           FIRST_PARTY
           fi
           cat "$RUNNER_TEMP/targets"

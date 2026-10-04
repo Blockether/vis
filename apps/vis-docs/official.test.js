@@ -10,6 +10,7 @@ const officialSources = [
   ['Blockether/vis-lang-clojure', 'extension', 'vis-lang-clojure'],
   ['Blockether/vis-lang-interface', '', 'vis-lang-interface'],
   ['Blockether/vis-lang-python', '', 'vis-lang-python'],
+  ['Blockether/vis-optmem', '', 'vis-optmem'],
 ];
 const official = {
   ...fixtures[0],
