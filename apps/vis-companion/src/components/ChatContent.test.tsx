@@ -1081,6 +1081,8 @@ describe('a card gives stdout one stable band and no op badge', () => {
         }}
       />,
     );
+    expect(view.queryByRole('button', { name: 'Expand error details' })).toBeNull();
+    fireEvent.click(view.getByRole('button', { name: 'Expand steps: 1 failed' }));
     const toggle = view.getByRole('button', { name: 'Expand error details' });
     expect(toggle).toHaveTextContent('Failed');
     expect(view.queryByText('Permission denied')).toBeNull();
@@ -1536,7 +1538,7 @@ describe('Activity follows the combined Python source', () => {
       },
     ]);
     const original = JSON.stringify(turn);
-    const painted = render(
+    const painted = renderOpenSteps(
       <IterationTrace iterations={turn.iterations ?? []} showCode={showCode} whole />,
     );
     expect(painted.container.querySelector('[data-execution-code]')).toBeNull();
@@ -1564,7 +1566,7 @@ describe('Activity follows the combined Python source', () => {
 
   it.each([true, false])('shows only the failed tool message with showCode=%s', (showCode) => {
     const source = 'print(' + 'large_source'.repeat(200) + ')';
-    const painted = render(
+    const painted = renderOpenSteps(
       <IterationTrace
         iterations={turnOf([
           {
@@ -1604,6 +1606,8 @@ describe('Activity follows the combined Python source', () => {
         ])}
       />,
     );
+    expect(painted.queryByRole('button', { name: 'Expand all error details' })).toBeNull();
+    fireEvent.click(painted.getByRole('button', { name: 'Expand steps: 3 failed' }));
     const toggle = painted.getByRole('button', { name: 'Expand all error details' });
     expect(toggle).toHaveTextContent('Failed ×3');
     expect(painted.queryByText(/FIRST_FAILURE/)).toBeNull();
@@ -1616,7 +1620,7 @@ describe('Activity follows the combined Python source', () => {
   });
 
   it('keeps grouped failure details on the code surface', () => {
-    const painted = render(
+    const painted = renderOpenSteps(
       <AssistantMessage
         turn={turnOf([
           { source: 'first()', error: { message: 'FIRST_FAILURE' } },
@@ -2585,7 +2589,8 @@ describe('steps between progress notes', () => {
     expect(bands(painted.container)).toEqual([]);
   });
 
-  it('keeps failures and files in view while a digest is closed', () => {
+  // Regression, user screenshot: a closed digest leaked a separate Failed card.
+  it.each([false, true])('keeps failures inside the digest and files visible (live: %s)', (live) => {
     const failed = iterations.map((step) =>
       step.id === 'step-2'
         ? {
@@ -2596,17 +2601,82 @@ describe('steps between progress notes', () => {
         : step,
     );
     const painted = render(
-      <IterationTrace whole showCode iterations={failed} client={client} sid="s1" />,
+      <IterationTrace whole showCode live={live} iterations={failed} client={client} sid="s1" />,
     );
     const [first, second] = digests(painted.container);
+    expect(painted.queryByRole('button', { name: 'Expand error details' })).toBeNull();
+    expect(first).toHaveAttribute('aria-label', 'Expand steps: 1 failed');
     expect(first).toHaveClass('text-err-ink!');
     expect(second).not.toHaveClass('text-err-ink!');
-    expect(painted.getByRole('button', { name: 'Expand error details' })).toHaveTextContent(
-      'Failed',
-    );
-    expect(painted.getByText('report.pdf')).toBeInTheDocument();
+    expect(painted.getByText('report.pdf')).toBeVisible();
     expect(traces(painted.container)).toHaveLength(0);
     expect(painted.container.textContent).not.toContain('read_second()');
+    fireEvent.click(first);
+    const failure = painted.getByRole('button', { name: 'Expand error details' });
+    expect(failure).toHaveTextContent('Failed');
+    fireEvent.click(failure);
+    expect(painted.getByText('missing source')).toBeVisible();
+    fireEvent.click(first);
+    expect(painted.queryByRole('button', { name: /error details/ })).toBeNull();
+    expect(painted.queryByText('missing source')).toBeNull();
+    expect(painted.getByText('report.pdf')).toBeVisible();
+  });
+
+  it.each(
+    [false, true].flatMap((live) =>
+      (['missing', 'empty', 'succeeded', 'failed', 'cancelled'] as const).map((state) => ({ live, state })),
+    ),
+  )('counts an execution failure once with $state Activity (live: $live)', ({ live, state }) => {
+    const activity: ActivityProjection | undefined =
+      state === 'missing'
+        ? undefined
+        : {
+            state: state === 'empty' ? 'succeeded' : state,
+            counts: {
+              running: 0,
+              succeeded: state === 'succeeded' ? 1 : 0,
+              failed: state === 'failed' ? 1 : 0,
+              cancelled: state === 'cancelled' ? 1 : 0,
+            },
+            rows: state === 'empty' ? [] : [{ ...read.rows[0], signal: 'generic', state }],
+          };
+    const completed: ActivityProjection = {
+      ...read,
+      counts: { running: 0, succeeded: 3, failed: 0, cancelled: 0 },
+      rows: (['mutation', 'observation', 'observation'] as const).map((signal, index) => ({
+        ...read.rows[0],
+        id: `completed-${index}`,
+        sequence: index + 1,
+        signal,
+      })),
+    };
+    const painted = render(
+      <IterationTrace
+        whole
+        showCode={false}
+        live={live}
+        iterations={[
+          {
+            id: 'step-1',
+            position: 1,
+            forms: [
+              { source: 'read_sources()', duration_ms: 559, activity: completed },
+              { source: 'check()', duration_ms: 163, error: 'check failed', activity },
+            ],
+          },
+        ]}
+      />,
+    );
+    const [digest] = digests(painted.container);
+    const count = state === 'cancelled' ? '1 cancelled' : '1 failed';
+    expect(digest).toHaveAttribute(
+      'aria-label',
+      `Expand steps: 1 mutation · 2 observations · ${count}`,
+    );
+    expect(digest).toHaveClass('text-err-ink!');
+    expect(digest.querySelector('.text-err-ink')).toHaveTextContent(count);
+    expect(digest.parentElement).toHaveTextContent('722ms');
+    expect(painted.queryByRole('button', { name: 'Expand error details' })).toBeNull();
   });
 
   // The live views of the steps fold into one control on the row of a closed digest.

@@ -7925,12 +7925,10 @@
                                  run-entries
                                  (when (seq run-sections) [(line-entry activity-marker)])))))]
 
-            ;; CODE, ACTIVITY and RUN are siblings on one execution surface. A closed digest
-            ;; keeps only failures and files, and its row opens the live views.
+            ;; CODE, ACTIVITY and RUN share one execution surface. A closed digest keeps
+            ;; only files below its row. Failures and their details stay inside the steps.
             (vec (concat (inset-entries
-                           (if digest-closed?
-                             ;; The row counts a stop as a failure. Its message stays in the steps.
-                             (when-not (interrupted-error? error) inline-error-message-lines)
+                           (when-not digest-closed?
                              (concat comment-block code-block execution-details activity-surface)))
                          artifact-block
                          (when-not (or activity-run digest-closed?) generic-run-entries)))))
@@ -7963,7 +7961,7 @@
         (or block-code-body [])
 
         trailing-errors
-        (error-lines)
+        (when-not digest-closed? (error-lines))
 
         thinking-body
         (or (thinking-lines thinking) [])
@@ -8451,21 +8449,30 @@
             {:artifact artifact :running? false}))))
 
 (defn- step-digest-entries
-  "One DIGEST row for the steps after a note. It names what their calls did, in the words of
-   Activity (`activity-cost-text`), not how many steps ran. Then it counts their running, failed
-   and cancelled calls, and it shows their measured time on the right. A failed step colors it
-   red, and a running step colors it yellow. A stop is a failure too, so a cancelled call or an
-   interrupted step also colors it red. A closed row ends its counts with `· live`, in the same
-   font. It opens the newest running live view of the steps, or else their newest recording."
-  [{:keys [forms node-id open? lives]} content-w session-id]
+  "One summary row for the steps under a note. It names their Activity and counts failures,
+   including execution errors without failed Activity. Failures and stops color the row red.
+   Running steps color it yellow. The measured time stays on the right.
+   A closed row ends with its live control, which opens the newest running view or recording."
+  [{:keys [forms errors node-id open? lives]} content-w session-id]
   (let [activities
         (keep :activity forms)
 
         rows
         (into [] (mapcat :rows) activities)
 
+        ;; Do not count an execution error twice when Activity already reports a failure.
+        unreported-failures
+        (+ (count errors)
+           (count (filter (fn [form]
+                            (and (or (:error form) (false? (:success? form)))
+                                 (not-any? #(#{:failed :cancelled} (activity-row-state %))
+                                           (get-in form [:activity :rows]))))
+                          forms)))
+
         states
-        (frequencies (map activity-row-state rows))
+        (cond-> (frequencies (map activity-row-state rows))
+          (pos? unreported-failures)
+          (update :failed (fnil + 0) unreported-failures))
 
         running-lives
         (filterv :running? lives)
@@ -8542,9 +8549,9 @@
 
 (defn- render-step-digests
   "Summarized steps: each progress note stays, and its steps fold into one digest row.
-   An open digest shows the thinking, code and Activity of the steps, without the note.
-   A closed digest still shows failures and files, and its row opens the live views. Steps
-   before the first note fold the same way. A note with no forms after it keeps its own rows."
+   An open digest shows the thinking, code, Activity and errors of the steps, without the note.
+   A closed digest keeps only files below its row, which also opens the live views.
+   Steps before the first note fold the same way. A note without forms keeps its own rows."
   [visible-iterations show-silent? show-thinking?
    {:keys [session-id session-turn-id detail-expansions]}]
   (let [segments (reduce (fn [segments [_ entry :as pair]]
@@ -8560,6 +8567,14 @@
             (fn [steps]
               (let [{[head-idx] :pair head :entry} (first steps)
                     forms (into [] (mapcat (comp :forms :entry)) steps)
+                    errors (keep (fn [{:keys [entry]}]
+                                   (let [error (:error entry)]
+                                     (when (and (map? error)
+                                                (not-any? #(= (error-map-signature error)
+                                                              (error-map-signature (:error %)))
+                                                          (:forms entry)))
+                                       error)))
+                                 steps)
                     note (step-note head)
                     pairs (mapv :pair steps)]
 
@@ -8581,6 +8596,7 @@
                                 {:iteration-id (:iteration-id head) :assistant-prose note}]])
                             [[head-idx
                               {::digest {:forms forms
+                                         :errors errors
                                          :node-id node-id
                                          :open? open?
                                          :lives (step-digest-lives steps forms)}}]]

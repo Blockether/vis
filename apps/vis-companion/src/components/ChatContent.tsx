@@ -2671,13 +2671,10 @@ function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
 }
 
 /**
- * THE ROW THAT STANDS FOR THE STEPS UNDER A NOTE. It names what their calls did, in the words
- * of Activity (`activityCostParts`), not how many steps ran. Then it counts the calls that are
- * running, failed or cancelled, and it shows their measured time on the right. A failure
- * colors the chevron. A stop is a failure too, so a cancelled call or an interrupted step also
- * colors it. A closed row ends its counts with `· live`, the live control of its steps.
- * Opening the row shows the thinking, code and Activity of the steps. Mirrors the TUI
- * (`render/step-digest-entries`).
+ * One summary row for the steps under a note. It names their Activity and counts failures,
+ * including execution errors without failed Activity. Failures and stops color the chevron.
+ * The measured time stays on the right. A closed row ends with its live control.
+ * Open the row to see thinking, code, Activity and errors. Mirrors `render/step-digest-entries`.
  */
 function StepDigest({
   chunks,
@@ -2694,14 +2691,27 @@ function StepDigest({
   children?: ReactNode;
 }) {
   const forms = chunks.flatMap((chunk) => (chunk.kind === 'code' ? chunk.forms : chunk.cards));
-  const activity = mergeActivity(forms.flatMap((form) => formActivity(form, live) ?? []));
+  const activities = forms.map((form) => formActivity(form, live));
+  const activity = mergeActivity(activities.flatMap((item) => item ?? []));
+  // Count a failed execution only when its Activity has no failed or cancelled call.
+  const counts = {
+    ...activity.counts,
+    failed:
+      activity.counts.failed +
+      forms.filter(
+        (form, index) =>
+          form.error != null &&
+          !activities[index]?.counts.failed &&
+          !activities[index]?.counts.cancelled,
+      ).length,
+  };
   const parts = [
     ...activityCostParts(activity),
     ...(['running', 'failed', 'cancelled'] as const).flatMap((state) =>
-      activity.counts[state]
+      counts[state]
         ? [
             {
-              text: `${activity.counts[state]} ${state}`,
+              text: `${counts[state]} ${state}`,
               tone: state === 'running' ? '' : 'text-err-ink',
             },
           ]
@@ -2715,10 +2725,7 @@ function StepDigest({
     0,
   );
   const duration = measured > 0 ? formatDuration(measured) : null;
-  const failed =
-    activity.counts.failed > 0 ||
-    activity.counts.cancelled > 0 ||
-    forms.some((form) => form.error != null);
+  const failed = counts.failed > 0 || counts.cancelled > 0;
   return (
     <div className="flex min-w-0 items-center">
       <Disclosure
@@ -2794,22 +2801,6 @@ function DigestLive({
       )}
     </>
   );
-}
-
-/**
- * WHAT A CLOSED DIGEST KEEPS IN VIEW: the failures that its open steps show. A stop is a
- * failure too, but only the row tells it: its Interrupted card stays inside the steps. Its
- * live views are one control on the digest row, and files stay in the attachment rail of the
- * segment.
- */
-function ClosedDigest({ chunks, showCode }: { chunks: Chunk[]; showCode: boolean }) {
-  // Hidden Python code hides its failures too, as in the open steps.
-  const failures = chunks
-    .flatMap((chunk) =>
-      chunk.kind === 'cards' ? chunk.cards : showCode || !chunk.isPython ? chunk.forms : [],
-    )
-    .filter((form) => !interruptedPython(form));
-  return <FailedCards cards={failures} />;
 }
 
 const TraceSegment = memo(function TraceSegment({
@@ -2951,7 +2942,6 @@ const TraceSegment = memo(function TraceSegment({
           })}
         </div>
       )}
-      {!expanded && <ClosedDigest chunks={chunks} showCode={showCode} />}
       {client && sid && (
         <AttachmentRail
           client={client}

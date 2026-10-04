@@ -10986,10 +10986,28 @@ print(paths)"
           (expect (= :error (get-in row [:meta :status-tone])))
           (expect (not (str/includes? text "FAILED")))
           (expect (not (str/includes? text "interrupted")))))
-    ;; Real turns split here: a step that produced an artifact or failed a check opened
-    ;; its own Activity between the same two notes.
+    (it "counts execution failures once, with or without failed Activity"
+        (doseq [state
+                [nil "succeeded" "failed" "cancelled"]
+
+                error
+                [nil {:type "AssertionError" :message "check failed"}]]
+
+          (let [entry (second (#'render/step-digest-entries
+                               {:forms [{:code "check()"
+                                         :success? false
+                                         :error error
+                                         :activity
+                                         {:rows (if state [{:signal "generic" :state state}] [])}}]}
+                               76
+                               "s"))]
+            (expect (= (str "▸ 1 " (if (= state "cancelled") "cancelled" "failed"))
+                       (str/trim (subs (:line entry) 1))))
+            (expect (= :error (get-in entry [:meta :status-tone]))))))
+    ;; Regression, user screenshot: failures must stay inside the closed digest.
+    ;; Files remain visible, and opening the digest restores each error.
     (it
-      "pins failures, files and step errors under a closed digest"
+      "keeps failures and step errors inside a closed digest, with files visible"
       (let [artifact
             {"source" "tool"
              "kind" "doc"
@@ -11047,6 +11065,10 @@ print(paths)"
               (expect (= (if open? 2 0) (headers entries)))
               (expect (some #(= artifact-meta (get-in % [:meta :artifact])) entries))
               (expect (= :error (get-in (first (filter digest? entries)) [:meta :status-tone])))
-              ;; The failed check keeps its collapsed FAILED band, open or closed.
-              (expect (< -1 (at "FAILED") (at "report.html") (at "Step timed out") (at note)))))
+              (expect (str/includes? (first (digests entries)) "2 failed"))
+              (if open?
+                (expect (< -1 (at "FAILED") (at "report.html") (at "Step timed out") (at note)))
+                (do (expect (= -1 (at "FAILED")))
+                    (expect (= -1 (at "Step timed out")))
+                    (expect (< -1 (at "report.html") (at note)))))))
           (expect (= 5 (headers (render false live? {})))))))))

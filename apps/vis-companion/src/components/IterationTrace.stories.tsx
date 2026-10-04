@@ -110,6 +110,10 @@ export const CollapsedToolError: Story = {
     ],
   },
   play: async ({ canvas }) => {
+    const digest = canvas.getByRole('button', { name: 'Expand steps: 1 failed' });
+    await expect(digest).toHaveAttribute('aria-expanded', 'false');
+    await expect(canvas.queryByRole('button', { name: 'Expand error details' })).toBeNull();
+    await userEvent.click(digest);
     const toggle = canvas.getByRole('button', { name: 'Expand error details' });
     await expect(toggle).toHaveTextContent('Failed');
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
@@ -125,6 +129,9 @@ export const CollapsedToolError: Story = {
     await expect(canvas.getByText(/Report service unavailable/)).toBeVisible();
     await userEvent.click(toggle);
     await expect(canvas.queryByText(/Report service unavailable/)).toBeNull();
+    await userEvent.click(digest);
+    await expect(digest).toHaveAttribute('aria-expanded', 'false');
+    await expect(canvas.queryByRole('button', { name: 'Expand error details' })).toBeNull();
   },
 };
 
