@@ -512,20 +512,32 @@
 (defonce ^:private webhook-hits (atom {}))
 
 (defn- rate-limited?
+  "Whether the automation already accepted its limit of requests in the minute
+   before `at`. Only an accepted request takes a place in the window, so a
+   sender above the limit gets through again when old requests leave it."
   [automation-id at]
   (let [cutoff
         (- (long at) 60000)
 
-        hits
-        (get (swap! webhook-hits update
-               automation-id
-               #(conj (vec (filter (fn [hit]
-                                     (< cutoff (long hit)))
-                                   %))
-                      at))
-             automation-id)]
+        limit
+        (long (automation/limit :webhook_requests_per_minute))
 
-    (> (count hits) (automation/limit :webhook_requests_per_minute))))
+        accepted
+        (volatile! false)]
+
+    (swap! webhook-hits (fn [hits-by-id]
+                          (let [hits
+                                (filterv #(< cutoff (long %)) (get hits-by-id automation-id))
+
+                                free?
+                                (< (count hits) limit)]
+
+                            (vreset! accepted free?)
+                            (assoc hits-by-id
+                              automation-id (cond-> hits
+                                              free?
+                                              (conj at))))))
+    (not @accepted)))
 
 (defn- webhook-result [status run-id reason] {"status" status "run_id" run-id "reason" reason})
 

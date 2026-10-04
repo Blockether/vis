@@ -411,7 +411,37 @@
 
             (expect (every? #{401} (repeatedly 40 #(send! {"authorization" "Bearer forged"}))))
             (expect (= 202 (send! signed)))
-            (expect (= 429 (last (repeatedly 30 #(send! signed))))))))))
+            (expect (= 429 (last (repeatedly 30 #(send! signed)))))))))
+  (it "admits requests again as old ones leave the minute"
+      ;; Regression: each rejected request also took a place in the window, so a
+      ;; sender that stayed above the limit never got a request through again.
+      (with-runner
+        true
+        (answer "unused")
+        (fn [db _]
+          (let [id
+                (create! db {"enabled" false "triggers" [{"kind" "webhook" "signature" "token"}]})
+
+                headers
+                {"authorization" (str "Bearer "
+                                      (get (automation/rotate-secret! db id "webhook" 1) "secret"))}
+
+                start
+                (util/now-ms)
+
+                send-at!
+                (fn [at]
+                  (let [caller (Thread/currentThread)]
+                    (with-redefs [util/now-ms (fn ^long []
+                                                (if (identical? caller (Thread/currentThread))
+                                                  (long at)
+                                                  (System/currentTimeMillis)))]
+                      (:status
+                        (runner/accept-webhook! db id {:headers headers :body (utf8 "{}")})))))]
+
+            (expect (every? #{202} (mapv send-at! (repeat 30 start))))
+            (expect (every? #{429} (mapv #(send-at! (+ start (* 1000 %))) (range 1 60))))
+            (expect (= 202 (send-at! (+ start 60000)))))))))
 
 (defn- receiver
   "A local callback receiver that records each request. It answers `statuses` in
