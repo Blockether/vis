@@ -26,6 +26,8 @@ when you want settings shared across projects or checked into a repository.
 - **Python HTTPS requests fail a strict certificate check, or packages must come
   from a private index.** See [Python TLS validation](#python-tls-validation) and
   [Python package index](#python-package-index).
+- **Your own program must read or change settings.** Use the [Python SDK](#python-sdk) or the
+  [HTTP API](#http-api). Both have the same operations.
 
 Use [Project instructions](context-and-prompts.md) for rules about working in your
 codebase, and the [process jail](jail.md) to limit what commands can access.
@@ -61,12 +63,11 @@ file by hand, reopen the session to show the new name. The name changes the next
 prompt. It does not change product branding, session titles or a full custom prompt, which keeps its
 own identity.
 
-For client integrations, `GET /v1/settings/agent_name` reads the setting and
-`POST /v1/settings` with `{"id":"agent_name","action":"value","value":"Ada"}`
-saves it. Invalid names return 400 without changing the saved value. The settings
-list exposes a `string` row in the Agent group. Session detail
-(`GET /v1/sessions/:sid`) and workspace responses include the resolved `agent_name`,
-so reconnecting clients receive the current value.
+Programs read and save the name like any other setting, with the [Python
+SDK](#change-one-setting-in-python) or the [HTTP API](#change-one-setting-over-http). An invalid name
+returns 400 without changing the saved value. The settings list shows the name as a `string` row in
+the Agent group. Session details include the resolved `agent_name`, so reconnecting clients receive
+the current value.
 
 ## Configuration files
 
@@ -683,60 +684,6 @@ extension fails, goes away or loads again.
 If the gateway runs an older Vis, **Reload extensions** shows a message. Update
 Vis on that machine to use the action.
 
-### Settings HTTP reference
-
-`GET /v1/settings` and `GET /v1/settings/:id` take `scope` and `target_id` query
-parameters. Omitted scope means global, never the currently viewed session.
-Non-global requests require a target. Rows include `scopes`, `scope`, `source`
-and `is_override`. Boolean rows use `enabled`, other rows use `value`. The catalog
-also includes `revision`, a hash of the saved values of its target.
-
-Add `context_session_id` to either `GET` to mark the rows that a more specific scope
-decides for that session. Such a row includes `overridden_by` with the deciding
-`scope` and its `enabled` or `value`. An unknown session, or one outside the
-requested target, marks no rows. Writes are not refused, because the global value
-still applies to other projects. Clients lock the row only for the open session.
-
-`PATCH /v1/settings` applies one batch of changes to one target. The body has `scope`,
-`target_id` for a non-global scope, the `revision` that you read and `changes`. Each change
-has a unique `id` and an `action`, either `value` or `inherit`. A `value` change also
-requires `value`. A batch holds 1 to 256 changes. Optional `channel` and
-`context_session_id` work as in `GET`.
-
-```json
-{
-  "scope": "session",
-  "target_id": "<session-id>",
-  "revision": "<revision from GET>",
-  "changes": [
-    {"id": "refusal_fallback", "action": "value", "value": false},
-    {"id": "provider_fallback", "action": "inherit"}
-  ]
-}
-```
-
-The gateway applies the whole batch or none of it. A stale `revision` returns 409. An
-invalid batch or value returns 400 with the setting `id`. Access errors also list
-`field_errors`. An unknown target or context session returns 404. A successful response is
-the full catalog with its new `revision`.
-
-`POST /v1/settings` accepts the same target with `id` and `action`: `value`,
-`toggle`, `cycle` or `inherit`. A `value` action also requires `value`, including
-explicit JSON `false`. Invalid values and disallowed scopes return 400. Unknown
-targets or setting IDs return 404. Inheritance removes one key, not a parent map.
-
-An extension group in the catalog includes `extension` with `name`, `origin` and
-`status`. `origin` is `built_in`, `global` or `project`. `status` is `loaded`,
-`stale` or `failed`. A `global` or `project` extension also has `path`. A `stale`
-or `failed` extension has `error`. A failed extension that never loaded has a group
-with no rows.
-
-`POST /v1/extensions/reload` runs the extension files of one settings target
-again. The body has the same `scope` and `target_id` as `GET /v1/settings`. A
-global target reloads machine extensions only. The response has the `loaded` and
-`failed` counts. Reading the catalog never runs extension code. Gateways without
-this route return 404.
-
 ## Session titling
 
 A session is named from its first message immediately, then improved by one
@@ -795,6 +742,174 @@ are `.git/`, `node_modules/`, `target/`, `build/`, `dist/`, `__pycache__/`, `.ve
 `vendor/`, `.next/`, `out/`, `.m2/`, `.shadow-cljs/`, `cljs-runtime/`, `.cpcache/`, `.clj-kondo/`,
 `.calva/`, `.lsp/` and `.rift/`. If you set `always_exclude`, it replaces that list. It does not add
 to it. Run `/reload` after you edit these lists.
+
+## Read and change settings from a program
+
+Your program reads and changes the same settings as the Settings views. Use the [Python
+SDK](#python-sdk) or the [HTTP API](#http-api). Both send the same JSON and get the same answers.
+
+A request names its target with `scope` and `target_id`. The `scope` is `global`, `project`, `group`
+or `session`. Without a scope, a request uses the global settings, never the session that you see.
+A scope other than `global` needs a `target_id`.
+
+The catalog of a target has its `revision` and its `groups`. Each group has `toggles`, the setting
+rows. A row has `scopes`, `scope`, `source` and `is_override`. A boolean row has `enabled`, and
+other rows have `value`. The `revision` is a hash of the saved values of the target.
+
+Add `context_session_id` to a read to mark the rows that a more specific scope decides for that
+session. Such a row has `overridden_by` with the deciding `scope` and its `enabled` or `value`. An
+unknown session, or a session outside the target, marks no rows. Vis does not refuse a write to a
+marked row, because the global value still applies to other projects. Clients lock the row only for
+the open session.
+
+An extension group in the catalog has `extension` with `name`, `origin` and `status`. The `origin`
+is `built_in`, `global` or `project`, and the `status` is `loaded`, `stale` or `failed`. A `global`
+or `project` extension also has `path`. A `stale` or `failed` extension has `error`. A failed
+extension that never loaded has a group with no rows.
+
+| Status | Meaning |
+|---|---|
+| `400` | A value, a scope or a batch is not valid. A batch error names the setting `id`. Access errors also list `field_errors`. |
+| `404` | The target, the context session or the setting ID does not exist. |
+| `409` | The `revision` of a batch is stale. Read the catalog again. |
+
+## Python SDK
+
+`GatewayClient` has one method for each settings route. Connect as in [Connect a Python
+client](gateway-service.md#connect-a-python-client). The examples are calls on that `client`.
+
+| Task | Method |
+|---|---|
+| Read the settings of a target | `get_settings(query=...)` |
+| Read one setting | `get_setting(id, query=...)` |
+| Change one setting | `post_settings(body=...)` |
+| Change many settings at once | `patch_settings(body=...)` |
+| Reload extensions | `post_extensions_reload(body=...)` |
+
+### Read settings in Python
+
+```python
+catalog = client.get_settings(query={"scope": "session", "target_id": session_id})
+for group in catalog["groups"]:
+    for row in group["toggles"]:
+        print(row["id"], row.get("enabled", row.get("value")), row["source"])
+
+print(client.get_setting("agent_name")["value"])
+```
+
+`get_session(session_id)` also returns the resolved `agent_name` of a session.
+
+### Change one setting in Python
+
+```python
+client.post_settings(body={"id": "agent_name", "action": "value", "value": "Ada"})
+client.post_settings(
+    body={"scope": "session", "target_id": session_id, "id": "refusal_fallback", "action": "toggle"}
+)
+```
+
+The `action` is `value`, `toggle`, `cycle` or `inherit`. A `value` action needs `value`, also when
+the value is `False`. `inherit` removes one key at this scope, not a parent map. The answer is the
+changed row.
+
+### Change many settings in Python
+
+```python
+catalog = client.get_settings(query={"scope": "session", "target_id": session_id})
+client.patch_settings(
+    body={
+        "scope": "session",
+        "target_id": session_id,
+        "revision": catalog["revision"],
+        "changes": [
+            {"id": "refusal_fallback", "action": "value", "value": False},
+            {"id": "provider_fallback", "action": "inherit"},
+        ],
+    }
+)
+```
+
+A batch has 1 to 256 changes for one target. Each change has a unique `id` and the action `value` or
+`inherit`. Vis applies the whole batch or none of it. Optional `channel` and `context_session_id`
+work as in a read. The answer is the full catalog with its new `revision`.
+
+### Reload extensions in Python
+
+```python
+result = client.post_extensions_reload(body={"scope": "project", "target_id": project_id})
+print(result["loaded"], result["failed"])
+```
+
+Vis runs the extension files of the target again. A global target reloads machine extensions only.
+Reading the catalog never runs extension code. An older gateway without this route answers 404.
+
+## HTTP API
+
+The HTTP API has the same operations as the [Python SDK](#python-sdk). The examples use the `vis_api`
+function from [Authenticate HTTP requests](gateway-service.md#authenticate-http-requests).
+
+| Task | Method and path |
+|---|---|
+| Read the settings of a target | `GET /v1/settings` |
+| Read one setting | `GET /v1/settings/{id}` |
+| Change one setting | `POST /v1/settings` |
+| Change many settings at once | `PATCH /v1/settings` |
+| Reload extensions | `POST /v1/extensions/reload` |
+
+### Read settings over HTTP
+
+```bash
+vis_api "$VIS_GATEWAY_URL/v1/settings?scope=session&target_id=$SESSION_ID"
+vis_api "$VIS_GATEWAY_URL/v1/settings/agent_name"
+```
+
+`GET /v1/sessions/{sid}` also returns the resolved `agent_name` of a session.
+
+### Change one setting over HTTP
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/json' \
+  --data '{"id": "agent_name", "action": "value", "value": "Ada"}'
+```
+
+The `action` is `value`, `toggle`, `cycle` or `inherit`. A `value` action needs `value`, also when
+the value is `false`. `inherit` removes one key at this scope, not a parent map. The answer is the
+changed row.
+
+### Change many settings over HTTP
+
+Save the batch as `changes.json`, with the `revision` from your last read:
+
+```json
+{
+  "scope": "session",
+  "target_id": "<session-id>",
+  "revision": "<revision from GET>",
+  "changes": [
+    {"id": "refusal_fallback", "action": "value", "value": false},
+    {"id": "provider_fallback", "action": "inherit"}
+  ]
+}
+```
+
+```bash
+vis_api -X PATCH "$VIS_GATEWAY_URL/v1/settings" -H 'content-type: application/json' \
+  --data @changes.json
+```
+
+A batch has 1 to 256 changes for one target. Each change has a unique `id` and the action `value` or
+`inherit`. Vis applies the whole batch or none of it. Optional `channel` and `context_session_id`
+work as in a read. The answer is the full catalog with its new `revision`.
+
+### Reload extensions over HTTP
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/extensions/reload" -H 'content-type: application/json' \
+  --data '{"scope": "global"}'
+```
+
+Vis runs the extension files of the target again. A global target reloads machine extensions only.
+Reading the catalog never runs extension code. An older gateway without this route answers 404.
 
 ## See also
 

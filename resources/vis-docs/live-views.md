@@ -16,6 +16,8 @@ The view appears in the terminal or Companion app and can be stopped at any time
 - **The person watching needs to act or stop.** Add
   [buttons](#add-spinners-and-buttons), and handle [interruption](#interruption)
   when they stop watching.
+- **Your own program must list, read or interrupt live views.** Use the [Python
+  SDK](#python-sdk) or the [HTTP API](#http-api). Both have the same operations.
 
 For a tool's ordinary status, choose [Activity
 presentation](extension-api.md#activity-presentation) instead. Use a live view when
@@ -361,9 +363,9 @@ output is focused moves focus to search. Without a record loader, the panel
 explicitly limits search to loaded lines. In the TUI, an empty query browses the
 record, Enter opens a full wrapped line, and Escape cancels an in-flight read.
 
-The existing `GET /v1/sessions/:sid/views/live/:view-id/log` route names the log node in its `node`
-query parameter. Node ids can contain `/`, which a path segment cannot carry. The route accepts
-`query`, `from` and `limit`. `from` is a zero-based match offset. An empty query matches all lines.
+A client reads the record of a log node in pages with the [Python SDK](#read-a-log-page-in-python)
+or the [HTTP API](#read-a-log-page-over-http). A request names the log node and takes `query`, `from`
+and `limit`. `from` is a zero-based match offset. An empty query matches all lines.
 
 The response includes `lines`, `line_numbers`, `matched` and `total`. The gateway caps pages at the
 default log-window size. It streams the record and keeps only the requested result page. Styled
@@ -562,10 +564,10 @@ Companion app's Interrupt button opens the same input.
   loop does not check the flag.
 - From the producer, `view.close(reason="interrupted", summary="Stopped monitoring")`
   closes the owned view. It does not kill threads or remote jobs.
-- From an independent SDK client, list `sdk_session.live_views()` and call
-  `sdk_session.view_action(view_id, "interrupt", note="Stop monitoring")`. The
-  action is `interrupt`, not `cancel`. The producer must still handle
-  `view.is_interrupted` or `vis.Interrupted` and clean up its resources.
+- From an independent client, interrupt the view with the [Python
+  SDK](#interrupt-a-view-in-python) or the [HTTP API](#interrupt-a-view-over-http). The action is
+  `interrupt`, not `cancel`. The producer must still handle `view.is_interrupted` or
+  `vis.Interrupted` and clean up its resources.
 
 ## Closing
 
@@ -605,6 +607,85 @@ result = recorder.close(reason="interrupted")
 
 `recorder.ops()` returns the recorded operations for comparison with expected
 output. `vis.testing.assert_tree(actual, expected)` reports nested differences.
+
+## Python SDK
+
+`GatewayClient` reads and interrupts the live views of a session. Connect as in [Connect a Python
+client](gateway-service.md#connect-a-python-client). The examples are calls on that `client`.
+
+| Task | Method |
+|---|---|
+| List live views | `get_session_views_live(sid)` |
+| Read a page of a log node | `get_session_views_live_log(sid, view_id, node_id, query=...)` |
+| Interrupt a view | `post_session_view(sid, view_id, body=...)` |
+
+### List live views in Python
+
+```python
+for view in client.session(session_id).live_views():
+    print(view.id, view.title, len(view.nodes))
+```
+
+`live_views()` returns typed `LiveView` records. `get_session_views_live(session_id)` returns the
+same views as JSON in `views`. A list is a snapshot. It does not follow later updates.
+
+### Read a log page in Python
+
+```python
+page = client.get_session_views_live_log(
+    session_id, view_id, "build/log", query={"query": "error", "from": 0, "limit": 100}
+)
+for number, line in zip(page["line_numbers"], page["lines"]):
+    print(number, line)
+```
+
+The method sends the node ID as the `node` query parameter. The answer has `lines`, `line_numbers`,
+`matched` and `total`.
+
+### Interrupt a view in Python
+
+```python
+client.session(session_id).view_action(view_id, "interrupt", note="Stop monitoring")
+```
+
+`view_action` checks the body before it sends it. `post_session_view(session_id, view_id,
+body={"action": "interrupt", "note": "Stop monitoring"})` sends the same request without the check.
+
+## HTTP API
+
+The HTTP API has the same operations as the [Python SDK](#python-sdk). The examples use the `vis_api`
+function from [Authenticate HTTP requests](gateway-service.md#authenticate-http-requests).
+
+| Task | Method and path |
+|---|---|
+| List live views | `GET /v1/sessions/{sid}/views/live` |
+| Read a page of a log node | `GET /v1/sessions/{sid}/views/live/{view-id}/log` |
+| Interrupt a view | `POST /v1/sessions/{sid}/views/{view-id}/actions` |
+
+### List live views over HTTP
+
+```bash
+vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/views/live"
+```
+
+The answer has `views`. Each view has `id`, `title` and `nodes`. A list is a snapshot. It does not
+follow later updates.
+
+### Read a log page over HTTP
+
+```bash
+vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/views/live/$VIEW_ID/log?node=build%2Flog&query=error&from=0&limit=100"
+```
+
+The `node` query parameter names the log node, because a node ID can contain `/`. Encode `/` as
+`%2F`. The answer has `lines`, `line_numbers`, `matched` and `total`.
+
+### Interrupt a view over HTTP
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/views/$VIEW_ID/actions" \
+  -H 'content-type: application/json' --data '{"action": "interrupt", "note": "Stop monitoring"}'
+```
 
 ## See also
 

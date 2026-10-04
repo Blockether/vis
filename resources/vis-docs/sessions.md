@@ -17,8 +17,8 @@ apps and the command line.
   each state.
 - **You need a conversation from last week.** [Find the
   session](#find-a-saved-session) by its title or by something said in it.
-- **You write a gateway client that must find sessions.** Use the [gateway search
-  route](#search-through-the-gateway-api).
+- **You write a gateway client that must find sessions.** Use the [Python SDK](#python-sdk) or the
+  [HTTP API](#http-api). Both have the same search.
 - **You want to try another approach without losing this conversation.** [Fork
   the session](#fork-a-session).
 - **The last few turns went wrong and you want to go back.** [Fork from an earlier
@@ -206,18 +206,14 @@ different session, choose that session. To open the session, choose it again. Yo
 can also choose **Open** or one of its messages. Before you type, choose a recent session
 once to open it. To close the search, press **Esc** or choose the close button.
 
-### Search through the gateway API
+### Search from your own program
 
-The terminal and the apps search sessions through one gateway route. To use the
-same search in your own program, send this request through an authenticated gateway
-client:
+The terminal and the apps use one gateway search. Your program can use the same search with the
+[Python SDK](#python-sdk) or the [HTTP API](#http-api). Both take these query parameters and return
+the same answer.
 
-```text
-GET /v1/sessions/actions/search?q=release%20notes&limit=20
-```
-
-The answer lists session rows with the same fields as `GET /v1/sessions` rows. The
-rows are in order of recent activity, with the most recent first.
+The answer lists session rows with the same fields as the session list. The rows are in order of
+recent activity, with the most recent first.
 
 - With an empty `q`, the answer lists your recent sessions.
 - With words in `q`, the answer lists the sessions whose title or conversation text
@@ -353,6 +349,55 @@ missing directories and adds `.html` if the output path has no extension:
 ```bash
 vis-agent sessions export 3a7b2c1d --html report.html
 ```
+
+## Python SDK
+
+`GatewayClient` lists and searches sessions. Connect as in [Connect a Python
+client](gateway-service.md#connect-a-python-client). The example is a call on that `client`.
+
+| Task | Method |
+|---|---|
+| Search sessions | `get_sessions_search(query=...)` |
+| List sessions | `get_sessions(query=...)` |
+
+### Search sessions in Python
+
+```python
+after = None
+while True:
+    query = {"q": "release notes", "limit": 20}
+    if after is not None:
+        query["after"] = after
+    page = client.get_sessions_search(query=query)
+    for row in page["sessions"]:
+        print(row["id"], row["title"])
+    if not page["has_more"]:
+        break
+    after = page["next_cursor"]
+```
+
+[Search from your own program](#search-from-your-own-program) explains the parameters and the
+answer. The rows have the same fields as the rows of `get_sessions()`.
+
+## HTTP API
+
+The HTTP API has the same operations as the [Python SDK](#python-sdk). The example uses the `vis_api`
+function from [Authenticate HTTP requests](gateway-service.md#authenticate-http-requests).
+
+| Task | Method and path |
+|---|---|
+| Search sessions | `GET /v1/sessions/actions/search` |
+| List sessions | `GET /v1/sessions` |
+
+### Search sessions over HTTP
+
+```bash
+vis_api "$VIS_GATEWAY_URL/v1/sessions/actions/search?q=release%20notes&limit=20"
+```
+
+[Search from your own program](#search-from-your-own-program) explains the parameters and the
+answer. To read the next page, add `after` with the `next_cursor` value. The rows have the same
+fields as the rows of `GET /v1/sessions`.
 
 ## See also
 

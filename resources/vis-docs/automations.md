@@ -15,9 +15,102 @@ notification or at an address that you choose. **Automations are off by default.
   address that you choose.
 - **You want to test, pause or remove an automation.** [Manage your
   automations](#manage-automations) in the TUI or the app.
+- **Your own program must create and control automations.** Use the [Python SDK](#python-sdk) or
+  the [HTTP API](#http-api). Both have the same operations.
 
 To follow a task while it runs, use [Sessions](sessions.md). To ask another session for help or a
 second review, use [Council](council.md).
+
+## How automations work
+
+An automation is a saved prompt with three rules: when it runs, where the agent works and how you
+get the result. Each time a trigger fires, Vis creates a run. The run gives the prompt to the agent
+in the target session. Vis records the status and the answer, then sends the result to you.
+
+Automations support these features:
+
+- **Schedules.** Cron expressions with time zones, fixed intervals and one-time runs.
+- **Webhooks.** Runs from GitHub, GitLab, Standard Webhooks senders and your own scripts. Vis checks
+  the signature, filters the events and can put payload values in the prompt.
+- **Targets.** An existing session, a new session for each run or a temporary session.
+- **Delivery.** Phone notifications and signed callbacks. `[SILENT]` reports only changes.
+- **Control.** Manual runs, pause and resume, secrets and the last 200 runs of each automation.
+- **Access.** A chat, the TUI, the app, the [Python SDK](#python-sdk) and the [HTTP API](#http-api).
+
+Each automation has these parts:
+
+| Part | What it sets |
+|---|---|
+| `name` | The name in lists and notifications, up to 128 characters. |
+| `triggers` | One to eight [triggers](#triggers) that start a run. |
+| `prompt` | The request for each run, up to 16384 bytes. A webhook can [fill it from the payload](#use-the-payload-in-the-prompt). |
+| `target` | The [session](#targets) where a run works. |
+| `delivery` | How you [get the results](#runs-and-results). |
+| `model` | Optional. A fixed `provider` and `model` for each run. Without it, Vis chooses the model as for any other turn. |
+| `deliver_only` | Optional. Vis sends the prompt as the answer and does not call a model. Use it to forward a webhook to your phone. |
+| `enabled` | Whether the triggers start runs. A paused automation does not start runs from its triggers. |
+
+### Triggers
+
+| Trigger | When it starts a run | Example |
+|---|---|---|
+| `cron` | At the times of a five-field cron expression: minute, hour, day of month, month and day of week | `{"kind": "cron", "expression": "0 8 * * 1-5", "timezone": "Europe/Warsaw"}` |
+| `every` | At a fixed interval from the creation time, from 60 seconds to one year | `{"kind": "every", "seconds": 3600}` |
+| `once` | One time, at a time in milliseconds since 1970 UTC | `{"kind": "once", "at": 1767254400000}` |
+| `webhook` | When a signed request arrives, see [Start a run from a webhook](#start-a-run-from-a-webhook) | `{"kind": "webhook", "signature": "github"}` |
+
+A `cron` trigger uses its `timezone`, or the time zone of the gateway. It also accepts `@hourly`,
+`@daily`, `@weekly`, `@monthly` and `@yearly`. When a clock change skips a time, the run starts at
+the end of the gap. When a time occurs twice, the run starts only at the first one. An automation
+can have only one `webhook` trigger.
+
+Vis does not catch up on missed schedules. If the gateway was stopped at a scheduled time, Vis
+waits for the next time. A missed `once` trigger still runs if it is at most one day late.
+
+An automation works on one run at a time. If a scheduled time arrives while a run still works, Vis
+skips the new run with the reason `overlap`. Webhook and manual runs wait in a queue of up to 8
+runs for each automation. When the queue is full, Vis skips the run with the reason `queue_full`.
+One gateway works on at most 4 runs at the same time.
+
+### Targets
+
+| `mode` | What a run does | Use it for |
+|---|---|---|
+| `session` | Adds a turn to the session in `session_id` | A running log or a task that needs earlier context |
+| `new` | Creates a session for each run and keeps it. `root` sets the project folder and `group_id` the sidebar group | Results that you want to read and continue later |
+| `temporary` | Creates a session for the run and deletes it after the run. The run keeps the answer | Checks that need no history |
+
+A run cannot ask you questions. If a run asks for input, it fails with the error `The run asked for
+input. An automation cannot answer questions.` If the target session no longer exists, the run
+fails with `The target session does not exist.`
+
+### Runs and results
+
+Vis records the status and the answer of each run. You find the result in these places:
+
+- **The session.** With the `session` and `new` targets, the answer stays in the session as a
+  normal turn.
+- **Runs.** The [automation views](#manage-automations) show the last 200 runs of each automation.
+  Your program reads them with the [Python SDK](#read-runs-in-python) or the [HTTP
+  API](#read-runs-over-http).
+- **A notification.** Push is on by default. The Vis app on your phone shows a notification for
+  each run that Vis did not skip.
+- **A callback.** Vis sends each run event to an address that you choose. See [Receive
+  callbacks](#receive-callbacks).
+
+To report only changes, tell Vis to start its answer with `[SILENT]` when nothing changed. Vis then
+sends no notification and no callback for that completed run. The run keeps its answer. A failed
+run always reports.
+
+| Status | Meaning |
+|---|---|
+| `queued` | The run waits for its turn. |
+| `running` | Vis works on the run. |
+| `completed` | The run finished with an answer. |
+| `failed` | The run stopped with an error. |
+| `cancelled` | The turn of the run was cancelled. |
+| `skipped` | Vis did not start the run. The reason is `overlap`, `queue_full` or `settings`. |
+| `unknown` | The gateway stopped before the run finished. |
 
 ## Turn on automations
 
@@ -67,80 +160,28 @@ machine and select **New automation**. Fill in the name, the prompt and the trig
 **Create automation**. To change an automation, open it and select **Edit**. The form keeps the
 [filters](#filter-events) of a webhook trigger. To change them, ask Vis in a chat.
 
-Each automation has these parts:
+To create automations from your own program, use the [Python
+SDK](#create-an-automation-in-python) or the [HTTP API](#create-an-automation-over-http).
+[How automations work](#how-automations-work) lists the parts of an automation.
 
-| Part | What it sets |
-|---|---|
-| `name` | The name in lists and notifications. |
-| `triggers` | One to eight [triggers](#triggers) that start a run. |
-| `prompt` | The request for each run, up to 16384 bytes. A webhook can [fill it from the payload](#use-the-payload-in-the-prompt). |
-| `target` | The [session](#targets) where a run works. |
-| `delivery` | How you [get the results](#get-the-results). |
-| `model` | Optional. A fixed `provider` and `model` for each run. Without it, Vis chooses the model as for any other turn. |
-| `deliver_only` | Optional. Vis sends the prompt as the answer and does not call a model. Use it to forward a webhook to your phone. |
-| `enabled` | Whether the triggers start runs. A paused automation does not start runs from its triggers. |
+## Manage automations
 
-## Triggers
+In the TUI, open the command palette and choose **Automations**. Select an automation to see
+**Details**, **Run now**, **Pause** or **Resume**, **Runs** and **Delete**. An automation with a
+webhook trigger also shows **Create webhook secret**. An automation with a callback also shows
+**Create callback secret**.
 
-| Trigger | When it starts a run | Example |
-|---|---|---|
-| `cron` | At the times of a five-field cron expression: minute, hour, day of month, month and day of week | `{"kind": "cron", "expression": "0 8 * * 1-5", "timezone": "Europe/Warsaw"}` |
-| `every` | At a fixed interval from the creation time, from 60 seconds to one year | `{"kind": "every", "seconds": 3600}` |
-| `once` | One time, at a time in milliseconds since 1970 UTC | `{"kind": "once", "at": 1767254400000}` |
-| `webhook` | When a signed request arrives, see [Start a run from a webhook](#start-a-run-from-a-webhook) | `{"kind": "webhook", "signature": "github"}` |
+In the app, select the **Open automations** icon in the header. The icon shows when a connected
+machine allows automations or has automations. Choose the machine, then select an automation. The
+app shows its triggers, next run, target, delivery, webhook address and recent runs. It has buttons
+for the same actions. **New automation** and **Edit** open the form from [Create an
+automation](#create-an-automation).
 
-A `cron` trigger uses its `timezone`, or the time zone of the gateway. It also accepts `@hourly`,
-`@daily`, `@weekly`, `@monthly` and `@yearly`. When a clock change skips a time, the run starts at
-the end of the gap. When a time occurs twice, the run starts only at the first one. An automation
-can have only one `webhook` trigger.
+**Run now** starts a manual run at once. **Pause** stops the triggers until you select **Resume**.
+**Replace webhook secret** and **Replace callback secret** create a new secret. The old secret
+stops working at once, so update the other service right after the change.
 
-Vis does not catch up on missed schedules. If the gateway was stopped at a scheduled time, Vis
-waits for the next time. A missed `once` trigger still runs if it is at most one day late.
-
-An automation works on one run at a time. If a scheduled time arrives while a run still works, Vis
-skips the new run with the reason `overlap`. Webhook and manual runs wait in a queue of up to 8
-runs for each automation. When the queue is full, Vis skips the run with the reason `queue_full`.
-One gateway works on at most 4 runs at the same time.
-
-## Targets
-
-| `mode` | What a run does | Use it for |
-|---|---|---|
-| `session` | Adds a turn to the session in `session_id` | A running log or a task that needs earlier context |
-| `new` | Creates a session for each run and keeps it. `root` sets the project folder and `group_id` the sidebar group | Results that you want to read and continue later |
-| `temporary` | Creates a session for the run and deletes it after the run. The run keeps the answer | Checks that need no history |
-
-A run cannot ask you questions. If a run asks for input, it fails with the error `The run asked for
-input. An automation cannot answer questions.` If the target session no longer exists, the run
-fails with `The target session does not exist.`
-
-## Get the results
-
-Vis records the status and the answer of each run. You find the result in these places:
-
-- **The session.** With the `session` and `new` targets, the answer stays in the session as a
-  normal turn.
-- **Runs.** The [automation views](#manage-automations) show the last 200 runs of each automation.
-- **A notification.** Push is on by default. The Vis app on your phone shows a notification for
-  each run that Vis did not skip.
-- **A callback.** Vis sends each run event to an address that you choose. See [Receive
-  callbacks](#receive-callbacks).
-
-To report only changes, tell Vis to start its answer with `[SILENT]` when nothing changed. Vis then
-sends no notification and no callback for that completed run. The run keeps its answer. A failed
-run always reports.
-
-| Status | Meaning |
-|---|---|
-| `queued` | The run waits for its turn. |
-| `running` | Vis works on the run. |
-| `completed` | The run finished with an answer. |
-| `failed` | The run stopped with an error. |
-| `cancelled` | The turn of the run was cancelled. |
-| `skipped` | Vis did not start the run. The reason is `overlap`, `queue_full` or `settings`. |
-| `unknown` | The gateway stopped before the run finished. |
-
-### Receive callbacks
+## Receive callbacks
 
 Add a callback with an `http` or `https` address to the delivery. Vis sends a `POST` request with a
 JSON body for each run event:
@@ -227,18 +268,8 @@ The `github` and `generic` kinds use the whole secret as the HMAC key. The `stan
 base64-decoded part after `whsec_`. A `standard` or `generic` timestamp is in seconds. It must be
 within 300 seconds of the gateway clock.
 
-This script sends a `generic` request:
-
-```bash
-body='{"type":"deploy","environment":"production"}'
-ts=$(date +%s)
-sig=$(printf '%s.%s' "$ts" "$body" | openssl dgst -sha256 -hmac "$SECRET" -hex | sed 's/^.* //')
-curl -X POST "https://gateway.example.com/v1/hooks/$AUTOMATION_ID" \
-  -H 'content-type: application/json' \
-  -H "X-Webhook-Timestamp: $ts" \
-  -H "X-Webhook-Signature-V2: $sig" \
-  --data "$body"
-```
+To send a signed request from your own code, see [Send a webhook from
+Python](#send-a-webhook-from-python) or [Send a webhook over HTTP](#send-a-webhook-over-http).
 
 ### Filter events
 
@@ -290,22 +321,361 @@ instructions. The payload fills only the prompt. It cannot choose the target, th
 Vis drops a repeated delivery by its delivery ID. It reads the ID from `X-GitHub-Delivery`,
 `webhook-id`, `X-Gitlab-Event-UUID`, `Idempotency-Key` or `X-Request-Id`.
 
-## Manage automations
+## Python SDK
 
-In the TUI, open the command palette and choose **Automations**. Select an automation to see
-**Details**, **Run now**, **Pause** or **Resume**, **Runs** and **Delete**. An automation with a
-webhook trigger also shows **Create webhook secret**. An automation with a callback also shows
-**Create callback secret**.
+`GatewayClient` has one method for each automation route. A method sends the same request as the
+[HTTP API](#http-api) and returns the parsed JSON answer. You give a body or a query as a Python
+`dict` with the same fields.
 
-In the app, select the **Open automations** icon in the header. The icon shows when a connected
-machine allows automations or has automations. Choose the machine, then select an automation. The
-app shows its triggers, next run, target, delivery, webhook address and recent runs. It has buttons
-for the same actions. **New automation** and **Edit** open the form from [Create an
-automation](#create-an-automation).
+| Task | Method |
+|---|---|
+| List automations | `get_automations()` |
+| Read one automation | `get_automation(automation_id)` |
+| Create an automation | `post_automations(body=...)` |
+| Change, pause or resume an automation | `patch_automation(automation_id, body=...)` |
+| Start a run now | `post_automation_run(automation_id)` |
+| Create a secret | `post_automation_secrets(automation_id, body=...)` |
+| List runs | `get_automation_runs(query=...)` |
+| Read one run | `get_automation_run(run_id)` |
+| Delete an automation | `delete_automation(automation_id)` |
+| Send a webhook | Any HTTP library, see [Send a webhook from Python](#send-a-webhook-from-python) |
 
-**Run now** starts a manual run at once. **Pause** stops the triggers until you select **Resume**.
-**Replace webhook secret** and **Replace callback secret** create a new secret. The old secret
-stops working at once, so update the other service right after the change.
+### Connect a Python client
+
+[Install the SDK](python-sdk.md#install-the-sdk). Then set `VIS_GATEWAY_URL` and
+`VIS_GATEWAY_TOKEN` as in [Connect to a gateway and run a
+task](python-sdk.md#connect-to-a-gateway-and-run-a-task).
+
+```python
+import os
+
+from blockether.vis.engine import GatewayClient
+
+with GatewayClient(os.environ["VIS_GATEWAY_URL"], token=os.environ["VIS_GATEWAY_TOKEN"]) as client:
+    listing = client.get_automations()
+    print("Automations allowed:", listing["is_enabled"])
+```
+
+When the `with` block starts, the client calls `get_capabilities()` and checks the protocol. It then
+sends the token with each request. The next examples are calls on this `client` inside the `with`
+block.
+
+### List and read automations in Python
+
+```python
+listing = client.get_automations()
+for automation in listing["automations"]:
+    print(automation["id"], automation["name"], automation["enabled"], automation["next_run_at"])
+
+automation = client.get_automation(automation_id)
+print(automation["webhook"], automation["secrets"], automation["last_run"])
+```
+
+`is_enabled` is the global `automations` setting. Each automation has the [parts](#how-automations-work)
+that you set and these fields:
+
+- `next_run_at` is the next scheduled time in milliseconds since 1970 UTC, or `None`.
+- `webhook` has the `path` of the webhook address, or is `None`.
+- `secrets` tells whether a `webhook` secret and a `callback` secret exist. It never contains a secret.
+- `last_run` is the newest run, or `None`.
+
+### Create an automation in Python
+
+```python
+automation = client.post_automations(
+    body={
+        "name": "Morning review list",
+        "triggers": [{"kind": "cron", "expression": "0 8 * * 1-5", "timezone": "Europe/Warsaw"}],
+        "prompt": "List the open pull requests that wait for a review. If there are none, answer [SILENT].",
+        "target": {"mode": "temporary", "root": "/srv/projects/shop"},
+        "delivery": {
+            "push": True,
+            "callback": {
+                "url": "http://10.0.0.5:9000/vis-results",
+                "events": ["run.completed", "run.failed"],
+            },
+        },
+    }
+)
+automation_id = automation["id"]
+```
+
+The body needs `name`, `triggers`, `prompt` and `target`. `enabled` and `push` are `True` when you
+do not send them. The answer is the new automation with its `id`.
+
+### Change or pause an automation in Python
+
+```python
+client.patch_automation(automation_id, body={"enabled": False})  # pause
+client.patch_automation(automation_id, body={"enabled": True})  # resume
+client.patch_automation(
+    automation_id,
+    body={"triggers": [{"kind": "cron", "expression": "30 7 * * 1-5", "timezone": "Europe/Warsaw"}]},
+)
+```
+
+The body changes only the fields that it names. Vis replaces `triggers`, `target` and `delivery` as a
+whole, so send the full new value. The answer is the changed automation.
+
+### Start a run in Python
+
+```python
+run = client.post_automation_run(automation_id)
+print(run["id"], run["status"])
+```
+
+The answer is the new run with the trigger `manual`. A manual run waits in the same queue as a
+webhook run.
+
+### Create a secret in Python
+
+```python
+created = client.post_automation_secrets(automation_id, body={"kind": "webhook"})
+webhook_secret = created["secret"]
+```
+
+The `kind` is `webhook` or `callback`. The answer is the only copy of the secret, so store it at
+once. A new secret replaces the old secret immediately.
+
+### Read runs in Python
+
+```python
+runs = client.get_automation_runs(query={"automation_id": automation_id, "status": "failed", "limit": 20})
+for run in runs["runs"]:
+    print(run["id"], run["trigger"], run["status"], run["error"])
+
+run = client.get_automation_run(run_id)
+print(run["answer"])
+```
+
+The list starts with the newest run. You can filter by `automation_id`, `status` and `session_id`.
+`limit` is from 1 to 200, and the default is 50. A run has the fields of the `data` object in
+[Receive callbacks](#receive-callbacks).
+
+### Delete an automation in Python
+
+```python
+deleted = client.delete_automation(automation_id)
+print(deleted["is_deleted"])
+```
+
+Vis deletes the automation and its runs.
+
+### Handle errors in Python
+
+```python
+from blockether.vis.engine import GatewayError
+
+try:
+    client.get_automation("0b8e5d7c-1f2a-4c3b-8d9e-5a6f7b8c9d0e")
+except GatewayError as error:
+    print(error.status, error.code)  # 404 not-found
+```
+
+A failed request raises `GatewayError` with the HTTP `status` and the error `code`. The codes are in
+[Handle HTTP errors](#handle-http-errors). The exception does not contain the message of the
+gateway. A connection failure raises `TransportError`.
+
+### Send a webhook from Python
+
+The webhook route is public, because the signature replaces the gateway token. `GatewayClient` has
+no method for it. This example sends a `generic` request with the standard library:
+
+```python
+import hashlib
+import hmac
+import json
+import os
+import time
+import urllib.request
+
+secret = os.environ["VIS_WEBHOOK_SECRET"].encode()
+url = "https://gateway.example.com/v1/hooks/" + os.environ["VIS_AUTOMATION_ID"]
+body = json.dumps({"type": "deploy", "environment": "production"}).encode()
+timestamp = str(int(time.time()))
+signature = hmac.new(secret, timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()
+request = urllib.request.Request(
+    url,
+    data=body,
+    method="POST",
+    headers={
+        "content-type": "application/json",
+        "X-Webhook-Timestamp": timestamp,
+        "X-Webhook-Signature-V2": signature,
+    },
+)
+with urllib.request.urlopen(request, timeout=10) as response:
+    print(response.status, json.load(response))
+```
+
+[Check a delivery](#check-a-delivery) explains the answer.
+
+## HTTP API
+
+The HTTP API has the same operations as the [Python SDK](#python-sdk). Requests and answers are
+JSON.
+
+| Task | Method and path |
+|---|---|
+| List automations | `GET /v1/automations` |
+| Read one automation | `GET /v1/automations/{id}` |
+| Create an automation | `POST /v1/automations` |
+| Change, pause or resume an automation | `PATCH /v1/automations/{id}` |
+| Start a run now | `POST /v1/automations/{id}/run` |
+| Create a secret | `POST /v1/automations/{id}/secrets` |
+| List runs | `GET /v1/automations/runs` |
+| Read one run | `GET /v1/automations/runs/{run_id}` |
+| Delete an automation | `DELETE /v1/automations/{id}` |
+| Send a webhook | `POST /v1/hooks/{id}` |
+
+### Authenticate HTTP requests
+
+Each request needs these headers. The webhook route is the exception.
+
+- `x-vis-protocol` with the protocol number of the gateway. `GET /v1/capabilities` returns it as
+  `protocol.protocol`.
+- `Authorization: Bearer <token>` when the gateway requires a token. [Tokens and HTTP
+  401](gateway-service.md#tokens-and-http-401) tells when it does.
+
+This setup reads the token and the protocol number once. The next examples use the `vis_api`
+function. Do not print or commit the token.
+
+```bash
+export VIS_GATEWAY_URL=http://127.0.0.1:7890
+export VIS_GATEWAY_TOKEN="$(cat "$HOME/.vis/gateway.token")"
+export VIS_PROTOCOL="$(curl -sS -H "Authorization: Bearer $VIS_GATEWAY_TOKEN" \
+  "$VIS_GATEWAY_URL/v1/capabilities" |
+  python3 -c 'import json, sys; print(json.load(sys.stdin)["protocol"]["protocol"])')"
+
+vis_api() {
+  curl -sS -H "x-vis-protocol: $VIS_PROTOCOL" -H "Authorization: Bearer $VIS_GATEWAY_TOKEN" "$@"
+}
+```
+
+### List and read automations over HTTP
+
+```bash
+vis_api "$VIS_GATEWAY_URL/v1/automations"
+vis_api "$VIS_GATEWAY_URL/v1/automations/$AUTOMATION_ID"
+```
+
+The list has `automations` and `is_enabled`, the global `automations` setting. Each automation has
+the [parts](#how-automations-work) that you set and these fields:
+
+- `next_run_at` is the next scheduled time in milliseconds since 1970 UTC, or `null`.
+- `webhook` has the `path` of the webhook address, or is `null`.
+- `secrets` tells whether a `webhook` secret and a `callback` secret exist. It never contains a secret.
+- `last_run` is the newest run, or `null`.
+
+### Create an automation over HTTP
+
+Save this body as `morning-review.json`:
+
+```json
+{
+  "name": "Morning review list",
+  "triggers": [{"kind": "cron", "expression": "0 8 * * 1-5", "timezone": "Europe/Warsaw"}],
+  "prompt": "List the open pull requests that wait for a review. If there are none, answer [SILENT].",
+  "target": {"mode": "temporary", "root": "/srv/projects/shop"},
+  "delivery": {
+    "push": true,
+    "callback": {"url": "http://10.0.0.5:9000/vis-results", "events": ["run.completed", "run.failed"]}
+  }
+}
+```
+
+Then send it:
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/automations" \
+  -H 'content-type: application/json' --data @morning-review.json
+```
+
+The body needs `name`, `triggers`, `prompt` and `target`. `enabled` and `push` are `true` when you
+do not send them. The answer is the new automation with its `id`.
+
+### Change or pause an automation over HTTP
+
+```bash
+vis_api -X PATCH "$VIS_GATEWAY_URL/v1/automations/$AUTOMATION_ID" \
+  -H 'content-type: application/json' --data '{"enabled": false}'
+```
+
+Send `{"enabled": true}` to resume. The body changes only the fields that it names. Vis replaces
+`triggers`, `target` and `delivery` as a whole, so send the full new value. The answer is the
+changed automation.
+
+### Start a run over HTTP
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/automations/$AUTOMATION_ID/run"
+```
+
+The answer is the new run with the trigger `manual`. A manual run waits in the same queue as a
+webhook run.
+
+### Create a secret over HTTP
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/automations/$AUTOMATION_ID/secrets" \
+  -H 'content-type: application/json' --data '{"kind": "webhook"}'
+```
+
+The `kind` is `webhook` or `callback`. The answer has `kind` and `secret`. It is the only copy of
+the secret, so store it at once. A new secret replaces the old secret immediately.
+
+### Read runs over HTTP
+
+```bash
+vis_api "$VIS_GATEWAY_URL/v1/automations/runs?automation_id=$AUTOMATION_ID&status=failed&limit=20"
+vis_api "$VIS_GATEWAY_URL/v1/automations/runs/$RUN_ID"
+```
+
+The list has `runs` and starts with the newest run. You can filter by `automation_id`, `status` and
+`session_id`. `limit` is from 1 to 200, and the default is 50. A run has the fields of the `data`
+object in [Receive callbacks](#receive-callbacks).
+
+### Delete an automation over HTTP
+
+```bash
+vis_api -X DELETE "$VIS_GATEWAY_URL/v1/automations/$AUTOMATION_ID"
+```
+
+Vis deletes the automation and its runs. The answer has `id` and `is_deleted`.
+
+### Handle HTTP errors
+
+An error answer has this body:
+
+```json
+{"error": {"type": "not-found", "message": "Automation not found"}}
+```
+
+| Status | `type` | Meaning |
+|---|---|---|
+| `400` | `invalid-automation` | The body is not valid. The `message` names the problem. |
+| `401` | `unauthorized` | The token is missing or not correct. |
+| `404` | `not-found` | The automation or the run does not exist. |
+| `409` | `automation-limit` | The gateway already has 256 automations. |
+| `426` | `incompatible_protocol` | The `x-vis-protocol` header is missing or not supported. |
+
+### Send a webhook over HTTP
+
+The webhook route needs no gateway token and no `x-vis-protocol` header. The signature replaces
+them. This script sends a `generic` request:
+
+```bash
+body='{"type":"deploy","environment":"production"}'
+ts=$(date +%s)
+sig=$(printf '%s.%s' "$ts" "$body" | openssl dgst -sha256 -hmac "$SECRET" -hex | sed 's/^.* //')
+curl -X POST "https://gateway.example.com/v1/hooks/$AUTOMATION_ID" \
+  -H 'content-type: application/json' \
+  -H "X-Webhook-Timestamp: $ts" \
+  -H "X-Webhook-Signature-V2: $sig" \
+  --data "$body"
+```
+
+[Check a delivery](#check-a-delivery) explains the answer.
 
 ## Limits
 
@@ -324,40 +694,6 @@ stops working at once, so update the other service right after the change.
 | One payload value in a prompt | 4000 bytes |
 | Callback attempts | 6, each with a 10-second timeout |
 
-## HTTP reference
-
-These routes use the normal gateway authentication. The webhook route is the exception: the
-signature of the request replaces it. The [Python SDK](python-sdk.md) has a method for each route,
-for example `get_automations` and `post_automation_run`.
-
-| Method and path | What it does |
-|---|---|
-| `GET /v1/automations` | Lists the automations and `is_enabled`, the global setting. |
-| `POST /v1/automations` | Creates an automation. |
-| `GET /v1/automations/{id}` | Reads one automation. |
-| `PATCH /v1/automations/{id}` | Replaces the given top-level fields. |
-| `DELETE /v1/automations/{id}` | Deletes an automation and its runs. |
-| `POST /v1/automations/{id}/run` | Starts a manual run. |
-| `POST /v1/automations/{id}/secrets` | Creates a `webhook` or `callback` secret. The answer is the only copy. |
-| `GET /v1/automations/runs` | Lists runs. Filter with `automation_id`, `status`, `session_id` and `limit`. |
-| `GET /v1/automations/runs/{run_id}` | Reads one run. |
-| `POST /v1/hooks/{id}` | Receives a webhook. |
-
-This body creates the automation from the first example:
-
-```json
-{
-  "name": "Morning review list",
-  "triggers": [{"kind": "cron", "expression": "0 8 * * 1-5", "timezone": "Europe/Warsaw"}],
-  "prompt": "List the open pull requests that wait for a review. If there are none, answer [SILENT].",
-  "target": {"mode": "temporary", "root": "/srv/projects/shop"},
-  "delivery": {
-    "push": true,
-    "callback": {"url": "http://10.0.0.5:9000/vis-results", "events": ["run.completed", "run.failed"]}
-  }
-}
-```
-
 ## See also
 
 - [Configuration](configuration.md) — the `automations` toggle and the settings of a project, a group
@@ -365,4 +701,4 @@ This body creates the automation from the first example:
 - [Sessions](sessions.md) — find and continue the sessions that runs create.
 - [Running a gateway](gateway-service.md) — keep a gateway online, so that schedules and webhooks
   work.
-- [Python SDK](python-sdk.md) — call the automation routes from your own code.
+- [Python SDK](python-sdk.md) — install the SDK and run agents from your own code.
