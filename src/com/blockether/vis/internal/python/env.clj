@@ -28,7 +28,6 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.parinferish.python :as python-repair]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.docs.corpus :as doc-corpus]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -1603,33 +1602,6 @@
    Two retries is normal recovery; the third is a loop."
   3)
 
-(def ^:private listed-messages "Fixes a repair note lists before it counts the rest." 5)
-
-(defn- message-lines
-  "The `:message` of each of the first `items`, one indented line each, then a
-   count of the rest."
-  [items]
-  (let [shown
-        (take listed-messages items)
-
-        more
-        (- (count items) (count shown))]
-
-    (str (str/join (map #(str "  " (:message %) "\n") shown))
-         (when (pos? more) (str "  and " more " more\n")))))
-
-(def ^:private bracket-problems
-  "Problem kinds about brackets alone. A misplaced quote moves brackets into and
-   out of strings, so these usually follow from a quote problem elsewhere."
-  #{:unclosed-bracket :unmatched-closer :mismatched-closer :semicolon-in-brackets
-    :open-bracket-at-statement})
-
-(defn- first-cause
-  "The one problem a refusal names: the first of `problems` that is not about
-   brackets alone, else the first. The rest are mostly what that one caused."
-  [problems]
-  (or (first (remove #(contains? bracket-problems (:kind %)) problems)) (first problems)))
-
 ;; =============================================================================
 ;; Running one block
 ;; =============================================================================
@@ -1807,14 +1779,6 @@
         non-ascii?
         (boolean (and syntax? (re-find #"invalid character" base)))
 
-        delimiter-problems
-        (when (and (or syntax? indent?) (not non-ascii?))
-          (try (python-repair/diagnose (str code) {:error-line (first pos)})
-               (catch Throwable _ nil)))
-
-        problem
-        (first-cause delimiter-problems)
-
         ;; The confinement refuses in the interpreter itself, naming the operation
         ;; and whether it wanted to WRITE — the one denial the model can act on.
         denied-write?
@@ -1852,11 +1816,10 @@
                    "patch(path, edits) to edit, "
                    "or ask the USER to add the path to workspace.filesystem in vis.yml "
                    "and run /reload. Original error: ")
-              ;; A refusal names its problem instead.
-              (and indent? (not problem))
-              (str "Python is INDENTATION-sensitive: a block (after def / if / for / with / "
-                   "a trailing `:`) must be indented consistently (4 spaces), and a top-level "
-                   "statement must start at column 0. Re-indent that region. Original error: ")
+              indent? (str
+                        "Python is INDENTATION-sensitive: a block (after def / if / for / with / "
+                        "a trailing `:`) must be indented consistently (4 spaces), and a top-level "
+                        "statement must start at column 0. Re-indent that region. Original error: ")
               lost-reason
               (str "`"
                    undefined-name
@@ -1876,29 +1839,23 @@
         line-text
         (when pos (nth (str/split-lines (str code)) (dec (long (first pos))) nil))
 
-        ;; A parse failure names only its line, so a refusal shows the line of the
-        ;; problem it names, with the caret under that problem.
         source-context
         (when (and code pos (not host?))
-          (if problem
-            (render-source-context code (:line problem) (dec (long (:column problem))) nil)
-            (render-source-context code
-                                   (first pos)
-                                   (char-column line-text (second pos))
-                                   (char-column line-text (nth pos 2 nil)))))
+          (render-source-context code
+                                 (first pos)
+                                 (char-column line-text (second pos))
+                                 (char-column line-text (nth pos 2 nil))))
 
         ;; Frames under that line in helpers that earlier blocks defined: their
         ;; lines number other sources, so they show apart from the excerpt.
         helper-context
         (when-not host? (render-helper-frames helpers))
 
-        ;; The excerpt numbers its line, so the parser's own `(<file>, line N)`
-        ;; stays only when the excerpt shows another line.
+        ;; The source excerpt already identifies the parser's line.
         error-text
         (cond-> base
           (or syntax? indent?)
-          (parser-message (or (nil? source-context)
-                              (and problem (not= (first pos) (:line problem))))))
+          (parser-message (nil? source-context)))
 
         repeats
         (note-block-failure! session code base)
@@ -1917,7 +1874,6 @@
           (str breaker
                hint
                error-text
-               (when problem (str "\n" (:message problem)))
                (when source-context (str "\n\n" source-context))
                (when helper-context (str (if source-context "\n" "\n\n") helper-context))))]
 
@@ -1934,9 +1890,6 @@
 
              non-ascii?
              (assoc :non-ascii-in-code? true)
-
-             (seq delimiter-problems)
-             (assoc :unbalanced-delimiters? true)
 
              denied-root?
              (assoc :sandbox-denied? true)
@@ -1970,36 +1923,6 @@
                    "one statement, and print() what you want back.")
      :data {:phase :python/empty-block :empty-block? true}}))
 
-(defn- repair-block
-  "The repair of `code` that the session's parser accepts, as `{:code :fixes}`,
-   or nil.
-
-   Only a block Python `refused` with a syntax error is repaired, and only its
-   quotes, brackets and escapes change: parinferish closes a string or bracket
-   left open, drops or swaps a stray closer, splits statements glued onto one
-   line, escapes quotes that end a string too early and doubles f-string braces
-   or backslashes Python rejects. The repaired source must still parse to at
-   least one statement."
-  [session code ^String refused]
-  (when (re-find #"^(?:vis-python:\s+)?(?:SyntaxError|IndentationError|TabError)\b" refused)
-    (let [{:keys [text changed? clean? fixes]}
-          (try (python-repair/repair (str code)
-                                     {:error-line (first (syntax-error-position refused))})
-               (catch Throwable _ nil))]
-      (when (and changed? clean? (pos? (long (:forms (parse-block session text) 0))))
-        {:code text :fixes fixes}))))
-
-(defn- repair-note
-  "What a repaired block's output opens with: the error Python refused the
-   written block with and the fixes that made it run, so the model can check the
-   result and write balanced code next time."
-  [^String refused fixes printed?]
-  (str "Vis repaired this block before running it. Python refused it with "
-       (parser-message (str/replace refused #"^vis-python:\s+" "") false)
-       "\n"
-       (message-lines fixes)
-       (when printed? "Output of the repaired block:\n")))
-
 (defn run-python-block
   "Run one Python `code` block in `session` as ONE whole-block coroutine,
    answering the FLAT sum-typed outcome:
@@ -2011,10 +1934,8 @@
    so `print()` is the only way anything comes back. Either outcome may carry
    `:attachments`, the artifacts the block produced.
 
-   A block Python refuses for unbalanced quotes or brackets runs repaired when
-   the repair parses. That outcome also carries `:auto-repaired true` and the
-   `:repaired-source` that ran, and its `:stdout` opens with a note naming the
-   parser error and the fixes.
+   Language extension hooks repair source before this function runs.
+   This function executes the supplied source without structural changes.
 
    The runtime AST-wraps the block in an `async def`, auto-settles every bare
    tool-call statement at every depth and drives it as a single coroutine.
@@ -2030,38 +1951,28 @@
   (let [parsed (parse-block session code)]
     (if-let [err (empty-block-error parsed)]
       (do (discard-block-stdout! session) {:forms [{:source code :error err}] :error err})
-      (let [sink (atom [])
-            repair (some->> (:refused parsed)
-                            (repair-block session code))
-            source (or (:code repair) code)]
-
+      (let [sink (atom [])]
         (with-bindings {#'extension/*current-form-idx* 0 #'mpl-capture/*attachment-sink* sink}
           ;; The doors run on the interpreter's own threads, so the bindings above
           ;; travel to them explicitly - see `python-host/conveying`.
-          (python-host/conveying
-            session
-            (let [outcome (or (read-json (py-run-block session source)) {})
-                  _ (discard-block-stdout! session)
-                  out (not-empty (str/trim-newline (str (:stdout outcome))))
-                  printed? (and out (not (str/blank? out)))
-                  raised (:error outcome)
-                  attachments (mpl-capture/drain sink)]
+          (python-host/conveying session
+                                 (let [outcome (or (read-json (py-run-block session code)) {})
+                                       _ (discard-block-stdout! session)
+                                       out (not-empty (str/trim-newline (str (:stdout outcome))))
+                                       printed? (and out (not (str/blank? out)))
+                                       raised (:error outcome)
+                                       attachments (mpl-capture/drain sink)]
 
-              (when-not raised (clear-block-failures! session))
-              (cond-> {}
-                (or printed? repair)
-                (assoc :stdout
-                  (str (when repair (repair-note (:refused parsed) (:fixes repair) printed?))
-                       (when printed? (:stdout outcome))))
+                                   (when-not raised (clear-block-failures! session))
+                                   (cond-> {}
+                                     printed?
+                                     (assoc :stdout (:stdout outcome))
 
-                repair
-                (merge {:auto-repaired true :repaired-source source})
+                                     raised
+                                     (assoc :error (map-python-error session raised code))
 
-                raised
-                (assoc :error (map-python-error session raised source))
-
-                attachments
-                (assoc :attachments attachments)))))))))
+                                     attachments
+                                     (assoc :attachments attachments)))))))))
 
 (defn system-var-sym? [sym] (contains? SYSTEM_VAR_NAMES sym))
 

@@ -2496,6 +2496,113 @@ vis.register_extension(vis.Extension(
                        ;; Without a preview in the env the hook sees none, so it allows the call.
                        (expect (= :ran ((:fn hook) {} :patch ["a.clj" "BROKEN"] ran))))))))
 
+(def ^:private repair-hook-py
+  "import blockether.vis.extension as vis
+
+def before(call):
+    return vis.repair('print(42)', notes=['Closed the call.'])
+
+vis.register_extension(vis.Extension(
+    name='repair-hook', description='Repair hook fixture.',
+    op_hooks=[vis.OpHook(['python_execution', 'patch', 'shell'], before)]))
+")
+
+(defdescribe
+  op-hook-repair-test
+  (it "rewrites Python source before execution and reports the actual source"
+      (with-loaded {"repair_hook.py" repair-hook-py}
+                   (fn [_ _]
+                     (let [hook
+                           (first (:ext/op-hooks (registered "repair-hook")))
+
+                           seen
+                           (atom nil)
+
+                           result
+                           ((:fn hook)
+                             {}
+                             :python_execution
+                             [{:code "print(42"}]
+                             (fn [args]
+                               (reset! seen args)
+                               (extension/success {:result {:stdout "42\n"}})))]
+
+                       (expect (= [{:code "print(42)"}] @seen))
+                       (expect (true? (get-in result [:result :auto-repaired])))
+                       (expect (= "print(42)" (get-in result [:result :repaired-source])))
+                       (expect (str/includes? (get-in result [:result :stdout])
+                                              "Closed the call."))))))
+  (it "rejects repairs for operations without a repair contract"
+      (with-loaded {"repair_hook.py" repair-hook-py}
+                   (fn [_ _]
+                     (let [hook
+                           (first (:ext/op-hooks (registered "repair-hook")))
+
+                           ran
+                           (atom false)
+
+                           result
+                           ((:fn hook)
+                             {}
+                             :shell
+                             ["echo unchanged"]
+                             (fn [_]
+                               (reset! ran true)
+                               :ran))]
+
+                       (expect (false? @ran))
+                       (expect (false? (:success? result)))))))
+  (it "rejects malformed repair markers without running the operation"
+      (doseq [decision ["{'marker': 'repair', 'source': 'print(42)', 'notes': []}"
+                        "{'marker': 'repair', 'source': 42, 'notes': ['Closed the call.']}"
+                        "{'marker': 'repair', 'source': 'print(42)', 'notes': [' ']}"
+                        "{'marker': 'repair', 'source': 'print(42)', 'notes': 'Closed the call.'}"]]
+        (with-loaded {"repair_hook.py" (str/replace
+                                         repair-hook-py
+                                         "vis.repair('print(42)', notes=['Closed the call.'])"
+                                         decision)}
+                     (fn [_ _]
+                       (let [hook (first (:ext/op-hooks (registered "repair-hook")))
+                             ran (atom false)
+                             result ((:fn hook)
+                                      {}
+                                      :python_execution
+                                      [{:code "print(42"}]
+                                      (fn [_]
+                                        (reset! ran true)
+                                        :ran))]
+
+                         (expect (false? @ran))
+                         (expect (extension/envelope-failure? result)))))))
+  (it "reports a repair when the actual repaired block raises"
+      (with-fresh-loaded
+        {"repair_hook.py" (str/replace repair-hook-py "'print(42)'" "'raise ValueError(\"boom\")'")}
+        (fn [_ {:keys [ext-dir store]}]
+          (let [ext
+                (registered "repair-hook")
+
+                ctx
+                (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+
+                env
+                {:python-context ctx
+                 :db-info store
+                 :cwd (str ext-dir)
+                 :session-id (str "repair-hook-" (random-uuid))
+                 :extensions (atom [ext])
+                 :active-extensions (atom [])}]
+
+            (try (loop-env/sync-active-extension-symbols! env [ext])
+                 (let [result
+                       (#'python-exec/run-python-code ctx "raise ValueError(\"boom\"" :env env)]
+                   (expect (= :python/runtime (get-in result [:error :data :phase])))
+                   (expect (str/includes? (get-in result [:error :message]) "ValueError: boom"))
+                   (expect (true? (:auto-repaired result)))
+                   (expect (= "raise ValueError(\"boom\")" (:repaired-source result)))
+                   (expect (= ["Closed the call."] (:repair-notes result)))
+                   (expect (str/includes? (:stdout result) "Closed the call.")))
+                 (finally (ep/dispose-python-context! ctx))))))))
+
 (def ^:private execution-hook-py
   "import blockether.vis.extension as vis
 

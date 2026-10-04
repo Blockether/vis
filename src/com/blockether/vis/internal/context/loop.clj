@@ -200,7 +200,12 @@
                (tel/log! {:level :warn :id ::access-view-failed :data {:error (ex-message t)}})
                nil))]
 
-    (cond-> (env-digest/deep-merge ctx (dissoc ext-ctx "session_env"))
+    (cond-> (assoc (env-digest/deep-merge ctx (dissoc ext-ctx "session_env"))
+              "session_extension_context"
+              (into (sorted-map)
+                    (filter (fn [[key _]]
+                              (and (string? key) (not (re-find #"^(engine|session)_" key)))))
+                    ext-ctx))
       (seq env-block)
       (assoc "session_env" env-block)
 

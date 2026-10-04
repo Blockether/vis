@@ -45,6 +45,77 @@
   (assoc-in base-ctx ["session_workspace" "session_title"] "Renamed session"))
 
 (defdescribe
+  extension-repair-context-test
+  (it
+    "keeps extension reports in the live context, baseline and later deltas"
+    (let [report
+          ["late.py: Closed the list.\n+value = [3, 4]"]
+
+          contributions
+          (atom {"python_syntax_repairs" report "clojure_syntax_errors" ["broken.clj:1:1: EOF"]})
+
+          env
+          {:session-id "s1" :ctx-atom (atom base-ctx)}]
+
+      (with-redefs [prompt/active-extensions
+                    (constantly [{:ext/name "repair"
+                                  :ext/ctx-fn (fn [_]
+                                                @contributions)}])
+
+                    env-digest/base-digest
+                    (constantly {})]
+
+        (let [before
+              (cr/ctx-delta-map {:ctx base-ctx})
+
+              enriched
+              (ctx-loop/enrich-ctx env base-ctx)
+
+              live
+              (cr/project-ctx (ctx-loop/session-snapshot env))
+
+              baseline
+              (cr/ctx-static-map {:ctx enriched})
+
+              current
+              (cr/ctx-delta-map {:ctx enriched})]
+
+          (doseq [view [live baseline current]]
+            (expect (= report (get view "python_syntax_repairs")))
+            (expect (= ["broken.clj:1:1: EOF"] (get view "clojure_syntax_errors"))))
+          (expect (str/includes? (cr/render-ctx-static {:ctx enriched}) "Closed the list."))
+          (expect (str/includes? (cr/render-ctx-delta before current) "python_syntax_repairs"))
+          (reset! contributions {})
+          (let [cleared (cr/ctx-delta-map {:ctx (ctx-loop/enrich-ctx env enriched)})]
+            (expect (not (contains? cleared "python_syntax_repairs")))
+            (expect (str/includes? (cr/render-ctx-delta current cleared)
+                                   "del session[\"python_syntax_repairs\"]")))))))
+  (it "keeps engine data private and prevents custom keys from replacing core fields"
+      (let [env
+            {:session-id "s1" :ctx-atom (atom base-ctx)}
+
+            extras
+            {"python_syntax_repairs" ["Visible repair"]
+             "engine_private" "hidden"
+             "session_resources" ["hidden"]
+             "id" "wrong"
+             "goal" "wrong"
+             "workspace" {"root" "/wrong"}}]
+
+        (with-redefs [prompt/active-extensions
+                      (constantly [{:ext/name "repair" :ext/ctx-fn (constantly extras)}])
+
+                      env-digest/base-digest
+                      (constantly {})]
+
+          (let [live (cr/project-ctx (ctx-loop/session-snapshot env))]
+            (expect (= ["Visible repair"] (get live "python_syntax_repairs")))
+            (expect (= "s1" (get live "id")))
+            (expect (= "/repo" (get-in live ["workspace" "root"])))
+            (doseq [key ["engine_private" "session_resources" "goal"]]
+              (expect (not (contains? live key)))))))))
+
+(defdescribe
   ctx-cache-stability-test
   ;; --- THE BUG: re-rendering the static block per turn changes the SYSTEM
   ;;     PREFIX whenever state moves → invalidates the cached prefix.

@@ -213,7 +213,8 @@
   "EXACT set of `session_*` keys the model is meant to see. Security access is
    included as an environment-derived value; engine bookkeeping remains hidden."
   ["session_id" "session_turn" "session_scope" "session_workspace" "session_access" "session_env"
-   "session_routing" "session_symbols" "session_council" "session_goal" "session_agent"])
+   "session_routing" "session_symbols" "session_council" "session_goal" "session_agent"
+   "session_extension_context"])
 
 (defn scope-key
   "Ordered key for a scope so ranges can compare scopes: `\"t1/i2\"` or

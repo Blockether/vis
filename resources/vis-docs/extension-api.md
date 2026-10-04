@@ -786,18 +786,31 @@ vis.OpHook(ops, fn, phase="before")
 ```
 
 `ops` names operations such as `"patch"`, `"shell"` or `"python_execution"`.
-With `phase="before"`, `fn(call)` receives `{"op", "args"}` and returns
-`vis.block(reason)` to refuse the call or `None` to allow it. The model sees the
-reason as a tool failure. With `phase="after"`, `fn` receives `{"op", "args",
-"result"}` and its return value is ignored. Ordinary tool-hook errors are
-logged and do not block the operation. An after hook cannot undo its effects.
+With `phase="before"`, `fn(call)` receives `{"op", "args"}`. Return `None` to
+allow the call or `vis.block(reason)` to refuse it. The model sees the reason
+as a tool failure. For supported operations, return `vis.repair(source, notes=[...])`
+to propose corrected source.
+
+With `phase="after"`, `fn` receives `{"op", "args", "result"}` and its return value
+is ignored. Ordinary tool-hook errors are logged and do not block the operation.
+An after hook cannot undo its effects.
 
 For `"patch"`, a before hook also receives `preview`: `{"path", "before",
-"after"}`. It holds the text of the file now and after every edit. Use it to
-check the result before anything is written. `preview` is absent when the patch
-would be refused anyway, for example for a stale anchor. Give
-`vis.block(reason, hint=...)` a `hint` to tell the model what to do next.
-Without a hint, the failure tells the model to ask the user before a retry.
+"after", "spans"}`. It holds the current file and the proposed result of all edits.
+Each span is `[start, end]`, with inclusive, one-based lines in the proposed result.
+Use the preview to validate a repair before anything is written. `preview` is absent
+when the patch would be refused, for example for a stale anchor.
+
+A repair replaces the complete proposed source, not the edit list. Vis checks that
+the original file still matches, then writes the final source once. Later guards
+see the repaired preview. The result includes correction notes, the actual diff and
+fresh anchors. The hook must validate its candidate before returning it.
+
+`vis.repair` requires string source and a nonempty list or tuple of nonblank notes.
+Invalid repair markers fail without running the operation. Only `"patch"` and
+`"python_execution"` accept repairs. Give `vis.block(reason, hint=...)` a `hint` to
+tell the model what to do next. Without a hint, the failure tells the model to
+ask the user before a retry.
 
 For `"python_execution"`, `args` is `[{"code": <Python source>}]`. The before
 hook runs before the block. The after hook runs when evaluation returns.
@@ -907,9 +920,12 @@ def _ctx(env):
 vis.register_extension(vis.Extension(name="todo", description="Todo list.", ctx=_ctx))
 ```
 
-Return a string-keyed dict under a key unique to your extension. Results from
-all extensions are deep-merged. A non-dict return or exception adds no context
-and does not block the turn.
+Return a string-keyed dict under a key unique to your extension. Vis exposes
+custom keys directly in `session`. Core fields and the `engine_` and `session_`
+prefixes are reserved. Use `session_env` to add nested data under `session["env"]`.
+
+Results from all extensions are deep-merged. A non-dict return or exception adds
+no context and does not block the turn.
 
 ## Workspace root
 

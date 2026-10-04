@@ -2959,6 +2959,24 @@ def block(reason, hint=None):
     return refusal
 
 
+def repair(source, *, notes):
+    """Return repaired source from a before hook, without writing or running it.
+
+    Only patch and python_execution accept this decision. The host validates
+    the request and reports the notes with the result. A patch still checks
+    the complete original file before it writes the repaired text once.
+    """
+    if not isinstance(source, str):
+        raise TypeError("Repair source must be a string")
+    if (
+        not isinstance(notes, (tuple, list))
+        or not notes
+        or not all(isinstance(note, str) and note.strip() for note in notes)
+    ):
+        raise ValueError("Repair notes must be a non-empty sequence of strings")
+    return {"marker": "repair", "source": source, "notes": list(notes)}
+
+
 def strings_of(value):
     out = []
 

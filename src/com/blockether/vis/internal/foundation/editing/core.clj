@@ -3990,9 +3990,15 @@
         original
         (slurp f)
 
-        ;; Resolve EVERY span against the ONE read before a character moves: a span is
-        ;; a char range, not new content, so the whole batch is verified while the file
-        ;; is still exactly what the caller read.
+        _
+        (when-let [repair (::repair (meta edits))]
+          (when-not (= original (:before repair))
+            (patch-refusal! rel
+                            {:reason :source-changed}
+                            ["The file changed during repair. Read it again before retrying."])))
+
+        ;; Resolve all character spans against the same source before changing content.
+        ;; Validate the full batch while the file still matches the caller's read.
         resolved
         (mapv (fn [{:keys [index from to replace]}]
                 (let [;; A drifted `\uXXXX` otherwise reaches disk as six literal characters.
@@ -4024,69 +4030,37 @@
                 original
                 (sort-by :start #(compare %2 %1) resolved))]
 
-    {:file f :rel rel :total total :original original :resolved resolved :updated updated}))
+    (if-let [{:keys [after notes]} (::repair (meta edits))]
+      {:file f
+       :rel rel
+       :total 1
+       :original original
+       :updated after
+       :repair-notes notes
+       :resolved [{:index 0
+                   :start 0
+                   :end (count original)
+                   :from-line 1
+                   :to-line (max 1 (count (hashline/split-content-lines original)))
+                   :replacement after
+                   :new-text after}]}
+      {:file f :rel rel :total total :original original :resolved resolved :updated updated})))
 
-(defn- patch-preview
-  "What ONE `patch` call would write, for an op hook that decides before the write:
-   `{:path :before :after}` with the file's text now and after every edit. Nil when
-   the write would refuse the call anyway (a missing file, a stale anchor, an
-   overlap), because that refusal then speaks for itself and nothing is written."
-  [[path edits]]
-  (try (let [{:keys [rel original updated]} (patch-plan path edits)]
-         {:path rel :before original :after updated})
-       (catch Exception _ nil)))
+(defn- patch-output-rows
+  "Locate each edit in the output, including the line delta from earlier edits."
+  [original resolved]
+  (:rows
+    (reduce (fn [{:keys [^long delta rows]} {:keys [index start end from-line to-line replacement]}]
+              (let [text
+                    (str replacement)
 
-(defn- previewing-before-fn
-  "`before-fn` that also hands the op's around hooks `:op/preview` in the env: a fn
-   from the call's args to what the call would write, computed at most once per
-   call. A `before-fn` that answers on its own keeps that answer."
-  [before-fn preview]
-  (fn [env f args]
-    (let [out (before-fn env f args)]
-      (if (contains? out :result)
-        out
-        (assoc out :env (assoc (get out :env env) :op/preview (memoize preview)))))))
-
-(defn- patch-file!
-  "Every anchored edit for ONE file, resolved against ONE read and applied in ONE
-   write. Atomic for the FILE: every span resolves and every shape is checked
-   BEFORE anything reaches disk, so a refusal — a stale anchor, an overlap —
-   leaves the file exactly as the caller
-   last read it. The splice runs from the END of the file backwards, so the order
-   the edits arrive in is irrelevant and no anchor from the caller's own read can
-   go stale mid-batch. The answer is the status line and one row per edit, carrying
-   the anchors that are live AFTER the write."
-  [path edits]
-  (let [{^File f :file :keys [rel total original resolved updated]}
-        (patch-plan path edits)
-
-        ;; Where each edit ENDED UP: walk the spans in file order carrying the line
-        ;; delta every earlier edit already applied, so every anchor reported below is
-        ;; one a next call can spend without a `cat`. Pure: it reads the resolved
-        ;; spans, never the write.
-        applied
-        (:rows
-          (reduce
-            (fn [{:keys [^long delta rows]} {:keys [index start end from-line to-line replacement]}]
-              (let [;; What the splice ACTUALLY put in the file. The matched
-                    ;; region's terminator stays OUTSIDE the span, so a mid-file
-                    ;; replacement always closes its last line and only a span
-                    ;; that reaches EOF carries a terminator of its own — counting
-                    ;; the replacement's own lines instead reported one line too
-                    ;; few for every replacement that ended in a newline, and every
-                    ;; later row's anchor inherited the drift.
                     written
-                    (long (let [text (str replacement)]
-                            ;; The SPLICED text decides, not the caller's `replace`:
-                            ;; a replacement that reduces to nothing — `"\n"` over a
-                            ;; span that ends a file with no final newline — writes
-                            ;; no line at all.
-                            (if (= "" text)
-                              0
-                              (let [breaks (count (filter #(= \newline %) text))]
-                                (if (and (= (long end) (count original)) (str/ends-with? text "\n"))
-                                  breaks
-                                  (inc breaks))))))
+                    (long (if (= "" text)
+                            0
+                            (let [breaks (count (filter #(= \newline %) text))]
+                              (if (and (= (long end) (count original)) (str/ends-with? text "\n"))
+                                breaks
+                                (inc breaks)))))
 
                     replaced
                     (inc (- (long to-line) (long from-line)))]
@@ -4098,10 +4072,72 @@
                               :to-line to-line
                               :new-from (+ (long from-line) delta)
                               :written written
-                              :unchanged? (= (subs original (long start) (long end))
-                                             (str replacement))})}))
+                              :unchanged? (= (subs original (long start) (long end)) text)})}))
             {:delta 0 :rows []}
-            (sort-by :start resolved)))
+            (sort-by :start resolved))))
+
+(defn- patch-preview
+  "What ONE `patch` call would write, for an op hook that decides before the write:
+   `{:path :before :after :spans}` with inclusive output line ranges. Nil when
+   the write would refuse the call anyway (a missing file, a stale anchor, an
+   overlap), because that refusal then speaks for itself and nothing is written."
+  [[path edits]]
+  (try (let [{:keys [rel original updated resolved]} (patch-plan path edits)]
+         {:path rel
+          :before original
+          :after updated
+          :spans (mapv (fn [{:keys [new-from written]}]
+                         [new-from (+ (long new-from) (dec (long written)))])
+                       (filter #(pos? (long (:written %))) (patch-output-rows original resolved)))})
+       (catch Exception _ nil)))
+
+(defn- repair-patch-args
+  "Attach a checked source replacement to the original edits. Write nothing."
+  [[path edits] preview repair]
+  (when-not (and (map? preview) (string? (:before preview)) (string? (get repair "source")))
+    (throw (ex-info "A patch repair needs a valid preview and source." {:reason :invalid-repair})))
+  [path
+   (with-meta (vec edits)
+     {::repair {:before (:before preview)
+                :after (get repair "source")
+                :notes (into (vec (:notes (::repair (meta edits)))) (get repair "notes"))}})])
+
+(defn- previewing-before-fn
+  "`before-fn` that also hands the op's around hooks `:op/preview` in the env: a fn
+   from the call's args to what the call would write, computed at most once per
+   call. A `before-fn` that answers on its own keeps that answer."
+  [before-fn preview repair]
+  (fn [env f args]
+    (let [out
+          (before-fn env f args)
+
+          preview-for
+          (memoize (fn [args _metadata]
+                     (preview args)))]
+
+      (if (contains? out :result)
+        out
+        (assoc out
+          :env (assoc (get out :env env)
+                 :op/preview (fn [args]
+                               (preview-for args (mapv meta args)))
+                 :op/repair repair))))))
+
+(defn- patch-file!
+  "Every anchored edit for ONE file, resolved against ONE read and applied in ONE
+   write. Atomic for the FILE: every span resolves and every shape is checked
+   BEFORE anything reaches disk, so a refusal — a stale anchor, an overlap —
+   leaves the file exactly as the caller
+   last read it. The splice runs from the END of the file backwards, so the order
+   the edits arrive in is irrelevant and no anchor from the caller's own read can
+   go stale mid-batch. The answer is the status line and one row per edit, carrying
+   the anchors that are live AFTER the write."
+  [path edits]
+  (let [{^File f :file :keys [rel total original resolved updated repair-notes]}
+        (patch-plan path edits)
+
+        applied
+        (patch-output-rows original resolved)
 
         ;; What actually reaches disk. Every anchor, count and diff below is taken
         ;; from THIS.
@@ -4118,6 +4154,12 @@
                             (hashline/split-content-lines new-text)))
                     resolved)
           "  note: a replacement carries a `line:hash│ ` gutter, written verbatim")
+
+        _
+        (when-not (= original (slurp f))
+          (patch-refusal! rel
+                          {:reason :source-changed}
+                          ["The file changed before the write. Read it again before retrying."]))
 
         failure
         (atomic-replace! f rel written-content)]
@@ -4142,7 +4184,9 @@
                                            (count new-lines)
                                            (str gutter-clause))
                         "\n"
-                        (str/join "\n" (patch-edit-rows applied new-lines)))
+                        (str/join "\n" (patch-edit-rows applied new-lines))
+                        (when (seq repair-notes)
+                          (str "\nAuto-repair: " (str/join " " repair-notes))))
            ;; The unified diff is METADATA, not payload: the human channel can
            ;; render the write in full while the model pays only for the fresh
            ;; anchors it will actually spend.
@@ -4224,7 +4268,8 @@
        "NOTHING. The refusal names the edit and gives its current anchor or range.")
      :call {:pos ["path" "edits"]}
      :before-fn (previewing-before-fn (fs-access-before-fn :patch :file "file-write" read-arg-paths)
-                                      patch-preview)
+                                      patch-preview
+                                      repair-patch-args)
      :tag :mutation
      :presenter :patch
      :on-error-fn (tool-failure-on-error :patch :file)}))

@@ -39,15 +39,27 @@ balance. For example:
 - A quote inside a string ends it too early.
 - A bracket is closed by the wrong character or not closed at all.
 
-Literal braces in an f-string and a backslash escape that Python rejects stop a block in the same
-way. Vis repairs such a block with parinferish. It runs the repaired code only when Python can
-parse it. The output of the block then starts with a note that names the Python error and each
-fix. Vis also marks the block as repaired. The agent reads the same note, so it can check that the
-repaired code did what it meant.
+The Python language extension can repair these errors before a block runs.
+It can also repair invalid escapes and literal braces in f-strings. Its repair engine and syntax
+checks run locally in Python. The repaired source must pass parsing and compilation before it runs.
+The output identifies each correction. Vis also records the source that actually ran.
 
-When the repair cannot make the block parse, the block does not run. Its error
-lists the quotes, brackets and escapes that are wrong, followed by Python's own
-error.
+Without that extension, Vis runs the supplied source unchanged. If repair fails, Python reports its
+syntax error and the block does not run.
+
+### File edits and formatting
+
+Language extensions check proposed `patch` edits before Vis writes the file. They can propose a
+repair, validate it, then let Vis write the final source once. The patch result shows corrections,
+the actual diff and fresh anchors. If validation fails, the original file stays unchanged.
+
+Plain writes inside Python blocks have a different boundary. The extensions inspect changed files
+after the block, including a block that raises an exception. They can then repair invalid files and
+report corrections in the next context. These checks do not intercept each write or roll back a block.
+
+The Clojure repair engine runs in Python, but full validation still needs the Clojure reader on a
+JVM. A repair is not accepted without that validation. Clojure and Python formatters change layout,
+not program structure.
 
 ## Sandbox state after a restart
 

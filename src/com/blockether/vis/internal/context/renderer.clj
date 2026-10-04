@@ -43,14 +43,24 @@
                ws)
     (or ws {})))
 
+(def ^:private reserved-context-keys
+  "Core fields cannot be replaced by custom extension keys."
+  #{"id" "turn" "scope" "workspace" "access" "env" "routing" "symbols" "council" "agent" "goal"
+    "utilization"})
+
+(defn- extension-context
+  [view]
+  (apply dissoc (get view "session_extension_context") reserved-context-keys))
+
 (defn project-ctx
   "THE canonical projection of a `session-view` into the agent-facing ordered
    string-keyed map used by both rendered context and the live Python dict."
   ([view] (project-ctx view nil))
   ([view _opts]
-   (cond-> (array-map "id" (get view "session_id")
-                      "turn" (get view "session_turn")
-                      "scope" (get view "session_scope"))
+   (cond-> (into (array-map "id" (get view "session_id")
+                            "turn" (get view "session_turn")
+                            "scope" (get view "session_scope"))
+                 (extension-context view))
      (get view "session_utilization")
      (assoc "utilization" (get view "session_utilization"))
 
@@ -96,7 +106,7 @@
         (reduce (fn [m k]
                   (if (contains? full k) (assoc m k (get full k)) m))
                 (array-map)
-                static-context-keys)]
+                (concat static-context-keys (keys (extension-context view))))]
 
     (cond-> m
       (get-in m ["env" "host" "clock"])

@@ -1895,7 +1895,8 @@
             ((private-fn "patch-preview")
               [rel [{"from" (hashline/line-anchor 2 "beta") "replace" "BETA"}]])]
 
-        (expect (= {:path rel :before "alpha\nbeta\n" :after "alpha\nBETA\n"} preview))
+        (expect (= {:path rel :before "alpha\nbeta\n" :after "alpha\nBETA\n" :spans [[2 2]]}
+                   preview))
         (expect (= "alpha\nbeta\n" (slurp rel)))))
   (it "is nil for a call that the write would refuse"
       (let [rel
@@ -1917,8 +1918,104 @@
               (constantly :ok)
               [rel [{"from" (hashline/line-anchor 1 "alpha") "replace" "ALPHA"}]])]
 
-        (expect (= {:path rel :before "alpha\n" :after "ALPHA\n"}
+        (expect (= {:path rel :before "alpha\n" :after "ALPHA\n" :spans [[1 1]]}
                    ((get-in out [:env :op/preview]) (:args out)))))))
+
+(defdescribe
+  patch-repair-test
+  (it
+    "commits a repaired preview once and returns anchors for the repaired text"
+    (let [rel
+          (write-temp! "patch/repaired.clj" "(old)\n(keep)\n")
+
+          args
+          [rel [{"from" (hashline/line-anchor 1 "(old)") "replace" "(new"}]]
+
+          preview
+          ((private-fn "patch-preview") args)
+
+          repair-args
+          ((private-fn "repair-patch-args")
+            args
+            preview
+            {"source" "(new)\n(keep)\n" "notes" ["Added a closing parenthesis."]})
+
+          writes
+          (atom 0)
+
+          write-file
+          (private-fn "atomic-replace!")
+
+          result
+          (with-redefs-fn {#'editing/atomic-replace! (fn [& xs]
+                                                       (swap! writes inc)
+                                                       (apply write-file xs))}
+            #(apply (private-fn "patch-tool") repair-args))]
+
+      (expect (= 1 @writes))
+      (expect (= "(new)\n(keep)\n" (slurp rel)))
+      (expect (string/includes? (:result result) "Added a closing parenthesis."))
+      (expect (re-find #"\n\s+1\s+1\.\.2" (:result result)))
+      (expect (string/includes? (:result result) (hashline/line-anchor 1 "(new)")))
+      (expect (= "(old)\n(keep)\n" (get-in result [:metadata :file-befores 0 :before])))))
+  (it "refuses a repair if any source changed while the hook worked"
+      (let [rel
+            (write-temp! "patch/repair-race.clj" "(old)\n(keep)\n")
+
+            args
+            [rel [{"from" (hashline/line-anchor 1 "(old)") "replace" "(new"}]]
+
+            preview
+            ((private-fn "patch-preview") args)
+
+            repaired
+            ((private-fn "repair-patch-args")
+              args
+              preview
+              {"source" "(new)\n(keep)\n" "notes" ["Closed a form."]})]
+
+        (spit rel "(old)\n(concurrent)\n")
+        (expect (try (apply (private-fn "patch-tool") repaired)
+                     false
+                     (catch clojure.lang.ExceptionInfo e
+                       (= :source-changed (:reason (ex-data e))))))
+        (expect (= "(old)\n(concurrent)\n" (slurp rel)))))
+  (it
+    "gives later guards the repaired preview, without a write"
+    (let [rel
+          (write-temp! "patch/repair-preview.clj" "(a)\n")
+
+          args
+          [rel [{"from" (hashline/line-anchor 1 "(a)") "replace" "(b"}]]
+
+          out
+          ((:ext.symbol/before-fn (private-fn "patch-symbol"))
+            {:extensions (atom [])}
+            (constantly :ok)
+            args)
+
+          preview-fn
+          (get-in out [:env :op/preview])
+
+          repair-fn
+          (get-in out [:env :op/repair])
+
+          preview
+          (preview-fn args)
+
+          repaired
+          (repair-fn args preview {"source" "(b)\n" "notes" ["Closed a form."]})
+
+          second-preview
+          (preview-fn repaired)
+
+          repaired-again
+          (repair-fn repaired second-preview {"source" "(b)\n(c)\n" "notes" ["Added a form."]})]
+
+      (expect (= "(b)\n" (:after second-preview)))
+      (expect (= [[1 1]] (:spans second-preview)))
+      (expect (= "(b)\n(c)\n" (:after (preview-fn repaired-again))))
+      (expect (= "(a)\n" (slurp rel))))))
 
 (defdescribe
   grep-returns-anchored-text-test

@@ -1220,12 +1220,66 @@
            (tel/log! {:level :warn :id ::op-preview-failed :data {:op op-kw :error (ex-message t)}})
            nil))))
 
+(defn- run-repaired-op
+  "Pass a repair through the operation's contract and report the actual source."
+  [env op-kw args preview repair next-fn]
+  (try
+    (let [source
+          (get repair "source")
+
+          notes
+          (get repair "notes")
+
+          _
+          (when-not (and (string? source)
+                         (sequential? notes)
+                         (seq notes)
+                         (every? util/non-blank-string? notes))
+            (throw (ex-info "A repair needs source text and non-empty notes." {})))
+
+          repaired-args
+          (case op-kw
+            :patch
+            (if-let [transform (:op/repair env)]
+              (transform args preview repair)
+              (throw (ex-info "This patch has no repair contract." {})))
+
+            :python_execution
+            (if (and (= 1 (count args)) (map? (first args)) (string? (:code (first args))))
+              [(assoc (first args) :code source)]
+              (throw (ex-info "A Python repair needs one source block." {})))
+
+            (throw (ex-info "This operation does not accept a repair." {})))
+
+          result
+          (next-fn repaired-args)]
+
+      (if (and (= :python_execution op-kw) (map? (:result result)))
+        (update result
+                :result
+                (fn [out]
+                  (-> out
+                      (assoc :auto-repaired true)
+                      (update :repaired-source #(or % source))
+                      (update :repair-notes #(into (vec notes) %))
+                      (update :stdout
+                              #(str "Vis repaired this block before running it.\n" (str/join "\n"
+                                                                                             notes)
+                                    "\n" %)))))
+        result))
+    (catch Throwable t
+      (extension/failure {:result nil
+                          :error {:message (ex-message t)
+                                  :hint
+                                  "Read the source and correct the edit before retrying."}}))))
+
 (defn- guard-adapter
   "Python `phase='before'` hook -> a host :around op hook. The callable
    receives `{'op', 'args'}`, plus `'preview'` (`{'path', 'before', 'after'}`)
    when the op can show what it would write. Returning `vis.block(reason)`
    refuses the op with a failure envelope the model reads; its `hint`, when
-   given, replaces the advice to ask the user. Returning None allows it.
+   given, replaces the advice to ask the user. None allows it; `vis.repair`
+   submits source to the operation's repair contract before it runs.
    A hook error fails OPEN (op runs) — a broken guard must not brick the
    loop."
   [ext-name ctx pyfn]
@@ -1246,17 +1300,19 @@
                             :data {:extension ext-name :op op-kw :error (ex-message t)}})
                  nil))]
 
-      (if (and (map? res) (= "block" (get res "marker")))
-        (let [hint (get res "hint")]
-          (extension/failure
-            {:result nil
-             :error {:message (str (or (get res "reason") "Blocked by a Python extension hook"))
-                     :hint (if (util/non-blank-string? hint)
-                             (str hint " Blocked by the '" ext-name "' Python extension.")
-                             (str "Blocked by the '"
-                                  ext-name
-                                  "' Python extension. Ask the user before retrying."))}}))
-        (next-fn args)))))
+      (cond (and (map? res) (= "block" (get res "marker")))
+            (let [hint (get res "hint")]
+              (extension/failure
+                {:result nil
+                 :error {:message (str (or (get res "reason") "Blocked by a Python extension hook"))
+                         :hint (if (util/non-blank-string? hint)
+                                 (str hint " Blocked by the '" ext-name "' Python extension.")
+                                 (str "Blocked by the '"
+                                      ext-name
+                                      "' Python extension. Ask the user before retrying."))}}))
+            (and (map? res) (= "repair" (get res "marker")))
+            (run-repaired-op env op-kw args preview res next-fn)
+            :else (next-fn args)))))
 
 (defn- gate-adapter
   "Python hook on a GATE op -> a host `:gate` hook. The callable receives that
