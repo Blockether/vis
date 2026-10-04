@@ -48,7 +48,7 @@ describe('compatFromHealth', () => {
   it('refuses protocol 13 instead of silently losing its Activity', () => {
     const oldActivity = { ...activityFixture, omitted: 0 };
     expect(activityProjectionFromWire(oldActivity)).toBeNull();
-    expect(activityProjectionFromWire(activityFixture)).not.toBeNull();
+    expect(activityProjectionFromWire(activityFixture)).toEqual(activityFixture);
 
     const verdict = compatFromHealth({
       status: 'ok',
