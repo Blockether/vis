@@ -10,6 +10,7 @@ import {
   EDGE_EASING,
   EDGE_PARALLAX,
   EDGE_SETTLE_MS,
+  EDGE_STEP_WAIT_MS,
   EDGE_UNDER_DIM,
   EDGE_ZONE_PX,
   dismissTopLayer,
@@ -317,6 +318,50 @@ describe('the pop the stroke draws', () => {
 
     settle();
     expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  // Regression, user report (paraphrased: after a swipe back from a session to the list, the
+  // list flickers and reflows; seen on iOS). The shell takes that step as a history pop, which
+  // arrives a while after the call. Until it does, the session is still open, and the panes
+  // that were handed back their styles put the transcript over the list again.
+  it('holds the transcript off the glass until the session has closed', () => {
+    const onBack = vi.fn();
+    const { getByTestId, rerender } = render(<OpenSession onBack={onBack} />);
+    const pane = getByTestId('pane');
+    const list = getByTestId('list');
+
+    act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
+    settle();
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(xOf(pane)).toBe(window.innerWidth);
+    expect(xOf(list)).toBe(0);
+
+    rerender(<OpenSession onBack={onBack} enabled={false} />);
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(pane.style.transform).toBe('');
+    expect(list.style.transform).toBe('');
+  });
+
+  it('gives the transcript back when the step never comes', () => {
+    const onBack = vi.fn();
+    const { getByTestId } = render(<OpenSession onBack={onBack} />);
+    const pane = getByTestId('pane');
+
+    act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
+    settle();
+    act(() => {
+      vi.advanceTimersByTime(EDGE_STEP_WAIT_MS + 100);
+    });
+
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(pane.style.transform).toBe('');
   });
 
   it('carries the transcript home again when the stroke is taken back', () => {

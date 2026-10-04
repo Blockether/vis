@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderApp } from './app-harness';
 import { listSession } from './screens/sessions-screen-harness';
@@ -128,6 +128,45 @@ describe('swiping in from the edge of a transcript', () => {
     expect(list.contains(screen.getByText('Pull to search'))).toBe(false);
 
     act(() => fireTouch(pane, 'touchcancel', []));
+    view.unmount();
+  });
+
+  // Regression, user report (paraphrased: after a swipe back from a session to the list, the
+  // list flickers and reflows; seen on iOS). A session opened from the list is a history
+  // entry, so leaving it is a pop, and WebKit delivers the pop a round trip after the call.
+  // The stroke stood down at the lift, so until the pop arrived the app bar went away, the
+  // list was laid out again and the transcript came back over it.
+  it('keeps the list and the app bar on the glass until the pop arrives', async () => {
+    window.location.hash = '';
+    const view = renderApp({ machines: fleet() });
+    // Hold the pop the way WebKit does: it lands only when this test lets it.
+    const pop = history.back.bind(history);
+    const back = vi.spyOn(history, 'back').mockImplementation(() => {});
+    restore = () => {
+      back.mockRestore();
+      view.restore();
+    };
+    await screen.findByText('Alpha one');
+    fireEvent.click(screen.getByText('Alpha one'));
+    await screen.findByLabelText('Message Vis');
+    const main = view.baseElement.querySelector('main') as HTMLElement;
+    const list = main.firstElementChild as HTMLElement;
+    const pane = main.lastElementChild as HTMLElement;
+
+    swipe(pane, 6, EDGE_BACK_PX + 20);
+    await waitFor(() => expect(back).toHaveBeenCalledTimes(1));
+    // Frames go by before the pop.
+    await act(() => new Promise((done) => setTimeout(done, 50)));
+
+    expect(screen.getByLabelText('Vis')).toBeVisible();
+    expect(list.getAttribute('aria-hidden')).toBeNull();
+    expect(pane.style.transform).toBe(`translateX(${window.innerWidth}px)`);
+
+    act(() => pop());
+
+    await waitFor(() => expect(screen.queryByLabelText('Message Vis')).toBeNull());
+    expect(screen.getByLabelText('Vis')).toBeVisible();
+    await waitFor(() => expect(list.style.transform).toBe(''));
     view.unmount();
   });
 });

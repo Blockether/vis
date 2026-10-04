@@ -125,6 +125,14 @@ export const EDGE_EASING = 'cubic-bezier(0.32, 0.72, 0, 1)';
 /** The longest the rest of the way back ever takes, in ms. */
 export const EDGE_SETTLE_MS = 540;
 
+/**
+ * The longest a finished stroke waits for its step, in ms. The shell can take the
+ * step later than the call: to leave a session that the list opened, it pops
+ * history, and the pop arrives as a later event. If the step never comes, the
+ * transcript comes back.
+ */
+export const EDGE_STEP_WAIT_MS = 1000;
+
 /** How far behind the page being left the one underneath waits: a third of the width. */
 export const EDGE_PARALLAX = 0.33;
 
@@ -268,7 +276,10 @@ export interface EdgeBackPanes {
   readonly pane: (element: HTMLElement | null) => void;
   /** Put this on the pane it comes back TO — the list, mounted behind it all along. */
   readonly under: (element: HTMLElement | null) => void;
-  /** A stroke is in flight: the list and the app bar it returns to must be on the glass. */
+  /**
+   * A stroke is in flight or waits for its step: the list and the app bar it returns to
+   * must be on the glass.
+   */
   readonly isSwiping: boolean;
 }
 
@@ -355,7 +366,9 @@ export function isLayerUp(doc: Document = document): boolean {
  * `isSwiping` turns on at the FIRST MOVE, not at the touch: a tap that lands in
  * the edge strip must not make the shell re-render, and by the time the first
  * move has been drawn the pane still covers the whole glass, so the list and the
- * bar arriving behind it are invisible.
+ * bar arriving behind it are invisible. After a lift that leaves, it stays on until
+ * the step has been taken, so the shell does not show the session again on the way
+ * out.
  *
  * The listeners are passive and captured: passive because a gesture that only
  * WATCHES must never be able to delay the scroll it is watching, captured so a
@@ -396,7 +409,10 @@ export function useEdgeBack(
     let velocity = 0;
     let lastX = 0;
     let lastAt = 0;
-    let settling: number | null = null;
+    // The settle, and then the wait for the step.
+    let timer: number | null = null;
+    // A stroke that the finger let go of, until its panes get their styles back.
+    let landing: EdgeStage | null = null;
 
     const pointOf = (event: TouchEvent): EdgePoint | null => {
       const touch = event.touches[0];
@@ -419,11 +435,31 @@ export function useEdgeBack(
     };
 
     /**
+     * Give both panes back the inline styles they arrived with, and the shell its own
+     * layout. The styles go one frame after `isSwiping`, by which time the shell has
+     * drawn the screen that the stroke ends on, and nothing would flash.
+     */
+    const release = () => {
+      const closing = landing;
+      landing = null;
+      if (timer !== null) view?.clearTimeout(timer);
+      timer = null;
+      setSwiping(false);
+      if (!closing) return;
+      (view?.requestAnimationFrame ?? ((run: FrameRequestCallback) => run(0)))(() =>
+        edgeClose(closing),
+      );
+    };
+
+    /**
      * End the stroke: carry the panes the rest of the way, and only once they are
      * there take the step. Leaving is announced AFTER the slide so the transcript
-     * is gone from the glass before it is gone from the shell; the inline styles
-     * go one frame later still, by which time the list is back in the layout and
-     * nothing would flash.
+     * is gone from the glass before it is gone from the shell.
+     *
+     * The step can come later than the call. A session that the list opened is a
+     * history entry, so the shell leaves it by a pop, and the pop arrives as a later
+     * event. Until then the session is still open: the panes stay where the slide
+     * left them, and the step releases them when it closes this hook's door.
      */
     const finish = (completes: boolean, across: number) => {
       gesture = null;
@@ -433,23 +469,25 @@ export function useEdgeBack(
         if (completes) latest.current?.();
         return;
       }
+      landing = closing;
       const travelled = Math.max(0, Math.min(across, closing.width));
       const ms = edgeSettleMs(completes ? closing.width - travelled : travelled, velocity);
       edgeSettle(closing, completes, ms);
       const land = () => {
-        settling = null;
-        if (completes) latest.current?.();
-        setSwiping(false);
-        (view?.requestAnimationFrame ?? ((run: FrameRequestCallback) => run(0)))(() =>
-          edgeClose(closing),
-        );
+        timer = null;
+        if (!completes) {
+          release();
+          return;
+        }
+        latest.current?.();
+        if (landing) timer = view?.setTimeout(release, EDGE_STEP_WAIT_MS) ?? null;
       };
       if (ms <= 0) land();
-      else settling = view?.setTimeout(land, ms) ?? null;
+      else timer = view?.setTimeout(land, ms) ?? null;
     };
 
     const onStart = (event: Event) => {
-      if (settling !== null) return;
+      if (landing) return;
       const touchEvent = event as TouchEvent;
       const at = pointOf(touchEvent);
       const started = at
@@ -506,8 +544,9 @@ export function useEdgeBack(
       pane.removeEventListener('touchmove', onMove, true);
       pane.removeEventListener('touchend', onEnd, true);
       pane.removeEventListener('touchcancel', onCancel, true);
-      if (settling !== null) view?.clearTimeout(settling);
       if (stage) edgeClose(stage);
+      // The step was taken, or the pane went: give back what the stroke still holds.
+      if (landing) release();
     };
   }, [hasDoor, isLayer, pane]);
 
