@@ -2,6 +2,24 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.29 (7241) — 2026-10-04
+<!-- commit: 624ee3262bacc8b1b64265aec0f390f339622bab -->
+
+- Add a machine name setting and room actions
+- Put Council rooms inside the Council group
+- Retain search test observer visibility
+- Assert the complete compatibility projection
+- Publish session lists before NEW answers warm
+- Justify Council requests with Justice
+- Remove doubled project header borders
+- Reject incompatible Activity protocol peers
+- Persist hiding of unavailable gateways
+- Hide empty mobile search previews
+- Receive webhooks on the gateway, not the relay
+- Hide zero activity counters
+- Keep project rename chevron and folder panel visible
+- Record companion build 7207
+
 ## 0.2.29 (7207) — 2026-10-04
 <!-- commit: 0b3d4e012ba3f0b9adbe7105088eca874308a42f -->
 
