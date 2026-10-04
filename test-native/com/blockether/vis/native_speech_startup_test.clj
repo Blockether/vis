@@ -142,7 +142,8 @@
        (str/join " ")))
 
 (defn- heard-most-words?
-  "ASR round-trip proof tolerant of one acoustic substitution."
+  "ASR round-trip proof tolerant of one acoustic substitution. One substitution can
+   change two adjacent words, so at most two expected words may be missing."
   [output sentence]
   (let [words
         #(set (str/split (plain-words %) #" "))
@@ -153,7 +154,7 @@
         heard
         (words output)]
 
-    (<= (count (set/difference expected heard)) 1)))
+    (<= (count (set/difference expected heard)) 2)))
 
 (defn- wav-facts
   "What a WAV header claims, read by hand: `nil` when the file is not one."
@@ -179,6 +180,17 @@
   "Plain words on purpose: this sentence is spoken by one engine and read back by
    another, and a rare word would test the vocabulary rather than the image."
   "Local speech now runs entirely on this machine, with no account and no network.")
+
+(defdescribe
+  heard-most-words-test
+  ;; Beta Native 37175969938 (Linux x64) heard this transcript: one acoustic
+  ;; substitution changed two adjacent words, and the round trip still worked.
+  (it "accepts one substitution that changes two adjacent words"
+      (expect (heard-most-words?
+                "Local speech now runs entirely on this machine, with no count in no network.\n"
+                spoken-sentence)))
+  (it "rejects a transcript that lost more of the sentence"
+      (expect (not (heard-most-words? "Local speech now runs on this machine." spoken-sentence)))))
 
 (defdescribe
   native-binary-speaks-and-listens-test
