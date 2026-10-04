@@ -131,30 +131,70 @@
                       (expect (= "still running" (out later)))))))
 
 (defdescribe
-  extension-owned-repair-test
-  "Language hooks own repairs. The host executes the supplied source without changing it."
-  (it "does not repair malformed source when no language hook runs"
-      (doseq [source
-              ["xs = [1, 2\nprint(len(xs))" "summary = \"First line.\nSecond line\"\nprint(summary)"
-               "print(\"He said \"hi\" to me\")" "raise ValueError(\"boom\"" "x = (1 + 2\ny = 3 3"]]
-        (let [result (ep/run-python-block (py-ctx) source)]
-          (expect (= :python/syntax (get-in result [:error :data :phase])))
-          (expect (nil? (:stdout result)))
-          (expect (nil? (:auto-repaired result)))
-          (expect (nil? (:repaired-source result)))))))
-
-(defdescribe
-  python-execution-diagnosis-test
-  "Python refuses a malformed block before it runs. With or without a language hook,
-   the host error names the first wrong quote, bracket or escape and shows its line."
-  (it "names the delimiter that is never closed"
+  auto-repair-test
+  "A block Python refuses for unbalanced quotes or brackets runs repaired by
+   parinferish when the repair parses. Its output opens with a note naming the
+   parser error and every fix. A repair that cannot make the block parse leaves
+   it unrun, and the error names the delimiters that are wrong."
+  (it "closes a bracket, runs the repaired block and discloses the fix"
+      (let [r (ep/run-python-block (py-ctx) "xs = [1, 2\nprint(len(xs))")]
+        (expect (nil? (:error r)))
+        (expect (true? (:auto-repaired r)))
+        (expect (= "xs = [1, 2]\nprint(len(xs))" (:repaired-source r)))
+        (expect (= (str "Vis repaired this block before running it. Python refused it with "
+                        "SyntaxError: '[' was never closed\n"
+                        "  line 1: added ']' at column 11 to close '[' from line 1\n"
+                        "Output of the repaired block:\n" "2")
+                   (out r)))))
+  (it
+    "triple-quotes a string that continues onto the next line"
+    (let [r (ep/run-python-block (py-ctx) "summary = \"First line.\nSecond line\"\nprint(summary)")]
+      (expect (nil? (:error r)))
+      (expect (true? (:auto-repaired r)))
+      (expect (str/ends-with? (out r) "Output of the repaired block:\nFirst line.\nSecond line"))))
+  (it "escapes the quotes inside a string, runs the repaired block and discloses the fix"
+      (let [r (ep/run-python-block (py-ctx) "print(\"He said \"hi\" to me\")")]
+        (expect (nil? (:error r)))
+        (expect (true? (:auto-repaired r)))
+        (expect (= "print(\"He said \\\"hi\\\" to me\")" (:repaired-source r)))
+        (expect (str/includes?
+                  (out r)
+                  "escaped the \" at columns 16 and 19 so the string keeps them as text"))
+        (expect (str/ends-with? (out r) "Output of the repaired block:\nHe said \"hi\" to me"))))
+  (it
+    "closes a path string that lost its closing quote before the code after it"
+    ;; The shape of a block a real session sent: the path lost its closing quote
+    ;; before `,[{'from'`, which flipped every later string on the line.
+    (let
+      [r
+       (ep/run-python-block
+         (py-ctx)
+         (str
+           "root = 'repo'\n"
+           "def patch(path, edits): return [path, edits[0]['from']]\n"
+           "print(patch(root + '/apps/x/JustifiedProse.test.tsx,[{'from':'130:5ae','to':'142:a6f'}]))"))]
+      (expect (nil? (:error r)))
+      (expect (true? (:auto-repaired r)))
+      (expect (str/includes? (out r) "line 3: added the missing closing ' at column 52"))
+      (expect
+        (str/ends-with?
+          (out r)
+          "Output of the repaired block:\n['repo/apps/x/JustifiedProse.test.tsx', '130:5ae']"))))
+  (it "discloses the repair when the repaired block raises"
+      (let [r (ep/run-python-block (py-ctx) "raise ValueError(\"boom\"")]
+        (expect (true? (:auto-repaired r)))
+        (expect (str/includes? (out r) "added ')'"))
+        (expect (not (str/includes? (out r) "Output of the repaired block")))
+        (expect (= :python/runtime (get-in r [:error :data :phase])))
+        (expect (str/includes? (get-in r [:error :message]) "ValueError: boom"))))
+  (it "names the delimiter it could not repair"
       (let [r (ep/run-python-block (py-ctx) "x = (1 + 2\ny = 3 3")]
         (expect (nil? (:auto-repaired r)))
         (expect (nil? (:stdout r)))
         (expect (= :python/syntax (get-in r [:error :data :phase])))
         (expect (= 1 (get-in r [:error :data :line])))
         (expect (true? (get-in r [:error :data :unbalanced-delimiters?])))
-        ;; The parser names only the line; the caret marks the '(' that is never closed.
+        ;; The parser names only the line; the caret marks the '(' the repair left open.
         (expect (= (str "SyntaxError: '(' was never closed\n"
                         "line 1, column 5: '(' is never closed\n\n"
                         "1: x = (1 + 2\n" "       ^")
@@ -162,7 +202,7 @@
   (it
     "names the first quote problem, not the brackets it flipped, and shows its line around it"
     ;; A path string that lost its closing quote flips every later string on the line.
-    ;; A language hook can repair it; `classify` only parses, so this checks the host error.
+    ;; Auto-repair now closes it; `classify` only parses, so this checks the refusal text.
     (let
       [error
        (classify
@@ -190,7 +230,10 @@
 
 (defdescribe
   no-false-repair-test
-  "Without a language hook, invalid Python fails and valid Python runs unchanged."
+  "Auto-repair changes only quotes, brackets and escapes. A block whose
+   delimiters balance but still does not parse — glued statements, a parroted
+   transcript tail — errors as a plain SyntaxError, and clean Python runs
+   untouched."
   (it "GLUED top-level forms ERROR as a SyntaxError (not repaired)"
       (let [r (ep/run-python-block (py-ctx) "len([1,2])abs(-3)")]
         (expect (not (contains? r :result)))

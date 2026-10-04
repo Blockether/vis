@@ -39,16 +39,14 @@ balance. For example:
 - A quote inside a string ends it too early.
 - A bracket is closed by the wrong character or not closed at all.
 
-The Python language extension can repair these errors before a block runs.
-It can also repair invalid escapes and literal braces in f-strings. Its repair engine and syntax
-checks run locally in Python. The repaired source must pass parsing and compilation before it runs.
-The output identifies each correction. Vis also records the source that actually ran.
+Literal braces in an f-string and a backslash escape that Python rejects stop a block in the same
+way. Vis repairs such a block with parinferish. It runs the repaired code only when Python can
+parse it. The output of the block then starts with a note that names the Python error and each
+fix. Vis also marks the block as repaired. The agent reads the same note, so it can check that the
+repaired code did what it meant.
 
-Without that extension, Vis runs the supplied source unchanged.
-
-If a block still does not parse, it does not run. The error shows Python's own message and the
-first wrong quote, bracket or escape. It also shows the line with that problem. This check belongs
-to `python_execution`, so it works with or without the extension.
+If the repair cannot make the block parse, the block does not run. The error shows Python's own
+message and the first wrong quote, bracket or escape. It also shows the line with that problem.
 
 ### File edits and formatting
 

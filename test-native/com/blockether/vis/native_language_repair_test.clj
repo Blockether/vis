@@ -12,7 +12,7 @@
 (defdescribe
   native-language-repair-test
   (it
-    "repairs blocks and file edits with published hooks and full reader validation"
+    "repairs blocks in the host and file edits with published hooks and full reader validation"
     (let
       [home
        (#'native/temp-dir "vis-native-language-repair-")
@@ -81,7 +81,7 @@
           "except Exception:\n" "    pass\n"
           "assert broken.read_text() == before\n"
           "print('Native file repair and reader validation verified')")
-        ;; The hook cannot repair this block, so the host diagnosis must name the cause.
+        ;; Parinferish cannot repair this block, so the host diagnosis must name the cause.
         "x = (1 + 2\ny = 3 3"]
 
        reply

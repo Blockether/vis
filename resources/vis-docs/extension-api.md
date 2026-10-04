@@ -788,8 +788,8 @@ vis.OpHook(ops, fn, phase="before")
 `ops` names operations such as `"patch"`, `"shell"` or `"python_execution"`.
 With `phase="before"`, `fn(call)` receives `{"op", "args"}`. Return `None` to
 allow the call or `vis.block(reason)` to refuse it. The model sees the reason
-as a tool failure. For supported operations, return `vis.repair(source, notes=[...])`
-to propose corrected source.
+as a tool failure. For `"patch"`, return `vis.repair(source, notes=[...])` to
+propose corrected source.
 
 With `phase="after"`, `fn` receives `{"op", "args", "result"}` and its return value
 is ignored. Ordinary tool-hook errors are logged and do not block the operation.
@@ -807,10 +807,11 @@ see the repaired preview. The result includes correction notes, the actual diff 
 fresh anchors. The hook must validate its candidate before returning it.
 
 `vis.repair` requires string source and a nonempty list or tuple of nonblank notes.
-Invalid repair markers fail without running the operation. Only `"patch"` and
-`"python_execution"` accept repairs. Give `vis.block(reason, hint=...)` a `hint` to
-tell the model what to do next. Without a hint, the failure tells the model to
-ask the user before a retry.
+Invalid repair markers fail without running the operation. Only `"patch"` accepts
+repairs. Vis repairs `"python_execution"` blocks itself with parinferish, so a block
+hook that returns `vis.repair` fails the block. Give `vis.block(reason, hint=...)` a
+`hint` to tell the model what to do next. Without a hint, the failure tells the model
+to ask the user before a retry.
 
 For `"python_execution"`, `args` is `[{"code": <Python source>}]`. The before
 hook runs before the block. The after hook runs when evaluation returns.

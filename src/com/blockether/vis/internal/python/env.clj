@@ -1603,6 +1603,21 @@
    Two retries is normal recovery; the third is a loop."
   3)
 
+(def ^:private listed-messages "Fixes a repair note lists before it counts the rest." 5)
+
+(defn- message-lines
+  "The `:message` of each of the first `items`, one indented line each, then a
+   count of the rest."
+  [items]
+  (let [shown
+        (take listed-messages items)
+
+        more
+        (- (count items) (count shown))]
+
+    (str (str/join (map #(str "  " (:message %) "\n") shown))
+         (when (pos? more) (str "  and " more " more\n")))))
+
 (def ^:private bracket-problems
   "Problem kinds about brackets alone. A misplaced quote moves brackets into and
    out of strings, so these usually follow from a quote problem elsewhere."
@@ -1955,6 +1970,36 @@
                    "one statement, and print() what you want back.")
      :data {:phase :python/empty-block :empty-block? true}}))
 
+(defn- repair-block
+  "The repair of `code` that the session's parser accepts, as `{:code :fixes}`,
+   or nil.
+
+   Only a block Python `refused` with a syntax error is repaired, and only its
+   quotes, brackets and escapes change: parinferish closes a string or bracket
+   left open, drops or swaps a stray closer, splits statements glued onto one
+   line, escapes quotes that end a string too early and doubles f-string braces
+   or backslashes Python rejects. The repaired source must still parse to at
+   least one statement."
+  [session code ^String refused]
+  (when (re-find #"^(?:vis-python:\s+)?(?:SyntaxError|IndentationError|TabError)\b" refused)
+    (let [{:keys [text changed? clean? fixes]}
+          (try (python-repair/repair (str code)
+                                     {:error-line (first (syntax-error-position refused))})
+               (catch Throwable _ nil))]
+      (when (and changed? clean? (pos? (long (:forms (parse-block session text) 0))))
+        {:code text :fixes fixes}))))
+
+(defn- repair-note
+  "What a repaired block's output opens with: the error Python refused the
+   written block with and the fixes that made it run, so the model can check the
+   result and write balanced code next time."
+  [^String refused fixes printed?]
+  (str "Vis repaired this block before running it. Python refused it with "
+       (parser-message (str/replace refused #"^vis-python:\s+" "") false)
+       "\n"
+       (message-lines fixes)
+       (when printed? "Output of the repaired block:\n")))
+
 (defn run-python-block
   "Run one Python `code` block in `session` as ONE whole-block coroutine,
    answering the FLAT sum-typed outcome:
@@ -1966,8 +2011,10 @@
    so `print()` is the only way anything comes back. Either outcome may carry
    `:attachments`, the artifacts the block produced.
 
-   Language extension hooks repair source before this function runs.
-   This function executes the supplied source without structural changes.
+   A block Python refuses for unbalanced quotes or brackets runs repaired when
+   the repair parses. That outcome also carries `:auto-repaired true` and the
+   `:repaired-source` that ran, and its `:stdout` opens with a note naming the
+   parser error and the fixes.
 
    The runtime AST-wraps the block in an `async def`, auto-settles every bare
    tool-call statement at every depth and drives it as a single coroutine.
@@ -1983,28 +2030,38 @@
   (let [parsed (parse-block session code)]
     (if-let [err (empty-block-error parsed)]
       (do (discard-block-stdout! session) {:forms [{:source code :error err}] :error err})
-      (let [sink (atom [])]
+      (let [sink (atom [])
+            repair (some->> (:refused parsed)
+                            (repair-block session code))
+            source (or (:code repair) code)]
+
         (with-bindings {#'extension/*current-form-idx* 0 #'mpl-capture/*attachment-sink* sink}
           ;; The doors run on the interpreter's own threads, so the bindings above
           ;; travel to them explicitly - see `python-host/conveying`.
-          (python-host/conveying session
-                                 (let [outcome (or (read-json (py-run-block session code)) {})
-                                       _ (discard-block-stdout! session)
-                                       out (not-empty (str/trim-newline (str (:stdout outcome))))
-                                       printed? (and out (not (str/blank? out)))
-                                       raised (:error outcome)
-                                       attachments (mpl-capture/drain sink)]
+          (python-host/conveying
+            session
+            (let [outcome (or (read-json (py-run-block session source)) {})
+                  _ (discard-block-stdout! session)
+                  out (not-empty (str/trim-newline (str (:stdout outcome))))
+                  printed? (and out (not (str/blank? out)))
+                  raised (:error outcome)
+                  attachments (mpl-capture/drain sink)]
 
-                                   (when-not raised (clear-block-failures! session))
-                                   (cond-> {}
-                                     printed?
-                                     (assoc :stdout (:stdout outcome))
+              (when-not raised (clear-block-failures! session))
+              (cond-> {}
+                (or printed? repair)
+                (assoc :stdout
+                  (str (when repair (repair-note (:refused parsed) (:fixes repair) printed?))
+                       (when printed? (:stdout outcome))))
 
-                                     raised
-                                     (assoc :error (map-python-error session raised code))
+                repair
+                (merge {:auto-repaired true :repaired-source source})
 
-                                     attachments
-                                     (assoc :attachments attachments)))))))))
+                raised
+                (assoc :error (map-python-error session raised source))
+
+                attachments
+                (assoc :attachments attachments)))))))))
 
 (defn system-var-sym? [sym] (contains? SYSTEM_VAR_NAMES sym))
 

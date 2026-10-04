@@ -2509,7 +2509,7 @@ vis.register_extension(vis.Extension(
 
 (defdescribe
   op-hook-repair-test
-  (it "rewrites Python source before execution and reports the actual source"
+  (it "passes a patch repair through the patch repair contract"
       (with-loaded {"repair_hook.py" repair-hook-py}
                    (fn [_ _]
                      (let [hook
@@ -2520,18 +2520,38 @@ vis.register_extension(vis.Extension(
 
                            result
                            ((:fn hook)
+                             {:op/repair (fn [args _ repair]
+                                           [(first args) (get repair "source")])}
+                             :patch
+                             ["a.py" "print(42"]
+                             (fn [args]
+                               (reset! seen args)
+                               :ran))]
+
+                       (expect (= ["a.py" "print(42)"] @seen))
+                       (expect (= :ran result))))))
+  (it "refuses a block repair because Vis repairs Python blocks itself"
+      (with-loaded {"repair_hook.py" repair-hook-py}
+                   (fn [_ _]
+                     (let [hook
+                           (first (:ext/op-hooks (registered "repair-hook")))
+
+                           ran
+                           (atom false)
+
+                           result
+                           ((:fn hook)
                              {}
                              :python_execution
                              [{:code "print(42"}]
-                             (fn [args]
-                               (reset! seen args)
-                               (extension/success {:result {:stdout "42\n"}})))]
+                             (fn [_]
+                               (reset! ran true)
+                               :ran))]
 
-                       (expect (= [{:code "print(42)"}] @seen))
-                       (expect (true? (get-in result [:result :auto-repaired])))
-                       (expect (= "print(42)" (get-in result [:result :repaired-source])))
-                       (expect (str/includes? (get-in result [:result :stdout])
-                                              "Closed the call."))))))
+                       (expect (false? @ran))
+                       (expect (extension/envelope-failure? result))
+                       (expect (str/includes? (get-in result [:error :message])
+                                              "does not accept a repair"))))))
   (it "rejects repairs for operations without a repair contract"
       (with-loaded {"repair_hook.py" repair-hook-py}
                    (fn [_ _]
@@ -2563,20 +2583,28 @@ vis.register_extension(vis.Extension(
                                          decision)}
                      (fn [_ _]
                        (let [hook (first (:ext/op-hooks (registered "repair-hook")))
+                             transformed (atom false)
                              ran (atom false)
                              result ((:fn hook)
-                                      {}
-                                      :python_execution
-                                      [{:code "print(42"}]
+                                      {:op/repair (fn [args _ _]
+                                                    (reset! transformed true)
+                                                    args)}
+                                      :patch
+                                      ["a.py" "print(42"]
                                       (fn [_]
                                         (reset! ran true)
                                         :ran))]
 
+                         (expect (false? @transformed))
                          (expect (false? @ran))
                          (expect (extension/envelope-failure? result)))))))
-  (it "reports a repair when the actual repaired block raises"
+  (it "repairs a block itself when a language hook only observes the block"
+      ;; Regression for Beta Native run 37197183840: a `python_execution` hook of a
+      ;; language extension must not replace the host parinferish repair.
       (with-fresh-loaded
-        {"repair_hook.py" (str/replace repair-hook-py "'print(42)'" "'raise ValueError(\"boom\")'")}
+        {"repair_hook.py" (str/replace repair-hook-py
+                                       "return vis.repair('print(42)', notes=['Closed the call.'])"
+                                       "return None")}
         (fn [_ {:keys [ext-dir store]}]
           (let [ext
                 (registered "repair-hook")
@@ -2599,8 +2627,8 @@ vis.register_extension(vis.Extension(
                    (expect (str/includes? (get-in result [:error :message]) "ValueError: boom"))
                    (expect (true? (:auto-repaired result)))
                    (expect (= "raise ValueError(\"boom\")" (:repaired-source result)))
-                   (expect (= ["Closed the call."] (:repair-notes result)))
-                   (expect (str/includes? (:stdout result) "Closed the call.")))
+                   (expect (str/includes? (:stdout result)
+                                          "Vis repaired this block before running it.")))
                  (finally (ep/dispose-python-context! ctx))))))))
 
 (def ^:private execution-hook-py
