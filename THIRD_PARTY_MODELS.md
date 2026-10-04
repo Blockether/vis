@@ -25,6 +25,7 @@ This file is generated from `resources/vis-models/manifest.edn` and
 | `gliner2.5-decide-1b` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
 | `gliner2.5-multi-decide` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
 | `decision2.0-eos-0.8b` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
+| `decision2.0-kai-0.6b` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
 
 ## `parakeet-tdt-0.6b-v3-int8`
 
@@ -276,6 +277,23 @@ Decision 2.0 Eos 0.8B by vLLM Semantic Router, Apache-2.0, fine-tuned from Decis
 - Downloaded from the shared Vis assets-pack release (verified by SHA-256):
   - inference: <https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-eos-0.8b-fp32.zip> (1763 MB, SHA-256 `0d6761151d36999def1ed27d6a345b23631ff5c4a53357cb9ca54fe723528afa`)
   - training: <https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-eos-0.8b-training.zip> (1525 MB, SHA-256 `40cf3908b994a7244a25654ac0eb32f940b9bb94b095130907516c7cfbe5173f`)
+- Training checkpoints are installed only when explicitly requested.
+- The vis-decisions extension supplies training dependencies.
+- Model scores do not authorize autonomous actions; evaluate the decision
+  head on held-out examples before relying on it.
+
+## `decision2.0-kai-0.6b`
+
+Decision model - Apache-2.0 - commercial use permitted - hosted by Vis.
+
+Decision 2.0 Kai 0.6B by vLLM Semantic Router, Apache-2.0, fine-tuned from Qwen3 0.6B Base. Full Qwen3 backbone and decision-head checkpoint, and FP32 ONNX export by Vis. Choice, score and yes/no decisions without an action head; not approved for autonomous actions.
+
+- Upstream: <https://huggingface.co/vllm-sr/Decision-2.0-Kai-0.6B/tree/cd49ea3813fd8ba0928a9a23ef6c9a0f2f0cd764>
+- Pinned revision: `cd49ea3813fd8ba0928a9a23ef6c9a0f2f0cd764`
+- Installs into: `~/.vis/models/decisions/decision2.0-kai-0.6b/cd49ea3813fd8ba0928a9a23ef6c9a0f2f0cd764/`
+- Downloaded from the shared Vis assets-pack release (verified by SHA-256):
+  - inference: <https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-kai-0.6b-fp32.zip> (1437 MB, SHA-256 `19f7222e7eb6d47f55eb220b611f3606a49ff2852c2cd89659937a08b53aa339`)
+  - training: <https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-kai-0.6b-training.zip> (1226 MB, SHA-256 `a243b0c4471866023d0758cb0145438d48e4caba6a0d346c3181b1e50c4116b4`)
 - Training checkpoints are installed only when explicitly requested.
 - The vis-decisions extension supplies training dependencies.
 - Model scores do not authorize autonomous actions; evaluate the decision

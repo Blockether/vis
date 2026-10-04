@@ -348,5 +348,45 @@
     "license": "Apache-2.0",
     "revision": "3594047d69f476f1d01cf84c593e213fc3a4dfe0",
     "source-url": "https://huggingface.co/vllm-sr/Decision-2.0-Eos-0.8B/tree/3594047d69f476f1d01cf84c593e213fc3a4dfe0"
+  },
+  {
+    "artifacts": {
+      "inference": {
+        "bytes": 1436529097,
+        "file": "decision2.0-kai-0.6b-fp32.zip",
+        "requires": [
+          "model.onnx",
+          "model.onnx.data",
+          "decision_config.json",
+          "tokenizer/tokenizer.json",
+          "tokenizer/tokenizer_config.json",
+          "PROVENANCE.json",
+          "LICENSE.txt"
+        ],
+        "sha256": "19f7222e7eb6d47f55eb220b611f3606a49ff2852c2cd89659937a08b53aa339",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-kai-0.6b-fp32.zip"
+      },
+      "training": {
+        "bytes": 1225605368,
+        "file": "decision2.0-kai-0.6b-training.zip",
+        "requires": [
+          "backbone/config.json",
+          "backbone/model.safetensors",
+          "decision_config.json",
+          "decision_head.safetensors",
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "PROVENANCE.json",
+          "LICENSE.txt"
+        ],
+        "sha256": "a243b0c4471866023d0758cb0145438d48e4caba6a0d346c3181b1e50c4116b4",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-kai-0.6b-training.zip"
+      }
+    },
+    "attribution": "Decision 2.0 Kai 0.6B by vLLM Semantic Router, Apache-2.0, fine-tuned from Qwen3 0.6B Base. Full Qwen3 backbone and decision-head checkpoint, and FP32 ONNX export by Vis. Choice, score and yes/no decisions without an action head; not approved for autonomous actions.",
+    "id": "decision2.0-kai-0.6b",
+    "license": "Apache-2.0",
+    "revision": "cd49ea3813fd8ba0928a9a23ef6c9a0f2f0cd764",
+    "source-url": "https://huggingface.co/vllm-sr/Decision-2.0-Kai-0.6B/tree/cd49ea3813fd8ba0928a9a23ef6c9a0f2f0cd764"
   }
 ]

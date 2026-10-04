@@ -32,7 +32,8 @@
    "gliner2.5-multi-decide" "boundary"})
 
 (def decision2-architectures
-  {"decision2.0-eos-0.8b" "qwen3.5-text-endpoints-global-query-shared-bilinear-mlp"})
+  {"decision2.0-eos-0.8b" "qwen3.5-text-endpoints-global-query-shared-bilinear-mlp"
+   "decision2.0-kai-0.6b" "qwen3-text-endpoints-global-query-shared-bilinear-mlp"})
 
 (defn inference-required
   "Files required by one explicitly named FP32 inference family."

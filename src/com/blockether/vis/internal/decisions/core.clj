@@ -806,9 +806,16 @@
 
     {:answers (into {} (map :answers) results) :logits (into {} (map :logits) results)}))
 
+(defn- score-logits
+  "Add the upstream offsets for this level count to Score logits. Other questions stay unchanged."
+  [score-bias {:keys [type options]} logits]
+  (if-let [offsets (when (= "score" type) (get score-bias (count options)))]
+    (mapv + logits offsets)
+    logits))
+
 (defn- run-decision2
   "Run each question alone: causal layers need no padding mask, and memory stays bounded."
-  [^OrtEnvironment environment ^OrtSession session items]
+  [^OrtEnvironment environment ^OrtSession session score-bias items]
   (into {}
         (map
           (fn [{:keys [id ids markers query options] :as item}]
@@ -837,7 +844,7 @@
                                (every? #(Double/isFinite (double %)) values))
                   (throw (ex-info "Decision 2.0 graph returned invalid option logits"
                                   {:type :decisions/invalid-bundle})))
-                [id (decision2-answer item values)]))))
+                [id (decision2-answer item (score-logits score-bias item values))]))))
         items))
 
 (def ^:private session-threads 4)
@@ -937,6 +944,36 @@
                          (try (.close session) (finally (.close tokenizer))))}))
            (catch Throwable e (.close tokenizer) (throw e))))))
 
+(defn- decision2-score-bias
+  "Read optional upstream Score offsets: each level count from 2 to 255 has that many finite numbers."
+  [value]
+  (when (some? value)
+    (when-not (and (map? value)
+                   (seq value)
+                   (every? (fn [[level offsets]]
+                             (let [n (and (string? level)
+                                          (re-matches #"[1-9][0-9]*" level)
+                                          (parse-long level))]
+                               (and n
+                                    (<= 2 (long n) 255)
+                                    (sequential? offsets)
+                                    (= (long n) (count offsets))
+                                    (every? #(and (number? %) (Double/isFinite (double %)))
+                                            offsets))))
+                           value))
+      (throw (ex-info "Decision 2.0 bundle has invalid Score offsets"
+                      {:type :decisions/invalid-bundle})))
+    (into {}
+          (map (fn [[level offsets]]
+                 [(parse-long level) (mapv double offsets)]))
+          value)))
+
+(defn- decision2-tokenizer
+  "Open the bundle tokenizer without DJL's default 512-token truncation, so the limit check sees all input."
+  ^HuggingFaceTokenizer [^File dir]
+  (HuggingFaceTokenizer/newInstance (.toPath (io/file dir "tokenizer/tokenizer.json"))
+                                    {"truncation" "false"}))
+
 (defn- open-decision2-model!
   [model ^File dir]
   (let [provenance
@@ -946,7 +983,10 @@
         (wire/parse-json (slurp (io/file dir "decision_config.json")))
 
         limit
-        (get provenance "max_input_tokens")]
+        (get provenance "max_input_tokens")
+
+        score-bias
+        (decision2-score-bias (get provenance "score_bias"))]
 
     (when-not (and (= "onnx" (get provenance "format"))
                    (= "fp32" (get provenance "precision"))
@@ -970,7 +1010,7 @@
           (OrtEnvironment/getEnvironment)
 
           ^HuggingFaceTokenizer tokenizer
-          (HuggingFaceTokenizer/newInstance (.toPath (io/file dir "tokenizer/tokenizer.json")))]
+          (decision2-tokenizer dir)]
 
       (try (with-open [^OrtSession$SessionOptions options
                        (doto (OrtSession$SessionOptions.) (.setIntraOpNumThreads session-threads))]
@@ -982,6 +1022,7 @@
                 :session session
                 :tokenizer tokenizer
                 :config {"max_input_tokens" (min (long limit) max-decision2-input-tokens)}
+                :score-bias score-bias
                 :close (fn []
                          (try (.close session) (finally (.close tokenizer))))}))
            (catch Throwable e (.close tokenizer) (throw e))))))
@@ -1008,7 +1049,7 @@
         key
         (weight-bytes dir)
         #(open-model! model dir)
-        (fn [{:keys [family environment session tokenizer special config]}]
+        (fn [{:keys [family environment session tokenizer special config score-bias]}]
           (let [input-names (case family
                               :gliner
                               #{"input_ids" "attention_mask" "label_indices"}
@@ -1042,7 +1083,7 @@
                             (:answers (run-gliner-batch environment session [item] special))
 
                             :decision2
-                            (run-decision2 environment session [item])
+                            (run-decision2 environment session score-bias [item])
 
                             (run-batch environment session [item] special config))
                   result (get answers "probe")
@@ -1131,7 +1172,7 @@
             (model-key model artifact dir)
             (weight-bytes dir)
             #(open-model! model dir)
-            (fn [{:keys [family environment session tokenizer special config]}]
+            (fn [{:keys [family environment session tokenizer special config score-bias]}]
               (let [items (mapv (case family
                                   :gliner
                                   #(gliner-sequence-item tokenizer config state %)
@@ -1146,7 +1187,7 @@
                               (:answers (run-gliner-batch environment session items special))
 
                               :decision2
-                              (run-decision2 environment session items)
+                              (run-decision2 environment session score-bias items)
 
                               (run-batch environment session items special config))]
 

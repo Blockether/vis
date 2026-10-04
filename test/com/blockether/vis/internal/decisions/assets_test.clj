@@ -179,30 +179,28 @@
                         "https://github.com/Blockether/vis/releases/download/assets-pack/")))
             (expect (seq (:requires artifact)))))))
   (it "publishes Decision 2.0 with external FP32 weights and a separate decision head"
-      (let [id
-            "decision2.0-eos-0.8b"
-
-            revision
-            "3594047d69f476f1d01cf84c593e213fc3a4dfe0"
-
-            model
-            (assets/entry id)]
-
-        (expect (= #{id} (set (keys assets/decision2-architectures))))
-        (expect (= revision (:revision model)))
-        (expect (= "Apache-2.0" (:license model)))
-        (expect (= (str "https://huggingface.co/vllm-sr/Decision-2.0-Eos-0.8B/tree/" revision)
-                   (:source-url model)))
-        (expect (= (assets/inference-required id) (:requires (assets/artifact model :inference))))
-        (expect (= #{"backbone/config.json" "backbone/model.safetensors" "decision_config.json"
-                     "decision_head.safetensors" "tokenizer.json" "tokenizer_config.json"
-                     "PROVENANCE.json" "LICENSE.txt"}
-                   (set (:requires (assets/artifact model :training)))))
-        (doseq [kind [:inference :training]]
-          (let [artifact (assets/artifact model kind)]
-            (expect (re-matches #"[0-9a-f]{64}" (:sha256 artifact)))
-            (expect (< 0 (:bytes artifact) 2000000000))
-            (expect (nil? (:parts artifact)))))))
+      (let [sources {"decision2.0-eos-0.8b" ["Decision-2.0-Eos-0.8B"
+                                             "3594047d69f476f1d01cf84c593e213fc3a4dfe0"]
+                     "decision2.0-kai-0.6b" ["Decision-2.0-Kai-0.6B"
+                                             "cd49ea3813fd8ba0928a9a23ef6c9a0f2f0cd764"]}]
+        (expect (= (set (keys sources)) (set (keys assets/decision2-architectures))))
+        (doseq [[id [repository revision]] sources]
+          (let [model (assets/entry id)]
+            (expect (= revision (:revision model)))
+            (expect (= "Apache-2.0" (:license model)))
+            (expect (= (str "https://huggingface.co/vllm-sr/" repository "/tree/" revision)
+                       (:source-url model)))
+            (expect (= (assets/inference-required id)
+                       (:requires (assets/artifact model :inference))))
+            (expect (= #{"backbone/config.json" "backbone/model.safetensors" "decision_config.json"
+                         "decision_head.safetensors" "tokenizer.json" "tokenizer_config.json"
+                         "PROVENANCE.json" "LICENSE.txt"}
+                       (set (:requires (assets/artifact model :training)))))
+            (doseq [kind [:inference :training]]
+              (let [artifact (assets/artifact model kind)]
+                (expect (re-matches #"[0-9a-f]{64}" (:sha256 artifact)))
+                (expect (< 0 (:bytes artifact) 2000000000))
+                (expect (nil? (:parts artifact)))))))))
   (it "splits every archive above the release asset limit into verified parts"
       (expect (seq (:parts (assets/artifact (assets/entry "gliner2.5-decide-1b") :training))))
       (expect (seq (:parts (assets/artifact (assets/entry "gliner2.5-decide-1b") :inference))))

@@ -345,6 +345,10 @@
               {"model_ref" "decision2.0-eos-0.8b"
                "revision" "3594047d69f476f1d01cf84c593e213fc3a4dfe0"
                "installed" false
+               "residency" "cold"}
+              {"model_ref" "decision2.0-kai-0.6b"
+               "revision" "cd49ea3813fd8ba0928a9a23ef6c9a0f2f0cd764"
+               "installed" false
                "residency" "cold"}]
              (decisions/models-status)))))))
 
@@ -662,86 +666,176 @@
                              [0.0 0.0 0.0])))))
 
 (defdescribe
+  decision2-score-offsets-shift-matching-score-logits
+  (let [score
+        (decision2-item
+          {"type" "score" "instructions" "Rate." "criteria" ["Missing" "Partial" "Complete"]})
+
+        choice
+        (decision2-item {"type" "choice" "instructions" "Pick." "criteria" ["a" "b" "c"]})
+
+        score-bias
+        {3 [1.0 0.0 -1.0]}]
+
+    (it "adds the offsets for the level count to Score logits before softmax"
+        (expect (= [1.0 0.0 -1.0] (#'decisions/score-logits score-bias score [0.0 0.0 0.0])))
+        (expect (= {"type" "score"
+                    "score" 0.4248
+                    "legend" {"0" "Missing" "1" "Partial" "2" "Complete"}
+                    "probabilities" {"0" 0.6652 "1" 0.2447 "2" 0.09}
+                    "confidence" 0.2423}
+                   (#'decisions/decision2-answer
+                    score
+                    (#'decisions/score-logits score-bias score [0.0 0.0 0.0])))))
+    (it "keeps other questions, other level counts and bundles without offsets unchanged"
+        (expect (= [0.0 0.0 0.0] (#'decisions/score-logits score-bias choice [0.0 0.0 0.0])))
+        (expect (= [0.0 0.0 0.0] (#'decisions/score-logits {2 [1.0 1.0]} score [0.0 0.0 0.0])))
+        (expect (= [0.0 0.0 0.0] (#'decisions/score-logits nil score [0.0 0.0 0.0]))))
+    (it "reads bundle offsets by level count and rejects malformed offsets"
+        (expect (nil? (#'decisions/decision2-score-bias nil)))
+        (expect (= {5 [0.039188 0.203049 0.079362 -0.15162 -0.169979]}
+                   (#'decisions/decision2-score-bias
+                    {"5" [0.039188 0.203049 0.079362 -0.15162 -0.169979]})))
+        (doseq [value [{} [] {"1" [0.0]} {"05" (vec (repeat 5 0.0))} {"256" (vec (repeat 256 0.0))}
+                       {"3" [0.0 0.0]} {"2" [0.0 "x"]} {"2" [0.0 ##NaN]} {5 (vec (repeat 5 0.0))}]]
+          (expect (= :decisions/invalid-bundle
+                     (error-type #(#'decisions/decision2-score-bias value))))))))
+
+(defdescribe
+  decision2-tokenizer-keeps-every-input-token
+  ;; DJL truncates to 512 tokens by default, so long Decision 2.0 input skipped the limit check.
+  (it "keeps input above 512 tokens for the limit check"
+      (let [dir
+            (io/file (System/getProperty "java.io.tmpdir")
+                     (str "vis-decision2-tokenizer-" (random-uuid)))
+
+            path
+            (io/file dir "tokenizer" "tokenizer.json")]
+
+        (try
+          (io/make-parents path)
+          (spit path
+                (wire/json-str
+                  {"version" "1.0"
+                   "truncation" nil
+                   "padding" nil
+                   "added_tokens" []
+                   "normalizer" nil
+                   "pre_tokenizer" {"type" "Whitespace"}
+                   "post_processor" nil
+                   "decoder" nil
+                   "model" {"type" "WordLevel" "vocab" {"word" 0 "[UNK]" 1} "unk_token" "[UNK]"}}))
+          (with-open [^HuggingFaceTokenizer tokenizer (#'decisions/decision2-tokenizer dir)]
+            (expect
+              (= 600
+                 (count (#'decisions/raw-token-ids tokenizer (str/join " " (repeat 600 "word")))))))
+          (finally (files/delete-dir! dir))))))
+
+(defdescribe
   decision2-fp32-bundle-matches-upstream-reference
-  ;; Expected token hashes and probabilities come from the upstream Decision 2.0 runtime at
-  ;; Hugging Face revision 3594047d69f476f1d01cf84c593e213fc3a4dfe0.
+  ;; Expected token hashes and probabilities come from the upstream Decision 2.0 runtime at the
+  ;; pinned Hugging Face revision of each model. The Kai five-level case checks its Score offsets.
   ;; Supply -Dvis.test.decision2.fp32.dir=<complete local inference dir>.
   (it
     "tokenizes like upstream and returns its probabilities through the public request path"
     (when-let [dir (System/getProperty "vis.test.decision2.fp32.dir")]
-      (let [model-id "decision2.0-eos-0.8b"
-            provenance (wire/parse-json (slurp (io/file dir "PROVENANCE.json")))
+      (let [provenance (wire/parse-json (slurp (io/file dir "PROVENANCE.json")))
+            model-id (get provenance "model")
             model {:id model-id
                    :revision (get provenance "revision")
                    :artifacts {:inference {:sha256 (apply str (repeat 64 "a"))
                                            :requires (assets/inference-required model-id)}}}
-            cases [["Customer: my parcel arrived broken, I want my money back."
-                    {"type" "choice"
-                     "instructions" "Pick the support queue for this message."
-                     "criteria" (array-map "refund" "Refunds and returns"
-                                           "shipping" "Delivery status questions"
-                                           "other" nil)}
-                    "cc272dab1367e391edfe4878392f2adc8f8d3fb3823123201b4959ce8f480ee7" [55 74 91]
-                    {"refund" 0.9886 "shipping" 0.0045 "other" 0.0069}]
-                   [(array-map "transfer" "pending" "requested_by" "account owner")
-                    {"type" "noul" "instructions" "Did the account owner request this transfer?"}
+            parcel "Customer: my parcel arrived broken, I want my money back."
+            queue {"type" "choice"
+                   "instructions" "Pick the support queue for this message."
+                   "criteria" (array-map "refund" "Refunds and returns"
+                                         "shipping" "Delivery status questions"
+                                         "other" nil)}
+            transfer (array-map "transfer" "pending" "requested_by" "account owner")
+            requested {"type" "noul" "instructions" "Did the account owner request this transfer?"}
+            steps "The answer is correct but leaves out one of the three steps."
+            completeness (fn [criteria]
+                           {"type" "score"
+                            "instructions" "Rate the completeness of the answer."
+                            "criteria" criteria})
+            cases
+            (get {"decision2.0-eos-0.8b"
+                  [[parcel queue "cc272dab1367e391edfe4878392f2adc8f8d3fb3823123201b4959ce8f480ee7"
+                    [55 74 91] {"refund" 0.9886 "shipping" 0.0045 "other" 0.0069}]
+                   [transfer requested
                     "74d79f0e33121d94f7995d8ad8022c528b56c8a356221de9ad4248e94acd9895" [51 68]
                     {"true" 0.9708}]
-                   ["The answer is correct but leaves out one of the three steps."
-                    {"type" "score"
-                     "instructions" "Rate the completeness of the answer."
-                     "criteria" ["Missing" "Partial" "Complete"]}
+                   [steps (completeness ["Missing" "Partial" "Complete"])
                     "360c6dd46a633e7412142bbecce161f5b193c2579d3079d97df72f168cfcd3aa" [51 68 85]
                     {"0" 0.2933 "1" 0.7019 "2" 0.0049}]]
+                  "decision2.0-kai-0.6b"
+                  [[parcel queue "a83ed9cae158b1b0a48ca384cf337580d6e91cac4e45457610968a86a1dc97d7"
+                    [49 66 81] {"refund" 0.8997 "shipping" 0.0558 "other" 0.0445}]
+                   [transfer requested
+                    "5b5bbe9f615d8109e706b6e153942bd3939440c8078cd463eb8acf117b596b9a" [45 60]
+                    {"true" 0.6555}]
+                   [steps (completeness ["Missing" "Partial" "Complete"])
+                    "9030832c4698e3f6863510a236aa39c27ed9728225e0d6f911c5c03cf17b6bd5" [45 60 75]
+                    {"0" 0.6674 "1" 0.2783 "2" 0.0543}]
+                   [steps (completeness ["Missing" "Poor" "Partial" "Good" "Complete"])
+                    "7ba664482028e7c063b772f125043d3306e8a08701e0165e907bba127bc5931a"
+                    [45 60 75 90 105] {"0" 0.6264 "1" 0.0728 "2" 0.2128 "3" 0.0556 "4" 0.0323}]]}
+                 model-id)
             close? #(< (Math/abs (- (double %1) (double %2))) 0.001)]
 
-        (try (decisions/validate-runtime! model (io/file dir))
-             (with-open [^HuggingFaceTokenizer tokenizer
-                         (HuggingFaceTokenizer/newInstance
-                           (.toPath ^File (io/file dir "tokenizer/tokenizer.json")))]
-               (with-redefs [assets/manifest (constantly [model])
-                             assets/install-dir (fn [& _]
-                                                  dir)
-                             assets/installed? (fn [& _]
-                                                 true)]
+        (expect (seq cases))
+        (try
+          (decisions/validate-runtime! model (io/file dir))
+          (with-open [^HuggingFaceTokenizer tokenizer (#'decisions/decision2-tokenizer
+                                                       (io/file dir))]
+            (with-redefs [assets/manifest (constantly [model])
+                          assets/install-dir (fn [& _]
+                                               dir)
+                          assets/installed? (fn [& _]
+                                              true)]
 
-                 (doseq [[state definition token-sha markers expected] cases]
-                   (let [item (#'decisions/decision2-sequence-item
-                               tokenizer
-                               {"max_input_tokens" 4096}
-                               state
-                               (decision2-item definition))
-                         result (decisions/infer!
-                                  {"model" model-id "state" state "questions" {"q" definition}})
-                         answer (get-in result ["answers" "q"])]
+              (doseq [[state definition token-sha markers expected] cases]
+                (let [item (#'decisions/decision2-sequence-item
+                            tokenizer
+                            {"max_input_tokens" 4096}
+                            state
+                            (decision2-item definition))
+                      result (decisions/infer!
+                               {"model" model-id "state" state "questions" {"q" definition}})
+                      answer (get-in result ["answers" "q"])]
 
-                     (expect (= token-sha
-                                (util/bytes->hex (.digest ^MessageDigest (util/sha256-digest)
-                                                          (.getBytes (#'decisions/canonical-json
-                                                                      (:ids item))
-                                                                     "UTF-8")))))
-                     (expect (= markers (:markers item)))
-                     (expect (= model-id (get result "model")))
-                     (expect (= (count (:ids item)) (get-in result ["usage" "input_tokens"])))
-                     (case (get definition "type")
-                       "noul"
-                       (expect (close? (get expected "true") (get answer "noul")))
+                  (expect (= token-sha
+                             (util/bytes->hex (.digest ^MessageDigest (util/sha256-digest)
+                                                       (.getBytes (#'decisions/canonical-json
+                                                                   (:ids item))
+                                                                  "UTF-8")))))
+                  (expect (= markers (:markers item)))
+                  (expect (= model-id (get result "model")))
+                  (expect (= (count (:ids item)) (get-in result ["usage" "input_tokens"])))
+                  (case (get definition "type")
+                    "noul"
+                    (expect (close? (get expected "true") (get answer "noul")))
 
-                       "choice"
-                       (expect (= (key (apply max-key val expected)) (get answer "choice")))
+                    "choice"
+                    (expect (= (key (apply max-key val expected)) (get answer "choice")))
 
-                       "score"
-                       (expect (close? (reduce +
-                                               (map (fn [[label probability]]
-                                                      (* (parse-long label) probability))
-                                                    expected))
-                                       (get answer "score"))))
-                     (when-not (= "noul" (get definition "type"))
-                       (expect (every? (fn [[label probability]]
-                                         (close? probability
-                                                 (get-in answer ["probabilities" label])))
-                                       expected)))))))
-             (finally (cache/release-idle!)))))))
+                    "score"
+                    (expect (close? (reduce +
+                                            (map (fn [[label probability]]
+                                                   (* (parse-long label) probability))
+                                                 expected))
+                                    (get answer "score"))))
+                  (when-not (= "noul" (get definition "type"))
+                    (expect (every? (fn [[label probability]]
+                                      (close? probability (get-in answer ["probabilities" label])))
+                                    expected)))))
+              ;; The request path rejects long input instead of truncating it.
+              (expect (= :decisions/input-too-long
+                         (error-type #(decisions/infer! {"model" model-id
+                                                         "state" (str/join " "
+                                                                           (repeat 3000 "parcel"))
+                                                         "questions" {"q" requested}}))))))
+          (finally (cache/release-idle!)))))))
 
 (defdescribe
   decision2-fp32-archive-imports-warms-and-survives-cache-restart
@@ -767,24 +861,25 @@
                                 "refund" {"type" "noul"
                                           "instructions" "Does the customer ask for a refund?"})}]
 
-        (try
-          (with-redefs [assets/models-root (constantly (str root))]
-            (let [registered
-                  (registry/register! archive (sha256-file archive) decisions/validate-runtime!)
-                  ref (get registered "model_ref")]
+        (try (with-redefs [assets/models-root (constantly (str root))]
+               (let [registered
+                     (registry/register! archive (sha256-file archive) decisions/validate-runtime!)
+                     ref (get registered "model_ref")
+                     model-id (get-in (registry/resolve-model ref) [:model :id])]
 
-              (expect (= "decision2.0-eos-0.8b" (get-in (registry/resolve-model ref) [:model :id])))
-              (expect (= ref (get (registry/activate! alias ref nil) "model_ref")))
-              (expect (= ref (get (decisions/warm! alias) "model_ref")))
-              (let [answer (decisions/infer! request)]
-                (expect (= "decision2.0-eos-0.8b" (get answer "model")))
-                (expect (= alias (get-in answer ["routing" "model"])))
-                (expect (= "refund" (get-in answer ["answers" "queue" "choice"])))
-                (expect (<= 0.0 (double (get-in answer ["answers" "urgency" "score"])) 2.0))
-                (expect (< 0.5 (double (get-in answer ["answers" "refund" "noul"])))))
-              (cache/release-idle!)
-              (expect (= "cold"
-                         (get (some #(when (= ref (get % "model_ref")) %) (decisions/models-status))
-                              "residency")))
-              (expect (= ref (get-in (decisions/infer! request) ["routing" "model_ref"])))))
-          (finally (cache/release-idle!) (files/delete-dir! root)))))))
+                 (expect (contains? assets/decision2-architectures model-id))
+                 (expect (= ref (get (registry/activate! alias ref nil) "model_ref")))
+                 (expect (= ref (get (decisions/warm! alias) "model_ref")))
+                 (let [answer (decisions/infer! request)]
+                   (expect (= model-id (get answer "model")))
+                   (expect (= alias (get-in answer ["routing" "model"])))
+                   (expect (= "refund" (get-in answer ["answers" "queue" "choice"])))
+                   (expect (<= 0.0 (double (get-in answer ["answers" "urgency" "score"])) 2.0))
+                   (expect (< 0.5 (double (get-in answer ["answers" "refund" "noul"])))))
+                 (cache/release-idle!)
+                 (expect (= "cold"
+                            (get (some #(when (= ref (get % "model_ref")) %)
+                                       (decisions/models-status))
+                                 "residency")))
+                 (expect (= ref (get-in (decisions/infer! request) ["routing" "model_ref"])))))
+             (finally (cache/release-idle!) (files/delete-dir! root)))))))

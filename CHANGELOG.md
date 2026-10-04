@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   2,048 tokens, and it has no action head. The shared assets release has its FP32 ONNX
   bundle and its training checkpoint. Version 0.2.0 of the vis-decisions extension trains
   it and exports new bundles.
+- Vis supports the Decision 2.0 Kai 0.6B decision model from vLLM Semantic Router as
+  `decision2.0-kai-0.6b`. Like Eos, it makes choice, score and yes/no decisions on inputs
+  of up to 2,048 tokens, and it has no action head. Five-level score answers use the fixed
+  offsets from its publisher, as its upstream runtime does. The shared assets release has
+  its FP32 ONNX bundle and its training checkpoint. Version 0.3.0 of the vis-decisions
+  extension trains it and exports new bundles.
 
 ### Changed
 - Documentation is easier to find. `apropos()` also matches documentation pages
@@ -79,6 +85,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   Wider screens still show `mutations`, `observations` and `external actions`.
 
 ### Fixed
+- Decision 2.0 models now read the complete question. Before, the tokenizer cut the state,
+  the instructions and each option to 512 tokens, so a longer question got an answer from
+  incomplete text. A question above the 2,048-token limit now fails with `input-too-long`.
 - A GitHub workflow watch now follows a newer run that replaces the watched
   run and answers with that run's result. Before, the watch stopped with a
   superseded result, and the newer run had to be found and watched separately.

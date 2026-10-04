@@ -25,7 +25,7 @@ heads. Then decide when a human must review a result before you rely on it.
   computers have enough memory, evaluate the larger
   [GLiNER2.5 Decide 1B model](#choose-and-train-a-gliner2-5-model).
 - **The GLiNER2.5 models do not answer your questions well enough, and you need no action
-  score.** Evaluate the [Decision 2.0 model](#choose-and-train-decision-2-0) on your own labels.
+  score.** Evaluate the [Decision 2.0 models](#choose-and-train-decision-2-0) on your own labels.
 - **The baseline does not fit your data.** [Train with your own
   labels](#train-locally-with-the-python-sdk), then [publish a verified version and
   select it](#publish-explicitly-and-select-a-version).
@@ -154,7 +154,7 @@ To use training tools in Vis, add this [extension declaration](extension-package
 extensions:
   vis-decisions:
     source: https://github.com/Blockether/vis-decisions
-    version: "0.2.0"
+    version: "0.3.0"
 ```
 
 Then open a session in that project. For example, ask:
@@ -305,26 +305,40 @@ autonomous actions without representative, held-out validation.
 
 ### Choose and train Decision 2.0
 
-Decision 2.0 Eos 0.8B is a decision model from vLLM Semantic Router. It reads the state, the
-instructions and each option with its description. Then it selects one option. Its model ID is
-`decision2.0-eos-0.8b`. The FP32 bundle download is 1.76 GB, and the checkpoint download is 1.52 GB.
+Decision 2.0 has two decision models from vLLM Semantic Router. Each model reads the state, the
+instructions and each option with its description. Then it selects one option.
+
+| Model | Model ID | FP32 bundle download | Checkpoint download |
+| --- | --- | --- | --- |
+| Decision 2.0 Eos 0.8B | `decision2.0-eos-0.8b` | 1.76 GB | 1.52 GB |
+| Decision 2.0 Kai 0.6B | `decision2.0-kai-0.6b` | 1.44 GB | 1.23 GB |
+
+Evaluate both models on your own labels. Then choose the model that answers them better.
 
 Decision 2.0 answers `choice`, `score` and `noul` questions. It has no action head, so its answers
 have no `action` field. Use your own review rule to decide when a person checks a result. A
 `choice` question needs 2 to 64 options. A `score` question needs 2 to 10 levels.
 
-Check these resources before you choose it:
+Kai changes the level probabilities of five-level `score` questions with fixed offsets from its
+publisher, as its upstream runtime does. The offsets fit only the published weights. A version
+that you train or export from the Kai checkpoint does not use them.
 
-- While the model is loaded, the gateway reserves 4,312 MB of memory. The default
-  `VIS_DECISION_MEMORY_BUDGET_MB` of 8,192 MB is enough for this model alone.
-- On an Apple M4 Max with 4 CPU threads, a question at the 2,048-token limit took about 6 seconds.
+Check these resources before you choose a model:
+
+- While a model is loaded, the gateway reserves 4,312 MB of memory for Eos and 4,096 MB for Kai.
+  The default `VIS_DECISION_MEMORY_BUDGET_MB` of 8,192 MB is enough for one of these models. To
+  keep both models loaded at the same time, set it to at least 8,408 MB.
+- On an Apple M4 Max with 4 CPU threads, a question near the 2,048-token limit took about
+  2.5 seconds with Eos. With Kai, it took about 3 seconds. The first question also waits about
+  1.3 seconds while the model loads.
 - Allow at least 15 GB of free disk for the checkpoint, a trained version and its upload archive.
 
-Download the FP32 bundle for the gateway. For training, also download the complete checkpoint:
+Download the FP32 bundle for the gateway. For training, also download the complete checkpoint.
+These commands download Kai. For Eos, use the model ID `decision2.0-eos-0.8b`:
 
 ```bash
-vis-agent decisions models download --model decision2.0-eos-0.8b
-vis-agent decisions models download --model decision2.0-eos-0.8b --training
+vis-agent decisions models download --model decision2.0-kai-0.6b
+vis-agent decisions models download --model decision2.0-kai-0.6b --training
 ```
 
 Training uses the same JSONL rows as GLiNER2.5. The `action` field is optional and not used. For a
