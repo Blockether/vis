@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contract.blockether.com/vis/schema/automations.json",
   "$ref": "#/$defs/automation",
-  "$comment": "Automations start turns from schedules, manual runs and signed webhooks. All times are Unix milliseconds. The gateway shows a secret only once, when it creates or rotates the secret. The relay inbox stores webhook requests for a gateway without a public address until the gateway acknowledges them. The server checks UTF-8 budgets, cron syntax and time zones separately.",
+  "$comment": "Automations start turns from schedules, manual runs and signed webhooks. All times are Unix milliseconds. The gateway shows a secret only once, when it creates or rotates the secret. The server checks UTF-8 budgets, cron syntax and time zones separately.",
   "x-vis-limits": {
     "automations": 256,
     "triggers": 8,
@@ -16,13 +16,7 @@
     "webhook_skew_seconds": 300,
     "webhook_value_bytes": 4000,
     "callback_attempts": 6,
-    "callback_timeout_ms": 10000,
-    "relay_pending_requests": 100,
-    "relay_pending_bytes": 8388608,
-    "relay_page_requests": 20,
-    "relay_page_bytes": 4194304,
-    "relay_request_ttl_seconds": 604800,
-    "relay_inbox_idle_seconds": 2592000
+    "callback_timeout_ms": 10000
   },
   "$defs": {
     "automation_id": {
@@ -468,19 +462,13 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256
-        },
-        "url": {
-          "type": "string",
-          "format": "uri",
-          "minLength": 1,
-          "maxLength": 2048
         }
       },
       "required": [
         "path"
       ],
       "additionalProperties": false,
-      "description": "Where webhook POSTs for this automation arrive. path is on the gateway. url is the public relay address and is present when the relay inbox is ready."
+      "description": "The gateway path that receives webhook POSTs for this automation."
     },
     "run_trigger_kind": {
       "enum": [
@@ -875,158 +863,6 @@
         "reason"
       ],
       "additionalProperties": false
-    },
-    "relay_inbox_id": {
-      "type": "string",
-      "pattern": "^[A-Za-z0-9_-]{22}$",
-      "description": "A relay inbox. It is part of the public relay address."
-    },
-    "relay_request_id": {
-      "type": "string",
-      "pattern": "^[A-Za-z0-9_-]{22}$"
-    },
-    "relay_header_name": {
-      "enum": [
-        "content-type",
-        "user-agent",
-        "authorization",
-        "x-hub-signature-256",
-        "x-github-event",
-        "x-github-delivery",
-        "webhook-id",
-        "webhook-timestamp",
-        "webhook-signature",
-        "x-webhook-timestamp",
-        "x-webhook-signature-v2",
-        "x-webhook-event",
-        "x-webhook-token",
-        "x-gitlab-token",
-        "x-gitlab-event",
-        "x-gitlab-event-uuid",
-        "idempotency-key",
-        "x-request-id"
-      ],
-      "description": "The request headers that the relay keeps. The relay drops all other headers."
-    },
-    "relay_inbox": {
-      "type": "object",
-      "properties": {
-        "inbox_id": {
-          "$ref": "#/$defs/relay_inbox_id"
-        },
-        "token": {
-          "type": "string",
-          "minLength": 32,
-          "maxLength": 128
-        }
-      },
-      "required": [
-        "inbox_id",
-        "token"
-      ],
-      "additionalProperties": false,
-      "description": "A new relay inbox. The relay shows the token only once and keeps only its SHA-256 digest."
-    },
-    "relay_request": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "$ref": "#/$defs/relay_request_id"
-        },
-        "automation_id": {
-          "$ref": "#/$defs/automation_id"
-        },
-        "received_at": {
-          "$ref": "#/$defs/timestamp"
-        },
-        "headers": {
-          "type": "object",
-          "propertyNames": {
-            "$ref": "#/$defs/relay_header_name"
-          },
-          "additionalProperties": {
-            "type": "string",
-            "maxLength": 8192
-          }
-        },
-        "body": {
-          "type": "string",
-          "contentEncoding": "base64",
-          "maxLength": 1398104
-        }
-      },
-      "required": [
-        "id",
-        "automation_id",
-        "received_at",
-        "headers",
-        "body"
-      ],
-      "additionalProperties": false,
-      "description": "One stored webhook request. body holds the raw request bytes in base64."
-    },
-    "relay_page": {
-      "type": "object",
-      "properties": {
-        "requests": {
-          "type": "array",
-          "maxItems": 20,
-          "items": {
-            "$ref": "#/$defs/relay_request"
-          }
-        }
-      },
-      "required": [
-        "requests"
-      ],
-      "additionalProperties": false,
-      "description": "The oldest unacknowledged requests of one inbox, oldest first."
-    },
-    "relay_ack_request": {
-      "type": "object",
-      "properties": {
-        "ids": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 20,
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/relay_request_id"
-          }
-        }
-      },
-      "required": [
-        "ids"
-      ],
-      "additionalProperties": false,
-      "description": "The stored requests that the gateway processed."
-    },
-    "relay_ack": {
-      "type": "object",
-      "properties": {
-        "acked": {
-          "type": "integer",
-          "minimum": 0
-        }
-      },
-      "required": [
-        "acked"
-      ],
-      "additionalProperties": false,
-      "description": "The number of stored requests that the relay deleted."
-    },
-    "relay_stored": {
-      "type": "object",
-      "properties": {
-        "status": {
-          "const": "stored"
-        }
-      },
-      "required": [
-        "status"
-      ],
-      "additionalProperties": false,
-      "description": "The relay stored the request for the gateway."
     }
   }
 }

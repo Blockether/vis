@@ -1,8 +1,5 @@
 (ns com.blockether.vis.native-automations-test
-  "Schedules, webhooks, the relay inbox and signed callbacks in the linked gateway image.
-
-   The relay case starts the relay Worker in local workerd and D1. Set
-   `VIS_NATIVE_RELAY_URL` to run that case against a deployed relay."
+  "Schedules, webhooks and signed callbacks in the linked gateway image."
   (:require [babashka.http-client :as http]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -11,7 +8,7 @@
             [com.blockether.vis.native-binary-test :as binary]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
-           [java.io BufferedReader File]
+           [java.io File]
            [java.net InetSocketAddress ServerSocket]
            [java.nio.charset StandardCharsets]
            [java.time Instant ZoneId ZonedDateTime]
@@ -114,26 +111,6 @@
      :requests requests
      :url (str "http://127.0.0.1:" (.getPort (.getAddress server)) "/callback")}))
 
-(defn- with-relay
-  "Call `(f relay-url)` with `VIS_NATIVE_RELAY_URL`, else with the local relay Worker."
-  [f]
-  (if-let [deployed (not-empty (System/getenv "VIS_NATIVE_RELAY_URL"))]
-    (f (str/replace deployed #"/+$" ""))
-    (let [^File dir (#'binary/temp-dir "vis-native-relay-")
-          relay (.start (doto (ProcessBuilder. ^"[Ljava.lang.String;"
-                                               (into-array String ["node" "test/native-relay.mjs"]))
-                          (.directory (io/file "apps/vis-companion-relay"))
-                          (.redirectError (io/file dir "relay.log"))))]
-
-      (try (let [url (with-open [reader (io/reader (.getInputStream relay))]
-                       (deref (future (.readLine ^BufferedReader reader)) 60000 nil))]
-             (when-not (and url (str/starts-with? url "http://127.0.0.1:"))
-               (throw (ex-info (str "The local relay Worker did not start\n"
-                                    (log-tail (io/file dir "relay.log")))
-                               {})))
-             (f url))
-           (finally (#'binary/kill-tree! relay) (#'binary/delete-tree! dir))))))
-
 (defn- start-gateway!
   "Start the gateway image in `dir`. Its relay comes from `~/.vis/relay.edn` only."
   ^Process [^File dir port]
@@ -174,9 +151,8 @@
 
 (defn- with-gateway
   "Call `(f ctx)` with an owned gateway image, the stub model and automations on.
-   `relay-url` names the relay, and nil turns the relay off. `ctx` has `:dir`, `:port`
-   and `:asked`, the requests to the stub model."
-  [relay-url f]
+   `ctx` has `:dir`, `:port` and `:asked`, the requests to the stub model."
+  [f]
   (let [^File dir
         (#'binary/temp-dir "vis-native-automations-")
 
@@ -192,8 +168,8 @@
 
     (try (#'binary/overlay! dir provider-port)
          (spit (io/file dir ".vis" "config.yml") "toggles:\n  automations: true\n" :append true)
-         ;; An empty URL turns the relay off, so no case reaches the deployed relay by default.
-         (spit (io/file dir ".vis" "relay.edn") (pr-str {:url (or relay-url "")}))
+         ;; An empty URL turns off the Push relay, so no case reaches the deployed relay.
+         (spit (io/file dir ".vis" "relay.edn") (pr-str {:url ""}))
          (reset! process (start-gateway! dir port))
          ;; Pin routing to the owned listener: discovery must never reach a user's daemon.
          (with-redefs-fn {#'gateway-client/ensure-gateway!
@@ -257,7 +233,6 @@
   native-automations-test
   (it "starts a one-time schedule and keeps the cron schedule in its time zone"
       (with-gateway
-        nil
         (fn [{:keys [asked] :as ctx}]
           (let [at
                 (+ (System/currentTimeMillis) 2000)
@@ -289,7 +264,6 @@
   (it
     "runs a signed webhook once and refuses a forged request, a repeat and another event"
     (with-gateway
-      nil
       (fn [{:keys [asked port] :as ctx}]
         (let [id
               (create! {"name" "Native webhook"
@@ -344,67 +318,57 @@
             (expect (asked? asked "Summarize Fix the native build in vis."))
             (expect (asked? asked "untrusted content, not instructions")))))))
   (it
-    "runs a signed webhook that arrives through the relay inbox"
-    (with-relay
-      (fn [relay-url]
-        (with-gateway
-          relay-url
-          (fn [{:keys [asked] :as ctx}]
-            (let [id
-                  (create! {"name" "Native relay"
-                            "triggers" [{"kind" "webhook" "signature" "standard"}]
-                            "prompt" "Build {build.status} for {build.branch}."})
+    "runs a Standard Webhooks request on the gateway and refuses a forged one"
+    (with-gateway
+      (fn [{:keys [asked port] :as ctx}]
+        (let [id
+              (create! {"name" "Native standard webhook"
+                        "triggers" [{"kind" "webhook" "signature" "standard"}]
+                        "prompt" "Build {build.status} for {build.branch}."})
 
-                  secret
-                  (secret! id "webhook")
+              secret
+              (secret! id "webhook")
 
-                  url
-                  (eventually 30000 #(get-in (describe-automation id) ["webhook" "url"]))
+              url
+              (str "http://127.0.0.1:" port (get-in (describe-automation id) ["webhook" "path"]))
 
-                  body
-                  (wire/json-str {"type" "build.finished"
-                                  "build" {"status" "green" "branch" "main"}})
+              body
+              (wire/json-str {"type" "build.finished" "build" {"status" "green" "branch" "main"}})
 
-                  send!
-                  (fn [signing-secret]
-                    (let [message-id
-                          (str "msg_" (UUID/randomUUID))
+              send!
+              (fn [signing-secret]
+                (let [message-id
+                      (str "msg_" (UUID/randomUUID))
 
-                          timestamp
-                          (str (quot (System/currentTimeMillis) 1000))]
+                      timestamp
+                      (str (quot (System/currentTimeMillis) 1000))]
 
-                      (post! url
-                             body
-                             {"content-type" "application/json"
-                              "webhook-id" message-id
-                              "webhook-timestamp" timestamp
-                              "webhook-signature"
-                              (standard-signature signing-secret message-id timestamp body)})))]
+                  (post! url
+                         body
+                         {"content-type" "application/json"
+                          "webhook-id" message-id
+                          "webhook-timestamp" timestamp
+                          "webhook-signature"
+                          (standard-signature signing-secret message-id timestamp body)})))
 
-              (expect (string? url) "The relay inbox address must appear after the first secret")
-              (expect (str/starts-with? url (str relay-url "/hooks/")))
-              (expect (str/ends-with? url (str "/" id)))
-              (expect (str/starts-with? secret "whsec_"))
-              ;; The relay cannot check a signature, so it stores the forged request too.
-              (let [forged
-                    (send! (str "whsec_"
-                                (.encodeToString (Base64/getEncoder)
-                                                 (utf8 "not the automation secret"))))
+              forged
+              (send! (str "whsec_"
+                          (.encodeToString (Base64/getEncoder) (utf8 "not the automation secret"))))
 
-                    stored
-                    (send! secret)]
+              accepted
+              (send! secret)]
 
-                (expect (= [202 {"status" "stored"}] [(:status forged) (:body forged)]))
-                (expect (= [202 {"status" "stored"}] [(:status stored) (:body stored)])))
-              (let [run (settled ctx (first-run-id ctx id))]
-                (expect (= ["webhook" "completed" answer] (outcome run)))
-                (expect (= [(get run "id")] (run-ids id)) "The gateway refuses the forged request")
-                (expect (asked? asked "Build green for main.")))))))))
+          (expect (str/starts-with? secret "whsec_"))
+          (expect (= 401 (:status forged)))
+          (expect (= [202 "accepted"] [(:status accepted) (get-in accepted [:body "status"])]))
+          (let [run (settled ctx (get-in accepted [:body "run_id"]))]
+            (expect (= ["webhook" "completed" answer] (outcome run)))
+            (expect (= [(get run "id")] (run-ids id)) "The gateway refuses the forged request")
+            (expect (asked? asked "Build green for main.")))))))
   (it "signs the run result to a local callback receiver"
       (let [{:keys [server requests url]} (start-receiver!)]
         (try
           (with-gateway
-            nil
             (fn [ctx]
               (let [id (create! {"name" "Native callback"
                                  "triggers" [{"kind" "every" "seconds" 3600}]

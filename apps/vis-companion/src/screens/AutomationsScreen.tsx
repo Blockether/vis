@@ -378,8 +378,7 @@ function AutomationDetail({
     });
   const replacing = confirm === 'webhook' || confirm === 'callback' ? confirm : null;
   const webhookUrl = automation.webhook
-    ? (automation.webhook.url ??
-      `${gatewayUrl?.replace(/\/+$/, '') ?? ''}${automation.webhook.path}`)
+    ? `${gatewayUrl?.replace(/\/+$/, '') ?? ''}${automation.webhook.path}`
     : null;
 
   return (

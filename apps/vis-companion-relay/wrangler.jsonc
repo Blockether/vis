@@ -1,6 +1,5 @@
 {
   // Push uses sealed grants. Council Rooms uses a separate D1 database.
-  // Webhook inboxes (src/hooks) use their own tables in the same database.
   // scripts/prepare-deploy.mjs adds its private binding for migrations and deployment.
   // Grants carry their contents sealed under RELAY_SEAL_KEY (src/seal.ts).
   // Abuse counters live in Cloudflare's rate limiting bindings at the edge.
@@ -32,16 +31,8 @@
     { "name": "PUSH_DEVICE_LIMIT", "namespace_id": "1003", "simple": { "limit": 20, "period": 60 } },
     // Rooms has separate counters. Presence refresh and inbox reads share these budgets.
     { "name": "ROOMS_ADDRESS_LIMIT", "namespace_id": "1004", "simple": { "limit": 2400, "period": 60 } },
-    { "name": "ROOMS_MACHINE_LIMIT", "namespace_id": "1005", "simple": { "limit": 1200, "period": 60 } },
-    // Webhook inboxes. Creating an inbox is public, so the address pays for it.
-    { "name": "HOOKS_CREATE_LIMIT", "namespace_id": "1006", "simple": { "limit": 5, "period": 60 } },
-    // Keyed by the inbox token digest: polls and acknowledgements of one gateway.
-    { "name": "HOOKS_INBOX_LIMIT", "namespace_id": "1007", "simple": { "limit": 240, "period": 60 } },
-    // Keyed by the inbox, not the sender: GitHub sends from shared addresses.
-    { "name": "HOOKS_SENDER_LIMIT", "namespace_id": "1008", "simple": { "limit": 120, "period": 60 } }
+    { "name": "ROOMS_MACHINE_LIMIT", "namespace_id": "1005", "simple": { "limit": 1200, "period": 60 } }
   ],
-  // The hourly cleanup of expired inbox requests and idle inboxes.
-  "triggers": { "crons": ["23 * * * *"] },
   // Public configuration only. Key material is a secret, never a var:
   //   wrangler secret put RELAY_SEAL_KEY / APNS_KEY_P8 / FCM_SERVICE_ACCOUNT
   "vars": {

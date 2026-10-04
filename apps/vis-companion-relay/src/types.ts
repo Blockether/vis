@@ -41,14 +41,6 @@ export interface Env {
   ROOMS_ADMIN_TOKEN?: string;
   ROOMS_ADDRESS_LIMIT?: RateLimit;
   ROOMS_MACHINE_LIMIT?: RateLimit;
-
-  /**
-   * Webhook inboxes share the Rooms database in their own tables. An inbox
-   * token opens only its own inbox.
-   */
-  HOOKS_CREATE_LIMIT?: RateLimit;
-  HOOKS_INBOX_LIMIT?: RateLimit;
-  HOOKS_SENDER_LIMIT?: RateLimit;
 }
 
 /** Everything non-deterministic, injected so a test can pin it. */

@@ -531,11 +531,9 @@
 
 (defn accept-webhook!
   "Check one webhook request and queue its run. `headers` have lower-case names
-   and `body` is the raw byte array. A request from the relay inbox also has
-   `received-at`, the time that the relay received it, and `relay-id`, which
-   deduplicates a request without a delivery header. Answers {:status … :body …}
-   or {:status … :error [code message]}."
-  [db automation-id {:keys [headers ^bytes body received-at relay-id]}]
+   and `body` is the raw byte array. Answers {:status … :body …} or
+   {:status … :error [code message]}."
+  [db automation-id {:keys [headers ^bytes body]}]
   (let [row
         (ps/db-automation-get db automation-id)
 
@@ -547,7 +545,7 @@
                 automation/webhook-trigger)
 
         at
-        (long (or received-at (util/now-ms)))]
+        (util/now-ms)]
 
     (cond (nil? trigger) {:status 404 :error [:not-found "This automation has no webhook"]}
           (nil? (:webhook_secret row))
@@ -585,11 +583,7 @@
                                 run (claim! db
                                             automation-id
                                             "webhook"
-                                            (str "webhook:"
-                                                 (or delivery
-                                                     (some->> relay-id
-                                                              (str "relay:"))
-                                                     (UUID/randomUUID)))
+                                            (str "webhook:" (or delivery (UUID/randomUUID)))
                                             {:request request})]
 
                             (if run

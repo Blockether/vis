@@ -13,11 +13,9 @@ import {
   sendApns,
 } from './apns';
 import { FCM_DEAD_REASONS, FCM_MAX_PAYLOAD_BYTES, fcmConfig, fcmPayload, sendFcm } from './fcm';
-import { readBytes, TOO_LARGE } from './body';
 import { sha256Hex } from './jwt';
 import { fitNotification } from './payload';
 import { seal, unseal } from './seal';
-import { cleanHooks, handleHooks } from './hooks';
 import { handleRooms } from './rooms';
 import type { Deps, Env, Notification, Platform } from './types';
 import { PLATFORMS } from './types';
@@ -121,6 +119,9 @@ function unsealed(): Response {
   );
 }
 
+/** A body big enough to cost CPU is refused before a single byte is parsed. */
+const TOO_LARGE = Symbol('too_large');
+
 function isOversized(request: Request, limit: number): boolean {
   const declared = Number.parseInt(request.headers.get('content-length') ?? '0', 10);
   return Number.isFinite(declared) && declared > limit;
@@ -130,12 +131,49 @@ function oversized(limit: number): Response {
   return fail(413, 'too_large', `a request body may not exceed ${limit} bytes`);
 }
 
+/**
+ * `content-length` is the cheap refusal, but a chunked body declares none, so
+ * the bytes are counted as they arrive and the stream is cancelled the instant
+ * the cap is passed. Buffering first and measuring after would let a single
+ * unauthenticated POST put Cloudflare's whole 100 MB body allowance into a
+ * 128 MB isolate, and take every other request sharing it down too.
+ *
+ * The cancel is deliberate: it stops the upload mid-flight, which is the whole
+ * point. `wrangler dev` wraps the worker in a body-draining middleware that
+ * then logs "Network connection lost" and can take the local server with it —
+ * a dev-only facade, absent from the deployed bundle (`deploy --dry-run
+ * --outdir` contains no drainer). Do not remove the cancel to quiet it.
+ */
 async function readJson(
   request: Request,
   limit: number,
 ): Promise<Record<string, unknown> | typeof TOO_LARGE | null> {
-  const bytes = await readBytes(request, limit);
-  if (bytes === null || bytes === TOO_LARGE) return bytes;
+  const stream = request.body;
+  if (!stream) return null;
+  const reader = stream.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel();
+        return TOO_LARGE;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return null;
+  }
+
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.byteLength;
+  }
   try {
     const parsed = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
     return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
@@ -361,11 +399,6 @@ async function route(request: Request, env: Env, deps: Deps): Promise<Response> 
     return handleRooms(request, env, deps, readJson);
   }
 
-  // A webhook body may be far bigger than the Push cap, so hooks sets its own.
-  if (path.startsWith('/hooks/') || path === '/v1/hooks' || path.startsWith('/v1/hooks/')) {
-    return handleHooks(request, env, deps, readJson);
-  }
-
   const limit = maxRequestBytes(env);
   if (isOversized(request, limit)) return oversized(limit);
 
@@ -397,9 +430,5 @@ export async function handle(
 export default {
   fetch(request: Request, env: Env): Promise<Response> {
     return handle(request, env, defaultDeps);
-  },
-  /** The cron trigger in `wrangler.jsonc` removes expired inbox requests. */
-  scheduled(controller: ScheduledController, env: Env): Promise<void> {
-    return cleanHooks(env, controller.scheduledTime);
   },
 };

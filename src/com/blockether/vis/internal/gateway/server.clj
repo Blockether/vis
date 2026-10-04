@@ -36,9 +36,7 @@
     [com.blockether.vis.internal.gateway.server.council :as council-api]
     [com.blockether.vis.internal.gateway.server.rooms :as rooms-api]
     [com.blockether.vis.internal.gateway.server.automations :as automations-api]
-    [com.blockether.vis.internal.automation.relay :as automation-relay]
     [com.blockether.vis.internal.automation.runner :as automation-runner]
-    [com.blockether.vis.internal.gateway.relay :as push-relay]
     [com.blockether.vis.internal.council.rooms :as rooms]
     [com.blockether.vis.internal.gateway.server.decisions :as decisions-api]
     [com.blockether.vis.internal.gateway.server.devices :as devices-api]
@@ -2098,11 +2096,7 @@
      (swap! instance/server-state assoc
        :stop-improve! (improve-review/start! db)
        :stop-rooms! (rooms/start! db)
-       :stop-automations! (automation-runner/start! db)
-       :stop-automation-relay! (automation-relay/start!
-                                 db
-                                 #(let [{:keys [url is-configured]} (push-relay/config)]
-                                    (when is-configured url))))
+       :stop-automations! (automation-runner/start! db))
      (when managed? (ensure-idle-reaper!))
      (tel/log! :info
                ["gateway: listening" (str host ":" port)
@@ -2136,10 +2130,8 @@
 (defn stop!
   "Stop the gateway server if running. Idempotent."
   []
-  (when-let [{:keys [^Server server db stop-improve! stop-rooms! stop-automations!
-                     stop-automation-relay!]}
+  (when-let [{:keys [^Server server db stop-improve! stop-rooms! stop-automations!]}
              @instance/server-state]
-    (when stop-automation-relay! (stop-automation-relay!))
     (when stop-automations! (stop-automations!))
     (when stop-rooms! (stop-rooms!))
     (when stop-improve! (stop-improve!))

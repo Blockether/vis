@@ -40,8 +40,7 @@ test("deployment adds private Rooms storage without changing Push configuration"
     assert.equal(config.d1_databases[0].database_id, databaseId);
     assert.ok(isAbsolute(config.main));
     assert.ok(isAbsolute(config.d1_databases[0].migrations_dir));
-    assert.equal(config.ratelimits.length, 8);
-    assert.deepEqual(config.triggers.crons, ["23 * * * *"]);
+    assert.equal(config.ratelimits.length, 5);
     assert.equal(JSON.stringify(config).includes("not-a-var"), false);
     if (process.platform !== "win32")
       assert.equal((await stat(path)).mode & 0o777, 0o600);
