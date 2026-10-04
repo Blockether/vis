@@ -29,11 +29,11 @@
 (defn- runs
   [request db _]
   {"runs" (automation/runs db
-                           {:automation-id (http/query-str request "automation_id")
-                            :statuses (some-> (http/query-str request "status")
-                                              vector)
-                            :session-id (http/query-str request "session_id")
-                            :limit (min 200 (max 1 (or (http/query-long request "limit") 50)))})})
+                           (automation/run-filter
+                             {"automation_id" (http/query-str request "automation_id")
+                              "status" (http/query-str request "status")
+                              "session_id" (http/query-str request "session_id")
+                              "limit" (http/query-long request "limit")}))})
 
 (defn- read-limited
   "The body bytes, or nil when the body is larger than `limit`."
@@ -61,8 +61,7 @@
 
 (def handlers
   {[:get "/v1/automations"] (respond (fn [_ db _]
-                                       {"automations" (automation/list-all db (util/now-ms))
-                                        "is_enabled" (runner/globally-enabled? db)}))
+                                       (runner/overview db (util/now-ms))))
    [:post "/v1/automations"] (respond (fn [request db _]
                                         (automation/create! db (json-body request) (util/now-ms))))
    [:get "/v1/automations/runs"] (respond runs)

@@ -81,25 +81,7 @@
 
 (defn- submit-task! [pool f] (.submit ^ExecutorService @pool ^Runnable f))
 
-;; Push quieting
-
-(defonce ^:private quiet-sessions (atom #{}))
-
-(defonce ^:private quiet-turns (atom {}))
-
-(defn quiet-turn?
-  "True for the turn of an automation run. The runner sends its own alert, so
-   the ordinary turn alert stays quiet."
-  [sid event]
-  (boolean (or (contains? @quiet-sessions (str sid))
-               (contains? @quiet-turns (get event "turn_id")))))
-
-(defn- remember-turn!
-  [turn-id]
-  (let [cutoff (- (util/now-ms) 600000)]
-    (swap! quiet-turns (fn [turns]
-                         (assoc (into {} (filter #(< cutoff (long (val %)))) turns)
-                           turn-id (util/now-ms))))))
+;; Run sessions
 
 (defonce ^:private run-sessions (atom {}))
 
@@ -110,7 +92,8 @@
   (contains? @run-sessions (str sid)))
 
 (defn- with-run-session
-  "Call `f` while `sid` counts as a session that an automation run uses."
+  "Call `f` while `sid` counts as a session that an automation run uses. The
+   count keeps a session that two automations share marked until both runs end."
   [sid f]
   (swap! run-sessions update (str sid) (fnil inc 0))
   (try (f)
@@ -119,6 +102,23 @@
                                         (if (pos? n)
                                           (assoc sessions (str sid) n)
                                           (dissoc sessions (str sid)))))))))
+
+;; Push quieting
+
+(defonce ^:private quiet-turns (atom {}))
+
+(defn quiet-turn?
+  "True for the turn of an automation run. The runner sends its own alert, so
+   the ordinary turn alert stays quiet."
+  [sid event]
+  (boolean (or (automation-session? sid) (contains? @quiet-turns (get event "turn_id")))))
+
+(defn- remember-turn!
+  [turn-id]
+  (let [cutoff (- (util/now-ms) 600000)]
+    (swap! quiet-turns (fn [turns]
+                         (assoc (into {} (filter #(< cutoff (long (val %)))) turns)
+                           turn-id (util/now-ms))))))
 
 ;; Settings
 
@@ -138,17 +138,20 @@
   [db]
   (true? (setting-value (scoped/settings db (scoped/target db "global" nil)))))
 
+(defn overview
+  "Every automation of this machine and the global run gate, as the gateway list
+   route and the Python host answer them."
+  [db now]
+  {"automations" (automation/list-all db now) "is_enabled" (globally-enabled? db)})
+
 ;; Delivery
 
 (def ^:private delivery-running (AtomicBoolean. false))
 
 (defn- send-callback!
   [db {:keys [id run_id payload attempts]}]
-  (let [run
-        (ps/db-automation-run db run_id)
-
-        row
-        (some->> run
+  (let [row
+        (some->> (ps/db-automation-run db run_id)
                  :automation_id
                  (ps/db-automation-get db))
 
@@ -182,44 +185,43 @@
         (:status response)
 
         attempt
-        (inc (long attempts))]
+        (inc (long attempts))
 
-    (cond (nil? url) (ps/db-automation-update-delivery! db
-                                                        id
-                                                        {:status "failed"
-                                                         :attempts attempt
-                                                         :last_error
-                                                         "The automation has no callback now."
-                                                         :updated_at (util/now-ms)})
-          (and status (<= 200 (long status) 299))
-          (ps/db-automation-update-delivery!
-            db
-            id
-            {:status "delivered" :attempts attempt :updated_at (util/now-ms)})
-          :else (let [error
-                      (or (:error response) (str "HTTP " status))
+        retry
+        (get retry-delays-ms (dec attempt))
 
-                      retry
-                      (get retry-delays-ms (dec attempt))]
+        now
+        (util/now-ms)]
 
-                  (ps/db-automation-update-delivery!
-                    db
-                    id
-                    (cond-> {:attempts attempt :last_error error :updated_at (util/now-ms)}
-                      (and retry (< attempt (automation/limit :callback_attempts)))
-                      (assoc :next_attempt_at (+ (util/now-ms) (long retry)))
-
-                      (not (and retry (< attempt (automation/limit :callback_attempts))))
-                      (assoc :status "failed")))))))
+    (ps/db-automation-update-delivery!
+      db
+      id
+      (cond (nil? url) {:status "failed"
+                        :attempts attempt
+                        :last_error "The automation has no callback now."
+                        :updated_at now}
+            (and status (<= 200 (long status) 299))
+            {:status "delivered" :attempts attempt :updated_at now}
+            :else (merge {:attempts attempt
+                          :last_error (or (:error response) (str "HTTP " status))
+                          :updated_at now}
+                         (if (and retry (< attempt (automation/limit :callback_attempts)))
+                           {:next_attempt_at (+ now (long retry))}
+                           {:status "failed"}))))))
 
 (defn deliver-due!
-  "Send the callbacks that are due, one batch at a time, off the calling thread."
+  "Send the due callbacks off the calling thread. One call drains the due
+   callbacks batch by batch, so a backlog does not wait for later ticks."
   [db]
   (when (.compareAndSet ^AtomicBoolean delivery-running false true)
     (submit-task! delivery-pool
                   (fn []
-                    (try (doseq [delivery (ps/db-automation-due-deliveries db (util/now-ms) 16)]
-                           (send-callback! db delivery))
+                    (try (loop [seen #{}]
+                           (let [batch (remove #(seen (:id %))
+                                         (ps/db-automation-due-deliveries db (util/now-ms) 16))]
+                             (when (seq batch)
+                               (run! #(send-callback! db %) batch)
+                               (recur (into seen (map :id) batch)))))
                          (catch Throwable t
                            (tel/log!
                              {:level :warn :id ::delivery-failed :data {:error (ex-message t)}}))
@@ -343,15 +345,13 @@
         (get definition "model")
 
         result
-        (with-run-session sid
-                          #(call :submit!
-                                 sid
-                                 (cond-> {:request (request-text definition run)
-                                          :display-request (:request run)
-                                          :idempotency-key (str "automation-" (:id run))}
-                                   model
-                                   (merge {:provider (get model "provider")
-                                           :model (get model "model")}))))
+        (call :submit!
+              sid
+              (cond-> {:request (request-text definition run)
+                       :display-request (:request run)
+                       :idempotency-key (str "automation-" (:id run))}
+                model
+                (merge {:provider (get model "provider") :model (get model "model")})))
 
         answer
         (answer-text result)
@@ -414,17 +414,15 @@
                                   (str (get (call :create-session! (session-opts definition target))
                                             "id")))]
                         (reset! session sid)
-                        (swap! quiet-sessions conj sid)
                         (ps/db-automation-update-run! db run-id ["running"] {:session_id sid})
                         (finish! db
                                  run-id
-                                 (cond-> (run-turn! definition run sid)
+                                 (cond-> (with-run-session sid #(run-turn! definition run sid))
                                    (= "temporary" mode)
                                    (assoc :session_id nil)))))
               (catch Throwable t
                 (finish! db run-id {:status "failed" :error (or (ex-message t) (str t))}))
               (finally (when-let [sid @session]
-                         (swap! quiet-sessions disj sid)
                          (when (= "temporary" mode)
                            (try (call :delete-session! sid)
                                 (catch Throwable t
@@ -532,7 +530,8 @@
 (defn accept-webhook!
   "Check one webhook request and queue its run. `headers` have lower-case names
    and `body` is the raw byte array. Answers {:status … :body …} or
-   {:status … :error [code message]}."
+   {:status … :error [code message]}. Only a request with a valid signature uses
+   the rate limit, so a sender without the secret cannot block real requests."
   [db automation-id {:keys [headers ^bytes body]}]
   (let [row
         (ps/db-automation-get db automation-id)
@@ -545,52 +544,64 @@
                 automation/webhook-trigger)
 
         at
-        (util/now-ms)]
+        (util/now-ms)
+
+        reason
+        (when (and trigger (:webhook_secret row))
+          (webhook/verify (get trigger "signature")
+                          (:webhook_secret row)
+                          {:headers headers
+                           :body body
+                           :now at
+                           :skew-seconds (automation/limit :webhook_skew_seconds)}))]
 
     (cond (nil? trigger) {:status 404 :error [:not-found "This automation has no webhook"]}
           (nil? (:webhook_secret row))
           {:status 401
            :error [:invalid-signature "Create a webhook secret for this automation first"]}
+          reason {:status 401
+                  :error [:invalid-signature
+                          (if (= "timestamp" reason)
+                            "The webhook timestamp is outside the allowed window"
+                            "The webhook signature is not valid")]}
           (rate-limited? automation-id at) {:status 429
                                             :error [:rate-limited "Too many webhook requests"]}
-          :else
-          (if-let [reason (webhook/verify (get trigger "signature")
-                                          (:webhook_secret row)
-                                          {:headers headers
-                                           :body body
-                                           :now at
-                                           :skew-seconds (automation/limit :webhook_skew_seconds)})]
-            {:status 401
-             :error [:invalid-signature
-                     (if (= "timestamp" reason)
-                       "The webhook timestamp is outside the allowed window"
-                       "The webhook signature is not valid")]}
-            (let [raw (String. body StandardCharsets/UTF_8)
-                  payload (wire/parse-json raw)
-                  event (webhook/event-name headers payload)]
+          :else (let [raw
+                      (String. body StandardCharsets/UTF_8)
 
-              (cond (not (get definition "enabled"))
-                    {:status 202 :body (webhook-result "ignored" nil "disabled")}
-                    (not (webhook/event-accepted? (get trigger "events" []) event payload))
-                    {:status 202 :body (webhook-result "ignored" nil "event")}
-                    (not (webhook/filters-pass? (get trigger "filters" []) payload))
-                    {:status 202 :body (webhook-result "ignored" nil "filter")}
-                    :else (let [delivery (webhook/delivery-id headers)
-                                request (webhook/render (get definition "prompt")
-                                                        payload
-                                                        raw
-                                                        (automation/limit :webhook_value_bytes))
-                                run (claim! db
+                      payload
+                      (wire/parse-json raw)
+
+                      event
+                      (webhook/event-name headers payload)]
+
+                  (cond (not (get definition "enabled"))
+                        {:status 202 :body (webhook-result "ignored" nil "disabled")}
+                        (not (webhook/event-accepted? (get trigger "events" []) event payload))
+                        {:status 202 :body (webhook-result "ignored" nil "event")}
+                        (not (webhook/filters-pass? (get trigger "filters" []) payload))
+                        {:status 202 :body (webhook-result "ignored" nil "filter")}
+                        :else (let [delivery
+                                    (webhook/delivery-id headers)
+
+                                    request
+                                    (webhook/render (get definition "prompt")
+                                                    payload
+                                                    raw
+                                                    (automation/limit :webhook_value_bytes))
+
+                                    run
+                                    (claim! db
                                             automation-id
                                             "webhook"
                                             (str "webhook:" (or delivery (UUID/randomUUID)))
                                             {:request request})]
 
-                            (if run
-                              (do (enqueue! db run)
-                                  {:status 202 :body (webhook-result "accepted" (:id run) nil)})
-                              {:status 200
-                               :body (webhook-result "duplicate" nil "delivery")}))))))))
+                                (if run
+                                  (do (enqueue! db run)
+                                      {:status 202 :body (webhook-result "accepted" (:id run) nil)})
+                                  {:status 200
+                                   :body (webhook-result "duplicate" nil "delivery")})))))))
 
 ;; Scheduler
 

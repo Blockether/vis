@@ -165,6 +165,49 @@
                          (expect (= "completed" (:status run)))
                          (expect (true? @during))
                          (expect (false? (runner/automation-session? "s-old"))))))))
+  (it "keeps a shared session marked until its last overlapping run ends"
+      ;; Regression: the quiet set forgot a session when the first of two runs that
+      ;; share it ended, so the second run also sent the ordinary turn alert.
+      (let [gates
+            {"First" (promise) "Second" (promise)}
+
+            started
+            (atom #{})]
+
+        (with-runner true
+                     (fn [sid opts]
+                       (let [prompt (:display-request opts)]
+                         (swap! started conj prompt)
+                         @(get gates prompt)
+                         ((answer "Done.") sid nil)))
+                     (fn [db _]
+                       (try (let [target
+                                  {"target" {"mode" "session" "session_id" "s-old"}}
+
+                                  start!
+                                  #(get (runner/run-now! db
+                                                         (create! db
+                                                                  (assoc target
+                                                                    "name" %
+                                                                    "prompt" %)))
+                                        "id")
+
+                                  first-id
+                                  (start! "First")
+
+                                  second-id
+                                  (start! "Second")]
+
+                              (expect (eventually #(= #{"First" "Second"} @started)))
+                              (deliver (get gates "First") true)
+                              (expect (= "completed" (:status (settled db first-id))))
+                              (expect (runner/automation-session? "s-old"))
+                              (expect (runner/quiet-turn? "s-old" {}))
+                              (deliver (get gates "Second") true)
+                              (expect (= "completed" (:status (settled db second-id))))
+                              (expect (false? (runner/automation-session? "s-old")))
+                              (expect (false? (runner/quiet-turn? "s-old" {}))))
+                            (finally (run! #(deliver % true) (vals gates))))))))
   (it "skips a run that the setting blocks and sends deliver-only text without a model"
       (with-runner false
                    (answer "unused")
@@ -291,19 +334,28 @@
                        (:status (runner/accept-webhook! db
                                                         (create! db {})
                                                         {:headers {} :body (utf8 "{}")})))))))))
-  (it "limits the requests of one automation in one minute"
-      (with-runner true
-                   (answer "unused")
-                   (fn [db _]
-                     (let [id (create! db {"triggers" [{"kind" "webhook" "signature" "token"}]})]
-                       (automation/rotate-secret! db id "webhook" 1)
-                       (expect (= 429
-                                  (:status (last (repeatedly 31
-                                                             #(runner/accept-webhook!
-                                                                db
-                                                                id
-                                                                {:headers {}
-                                                                 :body (utf8 "{}")})))))))))))
+  (it "limits the signed requests of one automation in one minute"
+      ;; Regression: forged requests used the budget before the signature check,
+      ;; so a sender that knew only the URL could block the real webhook.
+      (with-runner
+        true
+        (answer "unused")
+        (fn [db _]
+          (let [id
+                (create! db {"enabled" false "triggers" [{"kind" "webhook" "signature" "token"}]})
+
+                secret
+                (get (automation/rotate-secret! db id "webhook" 1) "secret")
+
+                send!
+                #(:status (runner/accept-webhook! db id {:headers % :body (utf8 "{}")}))
+
+                signed
+                {"authorization" (str "Bearer " secret)}]
+
+            (expect (every? #{401} (repeatedly 40 #(send! {"authorization" "Bearer forged"}))))
+            (expect (= 202 (send! signed)))
+            (expect (= 429 (last (repeatedly 30 #(send! signed))))))))))
 
 (defn- receiver
   "A local callback receiver that records each request. It answers `statuses` in

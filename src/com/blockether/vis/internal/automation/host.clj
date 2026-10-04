@@ -23,9 +23,7 @@
    next run and last run. `is_enabled` is false while the global `automations` setting stops
    every run."
   [env]
-  (let [db (:db-info env)]
-    (ok {"automations" (automation/list-all db (util/now-ms))
-         "is_enabled" (runner/globally-enabled? db)})))
+  (ok (runner/overview (:db-info env) (util/now-ms))))
 
 (defn get-automation
   "Read one automation by its id."
@@ -93,13 +91,7 @@
    completed, failed, cancelled, skipped or unknown), `session_id` and `limit` (1 to 200, default
    50)."
   ([env] (list-runs env {}))
-  ([env opts]
-   (ok {"runs" (automation/runs (:db-info env)
-                                {:automation-id (get opts "automation_id")
-                                 :statuses (some-> (get opts "status")
-                                                   vector)
-                                 :session-id (get opts "session_id")
-                                 :limit (min 200 (max 1 (long (or (get opts "limit") 50))))})})))
+  ([env opts] (ok {"runs" (automation/runs (:db-info env) (automation/run-filter opts))})))
 
 (def ^:private automation-result
   "`{id, name, enabled, triggers, prompt, target, delivery, model, deliver_only, created_at,

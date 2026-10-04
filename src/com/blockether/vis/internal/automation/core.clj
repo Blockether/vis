@@ -276,6 +276,16 @@
                              :updated_at now))
     {"kind" kind "secret" secret}))
 
+(defn run-filter
+  "The run filter of the wire parameters `automation_id`, `status`, `session_id`
+   and `limit`. `limit` defaults to 50 and stays between 1 and 200."
+  [{:strs [automation_id status session_id limit]}]
+  {:automation-id automation_id
+   :statuses (some-> status
+                     vector)
+   :session-id session_id
+   :limit (min 200 (max 1 (long (or limit 50))))})
+
 (defn runs
   "Runs newest first, with the automation names."
   [db opts]

@@ -285,7 +285,7 @@ instructions. The payload fills only the prompt. It cannot choose the target, th
 | `401` | The automation has no webhook secret, or the signature or the timestamp is not valid. |
 | `404` | The automation does not exist or has no webhook trigger. |
 | `413` | The body is larger than 1 MiB. |
-| `429` | The automation received more than 30 requests in one minute. |
+| `429` | The automation received more than 30 requests with a valid signature in one minute. Requests that fail the check do not count. |
 
 Vis drops a repeated delivery by its delivery ID. It reads the ID from `X-GitHub-Delivery`,
 `webhook-id`, `X-Gitlab-Event-UUID`, `Idempotency-Key` or `X-Request-Id`.
