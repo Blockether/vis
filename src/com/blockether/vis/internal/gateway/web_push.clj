@@ -20,7 +20,7 @@
            [java.net URI]
            [java.nio ByteBuffer]
            [java.nio.file Files]
-           [java.security KeyFactory KeyPair KeyPairGenerator PrivateKey Signature]
+           [java.security KeyFactory KeyPair KeyPairGenerator PrivateKey]
            [java.security.interfaces ECPublicKey]
            [java.security.spec ECGenParameterSpec X509EncodedKeySpec PKCS8EncodedKeySpec]
            [java.util Arrays Base64]
@@ -298,51 +298,14 @@
                     (util/concat-bytes previous info (byte-array [(unchecked-byte counter)])))]
         (recur block (util/concat-bytes output block) (inc counter))))))
 
-(defn- sign
-  "Sign UTF-8 text with the requested JCA signature algorithm."
-  ^bytes [^PrivateKey private ^String algorithm ^String input]
-  (let [signature
-        (doto (Signature/getInstance algorithm) (.initSign private) (.update (util/utf8 input)))]
-    (.sign signature)))
-
-(defn- jose-signature
-  "Convert JCA's DER ECDSA signature into the JOSE `r || s` form."
-  ^bytes [^bytes der]
-  (let [r-length
-        (long (aget der 3))
-
-        r
-        (fixed32 (BigInteger. 1 (Arrays/copyOfRange der 4 (+ 4 r-length))))
-
-        s-offset
-        (+ 4 r-length 2)
-
-        s-length
-        (long (aget der (+ 4 r-length 1)))
-
-        s
-        (fixed32 (BigInteger. 1 (Arrays/copyOfRange der s-offset (+ s-offset s-length))))]
-
-    (util/concat-bytes r s)))
-
 (defn- vapid-token
   "Build the short-lived VAPID JWT for one push-service origin."
   [cfg ^PrivateKey private ^String audience]
-  (let [header
-        (util/base64url (util/utf8 (wire/json-str {:alg "ES256" :typ "JWT"})))
-
-        claims
-        (util/base64url (util/utf8 (wire/json-str {:aud audience
-                                                   :exp (+ (quot (util/now-ms) 1000) (* 12 60 60))
-                                                   :sub (:subject cfg)})))
-
-        input
-        (str header "." claims)
-
-        signature
-        (sign private "SHA256withECDSA" input)]
-
-    (str input "." (util/base64url (jose-signature signature)))))
+  (util/compact-jws private
+                    (wire/json-str {:alg "ES256" :typ "JWT"})
+                    (wire/json-str {:aud audience
+                                    :exp (+ (quot (util/now-ms) 1000) (* 12 60 60))
+                                    :sub (:subject cfg)})))
 
 (defn- subscription-key
   "Decode one browser subscription key and enforce its RFC byte length."

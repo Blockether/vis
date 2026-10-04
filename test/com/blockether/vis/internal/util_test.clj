@@ -3,7 +3,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.util :as util]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defdescribe raw-json-encoding-test
              (it "preserves Charred's escaping, keys, values and object conversion"
@@ -259,6 +259,63 @@
                    (expect (= ["vis-test-1" "vis-test-2"] (mapv #(.getName ^Thread %) threads)))
                    (expect (every? #(.isDaemon ^Thread %) threads)))))
 
+(defn- key-pair
+  ^java.security.KeyPair [^String algorithm ^java.security.spec.AlgorithmParameterSpec spec]
+  (.generateKeyPair (doto (java.security.KeyPairGenerator/getInstance algorithm)
+                      (.initialize spec))))
+
+(defn- jws-verifies?
+  "True when the JCA `algorithm` verifies the signature of `token` with `public`."
+  [^String algorithm ^java.security.PublicKey public ^String token]
+  (let [[header claims ^String signature] (str/split token #"\.")]
+    (.verify (doto (java.security.Signature/getInstance algorithm)
+               (.initVerify public)
+               (.update (util/utf8 (str header "." claims))))
+             (.decode (java.util.Base64/getUrlDecoder) signature))))
+
+(defdescribe
+  compact-jws-test
+  (it
+    "signs ES256 as the raw 64-byte R and S that the JDK verifies"
+    (let [pair
+          (key-pair "EC" (java.security.spec.ECGenParameterSpec. "secp256r1"))
+
+          header
+          "{\"alg\":\"ES256\",\"typ\":\"JWT\"}"
+
+          tokens
+          (vec (repeatedly 200 #(util/compact-jws (.getPrivate pair) header "{\"sub\":\"vis\"}")))]
+
+      (expect (str/starts-with? (first tokens) (str (util/base64url (util/utf8 header)) ".")))
+      (expect (every? #(= 64
+                          (alength (.decode (java.util.Base64/getUrlDecoder)
+                                            ^String (last (str/split % #"\.")))))
+                      tokens))
+      (expect (every? #(jws-verifies? "SHA256withECDSAinP1363Format" (.getPublic pair) %) tokens))))
+  (it "pads a short DER integer and drops the sign byte of a long one"
+      (let [r
+            (cons 0x80 (repeat 31 0x11))
+
+            s
+            (repeat 31 0x22)
+
+            der
+            (byte-array (map unchecked-byte (concat [0x30 68 0x02 33 0x00] r [0x02 31] s)))]
+
+        (expect (= (map unchecked-byte (concat r [0x00] s)) (seq (#'util/der->jose der))))))
+  (it "signs RS256 with an RSA key"
+      (let [pair (key-pair "RSA"
+                           (java.security.spec.RSAKeyGenParameterSpec.
+                             2048
+                             java.security.spec.RSAKeyGenParameterSpec/F4))]
+        (expect (jws-verifies? "SHA256withRSA"
+                               (.getPublic pair)
+                               (util/compact-jws (.getPrivate pair) "{\"alg\":\"RS256\"}" "{}")))))
+  (it "refuses a key without an algorithm here"
+      (let [pair (key-pair "EC" (java.security.spec.ECGenParameterSpec. "secp384r1"))]
+        (expect (throws? IllegalArgumentException
+                         #(util/compact-jws (.getPrivate pair) "{}" "{}"))))))
+
 (def ^:private re-rolled
   "What `com.blockether.vis.internal.util` owns. A second copy is not a style
    question: the engine reached twelve `now-ms` wrappers and five different hex
@@ -273,7 +330,8 @@
    "secure random bytes (util/random-bytes)" #"\.nextBytes"
    "unpadded base64url (util/base64url)" #"\.withoutPadding"
    "byte concatenation (util/concat-bytes)" #"\(defn-?\s+concat-bytes\b"
-   "a daemon thread factory (util/daemon-thread-factory)" #"\(newThread\s*\["})
+   "a daemon thread factory (util/daemon-thread-factory)" #"\(newThread\s*\["
+   "JWS signing (util/compact-jws)" #"Signature/getInstance\s+\"SHA256with(?:ECDSA|RSA)\""})
 
 (defdescribe shared-primitives-test
              (it "leaves every re-rolled primitive of the engine to internal.util"

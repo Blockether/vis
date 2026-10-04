@@ -40,7 +40,7 @@
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import [java.io File]
-           [java.security KeyFactory Signature]
+           [java.security KeyFactory]
            [java.security.spec PKCS8EncodedKeySpec]
            [java.util Base64]))
 
@@ -175,61 +175,12 @@
 
     (.generatePrivate (KeyFactory/getInstance "EC") (PKCS8EncodedKeySpec. der))))
 
-(defn- unsigned-int
-  "Left-pad/trim one DER INTEGER to exactly 32 bytes of the P-256 field."
-  ^bytes [^bytes der ^long off ^long len]
-  (let [out
-        (byte-array 32)
-
-        src-off
-        (if (> len 32) (+ off (- len 32)) off)
-
-        n
-        (min len 32)]
-
-    (System/arraycopy der src-off out (- 32 n) n)
-    out))
-
-(defn- der->jose
-  "ECDSA DER `SEQUENCE{INTEGER r, INTEGER s}` -> the raw 64-byte `r||s` JOSE
-   signature. `Signature` emits DER; JWS ES256 demands the concatenation."
-  ^bytes [^bytes der]
-  (let [r-len
-        (long (aget der 3))
-
-        r
-        (unsigned-int der 4 r-len)
-
-        s-off
-        (+ 4 r-len 2)
-
-        s-len
-        (long (aget der (+ 4 r-len 1)))
-
-        s
-        (unsigned-int der s-off s-len)]
-
-    (util/concat-bytes r s)))
-
 (defn- sign-jwt
   [{:keys [key-path key-source key-id team-id]}]
-  (let [header
-        (util/base64url (util/utf8 (wire/json-str {:alg "ES256" :kid key-id})))
-
-        claims
-        (util/base64url (util/utf8 (wire/json-str {:iss team-id :iat (quot (util/now-ms) 1000)})))
-
-        signing-input
-        (str header "." claims)
-
-        sig
-        (doto (Signature/getInstance "SHA256withECDSA")
-          (.initSign (private-key (if (= "keychain" key-source)
-                                    (keychain/secret "vis-apns" "key")
-                                    (slurp key-path))))
-          (.update (util/utf8 signing-input)))]
-
-    (str signing-input "." (util/base64url (der->jose (.sign sig))))))
+  (util/compact-jws
+    (private-key (if (= "keychain" key-source) (keychain/secret "vis-apns" "key") (slurp key-path)))
+    (wire/json-str {:alg "ES256" :kid key-id})
+    (wire/json-str {:iss team-id :iat (quot (util/now-ms) 1000)})))
 
 (defonce ^:private jwt-cache
   ;; {:token "…" :at ms :key-id "…"} — one provider token per key, reused

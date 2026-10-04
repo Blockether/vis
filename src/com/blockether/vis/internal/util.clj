@@ -2,7 +2,8 @@
   "The engine's one shared leaf: the primitives every namespace kept re-rolling —
    a millisecond clock, the two blank-string idioms, a trimmed environment read,
    UTF-8 bytes, SHA-256, HMAC-SHA256, secure random bytes, unpadded base64url,
-   byte concatenation, the hex fold and a daemon thread factory.
+   byte concatenation, the hex fold, compact JWS signing and a daemon thread
+   factory.
 
    It requires NOTHING from the rest of vis and never will. That is the whole
    contract: a leaf can be required from anywhere — specs that load during
@@ -19,7 +20,8 @@
   (:import (charred JSONWriter)
            (java.io StringWriter)
            (java.nio.charset StandardCharsets)
-           (java.security MessageDigest SecureRandom)
+           (java.security MessageDigest PrivateKey SecureRandom Signature)
+           (java.security.interfaces ECPrivateKey RSAPrivateKey)
            (java.util Base64)
            (java.util.concurrent ThreadFactory)
            (java.util.concurrent.atomic AtomicLong)
@@ -230,6 +232,56 @@
         (do (System/arraycopy array 0 output offset (alength array))
             (recur (+ offset (alength array)) (next remaining)))
         output))))
+
+(defn- p256-integer
+  "The DER INTEGER of `length` bytes at `offset` in `der`, as 32 big-endian bytes.
+   DER adds a zero byte before a high first byte and drops leading zero bytes, so
+   the integer can have 33 bytes or fewer than 32."
+  ^bytes [^bytes der ^long offset ^long length]
+  (let [output
+        (byte-array 32)
+
+        size
+        (min length 32)]
+
+    (System/arraycopy der (+ offset (- length size)) output (- 32 size) size)
+    output))
+
+(defn- der->jose
+  "The raw `R‖S` form (RFC 7518 §3.4) of the DER ECDSA P-256 signature `der`.
+   JCA signs in DER: a SEQUENCE of the two INTEGERs R and S."
+  ^bytes [^bytes der]
+  (let [r-length
+        (long (aget der 3))
+
+        s-offset
+        (+ 6 r-length)]
+
+    (concat-bytes (p256-integer der 4 r-length)
+                  (p256-integer der s-offset (long (aget der (dec s-offset)))))))
+
+(defn compact-jws
+  "The compact JWS `header.claims.signature` (RFC 7515) of the JSON texts `header`
+   and `claims`. The key selects the algorithm: a P-256 EC key signs ES256 and an
+   RSA key signs RS256. The `alg` of `header` must name the same algorithm."
+  ^String [^PrivateKey key ^String header ^String claims]
+  (let [es256?
+        (and (instance? ECPrivateKey key)
+             (= 256 (.getFieldSize (.getField (.getCurve (.getParams ^ECPrivateKey key))))))
+
+        ^Signature signer
+        (cond es256? (Signature/getInstance "SHA256withECDSA")
+              (instance? RSAPrivateKey key) (Signature/getInstance "SHA256withRSA")
+              :else (throw (IllegalArgumentException.
+                             (str "No JWS algorithm for a " (.getAlgorithm key) " key"))))
+
+        input
+        (str (base64url (utf8 header)) "." (base64url (utf8 claims)))]
+
+    (.initSign signer key)
+    (.update signer (utf8 input))
+    (let [signature (.sign signer)]
+      (str input "." (base64url (if es256? (der->jose signature) signature))))))
 
 ;; ── Strings ──────────────────────────────────────────────────────────────
 

@@ -15,7 +15,7 @@
             [com.blockether.vis.contract.wire :as wire])
   (:import [java.security KeyPairGenerator Signature]
            [java.security.spec ECGenParameterSpec]
-           [java.util Arrays Base64]))
+           [java.util Base64]))
 
 (defn- temp-home
   ^java.io.File []
@@ -64,29 +64,6 @@
 
     (spit (io/file home "apns" (str "AuthKey_" kid ".p8")) pem)
     (.getPublic kp)))
-
-(defn- jose->der
-  "Raw 64-byte `r||s` back into the DER the JCA verifier expects.
-
-   Each half is an UNSIGNED big-endian integer, and DER carries an INTEGER
-   MINIMALLY: a leading zero byte only when the high bit is set, never a run of
-   them. `BigInteger/toByteArray` IS that encoding. Padding the first byte by
-   hand instead left the leading zeros a 32-byte JOSE half carries whenever its
-   component is short, the JCA's strict DER parser threw `Invalid encoding for
-   signature`, and the test went red on roughly one signature in a hundred."
-  [^bytes raw]
-  (let [der-int
-        (fn [^bytes b]
-          (.toByteArray (BigInteger. 1 b)))
-
-        r
-        (der-int (Arrays/copyOfRange raw 0 32))
-
-        s
-        (der-int (Arrays/copyOfRange raw 32 64))]
-
-    (byte-array
-      (concat [0x30 (+ 4 (count r) (count s)) 0x02 (count r)] (seq r) [0x02 (count s)] (seq s)))))
 
 (defdescribe config-discovery-test
              (it "an empty push home reports exactly what is missing and is not configured"
@@ -147,10 +124,38 @@
         (expect (str/includes? (decode p) "\"iat\":"))
         ;; the signature is raw JOSE r||s and verifies against the key
         (expect (= 64 (count raw)))
-        (expect (true? (.verify (doto (Signature/getInstance "SHA256withECDSA")
+        (expect (true? (.verify (doto (Signature/getInstance "SHA256withECDSAinP1363Format")
                                   (.initVerify pub)
                                   (.update (.getBytes (str h "." p) "UTF-8")))
-                                (jose->der raw))))))))
+                                raw)))))))
+
+(defdescribe
+  vapid-token-is-a-verifiable-es256-jwt-test
+  (it "vapid token is a verifiable es256 jwt"
+      (let [pair
+            (.generateKeyPair (doto (KeyPairGenerator/getInstance "EC")
+                                (.initialize (ECGenParameterSpec. "secp256r1"))))
+
+            jwt
+            (#'web-push/vapid-token
+             {:subject "mailto:admin@gateway.example.com"}
+             (.getPrivate pair)
+             "https://gateway.example.com")
+
+            [h p ^String s]
+            (str/split jwt #"\.")
+
+            decode
+            #(String. (.decode (Base64/getUrlDecoder) ^String %) "UTF-8")]
+
+        ;; header and claims are what RFC 8292 requires
+        (expect (= "{\"alg\":\"ES256\",\"typ\":\"JWT\"}" (decode h)))
+        (expect (= {"aud" "https://gateway.example.com" "sub" "mailto:admin@gateway.example.com"}
+                   (select-keys (wire/parse-json (decode p)) ["aud" "sub"])))
+        (expect (true? (.verify (doto (Signature/getInstance "SHA256withECDSAinP1363Format")
+                                  (.initVerify (.getPublic pair))
+                                  (.update (.getBytes (str h "." p) "UTF-8")))
+                                (.decode (Base64/getUrlDecoder) s)))))))
 
 (defdescribe
   device-registry-test

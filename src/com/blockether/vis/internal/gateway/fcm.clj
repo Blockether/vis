@@ -16,7 +16,7 @@
   (:import [java.io File]
            [java.net URLEncoder]
            [java.nio.charset StandardCharsets]
-           [java.security KeyFactory Signature]
+           [java.security KeyFactory]
            [java.security.spec PKCS8EncodedKeySpec]
            [java.util Base64]))
 
@@ -111,28 +111,14 @@
 
 (defn- sign-jwt
   [sa]
-  (let [now
-        (quot (util/now-ms) 1000)
-
-        header
-        (util/base64url (util/utf8 (wire/json-str {:alg "RS256" :typ "JWT"})))
-
-        claims
-        (util/base64url (util/utf8 (wire/json-str {:iss (get sa "client_email")
-                                                   :scope SCOPE
-                                                   :aud (or (get sa "token_uri") TOKEN_URI)
-                                                   :iat now
-                                                   :exp (+ now (long JWT_TTL_SECONDS))})))
-
-        signing-input
-        (str header "." claims)
-
-        sig
-        (doto (Signature/getInstance "SHA256withRSA")
-          (.initSign (private-key (get sa "private_key")))
-          (.update (util/utf8 signing-input)))]
-
-    (str signing-input "." (util/base64url (.sign sig)))))
+  (let [now (quot (util/now-ms) 1000)]
+    (util/compact-jws (private-key (get sa "private_key"))
+                      (wire/json-str {:alg "RS256" :typ "JWT"})
+                      (wire/json-str {:iss (get sa "client_email")
+                                      :scope SCOPE
+                                      :aud (or (get sa "token_uri") TOKEN_URI)
+                                      :iat now
+                                      :exp (+ now (long JWT_TTL_SECONDS))}))))
 
 (defonce ^:private http-client (delay (http/client {:connect-timeout 10000 :version :http2})))
 
