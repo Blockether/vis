@@ -94,101 +94,113 @@
           (finally (jobs/stop!) (cache/release-idle!) (files/delete-dir! root)))))))
 
 (defdescribe
-  installed-gliner-worker-trains-registers-and-resumes-both-families-offline
-  (it "installed gliner worker trains registers and resumes both families offline"
-      ;; Full gate: -Dvis.test.decisions.training.python and at least one
-      ;; -Dvis.test.gliner.training.{base,small,multi,decide,multi-decide,decide-1b}.dir.
-      ;; The directories hold verified full checkpoints, not encoder-only ONNX bundles.
-      (when-let [python (System/getProperty "vis.test.decisions.training.python")]
-        (doseq [[model-id property]
-                [["gliner2.5-base" "vis.test.gliner.training.base.dir"]
-                 ["gliner2.5-small" "vis.test.gliner.training.small.dir"]
-                 ["gliner2.5-multi" "vis.test.gliner.training.multi.dir"]
-                 ["gliner2.5-decide" "vis.test.gliner.training.decide.dir"]
-                 ["gliner2.5-multi-decide" "vis.test.gliner.training.multi-decide.dir"]
-                 ["gliner2.5-decide-1b" "vis.test.gliner.training.decide-1b.dir"]]
-                :let [checkpoint (System/getProperty property)]
-                :when checkpoint]
+  installed-worker-trains-registers-and-resumes-gliner-and-decision2-offline
+  (it
+    "installed worker trains registers and resumes gliner and decision2 offline"
+    ;; Full gate: -Dvis.test.decisions.training.python and at least one
+    ;; -Dvis.test.gliner.training.{base,small,multi,decide,multi-decide,decide-1b}.dir
+    ;; or -Dvis.test.decision2.training.{eos,kai}.dir.
+    ;; The directories hold verified full checkpoints, not encoder-only ONNX bundles.
+    (when-let [python (System/getProperty "vis.test.decisions.training.python")]
+      (doseq [[model-id property] [["gliner2.5-base" "vis.test.gliner.training.base.dir"]
+                                   ["gliner2.5-small" "vis.test.gliner.training.small.dir"]
+                                   ["gliner2.5-multi" "vis.test.gliner.training.multi.dir"]
+                                   ["gliner2.5-decide" "vis.test.gliner.training.decide.dir"]
+                                   ["gliner2.5-multi-decide"
+                                    "vis.test.gliner.training.multi-decide.dir"]
+                                   ["gliner2.5-decide-1b" "vis.test.gliner.training.decide-1b.dir"]
+                                   ["decision2.0-eos-0.8b" "vis.test.decision2.training.eos.dir"]
+                                   ["decision2.0-kai-0.6b" "vis.test.decision2.training.kai.dir"]]
+              :let [checkpoint (System/getProperty property)
+                    decision2? (contains? assets/decision2-architectures model-id)]
+              :when checkpoint]
 
-          (let [root (io/file (System/getProperty "java.io.tmpdir")
-                              (str "decision-gliner-job-" (random-uuid)))
-                data (io/file root "approved-data")
-                models (io/file root "models")
-                question {"type" "choice"
-                          "instructions" "Choose intent"
-                          "criteria" ["refund_request" "order_status" "other"]}
-                example
-                {"state" "Please refund this purchase" "question" question "target" 0 "action" 1}
-                original-entry assets/entry
-                original-artifact assets/artifact
-                original-install-dir assets/install-dir
-                original-installed? assets/installed?]
+        (let [root (io/file (System/getProperty "java.io.tmpdir")
+                            (str "decision-gliner-job-" (random-uuid)))
+              data (io/file root "approved-data")
+              models (io/file root "models")
+              question {"type" "choice"
+                        "instructions" "Choose intent"
+                        "criteria" ["refund_request" "order_status" "other"]}
+              example
+              {"state" "Please refund this purchase" "question" question "target" 0 "action" 1}
+              original-entry assets/entry
+              original-artifact assets/artifact
+              original-install-dir assets/install-dir
+              original-installed? assets/installed?]
 
-            (.mkdirs data)
-            (.mkdirs models)
-            (spit (io/file data "train.jsonl")
-                  (str (wire/json-str (assoc example "state" "Please refund my order")) "\n"))
-            (spit (io/file data "eval.jsonl") (str (wire/json-str example) "\n"))
-            (spit (io/file data "config.json")
-                  (str (wire/json-str
-                         {"epochs" 1 "max_steps" 1 "encoder_lr" 0.00001 "task_lr" 0.0005})
-                       "\n"))
-            (spit (io/file data "policy.json")
-                  (str (wire/json-str {"min_decision_accuracy" 0 "min_action_accuracy" 0}) "\n"))
-            (try
-              (with-redefs [assets/models-root (constantly (.getPath models))
-                            assets/entry (fn [id]
-                                           (if (= id model-id) {:id id} (original-entry id)))
-                            assets/artifact (fn [model kind]
-                                              (if (= kind :training)
-                                                {:kind :training}
-                                                (original-artifact model kind)))
-                            assets/install-dir
-                            (fn [model kind]
-                              (if (= kind :training) checkpoint (original-install-dir model kind)))
-                            assets/installed? (fn [artifact dir]
-                                                (if (= (:kind artifact) :training)
-                                                  true
-                                                  (original-installed? artifact dir)))
-                            config/extension-env-value (fn [name]
-                                                         (case name
-                                                           "VIS_DECISION_TRAINING_PYTHON"
-                                                           python
+          (.mkdirs data)
+          (.mkdirs models)
+          (spit (io/file data "train.jsonl")
+                (str (wire/json-str (assoc example "state" "Please refund my order")) "\n"))
+          (spit (io/file data "eval.jsonl") (str (wire/json-str example) "\n"))
+          (spit (io/file data "config.json")
+                (str (wire/json-str
+                       {"epochs" 1 "max_steps" 1 "encoder_lr" 0.00001 "task_lr" 0.0005})
+                     "\n"))
+          (spit (io/file data "policy.json")
+                ;; Decision 2.0 has no action head, so its trainer rejects an action gate.
+                (str (wire/json-str (cond-> {"min_decision_accuracy" 0}
+                                      (not decision2?)
+                                      (assoc "min_action_accuracy" 0)))
+                     "\n"))
+          (try
+            (with-redefs [assets/models-root (constantly (.getPath models))
+                          assets/entry (fn [id]
+                                         (if (= id model-id) {:id id} (original-entry id)))
+                          assets/artifact (fn [model kind]
+                                            (if (= kind :training)
+                                              {:kind :training}
+                                              (original-artifact model kind)))
+                          assets/install-dir
+                          (fn [model kind]
+                            (if (= kind :training) checkpoint (original-install-dir model kind)))
+                          assets/installed? (fn [artifact dir]
+                                              (if (= (:kind artifact) :training)
+                                                true
+                                                (original-installed? artifact dir)))
+                          config/extension-env-value (fn [name]
+                                                       (case name
+                                                         "VIS_DECISION_TRAINING_PYTHON"
+                                                         python
 
-                                                           "VIS_DECISION_TRAINING_DATA_ROOT"
-                                                           (.getPath data)
+                                                         "VIS_DECISION_TRAINING_DATA_ROOT"
+                                                         (.getPath data)
 
-                                                           nil))]
+                                                         nil))]
 
-                (cache/enable!)
-                (cache/release-idle!)
-                (let [created (jobs/create! (assoc request "model_id" model-id))
-                      first-id (get created "job_id")
-                      first-status (await-terminal first-id)]
+              (cache/enable!)
+              (cache/release-idle!)
+              (let [created (jobs/create! (assoc request "model_id" model-id))
+                    first-id (get created "job_id")
+                    first-status (await-terminal first-id)]
 
-                  (expect (= model-id (get created "model_id")))
-                  (expect (= "completed" (get first-status "status")) (str first-status))
-                  (expect (nil? (registry/get-alias "active")))
-                  (when (= "completed" (get first-status "status"))
-                    (let [ref (get first-status "model_ref")
-                          answer (decisions/infer! {"model" ref
-                                                    "state" "Please refund this purchase"
-                                                    "questions" {"intent" question}})
-                          _ (registry/activate! "active" ref nil)
-                          next-id (get (jobs/create! (assoc request
-                                                       "model_id" model-id
-                                                       "source_job_id" first-id))
-                                       "job_id")
-                          second-status (await-terminal next-id)]
+                (expect (= model-id (get created "model_id")))
+                (expect (= "completed" (get first-status "status")) (str first-status))
+                (expect (nil? (registry/get-alias "active")))
+                (when (= "completed" (get first-status "status"))
+                  (let [ref (get first-status "model_ref")
+                        answer (decisions/infer! {"model" ref
+                                                  "state" "Please refund this purchase"
+                                                  "questions" {"intent" question}})
+                        _ (registry/activate! "active" ref nil)
+                        next-id (get (jobs/create! (assoc request
+                                                     "model_id" model-id
+                                                     "source_job_id" first-id))
+                                     "job_id")
+                        second-status (await-terminal next-id)]
 
-                      (expect (= model-id (get-in (registry/resolve-model ref) [:model :id])))
-                      (expect (= ref (get-in answer ["routing" "model_ref"])))
+                    (expect (= model-id (get-in (registry/resolve-model ref) [:model :id])))
+                    (expect (= ref (get-in answer ["routing" "model_ref"])))
+                    (if decision2?
+                      (do (expect (contains? (set (get question "criteria"))
+                                             (get-in answer ["answers" "intent" "choice"])))
+                          (expect (nil? (get-in answer ["answers" "intent" "action"]))))
                       (expect (number? (get-in answer
-                                               ["answers" "intent" "action" "act_probability"])))
-                      (expect
-                        (.isFile
-                          (io/file models "jobs" first-id "output/checkpoint/PROVENANCE.json")))
-                      (expect (= "completed" (get second-status "status")) (str second-status))
-                      (expect (= model-id (get second-status "model_id")))
-                      (expect (= ref (get (registry/get-alias "active") "model_ref")))))))
-              (finally (jobs/stop!) (cache/release-idle!) (files/delete-dir! root))))))))
+                                               ["answers" "intent" "action" "act_probability"]))))
+                    (expect (.isFile
+                              (io/file models "jobs" first-id "output/checkpoint/PROVENANCE.json")))
+                    (expect (= "completed" (get second-status "status")) (str second-status))
+                    (expect (= model-id (get second-status "model_id")))
+                    (expect (= ref (get (registry/get-alias "active") "model_ref")))))))
+            (finally (jobs/stop!) (cache/release-idle!) (files/delete-dir! root))))))))

@@ -331,6 +331,9 @@ Check these resources before you choose a model:
 - On an Apple M4 Max with 4 CPU threads, a question near the 2,048-token limit took about
   2.5 seconds with Eos. With Kai, it took about 3 seconds. The first question also waits about
   1.3 seconds while the model loads.
+- Local training with the default batch size of 1 used a peak of about 16 GB of RAM with Eos.
+  With Kai, it used about 12 GB. These peaks include the FP32 export. A larger batch needs more
+  memory.
 - Allow at least 15 GB of free disk for the checkpoint, a trained version and its upload archive.
 
 Download the FP32 bundle for the gateway. For training, also download the complete checkpoint.
@@ -347,7 +350,8 @@ settings, for example `{"epochs":1,"max_steps":100,"encoder_lr":0.00001,"task_lr
 
 Set only `min_decision_accuracy` in `policy.json`. The trainer rejects a policy with
 `min_action_accuracy`. Then call `Trainer.train` as in the GLiNER2.5 example. The validation
-report and the gateway job metrics give `action_accuracy` as `null`.
+report and the gateway job metrics give `action_accuracy` as `null`. To train on the gateway, pass
+the model ID as `model_id`, as [Train on the gateway instead](#train-on-the-gateway-instead) shows.
 
 ### Resume or continue training
 
@@ -385,7 +389,7 @@ with Trainer(stopped) as trainer:
     )
 ```
 
-Use the same `TrainingBundle` and `Trainer` calls for either family.
+Use the same `TrainingBundle` and `Trainer` calls for every model family.
 
 The first event shows the saved step. Training then uses only the examples that the stopped run
 did not train, in the same order. The optimizer state starts again. GLiNER also starts its
@@ -470,10 +474,12 @@ print(decisions.get_training_job(job["job_id"]))
 # after completion, it deletes the private resumable checkpoint.
 ```
 
-For GLiNER, pass a model ID from the [GLiNER2.5 table](#choose-and-train-a-gliner2-5-model), such
-as `model_id="gliner2.5-multi"`, to `decisions.start_training(...)` with approved data and a GLiNER
-training config. Without `model_id`, the default stays Laya. Job status includes `model_id`, stage,
-progress, metrics and the final `model_ref`.
+For GLiNER or Decision 2.0, pass a model ID from the
+[GLiNER2.5 table](#choose-and-train-a-gliner2-5-model) or the
+[Decision 2.0 table](#choose-and-train-decision-2-0) to `decisions.start_training(...)`. For
+example, pass `model_id="gliner2.5-multi"` or `model_id="decision2.0-kai-0.6b"` with approved data
+and a GLiNER training config. Without `model_id`, the default stays Laya. Job status includes
+`model_id`, stage, progress, metrics and the final `model_ref`.
 
 The gateway stages bounded inputs and starts an isolated offline CPU worker. It then saves a private
 checkpoint and validates a new FP32 inference version. To continue from it, pass the completed or
