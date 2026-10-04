@@ -6766,6 +6766,16 @@
   [db]
   (mapv automation-row (query! db {:select [:*] :from [:automation] :order-by [:created_at :id]})))
 
+(defn db-automation-stamps
+  [db]
+  (mapv #(update %
+                 :enabled
+                 (fn [enabled]
+                   (= 1 (long enabled))))
+        (query!
+          db
+          {:select [:id :enabled :updated_at] :from [:automation] :order-by [:created_at :id]})))
+
 (defn db-automation-get
   [db id]
   (automation-row (query-one! db {:select [:*] :from [:automation] :where [:= :id id]})))
@@ -6802,9 +6812,27 @@
     (contains? attrs :is_silent)
     (update :is_silent #(if % 1 0))))
 
-(defn db-automation-run
-  [db id]
-  (run-row (query-one! db {:select [:*] :from [:automation_run] :where [:= :id id]})))
+(def ^:private run-query
+  {:select [:r.* [:a.name :automation_name]]
+   :from [[:automation_run :r]]
+   :left-join [[:automation :a] [:= :a.id :r.automation_id]]})
+
+(defn db-automation-run [db id] (run-row (query-one! db (assoc run-query :where [:= :r.id id]))))
+
+(defn db-automation-last-runs
+  [db]
+  (into {}
+        (map (juxt :automation_id run-row))
+        (query! db
+                {:select [:r.*]
+                 :from [[:automation :a]]
+                 :join [[:automation_run :r]
+                        [:= :r.id
+                         {:select [:r2.id]
+                          :from [[:automation_run :r2]]
+                          :where [:= :r2.automation_id :a.id]
+                          :order-by [[:r2.created_at :desc] [:r2.id :desc]]
+                          :limit 1}]]})))
 
 (defn db-automation-claim-run!
   [db row]
@@ -6823,19 +6851,18 @@
   [db {:keys [automation-id statuses session-id limit]}]
   (let [clauses (cond-> []
                   automation-id
-                  (conj [:= :automation_id automation-id])
+                  (conj [:= :r.automation_id automation-id])
 
                   (seq statuses)
-                  (conj [:in :status (vec statuses)])
+                  (conj [:in :r.status (vec statuses)])
 
                   session-id
-                  (conj [:= :session_id session-id]))]
+                  (conj [:= :r.session_id session-id]))]
     (mapv run-row
           (query! db
-                  (cond-> {:select [:*]
-                           :from [:automation_run]
-                           :order-by [[:created_at :desc] [:id :desc]]
-                           :limit (or limit 50)}
+                  (cond-> (assoc run-query
+                            :order-by [[:r.created_at :desc] [:r.id :desc]]
+                            :limit (or limit 50))
                     (seq clauses)
                     (assoc :where (into [:and] clauses)))))))
 
@@ -6880,10 +6907,13 @@
 (defn db-automation-due-deliveries
   [db now limit]
   (query! db
-          {:select [:*]
-           :from [:automation_delivery]
-           :where [:and [:= :status "pending"] [:<= :next_attempt_at now]]
-           :order-by [:next_attempt_at :id]
+          {:select [:d.* [[:json_extract :a.definition "$.delivery.callback.url"] :callback_url]
+                    :a.callback_secret]
+           :from [[:automation_delivery :d]]
+           :left-join [[:automation_run :r] [:= :r.id :d.run_id] [:automation :a]
+                       [:= :a.id :r.automation_id]]
+           :where [:and [:= :d.status "pending"] [:<= :d.next_attempt_at now]]
+           :order-by [:d.next_attempt_at :d.id]
            :limit limit}))
 
 (defn db-automation-update-delivery!

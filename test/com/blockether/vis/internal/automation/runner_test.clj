@@ -7,8 +7,10 @@
             [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (com.sun.net.httpserver HttpExchange HttpHandler HttpServer)
+           (java.lang ProcessHandle)
            (java.net InetSocketAddress)
            (java.nio.charset StandardCharsets)
+           (java.time Instant)
            (java.util HexFormat)))
 
 (def ^:private terminal #{"completed" "failed" "cancelled" "skipped" "unknown"})
@@ -241,13 +243,49 @@
                                                      :created_at 1
                                                      :owner_pid Integer/MAX_VALUE})
                        (runner/recover! db)
-                       (expect (= "unknown" (:status (ps/db-automation-run db run-id)))))))))
+                       (expect (= "unknown" (:status (ps/db-automation-run db run-id))))))))
+  (it
+    "keeps the runs of this gateway and marks the runs of a reused process ID"
+    (with-runner
+      true
+      (answer "unused")
+      (fn [db _]
+        (let [id
+              (create! db {})
 
-(defdescribe schedule-test
-             (it "claims each due occurrence once and skips an overlap"
-                 (let [release (promise)]
-                   (with-runner
-                     true
+              me
+              (ProcessHandle/current)
+
+              started
+              (.toEpochMilli ^Instant (.get (.startInstant (.info me))))
+
+              claim!
+              (fn [run-id owner-started-at]
+                (ps/db-automation-claim-run! db
+                                             {:id run-id
+                                              :automation_id id
+                                              :trigger_kind "manual"
+                                              :trigger_key (str "manual:" run-id)
+                                              :status "running"
+                                              :created_at 1
+                                              :owner_pid (.pid me)
+                                              :owner_started_at owner-started-at}))
+
+              sent
+              (settled db (get (runner/run-now! db (create! db {"deliver_only" true})) "id"))]
+
+          (claim! "run-live" started)
+          (claim! "run-reused" (dec started))
+          (runner/recover! db)
+          (expect (= [(.pid me) started] [(:owner_pid sent) (:owner_started_at sent)]))
+          (expect (= "running" (:status (ps/db-automation-run db "run-live"))))
+          (expect (= "unknown" (:status (ps/db-automation-run db "run-reused")))))))))
+
+(defdescribe
+  schedule-test
+  (it "claims each due occurrence once and skips an overlap"
+      (let [release (promise)]
+        (with-runner true
                      (fn [_ _]
                        @release
                        {"status" "done" "turn_id" "t" "content" []})
@@ -264,7 +302,25 @@
                          (expect (= ["skipped" "overlap"] ((juxt :status :reason) (first (runs)))))
                          (deliver release true)
                          (expect (eventually #(= "completed" (:status (last (runs))))))
-                         (expect (eventually #(not (runner/busy? id))))))))))
+                         (expect (eventually #(not (runner/busy? id)))))))))
+  (it "reads an automation again after a change in the same millisecond"
+      (with-runner true
+                   (answer "Done.")
+                   (fn [db _]
+                     (let [t0
+                           (System/currentTimeMillis)
+
+                           id
+                           (get (automation/create! db input t0) "id")
+
+                           runs
+                           #(ps/db-automation-runs db {:automation-id id :limit 10})]
+
+                       (runner/fire-schedules! db t0 (+ t0 1000) t0)
+                       (automation/update! db id {"triggers" [{"kind" "once" "at" (+ t0 2000)}]} t0)
+                       (runner/fire-schedules! db (+ t0 1000) (+ t0 3000) (+ t0 1000))
+                       (expect (= ["once"] (map :trigger_kind (runs))))
+                       (expect (= "completed" (:status (settled db (:id (first (runs))))))))))))
 
 (defn- github-headers
   [secret body delivery event]

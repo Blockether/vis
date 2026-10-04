@@ -177,12 +177,27 @@
 
 (defn next-fire
   "The first fire time strictly after `from-ms` in `zone-id`, in Unix
-   milliseconds, or nil when none occurs in the next five years."
+   milliseconds, or nil when none occurs in the next five years. The first day starts
+   at the local time of `from-ms`, because an earlier local time never resolves to a
+   later instant."
   [spec ^ZoneId zone-id from-ms]
-  (let [start (.toLocalDate (ZonedDateTime/ofInstant (Instant/ofEpochMilli from-ms) zone-id))]
+  (let [local
+        (.toLocalDateTime (ZonedDateTime/ofInstant (Instant/ofEpochMilli from-ms) zone-id))
+
+        start
+        (.toLocalDate local)
+
+        from-hour
+        (long (.getHour local))
+
+        from-minute
+        (long (.getMinute local))]
+
     (loop [offset 0]
       (when (< offset (long search-days))
-        (let [date (.plusDays start offset)]
+        (let [date (.plusDays start offset)
+              first-day? (zero? offset)]
+
           (or (when (day-matches? spec date)
                 (some (fn [hour]
                         (some (fn [minute]
@@ -191,6 +206,8 @@
                                                                                      (int minute)))
                                                      zone-id)]
                                   (when (> (long at) (long from-ms)) at)))
-                              (:minutes spec)))
-                      (:hours spec)))
+                              (if (and first-day? (== (long hour) from-hour))
+                                (subseq (:minutes spec) >= from-minute)
+                                (:minutes spec))))
+                      (if first-day? (subseq (:hours spec) >= from-hour) (:hours spec))))
               (recur (inc offset))))))))

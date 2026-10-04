@@ -19,6 +19,7 @@
             [taoensso.telemere :as tel])
   (:import (java.lang ProcessHandle)
            (java.nio.charset StandardCharsets)
+           (java.time Instant)
            (java.util UUID)
            (java.util.concurrent ExecutorService Executors ThreadFactory)
            (java.util.concurrent.atomic AtomicBoolean AtomicLong)))
@@ -61,7 +62,18 @@
     (apply f args)
     (throw (ex-info "The automation runtime is not installed" {:slot slot}))))
 
-(defn- own-pid ^long [] (.pid (ProcessHandle/current)))
+(defn- start-ms
+  "The start time of process `h` in epoch milliseconds, or nil when the system does
+   not tell."
+  [^ProcessHandle h]
+  (when-let [^Instant at (.orElse (.startInstant (.info h)) nil)]
+    (.toEpochMilli at)))
+
+(def ^:private owner
+  "The process ID and start time that mark the runs of this gateway. A delay, so a
+   native image never keeps the values of its build process."
+  (delay (let [h (ProcessHandle/current)]
+           {:owner_pid (.pid h) :owner_started_at (start-ms h)})))
 
 (defn- daemon-factory
   ^ThreadFactory [prefix]
@@ -149,19 +161,8 @@
 (def ^:private delivery-running (AtomicBoolean. false))
 
 (defn- send-callback!
-  [db {:keys [id run_id payload attempts]}]
-  (let [row
-        (some->> (ps/db-automation-run db run_id)
-                 :automation_id
-                 (ps/db-automation-get db))
-
-        url
-        (get-in row [:definition "delivery" "callback" "url"])
-
-        secret
-        (:callback_secret row)
-
-        timestamp
+  [db {:keys [id payload attempts] url :callback_url secret :callback_secret}]
+  (let [timestamp
         (str (quot (util/now-ms) 1000))
 
         response
@@ -279,7 +280,8 @@
                                           :request request
                                           :scheduled_at scheduled-at
                                           :created_at at
-                                          :owner_pid (own-pid)}
+                                          :owner_pid (:owner_pid @owner)
+                                          :owner_started_at (:owner_started_at @owner)}
                                    reason
                                    (assoc :reason reason)
 
@@ -624,42 +626,100 @@
 
     (when run (if busy (deliver! db row run) (enqueue! db run)))))
 
+(defonce ^:private schedule-cache
+  ;; The store of the last tick and, by automation id, the `updated_at`, the row and
+  ;; the next due time of each schedule trigger, by trigger position.
+  (atom nil))
+
+(defn- fire-trigger!
+  "Fire one schedule trigger of `row` when it is due in (`from`, `to`]. Answer its next
+   due time. A cached due time stays valid while it is later than the window start."
+  [db row trigger cached from to once-from]
+  (let [kind
+        (get trigger "kind")
+
+        since
+        (if (= "once" kind) once-from from)
+
+        due
+        (if (and cached (> (long cached) (long since)))
+          cached
+          (automation/next-fire trigger (:created_at row) since))]
+
+    (if (and due (<= (long due) (long to)))
+      (do (fire! db row kind due) (automation/next-fire trigger (:created_at row) to))
+      due)))
+
+(defn- fire-row!
+  "Fire the due schedule triggers of `row`. Answer their next due times by position."
+  [db row dues from to once-from]
+  (into {}
+        (keep-indexed (fn [i trigger]
+                        (when (automation/schedule-kinds (get trigger "kind"))
+                          [i
+                           (try (fire-trigger! db row trigger (get dues i) from to once-from)
+                                (catch Throwable t
+                                  (tel/log! {:level :warn
+                                             :id ::schedule-failed
+                                             :data {:automation-id (:id row)
+                                                    :error (ex-message t)}})
+                                  nil))])))
+        (get-in row [:definition "triggers"])))
+
 (defn fire-schedules!
   "Claim each schedule occurrence in (`from`, `to`]. A one-time trigger looks back
-   to `once-from`, so a missed one still starts once."
+   to `once-from`, so a missed one still starts once. A row and its due times stay
+   cached until the `updated_at` of the row changes."
   [db from to once-from]
-  (doseq [row
-          (ps/db-automation-list db)
+  (let [{cached-db :db cached-rows :rows}
+        @schedule-cache
 
-          :when (:enabled row)
-          trigger
-          (get-in row [:definition "triggers"])
+        cached
+        (when (identical? db cached-db) cached-rows)]
 
-          :let [kind
-                (get trigger "kind")]
-          :when (automation/schedule-kinds kind)]
+    (reset! schedule-cache
+      {:db db
+       :rows (reduce (fn [rows {:keys [id enabled updated_at]}]
+                       (let [hit
+                             (get cached id)
 
-    (try (let [due
-               (automation/next-fire trigger (:created_at row) (if (= "once" kind) once-from from))]
-           (when (and due (<= (long due) (long to))) (fire! db row kind due)))
-         (catch Throwable t
-           (tel/log! {:level :warn
-                      :id ::schedule-failed
-                      :data {:automation-id (:id row) :error (ex-message t)}})))))
+                             entry
+                             (when enabled
+                               (if (= updated_at (:updated_at hit))
+                                 hit
+                                 {:updated_at updated_at :row (ps/db-automation-get db id)}))]
 
-(defn- alive?
-  [pid]
-  (when pid
-    (let [handle (ProcessHandle/of (long pid))]
-      (and (.isPresent handle) (.isAlive ^ProcessHandle (.get handle))))))
+                         (if-let [row (:row entry)]
+                           (assoc rows
+                             id (assoc entry
+                                  :dues (fire-row! db row (:dues entry) from to once-from)))
+                           rows)))
+                     {}
+                     (ps/db-automation-stamps db))})))
+
+(defn- owner-alive?
+  "True when the gateway process that claimed `run` still runs. A different start time
+   shows that the system reused the process ID."
+  [{:keys [owner_pid owner_started_at]}]
+  (when owner_pid
+    (let [handle (ProcessHandle/of (long owner_pid))]
+      (when (.isPresent handle)
+        (let [h ^ProcessHandle (.get handle)
+              started (start-ms h)]
+
+          (and (.isAlive h)
+               (or (nil? owner_started_at)
+                   (nil? started)
+                   (== (long started) (long owner_started_at)))))))))
 
 (defn recover!
-  "Mark the queued and running runs of stopped gateways as unknown."
+  "Mark the queued and running runs of stopped gateways as unknown. A run of a reused
+   process ID counts as stopped."
   [db]
   (doseq [run
           (ps/db-automation-runs db {:statuses ["queued" "running"] :limit 10000})
 
-          :when (and (not= (own-pid) (:owner_pid run)) (not (alive? (:owner_pid run))))]
+          :when (not (owner-alive? run))]
 
     (when-let [updated (ps/db-automation-update-run! db
                                                      (:id run)

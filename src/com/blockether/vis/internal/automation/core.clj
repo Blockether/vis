@@ -216,11 +216,14 @@
     (->wire row (last-run db id) now)
     (not-found! "Automation" id)))
 
-(defn list-all [db now] (mapv #(->wire % (last-run db (:id %)) now) (ps/db-automation-list db)))
+(defn list-all
+  [db now]
+  (let [last-runs (ps/db-automation-last-runs db)]
+    (mapv #(->wire % (get last-runs (:id %)) now) (ps/db-automation-list db))))
 
 (defn create!
   [db input now]
-  (when (>= (count (ps/db-automation-list db)) (limit :automations))
+  (when (>= (count (ps/db-automation-stamps db)) (limit :automations))
     (throw (ex-info (str "An automation store holds at most " (limit :automations) " automations")
                     {:status 409 :code :automation-limit})))
   (let [definition
@@ -238,6 +241,12 @@
                             :updated_at now})
     (describe db id now)))
 
+(defn- touched-at
+  "The new `updated_at` of `row`: `now`, but always later than the old value. The
+   scheduler reads a row again only when this value changes."
+  [row now]
+  (max (long now) (inc (long (:updated_at row)))))
+
 (defn update!
   "Replace the given top-level fields and validate the result as a whole."
   [db id patch now]
@@ -253,7 +262,7 @@
                              :name (get definition "name")
                              :enabled (get definition "enabled")
                              :definition definition
-                             :updated_at now))
+                             :updated_at (touched-at row now)))
     (describe db id now)))
 
 (defn delete!
@@ -273,7 +282,7 @@
     (ps/db-automation-put! db
                            (assoc row
                              (if (= "webhook" kind) :webhook_secret :callback_secret) secret
-                             :updated_at now))
+                             :updated_at (touched-at row now)))
     {"kind" kind "secret" secret}))
 
 (defn run-filter
@@ -289,12 +298,10 @@
 (defn runs
   "Runs newest first, with the automation names."
   [db opts]
-  (let [names (into {} (map (juxt :id :name)) (ps/db-automation-list db))]
-    (mapv #(run->wire % (get names (:automation_id %) "Automation"))
-          (ps/db-automation-runs db opts))))
+  (mapv #(run->wire % (or (:automation_name %) "Automation")) (ps/db-automation-runs db opts)))
 
 (defn run
   [db run-id]
   (if-let [row (ps/db-automation-run db run-id)]
-    (run->wire row (or (:name (ps/db-automation-get db (:automation_id row))) "Automation"))
+    (run->wire row (or (:automation_name row) "Automation"))
     (not-found! "Automation run" run-id)))

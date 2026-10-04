@@ -247,18 +247,25 @@
    for the size of one method. Rows keep column names. A definition is canonical
    JSON with string keys."
   (db-automation-list [db-info])
+  (db-automation-stamps [db-info]
+    "The `id`, `enabled` and `updated_at` of each automation, without the definition.")
+  (db-automation-last-runs [db-info]
+    "The newest run of each automation that has runs, by automation id.")
   (db-automation-get [db-info id])
   (db-automation-put! [db-info row])
   (db-automation-delete! [db-info id])
   (db-automation-claim-run! [db-info row]
     "Insert a run unless its trigger key exists. Answer the inserted row or nil.")
-  (db-automation-run [db-info id])
-  (db-automation-runs [db-info opts])
+  (db-automation-run [db-info id]
+    "One run, with the name of its automation as `automation_name`.")
+  (db-automation-runs [db-info opts]
+    "Runs newest first, each with `automation_name`.")
   (db-automation-update-run! [db-info id statuses attrs]
     "Change a run only while its status is in `statuses`. Answer the new row or nil.")
   (db-automation-prune-runs! [db-info automation-id limit])
   (db-automation-enqueue-delivery! [db-info row])
-  (db-automation-due-deliveries [db-info now limit])
+  (db-automation-due-deliveries [db-info now limit]
+    "Due pending callbacks, with the current `callback_url` and `callback_secret`.")
   (db-automation-update-delivery! [db-info id attrs]))
 
 (defmacro store-implementation

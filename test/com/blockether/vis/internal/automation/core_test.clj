@@ -197,4 +197,44 @@
           (let [statuses (map :status (ps/db-automation-runs db {:automation-id id :limit 100}))]
             (expect (= 4 (count statuses)))
             (expect (= 1 (count (filter #{"queued"} statuses)))))
-          (expect (= 404 (:status (failure #(automation/run db "missing"))))))))))
+          (expect (= 404 (:status (failure #(automation/run db "missing")))))))))
+  (it "lists each automation with its newest run and names each run"
+      (with-db
+        (fn [db]
+          (let [morning
+                (get (automation/create! db input now) "id")
+
+                evening
+                (get (automation/create! db (assoc input "name" "Evening report") now) "id")
+
+                claim
+                (fn [id run-id at]
+                  (ps/db-automation-claim-run! db
+                                               {:id run-id
+                                                :automation_id id
+                                                :trigger_kind "manual"
+                                                :trigger_key (str "manual:" run-id)
+                                                :status "queued"
+                                                :created_at at
+                                                :owner_pid 1}))]
+
+            (automation/create! db (assoc input "name" "Weekly report") now)
+            (claim morning "run-old" (- now 1000))
+            (claim morning "run-new" now)
+            (claim evening "run-other" (- now 500))
+            (expect (= {"Morning report" "run-new" "Evening report" "run-other" "Weekly report" nil}
+                       (into {}
+                             (map (juxt #(get % "name") #(get-in % ["last_run" "id"])))
+                             (automation/list-all db now))))
+            (expect (= [["run-new" "Morning report"] ["run-other" "Evening report"]
+                        ["run-old" "Morning report"]]
+                       (mapv (juxt #(get % "id") #(get % "automation_name"))
+                             (automation/runs db {:limit 10}))))))))
+  (it "gives each change a later updated_at, also in the same millisecond"
+      (with-db (fn [db]
+                 (let [id (get (automation/create! db input now) "id")]
+                   (expect (= (inc now)
+                              (get (automation/update! db id {"prompt" "Check the build."} now)
+                                   "updated_at")))
+                   (automation/rotate-secret! db id "webhook" now)
+                   (expect (= (+ now 2) (:updated_at (ps/db-automation-get db id)))))))))

@@ -1085,7 +1085,8 @@ CREATE TABLE automation (
 );
 
 -- One row claims one trigger occurrence at most once. A queued or running row of a
--- stopped gateway becomes unknown and never runs again.
+-- stopped gateway becomes unknown and never runs again. The process ID and its start
+-- time identify the gateway that claimed the row, also after the system reuses the ID.
 CREATE TABLE automation_run (
   id TEXT PRIMARY KEY NOT NULL,
   automation_id TEXT NOT NULL REFERENCES automation(id) ON DELETE CASCADE,
@@ -1104,6 +1105,7 @@ CREATE TABLE automation_run (
   error TEXT,
   is_silent INTEGER NOT NULL DEFAULT 0 CHECK (is_silent IN (0, 1)),
   owner_pid INTEGER,
+  owner_started_at INTEGER,
   UNIQUE (automation_id, trigger_key)
 );
 CREATE INDEX idx_automation_run_automation ON automation_run(automation_id, created_at);

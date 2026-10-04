@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.automation.cron-test
   (:require [com.blockether.vis.internal.automation.cron :as cron]
             [lazytest.core :refer [defdescribe describe expect it]])
-  (:import (java.time ZonedDateTime ZoneId)))
+  (:import (java.time Instant OffsetDateTime ZonedDateTime ZoneId)))
 
 (defn- ms
   [text zone]
@@ -54,7 +54,11 @@
   (describe "ordinary times"
             (it "answers the first time strictly after the start"
                 (expect (= "2026-03-02T09:00" (fire "0 9 * * *" "UTC" "2026-03-01T09:00")))
-                (expect (= "2026-03-01T09:15" (fire "*/15 * * * *" "UTC" "2026-03-01T09:00")))))
+                (expect (= "2026-03-01T09:15" (fire "*/15 * * * *" "UTC" "2026-03-01T09:00"))))
+            (it "starts the first day at the local start time"
+                (expect (= "2026-03-02T00:00" (fire "*/15 * * * *" "UTC" "2026-03-01T23:50")))
+                (expect (= "2026-03-02T23:59" (fire "59 23 * * *" "UTC" "2026-03-01T23:59:30")))
+                (expect (= "2026-03-01T23:59" (fire "59 23 * * *" "UTC" "2026-03-01T23:58:59")))))
   (describe "day rules"
             (it "matches either restricted day field"
                 (expect (= "2026-03-02T00:00" (fire "0 0 13 * MON" "UTC" "2026-03-01T12:00")))
@@ -93,7 +97,18 @@
                   (expect (= "2026-10-26T02:30"
                              (str (.toLocalDateTime (.atZone (java.time.Instant/ofEpochMilli
                                                                second-fire)
-                                                             zone)))))))))
+                                                             zone)))))))
+            (it "starts after the second occurrence of a repeated hour"
+                (let [zone
+                      (ZoneId/of "Europe/Warsaw")
+
+                      from
+                      (.toEpochMilli (.toInstant (OffsetDateTime/parse "2026-10-25T02:40+01:00")))]
+
+                  (expect (= "2026-10-25T03:00+01:00[Europe/Warsaw]"
+                             (str (.atZone (Instant/ofEpochMilli
+                                             (cron/next-fire (cron/parse "*/20 * * * *") zone from))
+                                           zone))))))))
 
 (defdescribe zone-test
              (it "rejects an unknown time zone"
