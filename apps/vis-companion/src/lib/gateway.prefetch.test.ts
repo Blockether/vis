@@ -23,9 +23,16 @@ const turns = [{
 }];
 const page = () => new Response(JSON.stringify({ turns, total: 1, offset: 0, has_more: false }));
 
+// Each test talks to its own machine: a previous test's module still flushes its
+// snapshots on a timer, and the same base would hand this test its transcripts.
+let conn = { url: 'http://gateway.example.com' };
+let machines = 0;
+
 beforeEach(() => {
   localStorage.clear();
   vi.resetModules();
+  machines += 1;
+  conn = { url: `http://gateway.example.com:${7000 + machines}` };
 });
 
 afterEach(() => {
@@ -34,9 +41,11 @@ afterEach(() => {
 });
 
 // Regression: first-seen unread rows and project pages bypassed transcript warming.
+// Waiting for those reads then held every list back, so project bands painted two or
+// three rows on app open and filled seconds later. The warm now runs behind the list.
 describe('preparing NEW sessions before opening', () => {
   it.each(['fleet', 'project', 'grouped'] as const)(
-    'warms a first-seen %s answer before publishing its row',
+    'publishes a first-seen %s row at once and warms its answer behind it',
     async (surface) => {
       let release!: (response: Response) => void;
       const body = new Promise<Response>((resolve) => { release = resolve; });
@@ -51,7 +60,7 @@ describe('preparing NEW sessions before opening', () => {
         }));
       }));
       const { GatewayClient } = await import('./gateway');
-      const client = new GatewayClient({ url: 'http://gateway.example.com' });
+      const client = new GatewayClient(conn);
       let published = false;
       const read = () => surface === 'fleet'
         ? client.listSessions()
@@ -64,13 +73,56 @@ describe('preparing NEW sessions before opening', () => {
       });
 
       await vi.waitFor(() => expect(reads).toContain('/v1/sessions/news-session/transcript'));
-      expect(published).toBe(false);
+      await vi.waitFor(() => expect(published).toBe(true));
+      expect(client.cachedTranscript(row.id)).toBeNull();
       release(page());
       await list;
-      expect(client.cachedTranscript(row.id)).toEqual(turns);
+      await vi.waitFor(() => expect(client.cachedTranscript(row.id)).toEqual(turns));
       await expect(client.transcriptIfMoved(row.id, row)).resolves.toBeNull();
       await read();
       expect(reads.filter((path) => path.endsWith('/transcript'))).toHaveLength(1);
+    },
+  );
+
+  // A saved list only paints the cold start. A row that finished while the app was
+  // closed is not a change this run saw, so it must not hold the first answer back.
+  it.each(['fleet', 'project'] as const)(
+    'publishes a %s row that finished while the app was closed before its answer arrives',
+    async (surface) => {
+      const before = { ...row, is_unread: false, unread_answers: 0, turn_count: 0 } as Session;
+      let current = before;
+      let release!: (response: Response) => void;
+      const body = new Promise<Response>((resolve) => { release = resolve; });
+      vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+        if (new URL(String(input)).pathname.endsWith('/transcript')) return body;
+        return new Response(JSON.stringify({ sessions: [current], total: 1 }), {
+          headers: { ETag: current === before ? 'closed' : 'reopened' },
+        });
+      }));
+      const read = (client: import('./gateway').GatewayClient) => surface === 'fleet'
+        ? client.listSessions()
+        : client.listProjectPage(
+            '/project', 15, '', new Map(), undefined, true, 'exclude', undefined, true,
+          );
+      const first = await import('./gateway');
+      await read(new first.GatewayClient(conn));
+      first.persistGatewayCaches();
+
+      vi.resetModules();
+      current = row;
+      const { GatewayClient } = await import('./gateway');
+      const client = new GatewayClient(conn);
+      const saved = surface === 'fleet'
+        ? client.cachedSessions()
+        : client.heldProjectPage('/project', 15, '', new Map())?.rows;
+      expect(saved?.[0]?.turn_count).toBe(0);
+      let published = false;
+      void read(client).then(() => { published = true; });
+
+      await vi.waitFor(() => expect(published).toBe(true));
+      expect(client.cachedTranscript(row.id)).toBeNull();
+      release(page());
+      await vi.waitFor(() => expect(client.cachedTranscript(row.id)).toEqual(turns));
     },
   );
 
@@ -78,7 +130,7 @@ describe('preparing NEW sessions before opening', () => {
     const fetched = vi.fn(async () => new Response(JSON.stringify({ sessions: [row], total: 1 })));
     vi.stubGlobal('fetch', fetched);
     const { GatewayClient } = await import('./gateway');
-    const client = new GatewayClient({ url: 'http://gateway.example.com' });
+    const client = new GatewayClient(conn);
     await client.listProjectPage('/project', 15, 'next-page', new Map());
     expect(client.cachedTranscript(row.id)).toBeNull();
     expect(fetched).toHaveBeenCalledOnce();
@@ -96,7 +148,7 @@ describe('preparing NEW sessions before opening', () => {
     });
     vi.stubGlobal('fetch', fetched);
     const { GatewayClient } = await import('./gateway');
-    const client = new GatewayClient({ url: 'http://gateway.example.com' });
+    const client = new GatewayClient(conn);
     const pins = new Map();
     const held = await client.listProjectPage('/project', 15, '', pins);
     expect(client.cachedTranscript(row.id)).toBeNull();
@@ -104,7 +156,7 @@ describe('preparing NEW sessions before opening', () => {
       '/project', 15, '', pins, undefined, true, 'exclude', undefined, true,
     );
     expect(ready).toBe(held);
-    expect(client.cachedTranscript(row.id)).toEqual(turns);
+    await vi.waitFor(() => expect(client.cachedTranscript(row.id)).toEqual(turns));
     expect(fetched).toHaveBeenCalledTimes(3);
   });
 
@@ -120,7 +172,7 @@ describe('preparing NEW sessions before opening', () => {
       });
     }));
     const { GatewayClient } = await import('./gateway');
-    const client = new GatewayClient({ url: 'http://gateway.example.com' });
+    const client = new GatewayClient(conn);
     const pins = new Map();
     const read = () => client.listProjectPage(
       '/project', 15, '', pins, undefined, true, 'exclude', undefined, true,
@@ -146,20 +198,21 @@ describe('preparing NEW sessions before opening', () => {
       return new Response(JSON.stringify({ sessions: rows.slice(0, 2), grouped: rows, total: 2 }));
     }));
     const { GatewayClient } = await import('./gateway');
-    const client = new GatewayClient({ url: 'http://gateway.example.com' });
+    const client = new GatewayClient(conn);
     await client.listProjectPage(
       '/project', 15, '', new Map(), undefined, true, 'exclude', undefined, true,
     );
+    const warmed = () => rows.slice(0, 10).filter((session) => client.cachedTranscript(session.id));
+    await vi.waitFor(() => expect(warmed()).toHaveLength(10));
     expect(bodies).toHaveLength(10);
     expect(new Set(bodies).size).toBe(10);
-    expect(client.cachedTranscript('session-0')).toEqual(turns);
     expect(client.cachedTranscript('session-11')).toBeNull();
   });
 
   it('retains a larger viewport only while its rows remain visible', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => page()));
     const { GatewayClient, SESSION_CACHE_LIMIT } = await import('./gateway');
-    const client = new GatewayClient({ url: 'http://gateway.example.com' });
+    const client = new GatewayClient(conn);
     const rows = Array.from({ length: 12 }, (_, index) => ({ ...row, id: `visible-${index}` }));
     const release = rows.map((row) => client.retainTranscript(row));
     const otherView = client.retainTranscript(rows[0]);
@@ -183,7 +236,7 @@ describe('preparing NEW sessions before opening', () => {
 
   it('retries a failed visible answer on the next project poll beyond the first ten rows', async () => {
     const { GatewayClient } = await import('./gateway');
-    const client = new GatewayClient({ url: 'http://gateway.example.com' });
+    const client = new GatewayClient(conn);
     const rows = Array.from({ length: 12 }, (_, index) => ({ ...row, id: `retry-${index}` }));
     const visible = rows[11];
     let failed = false;
@@ -203,7 +256,7 @@ describe('preparing NEW sessions before opening', () => {
     try {
       await vi.waitFor(() => expect(failed).toBe(true));
       await client.listProjectPage('/project', 10, '', new Map(), undefined, true, 'exclude', undefined, true);
-      expect(client.cachedTranscript(visible.id)).toEqual(turns);
+      await vi.waitFor(() => expect(client.cachedTranscript(visible.id)).toEqual(turns));
       expect(attempts).toBe(2);
     } finally {
       stop();

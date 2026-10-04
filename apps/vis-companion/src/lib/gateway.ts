@@ -599,6 +599,9 @@ const retainedTranscripts = new Map<string, number>();
 /** Last active-list row a background read completed for, so polls stay cheap. */
 const transcriptPrefetchStamps = new Map<string, string>();
 
+/** Session lists that already answered in this run. Only their changes hold a list back. */
+const listedSessions = new Set<string>();
+
 /**
  * Freshness stamp of the transcript snapshot we hold, per gateway+session. A
  * long session's transcript is TENS OF MEGABYTES; refetching it on a timer, or
@@ -662,15 +665,18 @@ function sessionTurnCount(row: Session): number {
   return Number.isFinite(count) && count > 0 ? count : 0;
 }
 
-/** Does this row need a finished answer ready before the list exposes it? */
-function sessionHasNewAnswer(previous: Session | undefined, next: Session): boolean {
-  if (sessionIsActive(next)) return false;
+/** Did this row finish an answer after the reader saw its `previous` version? */
+function sessionSettled(previous: Session | undefined, next: Session): boolean {
   return (
-    unreadTurnCount(next) > 0 ||
-    (!!previous && (
-      sessionIsActive(previous) || sessionTurnCount(next) > sessionTurnCount(previous)
-    ))
+    !!previous &&
+    !sessionIsActive(next) &&
+    (sessionIsActive(previous) || sessionTurnCount(next) > sessionTurnCount(previous))
   );
+}
+
+/** Does this row show a finished answer that the reader has not opened yet? */
+function sessionHasNewAnswer(previous: Session | undefined, next: Session): boolean {
+  return !sessionIsActive(next) && (unreadTurnCount(next) > 0 || sessionSettled(previous, next));
 }
 
 function transcriptPrefetchStamp(row: Session): string {
@@ -3359,9 +3365,11 @@ export class GatewayClient {
   }
 
   /**
-   * Do not expose a newly finished row until its newest page is ready to paint. The
-   * NEW badge is therefore a promise that pressing the row needs no transcript read. A
-   * failed warm keeps the previous window visible, and the next poll tries again.
+   * Warm the newest page of each row that shows NEW, within the cache budget. Only a row
+   * that settled after the reader's `previous` window holds the list back: the reader
+   * already sees that window, so NEW never outruns its transcript there. A failed warm
+   * keeps the previous window visible, and the next poll tries again. Other rows warm
+   * behind the list, so a first read paints without waiting for every unread answer.
    */
   private async prefetchSettledTranscripts(
     previous: readonly Session[] | null,
@@ -3369,8 +3377,12 @@ export class GatewayClient {
   ): Promise<boolean> {
     const before = new Map(previous?.map((row) => [row.id, row]));
     const selected = this.transcriptWarmRows(rows, (row) => sessionHasNewAnswer(before.get(row.id), row));
-    const ready = await Promise.all(selected.map((row) => this.prefetchTranscript(row)));
-    return ready.every(Boolean);
+    const held: Promise<boolean>[] = [];
+    for (const row of selected) {
+      const warming = this.prefetchTranscript(row);
+      if (sessionSettled(before.get(row.id), row)) held.push(warming);
+    }
+    return (await Promise.all(held)).every(Boolean);
   }
   /** Last queued backlog seen for ONE session. */
   cachedQueuedTurns(sid: string): QueuedTurn[] | null {
@@ -3588,6 +3600,8 @@ export class GatewayClient {
       ? `${this.snapshotKey('sessions-pin')}\u0000${overlay}`
       : this.snapshotKey('sessions-pin');
     const cached = this.cachedSessions();
+    // Rows saved by an earlier run only paint the cold start (see the warm below).
+    const listed = listedSessions.has(key);
     let pinned = GatewayClient.sessionsValidators.get(pinKey);
     // A webview kill clears the in-memory pin but not the rows it described. Put the
     // durable head ETag back onto those exact rows, so the first cold-start request
@@ -3661,14 +3675,17 @@ export class GatewayClient {
     };
 
     const head = await fetchWindow(HEAD_CURSOR);
+    listedSessions.add(key);
     // The stable project totals ride BESIDE the window and are complete there,
     // whatever depth this device is holding.
     this.overview = head.overview;
-    // Active work warms in the background. A row that just FINISHED is different:
-    // wait for its newest page before returning it, so NEW never outruns its transcript.
+    // Active work warms in the background. A row that FINISHED while this run watched
+    // is different: wait for its newest page before returning it, so NEW never outruns
+    // its transcript. Rows seen for the first time, and rows saved by an earlier run,
+    // warm behind the list: a cold start that waited for them painted seconds late.
     const visible = head.rows;
     this.prefetchActiveTranscripts(visible);
-    if (!(await this.prefetchSettledTranscripts(cached, visible)))
+    if (!(await this.prefetchSettledTranscripts(listed ? cached : null, visible)))
       return this.withoutDeletedSessions(cached ?? []);
 
     // AN UNCHANGED WINDOW IS THE SAME ARRAY, NOT AN EQUAL ONE.
@@ -3757,6 +3774,8 @@ export class GatewayClient {
     await hydrateDraftMessages();
     const overlay = dirtySessionIds(this.base).join(',');
     const key = this.projectWindowKey(root, limit, after, archived, bands);
+    // Only the window this reader already shows can hold its next answer back.
+    const seen = pins.get(key);
     const pin = this.heldProjectWindow(root, limit, after, pins, archived, bands);
     const res = await this.requestFull<{
       sessions?: Session[];
@@ -3779,12 +3798,12 @@ export class GatewayClient {
       window = { ...window, page: this.withoutDeletedProjectSessions(window.page) };
       if (warmTranscripts) {
         const visible = [...window.page.rows, ...window.page.awaiting, ...window.page.grouped];
-        const previous = pin ? [...pin.page.rows, ...pin.page.awaiting, ...pin.page.grouped] : null;
+        // Only a row that settled in front of this reader waits for its answer. A first
+        // read, also one answered from the saved head of a cold start, publishes at once.
+        const previous = seen ? [...seen.page.rows, ...seen.page.awaiting, ...seen.page.grouped] : null;
         this.prefetchActiveTranscripts(visible);
-        if (!(await this.prefetchSettledTranscripts(previous, visible))) {
-          if (pin) return this.withoutDeletedProjectSessions(pin.page);
-          throw new Error('Could not prepare new answers');
-        }
+        if (!(await this.prefetchSettledTranscripts(previous, visible)) && seen)
+          return this.withoutDeletedProjectSessions(seen.page);
       }
       // The saved head is the project's ACTIVE first page: a reveal is a look at another
       // list, and a cold start must not paint the archive in its place.

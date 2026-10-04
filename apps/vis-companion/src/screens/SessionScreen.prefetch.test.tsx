@@ -86,6 +86,8 @@ describe('opening a prefetched answer', () => {
     );
     vi.stubGlobal('fetch', fetched);
     await client.listSessions();
+    // The list publishes first and warms the NEW answer behind it.
+    await vi.waitFor(() => expect(client.cachedTranscript(row.id)?.map((turn) => turn.turn_id)).toEqual(['turn-2']));
     renderSessionScreen({
       session: row,
       client: {
