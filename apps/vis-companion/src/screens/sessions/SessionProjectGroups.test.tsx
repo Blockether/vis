@@ -252,7 +252,10 @@ describe('ProjectGroup groups', () => {
   // A fold is REMEMBERED (`lib/project-fold`), so one test's shut band must not
   // arrive shut in the next one.
   beforeEach(() => window.localStorage.clear());
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
 
   it('updates the group sticky offset and releases its observer when the project folds', async () => {
     const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(44);
@@ -573,6 +576,63 @@ describe('ProjectGroup groups', () => {
     expect(screen.getByRole('dialog', { name: 'Group settings' })).toBeInTheDocument();
     await waitFor(() =>
       expect(read).toHaveBeenCalledWith(expect.any(AbortSignal), { scope: 'group', target_id: WALLET }),
+    );
+  });
+
+  // Regression: renaming replaced the project's chevron with an empty slot.
+  it.each([true, false])('keeps the project chevron while renaming with expanded=%s', async (expanded) => {
+    const name = STORY_NEWER_PROJECT.name;
+    const actions = { rename: vi.fn(async () => {}), move: vi.fn(), remove: vi.fn(async () => {}) };
+    const { user } = mount(machine(), undefined, '', ROWS, actions);
+    const dots = await screen.findByRole('button', { name: `Actions for ${name}` });
+    if (!expanded) await user.click(screen.getByRole('button', { name: `Collapse ${name}` }));
+    const header = dots.closest('header')!;
+    const chevron = header.querySelector('svg.lucide-chevron-right')!;
+    expect(chevron).toBeVisible();
+    const mark = chevron.outerHTML;
+
+    await user.click(dots);
+    await user.click(within(sheet(name)).getByText('Rename project'));
+    const field = screen.getByRole('textbox', { name: `Rename ${name}` });
+    const editingChevron = header.querySelector('svg.lucide-chevron-right');
+    expect(editingChevron).toBeVisible();
+    expect(editingChevron?.outerHTML).toBe(mark);
+    expect(field).toHaveFocus();
+
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('button', { name: `${expanded ? 'Collapse' : 'Expand'} ${name}` }))
+      .toHaveAttribute('aria-expanded', String(expanded));
+    expect(actions.rename).not.toHaveBeenCalled();
+  });
+
+  // Regression: the wider folder panel reused the menu's position and crossed the right edge.
+  it.each([
+    { width: 390, source: 'button', left: 12 },
+    { width: 390, source: 'context', left: 12 },
+    { width: 1440, source: 'button', left: 1040 },
+    { width: 1440, source: 'context', left: 1040 },
+  ])('fits Change folder at width=$width from $source', async ({ width, source, left }) => {
+    vi.stubGlobal('innerWidth', width);
+    vi.stubGlobal('innerHeight', 900);
+    finePointer();
+    const name = STORY_NEWER_PROJECT.name;
+    const actions = { rename: vi.fn(async () => {}), move: vi.fn(), remove: vi.fn(async () => {}) };
+    const { user } = mount(machine(), undefined, '', ROWS, actions);
+    const dots = await screen.findByRole('button', { name: `Actions for ${name}` });
+    vi.spyOn(dots, 'getBoundingClientRect').mockReturnValue(new DOMRect(width - 48, 200, 32, 32));
+    if (source === 'button') {
+      await user.click(dots);
+    } else {
+      fireEvent.contextMenu(dots.closest('header')!, { clientX: width - 16, clientY: 232 });
+    }
+    const menu = sheet(name);
+    const top = menu.style.getPropertyValue('--menu-top');
+    await user.click(within(menu).getByText('Change folder'));
+
+    expect(actions.move).toHaveBeenCalledWith(
+      conn,
+      expect.objectContaining({ root: ROOT }),
+      expect.objectContaining({ left, top: Number.parseFloat(top) }),
     );
   });
 

@@ -34,7 +34,7 @@ import {
   SectionHeader,
   sessionStatusTone,
 } from '../../components/SessionNavigator';
-import { Menu, MenuItem, MenuNote, MENU_WIDTH } from '../../components/Menu';
+import { Menu, MenuItem, MenuNote, MENU_WIDTH, PANEL_SIZES } from '../../components/Menu';
 import { ScopedSettingsDialog } from '../settings/ScopedSettingsDialog';
 import type { SettingsTarget } from '../../lib/types';
 import {
@@ -49,7 +49,7 @@ import {
   TrashIcon,
 } from '../../components/icons';
 import { Button, IconButton, Input, TextButton } from '../../components/ui';
-import { menuPosition, pointerAnchor, type MenuPosition } from '../../lib/anchored-menu';
+import { menuPosition, pointerAnchor, type AnchorBox, type MenuPosition } from '../../lib/anchored-menu';
 import {
   draftMessageKey,
   EMPTY_DRAFT_MESSAGE,
@@ -1463,16 +1463,22 @@ export const ProjectGroup = memo(function ProjectGroup({
   // Group names edit in their bands; the sheet holds only actions that need a choice.
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
   const [settingsTarget, setSettingsTarget] = useState<SettingsTarget | null>(null);
-  const [menu, setMenu] = useState<{ at: MenuPosition; step: MenuStep } | null>(null);
+  const [menu, setMenu] = useState<{
+    at: MenuPosition;
+    anchor: AnchorBox;
+    point?: { x: number; y: number };
+    step: MenuStep;
+  } | null>(null);
   const [typed, setTyped] = useState('');
   const [failure, setFailure] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isRenamingProject, setIsRenamingProject] = useState(false);
   const openMenu = useCallback((anchor: HTMLElement, step: MenuStep, point?: { x: number; y: number }) => {
-    const at = menuPosition(point ? pointerAnchor(point, MENU_WIDTH) : anchor.getBoundingClientRect(), MENU_WIDTH);
+    const box = anchor.getBoundingClientRect();
+    const at = menuPosition(point ? pointerAnchor(point, MENU_WIDTH) : box, MENU_WIDTH);
     if (!at) return;
     setFailure(null);
-    setMenu({ at, step });
+    setMenu({ at, anchor: box, point, step });
   }, []);
   const goTo = (step: MenuStep) => {
     setFailure(null);
@@ -1905,7 +1911,9 @@ export const ProjectGroup = memo(function ProjectGroup({
         >
           {isRenamingProject && projectActions ? (
             <span className="flex min-w-0 flex-1 items-center pl-4 pr-2 mouse:pr-2.5">
-              <span aria-hidden className={LIST_MARK} />
+              <span aria-hidden className={LIST_MARK}>
+                <ChevronIcon open={isShowing} className="size-3.5 -translate-x-1.5 text-dialog-hint" />
+              </span>
               <NameField
                 name={project}
                 noun="project"
@@ -2147,8 +2155,14 @@ export const ProjectGroup = memo(function ProjectGroup({
                         title="Change folder"
                         icon={<ProjectsIcon className="size-3.5" />}
                         onSelect={() => {
+                          // Place the wider browser from the same trigger, not the narrower menu's position.
+                          const width = PANEL_SIZES.browse.width;
+                          const at = menuPosition(
+                            menu.point ? pointerAnchor(menu.point, width) : menu.anchor,
+                            width,
+                          );
                           setMenu(null);
-                          projectActions.move(conn, group, menu.at);
+                          if (at) projectActions.move(conn, group, at);
                         }}
                       />
                     </>
