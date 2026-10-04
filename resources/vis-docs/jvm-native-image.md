@@ -190,4 +190,3 @@ defaults are `changeit` and `PKCS12`.
 - [Runtime distributions](distributions.md) — use a prebuilt runtime when you do not change JVM capabilities.
 - [Running a gateway](gateway-service.md) — supervise and secure your custom engine.
 - [Python SDK](python-sdk.md) — call your capability through an owned engine or gateway.
-- [Java and Clojure SDK](jvm-sdk.md) — connect an external JVM application without rebuilding Vis.

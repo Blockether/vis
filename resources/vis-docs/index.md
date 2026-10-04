@@ -257,7 +257,7 @@ to browse saved sessions.
 <span id="resource-limits"></span>
 
 For remote connections, tokens, service setup and the HTTP API, see [Running a gateway](gateway-service.md).
-To use Vis in your code, see the [Python SDK](python-sdk.md) or [Java and Clojure SDK](jvm-sdk.md).
+To use Vis in your code, see the [Python SDK](python-sdk.md) or the [HTTP API](gateway-service.md#http-api).
 
 <span id="see-also"></span>
 
@@ -282,7 +282,6 @@ To use Vis in your code, see the [Python SDK](python-sdk.md) or [Java and Clojur
 
 - [Python SDK](python-sdk.md) — run a local agent, continue a conversation or connect remotely.
 - [Decision models](decision-models.md) — download Laya, train and publish FP32 versions.
-- [Java and Clojure SDK](jvm-sdk.md) — call Vis from a JVM application.
 - [Running a gateway](gateway-service.md) — install and operate a shared agent service.
 
 <span id="put-your-expertise-into-code"></span>

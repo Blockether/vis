@@ -534,6 +534,10 @@
         ;; A redirect keeps the fragment of an old bookmark, so every old anchor stays.
         (doseq [id ["queue-a-message" "cancel-a-turn" "quit" "export-a-session" "markdown" "html"]]
           (expect (contains? anchors id) id))))
+  (it "removes the Java and Clojure SDK guide"
+      (let [{:keys [pages]} (docs/collect)]
+        (expect (not (some #{"jvm-sdk"} (map :slug pages))))
+        (expect (nil? (io/resource "vis-docs/jvm-sdk.md")))))
   (it
     "keeps setup on the landing page and gateway details in their own guide"
     (let [{:keys [pages] :as site}
@@ -808,6 +812,16 @@
                                (str "/docs/" page suffix)]]
 
                    (expect (= {:status 301 :headers {"location" "/docs/sessions"} :body ""}
+                              (docs/handle {:uri uri :headers {}}))
+                           uri)))
+             (it "redirects the removed Java and Clojure SDK guide to Running a gateway"
+                 (doseq [suffix
+                         ["" "/" ".md" ".html"]
+
+                         :let [uri
+                               (str "/docs/jvm-sdk" suffix)]]
+
+                   (expect (= {:status 301 :headers {"location" "/docs/gateway-service"} :body ""}
                               (docs/handle {:uri uri :headers {}}))
                            uri)))
              (it "an unknown .md path still falls through as nil"

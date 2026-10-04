@@ -24,7 +24,7 @@ Use this guide for installation and task examples.
 - **Your own interface should show what the agent is doing.** [Show progress while a
   turn runs](#show-progress-while-a-turn-runs).
 
-For a Java or Clojure program, use the [Java and Clojure SDK](jvm-sdk.md).
+For a program in another language, use the [HTTP API](gateway-service.md#http-api).
 
 ## Install the SDK
 
@@ -555,6 +555,5 @@ client and its session handles use one calling thread.
 
 - [Running a gateway](gateway-service.md) — install and secure a shared agent service.
 - [Decision models](decision-models.md) — download Laya, train both heads and publish a verified FP32 version.
-- [Java and Clojure SDK](jvm-sdk.md) — call Vis from a JVM application.
 - [Native builds for JVM extensions](jvm-native-image.md) — rebuild Vis only when adding Java/Clojure capabilities.
 - [Extending Vis](extending.md) — add tools inside the agent.

@@ -596,9 +596,12 @@
        :body (io/input-stream u)})))
 
 (def ^:private moved-pages
-  "Slugs of pages merged into another page, mapped to the route that holds them now.
+  "Slugs of merged or removed pages, mapped to the route that replaces them.
    The redirect has no fragment, so a browser keeps the anchor of an old bookmark."
-  {"exporting-sessions" "/docs/sessions" "gateway" "/docs" "queue-and-cancel" "/docs/sessions"})
+  {"exporting-sessions" "/docs/sessions"
+   "gateway" "/docs"
+   "jvm-sdk" "/docs/gateway-service"
+   "queue-and-cancel" "/docs/sessions"})
 
 (defn handle
   "Ring handler for the docs site. Returns nil for paths it does not own (so the

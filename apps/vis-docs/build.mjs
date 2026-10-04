@@ -145,13 +145,16 @@ await writeFile(
 );
 // Keep / and explicit .html URLs static without spending a Worker request on the home page.
 // The app setup guide is now part of Getting started, and the guides to control and export
-// sessions are now part of Sessions. Keep existing bookmarks working.
+// sessions are now part of Sessions. The Java and Clojure SDK guide is removed, so its
+// bookmarks open Running a gateway, which documents the HTTP API. Keep bookmarks working.
 await writeFile(
   new URL('_redirects', dist),
   '/ /index.html 200\n/gateway / 301\n/gateway.html / 301\n/gateway.md /index.md 301\n' +
     '/queue-and-cancel /sessions.html 301\n/queue-and-cancel.html /sessions.html 301\n' +
     '/queue-and-cancel.md /sessions.md 301\n/exporting-sessions /sessions.html 301\n' +
     '/exporting-sessions.html /sessions.html 301\n/exporting-sessions.md /sessions.md 301\n' +
+    '/jvm-sdk /gateway-service.html 301\n/jvm-sdk.html /gateway-service.html 301\n' +
+    '/jvm-sdk.md /gateway-service.md 301\n' +
     '/python-sdk-api /python-sdk-api/blockether/vis.html 301\n' +
     '/python-sdk-api/ /python-sdk-api/blockether/vis.html 301\n',
 );

@@ -187,7 +187,7 @@ Start with the [Python SDK](resources/vis-docs/python-sdk.md) to run a task usin
 Browse the generated [Python API reference](https://vis.blockether.com/python-sdk-api/)
 for classes, methods, signatures and types. It follows `main` and can include
 unreleased APIs not yet available on PyPI.
-For JVM applications, follow the [Java and Clojure guide](resources/vis-docs/jvm-sdk.md).
+From other languages, use the [gateway HTTP API](resources/vis-docs/gateway-service.md#http-api).
 For a shared engine, [run a gateway](resources/vis-docs/gateway-service.md). No native build is needed.
 
 ## Add your own tools and checks
