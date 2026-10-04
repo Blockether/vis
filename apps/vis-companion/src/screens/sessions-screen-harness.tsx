@@ -365,6 +365,8 @@ export function renderSessionsScreen({
 
   const previousFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    // An aborted read never reaches the gateway, even if it resumes after remount.
+    init?.signal?.throwIfAborted();
     const url = new URL(
       typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
     );

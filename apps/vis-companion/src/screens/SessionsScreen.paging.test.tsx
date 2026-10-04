@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { fireEvent, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { act, fireEvent, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { GatewayClient } from '../lib/gateway';
 import { listSession, renderSessionsScreen } from './sessions-screen-harness';
 
 const at = (rank: number) => new Date(Date.UTC(2024, 4, 1, 10, 0, rank)).toISOString();
@@ -124,26 +125,47 @@ describe('gateway-backed project pages', () => {
 
   it('shows no pager for a project restored in its folded state', async () => {
     window.innerHeight = 844;
-    const first = renderSessionsScreen({ machines: [{ sessions: rows }] });
-    let conns;
+    let releaseLookAhead!: () => void;
+    let lookAheadSignal: AbortSignal | undefined;
+    const heldLookAhead = new Promise<void>((resolve) => { releaseLookAhead = resolve; });
+    const readPage = GatewayClient.prototype.listProjectPage;
+    // A canceled look-ahead can resume after the next screen installs its gateway.
+    const pageRead = vi.spyOn(GatewayClient.prototype, 'listProjectPage').mockImplementation(
+      async function (this: GatewayClient, ...args) {
+        if (args[2]) {
+          lookAheadSignal = args[4];
+          await heldLookAhead;
+        }
+        return readPage.apply(this, args);
+      },
+    );
     try {
-      await waitFor(() => expect(shown(first)).toHaveLength(15));
-      fireEvent.click(first.getByLabelText('Collapse alpha'));
-      conns = first.conns;
-      first.unmount();
+      const first = renderSessionsScreen({ machines: [{ sessions: rows }] });
+      const conns = first.conns;
+      try {
+        await waitFor(() => expect(shown(first)).toHaveLength(15));
+        await waitFor(() => expect(lookAheadSignal?.aborted).toBe(false));
+        fireEvent.click(first.getByLabelText('Collapse alpha'));
+        expect(lookAheadSignal!.aborted).toBe(true);
+      } finally {
+        first.unmount();
+        first.restore();
+      }
+      const again = renderSessionsScreen({ machines: [{ sessions: rows }], at: conns });
+      try {
+        await act(async () => { releaseLookAhead(); });
+        await again.findByLabelText('Expand alpha');
+        expect(again.queryByRole('navigation', { name: 'Pages of alpha sessions' })).toBeNull();
+        expect(again.queryByRole('textbox', { name: 'Current page' })).toBeNull();
+        expect(shown(again)).toHaveLength(0);
+        expect(pageReads(again)).toHaveLength(0);
+      } finally {
+        again.unmount();
+        again.restore();
+      }
     } finally {
-      first.restore();
-    }
-    const again = renderSessionsScreen({ machines: [{ sessions: rows }], at: conns });
-    try {
-      await again.findByLabelText('Expand alpha');
-      expect(again.queryByRole('navigation', { name: 'Pages of alpha sessions' })).toBeNull();
-      expect(again.queryByRole('textbox', { name: 'Current page' })).toBeNull();
-      expect(shown(again)).toHaveLength(0);
-      expect(pageReads(again)).toHaveLength(0);
-    } finally {
-      again.unmount();
-      again.restore();
+      releaseLookAhead();
+      pageRead.mockRestore();
     }
   });
 
