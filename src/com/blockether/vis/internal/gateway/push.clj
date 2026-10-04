@@ -162,8 +162,6 @@
 
 ;; ES256 provider token (JWT)
 
-(defn- b64url ^String [^bytes b] (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) b))
-
 (defn- private-key
   "Parse a PKCS#8 PEM (`.p8`, what Apple hands out) into an EC private key."
   [^String pem]
@@ -209,22 +207,17 @@
         (long (aget der (+ 4 r-len 1)))
 
         s
-        (unsigned-int der s-off s-len)
+        (unsigned-int der s-off s-len)]
 
-        out
-        (byte-array 64)]
-
-    (System/arraycopy r 0 out 0 32)
-    (System/arraycopy s 0 out 32 32)
-    out))
+    (util/concat-bytes r s)))
 
 (defn- sign-jwt
   [{:keys [key-path key-source key-id team-id]}]
   (let [header
-        (b64url (util/utf8 (wire/json-str {:alg "ES256" :kid key-id})))
+        (util/base64url (util/utf8 (wire/json-str {:alg "ES256" :kid key-id})))
 
         claims
-        (b64url (util/utf8 (wire/json-str {:iss team-id :iat (quot (util/now-ms) 1000)})))
+        (util/base64url (util/utf8 (wire/json-str {:iss team-id :iat (quot (util/now-ms) 1000)})))
 
         signing-input
         (str header "." claims)
@@ -236,7 +229,7 @@
                                     (slurp key-path))))
           (.update (util/utf8 signing-input)))]
 
-    (str signing-input "." (b64url (der->jose (.sign sig))))))
+    (str signing-input "." (util/base64url (der->jose (.sign sig))))))
 
 (defonce ^:private jwt-cache
   ;; {:token "…" :at ms :key-id "…"} — one provider token per key, reused

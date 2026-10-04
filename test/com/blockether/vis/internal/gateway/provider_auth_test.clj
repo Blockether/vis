@@ -13,6 +13,7 @@
             [com.blockether.vis.internal.gateway.server :as server]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.provider.vendor.openai-codex :as codex]
+            [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe expect it]]
             [reitit.ring :as ring]
             [ring.adapter.jetty9 :as jetty])
@@ -67,10 +68,10 @@
 
           access
           (str "test."
-               (#'codex/base64url
-                (.getBytes (json/write-json-str {(keyword "https://api.openai.com/auth")
-                                                 {:chatgpt_account_id "test-account"}})
-                           java.nio.charset.StandardCharsets/UTF_8))
+               (util/base64url (.getBytes (json/write-json-str
+                                            {(keyword "https://api.openai.com/auth")
+                                             {:chatgpt_account_id "test-account"}})
+                                          java.nio.charset.StandardCharsets/UTF_8))
                ".test")]
 
       (with-redefs [ext/register-extension! (fn [ext]

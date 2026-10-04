@@ -47,8 +47,6 @@
 ;; base-url + default-models come from svar (single source of truth).
 (def ^:private ^:const refresh-margin-ms 300000)
 
-(defn- base64url [^bytes bytes] (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) bytes))
-
 (defn- sha256 [^String s] (util/sha256 (util/utf8 s)))
 
 (defn- url-encode [v] (URLEncoder/encode (str v) "UTF-8"))
@@ -101,13 +99,13 @@
   "Create Anthropic Claude subscription OAuth PKCE flow data."
   []
   (let [verifier
-        (base64url (util/random-bytes 32))
+        (util/base64url (util/random-bytes 32))
 
         challenge
-        (base64url (sha256 verifier))
+        (util/base64url (sha256 verifier))
 
         state
-        (base64url (util/random-bytes 32))
+        (util/base64url (util/random-bytes 32))
 
         query
         (query-string {:code "true"

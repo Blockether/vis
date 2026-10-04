@@ -14,7 +14,8 @@
 (defn- jwt
   [payload]
   (let [->b64 (fn [s]
-                (#'codex/base64url (.getBytes ^String s java.nio.charset.StandardCharsets/UTF_8)))]
+                (com.blockether.vis.internal.util/base64url
+                  (.getBytes ^String s java.nio.charset.StandardCharsets/UTF_8)))]
     (str (->b64 (json/write-json-str {:alg "none"}))
          "."
          (->b64 (json/write-json-str payload))

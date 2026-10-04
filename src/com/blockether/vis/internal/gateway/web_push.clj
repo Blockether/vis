@@ -87,11 +87,6 @@
   []
   {:private-file (key-file) :public-file (public-file)})
 
-(defn- b64url
-  "Encode bytes as unpadded RFC 4648 base64url."
-  ^String [^bytes bytes]
-  (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) bytes))
-
 (defn- b64url-decode
   "Decode an unpadded browser base64url value."
   ^bytes [^String value]
@@ -117,32 +112,6 @@
   ^ECPublicKey [^bytes der]
   (.generatePublic (ec-key-factory) (X509EncodedKeySpec. der)))
 
-(defn- concat-bytes
-  "Concatenate byte arrays without converting them through Clojure sequences."
-  ^bytes [& arrays]
-  (let [length
-        (reduce (fn [^long total ^bytes array]
-                  (+ total (alength array)))
-                0
-                arrays)
-
-        output
-        (byte-array length)]
-
-    (loop [offset
-           0
-
-           remaining
-           arrays]
-
-      (if-let [array (first remaining)]
-        (let [^bytes array array
-              length (alength array)]
-
-          (System/arraycopy array 0 output offset length)
-          (recur (+ offset length) (next remaining)))
-        output))))
-
 (defn- fixed32
   "Represent a positive EC coordinate as exactly 32 unsigned bytes."
   ^bytes [^BigInteger value]
@@ -164,9 +133,9 @@
 (defn- public-key-bytes
   "Encode a JCA P-256 public key as the browser's uncompressed point form."
   ^bytes [^ECPublicKey key]
-  (concat-bytes (byte-array [4])
-                (fixed32 (.getAffineX (.getW key)))
-                (fixed32 (.getAffineY (.getW key)))))
+  (util/concat-bytes (byte-array [4])
+                     (fixed32 (.getAffineX (.getW key)))
+                     (fixed32 (.getAffineY (.getW key)))))
 
 (defn- pem
   "Serialize a PKCS#8 byte array as the PEM form used on disk."
@@ -294,7 +263,7 @@
         (valid-subject? subject)]
 
     {:is-configured (boolean (and pair subject-valid?))
-     :application-server-key (when pair (b64url (public-key-bytes (:public pair))))
+     :application-server-key (when pair (util/base64url (public-key-bytes (:public pair))))
      :subject subject
      :source (when pair "generated")
      :missing (missing-config pair subject-valid?)}))
@@ -326,8 +295,8 @@
       (Arrays/copyOf output length)
       (let [block (util/hmac-sha256
                     prk
-                    (concat-bytes previous info (byte-array [(unchecked-byte counter)])))]
-        (recur block (concat-bytes output block) (inc counter))))))
+                    (util/concat-bytes previous info (byte-array [(unchecked-byte counter)])))]
+        (recur block (util/concat-bytes output block) (inc counter))))))
 
 (defn- sign
   "Sign UTF-8 text with the requested JCA signature algorithm."
@@ -354,18 +323,18 @@
         s
         (fixed32 (BigInteger. 1 (Arrays/copyOfRange der s-offset (+ s-offset s-length))))]
 
-    (concat-bytes r s)))
+    (util/concat-bytes r s)))
 
 (defn- vapid-token
   "Build the short-lived VAPID JWT for one push-service origin."
   [cfg ^PrivateKey private ^String audience]
   (let [header
-        (b64url (util/utf8 (wire/json-str {:alg "ES256" :typ "JWT"})))
+        (util/base64url (util/utf8 (wire/json-str {:alg "ES256" :typ "JWT"})))
 
         claims
-        (b64url (util/utf8 (wire/json-str {:aud audience
-                                           :exp (+ (quot (util/now-ms) 1000) (* 12 60 60))
-                                           :sub (:subject cfg)})))
+        (util/base64url (util/utf8 (wire/json-str {:aud audience
+                                                   :exp (+ (quot (util/now-ms) 1000) (* 12 60 60))
+                                                   :sub (:subject cfg)})))
 
         input
         (str header "." claims)
@@ -373,7 +342,7 @@
         signature
         (sign private "SHA256withECDSA" input)]
 
-    (str input "." (b64url (jose-signature signature)))))
+    (str input "." (util/base64url (jose-signature signature)))))
 
 (defn- subscription-key
   "Decode one browser subscription key and enforce its RFC byte length."
@@ -416,7 +385,7 @@
 (defn- client-public-key
   "Convert a browser's uncompressed P-256 point into a JCA public key."
   ^ECPublicKey [^bytes raw]
-  (public-key-from-der (concat-bytes PUBLIC_KEY_PREFIX raw)))
+  (public-key-from-der (util/concat-bytes PUBLIC_KEY_PREFIX raw)))
 
 (defn- key-agreement
   "Generate an ephemeral server key and derive its ECDH secret."
@@ -434,7 +403,7 @@
   "Derive the aes128gcm content-encryption key and nonce from ECDH output."
   [^bytes client-public ^bytes server-public ^bytes auth ^bytes shared]
   (let [key-info
-        (concat-bytes (util/utf8 KEY_INFO_PREFIX) client-public server-public)
+        (util/concat-bytes (util/utf8 KEY_INFO_PREFIX) client-public server-public)
 
         ikm
         (hkdf-expand (util/hmac-sha256 auth shared) key-info 32)
@@ -465,11 +434,11 @@
 (defn- frame-record
   "Frame one encrypted payload as an RFC 8188 aes128gcm record."
   ^bytes [^bytes salt ^bytes server-public ^bytes ciphertext]
-  (concat-bytes salt
-                (int-bytes RECORD_SIZE)
-                (byte-array [(unchecked-byte (alength server-public))])
-                server-public
-                ciphertext))
+  (util/concat-bytes salt
+                     (int-bytes RECORD_SIZE)
+                     (byte-array [(unchecked-byte (alength server-public))])
+                     server-public
+                     ciphertext))
 
 (defn- encrypted-payload
   "Encrypt a notification and frame it as one RFC 8188/8291 record."
@@ -487,7 +456,7 @@
         (content-keys client-public server-public auth shared-secret)
 
         ciphertext
-        (aes-gcm-encrypt cek nonce (concat-bytes plaintext (byte-array [2])))]
+        (aes-gcm-encrypt cek nonce (util/concat-bytes plaintext (byte-array [2])))]
 
     (frame-record salt server-public ciphertext)))
 

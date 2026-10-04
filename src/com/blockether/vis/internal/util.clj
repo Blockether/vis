@@ -1,7 +1,8 @@
 (ns com.blockether.vis.internal.util
   "The engine's one shared leaf: the primitives every namespace kept re-rolling —
    a millisecond clock, the two blank-string idioms, a trimmed environment read,
-   UTF-8 bytes, SHA-256, HMAC-SHA256, secure random bytes and the hex fold.
+   UTF-8 bytes, SHA-256, HMAC-SHA256, secure random bytes, unpadded base64url,
+   byte concatenation and the hex fold.
 
    It requires NOTHING from the rest of vis and never will. That is the whole
    contract: a leaf can be required from anywhere — specs that load during
@@ -19,6 +20,7 @@
            (java.io StringWriter)
            (java.nio.charset StandardCharsets)
            (java.security MessageDigest SecureRandom)
+           (java.util Base64)
            (java.util.function BiConsumer)
            (javax.crypto Mac)
            (javax.crypto.spec SecretKeySpec)))
@@ -193,6 +195,27 @@
   (let [b (byte-array n)]
     (.nextBytes (SecureRandom.) b)
     b))
+
+(defn base64url
+  "Unpadded base64url text of `b`, the form of JWT parts, PKCE values, Web Push
+   keys and URL-safe secrets."
+  ^String [^bytes b]
+  (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) b))
+
+(defn concat-bytes
+  "One array with the bytes of each array in `arrays`, in order."
+  ^bytes [& arrays]
+  (let [output (byte-array (reduce (fn [^long total ^bytes array]
+                                     (+ total (alength array)))
+                                   0
+                                   arrays))]
+    (loop [offset 0
+           remaining arrays]
+
+      (if-let [^bytes array (first remaining)]
+        (do (System/arraycopy array 0 output offset (alength array))
+            (recur (+ offset (alength array)) (next remaining)))
+        output))))
 
 ;; ── Strings ──────────────────────────────────────────────────────────────
 

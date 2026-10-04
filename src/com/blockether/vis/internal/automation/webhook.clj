@@ -8,13 +8,7 @@
             [com.blockether.vis.internal.util :as util])
   (:import (java.nio.charset StandardCharsets)
            (java.security MessageDigest)
-           (java.util Arrays Base64 HexFormat)))
-
-(defn- concat-bytes
-  ^bytes [^bytes head ^bytes tail]
-  (let [result (Arrays/copyOf head (+ (alength head) (alength tail)))]
-    (System/arraycopy tail 0 result (alength head) (alength tail))
-    result))
+           (java.util Base64 HexFormat)))
 
 (defn standard-key
   "The HMAC key of a Standard Webhooks secret. A `whsec_` secret uses its decoded
@@ -28,7 +22,7 @@
   "The raw HMAC bytes of one Standard Webhooks message."
   ^bytes [^String secret ^String message-id ^String timestamp ^bytes body]
   (util/hmac-sha256 (standard-key secret)
-                    (concat-bytes (util/utf8 (str message-id "." timestamp ".")) body)))
+                    (util/concat-bytes (util/utf8 (str message-id "." timestamp ".")) body)))
 
 (defn standard-signature
   "The `v1,<base64>` signature of Standard Webhooks for one message."
@@ -97,7 +91,7 @@
             (not (fresh? timestamp now skew-seconds)) "timestamp"
             (not (same-bytes? (util/hmac-sha256
                                 (util/utf8 secret)
-                                (concat-bytes (util/utf8 (str (str/trim timestamp) ".")) body))
+                                (util/concat-bytes (util/utf8 (str (str/trim timestamp) ".")) body))
                               (hex-bytes (str/trim signature))))
             "signature"
             :else nil))

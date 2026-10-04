@@ -29,8 +29,7 @@
             [com.blockether.vis.internal.provider.flow :as auth-flow]
             [com.blockether.vis.internal.provider.oauth :as oauth]
             [com.blockether.vis.internal.util :as util])
-  (:import (java.net URI URLDecoder URLEncoder)
-           (java.util Base64)))
+  (:import (java.net URI URLDecoder URLEncoder)))
 
 (def ^:private protocol-version-header "MCP-Protocol-Version")
 
@@ -38,12 +37,6 @@
 
 ;; The lazy babashka.http-client instance is shared with `client.clj` through
 ;; `mcp-http/client`.
-
-(defn- b64url
-  ^String [^bytes bs]
-  (-> (Base64/getUrlEncoder)
-      .withoutPadding
-      (.encodeToString bs)))
 
 (defn- form-encode
   ^String [m]
@@ -247,14 +240,14 @@
                             {:type :mcp/oauth-discovery :server server-name})))
 
         verifier
-        (b64url (util/random-bytes 32))]
+        (util/base64url (util/random-bytes 32))]
 
     {:server server-name
      :as-url as-url
      :asmeta asmeta
      :verifier verifier
-     :challenge (b64url (util/sha256 (util/utf8 verifier)))
-     :state (b64url (util/random-bytes 16))
+     :challenge (util/base64url (util/sha256 (util/utf8 verifier)))
+     :state (util/base64url (util/random-bytes 16))
      :resource (get rmeta "resource")
      :scope (or (:scope auth-hint)
                 (some->> (get rmeta "scopes_supported")

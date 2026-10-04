@@ -52,17 +52,15 @@
 
 ;; Encoding / crypto helpers
 
-(defn- base64url [^bytes bytes] (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) bytes))
-
 (defn- sha256 [^String s] (util/sha256 (util/utf8 s)))
 
 (defn- generate-pkce
   []
   (let [verifier
-        (base64url (util/random-bytes 32))
+        (util/base64url (util/random-bytes 32))
 
         challenge
-        (base64url (sha256 verifier))]
+        (util/base64url (sha256 verifier))]
 
     {:verifier verifier :challenge challenge}))
 

@@ -234,6 +234,18 @@
              (it "answers nil for a variable no environment sets"
                  (expect (nil? (util/env-val "VIS_A_VARIABLE_NOTHING_SETS")))))
 
+(defdescribe byte-text-test
+             (it "writes RFC 4648 base64url without padding"
+                 (expect (= ["" "Zg" "Zm8" "Zm9v" "-_8"]
+                            (mapv util/base64url
+                                  [(byte-array 0) (util/utf8 "f") (util/utf8 "fo") (util/utf8 "foo")
+                                   (byte-array [(unchecked-byte 0xfb) (unchecked-byte 0xff)])]))))
+             (it "joins byte arrays in order"
+                 (expect
+                   (= [1 2 3]
+                      (vec (util/concat-bytes (byte-array [1 2]) (byte-array 0) (byte-array [3])))))
+                 (expect (zero? (alength (util/concat-bytes))))))
+
 (def ^:private re-rolled
   "What `com.blockether.vis.internal.util` owns. A second copy is not a style
    question: the engine reached twelve `now-ms` wrappers and five different hex
@@ -245,7 +257,9 @@
    #"\(and\s+\(string\?\s+[^)]+\)\s+\(not\s+\(str/blank\?"
    "UTF-8 bytes (util/utf8)" #"\.getBytes\s+[^\s)]+\s+(?:StandardCharsets/UTF_8|\"UTF-8\")"
    "an HMAC-SHA256 (util/hmac-sha256)" #"Mac/getInstance\s+\"HmacSHA256\""
-   "secure random bytes (util/random-bytes)" #"\.nextBytes"})
+   "secure random bytes (util/random-bytes)" #"\.nextBytes"
+   "unpadded base64url (util/base64url)" #"\.withoutPadding"
+   "byte concatenation (util/concat-bytes)" #"\(defn-?\s+concat-bytes\b"})
 
 (defdescribe shared-primitives-test
              (it "leaves every re-rolled primitive of the engine to internal.util"

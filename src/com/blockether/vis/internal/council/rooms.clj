@@ -12,8 +12,7 @@
             [com.blockether.vis.internal.persistance.core :as store]
             [com.blockether.vis.internal.util :as util])
   (:import (java.nio.file Files Path LinkOption CopyOption StandardCopyOption)
-           (java.nio.file.attribute FileAttribute PosixFilePermissions)
-           (java.util Base64)))
+           (java.nio.file.attribute FileAttribute PosixFilePermissions)))
 
 (set! *warn-on-reflection* true)
 
@@ -83,7 +82,7 @@
 
 (defn- update-state! [f] (locking state-lock (save-state! (f (read-state)))))
 
-(defn- secret [] (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) (util/random-bytes 32)))
+(defn- secret [] (util/base64url (util/random-bytes 32)))
 
 (defn access-id [room-id] (str "council_room_" (str/replace room-id "-" "") "_access"))
 

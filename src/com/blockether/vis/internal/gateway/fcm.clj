@@ -100,8 +100,6 @@
 
 ;; OAuth access token (RS256 JWT -> Google token endpoint)
 
-(defn- b64url ^String [^bytes b] (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) b))
-
 (defn- private-key
   "Parse the PKCS#8 PEM Google embeds in the service-account JSON."
   [^String pem]
@@ -117,14 +115,14 @@
         (quot (util/now-ms) 1000)
 
         header
-        (b64url (util/utf8 (wire/json-str {:alg "RS256" :typ "JWT"})))
+        (util/base64url (util/utf8 (wire/json-str {:alg "RS256" :typ "JWT"})))
 
         claims
-        (b64url (util/utf8 (wire/json-str {:iss (get sa "client_email")
-                                           :scope SCOPE
-                                           :aud (or (get sa "token_uri") TOKEN_URI)
-                                           :iat now
-                                           :exp (+ now (long JWT_TTL_SECONDS))})))
+        (util/base64url (util/utf8 (wire/json-str {:iss (get sa "client_email")
+                                                   :scope SCOPE
+                                                   :aud (or (get sa "token_uri") TOKEN_URI)
+                                                   :iat now
+                                                   :exp (+ now (long JWT_TTL_SECONDS))})))
 
         signing-input
         (str header "." claims)
@@ -134,7 +132,7 @@
           (.initSign (private-key (get sa "private_key")))
           (.update (util/utf8 signing-input)))]
 
-    (str signing-input "." (b64url (.sign sig)))))
+    (str signing-input "." (util/base64url (.sign sig)))))
 
 (defonce ^:private http-client (delay (http/client {:connect-timeout 10000 :version :http2})))
 
