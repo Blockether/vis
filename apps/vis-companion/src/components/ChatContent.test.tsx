@@ -699,7 +699,9 @@ describe('request speaker labels', () => {
       const view = render(<UserMessage requestKind="council">{request}</UserMessage>);
       const body = view.container.querySelector('.line-clamp-4')!;
       const button = view.getByRole('button', { name: 'Show full message' });
-      expect(body.textContent).toBe(request);
+      expect([...body.querySelectorAll('p')].map((line) => line.textContent)).toEqual(
+        request.split('\n'),
+      );
       expect(button).toHaveAttribute('aria-expanded', 'false');
       expect(button).toHaveAttribute('aria-controls', body.id);
       fireEvent.click(button);

@@ -118,6 +118,22 @@ describe('Justice prose', () => {
     expect(prose?.textContent).toBe(paragraph);
   });
 
+  // Council messages and wakes must read like typed requests: Justice, not native justify.
+  it('composes a Council request with Justice on the first paint', async () => {
+    const view = render(
+      <UserMessage
+        requestKind="council"
+        council={{ entry_id: 7698, thread_id: 7698, kind: 'coordination', content: paragraph }}
+      >
+        Council notification #7698. Read the attributed Council input.
+      </UserMessage>,
+    );
+    await settle();
+    const prose = view.container.querySelector('article p');
+    expect(prose).toHaveAttribute('data-justice');
+    expect(prose?.textContent).toBe(paragraph);
+  });
+
   it('justifies a spoken request with doubled sentence spaces without changing its text', async () => {
     const request = `${paragraph}  And another sentence follows the first.  It should still fill the column.`;
     const view = render(<UserMessage>{request}</UserMessage>);

@@ -4286,6 +4286,7 @@ function UserFileAttachment({ attachment }: { attachment: GatewayAttachment }) {
   );
 }
 
+/** Council requests and wakes share the Justice prose of typed requests. */
 function CouncilRequestBody({ children }: { children: string }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const bodyId = useId();
@@ -4308,7 +4309,7 @@ function CouncilRequestBody({ children }: { children: string }) {
   return (
     <>
       <div id={bodyId} ref={bodyRef} className={expanded ? '' : 'line-clamp-4'}>
-        {children}
+        {children && <UserRequestText text={children} />}
       </div>
       {collapsible && (
         <Disclosure
