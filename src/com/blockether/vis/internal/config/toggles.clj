@@ -179,6 +179,12 @@
                     (into {} (remove #(= owner (:owner (val %)))) entries)))
   nil)
 
+(defn unregister-toggle!
+  "Remove one declaration whose source no longer exists; durable overrides stay stored."
+  [id]
+  (swap! registry dissoc id)
+  nil)
+
 (defn registered-toggles
   "Vec of every registered toggle's normalized spec, in registration
    insertion order. Stable for the TUI settings dialog."

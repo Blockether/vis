@@ -50,7 +50,7 @@
                            :default true
                            :owner :vis
                            :persist? true
-                           :group :sandbox})
+                           :group :council})
 
 (defn enabled? [& _] (toggles/enabled? "council"))
 

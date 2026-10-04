@@ -1,11 +1,14 @@
 (ns com.blockether.vis.internal.council.rooms-test
-  (:require [clojure.java.io :as io]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.scoped :as scoped]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.council.rooms :as rooms]
             [com.blockether.vis.internal.council.transport :as transport]
+            [com.blockether.vis.internal.gateway.server.settings :as settings-api]
             [com.blockether.vis.internal.persistance.core :as store]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [lazytest.core :refer [defdescribe describe it expect]])
@@ -332,3 +335,35 @@
               (expect (seq (:entries
                              (council/prepare-input! db sid "active" room-id input [1 0] 8192))))
               (expect (= room-id (get-in @input [:delivery :room-id])))))))))
+
+(defdescribe
+  rooms-settings-group
+  (it "lists Council and its room settings in one Council group"
+      (with-room
+        (fn [{:keys [room-id]}]
+          (let [groups
+                (get (json/read-json (:body (#'settings-api/list-settings-handler {}))) "groups")
+
+                council
+                (first (filter #(= "council" (get % "id")) groups))]
+
+            (expect (= "Council" (get council "title")))
+            (expect
+              (= {"council" "next_turn"
+                  "council_room" "next_call"
+                  "council_room_wake" "next_call"
+                  (rooms/access-id room-id) "next_call"}
+                 (into {} (map (juxt #(get % "id") #(get % "applies"))) (get council "toggles"))))
+            (expect (= [council]
+                       (filter #(some #{"council"}
+                                      (map (fn [row]
+                                             (get row "id"))
+                                           (get % "toggles")))
+                               groups)))
+            (expect (not-any? #(= "council_rooms" (get % "id")) groups))))))
+  (it "removes the access setting of a room that leaves the membership"
+      (with-room (fn [{:keys [room-id]}]
+                   (expect (some? (toggles/toggle-spec (rooms/access-id room-id))))
+                   (rooms/register-settings! [])
+                   (expect (nil? (toggles/toggle-spec (rooms/access-id room-id))))
+                   (expect (some? (toggles/toggle-spec "council_room_wake")))))))

@@ -105,11 +105,11 @@ The relay operator can read room messages. There is no end-to-end encryption, an
 Ask the room owner for an invitation. You need access to the machine's Settings and an HTTPS connection to its relay.
 Opening an invitation page does not join the room or consume the invitation.
 
-1. In Companion **Settings**, open the machine's **Council rooms** panel.
+1. In Companion **Settings**, open the machine's **Council** section and select **Join a room**.
 2. Enter a machine name and paste the complete invitation link.
 3. Select **Review invitation**.
 4. Check the relay address and machine name.
-5. Select **Confirm join**.
+5. Select **Join room**.
 
 The room now appears in Settings. Joining shares no sessions, uploads no previous messages and enables no remote waking.
 Keep invitation links private. Their fragment contains the invitation secret.
@@ -142,7 +142,8 @@ A crash between that claim and dispatch can lose the wake attempt. Read the thre
 
 ### Create and manage rooms
 
-A relay administrator can register a machine for room creation through **Set up room creation**.
+A relay administrator can register a machine for room creation.
+In the machine's **Council** section, select **Create rooms**, then **Register machine**.
 Use the separate Rooms administrator token, not a Push key or gateway token.
 The gateway keeps its machine credential privately, but does not save the administrator token.
 
@@ -150,11 +151,11 @@ A registered creator can create rooms. A room owner can create invitations, revo
 The interface creates invitations with one use and a one-day expiry.
 The protocol permits up to 100 uses and a seven-day expiry.
 
-**Leave room** removes this machine's membership. **Delete room** removes an owned room and its messages for everyone.
+**Leave** removes this machine's membership. **Delete** removes an owned room and its messages for everyone.
 Both actions require confirmation. Neither action deletes local sessions.
 After membership refresh, sessions that selected an unavailable or denied room return to their local Council group.
 
-**Disconnect this machine** deletes this machine from the relay, together with every room that it owns.
+**Disconnect** deletes this machine from the relay, together with every room that it owns.
 Vis then removes the machine credential from this computer. Local sessions stay.
 Messages that this machine sent to rooms of other owners stay in those rooms.
 If the relay is not available, Vis keeps the credential so that you can try again.

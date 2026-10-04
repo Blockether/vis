@@ -2448,6 +2448,15 @@ export function storySettingsFetch(populated = false): typeof fetch {
         },
       ]
     : [];
+  const council = [
+    {
+      id: 'council',
+      label: 'Council',
+      description: 'Exchange project messages and wake an idle peer or a managed subagent.',
+      type: 'boolean',
+      enabled: true,
+    },
+  ];
   const features = ['subagents', 'improve', 'plans'].map((id) => ({
     id,
     label: id === 'plans' ? 'Plan before coding' : id === 'improve' ? 'Improve' : 'Subagents',
@@ -2485,7 +2494,7 @@ export function storySettingsFetch(populated = false): typeof fetch {
         agentName.value = String(request.value);
         body = agentName;
       } else {
-        const feature = features.find((item) => item.id === request.id);
+        const feature = [...council, ...features].find((item) => item.id === request.id);
         if (feature) feature.enabled = !feature.enabled;
         body = feature;
       }
@@ -2495,6 +2504,7 @@ export function storySettingsFetch(populated = false): typeof fetch {
         revision: 'story-settings',
         groups: [
           { id: 'agent', title: 'Agent', toggles: [agentName] },
+          { id: 'council', title: 'Council', toggles: council },
           { id: 'experimental', title: 'Experimental', toggles: features },
         ],
       };

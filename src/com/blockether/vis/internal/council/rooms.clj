@@ -86,8 +86,14 @@
 
 (defn access-id [room-id] (str "council_room_" (str/replace room-id "-" "") "_access"))
 
+(defn setting?
+  "True for the room selection, wake and access settings. They apply on the next Council call."
+  [id]
+  (str/starts-with? id "council_room"))
+
 (defn register-settings!
-  "Membership permits selection. It never selects or shares a session."
+  "Membership permits selection. It never selects or shares a session.
+   A room that leaves the membership loses its access setting."
   [rooms]
   (toggles/register-toggle! {:id "council_room"
                              :label "Council room"
@@ -97,7 +103,7 @@
                              :description "Select a shared room, or keep Council on this machine."
                              :scopes toggle-contract/scopes
                              :persist? true
-                             :group :council_rooms})
+                             :group :council})
   (toggles/register-toggle!
     {:id "council_room_wake"
      :label "Allow room wake"
@@ -107,7 +113,7 @@
      :description
      "Allow room messages to start idle sessions. An ancestor denial cannot be overridden."
      :persist? true
-     :group :council_rooms})
+     :group :council})
   (doseq [room rooms]
     (toggles/register-toggle!
       {:id (access-id (:room_id room))
@@ -118,7 +124,12 @@
        :inheritance "restrict"
        :scopes toggle-contract/scopes
        :persist? true
-       :group :council_rooms})))
+       :group :council}))
+  (let [current (set (map (comp access-id :room_id) rooms))]
+    (doseq [{:keys [id]} (toggles/registered-toggles)
+            :when (and (setting? id) (str/ends-with? id "_access") (not (current id)))]
+
+      (toggles/unregister-toggle! id))))
 
 (register-settings! [])
 

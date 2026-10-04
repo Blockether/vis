@@ -54,7 +54,7 @@ import { SpeechEnginesPanel, type SaveSpeechPrefs } from './SpeechSettings';
 import { FormLabel, SettingsPanel } from './SettingsLayout';
 import { ExtensionNotice, ExtensionsPanel, extensionMeta } from './ExtensionSettings';
 import { SettingField } from './SettingField';
-import { RoomsPanel } from './RoomsPanel';
+import { CouncilRooms } from './CouncilRooms';
 import { IMPROVE_MODE_LABELS, type ImproveMode } from '../../lib/improve';
 
 /** Closed-choice setting: one shared picker, with saving disabling input. */
@@ -478,7 +478,6 @@ export function MachineSettings({
         <>
           <ProvidersPanel client={client} />
           <NotificationsPanel client={client} gateway={gateway} />
-          <RoomsPanel client={client} onChanged={load} />
           <McpServersPanel client={client} />
           <SpeechEnginesPanel client={client} prefs={speechPrefs} onChange={onSpeechChange} />
         </>
@@ -566,6 +565,8 @@ export function MachineSettings({
                 ))}
               </div>
             )}
+            {/* Room membership is part of Council, so it stands under the Council switches. */}
+            {group.id === 'council' && <CouncilRooms client={client} onChanged={load} />}
           </SettingsPanel>
         ))
       )}

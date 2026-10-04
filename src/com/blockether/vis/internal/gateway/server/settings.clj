@@ -34,7 +34,8 @@
            :own-value own-value
            :inherited-value inherited-value
            :inherited-source inherited-source
-           :applies (if (#{:skills :mcp :engines :council_rooms} group) "next_call" "next_turn")}
+           :applies
+           (if (or (#{:skills :mcp :engines} group) (rooms/setting? id)) "next_call" "next_turn")}
     (= "restrict" inheritance)
     (assoc :inheritance inheritance)
 
