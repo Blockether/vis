@@ -487,9 +487,7 @@
   (when (and (nil? @supervisor) (seq (configured-servers)))
     (let [^java.util.concurrent.ScheduledExecutorService ex
           (java.util.concurrent.Executors/newSingleThreadScheduledExecutor
-            (reify
-              java.util.concurrent.ThreadFactory
-                (newThread [_ r] (doto (Thread. ^Runnable r "vis-mcp-health") (.setDaemon true)))))]
+            (util/daemon-thread-factory "vis-mcp-health"))]
       (if (compare-and-set! supervisor nil ex)
         (.scheduleWithFixedDelay ex
                                  ^Runnable

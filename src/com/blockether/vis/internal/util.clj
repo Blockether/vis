@@ -2,14 +2,14 @@
   "The engine's one shared leaf: the primitives every namespace kept re-rolling —
    a millisecond clock, the two blank-string idioms, a trimmed environment read,
    UTF-8 bytes, SHA-256, HMAC-SHA256, secure random bytes, unpadded base64url,
-   byte concatenation and the hex fold.
+   byte concatenation, the hex fold and a daemon thread factory.
 
    It requires NOTHING from the rest of vis and never will. That is the whole
    contract: a leaf can be required from anywhere — specs that load during
    namespace initialization, the gateway, the sandbox — without a cycle to
    reason about. Everything here is a pure function of its arguments (or of one
-   process-wide reading), so nothing here may become a top-level value: a `def`
-   that CALLS one of these freezes the BUILDER's answer into the native image
+   process-wide reading), so no reading here may become a top-level value: a
+   `def` that CALLS one freezes the BUILDER's answer into the native image
    (`native-image-env-capture-test` is the gate).
 
    A name earns a place here when a THIRD namespace needs it. A helper with one
@@ -21,6 +21,8 @@
            (java.nio.charset StandardCharsets)
            (java.security MessageDigest SecureRandom)
            (java.util Base64)
+           (java.util.concurrent ThreadFactory)
+           (java.util.concurrent.atomic AtomicLong)
            (java.util.function BiConsumer)
            (javax.crypto Mac)
            (javax.crypto.spec SecretKeySpec)))
@@ -148,6 +150,18 @@
    that must tell BUILD from RUNTIME reads the property itself."
   []
   (some? (System/getProperty "org.graalvm.nativeimage.imagecode")))
+
+(defn daemon-thread-factory
+  "A thread factory for a background executor. Its threads are daemons, so they
+   never keep the process alive. Their names are `prefix-1`, `prefix-2` and so
+   on, so a thread dump names the owner."
+  ^ThreadFactory [^String prefix]
+  (let [counter (AtomicLong.)]
+    (reify
+      ThreadFactory
+        (newThread [_ runnable]
+          (doto (Thread. ^Runnable runnable (str prefix "-" (.incrementAndGet counter)))
+            (.setDaemon true))))))
 
 (defn utf8
   "`s` as UTF-8 bytes — the one charset every vis wire format names."

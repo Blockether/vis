@@ -30,8 +30,7 @@
             [com.blockether.vis.internal.util :as util])
   (:import (java.io InputStream OutputStream)
            (java.net InetAddress InetSocketAddress ServerSocket Socket URI)
-           (java.util.concurrent Executors ExecutorService ThreadFactory)
-           (java.util.concurrent.atomic AtomicLong)
+           (java.util.concurrent Executors ExecutorService)
            (javax.net.ssl SSLContext SSLSocket SSLSocketFactory)))
 
 ;; Policy: normalize vis.yml :network into a matcher, then decide per request.
@@ -1254,16 +1253,6 @@
 
 ;; Lifecycle
 
-(def ^:private thread-seq (AtomicLong. 0))
-
-(defn- daemon-factory
-  []
-  (reify
-    ThreadFactory
-      (newThread [_ r]
-        (doto (Thread. r (str "vis-egress-" (.getAndIncrement ^AtomicLong thread-seq)))
-          (.setDaemon true)))))
-
 (defn start!
   "Start a loopback egress proxy. `policy-fn` is a 1-arg fn `(fn [token] policy)` — it
    receives the per-connection session TOKEN (from `Proxy-Authorization`, nil when
@@ -1291,7 +1280,7 @@
         (.getLocalPort server)
 
         pool
-        (Executors/newCachedThreadPool (daemon-factory))
+        (Executors/newCachedThreadPool (util/daemon-thread-factory "vis-egress"))
 
         running
         (atom true)

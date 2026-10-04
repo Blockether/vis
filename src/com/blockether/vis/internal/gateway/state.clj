@@ -6779,11 +6779,8 @@
   ;; Stopping background shells and managed REPLs waits on real processes, and
   ;; `lp/close!` waits up to 5s on the turn lock before disposing the Python
   ;; session — seconds of work that a DELETE must never charge to the caller.
-  (delay (java.util.concurrent.Executors/newSingleThreadExecutor
-           (reify
-             java.util.concurrent.ThreadFactory
-               (newThread [_ r]
-                 (doto (Thread. ^Runnable r "vis-session-teardown") (.setDaemon true)))))))
+  (delay (java.util.concurrent.Executors/newSingleThreadExecutor (util/daemon-thread-factory
+                                                                   "vis-session-teardown"))))
 
 (defn- teardown-session-async!
   "Stop `sid`'s background resources and dispose its live environment off the

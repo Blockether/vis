@@ -14,11 +14,12 @@
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.channel.events :as channel-events]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.view.core :as view]
             [com.blockether.vis.internal.view.sink :as sink]
             [com.blockether.vis.contract.view :as view-spec]
             [com.blockether.vis.contract.wire :as wire])
-  (:import [java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit]))
+  (:import [java.util.concurrent Executors ScheduledExecutorService TimeUnit]))
 
 (set! *warn-on-reflection* true)
 
@@ -88,11 +89,8 @@
 (defonce ^:private buffered (atom {}))
 
 (defonce ^:private flusher
-  (delay (Executors/newSingleThreadScheduledExecutor
-           (reify
-             ThreadFactory
-               (newThread [_ runnable]
-                 (doto (Thread. ^Runnable runnable "vis-live-view-flush") (.setDaemon true)))))))
+  (delay (Executors/newSingleThreadScheduledExecutor (util/daemon-thread-factory
+                                                       "vis-live-view-flush"))))
 
 (defn- op-node
   "The node an op addresses. `add-node` names it inside the spec it carries."

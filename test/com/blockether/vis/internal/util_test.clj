@@ -246,6 +246,19 @@
                       (vec (util/concat-bytes (byte-array [1 2]) (byte-array 0) (byte-array [3])))))
                  (expect (zero? (alength (util/concat-bytes))))))
 
+(defdescribe daemon-thread-factory-test
+             (it "names daemon threads after the prefix with a running count"
+                 (let [factory
+                       (util/daemon-thread-factory "vis-test")
+
+                       threads
+                       (vec (repeatedly 2
+                                        #(.newThread factory
+                                                     (fn []))))]
+
+                   (expect (= ["vis-test-1" "vis-test-2"] (mapv #(.getName ^Thread %) threads)))
+                   (expect (every? #(.isDaemon ^Thread %) threads)))))
+
 (def ^:private re-rolled
   "What `com.blockether.vis.internal.util` owns. A second copy is not a style
    question: the engine reached twelve `now-ms` wrappers and five different hex
@@ -259,7 +272,8 @@
    "an HMAC-SHA256 (util/hmac-sha256)" #"Mac/getInstance\s+\"HmacSHA256\""
    "secure random bytes (util/random-bytes)" #"\.nextBytes"
    "unpadded base64url (util/base64url)" #"\.withoutPadding"
-   "byte concatenation (util/concat-bytes)" #"\(defn-?\s+concat-bytes\b"})
+   "byte concatenation (util/concat-bytes)" #"\(defn-?\s+concat-bytes\b"
+   "a daemon thread factory (util/daemon-thread-factory)" #"\(newThread\s*\["})
 
 (defdescribe shared-primitives-test
              (it "leaves every re-rolled primitive of the engine to internal.util"

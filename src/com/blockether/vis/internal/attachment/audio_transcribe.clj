@@ -46,7 +46,7 @@
   (:import [java.io File FileOutputStream]
            [java.nio.charset StandardCharsets]
            [java.util Base64]
-           [java.util.concurrent Callable ExecutorService Executors ThreadFactory]))
+           [java.util.concurrent Callable ExecutorService Executors]))
 
 (set! *warn-on-reflection* true)
 
@@ -115,11 +115,7 @@
   ;; ONE daemon thread: local speech saturates a core, and a message carrying five
   ;; memos must queue rather than race. Delayed so a build that never transcribes
   ;; never starts it.
-  (delay (Executors/newSingleThreadExecutor
-           (reify
-             ThreadFactory
-               (newThread [_ runnable]
-                 (doto (Thread. ^Runnable runnable "vis-audio-transcribe") (.setDaemon true)))))))
+  (delay (Executors/newSingleThreadExecutor (util/daemon-thread-factory "vis-audio-transcribe"))))
 
 (defn clear-cache!
   "Drop every transcript and every in-flight job. Tests only."

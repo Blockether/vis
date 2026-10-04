@@ -22,11 +22,7 @@
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
-  (:import (java.util.concurrent Executors
-                                 ScheduledExecutorService
-                                 ScheduledFuture
-                                 ThreadFactory
-                                 TimeUnit)))
+  (:import (java.util.concurrent Executors ScheduledExecutorService ScheduledFuture TimeUnit)))
 
 (def ^:private debounce-ms 600)
 
@@ -37,11 +33,8 @@
 (defonce ^:private flush-futures (atom {})) ; sid-string -> ScheduledFuture
 
 (defonce ^:private scheduler
-  (Executors/newSingleThreadScheduledExecutor
-    (reify
-      ThreadFactory
-        (newThread [_ r]
-          (doto (Thread. ^Runnable r "vis-session-model-flush") (.setDaemon true))))))
+  (Executors/newSingleThreadScheduledExecutor (util/daemon-thread-factory
+                                                "vis-session-model-flush")))
 
 ;; Short-TTL cache for per-frame DISPLAY readers (the TUI footer renders every
 ;; frame; the codebase avoids per-paint DB reads). Pending always wins over it.

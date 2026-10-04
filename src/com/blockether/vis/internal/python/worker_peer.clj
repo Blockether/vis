@@ -25,11 +25,7 @@
    :serving (atom {})
    :rpc-state (atom {})
    :seq (AtomicLong. 0)
-   :workers (Executors/newCachedThreadPool
-              (reify
-                java.util.concurrent.ThreadFactory
-                  (newThread [_ runnable]
-                    (doto (Thread. ^Runnable runnable "vis-python-worker") (.setDaemon true)))))})
+   :workers (Executors/newCachedThreadPool (util/daemon-thread-factory "vis-python-worker"))})
 
 (defn send-line!
   "Write one message. Synchronized because both a reply and a fresh request can

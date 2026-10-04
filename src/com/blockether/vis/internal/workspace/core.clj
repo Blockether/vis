@@ -1321,11 +1321,8 @@
   ;; Single daemon thread: serializes physical clone reclamation OFF the request
   ;; thread so discarding an isolated workspace never blocks on file deletion, and
   ;; keeps the global `rift/gc` from running concurrently with a fork.
-  (delay (java.util.concurrent.Executors/newSingleThreadExecutor
-           (reify
-             java.util.concurrent.ThreadFactory
-               (newThread [_ r]
-                 (doto (Thread. ^Runnable r "vis-workspace-discard") (.setDaemon true)))))))
+  (delay (java.util.concurrent.Executors/newSingleThreadExecutor (util/daemon-thread-factory
+                                                                   "vis-workspace-discard"))))
 
 (defn- discard-roots-async!
   "Physically release each `{:backend :root}` off the request thread. Returns a

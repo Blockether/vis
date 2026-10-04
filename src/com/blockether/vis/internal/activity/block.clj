@@ -9,7 +9,7 @@
             [com.blockether.vis.internal.activity.event :as event]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
-  (:import [java.util.concurrent ExecutionException ExecutorService Future ThreadFactory]))
+  (:import [java.util.concurrent ExecutionException ExecutorService Future]))
 
 (def ^:private coalesce-ms
   "Floor between two live Activity publications from one block.
@@ -29,14 +29,10 @@
    on the same serial worker. At most 64 immediate transitions can be pending;
    producers wait without dropping admitted events. Shutdown discards delayed flushes."
   []
-  (let [factory
-        (reify
-          ThreadFactory
-            (newThread [_ runnable]
-              (doto (Thread. ^Runnable runnable "vis-activity-dispatch") (.setDaemon true))))
-
-        executor
-        (doto (java.util.concurrent.ScheduledThreadPoolExecutor. 1 ^ThreadFactory factory)
+  (let [executor
+        (doto (java.util.concurrent.ScheduledThreadPoolExecutor. 1
+                                                                 (util/daemon-thread-factory
+                                                                   "vis-activity-dispatch"))
           (.setExecuteExistingDelayedTasksAfterShutdownPolicy false))
 
         pending

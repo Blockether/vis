@@ -21,8 +21,8 @@
            (java.nio.charset StandardCharsets)
            (java.time Instant)
            (java.util UUID)
-           (java.util.concurrent ExecutorService Executors ThreadFactory)
-           (java.util.concurrent.atomic AtomicBoolean AtomicLong)))
+           (java.util.concurrent ExecutorService Executors)
+           (java.util.concurrent.atomic AtomicBoolean)))
 
 (toggles/register-toggle!
   {:id "automations"
@@ -75,21 +75,13 @@
   (delay (let [h (ProcessHandle/current)]
            {:owner_pid (.pid h) :owner_started_at (start-ms h)})))
 
-(defn- daemon-factory
-  ^ThreadFactory [prefix]
-  (let [counter (AtomicLong.)]
-    (reify
-      ThreadFactory
-        (newThread [_ runnable]
-          (doto (Thread. ^Runnable runnable (str prefix "-" (.incrementAndGet counter)))
-            (.setDaemon true))))))
-
 (defonce ^:private run-pool
   (delay (Executors/newFixedThreadPool (int (automation/limit :concurrent_runs))
-                                       (daemon-factory "vis-automation-run"))))
+                                       (util/daemon-thread-factory "vis-automation-run"))))
 
 (defonce ^:private delivery-pool
-  (delay (Executors/newSingleThreadExecutor (daemon-factory "vis-automation-delivery"))))
+  (delay (Executors/newSingleThreadExecutor (util/daemon-thread-factory
+                                              "vis-automation-delivery"))))
 
 (defn- submit-task! [pool f] (.submit ^ExecutorService @pool ^Runnable f))
 
