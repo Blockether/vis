@@ -5903,15 +5903,14 @@
 
 (defn- session-dialog-sort-key
   [session]
-  [(- (max (long (or (date->millis (get session "modified_at"))
-                     (date->millis (get session "created_at"))
-                     0))
-           (long (or (date->millis (get session "last_opened_at")) 0)))) (str (get session "id"))])
+  [(- (long (or (date->millis (get session "modified_at"))
+                (date->millis (get session "created_at"))
+                0))) (str (get session "id"))])
 
 (defn session-dialog-items
   "Build table rows for existing sessions only. New/fork stay dialog
    options via the N/F shortcuts and command palette; they are not fake table
-   data rows. Rows are sorted by conversation or opening recency, then id."
+   data rows. Rows are sorted by the newest sent message, then id."
   ([sessions active-id] (session-dialog-items sessions active-id session-dialog-content-w))
   ([sessions active-id body-w]
    (mapv (fn [session]

@@ -493,12 +493,10 @@ describe('timeLabel', () => {
 // with it. Age may only ever hide a session that is idle, answered and read.
 
 describe('sessionOrder', () => {
-  it('puts a recently opened older conversation above newer content and stars', () => {
-    const newer = session('newer', { modified_at: '2026-01-02T00:00:00Z', favorite_rank: 1 });
-    const opened = session('opened', {
-      modified_at: '2026-01-01T00:00:00Z', last_opened_at: Date.parse('2026-01-03T00:00:00Z'),
-    });
-    expect(sessionOrder([newer, opened]).map((row) => row.id)).toEqual(['opened', 'newer']);
+  it('puts the newest message first, also above a star', () => {
+    const starred = session('starred', { modified_at: '2026-01-01T00:00:00Z', favorite_rank: 1 });
+    const sent = session('sent', { modified_at: '2026-01-02T00:00:00Z' });
+    expect(sessionOrder([starred, sent]).map((row) => row.id)).toEqual(['sent', 'starred']);
   });
 
   it('keeps an already ordered list by identity without mutating its rows', () => {

@@ -139,11 +139,6 @@ CREATE TABLE session_soul (
   -- so the gaps unstarring leaves behind cost nothing. NULL = unstarred.
   favorite_rank     INTEGER,
 
-  -- Last explicit opening by a person, shared by the TUI and app. Background
-  -- reads, transcript refreshes and gateway startup do not change this clock.
-  -- Epoch ms; NULL means the session has not been explicitly opened.
-  last_opened_at    INTEGER,
-
   -- The human's ARCHIVE, owned HERE for the same reason the star above is: a
   -- session put out of sight keeps its whole conversation and has to be out of
   -- sight on every device, so ONE column answers the app, the TUI and the SDK.

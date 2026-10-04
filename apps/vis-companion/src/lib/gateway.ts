@@ -174,6 +174,23 @@ export function onGatewayIncompatible(listener: (error: GatewayError) => void): 
   };
 }
 
+const turnSubmissionListeners = new Set<(sid: string) => void>();
+
+/**
+ * Hear each message that a gateway accepted from this device.
+ *
+ * The gateway ranks a session by its newest message as soon as it accepts it. A list
+ * behind the open session hears this and reads its new order before the reader goes
+ * back to it. Module-level on purpose: the composer and the list each hold their own
+ * client.
+ */
+export function onTurnSubmitted(listener: (sid: string) => void): () => void {
+  turnSubmissionListeners.add(listener);
+  return () => {
+    turnSubmissionListeners.delete(listener);
+  };
+}
+
 // One transcript-search hit inside a session: which SIDE it landed on (the
 // user's own request, the assistant's answer, or the reasoning aside it thought
 // out loud), a short preview snippet, and when it happened. Several travel per
@@ -1078,11 +1095,7 @@ function reconcileSession(
   next: Session,
   pending?: SessionGoal | null,
 ): Session {
-  let incoming = withHeldListFacts(previous, next);
-  // A GET started before the opening PATCH must not rewind the echoed recency.
-  if ((previous?.last_opened_at ?? 0) > (incoming.last_opened_at ?? 0)) {
-    incoming = { ...incoming, last_opened_at: previous!.last_opened_at };
-  }
+  const incoming = withHeldListFacts(previous, next);
   const oldGoal = sessionGoalFromWire(previous?.goal);
   const goal = pending && pending.revision > (oldGoal?.revision ?? 0) ? pending : oldGoal;
   const nextGoal = sessionGoalFromWire(incoming.goal);
@@ -4206,16 +4219,6 @@ export class GatewayClient {
     );
   }
 
-  /** Record a person's explicit selection, not transcript loading or a background refresh. */
-  async markSessionOpened(sid: string): Promise<Session> {
-    return this.absorbSessionRow(
-      sid,
-      await this.request<Session>('PATCH', `/v1/sessions/${encodeURIComponent(sid)}`, {
-        opened: true,
-      }),
-    );
-  }
-
   /**
    * Star or unstar a session. The star is the GATEWAY's fact, not this device's:
    * the reply carries the `favorite_rank` it allocated, every other client of the
@@ -5079,7 +5082,8 @@ export class GatewayClient {
         };
       }),
     );
-    return this.request<SubmittedTurn>('POST', `/v1/sessions/${encodeURIComponent(sid)}/turns`, {
+    const path = `/v1/sessions/${encodeURIComponent(sid)}/turns`;
+    const submitted = await this.request<SubmittedTurn>('POST', path, {
       request,
       display_request: options.displayRequest,
       model: options.model,
@@ -5088,6 +5092,8 @@ export class GatewayClient {
       turn_features: options.turnFeatures,
       idempotency_key: clientId,
     });
+    for (const listener of turnSubmissionListeners) listener(sid);
+    return submitted;
   }
 
   /** Stop a turn we know the id of — the addressed route, open to every channel. */

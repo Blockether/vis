@@ -50,31 +50,28 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('GatewayClient explicit session opening', () => {
-  it('echoes opening recency into the cache without changing conversation time', async () => {
-    const row = { ...sessions[0], modified_at: '2026-01-01T00:00:00Z', last_opened_at: null };
-    const opened = { ...row, last_opened_at: Date.parse('2026-01-02T00:00:00Z') };
+describe('GatewayClient turn submission', () => {
+  // The list behind an open session reads its new order when a message is accepted.
+  it('tells every listener about each accepted message, from any client', async () => {
+    const accepted = () =>
+      new Response(JSON.stringify({ turn_id: 'turn-1', status: 'queued', queued_at: 1 }));
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ sessions: [row], total: 1 })))
-      .mockResolvedValueOnce(new Response(JSON.stringify(opened)))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        ...row, queued_turns: [], queue_paused: null,
-      })));
+      .mockResolvedValueOnce(accepted())
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'refused' }), { status: 409 }))
+      .mockResolvedValueOnce(accepted());
     vi.stubGlobal('fetch', fetchMock);
-    const { GatewayClient } = await import('./gateway');
-    const client = new GatewayClient(conn);
-    await client.listSessions();
-    expect(String(fetchMock.mock.calls[0]![0])).toContain('order=recent');
-    const result = await client.markSessionOpened('session-1');
-    const [url, init] = fetchMock.mock.calls[1]!;
-    expect(String(url)).toContain('/v1/sessions/session-1');
-    expect(init).toMatchObject({ method: 'PATCH', body: JSON.stringify({ opened: true }) });
-    expect(result.last_opened_at).toBe(opened.last_opened_at);
-    expect(result.modified_at).toBe(row.modified_at);
-    expect(client.cachedSessions()![0]!.last_opened_at).toBe(opened.last_opened_at);
-    // An older detail response that was in flight must not undo the explicit opening.
-    await client.session('session-1', undefined, true);
-    expect(client.cachedSession('session-1')!.last_opened_at).toBe(opened.last_opened_at);
+    const { GatewayClient, onTurnSubmitted } = await import('./gateway');
+    const heard: string[] = [];
+    const stop = onTurnSubmitted((sid) => heard.push(sid));
+    // The composer and the list each hold their own client.
+    await new GatewayClient(conn).submitTurn('session-1', 'First message');
+    expect(heard).toEqual(['session-1']);
+    // A refused message moves nothing.
+    await expect(new GatewayClient(conn).submitTurn('session-1', 'Refused')).rejects.toThrow();
+    expect(heard).toEqual(['session-1']);
+    stop();
+    await new GatewayClient(conn).submitTurn('session-1', 'Not heard');
+    expect(heard).toEqual(['session-1']);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });

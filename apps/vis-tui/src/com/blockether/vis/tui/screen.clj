@@ -7661,9 +7661,6 @@
                      ;; session whose turn is mid-flight just brings its tab to
                      ;; the front; the turn was never paused.
                      (let [target-id (:id choice)]
-                       ;; Choosing the current session counts too; polling and resume
-                       ;; hydration do not. Complete the write before the next picker.
-                       (try (vis/mark-session-opened! target-id) (catch Throwable _ nil))
                        (when-not (= (str target-id) (current-session-id))
                          (if-let [session-result (chat/resume-session target-id)]
                            (open-session-tab! session-result true)

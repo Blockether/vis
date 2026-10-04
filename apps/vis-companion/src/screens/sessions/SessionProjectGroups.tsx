@@ -873,8 +873,15 @@ export const ProjectGroup = memo(function ProjectGroup({
   // pages' CURSOR and a validator for it: the turn then paints held rows in the frame
   // of the tap and confirms them with one conditional read, instead of standing on the
   // page before it for a whole round trip.
+  //
+  // A HIDDEN LIST READS ONLY FOR A MOVE. Behind an open session a page is read only
+  // for a `revision` that no page read answered yet: the read after a sent message.
+  // The reader then goes back to the new order. Hiding the list reads nothing, and a
+  // hidden read warms no transcript and reads no page ahead.
+  const pageRevision = useRef(revision);
   useEffect(() => {
-    if (!isVisible || !isShowing || searching) return;
+    if (!isShowing || searching) return;
+    if (!isVisible && revision === pageRevision.current) return;
     const control = new AbortController();
     let live = true;
     // The deepest place this group has walked to that is not past the one asked
@@ -918,9 +925,10 @@ export const ProjectGroup = memo(function ProjectGroup({
           start === 0,
           archived,
           bandWindow,
-          true,
+          isVisible,
         );
         if (!live) return;
+        pageRevision.current = revision;
         if (answer.nextCursor) cursors.current.set(from + answer.rows.length, answer.nextCursor);
         setPaged((held) => ({
           start,
@@ -944,7 +952,7 @@ export const ProjectGroup = memo(function ProjectGroup({
         // (`nextCursor === ''`) is not read past.
         let at = from + answer.rows.length;
         let cursor = answer.nextCursor;
-        for (let ahead = 0; ahead < PAGES_AHEAD && cursor; ahead += 1) {
+        for (let ahead = 0; isVisible && ahead < PAGES_AHEAD && cursor; ahead += 1) {
           const next = await api.listProjectPage(
             root,
             pageSize,
@@ -983,14 +991,18 @@ export const ProjectGroup = memo(function ProjectGroup({
     rows: Session[];
     read: number;
   } | null>(null);
+  // The same rule as the page above: a hidden list reads only for an unanswered move.
+  const asideRevision = useRef(revision);
   useEffect(() => {
-    if (!isVisible || !isShowing || searching || !readGroupsAside) return;
+    if (!isShowing || searching || !readGroupsAside) return;
+    if (!isVisible && revision === asideRevision.current) return;
     const control = new AbortController();
     let live = true;
     void getClient(conn)
-      .listProjectPage(root, 1, '', pins.current, control.signal, false, groupArchived, bandWindow, true)
+      .listProjectPage(root, 1, '', pins.current, control.signal, false, groupArchived, bandWindow, isVisible)
       .then((answer) => {
         if (!live) return;
+        asideRevision.current = revision;
         setGroupedPage({
           view: groupArchived,
           offset: bandOffset,

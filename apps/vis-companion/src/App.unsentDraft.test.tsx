@@ -39,8 +39,7 @@ const readsOfTheList = (requests: string[]) =>
   requests.filter((href) => href.includes('/v1/sessions?'));
 
 // One project whose LAST row is an empty session: no title of its own, no turn
-// ever taken. Every device is answered that row last — except the one holding
-// words for it, and only that device knows.
+// ever taken. Only the device that holds words for it knows about those words.
 const fleet = () => [
   {
     sessions: [
@@ -71,7 +70,7 @@ const fleet = () => [
 // this device — has news about still arrives in its place from the gateway. The
 // device says WHAT it holds (`dirty=`), never WHERE the row goes.
 describe('a session holding unsent words', () => {
-  it('comes back most recently opened, with nothing reordered here', async () => {
+  it('comes back in its recency place, with nothing reordered here', async () => {
     const view = renderApp({ machines: fleet() });
     restore = view.restore;
     await screen.findByText('Alpha one');
@@ -86,9 +85,10 @@ describe('a session holding unsent words', () => {
     await settle();
     fireEvent.click(screen.getByRole('button', { name: 'Back to sessions' }));
 
-    await waitFor(() => expect(rowOrder()).toEqual(['blank', 'one', 'two']));
-    // What travelled is the fact, and the fact is the id.
-    expect(readsOfTheList(view.requests).at(-1)).toContain('dirty=blank');
+    // What travelled is the fact, and the fact is the id. A draft is not a sent
+    // message, so the row keeps its recency place.
+    await waitFor(() => expect(readsOfTheList(view.requests).at(-1)).toContain('dirty=blank'));
+    expect(rowOrder()).toEqual(['one', 'two', 'blank']);
     // Not one pass over the rows on this side: no filter, no band, no sort.
     expect(counters.ordered).toBe(0);
     view.unmount();

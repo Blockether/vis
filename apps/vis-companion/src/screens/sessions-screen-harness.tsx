@@ -115,8 +115,7 @@ function bandOf(row: Session, dirty: ReadonlySet<string>): number {
 function sortKey(row: Session, band: number): number {
   if (band === FAVORITE_BAND) return row.favorite_rank ?? 0;
   const stamp = Date.parse(row.modified_at ?? row.created_at ?? '');
-  const opened = row.last_opened_at ?? 0;
-  return -Math.max(Number.isFinite(stamp) ? stamp : 0, Number.isFinite(opened) ? opened : 0);
+  return -(Number.isFinite(stamp) ? stamp : 0);
 }
 
 /**

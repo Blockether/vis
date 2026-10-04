@@ -236,7 +236,20 @@
            (expect (= 1 (fts-count ds "canary")))
            (exec! ds (str "UPDATE " table " SET llm_assistant_prose = 'kestrel' WHERE id = 'i1'"))
            (expect (= 1 (fts-count ds "kestrel")))
-           (finally (.delete file))))))
+           (finally (.delete file)))))
+  (it "drops the opening clock from a session soul, keeping the session"
+      (let [[^java.io.File file ds] (temp-ds)]
+        (try (migration/migrate! ds [migration-dir])
+             ;; the shape a V1 with the opening clock left behind
+             (exec! ds "ALTER TABLE session_soul ADD COLUMN last_opened_at INTEGER")
+             (exec!
+               ds
+               "INSERT INTO session_soul (id, created_at, last_opened_at) VALUES ('s1', 1, 5000)")
+             (expect (contains? (columns-of ds "session_soul") "last_opened_at"))
+             (migration/migrate! ds [migration-dir])
+             (expect (not (contains? (columns-of ds "session_soul") "last_opened_at")))
+             (expect (= 1 (row-count ds "session_soul")))
+             (finally (.delete file))))))
 
 (defn- scalar
   [^javax.sql.DataSource ds ^String sql]

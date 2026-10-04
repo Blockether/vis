@@ -82,7 +82,6 @@
   ;; --- Session lifecycle ---
   (db-store-session! [db-info opts])
   (db-get-session [db-info ref])
-  (db-mark-session-opened! [db-info session-id])
   (db-resolve-session-id [db-info sel])
   (db-list-sessions [db-info channel])
   (db-search-session-ids [db-info channel query])

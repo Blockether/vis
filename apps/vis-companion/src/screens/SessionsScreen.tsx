@@ -27,7 +27,7 @@ import {
   type SessionRowsContext,
 } from './sessions/SessionProjectGroups';
 import { PANEL_SIZES } from '../components/Menu';
-import { GatewayClient, type ProjectWindows, type SessionMatch } from '../lib/gateway';
+import { GatewayClient, onTurnSubmitted, type ProjectWindows, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { GatewayConn, Session, SseEvent } from '../lib/types';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, viewKind } from '../lib/view';
@@ -1086,6 +1086,19 @@ export function SessionsScreen({
     };
   }, [applyFleetFrame, forgetSessions, isVisible, load, subscriptions]);
 
+  // A SENT MESSAGE MOVES ITS ROW AT ONCE, also behind the open session. The gateway
+  // ranks a session by its newest message as soon as it accepts it, so read the window
+  // now: the reader goes back to a list that already shows the new order. This is one
+  // read for each message, not a poll, so a hidden list still does no repeated work.
+  useEffect(
+    () =>
+      onTurnSubmitted(() => {
+        fleetRefreshQueued.current = true;
+        void load(undefined, true);
+      }),
+    [load],
+  );
+
   useLayoutEffect(() => {
     const anchor = refreshAnchorRef.current;
     const viewport = listRef.current;
@@ -1395,22 +1408,17 @@ export function SessionsScreen({
   // happens INSIDE each machine: two checkouts of the same repo on two machines are two
   // projects, and a folder name never merges them.
   //
-  // Explicit openings participate in the same recency order as conversation activity.
-  // Keep the open row available when it falls outside the gateway's recent window,
-  // but do not pin it ahead of genuinely newer work.
+  // The recents use the list's own recency: the newest message first. Keep the open row
+  // available when it falls outside the gateway's recent window, but do not pin it ahead
+  // of newer work.
   const found = useMemo(() => {
     if (!isSearchOpen) return [];
     const needle = searchNeedle.toLowerCase();
     return inScope.filter((machine) => searchFilter.accepts(machineKey(machine.conn))).map((machine) => {
       const api = clientFor(machine.conn);
-      const answered = (searchRows.get(machineKey(machine.conn)) ?? [])
-        .filter((session) => !api.isSessionDeleted(session.id))
-        .map((session) => {
-          const opened = api.cachedSession(session.id)?.last_opened_at ?? 0;
-          return opened > (session.last_opened_at ?? 0)
-            ? { ...session, last_opened_at: opened }
-            : session;
-        });
+      const answered = (searchRows.get(machineKey(machine.conn)) ?? []).filter(
+        (session) => !api.isSessionDeleted(session.id),
+      );
       const isOpen = (session: Session) => sessionRowKey(machine.conn, session.id) === openRow;
       // The recents are painted as the gateway answered them: freshest first. Newer work
       // can push the open session out of their window; the row this device holds for it

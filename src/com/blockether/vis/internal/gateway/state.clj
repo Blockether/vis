@@ -5139,6 +5139,48 @@
   [{:keys [channel] :as opts}]
   (session->wire (create-session-cold! (assoc opts :channel (or channel :api)))))
 
+(def ^:private registry-in-flight-statuses
+  "Registry turn statuses of a turn that has not ended, so its turn row can still be
+   missing from the store."
+  #{"queued" "running" "cancelling"})
+
+(defn- sent-turn-ms
+  "Epoch ms of the newest message in registry `entry` whose turn is still in flight,
+   or 0. The worker stores the turn row after the permit and the engine start, so
+   recency follows the send and not that later write."
+  [entry]
+  (transduce (keep (fn [turn]
+                     (when (contains? registry-in-flight-statuses (:status turn))
+                       (or (:queued_at turn) (:started_at turn)))))
+             (completing (fn [newest at]
+                           (max (long newest) (long at))))
+             0
+             (vals (:turns entry))))
+
+(defn- with-sent-turn
+  "Turn stats `st` with `:latest-turn-at` raised to `sent-ms`, a send whose turn row
+   has not landed yet. A newer stored turn keeps its own clock."
+  [st sent-ms]
+  (let [sent
+        (long sent-ms)
+
+        ^java.util.Date stored
+        (:latest-turn-at st)]
+
+    (if (and (pos? sent) (or (nil? stored) (< (.getTime stored) sent)))
+      (assoc st :latest-turn-at (java.util.Date. sent))
+      st)))
+
+(defn- with-sent-turns
+  "Grouped turn stats `stats`, keyed by session id, with every in-flight send of the
+   registry applied. The ranking and the row dates then agree on one recency."
+  [stats]
+  (reduce-kv (fn [acc sid entry]
+               (let [sent (sent-turn-ms entry)]
+                 (if (pos? (long sent)) (update acc sid with-sent-turn sent) acc)))
+             stats
+             @registry))
+
 (defn soul
   "Canonical (string-keyed) wire soul for one session: persisted record + live
    gateway status. Running sessions include their request, start timestamp, and
@@ -5176,9 +5218,10 @@
                              peek
                              (get (:turns entry)))
           server-time-ms (util/now-ms)
-          stats (try (some-> (lp/db-info)
-                             (persistance/db-session-turn-stats sid))
-                     (catch Throwable _ nil))
+          stats (with-sent-turn (try (some-> (lp/db-info)
+                                             (persistance/db-session-turn-stats sid))
+                                     (catch Throwable _ nil))
+                                (sent-turn-ms entry))
           ;; EVERY payload a session reaches a client in carries its path, so no
           ;; answer can produce a row a client cannot key to its project
           ;; (`lean-workspace`). Resolved once here, which is also why the list
@@ -5200,7 +5243,6 @@
                  :goal (:goal session)
                  :model (:model session) ; the state's ROOT model, NOT the pin below
                  :created_at (:created-at session)
-                 :last_opened_at (:last-opened-at session)
                  :project_id (some-> (:project-id session)
                                      str)
                  :project_name (:project-name session)
@@ -5684,17 +5726,16 @@
         :else 0))
 
 (defn- session-recency-ms
-  "Last conversation activity or explicit opening, for ordering only.
-   Registry touches and gateway hydration never advance either durable clock."
+  "Last conversation activity, for ordering only: the newest message sent to the
+   session. Opening or reading a session, registry touches and gateway hydration
+   never advance it."
   [session]
-  (max (->epoch-ms (or (get session "modified_at") (get session "created_at")))
-       (->epoch-ms (get session "last_opened_at"))))
+  (->epoch-ms (or (get session "modified_at") (get session "created_at"))))
 
 (defn- record-recency-ms
   "`session-recency-ms` from the cheap record and grouped turn stats."
   ^long [record st]
-  (max (->epoch-ms (or (:latest-turn-at st) (:created-at record)))
-       (->epoch-ms (:last-opened-at record))))
+  (->epoch-ms (or (:latest-turn-at st) (:created-at record))))
 
 (def ^:private favorite-band
   "Starred. The one piece of ordering a HUMAN typed in themselves, so it outranks
@@ -5714,7 +5755,7 @@
 (def ^:private rest-band "Idle sessions, most recent first." 3)
 
 (def ^:private recent-band
-  "The one band of recency order: content activity or an explicit session opening."
+  "The one band of recency order: the newest message sent to each session."
   0)
 
 (defn- session-listed?
@@ -6060,7 +6101,8 @@
 
          ;; ONE grouped query serves BOTH the ordering and the page's decorations.
          stats
-         (if db (try (persistance/db-session-turn-stats db) (catch Throwable _ {})) {})
+         (with-sent-turns
+           (if db (try (persistance/db-session-turn-stats db) (catch Throwable _ {})) {}))
 
          reader-id
          (or (not-empty (str reader)) default-reader-id)
@@ -6313,7 +6355,8 @@
          (try (lp/db-info) (catch Throwable _ nil))
 
          stats
-         (if db (try (persistance/db-session-turn-stats db) (catch Throwable _ {})) {})
+         (with-sent-turns
+           (if db (try (persistance/db-session-turn-stats db) (catch Throwable _ {})) {}))
 
          live
          (try (bus/live-turns) (catch Throwable _ {}))
@@ -6852,12 +6895,6 @@
    session exists."
   [sid is-favorite]
   (when (lp/by-id sid) (lp/set-favorite! sid is-favorite) (soul sid)))
-
-(defn mark-session-opened!
-  "Record a person's explicit selection, not a background read. Return the refreshed
-   soul with `last_opened_at`, or nil if the session no longer exists."
-  [sid]
-  (when (persistance/db-mark-session-opened! (lp/db-info) sid) (soul sid)))
 
 (defn set-archived!
   "Archive (`true`) or unarchive (`false`) `sid`. Returns the refreshed soul (its

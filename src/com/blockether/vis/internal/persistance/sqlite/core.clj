@@ -1256,7 +1256,6 @@
                    :model (:llm_root_model state)
                    :version (or (:version state) 0)
                    :created-at (->date (:created_at soul))
-                   :last-opened-at (->date (:last_opened_at soul))
                    :owner-id (:owner_id soul)
                    :project-id (->uuid (:project_id soul))
                    :project-position (:project_position soul)
@@ -1282,26 +1281,6 @@
 
             project
             (assoc :project-name (:name project))))))))
-
-(defn db-mark-session-opened!
-  "Record an explicit client opening. Return its durable date, or nil if missing.
-   Allocate opening times monotonically across sessions, including same-ms selections.
-   Reading a session or hydrating a runtime must never call this operation."
-  [db-info session-id]
-  (when (and (ds db-info) session-id)
-    (sqlite-write-tx!
-      db-info
-      (fn [tx-info]
-        (let [id (->ref session-id)]
-          (when (query-one! tx-info {:select [:id] :from :session_soul :where [:= :id id]})
-            (let [latest (:latest (query-one! tx-info
-                                              {:select [[[:max :last_opened_at] :latest]]
-                                               :from :session_soul}))
-                  stamp (inc (max (now-ms) (long (or latest 0))))]
-
-              (execute! tx-info
-                        {:update :session_soul :set {:last_opened_at stamp} :where [:= :id id]})
-              (->date stamp))))))))
 
 (defn db-get-session-prompt-cache-state
   "Return the latest exact provider-prefix checkpoint stored on one session state."
@@ -1369,7 +1348,6 @@
            :version (:version row)
            :fork-count (or (:fork_count row) 0)
            :created-at (->date (:created_at row))
-           :last-opened-at (->date (:last_opened_at row))
            :owner-id (:owner_id row)
            :project-id (->uuid (:project_id row))
            :project-position (:project_position row)
@@ -1382,10 +1360,10 @@
            :favorite-rank (:favorite_rank row)
            :archived-at (->date (:archived_at row))})
         (query! db-info
-                {:select [:cs.id :cs.channel :cs.external_id :cs.created_at :cs.last_opened_at
-                          :cs.owner_id :cs.project_id :cs.project_position :cs.group_id
-                          :cs.favorite_rank :cs.archived_at :cs.goal [:p.name :project_name]
-                          [:s.title :state_title] :s.version
+                {:select [:cs.id :cs.channel :cs.external_id :cs.created_at :cs.owner_id
+                          :cs.project_id :cs.project_position :cs.group_id :cs.favorite_rank
+                          :cs.archived_at :cs.goal [:p.name :project_name] [:s.title :state_title]
+                          :s.version
                           [{:select [[[:count :*]]]
                             :from [[:session_state :child]]
                             :where [:and [:= :child.session_soul_id :cs.id]

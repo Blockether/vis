@@ -82,7 +82,7 @@ export function renderApp({
   /** Every request the fakes answered, newest last, as hrefs. */
   const requests: string[] = [];
   const previousFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = new URL(
       typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
     );
@@ -104,13 +104,6 @@ export function renderApp({
           ]
         ).map((index) => conns[index]!.id),
       });
-    const sessionId = url.pathname.match(/^\/v1\/sessions\/([^/]+)$/)?.[1];
-    if (sessionId && init?.method === 'PATCH' && JSON.parse(String(init.body)).opened === true) {
-      const row = machine.sessions?.find((session) => session.id === decodeURIComponent(sessionId));
-      if (!row) return new Response('{}', { status: 404 });
-      row.last_opened_at = Date.now();
-      return answer(row);
-    }
     if (url.pathname === '/v1/sessions') return answer(sessionsWindow(machine.sessions ?? [], url));
     if (url.pathname === '/v1/sessions/actions/search')
       return answer(searchAnswer(machine.sessions ?? [], url));

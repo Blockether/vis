@@ -322,9 +322,13 @@
 
    Cost, measured on that store: 3.7 s for the table rewrite, a transient WAL
    the size of the table, and 372 MB handed back to the freelist — SQLite reuses
-   those pages, and only a `VACUUM` shrinks the file itself."
+   those pages, and only a `VACUUM` shrinks the file itself.
+
+   `session_soul.last_opened_at` held the last time a person opened a session.
+   Recency follows the newest sent message alone, so opening a session must not
+   move it."
   [["session_turn_iteration" "llm_assistant_message"] ["session_attachment" "classification"]
-   ["session_attachment" "activity_anchor"]])
+   ["session_attachment" "activity_anchor"] ["session_soul" "last_opened_at"]])
 
 (def ^:private retired-rows
   "Rows DELETED before the column that identifies them is retired, as

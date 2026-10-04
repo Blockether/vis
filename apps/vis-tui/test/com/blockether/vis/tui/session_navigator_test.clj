@@ -91,14 +91,14 @@
 
           (expect (= ["newest" "middle" "current" "star"] (mapv (comp :id :target) visible)))
           (expect (not-any? :group-start? visible))))
-    (it "puts the last explicitly opened session first on the next opening"
+    (it "keeps the conversation order for a session that a person opened"
         (let [opened
               (mapv #(cond-> % (= "current" (get % "id")) (assoc "last_opened_at" 5000)) sessions)
 
               rows
               (#'dlg/navigator-all-rows {:sessions opened})]
 
-          (expect (= ["current" "newest" "middle" "star"] (mapv (comp :id :target) rows)))))
+          (expect (= ["newest" "middle" "current" "star"] (mapv (comp :id :target) rows)))))
     (it "uses session ids to break equal-recency ties consistently"
         (let [rows (#'dlg/navigator-all-rows
                     {:sessions [{"id" "a" "title" "A" "turn_count" 1 "modified_at" 2000}
@@ -319,13 +319,3 @@
                                {:sessions sessions :active-session-id "current"}
                                [(KeyStroke. (Character/valueOf \s) true false false)])]
         (expect (= {:action :favorite :id "current" :favorite? true} choice)))))
-
-(defdescribe session-opening-client-test
-             (it "records an explicit opening without using a background read endpoint"
-                 (let [asked (atom [])]
-                   (with-redefs-fn {#'vis/send-json! (fn [& args]
-                                                       (swap! asked conj (vec args))
-                                                       {"id" "current" "last_opened_at" 5000})}
-                     (fn []
-                       (expect (= 5000 (get (vis/mark-session-opened! "current") "last_opened_at")))
-                       (expect (= [["PATCH" "/v1/sessions/current" {:opened true}]] @asked)))))))

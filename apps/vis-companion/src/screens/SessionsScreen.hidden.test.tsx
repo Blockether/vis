@@ -5,6 +5,7 @@ import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { renderApp } from '../app-harness';
 import { listSession, renderSessionsScreen } from './sessions-screen-harness';
 import { draftMessageKey, flushDraftMessages, writeDraftMessage } from '../lib/draft-messages';
+import { GatewayClient } from '../lib/gateway';
 
 const settle = (ms = 0) => new Promise((done) => setTimeout(done, ms));
 
@@ -126,6 +127,44 @@ describe('a sessions list that is not on the glass', () => {
     },
   );
 
+  // Regression: a message sent from an open session moved its row only after the reader
+  // went back, so the list changed in front of them. The accepted message now reads the
+  // new order behind the open session, once, and the list is in place before it shows.
+  it('takes the order of a sent message before it is shown again', async () => {
+    const newer = listSession({ id: 's1', title: 'Newer session', modified_at: '2026-01-02T00:00:00Z' });
+    const older = listSession({ id: 's2', title: 'Older session', modified_at: '2026-01-01T00:00:00Z' });
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          label: 'laptop',
+          sessions: [newer, older],
+          routes: { '/v1/sessions/s2/turns': { turn_id: 'turn-1', status: 'running' } },
+        },
+      ],
+    });
+    const order = () =>
+      [...document.querySelectorAll('[data-session-id]')].map((row) =>
+        row.getAttribute('data-session-id'),
+      );
+    try {
+      await waitFor(() => expect(order()).toEqual(['s1', 's2']));
+      view.setVisible(false);
+      await settle(60);
+      const before = view.requests.filter(isListRead).length;
+      // The gateway ranks the session by the message as soon as it accepts it.
+      view.setRows(0, [{ ...older, modified_at: '2026-01-03T00:00:00Z' }, newer]);
+      await act(async () => {
+        await new GatewayClient(view.conns[0]).submitTurn('s2', 'Next step');
+      });
+      await waitFor(() => expect(order()).toEqual(['s2', 's1']));
+      // One read for the message, and no poll behind the open session.
+      await settle(60);
+      expect(view.requests.filter(isListRead)).toHaveLength(before + 1);
+    } finally {
+      view.unmount();
+      view.restore();
+    }
+  });
   it('is reloaded by the shell on the way back out of a session', async () => {
     const view = renderApp({ machines: fleet() });
     const inner = globalThis.fetch;

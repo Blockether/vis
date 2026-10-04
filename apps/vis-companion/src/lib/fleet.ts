@@ -401,7 +401,7 @@ export function sessionWasStopped(session: Session): boolean {
   return session.was_interrupted === true || session.was_failed === true;
 }
 
-/** Newest conversation activity or explicit opening first, with a stable id tie-break. */
+/** Newest conversation activity first, with a stable id tie-break. */
 export function sessionOrder(sessions: Session[]): Session[] {
   const ordered = [...sessions].sort((a, b) => {
     const recency = sessionMillis(b) - sessionMillis(a);
@@ -417,12 +417,15 @@ function dateMillis(value?: string | number): number {
   return Number.isFinite(millis) ? millis : 0;
 }
 
-/** Last conversation activity or explicit opening, never a background registry touch. */
+/**
+ * When a row last moved, for ORDERING: content time only, so the newest message wins.
+ *
+ * A TOUCH clock never reaches this ranking. The gateway keeps its own `:last-active`
+ * stamp (any event, a model switch, a daemon start re-stamping the whole fleet) to
+ * itself, because ranking by it made merely opening a session the freshest thing.
+ */
 export function sessionMillis(session: Session): number {
-  return Math.max(
-    dateMillis(session.modified_at ?? session.created_at),
-    dateMillis(session.last_opened_at ?? undefined),
-  );
+  return dateMillis(session.modified_at ?? session.created_at);
 }
 
 // Building an `Intl` formatter resolves locale data, which costs far more than
