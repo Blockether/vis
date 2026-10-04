@@ -223,3 +223,26 @@ VIS_PROVIDER=zai-coding-plan VIS_MODEL=glm-5.3-flash VIS_E2E_REPEATS=2 VIS_E2E_W
 
 Create `<root>/scenarios/<id>/scenario.json` and `files/...` under the `e2e/`
 directory. The runner discovers scenario folders automatically.
+
+## Run scenarios from Vis
+
+The project extension `.vis/extensions/evals.py` runs this runner from a Vis session:
+
+- `evals.scenarios()` lists the scenarios and their checks.
+- `evals.new_scenario(...)` creates `scenarios/<id>/scenario.json` and its `files/`.
+- `evals.run_scenarios(ids, models=[...])` starts a paid run in the background, with its own `VIS_E2E_TRACES` directory.
+- `evals.status()` and `evals.report()` read the run. The report lists each failed run with credentials redacted.
+- `evals.compare(baseline, candidate)` compares two scenario runs case by case.
+
+In these results, a case is one scenario on one model. `report()` gives the pass rate with its 95% interval. `detectable_change_points` is the smallest change that a second run of the same size detects. With `repeats` above 1, it also gives `pass_all_percent` (pass^k), the share of cases that passed every repeat. `pass_any_percent` (pass@k) is the share of cases that passed at least one repeat, and `unstable` names the cases that passed only some repeats. The interval allows for the similar results of repeats of one case.
+
+To find out if a change helps, run the same scenarios on the same models before and after the change. Then compare the two runs, not their pass rates:
+
+```python
+before = evals.run_scenarios(ids, provider="zai-coding-plan", models=["glm-5.3-flash"], repeats=3)
+# When this run ends, make the change and build Vis again.
+after = evals.run_scenarios(ids, provider="zai-coding-plan", models=["glm-5.3-flash"], repeats=3)
+evals.compare(before.run_id, after.run_id)
+```
+
+`compare()` pairs the cases that both runs measured. The verdict is `better` or `worse` only when the paired 95% interval of the change excludes zero. Each run records the Vis commit. With `native_bin`, it also records the sha256 of that executable. This digest names the code, also when the checkout has uncommitted changes. The caveats tell you when both runs used the same version, or when a version is unclear.

@@ -66,6 +66,69 @@ The report lists every trial attempt, including setup exceptions, and averages r
 
 `runs/provenance.json` records the pinned source commit, image architecture, bundle checksum, dataset version, model, and runner configuration; keep it with the ignored job artifacts. New trials retain the full JSONL event stream with credential values replaced by `[REDACTED]`. The optional archive step replaces each completed, valid gzip with long-window zstd only after the decompressed SHA-256 digest matches; `agent/trace-archive.json` records the digest and byte counts. It preserves incomplete gzip traces unchanged. Early canaries have uncompressed JSONL, and the report reads all three formats. Archiving preserves existing bytes; it does not sanitize older traces.
 
+## Run and read results from Vis
+
+The project extension `.vis/extensions/evals.py` drives this queue from a Vis session. Ask Vis to check the setup, start a batch or explain the score, or call the `evals` tools in Python:
+
+```python
+evals.preflight()             # Podman machine and socket, Compose, pinned bundle, dataset, key, disk
+evals.run_bench(max_tasks=1)  # paid: starts run_suite.py in the background
+evals.status()                # progress and log tail of the newest run
+evals.bench()                 # rebuilds runs/summary.json, then reports the score
+evals.diagnose()              # where Vis loses tasks, largest lever first
+evals.leaderboard()           # Harbor Hub board and where Vis would stand
+```
+
+`run_bench()` refuses to start when a preflight check fails or another queue runs. Before the first scored trial, it starts only a canary of one task. The extension keeps its run records in `~/.vis/evals/runs/`, or in `VIS_EVALS_HOME`. `uv run python run_suite.py --dry-run --json` prints the queue plan as one line of JSON for tools.
+
+### Read a score with its uncertainty
+
+A pass rate from a few dozen tasks is not exact. `bench()` gives each pass rate with its 95% interval, for example `pass_rate_ci95` for the task score. `detectable_change_points` is the smallest change, in points, that a second run of the same size detects with 80% power. Do not report a smaller difference between two runs as a gain or a loss. `cost_per_solved_usd` divides the metered-API price estimate by the solved attempts. `leaderboard()` turns the interval into a range of ranks, `rank_range`.
+
+### Repeat attempts in a named round
+
+One attempt for each task does not show if Vis solves the task every time. More than one attempt for each task needs a named round. A round keeps its jobs and results in the Git-ignored `rounds/<round>/`, apart from the main round in `jobs/` and `runs/`:
+
+```python
+evals.run_bench(max_tasks=1, attempts=3, round_name="glm-k3")  # paid: canary of one task
+evals.run_bench(attempts=3, round_name="glm-k3")               # paid: every pending task
+evals.bench(round_name="glm-k3")
+```
+
+Like the main round, a new round starts with a canary of one task. That first queue pins the bundle, the model and the attempts for each task. To change one of them, start a new round. A round name has lowercase letters and digits, joined by single hyphens. The queue gets `--jobs rounds/<round>/jobs --attempts K` and writes its logs to `rounds/<round>/runs/`.
+
+With more than one attempt for each task, `bench()` also reports:
+
+- `pass_at_k_percent` (pass@k): the share of tasks that at least one attempt solved.
+- `pass_all_k_percent` (pass^k): the share of tasks that every attempt solved. Use it when every request of a user must succeed.
+- `unstable_tasks`: the tasks that some attempts solved and others did not.
+
+The task score still counts each task once, by its latest scored attempt. The attempt fields, such as `attempt_pass_rate_percent`, count every scored attempt. Their interval allows for the similar results of attempts on one task.
+
+### Compare two versions
+
+To find out if a change helps, compare the results task by task, not as two pass rates:
+
+```python
+evals.compare("bench:before-fix", "bench:after-fix")
+```
+
+Each side is `bench` for the main round, `bench:<round>` for a named round, or a scenario run id. `compare()` pairs the tasks that both sides scored and gives the change with a paired 95% interval. The verdict is `better` or `worse` only when this interval excludes zero. Otherwise, it is `no measurable difference`.
+
+The `better` and `worse` lists name the tasks that changed. The caveats tell you when both sides ran the same Vis version, or when a version is unclear. `compare()` reads the saved summaries as they are, so run `bench()` for each round first.
+
+### Check the automatic causes with labels
+
+`diagnose()` gives each failed attempt a cause from its trace. Before you act on these causes, compare them with your own reading:
+
+1. Read a failed attempt with `evals.trial(task)`.
+2. Record your cause with `evals.label(task, cause, note="...")`.
+3. Run `evals.diagnose()` again and read its `label_check`.
+
+`trial()` shows the outcome, the verifier checks, the used share of the time limit, the most used tools and the last log lines. A task name selects the latest scored attempt of the task. To select a different attempt, give its trial name, `<task>__<id>`. The causes are `dead_tools`, `vis_errors`, `agent_timeouts`, `early_stops`, `unscored` and `other`. `label()` refuses a solved attempt, and a new label of an attempt replaces the old label.
+
+`label_check` gives the agreement and Cohen's kappa between your labels and the automatic causes. Label at least 30 failed attempts. With a kappa below 0.6, do not trust the automatic causes. From 0.6, use them after you review the disagreements. From 0.8, you can use them without a review. The labels stay local in `runs/labels.json` of the round.
+
 ## Keep credentials out of shared results
 
 The capture wrapper redacts values from environment variables whose names contain `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, or `CREDENTIAL`. It covers plain text, JSON/Python string escapes, URL encoding, and standard or URL-safe Base64, including values split across reads. The queue uses the same wrapper for Harbor logs. Reports and agent metadata redact matching strings and mapping keys without changing numeric metrics. Keep the relevant credential variables available when generating a report from older trials; credentials no longer present in the environment cannot be identified this way.

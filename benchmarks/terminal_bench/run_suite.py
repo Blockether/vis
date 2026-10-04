@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+from collections import Counter
 from collections.abc import Collection, Iterator
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import contextmanager
@@ -153,9 +154,9 @@ def is_scored_attempt(result: dict, trial: Path) -> bool:
     return pinned_model_work(trial)[1]
 
 
-def accounted_tasks(jobs: Path) -> tuple[set[str], set[str], set[str]]:
-    """Skip scored and failed model attempts, but retry setup and canceled trials."""
-    completed = set()
+def accounted_tasks(jobs: Path) -> tuple[Counter[str], set[str], set[str]]:
+    """Count scored and failed model attempts, but retry setup and canceled trials."""
+    scored = Counter()
     failed = set()
     for path in jobs.glob("*/*/result.json"):
         result = json.loads(path.read_text(encoding="utf-8"))
@@ -165,7 +166,7 @@ def accounted_tasks(jobs: Path) -> tuple[set[str], set[str], set[str]]:
             and result.get("finished_at")
             and is_scored_attempt(result, path.parent)
         ):
-            completed.add(task.removeprefix("terminal-bench/"))
+            scored[task.removeprefix("terminal-bench/")] += 1
         elif (
             isinstance(task, str)
             and result.get("finished_at")
@@ -185,7 +186,7 @@ def accounted_tasks(jobs: Path) -> tuple[set[str], set[str], set[str]]:
         ):
             continue
         in_flight.add(trial.name.split("__", 1)[0])
-    return completed, in_flight, failed
+    return scored, in_flight, failed
 
 
 def next_task(pending: list[dict], running: list[dict]) -> dict | None:
@@ -245,8 +246,9 @@ def job_name(prefix: str, jobs: Path, taken: Collection[str] = ()) -> str:
     return name
 
 
-def job_result(job: Path, task: dict) -> dict:
-    """Treat missing metrics or a missing verifier as a runner failure."""
+def job_results(job: Path, task: dict) -> list[dict]:
+    """Treat missing metrics or a missing verifier in any trial as a runner failure."""
+    results = []
     for path in job.glob("*/result.json"):
         result = json.loads(path.read_text(encoding="utf-8"))
         name = str(result.get("task_name") or "").removeprefix("terminal-bench/")
@@ -256,8 +258,14 @@ def job_result(job: Path, task: dict) -> dict:
             raise RuntimeError(
                 f"Incomplete metrics in {job.name}/{name}; inspect the trial"
             )
-        return result
-    raise RuntimeError(f"Incomplete job {job.name}: missing result for {task['name']}")
+        results.append(result)
+    expected = task.get("attempts", 1)
+    if len(results) < expected:
+        raise RuntimeError(
+            f"Incomplete job {job.name}: {len(results)} of {expected} results "
+            f"for {task['name']}"
+        )
+    return sorted(results, key=lambda result: str(result.get("finished_at")))
 
 
 def archive_job_traces(job: Path) -> None:
@@ -278,7 +286,7 @@ def archive_job_traces(job: Path) -> None:
         )
 
 
-def harbor_command(name: str, task: dict) -> list[str]:
+def harbor_command(name: str, task: dict, jobs: Path) -> list[str]:
     """Give each task its own Harbor job so a free slot can start the next task."""
     return [
         str(Path(sys.executable).parent / "harbor"),
@@ -292,11 +300,11 @@ def harbor_command(name: str, task: dict) -> list[str]:
         "-e",
         "podman",
         "-k",
-        "1",
+        str(task.get("attempts", 1)),
         "-n",
         "1",
         "-o",
-        str(JOBS),
+        str(jobs),
         "--job-name",
         name,
         "-i",
@@ -304,31 +312,46 @@ def harbor_command(name: str, task: dict) -> list[str]:
     ]
 
 
-def finish_job(name: str, task: dict, returncode: int) -> bool:
-    """Validate, archive and report a job; return whether Vis failed fast."""
+def finish_job(name: str, task: dict, returncode: int, jobs: Path) -> list[bool]:
+    """Validate, archive and report a job; return which trials Vis failed fast."""
     if returncode:
-        raise RuntimeError(
-            f"Harbor exited {returncode} in {name}; inspect runs/{name}.log"
+        log = os.path.relpath(jobs.parent / "runs" / f"{name}.log", ROOT)
+        raise RuntimeError(f"Harbor exited {returncode} in {name}; inspect {log}")
+    results = job_results(jobs / name, task)
+    archive_job_traces(jobs / name)
+    fast_errors = []
+    for result in results:
+        agent = result.get("agent_result") or {}
+        metadata = (agent.get("metadata") or {}).get("vis") or {}
+        is_error = metadata.get("status") == "error"
+        is_timeout = exception_type(result) == "AgentTimeoutError"
+        reward = (result["verifier_result"].get("rewards") or {}).get("reward")
+        print(
+            f"Finished {name}/{task['name']}: reward={reward}, "
+            f"agent_error={is_error}, agent_timeout={is_timeout}",
+            flush=True,
         )
-    result = job_result(JOBS / name, task)
-    archive_job_traces(JOBS / name)
-    agent = result.get("agent_result") or {}
-    metadata = (agent.get("metadata") or {}).get("vis") or {}
-    is_error = metadata.get("status") == "error"
-    is_timeout = exception_type(result) == "AgentTimeoutError"
-    reward = (result["verifier_result"].get("rewards") or {}).get("reward")
-    print(
-        f"Finished {name}/{task['name']}: reward={reward}, "
-        f"agent_error={is_error}, agent_timeout={is_timeout}",
-        flush=True,
-    )
-    return is_error and (metadata.get("duration_ms") or 0) < FAST_ERROR_MS
+        fast_errors.append(
+            is_error and (metadata.get("duration_ms") or 0) < FAST_ERROR_MS
+        )
+    return fast_errors
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--machine", default="vis-amd64")
     parser.add_argument("--job-prefix", default="suite")
+    parser.add_argument(
+        "--jobs",
+        type=Path,
+        help="Harbor jobs directory, with logs in runs/ beside it (default: jobs)",
+    )
+    parser.add_argument(
+        "--attempts",
+        type=int,
+        default=1,
+        help="scored attempts that each task needs (default: 1)",
+    )
     parser.add_argument("--max-tasks", type=int)
     parser.add_argument("--min-free-gb", type=float, default=12.0)
     parser.add_argument("--dry-run", action="store_true")
@@ -339,9 +362,20 @@ def main() -> None:
         metavar="NAME",
         help="retry a named failed model attempt (repeatable)",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="with --dry-run, print the queue plan as JSON",
+    )
     args = parser.parse_args()
+    if args.json and not args.dry_run:
+        parser.error("--json requires --dry-run")
+    if args.attempts < 1:
+        parser.error("--attempts must be positive")
+    jobs = args.jobs.resolve() if args.jobs is not None else JOBS
     tasks, gpu_tasks = catalog(DATASET)
-    completed, in_flight, failed = accounted_tasks(JOBS)
+    scored, in_flight, failed = accounted_tasks(jobs)
+    completed = {task for task, count in scored.items() if count >= args.attempts}
     retry_tasks = set(args.retry_task)
     retryable = (failed & {task["name"] for task in tasks}) - completed - in_flight
     if invalid := retry_tasks - retryable:
@@ -349,9 +383,31 @@ def main() -> None:
             "--retry-task requires an uncompleted, inactive failed model attempt: "
             + ", ".join(sorted(invalid))
         )
-    pending = [task for task in tasks if task["name"] in retry_tasks] + [
+    queued = [task for task in tasks if task["name"] in retry_tasks] + [
         task for task in tasks if task["name"] not in completed | in_flight | failed
     ]
+    # A Harbor job asks only for the scored attempts that its task still needs.
+    pending = [
+        {**task, "attempts": args.attempts - scored[task["name"]]} for task in queued
+    ]
+    if args.json:
+        names = {task["name"] for task in tasks}
+        print(
+            json.dumps(
+                {
+                    "model": MODEL,
+                    "attempts": args.attempts,
+                    "cpu_tasks": len(tasks),
+                    "completed": sorted(completed & names),
+                    "scored": sorted(set(scored) & names),
+                    "retryable": sorted(retryable),
+                    "live": sorted(in_flight),
+                    "pending": [task["name"] for task in pending],
+                    "gpu_only": sorted(gpu_tasks),
+                }
+            )
+        )
+        return
     print(
         f"CPU tasks: {len(tasks)}; completed: {len(completed & {t['name'] for t in tasks})}; "
         f"failed after model call: {len(failed)}; live: {len(in_flight)}; "
@@ -365,7 +421,9 @@ def main() -> None:
         raise RuntimeError("ZAI_CODING_API_KEY is required in the Harbor host")
     if args.max_tasks is not None and args.max_tasks < 1:
         parser.error("--max-tasks must be positive")
-    (ROOT / "runs").mkdir(exist_ok=True)
+    runs = jobs.parent / "runs"
+    for directory in (jobs, runs):
+        directory.mkdir(parents=True, exist_ok=True)
     running: dict[Future, tuple[str, dict]] = {}
     failures = []
     started = 0
@@ -390,11 +448,13 @@ def main() -> None:
                     )
                     break
                 name = job_name(
-                    args.job_prefix, JOBS, [job for job, _ in running.values()]
+                    args.job_prefix, jobs, [job for job, _ in running.values()]
                 )
                 print(f"Starting {name}: {task['name']}", flush=True)
-                log = ROOT / "runs" / f"{name}.log"
-                future = pool.submit(capture, harbor_command(name, task), log, cwd=ROOT)
+                log = runs / f"{name}.log"
+                future = pool.submit(
+                    capture, harbor_command(name, task, jobs), log, cwd=ROOT
+                )
                 running[future] = (name, task)
                 started += 1
             if not running:
@@ -403,16 +463,17 @@ def main() -> None:
             for future in done:
                 name, task = running.pop(future)
                 try:
-                    fast_error = finish_job(name, task, future.result())
+                    fast_trials = finish_job(name, task, future.result(), jobs)
                 except RuntimeError as error:
                     stop_starting(str(error))
                     continue
                 reclaim_images(args.machine, task)
-                fast_errors = fast_errors + 1 if fast_error else 0
-                if fast_errors == 2:
-                    stop_starting(
-                        "Two consecutive fast agent errors; inspect the traces before continuing"
-                    )
+                for fast_error in fast_trials:
+                    fast_errors = fast_errors + 1 if fast_error else 0
+                    if fast_errors == 2:
+                        stop_starting(
+                            "Two consecutive fast agent errors; inspect the traces before continuing"
+                        )
     if failures:
         raise RuntimeError("; ".join(failures))
     print(

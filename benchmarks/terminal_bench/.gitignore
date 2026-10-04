@@ -4,6 +4,7 @@
 /artifacts/
 /jobs/
 /runs/
+/rounds/
 __pycache__/
 *.jsonl
 *.jsonl.gz

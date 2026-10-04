@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 import threading
+from collections import Counter
 
 import pytest
 import run_suite
@@ -13,7 +14,7 @@ from run_suite import (
     archive_job_traces,
     catalog,
     job_name,
-    job_result,
+    job_results,
     next_task,
 )
 
@@ -107,8 +108,8 @@ def test_accounting_retries_setup_only_failures_but_not_live_trials(tmp_path):
         '{"finished_at":"2026-01-01T00:00:01Z"}'
     )
     write_model_trace(jobs / "old" / "completed__abcd")
-    completed, in_flight, failed = accounted_tasks(jobs)
-    assert completed == {"completed"}
+    scored, in_flight, failed = accounted_tasks(jobs)
+    assert scored == {"completed": 1}
     assert in_flight == {"still-live"}
     assert failed == set()
 
@@ -126,11 +127,11 @@ def test_refused_model_calls_are_retryable_failures_not_scores(tmp_path):
         "verifier_result": {"rewards": {"reward": 0.0}},
     }
     write_model_attempt(trial, result, streamed=False)
-    assert accounted_tasks(jobs) == (set(), set(), {"refused"})
+    assert accounted_tasks(jobs) == ({}, set(), {"refused"})
     with pytest.raises(RuntimeError, match="Incomplete metrics"):
-        job_result(jobs / "suite-001", {"name": "refused"})
+        job_results(jobs / "suite-001", {"name": "refused"})
     write_model_attempt(trial, result)
-    assert accounted_tasks(jobs) == ({"refused"}, set(), set())
+    assert accounted_tasks(jobs) == ({"refused": 1}, set(), set())
 
 
 def test_accounting_records_model_failure_but_retries_canceled_peer(tmp_path):
@@ -147,8 +148,8 @@ def test_accounting_records_model_failure_but_retries_canceled_peer(tmp_path):
                 "exception_info": {"exception_type": exception},
             },
         )
-    completed, in_flight, failed = accounted_tasks(jobs)
-    assert completed == in_flight == set()
+    scored, in_flight, failed = accounted_tasks(jobs)
+    assert not scored and not in_flight
     assert failed == {"model-failed"}
 
 
@@ -179,8 +180,8 @@ def test_accounting_scores_verified_timeouts_after_model_work(tmp_path):
             }
         )
     )
-    completed, in_flight, failed = accounted_tasks(jobs)
-    assert completed == {"verified-timeout"}
+    scored, in_flight, failed = accounted_tasks(jobs)
+    assert scored == {"verified-timeout": 1}
     assert in_flight == set()
     assert failed == {"unverified-timeout"}
 
@@ -200,7 +201,7 @@ def test_accounting_reads_model_work_from_archived_traces(tmp_path):
     )
     archive_job_traces(jobs / "long")
     assert not (trial / "agent/vis-trace.jsonl.gz").exists()
-    assert accounted_tasks(jobs)[0] == {"archived-timeout"}
+    assert accounted_tasks(jobs)[0] == {"archived-timeout": 1}
 
 
 @pytest.mark.parametrize("name", ["completed", "live", "pending", "unknown"])
@@ -225,7 +226,11 @@ def test_retry_task_refuses_unaccounted_completed_or_active_trials(
     monkeypatch.setattr(
         run_suite,
         "accounted_tasks",
-        lambda _: ({"completed"}, {"live"}, {"interrupted", "completed", "live"}),
+        lambda _: (
+            Counter(["completed"]),
+            {"live"},
+            {"interrupted", "completed", "live"},
+        ),
     )
     with pytest.raises(SystemExit, match="2"):
         run_suite.main()
@@ -272,7 +277,7 @@ def test_retry_task_selects_interrupted_model_attempt_without_losing_failed_arti
         run_suite,
         "accounted_tasks",
         lambda _: (
-            {"completed"},
+            Counter(["completed"]),
             {"live"},
             {"interrupted", "interrupted2", "completed", "live"},
         ),
@@ -282,6 +287,72 @@ def test_retry_task_selects_interrupted_model_attempt_without_losing_failed_arti
     assert "failed after model call: 4" in output
     assert "pending: 3" in output
     assert "Next tasks: interrupted, interrupted2, pending" in output
+
+
+def test_dry_run_json_reports_the_queue_plan_for_tools(monkeypatch, capsys):
+    monkeypatch.setattr(run_suite.sys, "argv", ["run_suite", "--dry-run", "--json"])
+    monkeypatch.setattr(
+        run_suite,
+        "catalog",
+        lambda _: (
+            [{"name": task} for task in ("done", "live", "broken", "next")],
+            ["gpu-task"],
+        ),
+    )
+    monkeypatch.setattr(
+        run_suite,
+        "accounted_tasks",
+        lambda _: (Counter(["done"]), {"live"}, {"broken", "done", "elsewhere"}),
+    )
+    run_suite.main()
+    plan = json.loads(capsys.readouterr().out)
+    assert plan == {
+        "model": run_suite.MODEL,
+        "attempts": 1,
+        "cpu_tasks": 4,
+        "completed": ["done"],
+        "scored": ["done"],
+        "retryable": ["broken"],
+        "live": ["live"],
+        "pending": ["next"],
+        "gpu_only": ["gpu-task"],
+    }
+
+
+def test_json_plan_requires_dry_run(monkeypatch):
+    monkeypatch.setattr(run_suite.sys, "argv", ["run_suite", "--json"])
+    with pytest.raises(SystemExit):
+        run_suite.main()
+
+
+def test_dry_run_json_counts_the_scored_attempts_of_each_task(monkeypatch, capsys):
+    monkeypatch.setattr(
+        run_suite.sys, "argv", ["run_suite", "--dry-run", "--json", "--attempts", "2"]
+    )
+    monkeypatch.setattr(
+        run_suite,
+        "catalog",
+        lambda _: ([{"name": task} for task in ("done", "half", "new")], []),
+    )
+    monkeypatch.setattr(
+        run_suite,
+        "accounted_tasks",
+        lambda _: (Counter({"done": 2, "half": 1}), set(), set()),
+    )
+    run_suite.main()
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["attempts"] == 2
+    assert plan["completed"] == ["done"]
+    assert plan["scored"] == ["done", "half"]
+    assert plan["pending"] == ["half", "new"]
+
+
+def test_attempts_must_be_positive(monkeypatch):
+    monkeypatch.setattr(
+        run_suite.sys, "argv", ["run_suite", "--dry-run", "--attempts", "0"]
+    )
+    with pytest.raises(SystemExit):
+        run_suite.main()
 
 
 def test_job_names_and_missing_metrics_are_not_silently_accepted(tmp_path):
@@ -302,17 +373,17 @@ def test_job_names_and_missing_metrics_are_not_silently_accepted(tmp_path):
     }
     path = trial / "result.json"
     path.write_text(json.dumps(result))
-    assert job_result(job, {"name": "small"}) == result
+    assert job_results(job, {"name": "small"}) == [result]
     result["agent_result"] = {}
     path.write_text(json.dumps(result))
     with pytest.raises(RuntimeError, match="Incomplete metrics"):
-        job_result(job, {"name": "small"})
+        job_results(job, {"name": "small"})
     result["agent_result"] = None
     path.write_text(json.dumps(result))
     with pytest.raises(RuntimeError, match="Incomplete metrics"):
-        job_result(job, {"name": "small"})
-    with pytest.raises(RuntimeError, match="missing result"):
-        job_result(job, {"name": "another"})
+        job_results(job, {"name": "small"})
+    with pytest.raises(RuntimeError, match="0 of 1 results"):
+        job_results(job, {"name": "another"})
 
 
 def test_job_accepts_verified_timeout_only_after_model_work(tmp_path):
@@ -327,13 +398,25 @@ def test_job_accepts_verified_timeout_only_after_model_work(tmp_path):
     }
     (trial / "result.json").write_text(json.dumps(result))
     with pytest.raises(RuntimeError, match="Incomplete metrics"):
-        job_result(job, {"name": "long"})
+        job_results(job, {"name": "long"})
     write_model_attempt(trial, result)
-    assert job_result(job, {"name": "long"}) == result
+    assert job_results(job, {"name": "long"}) == [result]
     result["verifier_result"] = None
     write_model_attempt(trial, result)
     with pytest.raises(RuntimeError, match="Incomplete metrics"):
-        job_result(job, {"name": "long"})
+        job_results(job, {"name": "long"})
+
+
+def test_job_needs_every_requested_attempt_in_finish_order(tmp_path):
+    job = tmp_path / "suite-001"
+    first, second = scored_result("pair"), scored_result("pair")
+    first["finished_at"] = "2026-01-01T00:00:02Z"
+    second["finished_at"] = "2026-01-01T00:00:01Z"
+    write_model_attempt(job / "pair__one", first)
+    with pytest.raises(RuntimeError, match="1 of 2 results"):
+        job_results(job, {"name": "pair", "attempts": 2})
+    write_model_attempt(job / "pair__two", second)
+    assert job_results(job, {"name": "pair", "attempts": 2}) == [second, first]
 
 
 @pytest.mark.skipif(shutil.which("zstd") is None, reason="zstd executable required")
@@ -363,7 +446,9 @@ def one_task_queue(tmp_path, monkeypatch):
     monkeypatch.setattr(run_suite, "JOBS", tmp_path / "jobs")
     task = {"name": "sample", "memory_mb": 4096}
     monkeypatch.setattr(run_suite, "catalog", lambda _: ([task], []))
-    monkeypatch.setattr(run_suite, "accounted_tasks", lambda _: (set(), set(), set()))
+    monkeypatch.setattr(
+        run_suite, "accounted_tasks", lambda _: (Counter(), set(), set())
+    )
     monkeypatch.setattr(run_suite, "free_gb", lambda _: (32, 32))
     monkeypatch.setattr(run_suite, "reclaim_images", lambda *_: None)
     return task
@@ -427,6 +512,59 @@ def write_job_attempt(jobs, command, **vis):
     name = command[-1]
     job = command[command.index("--job-name") + 1]
     write_model_attempt(jobs / job / f"{name}__abcd", scored_result(name, **vis))
+
+
+def write_attempts(jobs, job, name, count, **vis):
+    """Write the trials of one Harbor job that ran several attempts of a task."""
+    for number in range(count):
+        write_model_attempt(
+            jobs / job / f"{name}__{number:04}", scored_result(name, **vis)
+        )
+
+
+def test_queue_runs_missing_attempts_in_the_round_jobs_directory(
+    tmp_path, monkeypatch, capsys, one_task_queue
+):
+    jobs = tmp_path / "rounds/first/jobs"
+    monkeypatch.setattr(
+        run_suite.sys, "argv", ["run_suite", "--attempts", "3", "--jobs", str(jobs)]
+    )
+    monkeypatch.setattr(
+        run_suite, "accounted_tasks", lambda _: (Counter(["sample"]), set(), set())
+    )
+    monkeypatch.setattr(run_suite, "archive_job_traces", lambda _: None)
+    calls = []
+
+    def capture(command, path, *, cwd):
+        calls.append((command, path))
+        write_attempts(jobs, "suite-001", "sample", 2, status="success")
+        return 0
+
+    monkeypatch.setattr(run_suite, "capture", capture)
+    run_suite.main()
+    [(command, path)] = calls
+    assert command[command.index("-k") + 1] == "2"
+    assert command[command.index("-o") + 1] == str(jobs)
+    assert path == tmp_path / "rounds/first/runs/suite-001.log"
+    output = capsys.readouterr().out
+    assert output.count("Finished suite-001/sample: reward=0.0") == 2
+
+
+def test_queue_counts_fast_agent_errors_per_attempt(
+    tmp_path, monkeypatch, one_task_queue
+):
+    monkeypatch.setattr(run_suite.sys, "argv", ["run_suite", "--attempts", "2"])
+    monkeypatch.setattr(run_suite, "archive_job_traces", lambda _: None)
+
+    def capture(command, path, *, cwd):
+        write_attempts(
+            tmp_path / "jobs", "suite-001", "sample", 2, status="error", duration_ms=1
+        )
+        return 0
+
+    monkeypatch.setattr(run_suite, "capture", capture)
+    with pytest.raises(RuntimeError, match="Two consecutive fast agent errors"):
+        run_suite.main()
 
 
 def test_queue_starts_next_task_when_one_slot_frees(
