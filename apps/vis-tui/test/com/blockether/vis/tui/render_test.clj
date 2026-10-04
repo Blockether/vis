@@ -982,6 +982,51 @@
           (expect (= (vec (mapcat #(get-in % [:presentation :content]) rows))
                      (get-in merged [:presentation :content])))
           (expect (= 2 (count rows)))))
+    (it "paints Read before file paths for single, merged and expandable reads"
+        ;; Regression: successful reads must keep their operation label on both clients.
+        (doseq [read-rows
+                [[first-read] rows [(dissoc first-read :presentation)]
+                 [(assoc-in first-read
+                    [:presentation :content]
+                    [{:type "code" :text "File snapshot"}])]]
+
+                cols
+                [40 100]]
+
+          (let [entries
+                (#'render/activity-detail-entries
+                 {:node-id "reads"
+                  :activity-rows read-rows
+                  :activity-expanded? (fn [key _]
+                                        (not= "read-1" key))}
+                 (- cols 4)
+                 "fixture")
+
+                head
+                (first (filter #(= "read-1" (get-in % [:meta :item-id])) entries))
+
+                capture
+                (cap/capture! {:cols cols
+                               :rows 8
+                               :paint!
+                               (fn [{:keys [screen]}]
+                                 (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
+                                   (render/draw-chat-bubble! (.newTextGraphics s)
+                                                             {:role :assistant
+                                                              :prewrapped-lines [(:line head)]
+                                                              :line-meta [(:meta head)]}
+                                                             0
+                                                             0
+                                                             cols
+                                                             {:viewport-h 8})
+                                   (.refresh s)))})
+
+                text
+                (cap/frame-text capture)]
+
+            (expect (= "Read" (get-in head [:meta :operation-label])))
+            (expect (nil? (:error capture)))
+            (expect (boolean (re-find #"Read(?: [▾▸])? (?:· )?.*PLAN\.md" text))))))
     (it "opens the file rather than a caption containing one or several line ranges"
         (doseq [read-rows
                 [[first-read] rows]

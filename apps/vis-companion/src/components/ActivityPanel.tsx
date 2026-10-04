@@ -875,28 +875,12 @@ function ActivityStep({
       )}
     </>
   );
-  // Successful file reads are identified by the filename, not a repeated "Read" label.
-  // Keep authored labels and non-success states so failures and running work stay clear.
-  const filenameLabel =
-    row.operation === 'cat' &&
-    row.state === 'succeeded' &&
-    lead === 'Read' &&
-    !linkedSummary &&
-    Boolean(caption || object);
-  const label = filenameLabel ? (
-    <span
-      data-activity-summary
-      className="min-w-0 truncate font-normal"
-      title={caption || object}
-    >
-      <ActivityPath {...readPathCaption(caption ? row.summary : object, caption)} />
-    </span>
-  ) : (
+  const label = (
     <span className="min-w-0 truncate font-semibold" title={activityStepHeadline(row)}>
       {lead}
     </span>
   );
-  const detail = filenameLabel ? metadata : (
+  const detail = (
     <span className="flex min-w-0 flex-1 items-baseline gap-x-2">
       {object ? ' ' : null}
       {object && (

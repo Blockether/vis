@@ -631,7 +631,7 @@ export const SameFileReads: Story = {
     await expect(canvasElement.querySelectorAll('[data-activity-row]')).toHaveLength(1);
     const row = canvasElement.querySelector<HTMLElement>('[data-activity-row]')!;
     await expect(row.textContent).toContain('PLAN.md · lines 583–584, 615–616');
-    await expect(within(row).queryByText('Read')).not.toBeInTheDocument();
+    await expect(within(row).getByText('Read')).toBeVisible();
     await expect(within(row).queryByRole('button')).not.toBeInTheDocument();
     await expect(canvas.getByLabelText('Duration 3ms')).toBeVisible();
     await expect(row.querySelector('[data-activity-content]')).toBeNull();

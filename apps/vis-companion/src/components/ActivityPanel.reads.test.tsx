@@ -47,7 +47,7 @@ it('merges ranges into one summary without a disclosure or changing invocation c
 });
 
 it.each([1, 2])(
-  'labels %i same-file reads with the filename instead of a Read headline',
+  'keeps Read before the filename for %i same-file reads',
   (count) => {
     const activity = reads();
     activity.rows = activity.rows.slice(0, count);
@@ -56,33 +56,34 @@ it.each([1, 2])(
     const headline = within(row).getByRole('heading', { level: 4 });
     const ranges = count === 1 ? '583–584' : '583–584, 615–616';
     const duration = activity.rows.reduce((sum, read) => sum + read.duration_ms!, 0);
-    expect(headline.textContent).toBe(`~/vis/PLAN.md · lines ${ranges}${duration}ms`);
-    expect(within(row).queryByText('Read')).toBeNull();
+    expect(headline.textContent).toBe(`Read·~/vis/PLAN.md · lines ${ranges}${duration}ms`);
+    expect(within(headline).getByText('Read')).toBeVisible();
     expect(row.querySelector('[data-activity-content]')).toBeNull();
   },
 );
 
-it('uses the filename as the disclosure label when a read includes an excerpt', () => {
+it('keeps Read as the disclosure label when a read includes an excerpt', () => {
   const activity = reads();
   activity.rows = activity.rows.slice(0, 1);
   activity.rows[0].presentation!.content = [{ type: 'code', text: 'File snapshot' }];
   openReads(activity);
   const row = document.querySelector<HTMLElement>('[data-activity-row]')!;
-  const toggle = within(row).getByRole('button');
-  expect(toggle.textContent).toMatch(/^~\/vis\/PLAN\.md · lines 583–584/);
-  expect(within(row).queryByText('Read')).toBeNull();
+  const toggle = within(row).getByRole('button', { name: /^Read/ });
+  expect(toggle).toHaveTextContent('PLAN.md · lines 583–584');
+  expect(within(toggle).getByText('Read')).toBeVisible();
   fireEvent.click(toggle);
   expect(within(row).getByText('File snapshot')).toBeVisible();
   expect(row.querySelector('[data-activity-content] > div')).not.toHaveClass('border');
 });
 
-it('uses a filename-only label for a read without an authored presentation', () => {
+it('keeps Read before the filename without an authored presentation', () => {
   const activity = reads();
   activity.rows = activity.rows.slice(0, 1);
   delete activity.rows[0].presentation;
   openReads(activity);
   const headline = screen.getByRole('heading', { level: 4 });
-  expect(headline.textContent).toBe(`~/vis/PLAN.md${activity.rows[0].duration_ms}ms`);
+  expect(headline.textContent).toBe(`Read ~/vis/PLAN.md${activity.rows[0].duration_ms}ms`);
+  expect(within(headline).getByText('Read')).toBeVisible();
 });
 
 it.each(['running', 'failed', 'cancelled'] as const)(
