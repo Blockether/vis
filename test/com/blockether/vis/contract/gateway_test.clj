@@ -94,9 +94,9 @@
         (expect (= {:request :none :response :binary}
                    (operation :get "/v1/sessions/:sid/speech/jobs/:job-id/audio")))))
   (it "owns protocol compatibility without a runtime mirror"
-      (expect (= 14 contract/protocol-version))
-      (expect (= 14 contract/minimum-client-protocol))
-      (expect (= 14 contract/minimum-gateway-protocol))
+      (expect (= 15 contract/protocol-version))
+      (expect (= 15 contract/minimum-client-protocol))
+      (expect (= 15 contract/minimum-gateway-protocol))
       (expect (every? (set (keys (get-in (document/schema-document "gateway")
                                          ["$defs" "http_headers" "properties"])))
                       ["x-vis-protocol" "x-vis-min-gateway-protocol" "x-vis-client"
@@ -114,7 +114,7 @@
                                              :client-min-gateway 1})))))
   (it "builds handshake and error response envelopes"
       (expect (=
-                {:protocol 14 :min-client 14 :min-gateway 14 :version "1.2.3" :build "abc123def456"}
+                {:protocol 15 :min-client 15 :min-gateway 15 :version "1.2.3" :build "abc123def456"}
                 (contract/handshake {:version "1.2.3" :build "abc123def456"})))
       (expect (= {"error" {"type" "invalid-request" "message" "replacement" "session_id" "s1"}}
                  (contract/error-body :mcp/invalid-request

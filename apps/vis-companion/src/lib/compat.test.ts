@@ -59,6 +59,17 @@ describe('compatFromHealth', () => {
     expect(verdict?.upgrade).toBe('gateway');
   });
 
+  // Regression: protocol 14 accepted a gateway whose single-relay Council rooms answer this app cannot read.
+  it('refuses protocol 14 instead of crashing on its Council rooms answer', () => {
+    const verdict = compatFromHealth({
+      status: 'ok',
+      protocol: { protocol: 14, min_client: 14, min_gateway: 14 },
+    });
+    expect(verdict?.isCompatible).toBe(false);
+    expect(verdict?.reason).toBe('gateway-too-old');
+    expect(verdict?.upgrade).toBe('gateway');
+  });
+
   it('names the half that is stale', () => {
     const oldGateway = compatFromHealth({
       protocol: { protocol: APP_MIN_GATEWAY_PROTOCOL - 1 },
