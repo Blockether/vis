@@ -31,9 +31,22 @@
   ;; own contract refuses the half that is behind, in whichever direction it is
   ;; behind, instead of serving a shape neither side maintains.
   (it "this release serves only the protocol it speaks"
-      (expect (= 13 contract/protocol-version))
-      (expect (= 13 contract/minimum-client-protocol))
-      (expect (= 13 contract/minimum-gateway-protocol)))
+      (expect (= 14 contract/protocol-version))
+      (expect (= 14 contract/minimum-client-protocol))
+      (expect (= 14 contract/minimum-gateway-protocol)))
+  ;; Protocol 13 peers disagreed on Activity fields but still accepted each other.
+  (it "rejects protocol 13 peers in both directions"
+      (let [gateway
+            (protocol/gateway-verdict {:headers {"x-vis-protocol" "13"
+                                                 "x-vis-min-gateway-protocol" "13"}})
+
+            client
+            (protocol/client-verdict "vis-test" {:protocol 13 :min-client 13 :min-gateway 13})]
+
+        (expect (false? (:is-compatible gateway)))
+        (expect (= "client-too-old" (:reason gateway)))
+        (expect (false? (:is-compatible client)))
+        (expect (= "gateway-too-old" (:reason client)))))
   (it "a gateway rejects an explicitly too-old client"
       (let [verdict
             (contract/verdict
@@ -91,14 +104,16 @@
             previous
             @handshake-atom
 
-            ;; A gateway demanding MORE than this build speaks — the point of the
-            ;; case, so the floor has to stay ahead of `protocol-version`.
+            ;; Keep the demanding gateway ahead of the current protocol.
+            newer
+            (inc contract/protocol-version)
+
             body
             {"status" "ok"
-             "protocol" {"protocol" 14 "min_client" 14 "min_gateway" 2 "version" "14.0.0"}}]
+             "protocol" {"protocol" newer "min_client" newer "min_gateway" 2 "version" "dev"}}]
 
         (try (expect (= body ((client-var 'note-handshake!) body)))
-             (expect (= {:protocol 14 :min-client 14 :min-gateway 2 :version "14.0.0" :build nil}
+             (expect (= {:protocol newer :min-client newer :min-gateway 2 :version "dev" :build nil}
                         @handshake-atom))
              (expect (= "client-too-old" (:reason (client/compatibility))))
              (finally (reset! handshake-atom previous))))))

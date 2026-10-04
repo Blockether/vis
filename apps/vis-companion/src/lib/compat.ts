@@ -8,21 +8,19 @@
  * wire `protocol` they speak, and the oldest counterpart they still speak to —
  * and compatibility is a pure comparison, never feature sniffing.
  *
- * Keep the numbers and the copy in lockstep with `protocol.clj`: the gateway
- * renders the SAME verdict for the TUI, so a user who sees the screen on their
- * phone and in their terminal must read the same explanation.
+ * Both clients read protocol numbers from the canonical gateway schema.
+ * Keep verdict text consistent with `internal.gateway.runtime` so phone and
+ * terminal users see the same explanation.
  */
 
+import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import type { GatewayHealth, GatewayProtocol } from './types';
 
-/**
- * Wire protocol number THIS app build speaks. Protocol 13 retains complete Activity
- * history and delivers bounded pages instead of capped receipts.
- */
-export const APP_PROTOCOL = 13;
+/** Protocol 14 requires Activity without the removed `omitted` field. */
+export const APP_PROTOCOL = gatewaySchema.$defs.handshake.properties.protocol.const;
 
-/** Oldest gateway protocol this app accepts: the canonical protocol 13 shape. */
-export const APP_MIN_GATEWAY_PROTOCOL = 13;
+/** Read the gateway floor from the same contract as the engine. */
+export const APP_MIN_GATEWAY_PROTOCOL = gatewaySchema.$defs.handshake.properties.min_gateway.const;
 
 /** How this app names itself in the handshake. */
 export const APP_NAME = 'vis-companion';

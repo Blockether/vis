@@ -2127,15 +2127,15 @@
       "properties": {
         "protocol": {
           "type": "integer",
-          "const": 13
+          "const": 14
         },
         "min_client": {
           "type": "integer",
-          "const": 13
+          "const": 14
         },
         "min_gateway": {
           "type": "integer",
-          "const": 13
+          "const": 14
         },
         "version": {
           "type": [

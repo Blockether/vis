@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import activityFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json';
+import { activityProjectionFromWire } from './activity';
 import {
   APP_MIN_GATEWAY_PROTOCOL,
   APP_PROTOCOL,
@@ -40,6 +42,21 @@ describe('compatFromHealth', () => {
     expect(verdict?.isCompatible).toBe(true);
     expect(verdict?.reason).toBe('ok');
     expect(verdict?.upgrade).toBeNull();
+  });
+
+  // Regression: protocol 13 accepted a gateway whose Activity payload this app rejects.
+  it('refuses protocol 13 instead of silently losing its Activity', () => {
+    const oldActivity = { ...activityFixture, omitted: 0 };
+    expect(activityProjectionFromWire(oldActivity)).toBeNull();
+    expect(activityProjectionFromWire(activityFixture)).not.toBeNull();
+
+    const verdict = compatFromHealth({
+      status: 'ok',
+      protocol: { protocol: 13, min_client: 13, min_gateway: 13 },
+    });
+    expect(verdict?.isCompatible).toBe(false);
+    expect(verdict?.reason).toBe('gateway-too-old');
+    expect(verdict?.upgrade).toBe('gateway');
   });
 
   it('names the half that is stale', () => {

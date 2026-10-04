@@ -170,6 +170,82 @@ it('accepts a newer running invocation without reopening an already settled oper
   expect(updated.iterations[0].forms?.[0].activity).toEqual(next);
 });
 
+// Regression: appending work to one trace group must retain every observation and mutation.
+it.each(['same form', 'next form', 'next iteration'] as const)(
+  'keeps Activity and counters when calls arrive in the %s',
+  (target) => {
+    const first = snapshot('succeeded', 1);
+    first.rows[0] = {
+      ...first.rows[0],
+      id: 'list-call',
+      operation: 'ls',
+      presenter: 'observation',
+      signal: 'observation',
+      summary: 'List files',
+      presentation: { headline: 'List files', summary: '2 files', content: [] },
+    };
+    let turn = activityEvent(start(), first);
+    const view = renderOpenSteps(trace(turn));
+    expect(screen.getByRole('button', { name: /Collapse steps:.*1 observation/ })).toBeVisible();
+
+    const next = snapshot('succeeded', 2);
+    next.rows = [
+      {
+        ...first.rows[0],
+        id: 'read-call',
+        operation: 'cat',
+        summary: 'Read file',
+        presentation: { headline: 'Read file', summary: '12 lines', content: [] },
+      },
+      {
+        ...first.rows[0],
+        id: 'patch-call',
+        operation: 'patch',
+        presenter: 'patch',
+        signal: 'mutation',
+        summary: 'Patch file',
+        presentation: { headline: 'Patch file', summary: '1 edit', content: [] },
+      },
+    ];
+    if (target === 'same form') {
+      next.rows.unshift(first.rows[0]);
+    } else {
+      next.history!.id = '22222222-3333-4444-5555-666666666666';
+      turn = apply(turn, {
+        type: 'block.started',
+        iteration: target === 'next iteration' ? 2 : 1,
+        form_index: target === 'next form' ? 1 : 0,
+        scope: 'python',
+        code: 'patch_file()',
+      });
+    }
+    next.rows = next.rows.map((row, index) => ({ ...row, sequence: index + 1 }));
+    next.counts.succeeded = next.rows.length;
+    next.history!.total = next.rows.length;
+    turn = apply(turn, {
+      type: 'block.activity',
+      iteration: target === 'next iteration' ? 2 : 1,
+      form_index: target === 'next form' ? 1 : 0,
+      activity: next,
+    });
+    view.rerender(trace(turn));
+
+    expect(screen.getByRole('button', { name: /Collapse steps:.*2 observations/ })).toBeVisible();
+    expect(screen.getByRole('button', { name: /Collapse steps:.*1 mutation/ })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+    const rows = Array.from(document.querySelectorAll('[data-activity-row]'));
+    expect(rows).toHaveLength(3);
+    expect(rows.map((row) => row.textContent)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('List files'),
+        expect.stringContaining('Read file'),
+        expect.stringContaining('Patch file'),
+      ]),
+    );
+    rows.forEach((row) => expect(row).toBeVisible());
+  },
+);
+
 // Regression, user screenshot: a failed step's Activity band still counted `1 running`,
 // because the last snapshot on the form predated the engine's settlement.
 it.each([
