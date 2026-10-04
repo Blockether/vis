@@ -1,4 +1,4 @@
-# Python SDK
+# Python SDK basics
 
 Use `Agent()` to embed Vis in your program and run tasks in your current project. To use a gateway
 that runs separately, give `Agent()` a `GatewayClient`. Add your application's functions with
@@ -21,10 +21,10 @@ Use this guide for installation and task examples.
   functions](#give-the-agent-your-functions) without installing an extension.
 - **Conversations must outlive your script or appear in the Vis app.** [Connect to a
   gateway](#connect-to-a-gateway-and-run-a-task).
-- **Your own interface should show what the agent is doing.** [Show progress while a
-  turn runs](#show-progress-while-a-turn-runs).
+- **Your program must work with sessions, Council, automations or settings.** [Find the calls for a
+  feature](#find-the-calls-for-a-feature).
 
-For a program in another language, use the [HTTP API](gateway-service.md#http-api).
+For a program in another language, read [HTTP API basics](http-api.md).
 
 ## Install the SDK
 
@@ -280,6 +280,13 @@ Keep the printed session ID: to resume it later, open a
 `GatewayClient(url, token=...)` context and use `client.session(session_id)`.
 Each new Agent creates a new session. It does not implicitly resume an old one.
 
+When the `with` block starts, `GatewayClient` calls `get_capabilities()` and checks the protocol. It
+then sends the token with each request. The client also has one generated method for each gateway
+route. The method name is the HTTP method and the words of the route path, for example
+`get_session_usage()`. Each generated method returns the parsed JSON answer.
+
+To follow the progress of a turn, read [Follow progress](python-sessions.md#follow-progress).
+
 ## Give the agent your functions
 
 Pass an `Extension` to your Agent to let it use business rules, query your data
@@ -417,104 +424,6 @@ instances. Tuples become lists and dataclass fields become ordinary data, keepin
 value. Async functions are awaited on the SDK calling thread, which must not
 already be running an asyncio event loop.
 
-## Continue a conversation
-
-Reuse either kind of Agent for follow-up requests. Use `send()` instead of `run()`
-when you want a turn handle for progress, waiting or cancellation:
-
-```python
-with Agent(project=".") as agent:
-    first = agent.run("Explain the test setup without changing files.")
-    if first["status"] == "completed":
-        turn = agent.send("Which test should I run first?")
-        result = turn.wait(timeout=300)
-        print(result["status"], result["content"])
-```
-
-`agent.session` exposes the underlying session, including its ID and transcript.
-Export history before closing a local agent if you need to keep it.
-For example, inside the context, `agent.session.transcript(format="markdown").content`
-returns bytes you can save to a file.
-
-By default, requests use the engine's configured provider and model. Both `run()`
-and `send()` accept `provider` and `model` to choose configured alternatives for a
-request. They also accept `Session.send()` options such as `idempotency_key`.
-
-## Show progress while a turn runs
-
-Pass `agent.session` and the turn from `agent.send(...)`, or the session and turn
-from a gateway client, to this function:
-
-```python
-# progress.py
-def watch_turn(conversation, turn):
-    terminal = {"turn.completed", "turn.failed", "turn.cancelled"}
-    with conversation.events(cursor=turn.cursor) as events:
-        for event in events:
-            print(event.type)
-            if event.turn_id == turn.id and event.type in terminal:
-                break
-    return turn.wait(timeout=300)
-```
-
-`turn.cursor` was captured before submission, so even a fast answer can be replayed.
-The stream follows the **session** and does not end automatically with a turn.
-Stop only for the matching turn. Closing the stream does not cancel work.
-Save `events.cursor` if you need to reconnect.
-
-For structured progress, inspect `event.activity` and `event.view`. If the turn
-needs a person's answer, use `conversation.input_views()` and
-`conversation.answer(view_id, values)`. See [Forms and user input](human-input.md).
-Do not automatically approve credential or permission requests.
-
-### Read Activity and view receipts
-
-Use `event.activity` to read an Activity receipt with immutable rows, outcome counts
-and evidence. Its `groups` property groups invocations by operation.
-`argument_groups` groups calls with identical arguments. These reader views leave
-`rows` and serialization unchanged.
-
-A row with a persistent `handle_id` can represent several calls in `children`. Read the head for the
-latest outcome. Then expand the children to see each call with its own state and evidence. The
-handle is scoped to its extension and Python form, so it is not a session-wide identifier. For a
-Python extension example, see [Link receipts for one
-operation](extension-api.md#link-receipts-for-one-operation).
-
-A receipt can be one page of history. Check `history` before you treat the receipt
-as complete.
-
-`event.view` decodes view lifecycle events. The records describe input forms, live
-interfaces, patches and closure results. They are not Python UI widgets. To create
-an interface, follow [Forms and user input](human-input.md) or [Live views](live-views.md).
-
-When you have saved JSON rather than an event, use the record's `from_wire()` method.
-It validates the data and makes nested values immutable. `to_wire()` returns a fresh
-JSON-compatible copy. For example, this reads a completed live-view receipt without
-starting Vis, opening a view or making a model call:
-
-```python
-# view_receipt.py
-from blockether.vis.views import LiveResult
-
-result = LiveResult.from_wire(
-    {
-        "view_id": "build-one",
-        "is_completed": True,
-        "reason": "completed",
-        "is_from_human": False,
-        "view": {
-            "title": "Build",
-            "nodes": [{"id": "status", "type": "status", "text": "Done", "tone": "ok"}],
-        },
-    }
-)
-assert result.view.nodes[0]["text"] == "Done"
-assert result.to_wire()["view"]["title"] == "Build"
-```
-
-Both assertions pass for this receipt. Invalid data raises `ValueError`. Decoding
-never assigns engine IDs, sequence numbers, timeouts or terminal outcomes.
-
 ## Handle failures and choose a lifecycle
 
 | Situation | Meaning and next step |
@@ -532,6 +441,29 @@ borrowed layer leaves that layer running. A remote turn can outlive the client.
 
 When you retry a submission, reuse the same explicit `idempotency_key`. A new key means a new
 request.
+
+### Catch gateway errors
+
+```python
+import os
+
+from blockether.vis.engine import GatewayClient, GatewayError, ProtocolError, TransportError
+
+try:
+    with GatewayClient(os.environ["VIS_GATEWAY_URL"], token=os.environ["VIS_GATEWAY_TOKEN"]) as client:
+        client.get_capabilities()
+except GatewayError as error:
+    print("HTTP error:", error.status, error.code)
+except ProtocolError:
+    print("Update the SDK or the gateway to compatible versions.")
+except TransportError:
+    print("The gateway is not reachable.")
+```
+
+`GatewayError` has `status` and `code`, but not the message of the gateway. `ProtocolError` and
+`VisTimeout` are kinds of `TransportError`, so catch them first.
+
+### Choose a lifecycle
 
 | API | Use it for | Closing it |
 | --- | --- | --- |
@@ -551,8 +483,24 @@ installed wrapper, not a bare native binary without its Python sidecar. Each
 client and its session handles use one calling thread.
 `conversation.delete()` is a separate, destructive operation.
 
+## Find the calls for a feature
+
+Each concept page has a Python page with the same operations as its HTTP page.
+
+| Concept | Python page |
+|---|---|
+| [Sessions](sessions.md) | [Sessions in Python](python-sessions.md) |
+| [Context management](context-management.md) | [Context management in Python](python-context-management.md) |
+| [Project instructions](project-instructions.md) | [Project instructions in Python](python-project-instructions.md) |
+| [Drafts](drafts.md) | [Drafts in Python](python-drafts.md) |
+| [Council](council.md) | [Council in Python](python-council.md) |
+| [Automations](automations.md) | [Automations in Python](python-automations.md) |
+| [Configuration](configuration.md) | [Configuration in Python](python-configuration.md) |
+
 ## See also
 
+- [HTTP API basics](http-api.md) — the same gateway from any language.
+- [Sessions in Python](python-sessions.md) — send messages, follow progress and manage sessions.
 - [Running a gateway](gateway-service.md) — install and secure a shared agent service.
 - [Decision models](decision-models.md) — download Laya, train both heads and publish a verified FP32 version.
 - [Native builds for JVM extensions](jvm-native-image.md) — rebuild Vis only when adding Java/Clojure capabilities.

@@ -1,7 +1,7 @@
 """Immutable Activity receipts, counts, grouping and evidence.
 
 For reading event data, see the
-[SDK guide](https://vis.blockether.com/python-sdk.html#read-activity-and-view-receipts).
+[Sessions in Python guide](https://vis.blockether.com/python-sessions.html#read-activity-and-view-receipts).
 For authoring tool presentations, see the
 [Activity presentation guide](https://vis.blockether.com/extension-api.html#activity-presentation).
 """

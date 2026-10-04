@@ -256,8 +256,8 @@ to browse saved sessions.
 <span id="python-sdk"></span>
 <span id="resource-limits"></span>
 
-For remote connections, tokens, service setup and the HTTP API, see [Running a gateway](gateway-service.md).
-To use Vis in your code, see the [Python SDK](python-sdk.md) or the [HTTP API](gateway-service.md#http-api).
+For remote connections, tokens and service setup, see [Running a gateway](gateway-service.md). To
+use Vis from your own code, see [Python SDK basics](python-sdk.md) or [HTTP API basics](http-api.md).
 
 <span id="see-also"></span>
 
@@ -266,23 +266,60 @@ To use Vis in your code, see the [Python SDK](python-sdk.md) or the [HTTP API](g
 <span id="work-with-a-project"></span>
 <span id="follow-the-work-on-every-screen"></span>
 <span id="keep-useful-work-when-you-return"></span>
+<span id="why-vis"></span>
 
-### Guides
+### Intro
 
-- [Configuration](configuration.md) — providers, models and project settings.
-- [Project instructions](context-and-prompts.md) — tell the agent how your codebase works.
-- [Skills](skills.md) — reusable task instructions.
+- [Rationale](rationale.md) — the reasons behind the design of Vis.
+
+### Concepts
+
+Each concept page explains one feature: what it does, when to use it and how to use it in chat.
+
 - [Sessions](sessions.md) — continue, stop or find your work.
+- [Context management](context-management.md) — how filtering and summaries keep conversations manageable.
+- [Project instructions](project-instructions.md) — tell the agent how your codebase works.
+- [Skills](skills.md) — reusable task instructions.
 - [Drafts](drafts.md) — review changes in a separate working copy.
 - [Council](council.md) — ask another session for help or a second review.
 - [Automations](automations.md) — run a prompt on a schedule or from a webhook.
-- [Reporting a bug](reporting-bugs.md) — report a problem without exposing private data.
+- [Python sandbox](python-sandbox.md) — Python execution, packages and permissions.
+- [Configuration](configuration.md) — providers, models and project settings.
 
-### SDKs
+### Programmatic access
 
-- [Python SDK](python-sdk.md) — run a local agent, continue a conversation or connect remotely.
-- [Decision models](decision-models.md) — download Laya, train and publish FP32 versions.
+Use these pages to drive the same features from your own code. Each concept page that a program can
+use has a Python page and an HTTP page with the same sections.
+
+**Python SDK**
+
+- [Python SDK basics](python-sdk.md) — install the SDK, run a private agent and connect to a gateway.
+- [Sessions in Python](python-sessions.md) — sessions, messages, progress and saved work from Python.
+- [Context management in Python](python-context-management.md) — context budget, usage and cache health from Python.
+- [Project instructions in Python](python-project-instructions.md) — prompt templates, skills and goals from Python.
+- [Drafts in Python](python-drafts.md) — draft settings and draft state from Python.
+- [Council in Python](python-council.md) — Council messages, wakes and rooms from Python.
+- [Automations in Python](python-automations.md) — automations, runs, secrets and webhooks from Python.
+- [Configuration in Python](python-configuration.md) — settings and extension reloads from Python.
+
+**HTTP API**
+
+- [HTTP API basics](http-api.md) — authenticate requests, read the OpenAPI document and handle errors.
+- [Sessions over HTTP](http-sessions.md) — sessions, messages, progress and saved work with HTTP requests.
+- [Context management over HTTP](http-context-management.md) — context budget, usage and cache health with HTTP requests.
+- [Project instructions over HTTP](http-project-instructions.md) — prompt templates, skills and goals with HTTP requests.
+- [Drafts over HTTP](http-drafts.md) — draft settings and draft state with HTTP requests.
+- [Council over HTTP](http-council.md) — Council messages, wakes and rooms with HTTP requests.
+- [Automations over HTTP](http-automations.md) — automations, runs, secrets and webhooks with HTTP requests.
+- [Configuration over HTTP](http-configuration.md) — settings and extension reloads with HTTP requests.
+
+### Guides
+
+Each guide completes one task with the concepts and the programmatic pages above.
+
 - [Running a gateway](gateway-service.md) — install and operate a shared agent service.
+- [Decision models](decision-models.md) — download Laya, train and publish FP32 versions.
+- [Reporting a bug](reporting-bugs.md) — report a problem without exposing private data.
 
 <span id="put-your-expertise-into-code"></span>
 <span id="combine-steps-in-python"></span>
@@ -299,14 +336,6 @@ To use Vis in your code, see the [Python SDK](python-sdk.md) or the [HTTP API](g
 - [Forms and user input](human-input.md) — ask for choices, credentials or confirmation.
 - [Live views](live-views.md) — show progress a person can watch and stop.
 - [Provider extensions](provider-extensions.md) — register an LLM provider from an extension.
-
-<span id="why-vis"></span>
-
-### Concepts
-
-- [Why I built Vis](motivation.md) — the reasons behind the design.
-- [How Vis manages context](token-optimization.md) — how filtering and summaries keep conversations manageable.
-- [Python sandbox](python-sandbox.md) — Python execution, packages and permissions.
 
 <span id="updating-vis"></span>
 <span id="native-vs-jvm"></span>

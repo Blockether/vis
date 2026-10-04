@@ -1,4 +1,4 @@
-# How Vis manages context
+# Context management
 
 Long sessions can fill the model's context window with old file reads and tool
 results. Vis returns only selected tool output and can compress completed work
@@ -16,6 +16,9 @@ into a summary without deleting your session history.
 - **You want to know why Vis prints only part of a result, or edits files by line
   address.** See [One tool, many functions](#one-tool-many-functions) and
   [Addresses, not copies](#addresses-not-copies).
+- **Your own program must show the context budget, the usage or the cost of a session.** Use
+  [Context management in Python](python-context-management.md) or [Context management over
+  HTTP](http-context-management.md).
 
 ## Folding settled work
 
@@ -162,6 +165,9 @@ print(defs("summarize_rows", details=True))
 
 ## See also
 
+- [Context management in Python](python-context-management.md) — context, usage and cache health from a
+  Python program.
+- [Context management over HTTP](http-context-management.md) — the same operations as HTTP requests.
 - [Python sandbox](python-sandbox.md) — the interpreter the model's programs run in.
 - [Extending Vis](extending.md) — turning a recurring helper into a tool.
 - [Skills](skills.md) — instructions loaded when needed rather than included in every request.

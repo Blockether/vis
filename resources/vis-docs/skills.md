@@ -24,7 +24,7 @@ Skills written for Claude Code, pi, opencode or the
   [availability](#control-availability) without deleting the skill files.
 
 Put rules that apply to every task in
-[`AGENTS.md`](context-and-prompts.md#project-rules-agents-md). When the task needs a
+[`AGENTS.md`](project-instructions.md#project-rules-agents-md). When the task needs a
 tool that Vis can call rather than instructions, write an [extension](extending.md).
 
 ## Control availability
@@ -112,5 +112,5 @@ The `/` list does not show skills at first. They appear when you search by name.
 
 ## See also
 
-- [Project instructions](context-and-prompts.md) — project rules and prompt templates.
+- [Project instructions](project-instructions.md) — project rules and prompt templates.
 - [Extending Vis](extending.md) — when a task needs a tool rather than instructions.

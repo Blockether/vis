@@ -18,7 +18,7 @@ or ask Vis to build it.
   extension](#ask-vis-to-build-an-extension) from a description of the task.
 
 If Vis needs only instructions, not code, write a [skill](skills.md) or add the rule
-to [`AGENTS.md`](context-and-prompts.md#project-rules-agents-md). [Choose what you
+to [`AGENTS.md`](project-instructions.md#project-rules-agents-md). [Choose what you
 need](#choose-what-you-need) compares the options.
 
 ## Choose what you need

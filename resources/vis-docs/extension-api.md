@@ -14,8 +14,9 @@ callbacks and host operations.
 - **Your extension needs a service from Vis**, such as [durable
   state](#durable-state), [environment variables](#environment), [session
   context](#session-context) or [another session tool](#call-other-session-tools).
-- **Your own program must read or export Activity history.** Use the [Python
-  SDK](#python-sdk) or the [HTTP API](#http-api). Both have the same operations.
+- **Your own program must read or export Activity history.** Read [Sessions in
+  Python](python-sessions.md#read-activity-history) or [Sessions over
+  HTTP](http-sessions.md#read-activity-history).
 
 Start with the [tutorial](extending.md) for a complete entry file or [Extension
 design](extension-design.md) for authoring and test guidance.
@@ -509,7 +510,8 @@ Vis does not discard saved Activity.
 
 For clients, a projection's optional `history` object identifies its durable record and carries the
 revision, total invocation count and page cursor. A client reads the history in pages with the
-[Python SDK](#python-sdk) or the [HTTP API](#http-api). `q` searches all saved details. Follow
+[Python SDK](python-sessions.md#read-activity-history) or the [HTTP
+API](http-sessions.md#read-activity-history). `q` searches all saved details. Follow
 `history.next_after` until it is `null`. Pages contain at most 32 invocations and 1 MiB, without
 shortening their details. Synthetic group headings do not count as invocations.
 
@@ -1057,75 +1059,10 @@ instead. When the jail is disabled, Vis ignores both options.
 `write`, `read` (bytes), `read_text`, `copy`, `move`, `list`, `stat` and `remove`.
 Ordinary `open()` uses the extension's permissions too, not the model's jail.
 
-## Python SDK
-
-`GatewayClient` reads the saved Activity of a session. Connect as in [Connect a Python
-client](gateway-service.md#connect-a-python-client). The examples are calls on that `client`.
-
-| Task | Method |
-|---|---|
-| Read one page of Activity history | `get_session_activity(sid, aid, query=...)` |
-| Export the full Activity history | `get_session_activity_export(sid, aid, query=...)` |
-
-### Read Activity history in Python
-
-```python
-after, revision = 0, None
-while after is not None:
-    query = {"after": after, "limit": 32}
-    if revision is not None:
-        query["revision"] = revision
-    page = client.get_session_activity(session_id, activity_id, query=query)
-    for row in page["rows"]:
-        print(row)
-    revision = page["history"]["revision"]
-    after = page["history"]["next_after"]
-```
-
-The `revision` keeps all pages on the same version of the history. A changed history raises
-`GatewayError` with the status 409. Read the history again from the first page.
-
-### Export Activity history in Python
-
-```python
-response = client.get_session_activity_export(session_id, activity_id, query={"revision": revision})
-print(response.content.decode())
-```
-
-An incomplete export raises `ProtocolError`. Read the history again and retry.
-
-## HTTP API
-
-The HTTP API has the same operations as the [Python SDK](#python-sdk). The examples use the `vis_api`
-function from [Authenticate HTTP requests](gateway-service.md#authenticate-http-requests).
-
-| Task | Method and path |
-|---|---|
-| Read one page of Activity history | `GET /v1/sessions/{sid}/activity/{aid}` |
-| Export the full Activity history | `GET /v1/sessions/{sid}/activity/{aid}/export` |
-
-### Read Activity history over HTTP
-
-```bash
-vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/activity/$ACTIVITY_ID?after=0&limit=32&q=timeout"
-```
-
-The answer has `rows` and `history`. Send `history.next_after` as `after` to read the next page, and
-send `history.revision` as `revision`. A changed history returns 409. Read the history again from the
-first page.
-
-### Export Activity history over HTTP
-
-```bash
-vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/activity/$ACTIVITY_ID/export?revision=$REVISION" \
-  -o activity.txt
-```
-
-An export that ends with the line `INCOMPLETE EXPORT: Activity changed. Reload and retry.` is not
-complete. Read the history again and retry.
-
 ## See also
 
 - [Extension design](extension-design.md) — choosing and documenting tool behavior.
 - [Installing and sharing extensions](extension-packages.md) — installation and reload.
 - [Extension troubleshooting](extension-troubleshooting.md) — loading and call errors.
+- [Sessions in Python](python-sessions.md#read-activity-history) — read the saved Activity of a
+  session from a program.

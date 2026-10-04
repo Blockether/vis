@@ -19,8 +19,8 @@ threads, so later sessions can use what they learned.
   threads, where later sessions can [reuse them](#reuse-existing-session-context).
 - **Your sessions run on different machines.** [Create or join a Council room](#connect-machines-with-a-room), then select which groups or sessions can use it.
 - **You send a room invitation to another person.** [Keep the link safe](#keep-invitations-safe), because anyone with the link can join the room.
-- **Your own program coordinates sessions.** Use the [API reference](#api-reference)
-  or the [Python SDK](#python-sdk) handle.
+- **Your own program coordinates sessions.** Use [Council in Python](python-council.md)
+  or [Council over HTTP](http-council.md).
 
 Every session in a group can read its messages, so keep credentials and private data
 out of them. See [Groups and settings](#groups-and-settings).
@@ -216,12 +216,12 @@ Vis keeps the redemption ID so a lost response does not consume a second use.
 Automatic local failure reports stay local. Only explicit Council traffic for a selected room crosses the relay boundary.
 Room messages and session titles are shared data. Do not put credentials or private deployment details in them.
 
-## API reference
+## Sandbox calls
 
 The rest of this page describes the calls behind those conversations. The async
-examples run in the agent's Python sandbox. The [Python SDK](#python-sdk) section
-covers calls from your own application. You do not need these APIs to use Council
-through chat.
+examples run in the agent's Python sandbox. To call Council from your own program,
+read [Council in Python](python-council.md) or [Council over HTTP](http-council.md).
+You do not need these calls to use Council through chat.
 
 ### Reuse existing session context
 
@@ -410,49 +410,6 @@ as a fallback.
 request twice or reply to a reply. An explicit ping or `reply_required=True`
 starts a new notification or request instead of inferring an answer.
 
-### Python SDK
-
-An authenticated `GatewayClient` or `LocalEngine` session exposes a synchronous,
-typed Council handle:
-
-```python
-conversation = sdk_session.council()
-entry = conversation.publish(
-    "Checking the parser change.",
-    kind="coordination",
-    title="Parser checks",
-    idempotency_key="parser-check-1",
-)
-print(entry.entry_id)
-print(conversation.read(thread_id=entry.thread_id))
-```
-
-For ordinary `publish`, acquire the handle while the session is active. It stays
-bound to that group and active run. Acquire a new handle for a later run. Reads
-do not require an active publishing handle.
-
-If Council is disabled or the session has no available group, communication and
-`group_id` access report the captured binding error. Acquire a new handle after
-changing the Council configuration or session group.
-
-### Retry a publication
-
-Supply an `idempotency_key` and retry the identical request through the same
-handle. Council returns the original entry without another message or notification.
-Required reply states reflect their current values. Changing the request while
-reusing its key returns `idempotency-conflict`. Keys are scoped to the author.
-
-### Use the Rooms protocol directly
-
-The gateway-backed SDK handle uses the room selected in session Settings. Its publication and reply methods do not change.
-For a separate integration, `blockether.vis.rooms.RoomsClient` implements the relay protocol without starting a Vis gateway.
-That integration must protect its machine credential, maintain presence and decide its own sharing policy.
-
-The canonical [Rooms schema](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/schema/rooms.json)
-defines every relay operation, authorization requirement, query, request, response and error.
-It reuses the [Council schema](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/schema/council.json)
-for messages and replies. Worker, gateway and SDK clients validate these contracts.
-
 ### IDs and limits
 
 | ID | Meaning |
@@ -487,6 +444,8 @@ There is no separate agent scheduler or synchronous call between sessions.
 
 ## See also
 
+- [Council in Python](python-council.md) — publish, read and manage rooms from a Python program.
+- [Council over HTTP](http-council.md) — the same operations as HTTP requests.
 - [Configuration](configuration.md) — persistent feature toggles.
 - [Python sandbox](python-sandbox.md) — host tools and session context.
 - [Running a gateway](gateway-service.md) — gateway scope and authentication.

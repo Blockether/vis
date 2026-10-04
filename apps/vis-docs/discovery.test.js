@@ -137,7 +137,7 @@ test('the manifest points to the transparent app icons with matching sizes', () 
 
 test('docs, SDK and catalog pages replace every cached icon URL, including the touch icon', () => {
   for (const html of [
-    read('motivation.html'),
+    read('rationale.html'),
     read('python-sdk-api/blockether/vis/engine.html'),
     renderPage({ items }),
     renderPage({ items, item: items[0] }),

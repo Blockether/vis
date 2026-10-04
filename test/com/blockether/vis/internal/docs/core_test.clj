@@ -512,12 +512,20 @@
           (expect (not (str/includes? html "hero-install")))
           (expect (not (str/includes? html "data-copy-active")))
           (expect (str/includes? html "id=\"first-session\"")))))
-  (it "keeps motivation next to getting started without a separate app guide"
+  (it "opens on the intro module of Rationale and Getting started without a separate app guide"
       (let [slugs (mapv :slug (:pages (docs/collect)))]
-        (expect (= ["index" "motivation"] (subvec slugs 0 2)))
+        (expect (= ["rationale" "index"] (subvec slugs 0 2)))
         (expect (not (some #{"gateway"} slugs)))
         (expect (nil? (io/resource "vis-docs/gateway.md")))
         (expect (< (.indexOf slugs "sessions") (.indexOf slugs "python-sandbox")))))
+  (it "renames the motivation, token and prompt pages without keeping the old files"
+      (let [slugs (set (map :slug (:pages (docs/collect))))]
+        (doseq [[old new] {"motivation" "rationale"
+                           "token-optimization" "context-management"
+                           "context-and-prompts" "project-instructions"}]
+          (expect (contains? slugs new) new)
+          (expect (not (contains? slugs old)) old)
+          (expect (nil? (io/resource (str "vis-docs/" old ".md"))) old))))
   (it "keeps controlling, managing and exporting sessions in one page"
       (let [{:keys [pages]}
             (docs/collect)
@@ -814,14 +822,29 @@
                    (expect (= {:status 301 :headers {"location" "/docs/sessions"} :body ""}
                               (docs/handle {:uri uri :headers {}}))
                            uri)))
-             (it "redirects the removed Java and Clojure SDK guide to Running a gateway"
+             (it "redirects renamed pages to their new slugs without replacing their fragments"
+                 (doseq [[page target]
+                         {"motivation" "/docs/rationale"
+                          "token-optimization" "/docs/context-management"
+                          "context-and-prompts" "/docs/project-instructions"}
+
+                         suffix
+                         ["" "/" ".md" ".html"]
+
+                         :let [uri
+                               (str "/docs/" page suffix)]]
+
+                   (expect (= {:status 301 :headers {"location" target} :body ""}
+                              (docs/handle {:uri uri :headers {}}))
+                           uri)))
+             (it "redirects the removed Java and Clojure SDK guide to HTTP API basics"
                  (doseq [suffix
                          ["" "/" ".md" ".html"]
 
                          :let [uri
                                (str "/docs/jvm-sdk" suffix)]]
 
-                   (expect (= {:status 301 :headers {"location" "/docs/gateway-service"} :body ""}
+                   (expect (= {:status 301 :headers {"location" "/docs/http-api"} :body ""}
                               (docs/handle {:uri uri :headers {}}))
                            uri)))
              (it "an unknown .md path still falls through as nil"
@@ -959,7 +982,7 @@
    `anchors` is `{slug #{anchor-id}}` for the whole site, so a cross-page
    fragment is checked against the toc of the page it points AT, and `pages` is
    the whole page list, which the landing page has to be a map of."
-  [{:keys [slug title section md blurb toc]} anchors pages]
+  [{:keys [slug title section intro? md blurb toc]} anchors pages]
   (let [home?
         (= "index" slug)
 
@@ -1007,11 +1030,11 @@
                   ", not with its manifest title " (pr-str (str "# " title)))])
           (when (< (count (lead-paragraph md)) 60)
             [(say "has no lead paragraph between its H1 and the first `##`")])
-          (when (and section (not= "When to use" (first h2-texts)))
+          (when (and section (not intro?) (not= "When to use" (first h2-texts)))
             [(say "opens on `## "
                   (first h2-texts)
-                  "` — a page under a site section starts with `## When to use`")])
-          (when (and section (< (count (use-cases md)) 2))
+                  "` — a page outside the intro module starts with `## When to use`")])
+          (when (and section (not intro?) (< (count (use-cases md)) 2))
             [(say "`When to use` names fewer than two problems the page solves")])
           (when-not (= "See also" (last h2-texts))
             [(say "ends on `## " (last h2-texts) "` — the last `##` of a page is `See also`")])
@@ -1084,6 +1107,7 @@
   {:slug "fixture"
    :title "Fixture"
    :section section
+   :intro? (= "Intro" section)
    :md (str "# Fixture\n\nA lead paragraph long enough to count as the page's introduction.\n\n## "
             first-h2
             "\n\n"
@@ -1097,16 +1121,98 @@
 
 (defdescribe
   when-to-use-canon-test
-  "A page under a site section opens with the problems it solves, so a reader who
-   arrives with a problem learns first whether this is the right page. The
-   unsectioned introduction is exempt."
-  (it "flags a sectioned page that opens elsewhere or names fewer than two problems"
+  "A page outside the intro module opens with the problems it solves, so a reader
+   who arrives with a problem learns first whether this is the right page. The
+   intro module of Rationale and Getting started is exempt."
+  (it "flags a module page that opens elsewhere or names fewer than two problems"
       (expect (seq (when-to-use-breaks (canon-fixture "Guides" "Install" ["a" "b"]))))
       (expect (seq (when-to-use-breaks (canon-fixture "Guides" "When to use" ["only one"])))))
-  (it "accepts a sectioned page that opens with two or more problems"
+  (it "accepts a module page that opens with two or more problems"
       (expect (empty? (when-to-use-breaks (canon-fixture "Guides" "When to use" ["a" "b"])))))
-  (it "leaves the unsectioned introduction pages alone"
-      (expect (empty? (when-to-use-breaks (canon-fixture nil "Why Vis" []))))))
+  (it "leaves the intro module alone"
+      (expect (empty? (when-to-use-breaks (canon-fixture "Intro" "Rationale" []))))))
+
+(defn- h2-headings
+  "The `##` heading texts of `md`, outside code fences, in page order."
+  [md]
+  (keep (fn [[_ lvl text]]
+          (when (= 2 lvl) text))
+        (:headings (scan md))))
+
+(defn- links-to?
+  "True when `md` links the page `slug`."
+  [md slug]
+  (str/includes? md (str "(" slug ".md")))
+
+(defdescribe
+  docs-modules-test
+  "The manual reads in modules: the intro, the concepts, the programmatic access to
+   those concepts and the guides built on both. A Python SDK page and its HTTP API
+   page cover one concept with the same headings, so a reader can change between
+   them at any section."
+  (it "orders the modules and the programmatic groups"
+      (let [{:keys [pages]} (docs/collect)]
+        (expect (= ["Intro" "Concepts" "Programmatic access" "Guides" "Extensions" "Reference"]
+                   (distinct (map :section pages))))
+        (expect (= ["rationale" "index"] (mapv :slug (filter :intro? pages))))
+        (expect (= ["Python SDK" "HTTP API"] (distinct (keep :group pages))))))
+  (it
+    "mirrors each Python SDK page with an HTTP API page that has the same headings"
+    (let [{:keys [pages]}
+          (docs/collect)
+
+          in-group
+          (fn [group]
+            (filter #(= group (:group %)) pages))
+
+          sdk
+          (in-group "Python SDK")
+
+          http
+          (in-group "HTTP API")
+
+          concept-md
+          (into {} (comp (filter #(= "Concepts" (:section %))) (map (juxt :slug :md))) pages)]
+
+      (expect (= "python-sdk" (:slug (first sdk))))
+      (expect (= "http-api" (:slug (first http))))
+      (expect (= (map #(subs (:slug %) (count "python-")) (rest sdk))
+                 (map #(subs (:slug %) (count "http-")) (rest http))))
+      (doseq [[py ht]
+              (map vector (rest sdk) (rest http))
+
+              :let [concept
+                    (subs (:slug py) (count "python-"))
+
+                    md
+                    (concept-md concept)]]
+
+        (expect (some? md) (:slug py))
+        (expect (= (h2-headings (:md py)) (h2-headings (:md ht))) (:slug py))
+        (expect (links-to? (str md) (:slug py)) concept)
+        (expect (links-to? (str md) (:slug ht)) concept))))
+  (it "names gateway routes only on the HTTP API pages"
+      (doseq [{:keys [slug group md]}
+              (:pages (docs/collect))
+
+              :when (not= "HTTP API" group)]
+
+        (expect (not (re-find #"\b(GET|POST|PUT|PATCH|DELETE) /" md)) slug)))
+  (it "builds every guide on a concept page and a programmatic page"
+      (let [{:keys [pages]}
+            (docs/collect)
+
+            slugs-of
+            (fn [section]
+              (map :slug (filter #(= section (:section %)) pages)))]
+
+        (doseq [{:keys [slug section md]}
+                pages
+
+                :when (= "Guides" section)]
+
+          (expect (some #(links-to? md %) (slugs-of "Concepts")) slug)
+          (expect (some #(links-to? md %) (slugs-of "Programmatic access")) slug)))))
 
 (defn- plain-english-breaks
   "The page-contract lines a page whose body is `prose` earns for its sentences."

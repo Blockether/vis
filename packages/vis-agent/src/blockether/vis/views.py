@@ -1,7 +1,7 @@
 """Immutable input-form, live-view and view-event records.
 
 For reading receipts, see the
-[SDK guide](https://vis.blockether.com/python-sdk.html#read-activity-and-view-receipts).
+[Sessions in Python guide](https://vis.blockether.com/python-sessions.html#read-activity-and-view-receipts).
 For creating interfaces, use the [human-input guide](https://vis.blockether.com/human-input.html)
 or [live-view guide](https://vis.blockether.com/live-views.html).
 """

@@ -16,12 +16,18 @@
        carries no `#` at all.
      * Under the H1 comes a LEAD paragraph, before the first `##`: what this page
        covers, so a reader who stops there still knows what they found.
-     * A page under a named section of `vis-docs/site.edn` documents a feature,
-       so its FIRST `##` is `When to use`: two or more problems a reader brings,
-       each tied to the part of the page that solves it, and the page to read
-       instead when a neighbouring feature fits better. It follows the lead and
-       never precedes it, because the lead's first paragraph is also the page's
-       `apropos` row. `index.md` and the unsectioned introduction are exempt.
+     * The `:nav` of `vis-docs/site.edn` is the reading order, in modules: `Intro`
+       (Rationale and Getting started, the `:intro?` module), `Concepts` (one page
+       for each feature), `Programmatic access` (the `Python SDK` and `HTTP API`
+       groups), `Guides` (tasks built on the concepts and the programmatic pages),
+       `Extensions` and `Reference`. A Concepts page `X` that a program can drive
+       has the mirror pages `python-X` and `http-X`, with the same `##` headings in
+       the same order. Only the `http-` pages name gateway routes.
+     * A page outside the intro module documents a feature, so its FIRST `##` is
+       `When to use`: two or more problems a reader brings, each tied to the part
+       of the page that solves it, and the page to read instead when a
+       neighbouring feature fits better. It follows the lead and never precedes
+       it, because the lead's first paragraph is also the page's `apropos` row.
      * `##` and `###` only. A deeper heading gets no `id` and no on-this-page
        entry (see `anchors+toc`), so nothing — not even this page — can link to it.
      * Anchors are unique within a page, and every relative `page.md#anchor` link
@@ -144,9 +150,10 @@
   "vis-docs/site.edn")
 
 (defn- site-file
-  "`{:site {...} :nav [{:section _ :pages [{:page :title :blurb} ...]} ...]}`, read
-   from `site-resource` and checked. The nav VECTOR is the order — a page's place in
-   the manual is where it stands here, so there is no order number to keep in step."
+  "`{:site {...} :nav [{:section _ :intro? _ :pages [{:page :title :blurb} ...]} ...]}`, read
+   from `site-resource` and checked. A module with groups has `:groups [{:group _ :pages [...]}]`
+   instead of `:pages`. The nav VECTOR is the order — a page's place in the manual is where it
+   stands here, so there is no order number to keep in step."
   []
   (let [url
         (or (io/resource site-resource)
@@ -163,7 +170,16 @@
     (when-not (and (map? parsed)
                    (map? (:site parsed))
                    (vector? (:nav parsed))
-                   (every? #(and (map? %) (vector? (:pages %))) (:nav parsed)))
+                   (every? #(and (map? %)
+                                 (if (contains? % :groups)
+                                   (and (vector? (:groups %))
+                                        (every? (fn [g]
+                                                  (and (map? g)
+                                                       (string? (:group g))
+                                                       (vector? (:pages g))))
+                                                (:groups %)))
+                                   (vector? (:pages %))))
+                           (:nav parsed)))
       (throw (ex-info "Malformed docs site resource"
                       {:type ::malformed-site :resource site-resource})))
     parsed))
@@ -178,11 +194,14 @@
 
         pages
         (into []
-              (for [{section :section group :pages}
+              (for [{:keys [section intro? groups] :as module}
                     nav
 
+                    {:keys [group] group-pages :pages}
+                    (or groups [{:pages (:pages module)}])
+
                     {:keys [page title blurb]}
-                    group]
+                    group-pages]
 
                 (let [record
                       (or (get by-name page)
@@ -198,6 +217,8 @@
                   {:slug page
                    :title (or title (first-h1 md) page)
                    :section section
+                   :group group
+                   :intro? (boolean intro?)
                    :blurb blurb
                    :md md
                    :html html
@@ -293,14 +314,22 @@
 
              (str (when sec (str "<div class=\"nav-sec\">" (esc sec) "</div>"))
                   (apply str
-                    (for [{:keys [slug title]} ps]
-                      (str "<a href=\""
-                           (href mode slug)
-                           "\""
-                           (when (= slug active-slug) " class=\"active\"")
-                           ">"
-                           (esc title)
-                           "</a>"))))))
+                    (for [run
+                          (partition-by :group ps)
+
+                          :let [grp
+                                (:group (first run))]]
+
+                      (str (when grp (str "<div class=\"nav-grp\">" (esc grp) "</div>"))
+                           (apply str
+                             (for [{:keys [slug title]} run]
+                               (str "<a href=\""
+                                    (href mode slug)
+                                    "\""
+                                    (when (= slug active-slug) " class=\"active\"")
+                                    ">"
+                                    (esc title)
+                                    "</a>")))))))))
          (when (and (= mode :static) public?)
            (str "<div class=\"nav-sec\">"
                 (esc (get-in site [:extension-center :section]))
@@ -598,10 +627,13 @@
 (def ^:private moved-pages
   "Slugs of merged or removed pages, mapped to the route that replaces them.
    The redirect has no fragment, so a browser keeps the anchor of an old bookmark."
-  {"exporting-sessions" "/docs/sessions"
+  {"context-and-prompts" "/docs/project-instructions"
+   "exporting-sessions" "/docs/sessions"
    "gateway" "/docs"
-   "jvm-sdk" "/docs/gateway-service"
-   "queue-and-cancel" "/docs/sessions"})
+   "jvm-sdk" "/docs/http-api"
+   "motivation" "/docs/rationale"
+   "queue-and-cancel" "/docs/sessions"
+   "token-optimization" "/docs/context-management"})
 
 (defn handle
   "Ring handler for the docs site. Returns nil for paths it does not own (so the

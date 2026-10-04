@@ -17,8 +17,8 @@ apps and the command line.
   each state.
 - **You need a conversation from last week.** [Find the
   session](#find-a-saved-session) by its title or by something said in it.
-- **You write a gateway client that must find sessions.** Use the [Python SDK](#python-sdk) or the
-  [HTTP API](#http-api). Both have the same search.
+- **Your program must create sessions, send messages or find saved sessions.** Read [Sessions in
+  Python](python-sessions.md) or [Sessions over HTTP](http-sessions.md).
 - **You want to try another approach without losing this conversation.** [Fork
   the session](#fork-a-session).
 - **The last few turns went wrong and you want to go back.** [Fork from an earlier
@@ -206,31 +206,6 @@ different session, choose that session. To open the session, choose it again. Yo
 can also choose **Open** or one of its messages. Before you type, choose a recent session
 once to open it. To close the search, press **Esc** or choose the close button.
 
-### Search from your own program
-
-The terminal and the apps use one gateway search. Your program can use the same search with the
-[Python SDK](#python-sdk) or the [HTTP API](#http-api). Both take these query parameters and return
-the same answer.
-
-The answer lists session rows with the same fields as the session list. The rows are in order of
-recent activity, with the most recent first.
-
-- With an empty `q`, the answer lists your recent sessions.
-- With words in `q`, the answer lists the sessions whose title or conversation text
-  matches. Each of these rows also has a `match` object. It tells where the words
-  matched and gives short text around each match.
-- `project_id` restricts results to one saved project.
-- `root` restricts results to one project directory. An empty `root` selects sessions without a project.
-- `group_ids` selects any group in a comma-separated list. An empty value selects no groups.
-- Without these parameters, the search includes every project and group.
-- Scopes apply before `total`, the page window and its cursor are calculated.
-- `limit` sets the page size, from 1 to 1000. The default is 50.
-- `total` is the number of sessions in all pages.
-- To read the next page, send the `next_cursor` value as `after`. When `has_more`
-  is `false`, there are no more pages.
-- `archived=exclude` lists active sessions, `include` lists all sessions and `only`
-  lists archived sessions. The default is `exclude`.
-
 ## Fork a session
 
 A fork is a new session that starts with a copy of another session's
@@ -350,59 +325,12 @@ missing directories and adds `.html` if the output path has no extension:
 vis-agent sessions export 3a7b2c1d --html report.html
 ```
 
-## Python SDK
-
-`GatewayClient` lists and searches sessions. Connect as in [Connect a Python
-client](gateway-service.md#connect-a-python-client). The example is a call on that `client`.
-
-| Task | Method |
-|---|---|
-| Search sessions | `get_sessions_search(query=...)` |
-| List sessions | `get_sessions(query=...)` |
-
-### Search sessions in Python
-
-```python
-after = None
-while True:
-    query = {"q": "release notes", "limit": 20}
-    if after is not None:
-        query["after"] = after
-    page = client.get_sessions_search(query=query)
-    for row in page["sessions"]:
-        print(row["id"], row["title"])
-    if not page["has_more"]:
-        break
-    after = page["next_cursor"]
-```
-
-[Search from your own program](#search-from-your-own-program) explains the parameters and the
-answer. The rows have the same fields as the rows of `get_sessions()`.
-
-## HTTP API
-
-The HTTP API has the same operations as the [Python SDK](#python-sdk). The example uses the `vis_api`
-function from [Authenticate HTTP requests](gateway-service.md#authenticate-http-requests).
-
-| Task | Method and path |
-|---|---|
-| Search sessions | `GET /v1/sessions/actions/search` |
-| List sessions | `GET /v1/sessions` |
-
-### Search sessions over HTTP
-
-```bash
-vis_api "$VIS_GATEWAY_URL/v1/sessions/actions/search?q=release%20notes&limit=20"
-```
-
-[Search from your own program](#search-from-your-own-program) explains the parameters and the
-answer. To read the next page, add `after` with the `next_cursor` value. The rows have the same
-fields as the rows of `GET /v1/sessions`.
-
 ## See also
 
 - [Keyboard shortcuts](keyboard-shortcuts.md) — every terminal key, including the session commands on this page.
 - [Desktop and mobile setup](index.md#connect-an-app) — follow and control the same session from another device.
 - [Council](council.md) — ask another session for help or a second review.
 - [Reporting a bug](reporting-bugs.md) — remove private information before you share an export.
-- [Project instructions](context-and-prompts.md) — slash commands and shell shortcuts you can queue.
+- [Project instructions](project-instructions.md) — slash commands and shell shortcuts you can queue.
+- [Sessions in Python](python-sessions.md) — create, follow and manage sessions from a Python program.
+- [Sessions over HTTP](http-sessions.md) — the same operations as HTTP requests from any language.

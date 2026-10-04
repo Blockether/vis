@@ -20,14 +20,14 @@ from test_engine import real_client, sdk_fixture
 
 
 def _recipe_source(name):
-    document = Path(__file__).parents[3] / "resources/vis-docs/python-sdk.md"
-    match = re.search(
-        rf"```python\n# {re.escape(name)}.py\n(.*?)\n```",
-        document.read_text(),
-        re.S,
-    )
-    assert match, f"Missing executable example: {name}"
-    return match[1]
+    """The source of the executable example `name` on a Python SDK page."""
+    pattern = re.compile(rf"```python\n# {re.escape(name)}.py\n(.*?)\n```", re.S)
+    documents = (Path(__file__).parents[3] / "resources/vis-docs").glob("python-*.md")
+    matches = [
+        match for doc in sorted(documents) if (match := pattern.search(doc.read_text()))
+    ]
+    assert matches, f"Missing executable example: {name}"
+    return matches[0][1]
 
 
 @pytest.fixture

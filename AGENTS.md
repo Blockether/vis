@@ -106,7 +106,7 @@ instructions for agents. User guides address people who use Vis. Extension guide
 reference address developers who build with Vis.
 
 - Start with the reader's goal: what the feature does, when to use it and how to get a useful result. If a chat or UI workflow exists, show it before internal calls.
-- Start each feature page with a `When to use` section. State the readers' problems in their words, link each to the section that solves it and name the better page for nearby problems. Describe the reader's situation, not the feature's capabilities.
+- Start each page outside the Intro module with a `When to use` section. State the readers' problems in their words, link each to the section that solves it and name the better page for nearby problems. Describe the reader's situation, not the feature's capabilities.
 - Address the reader as "you", in a clear, conversational and professional tone. Be direct and literal: no unexplained jargon, metaphors, slogans, filler or forced friendliness.
 - The page contract in `docs/core.clj` enforces the sentence, paragraph and semicolon limits.
 - Do not write apologies, defensive text, AI or generated-content disclaimers, or notes on how text or screenshots were made. State facts, actions and limitations directly. Give provenance only when it changes how the reader uses or verifies the information.
@@ -114,6 +114,24 @@ reference address developers who build with Vis.
 - Keep tutorials, task guides, explanations and API reference separate. Put low-level protocol details in labeled reference sections, not at the start. Do not copy agent prompts or operating checklists into user guides; explain their user-visible effects.
 - Review headings, introductions, navigation labels and page descriptions, not only body text. A new reader must understand the purpose and the next step without knowledge of Vis internals.
 - Also follow [Google: tone and style](https://developers.google.com/style/tone), [Microsoft: simple and human](https://learn.microsoft.com/en-us/style-guide/brand-voice-above-all-simple-human) and [Diátaxis: how-to guides](https://diataxis.fr/how-to-guides/) within these rules.
+
+### Manual structure
+
+Keep the modules of `resources/vis-docs/site.edn` in this order:
+
+1. **Intro**: Rationale, then Getting started.
+2. **Concepts**: one page for each feature, such as sessions, context management, drafts, council and automations.
+3. **Programmatic access**: the **Python SDK** group, then the **HTTP API** group. Each group starts with its basics page.
+4. **Guides**: tasks that build on the concepts and the programmatic pages.
+5. **Extensions**, then **Reference**.
+
+- Give each concept `X` that a program can use two mirror pages: `python-X.md` and `http-X.md`.
+- Give both mirror pages the same `##` headings in the same order.
+- Name gateway routes only on `http-` pages.
+- Keep SDK calls and gateway routes out of concept pages. Link both mirror pages from the concept page's `When to use` and `See also`.
+- Link each guide to the concept pages and the programmatic pages that it uses.
+- In the README, call the introduction `Rationale` and list the manual in module order.
+- `docs-modules-test` and `packages/vis-agent/tests/test_api_guides.py` check these rules.
 
 ## Computer-use automation
 

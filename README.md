@@ -23,7 +23,7 @@ Vis is a coding agent you can adapt to your tools and workflow.
 Ask it to explore a project, make a change or investigate a failure. Follow the
 work from your terminal, desktop or phone, with the same sessions on each.
 
-## Why Vis
+## Rationale
 
 A capable model can write code, but it does not know how your team works. It does not know which
 tests matter, how changes get reviewed or what to check before a release. You do. Vis lets you put
@@ -44,20 +44,27 @@ and failures in the conversation. Your extensions choose what to show, so you
 can read a test result or build summary without deciphering a stream of shell
 commands. Switch devices to follow the same work, rather than start again.
 
-Read [Why I built Vis](resources/vis-docs/motivation.md) for the full motivation.
+Read the full [Rationale](resources/vis-docs/rationale.md) in the manual.
 
 ## Documentation
 
-Read the manual at [vis.blockether.com](https://vis.blockether.com/). Its sidebar
-lists every guide. The same pages are in [`resources/vis-docs/`](resources/vis-docs/).
-Good places to start:
+Read the manual at [vis.blockether.com](https://vis.blockether.com/). The same pages are in
+[`resources/vis-docs/`](resources/vis-docs/). The manual has six modules, in reading order:
 
-- [Getting started](resources/vis-docs/index.md) — install Vis, connect the apps and try a first task.
-- [Sessions](resources/vis-docs/sessions.md) — send follow-ups or cancel a task while Vis works, and find, fork, organize or export saved sessions.
-- [Keyboard shortcuts](resources/vis-docs/keyboard-shortcuts.md) — every key in the terminal, including the commands after **Ctrl+X**.
-- [Configuration](resources/vis-docs/configuration.md) — providers, models and settings.
-- [Extending Vis](resources/vis-docs/extending.md) — add your own tools and checks.
-- [Python SDK](resources/vis-docs/python-sdk.md) — run Vis from your own code.
+- **Intro** — [Rationale](resources/vis-docs/rationale.md) explains why Vis exists.
+  [Getting started](resources/vis-docs/index.md) installs Vis, connects the apps and runs a first task.
+- **Concepts** — one page for each feature, for example [Sessions](resources/vis-docs/sessions.md),
+  [Context management](resources/vis-docs/context-management.md), [Drafts](resources/vis-docs/drafts.md),
+  [Council](resources/vis-docs/council.md) and [Automations](resources/vis-docs/automations.md).
+- **Programmatic access** — the same concepts from your own code. Start with
+  [Python SDK basics](resources/vis-docs/python-sdk.md) or [HTTP API basics](resources/vis-docs/http-api.md). Each has one
+  page for each concept, for example [Sessions in Python](resources/vis-docs/python-sessions.md) and
+  [Sessions over HTTP](resources/vis-docs/http-sessions.md).
+- **Guides** — tasks that use the concepts and the programmatic pages, for example
+  [Running a gateway](resources/vis-docs/gateway-service.md).
+- **Extensions** — add your own tools and checks with [Extending Vis](resources/vis-docs/extending.md).
+- **Reference** — exact facts, for example every key in
+  [Keyboard shortcuts](resources/vis-docs/keyboard-shortcuts.md).
 
 ## Screenshot gallery
 
@@ -182,12 +189,15 @@ covers requirements, startup time and memory use.
 
 ## Use Vis from your code
 
-Start with the [Python SDK](resources/vis-docs/python-sdk.md) to run a task using
+Start with [Python SDK basics](resources/vis-docs/python-sdk.md) to run a task using
 `Agent(project=".")`, continue the conversation or connect to a shared gateway.
+Then read the page for the concept that you need, for example
+[Sessions in Python](resources/vis-docs/python-sessions.md) or [Automations in Python](resources/vis-docs/python-automations.md).
 Browse the generated [Python API reference](https://vis.blockether.com/python-sdk-api/)
 for classes, methods, signatures and types. It follows `main` and can include
 unreleased APIs not yet available on PyPI.
-From other languages, use the [gateway HTTP API](resources/vis-docs/gateway-service.md#http-api).
+From other languages, start with [HTTP API basics](resources/vis-docs/http-api.md). Each Python page has
+an HTTP page with the same sections, for example [Sessions over HTTP](resources/vis-docs/http-sessions.md).
 For a shared engine, [run a gateway](resources/vis-docs/gateway-service.md). No native build is needed.
 
 ## Add your own tools and checks

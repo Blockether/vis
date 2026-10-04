@@ -29,6 +29,9 @@ restart.
   style](#progress-notes-and-writing-style). It explains how Vis chooses the language of a reply.
 - **You want to run a shell command without involving the model.** Start the message
   with [`!`](#shell-shortcuts-and).
+- **Your own program must run templates, skills or goals.** Use [Project instructions in
+  Python](python-project-instructions.md) or [Project instructions over
+  HTTP](http-project-instructions.md).
 
 Use a [skill](skills.md) for a procedure that Vis should read only when a task needs
 it.
@@ -102,7 +105,8 @@ Each interface shows the progress notes and the final answer in its own place:
 | Terminal | Above the code of each step | After the last step |
 | Desktop and Companion apps | Above the code of each step | After the last step |
 | Phone and desktop alerts | No alert | The alert shows the answer |
-| [Python SDK](python-sdk.md#show-progress-while-a-turn-runs) | In the event stream after `send()` | In the turn record from `run()` or `turn.wait()` |
+| [Python SDK](python-sessions.md#follow-progress) | In the event stream after `send()` | In the turn record from `run()` or `turn.wait()` |
+| [HTTP API](http-sessions.md#follow-progress) | In the event stream after the turn request | In the turn record |
 
 Your [notification settings](distributions.md#notifications-on-the-desktop) control the alerts.
 Keep project-specific rules in `AGENTS.md`. Examples are test commands, code conventions, files
@@ -216,32 +220,16 @@ engine does not check it.
 Repeated empty replies stop the turn and pause an unresolved goal. An exhausted
 iteration budget instead leaves it `budget_limited`.
 
-### Session data and interfaces
+### Goal states
 
-In the Python SDK, `session.goal("Implement and verify the change", iteration_budget=30)`
-creates a goal and returns the same `Turn` as `session.send()`. Use `turn.wait()`
-or its event stream to follow the work. `session.read()["goal"]` contains the
-current state. `session.send("/goal --pause")` submits a control command. There
-are no separate public SDK getter or updater methods for goals.
-
-Session detail and list responses include `goal` as an object or `null`.
-`get_session()`, `list_sessions()` and the session summary in `read_session()`
-expose the same data. Reconnecting clients receive it in `subscription.ready`,
-even when the session is idle. The shared JSON contract and OpenAPI schema
-define the fields and labels.
-
-Statuses are `active`, `paused`, `blocked`, `budget_limited` (shown as
-"iteration-limit reached"), `complete` and `cancelled`. `iteration_budget` is
-a positive integer or `null`. `iterations_used` is a nonnegative integer.
-`tokens_used` records measured input, output and cached input for statistics.
-It does not limit execution and is not shown in goal details.
-
-`time_used_ms` records active wall-clock time through `updated_at`, including
-model requests, tools and time between iterations. While active, the duration is
-`time_used_ms + max(0, now - updated_at)` in milliseconds. The clock stops for
-paused, blocked, budget-limited, complete and cancelled goals. Resuming continues
-from the saved duration. Replacing the goal resets it. Companion updates the
+A goal is `active`, `paused`, `blocked`, `budget_limited`, `complete` or `cancelled`. The apps show
+`budget_limited` as "iteration-limit reached". The elapsed time counts only while the goal is active.
+Resuming continues from the saved time, and a new goal starts again from zero. Companion updates the
 clock every second while goal details are open.
+
+Your own program can set, read and control goals. Read [Project instructions in
+Python](python-project-instructions.md#set-a-goal) or [Project instructions over
+HTTP](http-project-instructions.md#set-a-goal).
 
 ## Skills: /skill:name
 
@@ -266,5 +254,8 @@ Shell shortcuts need the **Shell commands** toggle enabled in settings.
 ## See also
 
 - [Skills](skills.md) — instructions loaded on demand.
+- [Project instructions in Python](python-project-instructions.md) — templates, skills and goals from a
+  Python program.
+- [Project instructions over HTTP](http-project-instructions.md) — the same operations as HTTP requests.
 - [Configuration → System prompt](configuration.md#system-prompt) — the equivalent config keys.
 - [Extension API → Slash commands](extension-api.md#slash-commands) — commands provided by extensions.

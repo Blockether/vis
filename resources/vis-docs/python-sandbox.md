@@ -351,6 +351,6 @@ and bytecode offset, not a decoded current source line.
 
 ## See also
 
-- [How Vis manages context](token-optimization.md) — batching tool calls and storing results in Python.
+- [Context management](context-management.md) — batching tool calls and storing results in Python.
 - [Process jail and network policy](jail.md) — the policy the sandbox runs under.
 - [Configuration](configuration.md#python-import-roots) — making your own modules importable.

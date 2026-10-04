@@ -1682,7 +1682,7 @@
           (expect (str/includes? text rule) rule))))
   ;; User report: three of seven helper lines described source fingerprints and
   ;; Improve proposals, a rare workflow paid for in every request. That contract
-  ;; stays on the `doc("defs")` page and in the token-optimization guide.
+  ;; stays on the `doc("defs")` page and in the context-management guide.
   (it "keeps fingerprints and Improve proposals out of the per-request prompt"
       (let [text (prompt/build-system-prompt {})]
         (doseq [rule ["SHA-256" "propose to Improve" "liveness unknown"]]

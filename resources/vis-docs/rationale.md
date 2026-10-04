@@ -1,4 +1,4 @@
-# Why I built Vis
+# Rationale
 
 I wanted a coding agent that understood more than the source code. It had to work with my tools and
 processes. It had to show me how it got to a result. I also wanted to follow the same work from my
@@ -98,4 +98,4 @@ and the different apps let you stay involved wherever you are.
 - [Getting started](index.md) — install Vis, connect an app and try your first task.
 - [Extending Vis](extending.md) — turn a repeated task into a tool.
 - [Extension design](extension-design.md) — working examples of checks and Activities.
-- [How Vis manages context](token-optimization.md) — how long sessions keep useful work.
+- [Context management](context-management.md) — how long sessions keep useful work.

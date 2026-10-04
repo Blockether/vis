@@ -1018,7 +1018,7 @@
     (it "finds callables by name alone and documentation pages by their outline"
         (let [out (run (str "print('body='+str(len(apropos('REGULAR-EXPRESSION FILTER'))))\n"
                             "print('exact='+apropos(r'^grep$')[0].name)\n"
-                            "print('outline='+str('token-optimization' in "
+                            "print('outline='+str('context-management' in "
                             "[i.name for i in apropos('Context Window') if i.type == 'doc']))"))]
           (expect (str/includes? out "body=0"))
           (expect (str/includes? out "exact=grep"))

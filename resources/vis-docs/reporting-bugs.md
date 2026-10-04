@@ -19,6 +19,9 @@ information needed to reproduce the Vis problem.
 If your own extension does not load, start with [Extension
 troubleshooting](extension-troubleshooting.md).
 
+This guide builds on [Sessions](sessions.md#export-a-session), which exports a transcript. It also
+uses [Configuration](configuration.md), which holds the settings to report.
+
 ## Security issues
 
 Do not open a public issue for a vulnerability such as a sandbox escape,
@@ -55,6 +58,9 @@ If the report needs a transcript to show the bug, export it and redact it:
 vis-agent sessions export <SESSION-ID> --md > /tmp/report.md
 ```
 
+To export from your own code, read [Export a session](python-sessions.md#export-a-session) in Python
+or [over HTTP](http-sessions.md#export-a-session).
+
 Exports are not redacted. Before you share an export, do these steps:
 
 1. Read the file from start to end.
@@ -87,4 +93,5 @@ to the affected part.
 ## See also
 
 - [Sessions](sessions.md#export-a-session) — create a transcript export.
+- [Sessions in Python](python-sessions.md#export-a-session) — export a transcript from a script.
 - [Configuration](configuration.md) — identify relevant settings.

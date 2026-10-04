@@ -178,8 +178,8 @@ Whole skill body."}
    `apropos` read names only; the page's outline now carries it."
   (it "finds the page a reader means"
       (let [es (dc/entries)]
-        (doseq [[words page] [["context window" "token-optimization"]
-                              ["tokens" "token-optimization"] ["api key" "configuration"]
+        (doseq [[words page] [["context window" "context-management"]
+                              ["tokens" "context-management"] ["api key" "configuration"]
                               ["worktree" "drafts"] ["iphone" "index"] ["android" "index"]
                               ["permissions" "jail"] ["log file" "logging"] ["crash" "logging"]
                               ["plugin" "extending"] ["custom tool" "extending"]

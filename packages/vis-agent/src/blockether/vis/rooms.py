@@ -4,6 +4,8 @@ Joining does not share local sessions. Configure the gateway's scoped Settings
 separately. The relay operator can read messages; Rooms does not provide E2EE.
 For room setup and scoped Settings, use the
 [Council guide](https://vis.blockether.com/council.html#connect-machines-with-a-room).
+For the room calls, see the
+[Council in Python guide](https://vis.blockether.com/python-council.html#manage-rooms).
 """
 
 from __future__ import annotations

@@ -12,8 +12,8 @@ Your project files and tools stay on the computer running it.
   SSH tunnel or HTTPS.
 - **Scripts and SDK clients need a service that is always running.** [Keep it
   running on Linux](#keep-it-running-on-linux) under a service manager.
-- **Your own program must call the gateway.** Use the [Python SDK](#python-sdk) or the [HTTP
-  API](#http-api).
+- **Your own program must call the gateway.** Read [Python SDK basics](python-sdk.md) or [HTTP API
+  basics](http-api.md).
 - **A client cannot connect, or a task stops making progress.** See [Troubleshoot a
   connection](#troubleshoot-a-connection) and [Collect evidence when work stops
   progressing](#collect-evidence-when-work-stops-progressing).
@@ -21,6 +21,9 @@ Your project files and tools stay on the computer running it.
 For terminal use on one computer, you do not need to set this up: `vis-agent tui`
 starts a local gateway when none is running. See [Runtime
 distributions](distributions.md#terminal-gateway-lifecycle).
+
+This guide builds on two concepts. The gateway keeps the [sessions](sessions.md) that every client
+shows. It reads its settings from [Configuration](configuration.md).
 
 ## Install the runtime
 
@@ -53,7 +56,7 @@ vis-agent gateway start --host 127.0.0.1 --port 7890 --require-token
 
 This runs in the foreground until you stop it. Leave the terminal open. In another terminal, run
 `vis-agent gateway status`, then connect your program to `http://127.0.0.1:7890` with the
-[Python SDK](#python-sdk) or the [HTTP API](#http-api). If a gateway is already running, check its status and port
+[Python SDK](python-sdk.md) or the [HTTP API](http-api.md). If a gateway is already running, check its status and port
 before you start another. Do not stop a shared gateway only to try an example.
 
 `--require-token` enables authentication, even on loopback. The default token file is
@@ -258,114 +261,13 @@ Set these environment variables before starting the gateway:
 
 A value `<= 0` disables an eviction threshold.
 
-## Python SDK
-
-The [Python SDK](python-sdk.md) has `GatewayClient`, a client with one method for each gateway route.
-The method name is the HTTP method and the words of the route path. Each method returns the parsed
-JSON answer. Feature guides show the methods for their tasks, for example
-[Automations](automations.md#python-sdk) and [Configuration](configuration.md#python-sdk).
-
-### Connect a Python client
-
-Set `VIS_GATEWAY_URL` and `VIS_GATEWAY_TOKEN` as in [Connect to a gateway and run a
-task](python-sdk.md#connect-to-a-gateway-and-run-a-task). Then open a client:
-
-```python
-import os
-
-from blockether.vis.engine import GatewayClient
-
-with GatewayClient(os.environ["VIS_GATEWAY_URL"], token=os.environ["VIS_GATEWAY_TOKEN"]) as client:
-    print(client.get_capabilities()["protocol"])
-```
-
-`GatewayClient` takes an HTTP or HTTPS origin without a path, a query or credentials. It keeps TLS
-verification on and refuses redirects. When the `with` block starts, the client calls
-`get_capabilities()` and checks the protocol. It then sends the token with each request.
-
-### Handle gateway errors in Python
-
-```python
-import os
-
-from blockether.vis.engine import GatewayClient, GatewayError, ProtocolError, TransportError
-
-try:
-    with GatewayClient(os.environ["VIS_GATEWAY_URL"], token=os.environ["VIS_GATEWAY_TOKEN"]) as client:
-        client.get_capabilities()
-except GatewayError as error:
-    print("HTTP error:", error.status, error.code)
-except ProtocolError:
-    print("Update the SDK or the gateway to compatible versions.")
-except TransportError:
-    print("The gateway is not reachable.")
-```
-
-| Exception | When |
-|---|---|
-| `GatewayError` | The gateway answers with an HTTP error. It has `status` and `code`, but not the message of the gateway. |
-| `ProtocolError` | The protocol of the gateway is not compatible, or an answer is not valid. |
-| `VisTimeout` | The gateway does not answer in time. The operation can still run on the gateway. |
-| `TransportError` | The connection fails, or the client is closed. |
-
-`ProtocolError` and `VisTimeout` are kinds of `TransportError`, so catch them first.
-
-## HTTP API
-
-The gateway serves its OpenAPI 3.1 schema without a token:
-
-```bash
-curl -sS http://127.0.0.1:7890/openapi.json -o vis-gateway.json
-```
-
-Use the schema for routes, request formats and answers. Feature guides show the routes for their
-tasks, for example [Automations](automations.md#http-api) and [Configuration](configuration.md#http-api).
-
-### Authenticate HTTP requests
-
-Each request needs these headers:
-
-- `x-vis-protocol` with the protocol number of the gateway. `GET /v1/capabilities` returns it as
-  `protocol.protocol`. An incompatible client receives `HTTP 426`.
-- `Authorization: Bearer <token>` when the gateway requires a token. [Tokens and HTTP
-  401](#tokens-and-http-401) tells when it does.
-
-This setup reads the token and the protocol number once. The `vis_api` function then sends both
-headers. Feature guides use this function in their examples. Do not print or commit the token.
-
-```bash
-export VIS_GATEWAY_URL=http://127.0.0.1:7890
-export VIS_GATEWAY_TOKEN="$(cat "$HOME/.vis/gateway.token")"
-export VIS_PROTOCOL="$(curl -sS -H "Authorization: Bearer $VIS_GATEWAY_TOKEN" \
-  "$VIS_GATEWAY_URL/v1/capabilities" |
-  python3 -c 'import json, sys; print(json.load(sys.stdin)["protocol"]["protocol"])')"
-
-vis_api() {
-  curl -sS -H "x-vis-protocol: $VIS_PROTOCOL" -H "Authorization: Bearer $VIS_GATEWAY_TOKEN" "$@"
-}
-```
-
-### Handle gateway errors over HTTP
-
-An error answer has a JSON body with `error.type` and `error.message`:
-
-```json
-{"error": {"type": "unauthorized", "message": "missing or invalid bearer token"}}
-```
-
-| Status | When |
-|---|---|
-| `401` | The token is missing or not correct. |
-| `426` | The type is `incompatible_protocol`. The client and the gateway have no common protocol. Update the client or the gateway to compatible versions. |
-| Other `4xx` and `5xx` | The feature guide of the route explains the `type`. |
-
 ## Troubleshoot a connection
 
 | Symptom | Check |
 | --- | --- |
 | Connection refused | Service state, listener port, tunnel and firewall |
 | Authentication fails | The token must belong to this gateway, and the client must receive it. Never print the token to debug. |
-| Client reports an incompatible protocol | Update the SDK and gateway to compatible versions |
+| Client reports an incompatible protocol, or an HTTP client receives `HTTP 426` | Update the SDK and gateway to compatible versions |
 | Requests work but progress stalls | Proxy SSE buffering, idle timeouts and the client's transport timeout |
 | Python tools fail after a manual install | The launcher, Python sidecar, file permissions and service environment |
 | A session cannot find the project | The path exists and is accessible on the gateway machine |
@@ -402,6 +304,9 @@ for cleanup rules. Review the files before sharing them.
 ## See also
 
 - [Getting started](index.md) — install Vis and connect an app for the first time.
-- [Python SDK](python-sdk.md) — connect a script or wrap an owned local agent.
+- [Sessions](sessions.md) — the sessions that every connected client shows.
+- [Configuration](configuration.md) — the settings that the gateway reads.
+- [Python SDK basics](python-sdk.md) — connect a script or wrap an owned local agent.
+- [HTTP API basics](http-api.md) — authenticate requests from any language and read gateway errors.
 - [Native builds for JVM extensions](jvm-native-image.md) — only when adding Java/Clojure capabilities to the engine.
 - [Process jail and network policy](jail.md) — limit what the service's tools can access.
