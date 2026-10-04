@@ -207,8 +207,9 @@ def forget_secret(handle):
 def declare_env(names_json):
     # The engine resolves declared names through the operator's configured
     # secrets; out here the process environment IS the configuration.
-    names = json.loads(names_json) or []
-    return json.dumps({str(n): os.environ.get(str(n)) for n in names})
+    names = [str(name) for name in json.loads(names_json) or []]
+    # A name without a value stays absent, as in the engine, never the text "None".
+    return json.dumps({name: os.environ[name] for name in names if name in os.environ})
 
 
 # -- Shell --------------------------------------------------------------------

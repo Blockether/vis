@@ -176,6 +176,24 @@ def test_host_env_reads_the_process_environment(monkeypatch):
     assert vis.host_env("VIS_TEST_ABSENT", "fallback") == "fallback"
 
 
+def test_registration_leaves_unset_declared_env_unset(monkeypatch):
+    # Standalone registration wrote the text "None" for unset names; the engine omits them.
+    monkeypatch.setenv("VIS_TEST_TOKEN", "from-the-environment")
+    # setenv, then delenv, makes monkeypatch remove a leaked value after the test.
+    monkeypatch.setenv("VIS_TEST_ABSENT", "removed after the test")
+    monkeypatch.delenv("VIS_TEST_ABSENT")
+    monkeypatch.setattr(vis, "_registration", {"spec": None})
+    names = ["VIS_TEST_TOKEN", "VIS_TEST_ABSENT"]
+    assert json.loads(_outside.declare_env(json.dumps(names))) == {
+        "VIS_TEST_TOKEN": "from-the-environment"
+    }
+    vis.register_extension(
+        vis.Extension(name="env-example", description="Env", env=names)
+    )
+    assert "VIS_TEST_ABSENT" not in os.environ
+    assert vis.host_env("VIS_TEST_ABSENT", "fallback") == "fallback"
+
+
 def test_log_and_notify_go_to_stderr(capsys):
     vis.log("info", "a line")
     vis.notify("something happened")
