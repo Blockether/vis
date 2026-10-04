@@ -80,7 +80,9 @@
           "try:\n" "    await clj.format_code(paths=[str(broken)], cwd=str(project_root_path))\n"
           "except Exception:\n" "    pass\n"
           "assert broken.read_text() == before\n"
-          "print('Native file repair and reader validation verified')")]
+          "print('Native file repair and reader validation verified')")
+        ;; The hook cannot repair this block, so the host diagnosis must name the cause.
+        "x = (1 + 2\ny = 3 3"]
 
        reply
        (fn [stream? text]
@@ -133,7 +135,8 @@
                         (doseq [marker ["Vis repaired this block before running it."
                                         "Native block repair verified"
                                         "Native patch repair verified" "failure after writes"
-                                        "Native file repair and reader validation verified"]]
+                                        "Native file repair and reader validation verified"
+                                        "line 1, column 5: '(' is never closed"]]
                           (expect (some #(str/includes? % marker) tools)
                                   (str marker "\n" output "\nTool results: " (pr-str tools)))))
                       (finally (.stop ^HttpServer server 0))))))

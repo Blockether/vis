@@ -28,6 +28,7 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.parinferish.python :as python-repair]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.docs.corpus :as doc-corpus]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -1602,6 +1603,18 @@
    Two retries is normal recovery; the third is a loop."
   3)
 
+(def ^:private bracket-problems
+  "Problem kinds about brackets alone. A misplaced quote moves brackets into and
+   out of strings, so these usually follow from a quote problem elsewhere."
+  #{:unclosed-bracket :unmatched-closer :mismatched-closer :semicolon-in-brackets
+    :open-bracket-at-statement})
+
+(defn- first-cause
+  "The one problem a refusal names: the first of `problems` that is not about
+   brackets alone, else the first. The rest are mostly what that one caused."
+  [problems]
+  (or (first (remove #(contains? bracket-problems (:kind %)) problems)) (first problems)))
+
 ;; =============================================================================
 ;; Running one block
 ;; =============================================================================
@@ -1779,6 +1792,14 @@
         non-ascii?
         (boolean (and syntax? (re-find #"invalid character" base)))
 
+        delimiter-problems
+        (when (and (or syntax? indent?) (not non-ascii?))
+          (try (python-repair/diagnose (str code) {:error-line (first pos)})
+               (catch Throwable _ nil)))
+
+        problem
+        (first-cause delimiter-problems)
+
         ;; The confinement refuses in the interpreter itself, naming the operation
         ;; and whether it wanted to WRITE — the one denial the model can act on.
         denied-write?
@@ -1816,10 +1837,11 @@
                    "patch(path, edits) to edit, "
                    "or ask the USER to add the path to workspace.filesystem in vis.yml "
                    "and run /reload. Original error: ")
-              indent? (str
-                        "Python is INDENTATION-sensitive: a block (after def / if / for / with / "
-                        "a trailing `:`) must be indented consistently (4 spaces), and a top-level "
-                        "statement must start at column 0. Re-indent that region. Original error: ")
+              ;; A refusal names its problem instead.
+              (and indent? (not problem))
+              (str "Python is INDENTATION-sensitive: a block (after def / if / for / with / "
+                   "a trailing `:`) must be indented consistently (4 spaces), and a top-level "
+                   "statement must start at column 0. Re-indent that region. Original error: ")
               lost-reason
               (str "`"
                    undefined-name
@@ -1839,23 +1861,29 @@
         line-text
         (when pos (nth (str/split-lines (str code)) (dec (long (first pos))) nil))
 
+        ;; A parse failure names only its line, so a refusal shows the line of the
+        ;; problem it names, with the caret under that problem.
         source-context
         (when (and code pos (not host?))
-          (render-source-context code
-                                 (first pos)
-                                 (char-column line-text (second pos))
-                                 (char-column line-text (nth pos 2 nil))))
+          (if problem
+            (render-source-context code (:line problem) (dec (long (:column problem))) nil)
+            (render-source-context code
+                                   (first pos)
+                                   (char-column line-text (second pos))
+                                   (char-column line-text (nth pos 2 nil)))))
 
         ;; Frames under that line in helpers that earlier blocks defined: their
         ;; lines number other sources, so they show apart from the excerpt.
         helper-context
         (when-not host? (render-helper-frames helpers))
 
-        ;; The source excerpt already identifies the parser's line.
+        ;; The excerpt numbers its line, so the parser's own `(<file>, line N)`
+        ;; stays only when the excerpt shows another line.
         error-text
         (cond-> base
           (or syntax? indent?)
-          (parser-message (nil? source-context)))
+          (parser-message (or (nil? source-context)
+                              (and problem (not= (first pos) (:line problem))))))
 
         repeats
         (note-block-failure! session code base)
@@ -1874,6 +1902,7 @@
           (str breaker
                hint
                error-text
+               (when problem (str "\n" (:message problem)))
                (when source-context (str "\n\n" source-context))
                (when helper-context (str (if source-context "\n" "\n\n") helper-context))))]
 
@@ -1890,6 +1919,9 @@
 
              non-ascii?
              (assoc :non-ascii-in-code? true)
+
+             (seq delimiter-problems)
+             (assoc :unbalanced-delimiters? true)
 
              denied-root?
              (assoc :sandbox-denied? true)

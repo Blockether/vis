@@ -44,8 +44,11 @@ It can also repair invalid escapes and literal braces in f-strings. Its repair e
 checks run locally in Python. The repaired source must pass parsing and compilation before it runs.
 The output identifies each correction. Vis also records the source that actually ran.
 
-Without that extension, Vis runs the supplied source unchanged. If repair fails, Python reports its
-syntax error and the block does not run.
+Without that extension, Vis runs the supplied source unchanged.
+
+If a block still does not parse, it does not run. The error shows Python's own message and the
+first wrong quote, bracket or escape. It also shows the line with that problem. This check belongs
+to `python_execution`, so it works with or without the extension.
 
 ### File edits and formatting
 

@@ -141,17 +141,52 @@
           (expect (= :python/syntax (get-in result [:error :data :phase])))
           (expect (nil? (:stdout result)))
           (expect (nil? (:auto-repaired result)))
-          (expect (nil? (:repaired-source result))))))
-  (it "reports the parser error and the unchanged source line"
-      (let [result (ep/run-python-block (py-ctx) "x = (1 + 2\ny = 3 3")]
-        (expect (= 1 (get-in result [:error :data :line])))
-        (expect (str/includes? (get-in result [:error :message]) "'(' was never closed"))
-        (expect (str/includes? (get-in result [:error :message]) "1: x = (1 + 2"))))
-  (it "keeps the parser's reported line instead of rescanning delimiters"
-      (let [error (classify "x = (1, 2]\ny = 'abc")]
-        (expect (= 1 (get-in error [:data :line])))
-        (expect (str/includes? (:message error) "does not match opening parenthesis '('"))
-        (expect (str/includes? (:message error) "1: x = (1, 2]")))))
+          (expect (nil? (:repaired-source result)))))))
+
+(defdescribe
+  python-execution-diagnosis-test
+  "Python refuses a malformed block before it runs. With or without a language hook,
+   the host error names the first wrong quote, bracket or escape and shows its line."
+  (it "names the delimiter that is never closed"
+      (let [r (ep/run-python-block (py-ctx) "x = (1 + 2\ny = 3 3")]
+        (expect (nil? (:auto-repaired r)))
+        (expect (nil? (:stdout r)))
+        (expect (= :python/syntax (get-in r [:error :data :phase])))
+        (expect (= 1 (get-in r [:error :data :line])))
+        (expect (true? (get-in r [:error :data :unbalanced-delimiters?])))
+        ;; The parser names only the line; the caret marks the '(' that is never closed.
+        (expect (= (str "SyntaxError: '(' was never closed\n"
+                        "line 1, column 5: '(' is never closed\n\n"
+                        "1: x = (1 + 2\n" "       ^")
+                   (get-in r [:error :message])))))
+  (it
+    "names the first quote problem, not the brackets it flipped, and shows its line around it"
+    ;; A path string that lost its closing quote flips every later string on the line.
+    ;; A language hook can repair it; `classify` only parses, so this checks the host error.
+    (let
+      [error
+       (classify
+         (str
+           "print(patch(root/'apps/vis-companion/src/components/JustifiedProse.test.tsx,"
+           "[{'from':'130:5ae','to':'142:a6f','replace':'  it(\"keeps reasoning lines\", async () => {})'}]))"))]
+      (expect (true? (get-in error [:data :unbalanced-delimiters?])))
+      (expect
+        (=
+          (str
+            "SyntaxError: invalid decimal literal\n"
+            "line 1, column 87: the string from column 84 ends right before this text\n\n"
+            "1: …nents/JustifiedProse.test.tsx,[{'from':'130:5ae','to':'142:a6f','replace':'  it(…\n"
+            (apply str (repeat 44 \space))
+            "^")
+          (:message error)))))
+  (it "keeps the parser's line when the problem it names is on another line"
+      (expect
+        (=
+          (str
+            "SyntaxError: closing parenthesis ']' does not match opening parenthesis '(' (line 1)\n"
+            "line 2, column 5: the string is not closed on its line\n\n"
+            "2: y = 'abc\n" "       ^")
+          (:message (classify "x = (1, 2]\ny = 'abc"))))))
 
 (defdescribe
   no-false-repair-test
