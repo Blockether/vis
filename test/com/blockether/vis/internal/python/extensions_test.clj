@@ -6664,7 +6664,34 @@ vis.register_extension(vis.Extension(
                  (pyx/reload-python-extensions! {:dirs []})
                  (expect (nil? (find-skill)))
                  (check-discovery nil nil)
-                 (finally (ep/dispose-python-context! ctx)))))))))
+                 (finally (ep/dispose-python-context! ctx))))))))
+  (it
+    "keeps a skill declared with settings = false out of settings"
+    (with-redefs [python-runtime/ensure-project! (fn [_]
+                                                   (io/file (runtime/packages-dir)))]
+      (with-fresh-loaded
+        {"quietpack/current/pyproject.toml"
+         (str "[project]\nname='vis-quietpack'\nversion='1.0.0'\n"
+              "description='Quiet skill package'\nrequires-python='>=3.11'\n"
+              "dependencies=['vis-agent>=0.1.0']\n[tool.vis]\ncategory='workflows'\n"
+              "skills=[{path='skills/guide', settings=false}, 'skills/review']\n")
+         "quietpack/current/extension.py"
+         "import blockether.vis.extension as vis\nvis.register_extension(vis.Extension(name='vis-quietpack', description='Quiet skill package'))\n"
+         "quietpack/current/skills/guide/SKILL.md"
+         "---\nname: guide\ndescription: Guide when requested.\n---\nGuide.\n"
+         "quietpack/current/skills/review/SKILL.md"
+         "---\nname: review\ndescription: Review when requested.\n---\nReview.\n"}
+        (fn [result _]
+          (expect (= 1 (:loaded result)) (pr-str result))
+          (let [skills (into {} (map (juxt :name identity)) (discovery/skills))
+                guide (get skills "vis-quietpack/guide")
+                review (get skills "vis-quietpack/review")]
+
+            (expect (false? (:settings? guide)))
+            (expect (discovery/own-setting? review))
+            (expect (nil? (toggles/toggle-spec (scoped/resource-id :skills "vis-quietpack/guide"))))
+            (expect (some? (toggles/toggle-spec (scoped/resource-id :skills
+                                                                    "vis-quietpack/review"))))))))))
 
 (defdescribe
   authoring-example-test

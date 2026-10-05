@@ -437,6 +437,25 @@ test.each([
     'skills = ["skills/greeting", "skills/greeting"]',
     'repeat',
   ],
+  ['skills table without a path', 'append', 'skills = [{ settings = false }]', 'path'],
+  [
+    'skills table with an unknown key',
+    'append',
+    'skills = [{ path = "skills/greeting", hidden = true }]',
+    'accepts only path',
+  ],
+  [
+    'skills settings flag that is not true or false',
+    'append',
+    'skills = [{ path = "skills/greeting", settings = "no" }]',
+    'true or false',
+  ],
+  [
+    'skill directory repeated as a table',
+    'append',
+    'skills = ["skills/greeting", { path = "skills/greeting" }]',
+    'repeat',
+  ],
   [
     'missing entrypoint',
     'plugins/greeting',
@@ -501,6 +520,15 @@ test('catalog display metadata accepts the SDK example, including bundled skills
   );
   expect(metadata.skills).toEqual(['skills/greeting']);
   expect(metadata.source_paths).toEqual(['src']);
+});
+test('catalog display metadata accepts a skill without its own settings switch', () => {
+  const example = readFileSync('../../packages/vis-agent/examples/greeter/pyproject.toml', 'utf8');
+  const manifest = example.replace(
+    'skills = ["skills/greeting"]',
+    'skills = [{ path = "skills/greeting", settings = false }]',
+  );
+  expect(manifest).toContain('settings = false');
+  expect(manifestMetadata(manifest).skills).toEqual(['skills/greeting']);
 });
 test('portable display metadata agrees with the shipped manifest and rejects unsafe paths', () => {
   const metadata = manifestMetadata(readFileSync('examples/vis-greeter/pyproject.toml', 'utf8'));

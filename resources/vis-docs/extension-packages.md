@@ -22,6 +22,8 @@ changes.
   GitHub Releases.
 - **You do not want your installs to count as downloads.** [Download
   counts](#download-counts) explains what Vis reports and how to turn it off.
+- **Settings show a switch for a skill that your extension always needs.** [Leave the
+  skill out of settings](#leave-a-skill-out-of-settings).
 
 For your first tool, start with [Extending Vis](extending.md). If you already have a
 uv package, follow [Using an existing Python project](extension-development.md).
@@ -531,7 +533,7 @@ pythonpath = ["src"]
 | `project.dependencies` | Must include an unconditional `vis-agent` requirement compatible with the running release |
 | `tool.vis.category` | Required package metadata: `providers`, `tools` or `workflows`. Catalog filters use tags instead |
 | `tool.vis.source_paths` | Import roots inside the package, such as `src`, not the `vis_greeter` package directory |
-| `tool.vis.skills` | Optional relative skill directories. Omit it when no procedure is needed |
+| `tool.vis.skills` | Optional relative skill directories, or tables with `path` and [`settings`](#leave-a-skill-out-of-settings). Omit it when no procedure is needed |
 
 Choose tags that describe what your extension helps people do, such as `browser` or `testing`.
 Tags appear on catalog cards and extension pages.
@@ -595,6 +597,23 @@ access. Installing, listing or reading it never executes its instructions.
 Code, skills and resources share the admitted source snapshot and the same reload,
 last-good retention and removal behavior. See [Skills](skills.md) for authoring and
 precedence. Put tool reference material in docstrings rather than duplicating it here.
+
+### Leave a skill out of settings
+
+Settings list each bundled skill under its extension, with its own switch. When the
+skill is the main purpose of your extension, a second switch is not useful. Write the
+skill's entry as a table with `settings = false`:
+
+```toml
+[tool.vis]
+category = "tools"
+skills = [{ path = "skills/browser", settings = false }, "skills/greeting"]
+```
+
+Settings then show no switch for `skills/browser`. The skill follows the extension's
+Auto, On or Off choice: Off removes it, and Auto or On keep it. A value saved for the
+skill earlier no longer applies. The other entry keeps its own switch. Vis versions
+without this option reject the table form.
 
 ## Standalone scripts
 

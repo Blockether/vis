@@ -19,11 +19,11 @@
      text is still in front of it. No injected body means nothing to remember
      between two `/skill:<name>`s: every skill surface is stateless.
 
-   Skill availability is a scoped setting, enforced on every discovery and invocation."
+   Skill availability is a scoped setting, enforced on every discovery and invocation.
+   A packaged skill without its own setting follows its extension's Auto/On/Off."
   (:require [clojure.string :as str]
             [com.blockether.vis.extension :as ext]
             [com.blockether.vis.internal.extension.core :as extension]
-            [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.foundation.harness.discovery :as d]))
@@ -120,7 +120,7 @@
           (cond-> {:name (str "skill:" (:name s))
                    :description (clip (:description s) 140)
                    :expand-fn (fn [env args]
-                                (when-not (scoped/resource-enabled? env :skills (:name s))
+                                (when-not (d/skill-enabled? env s)
                                   (throw (ex-info "This skill is disabled in this scope"
                                                   {:type :skill/unavailable})))
                                 (skill-template-text s args))}

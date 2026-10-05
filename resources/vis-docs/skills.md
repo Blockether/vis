@@ -35,6 +35,9 @@ find the skill under **Skills**. Switch it off to remove it from future discover
 value** to follow the parent scope again. The global switch affects sessions
 without a more specific override.
 
+An extension can bundle a skill without its own switch. That skill follows the
+extension's Auto, On or Off choice. Switch the extension off to remove the skill.
+
 Availability does not erase instructions already in the conversation and is not
 a filesystem permission. See [scoped settings](configuration.md#project-group-and-session-settings)
 for inheritance and [the process jail](jail.md) for access restrictions.

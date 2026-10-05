@@ -38,7 +38,7 @@ def test_example_manifest_registration_and_domain_behavior(monkeypatch):
     )
     metadata = extension_package.inspect_source(EXAMPLE)
     assert metadata["name"] == "vis-greeter"
-    assert metadata["skills"] == ["skills/greeting"]
+    assert metadata["skills"] == [{"path": "skills/greeting", "settings": True}]
     assert vis._registration["spec"] is None
     runpy.run_path(str(EXAMPLE / "extension.py"))
     declaration = vis._registration["spec"]

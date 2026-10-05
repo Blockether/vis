@@ -55,6 +55,22 @@ def _relative(value):
     return value
 
 
+def _skill(entry):
+    """Normalize a skills entry: a directory, or a table with path and settings."""
+    if isinstance(entry, str):
+        return {"path": _relative(entry), "settings": True}
+    if (
+        not isinstance(entry, dict)
+        or "path" not in entry
+        or set(entry) - {"path", "settings"}
+    ):
+        raise ValueError("A skills table needs path and accepts only path and settings")
+    settings = entry.get("settings", True)
+    if not isinstance(settings, bool):
+        raise ValueError("skills settings must be true or false")
+    return {"path": _relative(entry["path"]), "settings": settings}
+
+
 def project_subdirectory(value=""):
     """An empty value or dot selects the repository root. Otherwise, use a portable path."""
     return "" if value in ("", ".") else _relative(value)
@@ -131,7 +147,8 @@ def manifest_metadata(text, vis_version=None, python_version=None):
 
     Returns:
         A metadata dictionary containing normalized name and version, description,
-        category, Python requirement, dependencies, source paths and skill paths.
+        category, Python requirement, dependencies, source paths and skills. Each skill
+        is a `path` and a `settings` flag; False keeps the skill out of settings.
 
     Raises:
         ValueError: Required metadata, dependency constraints or portable paths
@@ -182,8 +199,8 @@ def manifest_metadata(text, vis_version=None, python_version=None):
         skills = vis.get("skills", [])
         if not isinstance(skills, list) or len(skills) > 64:
             raise ValueError("skills must be a list of at most 64 skill directories")
-        skills = [_relative(p) for p in skills]
-        if len(set(skills)) != len(skills):
+        skills = [_skill(entry) for entry in skills]
+        if len({skill["path"] for skill in skills}) != len(skills):
             raise ValueError("skills must not repeat a directory")
         return {
             "name": canonicalize_name(name),
@@ -233,7 +250,7 @@ def inspect_source(directory, vis_version=None, python_version=None):
         resolved = (directory / path).resolve(strict=True)
         if not resolved.is_relative_to(directory) or not resolved.is_dir():
             raise ValueError("source_paths must be directories inside the project")
-    for path in metadata["skills"]:
+    for path in (entry["path"] for entry in metadata["skills"]):
         skill = directory / path
         if not skill.is_dir() or not (skill / "SKILL.md").is_file():
             raise ValueError(

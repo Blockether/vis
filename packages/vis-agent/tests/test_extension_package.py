@@ -331,8 +331,18 @@ def test_remote_failure_and_invalid_revision_leave_no_installation(
         package.install(REPOSITORY, target, trust=True, revision="--upload-pack=bad")
 
 
-@pytest.mark.parametrize("skills", ['["skills/greeting"]', "[]"])
-def test_manifest_declares_skills_without_executing_code(tmp_path, skills):
+@pytest.mark.parametrize(
+    ("skills", "expected"),
+    [
+        ('["skills/greeting"]', [{"path": "skills/greeting", "settings": True}]),
+        (
+            '[{ path = "skills/greeting", settings = false }]',
+            [{"path": "skills/greeting", "settings": False}],
+        ),
+        ("[]", []),
+    ],
+)
+def test_manifest_declares_skills_without_executing_code(tmp_path, skills, expected):
     source = project(tmp_path / "source", MANIFEST + f"skills = {skills}\n")
     skill = source / "skills/greeting"
     skill.mkdir(parents=True)
@@ -340,7 +350,7 @@ def test_manifest_declares_skills_without_executing_code(tmp_path, skills):
         "---\nname: greeting\ndescription: Greet a person.\n---\nRead the tool contract."
     )
     metadata = package.inspect_source(source)
-    assert metadata["skills"] == (["skills/greeting"] if skills != "[]" else [])
+    assert metadata["skills"] == expected
 
 
 @pytest.mark.parametrize(
@@ -350,6 +360,10 @@ def test_manifest_declares_skills_without_executing_code(tmp_path, skills):
         '["../outside"]',
         '["skills/a", "skills/a"]',
         '["/absolute"]',
+        "[{ settings = false }]",
+        '[{ path = "skills/a", settings = "no" }]',
+        '[{ path = "skills/a", hidden = true }]',
+        '["skills/a", { path = "skills/a" }]',
     ],
 )
 def test_invalid_skill_declarations_are_rejected(skills):

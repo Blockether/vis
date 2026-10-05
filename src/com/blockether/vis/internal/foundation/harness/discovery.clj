@@ -278,13 +278,15 @@
 (defn read-package-skills
   "Read the explicitly declared skills from an admitted package snapshot.
    Names are package/skill; duplicate names fail the entire load. Resource files
-   remain beside SKILL.md. No project-root: a procedure never changes the workspace."
+   remain beside SKILL.md. No project-root: a procedure never changes the workspace.
+   An entry declared with `settings = false` gets `:settings? false`: it has no
+   switch of its own and follows its extension instead."
   [^java.io.File snapshot metadata]
   (let [package-name
         (get metadata "name")
 
         entries
-        (mapv (fn [path]
+        (mapv (fn [{path "path" settings "settings"}]
                 (let [dir
                       (io/file snapshot path)
 
@@ -302,10 +304,12 @@
                     (throw (ex-info
                              "Packaged skill names use letters, digits, underscores and hyphens"
                              {:package package-name :path path})))
-                  (assoc skill
-                    :name (str package-name "/" (:name skill))
-                    :package {:name package-name :version (get metadata "version")}
-                    :resources (skill-resources dir))))
+                  (cond-> (assoc skill
+                            :name (str package-name "/" (:name skill))
+                            :package {:name package-name :version (get metadata "version")}
+                            :resources (skill-resources dir))
+                    (false? settings)
+                    (assoc :settings? false))))
               (get metadata "skills" []))]
 
     (when-not (= (count entries) (count (dedup-by-name entries)))
@@ -562,11 +566,30 @@
 
 (defn agents [] (:agents (ensure!)))
 
+(defn own-setting?
+  "True when `skill` has its own availability switch in settings. A packaged skill
+   declared with `settings = false` has none: its extension's Auto/On/Off decides."
+  [skill]
+  (not (false? (:settings? skill))))
+
+(defn skill-enabled?
+  "Live gate for one discovered skill. A skill without its own switch follows its
+   extension: Off removes it, Auto and On keep it. Pass a delay of
+   [[scoped/live-values]] when checking several skills."
+  ([env skill] (skill-enabled? env skill nil))
+  ([env skill live]
+   (if (own-setting? skill)
+     (scoped/resource-enabled? env :skills (:name skill) live)
+     (let [owner (get-in skill [:package :name])]
+       (boolean (some #(and (= owner (:ext/name %)) (not= "off" (scoped/engine-mode env % live)))
+                      (extension/registered-extensions)))))))
+
 (defn all-skills
-  "Discovered skills before availability filtering, for human settings only."
+  "Discovered skills before availability filtering, for human settings only. Registers
+   the settings switch of each skill that has one."
   []
   (let [skills (:skills (ensure!))]
-    (doseq [skill skills]
+    (doseq [skill (filter own-setting? skills)]
       (scoped/register-resource! :skills (:name skill)))
     skills))
 
@@ -582,6 +605,6 @@
         live
         (delay (scoped/live-values env))]
 
-    (filterv #(scoped/resource-enabled? env :skills (:name %) live) skills)))
+    (filterv #(skill-enabled? env % live) skills)))
 
 (defn commands [] (:commands (ensure!)))

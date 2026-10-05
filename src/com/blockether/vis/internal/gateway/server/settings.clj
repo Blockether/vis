@@ -64,7 +64,7 @@
 (defn- resource-inventory
   [target]
   (binding [workspace/*workspace-root* (:root target)]
-    (let [skills (cond->> (harness/all-skills)
+    (let [skills (cond->> (filter harness/own-setting? (harness/all-skills))
                    (= "global" (:scope target))
                    (remove :project-root))
           servers (scoped/definitions (lp/db-info) target ["mcp" "servers"])]
@@ -166,7 +166,8 @@
 
 (defn- extension-rows
   "Row id -> `[extension position]` for each extension loaded where `target` runs.
-   An extension's own section holds its engine choice, its settings and its packaged skills."
+   An extension's own section holds its engine choice, its settings and each packaged skill
+   that has its own switch."
   [target]
   (into {}
         (mapcat (fn [{ext-name :ext/name :as ext}]
@@ -175,7 +176,7 @@
                                (concat [(scoped/resource-id :engines ext-name)]
                                        (map :id (:ext/toggles ext))
                                        (map #(scoped/resource-id :skills (:name %))
-                                            (:ext/skills ext))))))
+                                            (filter harness/own-setting? (:ext/skills ext)))))))
         (extension/registered-extensions (:root target))))
 
 (defn- extension-path

@@ -90,6 +90,20 @@ export async function readBounded(response, limit) {
     throw new RequestError('Metadata must be UTF-8.');
   }
 }
+// A skills entry is a directory, or a table with that path and an optional settings flag.
+function skillPath(entry) {
+  if (typeof entry === 'string') return entry;
+  assert(
+    entry !== null &&
+      typeof entry === 'object' &&
+      !Array.isArray(entry) &&
+      typeof entry.path === 'string' &&
+      Object.keys(entry).every((key) => ['path', 'settings'].includes(key)) &&
+      ['undefined', 'boolean'].includes(typeof entry.settings),
+    'A skills table needs path and accepts only path and a true or false settings flag.',
+  );
+  return entry.path;
+}
 // The catalog checks portable display metadata; the SDK remains authoritative for PEP 440/508 and runtime compatibility.
 export function manifestMetadata(text) {
   assert(new TextEncoder().encode(text).length <= 128 * 1024, 'pyproject.toml exceeds 128 KiB.');
@@ -156,9 +170,10 @@ export function manifestMetadata(text) {
     Array.isArray(skills) && skills.length <= 64,
     'skills must contain at most 64 relative directories.',
   );
-  for (const path of skills)
+  const skillPaths = skills.map(skillPath);
+  for (const path of skillPaths)
     assert(projectFolder(path) && path !== '.', 'skills must name directories inside the project.');
-  assert(new Set(skills).size === skills.length, 'skills must not repeat a directory.');
+  assert(new Set(skillPaths).size === skillPaths.length, 'skills must not repeat a directory.');
   const tags = p.keywords ?? [];
   assert(
     Array.isArray(tags) &&
@@ -179,7 +194,7 @@ export function manifestMetadata(text) {
     requires_python: p['requires-python'],
     dependencies: p.dependencies,
     source_paths: paths,
-    skills,
+    skills: skillPaths,
   };
 }
 // Catalog releases use a canonical, sortable subset of PEP 440; the SDK checks runtime requirements.

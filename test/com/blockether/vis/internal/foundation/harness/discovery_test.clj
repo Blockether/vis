@@ -351,10 +351,12 @@
             (.toFile (Files/createTempDirectory "vis-package-skill" (make-array FileAttribute 0)))
 
             metadata
-            {"name" "vis-fixture" "version" "1.0.0" "skills" ["skills/a" "skills/b"]}]
+            {"name" "vis-fixture"
+             "version" "1.0.0"
+             "skills" [{"path" "skills/a" "settings" true} {"path" "skills/b" "settings" true}]}]
 
         (try
-          (doseq [path (get metadata "skills")]
+          (doseq [{path "path"} (get metadata "skills")]
             (let [file (io/file snapshot path "SKILL.md")]
               (io/make-parents file)
               (spit file "---\nname: repeated\ndescription: Procedure.\n---\nBody.")))
@@ -379,3 +381,31 @@
                    (expect (= "LOCAL" (get skills "vis-fixture/review")))
                    (expect (= "OTHER" (get skills "vis-other/review"))))))
              (finally (run! #(.delete ^java.io.File %) (reverse (file-seq directory))))))))
+
+(defdescribe
+  package-skill-settings-test
+  (it "marks a skill declared with settings = false as one without its own switch"
+      (let [snapshot
+            (.toFile (Files/createTempDirectory "vis-package-skill" (make-array FileAttribute 0)))
+
+            metadata
+            {"name" "vis-fixture"
+             "version" "1.0.0"
+             "skills" [{"path" "skills/guide" "settings" false}
+                       {"path" "skills/review" "settings" true}]}]
+
+        (try (doseq [{path "path"} (get metadata "skills")]
+               (let [file (io/file snapshot path "SKILL.md")]
+                 (io/make-parents file)
+                 (spit file
+                       (str "---\nname: "
+                            (.getName (io/file path))
+                            "\ndescription: Procedure.\n---\nBody."))))
+             (let [[guide review] (d/read-package-skills snapshot metadata)]
+               (expect (= "vis-fixture/guide" (:name guide)))
+               (expect (false? (:settings? guide)))
+               (expect (not (d/own-setting? guide)))
+               (expect (= "vis-fixture/review" (:name review)))
+               (expect (not (contains? review :settings?)))
+               (expect (d/own-setting? review)))
+             (finally (run! #(.delete ^java.io.File %) (reverse (file-seq snapshot))))))))

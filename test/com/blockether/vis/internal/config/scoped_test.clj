@@ -533,7 +533,57 @@
                                 nil
                                 (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
                 (scoped/set-setting! db (scoped/target db "session" sid) id "inherit" nil)
-                (expect (= [skill] (discovery/skills))))))))))
+                (expect (= [skill] (discovery/skills)))))))))
+  (it
+    "lets a packaged skill without its own switch follow its extension"
+    (with-empty-config
+      (let [db
+            (h/store)
+
+            sid
+            (h/store-session! db {:title "Packaged skill"})
+
+            env
+            {:db-info db :session-id sid}
+
+            target
+            (scoped/target db "session" sid)
+
+            ext
+            {:ext/name "follow-fixture" :ext/engine {:ext.engine/symbols ['fixture]}}
+
+            skill
+            {:name "follow-fixture/guide"
+             :description "Packaged skill"
+             :body "Fixture body"
+             :dir "/tmp"
+             :package {:name "follow-fixture" :version "1.0.0"}
+             :settings? false}]
+
+        (try (with-redefs [discovery/all-skills
+                           (constantly [skill])
+
+                           extension/registered-extensions
+                           (constantly [ext])]
+
+               (binding [extension/*current-environment* env]
+                 (let [expand (:expand-fn (first (#'harness/skill-template-entries)))]
+                   ;; A switch saved before the extension hid the skill no longer applies.
+                   (scoped/set-setting! db
+                                        target
+                                        (scoped/register-resource! :skills (:name skill))
+                                        "value"
+                                        false)
+                   (expect (= [skill] (discovery/skills)))
+                   (scoped/set-setting! db target (scoped/engine-setting! ext) "value" "off")
+                   (expect (empty? (discovery/skills)))
+                   (expect (= :skill/unavailable
+                              (try (expand env "task")
+                                   nil
+                                   (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                   (scoped/set-setting! db target (scoped/engine-setting! ext) "value" "on")
+                   (expect (= [skill] (discovery/skills))))))
+             (finally (toggles/unregister-owner! "follow-fixture")))))))
 
 (defdescribe
   scoped-live-values
@@ -608,7 +658,7 @@
               (expect (= "Response" (get titles "provider")))
               (expect (not (contains? titles "mcp"))))))))
   (it
-    "puts an extension's engine choice, settings and packaged skills in its own section"
+    "puts an extension's engine choice, settings and switchable skills in its own section"
     (with-empty-config
       (let [db
             (h/store)
@@ -617,7 +667,8 @@
             {:ext/name "section-fixture"
              :ext/engine {:ext.engine/symbols ['fixture]}
              :ext/toggles [{:id "section_fixture_flag"}]
-             :ext/skills [{:name "section-fixture/guide"}]}]
+             :ext/skills [{:name "section-fixture/guide"}
+                          {:name "section-fixture/browser" :settings? false}]}]
 
         (toggles/register-toggle! {:id "section_fixture_flag"
                                    :label "Flag"
@@ -628,7 +679,7 @@
                            (constantly db)
 
                            discovery/all-skills
-                           (constantly [{:name "section-fixture/guide"}])
+                           (constantly (:ext/skills ext))
 
                            extension/registered-extensions
                            (constantly [ext])]
@@ -650,6 +701,8 @@
                  (expect (= [engine "section_fixture_flag"
                              (scoped/resource-id :skills "section-fixture/guide")]
                             (mapv #(get % "id") (get section "toggles"))))
+                 (expect (nil? (toggles/toggle-spec
+                                 (scoped/resource-id :skills "section-fixture/browser"))))
                  (expect (not-any? #(#{"engines" "skills"} (get % "id")) groups))))
              (finally (toggles/unregister-owner! "section-fixture"))))))
   (it
