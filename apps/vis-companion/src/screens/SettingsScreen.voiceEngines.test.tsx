@@ -221,13 +221,18 @@ describe('the speech-engines band', () => {
     const engines = await screen.findByRole('group', { name: 'TTS engines' });
     const device = choice(/This device/)!;
     const piper = choice(/Piper \(gateway\)/)!;
-    expect(engines).toHaveClass('border', 'border-dialog-hint/30');
-    expect(engines.firstElementChild).toHaveClass('border-b', 'border-dialog-hint/30');
+    // Regression: engine choices must fill the panel without a repeated heading or inset frame.
+    expect(engines.parentElement).toHaveClass('border-t', 'border-dialog-hint/30');
+    expect(engines.parentElement).not.toHaveClass('p-2');
+    expect(engines.parentElement).not.toHaveClass('sm:p-3');
+    expect(engines).not.toHaveClass('border');
+    expect(within(engines).queryByRole('heading', { name: 'TTS engines' })).toBeNull();
     expect(engines.lastElementChild).toHaveClass('divide-y', 'divide-dialog-hint/30');
     expect(engines.lastElementChild).not.toHaveClass('gap-px', 'bg-dialog-edge');
     expect(device).toHaveClass('min-h-11', 'mouse:min-h-8');
     expect(device).not.toHaveClass('py-2');
-    expect(await within(piper).findByText('· ready')).toHaveClass('ml-auto');
+    expect(await within(piper).findByText('ready')).toHaveClass('ml-auto');
+    expect(engines.textContent).not.toMatch(/[·●○]/);
     const disclosures = [
       within(engines).getByRole('button', { name: 'Settings for This device' }),
       within(engines).getByRole('button', { name: 'Settings for Piper (gateway)' }),

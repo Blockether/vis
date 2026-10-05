@@ -1527,7 +1527,7 @@ export function ChoiceCell({
 /**
  * One engine row with separate selection and settings controls.
  *
- * The status follows the name on one line, with a dot separator at the right.
+ * The status follows the name on one line. The selected fill shows the choice without dots.
  * Both controls keep the selected fill. Touch targets keep a minimum height of 44 pixels.
  */
 export function SettingsChoiceDisclosure({
@@ -1551,10 +1551,11 @@ export function SettingsChoiceDisclosure({
     <div className="grid grid-cols-[minmax(0,1fr)_2.75rem] mouse:grid-cols-[minmax(0,1fr)_2.5rem]">
       <ChoiceCell
         title={title}
-        sub={`· ${sub}`}
-        aria-label={`${title} · ${sub}`}
+        sub={sub}
+        aria-label={`${title} ${sub}`}
         isSelected={isSelected}
         isLeaf
+        showSelectionMark={false}
         onClick={onSelect}
       />
       <button

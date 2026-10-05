@@ -726,12 +726,12 @@ describe('a setting is picked and switched by one control each', () => {
     expect(screen.getByRole('button', { pressed: false })).toHaveTextContent('Albert');
   });
 
-  it('splits engine selection from its independently collapsed settings', () => {
+  it.each([true, false])('separates TTS controls without dots (selected: %s)', (isSelected) => {
     render(
       <SettingsChoiceDisclosure
         title="Piper (gateway)"
         sub="ready"
-        isSelected
+        isSelected={isSelected}
         isOpen={false}
         controls="piper-settings"
         onSelect={() => {}}
@@ -745,10 +745,13 @@ describe('a setting is picked and switched by one control each', () => {
 
     const buttons = screen.getAllByRole('button');
     expect(buttons).toHaveLength(2);
-    const choice = screen.getByRole('button', { pressed: true });
+    const choice = screen.getByRole('button', { pressed: isSelected });
     expect(choice).toBeVisible();
-    expect(choice).toHaveAccessibleName('Piper (gateway) · ready');
-    expect(screen.getByText('· ready')).toBeVisible();
+    expect(choice).toHaveAccessibleName('Piper (gateway) ready');
+    expect(screen.getByText('ready')).toBeVisible();
+    expect(choice.textContent).not.toMatch(/[·●○]/);
+    expect(choice).toHaveClass(isSelected ? 'bg-accent' : 'bg-input');
+    expect(settings).toHaveClass(isSelected ? 'bg-accent' : 'bg-input');
   });
 
   it('opens a settings direction with one full-row control', () => {
