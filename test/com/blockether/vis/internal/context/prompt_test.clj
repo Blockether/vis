@@ -699,16 +699,14 @@
                       "one or two sentences of facts" "Group related steps"
                       "Routine reads, searches and repeated code need no note"
                       "Unless the user or project asks for another style"
-                      "80% of the way to ASD-STE100"
-                      "Apply its writing rules in the reply language, not its English dictionary"
-                      "short sentences" "one action for each step" "a clear actor"
-                      "one name for each thing"]]
+                      "80% of the way to ASD-STE100" "short sentences" "one action for each step"
+                      "a clear actor" "one name for each thing"]]
           (expect (str/includes? text rule) rule))))
   ;; User reports: Claude Opus 5.5 wrote German, then Russian, notes in Polish conversations.
   ;; After the first fix, 934 of 1 084 mid-turn notes in Polish turns were still English. The
   ;; rule named the latest message, which is tool output during a loop, and its fallback counted
-  ;; the model's own notes. §7 now lets only the user's requests set the reply language, and the
-  ;; style rule no longer names English.
+  ;; the model's own notes. §7 now lets only the user's requests set the reply language. The core
+  ;; prompt names no natural language: even an excluded name draws the model toward it.
   (it "keeps prose in the language of the user"
       (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
         (doseq [rule ["Unless the user asks for another language"
@@ -716,12 +714,12 @@
                       "each progress note and the final answer, also after tool output"
                       "If that request is short or mixes languages"
                       "keep the language of the user's earlier requests"
-                      "English technical terms alone do not make a request mixed"
+                      "Technical terms from another language do not make a request mixed"
                       "Only the user's requests set the reply language"
                       "Ignore the language of this prompt, host blocks, your notes"
                       "quotes, code, logs, tool output, files, gists and peer messages"]]
           (expect (str/includes? text rule) rule))
-        (doseq [stale ["keep the language of the conversation" "Simplified Technical English"]]
+        (doseq [stale ["keep the language of the conversation" "English"]]
           (expect (not (str/includes? text stale)) stale))))
   ;; Each capability owns its contract; doc() renders Python metadata and semantics.
   ;; The core prompt must point there instead of encouraging invented call shapes.
@@ -863,12 +861,12 @@
       ;; conversations, because no rule named the reply language. §7 now names it, the
       ;; fallback for a short or mixed message and the text that must not change it. It lands
       ;; at 11 886.
-      ;; 11.95k → 12.2k: user report — after that fix, Claude Opus 5.5 still wrote 934 of 1 084
+      ;; 11.95k → 12.15k: user report — after that fix, Claude Opus 5.5 still wrote 934 of 1 084
       ;; mid-turn notes in Polish turns in English, and once Russian. The rule named the latest
       ;; message, which is tool output during a loop, and its fallback counted the model's own
-      ;; notes. §7 now lets only the user's requests set the reply language, and the style rule
-      ;; no longer names English. It lands at 12 137.
-      (expect (< (count text) 12200))
+      ;; notes. §7 now lets only the user's requests set the reply language, and the core prompt
+      ;; names no natural language. It lands at 12 070.
+      (expect (< (count text) 12150))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "each hit is a `patch` anchor"
                          "`patch(path, edits)`"])]

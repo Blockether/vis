@@ -83,9 +83,9 @@ The last reply starts with the answer. You can read it without the progress note
 
 Unless you ask for another language, Vis writes each progress note and each answer in the language
 of your latest request. If that request is short or mixes languages, Vis keeps the language of your
-earlier requests. English technical terms alone do not make a request mixed. Only your requests set
-the language. The system prompt, project rules, quoted text, code, logs, tool output, files and
-messages from other sessions do not change it.
+earlier requests. Technical terms from another language, such as English, do not make a request
+mixed. Only your requests set the language. The system prompt, project rules, quoted text, code,
+logs, tool output, files and messages from other sessions do not change it.
 
 Vis applies the [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/) writing rules
 to that text, at about 80% of the full standard. It uses these rules:
