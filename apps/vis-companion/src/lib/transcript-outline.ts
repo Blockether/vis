@@ -43,6 +43,12 @@ const READING_INSET = 32;
 /** The longest label that is kept. The row truncates long before this. */
 const LABEL_MAX = 160;
 
+/**
+ * The longest paste, in characters, that a label reads as its words. A longer paste,
+ * such as a log or a file, reads as its summary: `[Pasted #1: 60 lines, 1.1KB]`.
+ */
+const SHORT_PASTE_MAX = 500;
+
 /** The space between the rail and the card that it opens. */
 const RAIL_GAP = 8;
 
@@ -94,8 +100,8 @@ const KEPT = 0xe000;
 const KEPT_MARK = /[\ue000-\ue07f]/g;
 
 /**
- * The words that opened a turn, on one line. A pasted block counts as its short
- * summary, never as its content. An image has no words: its token and its caption go.
+ * The words that opened a turn, on one line. A short paste counts as its words, and a
+ * longer paste counts as its summary. An image has no words: its token and its caption go.
  */
 export function promptLabel(request: string | undefined, attachments = 0): string {
   const parts = parseUserMessage(request ?? '');
@@ -104,7 +110,9 @@ export function promptLabel(request: string | undefined, attachments = 0): strin
       part.type === 'text'
         ? part.text.split(IMAGE_TOKEN).join(' ')
         : part.type === 'paste'
-          ? part.summary
+          ? part.content.length > SHORT_PASTE_MAX
+            ? part.summary
+            : part.content
           : '',
     )
     .join(' ')

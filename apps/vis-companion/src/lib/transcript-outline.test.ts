@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { EDGE_MARGIN } from './anchored-menu';
+import { pasteSummary } from './paste';
 import {
   answerExcerpt,
   mergeOutline,
@@ -18,18 +19,31 @@ import {
 /** A desktop window with room for the card and its preview. */
 const DESKTOP = { width: 1440, height: 900 };
 
+/** A paste as the composer sends it: a fence with its summary, then its content. */
+const pasted = (id: number, content: string) =>
+  ['````vis-paste', pasteSummary(id, content), content, '````'].join('\n');
+
 describe('promptLabel', () => {
   it('cuts the image tokens of the composer out of the words', () => {
     expect(promptLabel('[IMAGE #1] cut this token')).toBe('cut this token');
     expect(promptLabel('look [IMAGE #2] at [Image #3] this')).toBe('look at this');
   });
 
-  it('drops image captions and image paths, and keeps paste summaries', () => {
+  it('drops image captions and image paths', () => {
     const image = '````vis-image\n[Image #1: shot.png]\n/tmp/vis/shot.png\n````\nfix this';
     expect(promptLabel(image)).toBe('fix this');
     expect(promptLabel('compare /tmp/shots/a.png with this')).toBe('compare with this');
-    const paste = 'see this\n````vis-paste\n[Pasted #1: 3 lines, 5 B]\na\nb\nc\n````';
-    expect(promptLabel(paste)).toBe('see this [Pasted #1: 3 lines, 5 B]');
+  });
+
+  it('reads a short paste as its words and a long paste as its summary', () => {
+    expect(promptLabel(`see this\n${pasted(1, 'a\nb\nc')}\nand fix it`)).toBe('see this a b c and fix it');
+    const log = Array.from({ length: 60 }, (_, line) => `line ${line} of the log`).join('\n');
+    expect(promptLabel(`${pasted(1, log)}\nwhy does this fail?`)).toBe(`${pasteSummary(1, log)} why does this fail?`);
+  });
+
+  it('reads each short paste of a prompt as its words, in order', () => {
+    const quotes = [pasted(1, 'the notice\nafter the tests'), pasted(2, 'an attempt key\nper call'), 'yes, both'];
+    expect(promptLabel(quotes.join('\n'))).toBe('the notice after the tests an attempt key per call yes, both');
   });
 
   it('names a prompt without words by what it holds', () => {
