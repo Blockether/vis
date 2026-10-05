@@ -112,6 +112,11 @@ if (( upload )); then
     die "no release for tag $tag" "Cut it first, or pass an existing --tag."
 fi
 
+# A version tag builds release assets: they stamp the `release` track and bundle the
+# SDK that python-publish.yml publishes as VIS_VERSION (bin/sdk-version).
+track=dev
+if [[ "$tag" == v[0-9]* ]]; then track=release; fi
+
 # ── macos-arm64 ──────────────────────────────────────────────────────────────
 build_macos_arm64() {
   local asset="vis-agent-macos-arm64.tar.gz"
@@ -119,7 +124,7 @@ build_macos_arm64() {
   # build.clj sizes the builder heap from this machine's RAM and re-execs under
   # the pinned GraalVM CE by itself; nothing to tune here.
   clojure -X:deps prep
-  clojure -T:build native
+  VIS_RELEASE_TRACK="$track" clojure -T:build native
   # Sign and notarize BEFORE staging: the smoke tests below and the published
   # asset have to be the exact bytes a user's Gatekeeper and Application
   # Firewall judge (Vis #277).
@@ -316,6 +321,7 @@ podman_export() {
     --platform "$platform" \
     --build-arg GRAAL_ARCH="$graal_arch" \
     --build-arg VIS_NATIVE_EXTRA_ARGS="${VIS_NATIVE_EXTRA_ARGS:-}" \
+    --build-arg VIS_RELEASE_TRACK="$track" \
     -t "$image" \
     .
   ctr="$(eng create --platform "$platform" "$image" /vis-agent)" || \
@@ -357,6 +363,7 @@ build_linux() {
       --platform "$platform" \
       --build-arg GRAAL_ARCH="$graal_arch" \
       --build-arg VIS_NATIVE_EXTRA_ARGS="${VIS_NATIVE_EXTRA_ARGS:-}" \
+      --build-arg VIS_RELEASE_TRACK="$track" \
       --output "type=local,dest=$out" \
       .
   fi

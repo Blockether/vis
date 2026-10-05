@@ -116,6 +116,9 @@ FROM jdk AS builder
 ARG CLOJURE_VERSION
 ARG VIS_ORACLE_NATIVE_IMAGE
 ARG VIS_NATIVE_EXTRA_ARGS
+# bin/release-native passes `release` for a version tag; empty is a dev build. This
+# build has no .git, so a dev build reports its bundled SDK version as `dev`.
+ARG VIS_RELEASE_TRACK
 
 # HOME here decides where the build's caches land (~/.m2, ~/.gitconfig). It is
 # /home/vis so the builder JVM's `user.home` is already the runtime user's home:

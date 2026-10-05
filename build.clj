@@ -83,6 +83,24 @@
                      [version (if dirty? (str commit "-dirty") commit) (release-track)
                       (str (java.time.Instant/now))]))))
 
+(def sdk-version
+  "PyPI version of the Python SDK (`vis-agent`) that ONE native build bundles:
+   `bin/sdk-version` for this build's `release-track`. A release bundles VIS_VERSION;
+   every other build bundles the development release of its commit, which
+   python-publish.yml publishes for each beta. Written into the image as
+   `vis/SDK_VERSION`, so `VIS_PYTHON_SDK_VERSION` names a version that pip installs."
+  (delay (let [track
+               (release-track)
+
+               {:keys [exit out err]}
+               (b/process
+                 {:command-args ["bash" "bin/sdk-version" track] :out :capture :err :capture})]
+
+           (when-not (zero? exit)
+             (throw (ex-info (str "bin/sdk-version " track " failed: " (str/trim (str err)))
+                             {:track track :exit exit})))
+           (str/trim out))))
+
 ;; Package catalog
 
 (def ^:private subproject-patterns
@@ -651,6 +669,10 @@
     (let [bfile (io/file native-class-dir "vis" "BUILD")]
       (io/make-parents bfile)
       (spit bfile @build-stamp))
+    ;; `vis/SDK_VERSION`: the PyPI version of the bundled Python SDK — see `sdk-version`.
+    (let [sfile (io/file native-class-dir "vis" "SDK_VERSION")]
+      (io/make-parents sfile)
+      (spit sfile @sdk-version))
     ;; No :ns-compile: compile every namespace in the source roots.
     (b/compile-clj {:basis basis :src-dirs srcs :class-dir native-class-dir})
     basis))
@@ -1053,6 +1075,8 @@
              "-H:IncludeResources=vis/VERSION"
              ;; the build-written `vis/BUILD` (version, commit, track, timestamp)
              "-H:IncludeResources=vis/BUILD"
+             ;; the build-written `vis/SDK_VERSION` (PyPI version of the bundled SDK)
+             "-H:IncludeResources=vis/SDK_VERSION"
              ;; Flyway migration SQL (not in the agent-traced metadata)
              "-H:IncludeResources=db/.*"
              ;; The WHOLE embedded docs corpus (markdown pages + manifest +

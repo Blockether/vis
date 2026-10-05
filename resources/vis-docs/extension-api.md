@@ -16,6 +16,8 @@ callbacks and host operations.
   context](#session-context) or [another session tool](#call-other-session-tools).
 - **Your own program must read or export Activity history.** Read [Sessions
   API](sessions-api.md#read-activity-history).
+- **Your editor or type checker reports errors for code that runs in Vis.**
+  Install the [SDK version that Vis bundles](#editor-types).
 
 Start with the [tutorial](extending.md) for a complete entry file or [Extension
 design](extension-design.md) for authoring and test guidance.
@@ -45,13 +47,32 @@ Python extension entry files and `python_execution` receive these globals withou
 | `VIS_VERSION` | Version of the loaded Vis build |
 | `VIS_SHA_RELEASE` | Full Vis build commit, with `-dirty` for an uncommitted native build, or `None` if unavailable |
 | `VIS_PYTHON_RUNTIME_VERSION` | Version of Vis' embedded Python runtime library, not the CPython interpreter version |
-| `VIS_PYTHON_SDK_VERSION` | Version of the bundled SDK, released together with Vis |
+| `VIS_PYTHON_SDK_VERSION` | PyPI version of the bundled SDK: `VIS_VERSION` for a release, a development release such as `0.2.31.dev7292` for a beta |
 
 The model's system context reports the same values. A source build can report `dev`.
 These values describe the loaded build, not necessarily a published release. They are
 diagnostic metadata and do not change instruction priority. The bundled SDK takes
 precedence over pip and editable copies in both trusted extensions and
 `python_execution`. Installing another SDK does not change these globals.
+
+### Editor types
+
+Your editor and type checker, for example Pyright or Pylance, read the `vis-agent`
+package in your Python environment. Vis runs its bundled SDK instead. To get the same
+types, install the version in `VIS_PYTHON_SDK_VERSION`:
+
+```bash
+pip install "vis-agent==0.2.31.dev7292"
+```
+
+PyPI has the SDK of every release and every published beta. The SDK of a new beta
+arrives on PyPI some minutes after the beta. Without an exact version, pip ignores
+development releases. Pin the exact version in your development environment, not in
+the dependencies of an extension that you publish.
+
+A `dev` value, or a value that ends in `+dirty`, comes from a source run or a local
+build. A local build of a commit without a published beta is also not on PyPI. For
+these builds, install `packages/vis-agent` from the same checkout.
 
 In `python_execution`, you can import `blockether.vis.extension` to inspect public
 types and construct declarations without registering them. Registration and host

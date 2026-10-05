@@ -2,6 +2,8 @@ name: Publish Python SDK
 
 # The release uses GITHUB_TOKEN, so its published release does not trigger workflows.
 # Completion triggers this top-level workflow, as required by PyPI trusted publishing.
+# Beta Native dispatches it for each published beta: every published build bundles
+# an SDK version that is on PyPI (bin/sdk-version).
 on:
   workflow_run:
     workflows: ['Release & Deploy to Clojars']
@@ -9,11 +11,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Exact VIS_VERSION on main to verify and publish (SDK-only or release recovery)
-        required: true
+        description: Optional exact SDK version gate (VIS_VERSION, or the dev release of a beta tag)
         type: string
+        default: ''
       release_tag:
-        description: Existing product tag to publish after release recovery (empty uses main)
+        description: Existing vX.Y.Z or beta-<sha> tag to publish (empty publishes VIS_VERSION from main)
         type: string
         default: ''
 
@@ -21,17 +23,53 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  source:
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_repository.full_name == github.repository) ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.version.outputs.ref }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_tag || github.event.workflow_run.head_sha || github.sha }}
+          # bin/sdk-version numbers a beta's SDK by commit count: full history, no trees.
+          fetch-depth: 0
+          filter: tree:0
+      - name: Derive the SDK version that this source bundles
+        id: version
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          case "$RELEASE_TAG" in
+            beta-*)
+              [[ "$RELEASE_TAG" =~ ^beta-[0-9a-f]{40}$ ]] || {
+                echo "::error::Invalid beta tag $RELEASE_TAG"; exit 1; }
+              track=beta ;;
+            *) track=release ;;
+          esac
+          version="$(bin/sdk-version "$track")"
+          # PyPI refuses local labels such as +dirty.
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.dev[0-9]+)?$ ]] || {
+            echo "::error::SDK version $version cannot be published"; exit 1; }
+          if [ -n "$EXPECTED_VERSION" ] && [ "$EXPECTED_VERSION" != "$version" ]; then
+            echo "::error::This source bundles SDK $version, not $EXPECTED_VERSION"; exit 1
+          fi
+          echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+  verify:
+    needs: source
     uses: ./.github/workflows/python-packages.yml
     with:
-      version: ${{ inputs.version }}
-      ref: ${{ inputs.release_tag || github.event.workflow_run.head_sha || github.sha }}
+      version: ${{ needs.source.outputs.version }}
+      ref: ${{ needs.source.outputs.ref }}
   publish:
     needs: verify
     runs-on: ubuntu-latest

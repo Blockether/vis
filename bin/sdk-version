@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Print the PyPI version of the Python SDK (`vis-agent`) that a build of this checkout bundles.
+#   bin/sdk-version [release|beta|dev|dry-run]   # the build's VIS_RELEASE_TRACK, default dev
+# A release bundles VIS_VERSION X.Y.Z. Every other build bundles X.Y.(Z+1).devN, where N is
+# `git rev-list --count HEAD`, the Companion build number. python-publish.yml publishes that
+# development release for every published beta. Uncommitted SDK changes add `+dirty`, which
+# PyPI never has. Without full history a beta fails, and a dev or dry-run build prints `dev`.
+set -euo pipefail
+export LC_ALL=C
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+track="${1:-dev}"
+case "$track" in
+  release|beta|dev|dry-run) ;;
+  *) echo "usage: $0 [release|beta|dev|dry-run]" >&2; exit 2 ;;
+esac
+version="$(tr -d '[:space:]' < VIS_VERSION)"
+if [[ ! "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+  echo "VIS_VERSION=$version is not X.Y.Z" >&2
+  exit 1
+fi
+next="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((10#${BASH_REMATCH[3]} + 1))"
+# The wheel's sources: packages/vis-agent/hatch_build.py adds the canonical contracts.
+sdk_sources=(packages/vis-agent packages/vis-contract/resources/vis-contract)
+count=""
+dirty=""
+# Only this checkout's own history counts, never a repository around a copied tree.
+if [[ "$(git rev-parse --show-toplevel 2>/dev/null)" == "$(pwd -P)" ]]; then
+  if [[ "$(git rev-parse --is-shallow-repository)" == false ]]; then
+    count="$(git rev-list --count HEAD)"
+  fi
+  if [[ -n "$(git status --porcelain -- "${sdk_sources[@]}")" ]]; then
+    dirty="+dirty"
+  fi
+fi
+if [[ "$track" == release ]]; then
+  echo "$version$dirty"
+elif [[ -n "$count" ]]; then
+  echo "$next.dev$count$dirty"
+elif [[ "$track" == beta ]]; then
+  echo "a beta needs full git history for its SDK version; check out with fetch-depth: 0" >&2
+  exit 1
+else
+  echo dev
+fi

@@ -10,6 +10,7 @@
             [clojure.string :as str]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.gateway.runtime :as gateway-runtime]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [lazytest.core :refer [defdescribe expect it]])
@@ -581,3 +582,16 @@
                   "status still follows every stage")
           (#'python-runtime/preparation-stage! project "failed")
           (expect (= "[vis extensions] quiet-greeter: failed" (.trim (.toString out "UTF-8"))))))))
+
+(defdescribe version-globals-test
+             ;; #312: betas reported VIS_VERSION for an SDK newer than that PyPI release.
+             (it "reports the SDK version that the build stamped, apart from VIS_VERSION"
+                 (with-redefs [gateway-runtime/release-version
+                               (constantly "1.4.9")
+
+                               gateway-runtime/sdk-version
+                               (constantly "1.4.10.dev3")]
+
+                   (expect (= {"VIS_VERSION" "1.4.9" "VIS_PYTHON_SDK_VERSION" "1.4.10.dev3"}
+                              (select-keys (python-runtime/version-globals)
+                                           ["VIS_VERSION" "VIS_PYTHON_SDK_VERSION"]))))))

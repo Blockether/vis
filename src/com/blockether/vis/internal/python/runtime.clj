@@ -37,14 +37,13 @@
 
 (defn version-globals
   "Host-owned build metadata shared by Python namespaces and the model prompt.
-   The bundled SDK is versioned with Vis, never with an editable or pip package.
+   The build names the bundled SDK version, never an editable or pip package.
    Source builds report dev; an unavailable commit is nil, not a guessed release."
   []
-  (let [version (gateway-runtime/release-version)]
-    {"VIS_PYTHON_RUNTIME_VERSION" runtime/version
-     "VIS_SHA_RELEASE" (gateway-runtime/release-sha)
-     "VIS_VERSION" version
-     "VIS_PYTHON_SDK_VERSION" version}))
+  {"VIS_PYTHON_RUNTIME_VERSION" runtime/version
+   "VIS_SHA_RELEASE" (gateway-runtime/release-sha)
+   "VIS_VERSION" (gateway-runtime/release-version)
+   "VIS_PYTHON_SDK_VERSION" (gateway-runtime/sdk-version)})
 
 (defn version-globals-python
   "Python bootstrap statement for the host's build metadata, encoded as JSON."

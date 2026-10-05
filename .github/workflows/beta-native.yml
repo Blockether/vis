@@ -3,7 +3,8 @@ name: Beta Native
 # Successful main CI starts the same native and desktop builds used for production
 # releases. Each beta has an immutable tag. Drafts never become installation
 # candidates until every native target, bundled worker, SDK check, terminal client
-# and desktop installer has passed.
+# and desktop installer has passed. A published beta then dispatches python-publish.yml,
+# which puts the SDK that the beta bundles on PyPI as a development release.
 on:
   workflow_run:
     workflows: [CI]
@@ -199,3 +200,23 @@ jobs:
           [ "$(gh api "repos/$REPO/releases/tags/$TAG" -q '.draft == false and .prerelease == true')" = true ]
           printf '%s\n' "$TAG" > "$RUNNER_TEMP/native-beta"
           gh release upload installer "$RUNNER_TEMP/native-beta" --repo "$REPO" --clobber
+
+  sdk:
+    name: publish the bundled SDK of the beta to PyPI
+    needs: [pick, publish]
+    # A separate job: a failed dispatch must not keep installers from the published beta.
+    if: needs.publish.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write   # dispatch python-publish.yml
+    steps:
+      - name: Dispatch the trusted PyPI publisher
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.pick.outputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^beta-[0-9a-f]{40}$ ]]
+          # PyPI trusts only python-publish.yml as a top-level workflow; it derives the version.
+          gh workflow run python-publish.yml --repo "$REPO" --ref main -f release_tag="$TAG"

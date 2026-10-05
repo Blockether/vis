@@ -238,3 +238,10 @@
              (it "one release on both halves still matches"
                  (expect (= "Versions match" (:title (release-skew-copy "0.2.22" "0.2.22"))))
                  (expect (= "Versions match" (:title (release-skew-copy "dev" "0.2.22"))))))
+
+(defdescribe sdk-version-test
+             (it "reports the release version when the build stamped no SDK version"
+                 ;; #312: a native build stamps `vis/SDK_VERSION`; release-bundle-test reads one.
+                 (expect (nil? (io/resource "vis/SDK_VERSION"))
+                         "the test classpath holds no build stamp")
+                 (expect (= (protocol/release-version) (protocol/sdk-version)))))

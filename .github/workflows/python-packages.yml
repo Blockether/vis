@@ -8,7 +8,7 @@ on:
         default: ''
         type: string
       version:
-        description: Optional exact VIS_VERSION gate
+        description: Optional exact SDK version, VIS_VERSION or a beta's dev release from bin/sdk-version
         default: ''
         type: string
   workflow_dispatch:
@@ -94,6 +94,22 @@ jobs:
         run: |
           python -m ruff check packages
           python -m ruff format --check packages
+      # A beta publishes its commit's dev release; a release keeps the VIS_VERSION mirror.
+      - name: Set the development release version
+        if: contains(inputs.version, '.dev')
+        env:
+          SDK_VERSION: ${{ inputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+          pyproject = Path('packages/vis-agent/pyproject.toml')
+          text, count = re.subn(r'(?m)^version = "[^"]*"$', f'version = "{os.environ["SDK_VERSION"]}"',
+                                pyproject.read_text())
+          assert count == 1, 'pyproject.toml needs exactly one version line'
+          pyproject.write_text(text)
+          PY
       - name: Build wheels from sdists
         run: |
           python -m build packages/vis-agent --outdir dist
@@ -107,13 +123,17 @@ jobs:
           python - <<'PY'
           import importlib.metadata as metadata
           import os
+          import re
           from pathlib import Path
           import blockether.vis.extension as vis
           from blockether.vis.engine import GatewayClient, LocalEngine
           from blockether.vis import _contracts
           version = (Path(os.environ['GITHUB_WORKSPACE']) / 'VIS_VERSION').read_text().strip()
-          assert metadata.version('vis-agent') == version
-          assert not os.environ.get('EXPECTED_VERSION') or os.environ['EXPECTED_VERSION'] == version
+          expected = os.environ.get('EXPECTED_VERSION') or version
+          # bin/sdk-version: a beta follows VIS_VERSION X.Y.Z with X.Y.(Z+1).devN.
+          major, minor, patch = map(int, version.split('.'))
+          assert expected == version or re.fullmatch(rf'{major}\.{minor}\.{patch + 1}\.dev[0-9]+', expected), expected
+          assert metadata.version('vis-agent') == expected
           assert not str(Path(vis.__file__).resolve()).startswith(os.environ['GITHUB_WORKSPACE'])
           assert _contracts.schema('gateway')['$defs']['handshake']['required']
           PY

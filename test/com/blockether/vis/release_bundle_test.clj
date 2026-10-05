@@ -1275,14 +1275,19 @@
       (expect (str/includes? dockerfile "COPY --from=native-export") dockerfile)
       (expect (not (str/includes? dockerfile "/opt/vis/src/resources/vis/VERSION")) dockerfile)))
   (it
-    "reports the stamped string verbatim in a fresh process"
+    "reports the stamped strings verbatim in a fresh process"
     (let [dir
           (.toFile (Files/createTempDirectory "vis-version" (make-array FileAttribute 0)))
 
           stamped
-          (str/trim (slurp "VIS_VERSION"))]
+          (str/trim (slurp "VIS_VERSION"))
+
+          sdk
+          "0.2.31.dev7292"]
 
       (spit (doto (io/file dir "vis" "VERSION") io/make-parents) (str stamped "\n"))
+      ;; #312: the bundled SDK has its own PyPI version beside VIS_VERSION.
+      (spit (io/file dir "vis" "SDK_VERSION") (str sdk "\n"))
       ;; Build identity is intentionally cached for a process. Other tests may
       ;; have resolved it before this fixture supplied its version resource.
       (try
@@ -1293,11 +1298,11 @@
               "--enable-native-access=ALL-UNNAMED" "-cp"
               (str dir File/pathSeparator (System/getProperty "java.class.path")) "clojure.main"
               "-e"
-              "(require '[com.blockether.vis.internal.gateway.runtime :as runtime]) (print (runtime/release-version))"]
+              "(require '[com.blockether.vis.internal.gateway.runtime :as runtime]) (println (runtime/release-version)) (print (runtime/sdk-version))"]
              {})]
           (expect (= 0 exit) output)
           ;; JAVA_TOOL_OPTIONS can prepend JVM diagnostics to the merged stream.
-          (expect (= stamped (last (str/split-lines (str/trim output))))))
+          (expect (= [stamped sdk] (take-last 2 (str/split-lines (str/trim output))))))
         (finally (delete-tree! dir))))))
 
 (defdescribe
@@ -2112,7 +2117,8 @@
          (run-bash
            ["bash" "-c"
             (str
-              "gh() {\ncase \"$*\" in\n" " *'/commits/main'*) printf '%s' \"$TEST_MAIN\" ;;\n"
+              "gh() {\ncase \"$*\" in\n"
+              " *'/commits/main'*) printf '%s' \"$TEST_MAIN\" ;;\n"
               " *'/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1'*) printf '%s' \"$TEST_GREEN_MAIN\" ;;\n"
               " *\"/compare/$SHA...$TEST_GREEN_MAIN\"*) printf '%s' \"$TEST_ORDER\" ;;\n"
               " *'/actions/workflows/ci.yml/runs?head_sha='*) printf '%s' \"$TEST_GREEN\" ;;\n"
@@ -2122,6 +2128,7 @@
               " 'api --method POST '*'/git/refs '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\"; : > \"$TEST_TAG_CREATED\" ;;\n"
               " *'/commits/beta-'*) [ \"$TEST_TAG_EXISTS\" = 1 ] || [ -f \"$TEST_TAG_CREATED\" ] || return 1; printf '%s' \"$TEST_TAG_SHA\" ;;\n"
               " 'release create '*|'release edit '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\" ;;\n"
+              " 'workflow run '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\" ;;\n"
               " 'release upload installer '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\"; cat \"$RUNNER_TEMP/native-beta\" >> \"$TEST_CALLS\" ;;\n"
               " *) echo 'unexpected GitHub request' >&2; return 77 ;;\nesac\n}\n" script)]
            (merge {"REPO" "example/vis"
@@ -3759,7 +3766,7 @@
 
 (defdescribe
   python-release-publication-test
-  (it "publishes after a Vis release or a verified SDK-only main commit (#203)"
+  (it "publishes after a release, a published beta or an SDK-only main commit (#203, #312)"
       (let [release-name
             (second (re-find #"(?m)^name: (.+)$" (slurp ".github/workflows/release.yml")))
 
@@ -3776,8 +3783,9 @@
             "github.event_name == 'workflow_dispatch'" "github.ref == 'refs/heads/main'"
             "uses: ./.github/workflows/python-packages.yml"
             "ref: ${{ inputs.release_tag || github.event.workflow_run.head_sha || github.sha }}"
-            "version: ${{ inputs.version }}" "needs: verify" "environment: pypi" "id-token: write"
-            "uses: pypa/gh-action-pypi-publish@release/v1"]]
+            "version: ${{ needs.source.outputs.version }}" "ref: ${{ needs.source.outputs.ref }}"
+            "EXPECTED_VERSION: ${{ inputs.version }}" "needs: verify" "environment: pypi"
+            "id-token: write" "uses: pypa/gh-action-pypi-publish@release/v1"]]
           (expect (str/includes? publisher needle) needle))
         ;; PyPI trusted publishing does not support reusable workflows.
         (expect (not (str/includes? publisher "workflow_call:")))
@@ -3807,8 +3815,9 @@
       (doseq
         [needle
          ["version = (Path(os.environ['GITHUB_WORKSPACE']) / 'VIS_VERSION').read_text().strip()"
-          "assert metadata.version('vis-agent') == version"
-          "os.environ['EXPECTED_VERSION'] == version"
+          "expected = os.environ.get('EXPECTED_VERSION') or version"
+          "assert expected == version or re.fullmatch(rf'{major}\\.{minor}\\.{patch + 1}\\.dev[0-9]+', expected), expected"
+          "assert metadata.version('vis-agent') == expected"
           "python -m build packages/vis-agent --outdir dist"]]
         (expect (str/includes? packages needle) needle))
       (expect (= "distribution" (get-in jobs ["engine" "needs"])))
@@ -3827,6 +3836,192 @@
         (expect (= [nil] (mapv #(get % "if") installed)))
         (expect (= ["3.11" "3.12" "3.13" "3.14" "pypy3.11"]
                    (get-in jobs ["distribution" "strategy" "matrix" "python"])))))))
+
+(defn- sdk-checkout!
+  "A three-commit checkout with VIS_VERSION 1.4.9, SDK sources and this repository's
+   `bin/sdk-version`, which numbers the SDK of the checkout that holds it."
+  []
+  (let [dir (.toFile (Files/createTempDirectory "vis-sdk-version-" (make-array FileAttribute 0)))]
+    (write-executable! (doto (io/file dir "bin" "sdk-version") io/make-parents)
+                       (slurp "bin/sdk-version"))
+    (spit (io/file dir "VIS_VERSION") "1.4.9\n")
+    (spit (doto (io/file dir "packages" "vis-agent" "pyproject.toml") io/make-parents)
+          "[project]\nname = \"vis-agent\"\nversion = \"1.4.9\"\n")
+    (spit (doto (io/file dir "packages" "vis-contract" "resources" "vis-contract" "gateway.json")
+            io/make-parents)
+          "{}\n")
+    (git! dir "init" "--quiet" "--initial-branch=main")
+    (doseq [n (range 3)]
+      (spit (io/file dir "notes.txt") (str n "\n"))
+      (git! dir "add" ".")
+      (git! dir
+            "-c" "user.name=Vis Test"
+            "-c" "user.email=vis@example.com"
+            "commit" "--quiet"
+            "-m" (str "change " n)))
+    dir))
+
+(defn- run-sdk-version
+  "Run the `bin/sdk-version` of `dir` with `args`; stderr is merged into :output."
+  [dir & args]
+  (run-bash (into ["bash" (.getAbsolutePath (io/file dir "bin" "sdk-version"))] args) {}))
+
+;; #312: betas reported VIS_VERSION for their bundled SDK, while PyPI had an older SDK
+;; under that version. Every published build now bundles an SDK version that PyPI has.
+(defdescribe
+  sdk-version-test
+  (it "names VIS_VERSION for a release and the commit's dev release for other builds"
+      (let [dir (sdk-checkout!)]
+        (try (expect (= {:exit 0 :output "1.4.9\n"} (run-sdk-version dir "release")))
+             (doseq [track [[] ["beta"] ["dev"] ["dry-run"]]]
+               (expect (= {:exit 0 :output "1.4.10.dev3\n"} (apply run-sdk-version dir track))
+                       (pr-str track)))
+             (expect (= 2 (:exit (run-sdk-version dir "nightly"))))
+             (finally (delete-tree! dir)))))
+  (it "marks uncommitted SDK sources and ignores other changes"
+      (let [dir (sdk-checkout!)]
+        (try (spit (io/file dir "notes.txt") "edited\n")
+             (spit (io/file dir "scratch.txt") "untracked\n")
+             (expect (= "1.4.10.dev3\n" (:output (run-sdk-version dir "beta"))))
+             (spit (io/file dir "packages" "vis-contract" "resources" "vis-contract" "added.json")
+                   "{}\n")
+             (expect (= "1.4.10.dev3+dirty\n" (:output (run-sdk-version dir "beta"))))
+             (expect (= "1.4.9+dirty\n" (:output (run-sdk-version dir "release"))))
+             (finally (delete-tree! dir)))))
+  (it
+    "refuses a beta without full history and reports dev for other builds"
+    (let [dir
+          (sdk-checkout!)
+
+          clones
+          (.toFile (Files/createTempDirectory "vis-sdk-shallow-" (make-array FileAttribute 0)))
+
+          shallow
+          (io/file clones "checkout")
+
+          ;; A tree copied into another repository must not number itself by that history.
+          copied
+          (io/file dir "vendor" "vis")]
+
+      (try (git! clones
+                 "clone"
+                 "--quiet"
+                 "--depth"
+                 "1"
+                 (str "file://" (.getAbsolutePath dir))
+                 "checkout")
+           (let [{:keys [exit output]} (run-sdk-version shallow "beta")]
+             (expect (= 1 exit) output)
+             (expect (str/includes? output "full git history") output))
+           (expect (= "dev\n" (:output (run-sdk-version shallow "dev"))))
+           (expect (= "1.4.9\n" (:output (run-sdk-version shallow "release"))))
+           (write-executable! (doto (io/file copied "bin" "sdk-version") io/make-parents)
+                              (slurp "bin/sdk-version"))
+           (spit (io/file copied "VIS_VERSION") "1.4.9\n")
+           (expect (= {:exit 0 :output "dev\n"} (run-sdk-version copied "dev")))
+           (expect (= 1 (:exit (run-sdk-version copied "beta"))))
+           (expect (= "1.4.9\n" (:output (run-sdk-version copied "release"))))
+           (spit (io/file copied "VIS_VERSION") "1.4\n")
+           (expect (= 1 (:exit (run-sdk-version copied "release"))))
+           (finally (delete-tree! dir) (delete-tree! clones)))))
+  (it
+    "publishes exactly the SDK version that the tagged source bundles"
+    (let [dir
+          (sdk-checkout!)
+
+          outputs
+          (io/file dir "outputs")
+
+          script
+          (workflow-job-script ".github/workflows/python-publish.yml" "source")
+
+          beta
+          (str "beta-" (apply str (repeat 40 "a")))
+
+          derive!
+          (fn [env]
+            (spit outputs "")
+            (let [{:keys [exit output]} (run-bash ["bash" "-c" (str "cd \"$CHECKOUT\"\n" script)]
+                                                  (merge {"CHECKOUT" (.getAbsolutePath dir)
+                                                          "GITHUB_OUTPUT" (.getAbsolutePath outputs)
+                                                          "RELEASE_TAG" ""
+                                                          "EXPECTED_VERSION" ""}
+                                                         env))]
+              {:exit exit :output output :outputs (slurp outputs)}))]
+
+      (try (let [head
+                 (git! dir "rev-parse" "HEAD")
+
+                 published
+                 (fn [version]
+                   (str "ref=" head "\nversion=" version "\n"))]
+
+             (expect (not (str/blank? script)))
+             (expect (= (published "1.4.10.dev3") (:outputs (derive! {"RELEASE_TAG" beta}))))
+             (expect (= (published "1.4.9") (:outputs (derive! {}))))
+             (expect (= (published "1.4.9")
+                        (:outputs (derive! {"RELEASE_TAG" "v1.4.9" "EXPECTED_VERSION" "1.4.9"}))))
+             ;; A manual gate for another version, or a malformed beta tag, stops the run.
+             (expect (= {:exit 1 :outputs ""}
+                        (select-keys (derive! {"RELEASE_TAG" beta "EXPECTED_VERSION" "1.4.9"})
+                                     [:exit :outputs])))
+             (expect (= 1 (:exit (derive! {"RELEASE_TAG" "beta-main"}))))
+             ;; PyPI refuses local labels, so uncommitted SDK sources never publish.
+             (spit (io/file dir "packages" "vis-agent" "pyproject.toml") "changed\n")
+             (expect (= {:exit 1 :outputs ""}
+                        (select-keys (derive! {"RELEASE_TAG" beta}) [:exit :outputs]))))
+           (finally (delete-tree! dir)))))
+  (it "builds the distribution of a beta under its dev release"
+      (let [step
+            (->> (get-in (yaml/load (slurp ".github/workflows/python-packages.yml"))
+                         ["jobs" "distribution" "steps"])
+                 (filter #(= "Set the development release version" (get % "name")))
+                 first)
+
+            dir
+            (.toFile (Files/createTempDirectory "vis-sdk-pyproject-" (make-array FileAttribute 0)))
+
+            pyproject
+            (io/file dir "packages" "vis-agent" "pyproject.toml")
+
+            python
+            (io/file dir "bin" "python")]
+
+        (try (io/make-parents pyproject)
+             (io/copy (io/file "packages/vis-agent/pyproject.toml") pyproject)
+             ;; The step runs under the `python` of setup-python.
+             (write-executable! (doto python io/make-parents) "#!/bin/sh\nexec python3 \"$@\"\n")
+             (expect (= "contains(inputs.version, '.dev')" (get step "if")))
+             (let [{:keys [exit output]}
+                   (run-bash ["bash" "-c" (str "cd \"$CHECKOUT\"\n" (get step "run"))]
+                             {"CHECKOUT" (.getAbsolutePath dir)
+                              "SDK_VERSION" "0.2.31.dev7292"
+                              "PATH"
+                              (str (.getParent python) File/pathSeparator (System/getenv "PATH"))})]
+               (expect (= 0 exit) output))
+             (expect (= ["version = \"0.2.31.dev7292\""]
+                        (filter #(str/starts-with? % "version = ")
+                                (str/split-lines (slurp pyproject)))))
+             (finally (delete-tree! dir)))))
+  (it "dispatches the trusted publisher for each published beta, apart from its installers"
+      (let [jobs
+            (get (yaml/load (slurp ".github/workflows/beta-native.yml")) "jobs")
+
+            {:keys [exit output calls]}
+            (run-beta-job "sdk" {} {})]
+
+        (expect (= 0 exit) output)
+        (expect
+          (= (str
+               "workflow run python-publish.yml --repo example/vis --ref main -f release_tag=beta-"
+               (apply str (repeat 40 "a"))
+               "\n")
+             calls))
+        (expect (= ["pick" "publish"] (get-in jobs ["sdk" "needs"])))
+        (expect (= "needs.publish.outputs.published == 'true'" (get-in jobs ["sdk" "if"])))
+        (expect (= {"actions" "write"} (get-in jobs ["sdk" "permissions"])))
+        ;; A failed dispatch never keeps installers from the published beta.
+        (expect (not-any? #{"sdk"} (get-in jobs ["index" "needs"]))))))
 
 (defdescribe
   python-interpreter-selection-test

@@ -193,7 +193,12 @@
                  (pr-str (util/sha256-hex (slurp (io/resource "vis-python/package_paths.py"))))
                  ", package_paths.__file__\n"
                  "import blockether.vis.extension as vis\n"
-                 "assert VIS_VERSION == VIS_PYTHON_SDK_VERSION != 'dev'\n"
+                 "assert VIS_VERSION != 'dev'\n"
+                 "# A release bundles VIS_VERSION; any other build bundles a dev release.\n"
+                 "major, minor, patch = map(int, VIS_VERSION.split('.'))\n"
+                 "dev = rf'{major}\\.{minor}\\.{patch + 1}\\.dev[0-9]+(\\+dirty)?'\n"
+                 "sdk = VIS_PYTHON_SDK_VERSION\n"
+                 "assert sdk == VIS_VERSION or re.fullmatch(dev, sdk), sdk\n"
                  "assert re.fullmatch(r'[0-9a-f]{40}(-dirty)?', VIS_SHA_RELEASE)\n"
                  "assert VIS_PYTHON_RUNTIME_VERSION == "
                  (pr-str (str/trim (slurp (io/resource "vis-python-runtime/VERSION"))))

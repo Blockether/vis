@@ -25,6 +25,21 @@
   []
   @build-version)
 
+(def ^:private build-sdk-version
+  (delay (or (some-> (io/resource "vis/SDK_VERSION")
+                     slurp
+                     str/trim
+                     not-empty)
+             (release-version))))
+
+(defn sdk-version
+  "PyPI version of the Python SDK (`vis-agent`) that this build bundles: the
+   `vis/SDK_VERSION` resource that `bin/sdk-version` wrote at build time, else
+   [[release-version]]. A release bundles VIS_VERSION and a beta the development
+   release of its commit, so `vis-agent==<this>` installs the same SDK."
+  []
+  @build-sdk-version)
+
 (defn- resource-file
   "The FILE a classpath resource resolves to, or nil when it lives inside a jar or
    a native image, or is absent."
