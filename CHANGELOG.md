@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.30] - 2026-10-05
+
 ### Added
 - The TUI colors Python code blocks and `python` fences with a built-in
   highlighter for keywords, definitions, types, strings, numbers and comments.
@@ -39,6 +41,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   offsets from its publisher, as its upstream runtime does. The shared assets release has
   its FP32 ONNX bundle and its training checkpoint. Version 0.3.0 of the vis-decisions
   extension trains it and exports new bundles.
+- Automations run a prompt on a schedule or when a signed webhook arrives. Create and
+  edit them in the companion's Automations screen, in the TUI Automations view or with
+  the `automations` tool. Each automation has its own pause control.
+- Council rooms connect your machines through the companion relay. Give each machine a
+  name in Settings, connect one machine to several room relays, and delete a machine
+  together with the rooms that it owns.
+- Settings can differ for each project, group and session. The settings screens review
+  and apply a batch of typed changes, and the Python SDK applies the same batches with
+  `patch_settings`.
+- `Agent.run` in the Python SDK accepts `response_model` and returns a validated
+  structured result. When an answer does not validate, Vis sends the errors back to the
+  model and asks again.
+- Extensions can call session tools through `vis.tools`. Vis prepares and isolates
+  extensions for each project, and before hooks get a preview of each patch.
+- Extension Center shows Vis Official badges, author tags and download counts, and it
+  filters extensions by tag and by official status.
+- In compact mode, the TUI and the companion fold the steps between two progress notes
+  into one digest row. The row shows the step time, the live views and what the steps
+  did.
+- Session search opens on your recent sessions, and you can limit it to one project or
+  group. Projects can be renamed and moved from their menus.
+- Turn footers show the output tokens per second.
+- Vis supports Claude 5.5 on the Vis providers that offer it, and GPT-6.1 Sol.
+- Vis supports the GLiNER2.5 small, multi and multi-Decide models and the trainable
+  GLiNER2.5 Decide 1B model. Laya and GLiNER training shows step progress and resumes
+  from a partial checkpoint (#297).
+- The TUI has sidebar keymaps, compact sidebar dialogs and a full-session fork in the
+  C-x menu. The companion can share clips.
+- XLSX attachments open in your spreadsheet app.
 
 ### Changed
 - Documentation is easier to find. `apropos()` also matches documentation pages
@@ -83,6 +114,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - On a phone, the companion's Activity band abbreviates its counts to `mut`,
   `obs` and `ext`, such as `3 mut · 9 obs · 1 ext`, so they fit on one line.
   Wider screens still show `mutations`, `observations` and `external actions`.
+- Automations are always available. The Allow automations switch and its global and
+  scoped run gates are removed. Each automation keeps its own pause control.
+- Syntax checks and repairs of edited Clojure and Python files run in the language
+  extensions `vis-lang-clojure` and `vis-lang-python`.
+- The agent writes short progress notes while it works. By default, it writes prose in
+  Simplified Technical English, in the language of your latest message (#303).
+- The soft context budget depends on the model family.
+- Settings are grouped by category, and the advanced JSON editors are removed.
+- The TUI and the companion sort sessions by the last message that you sent, not by the
+  last time that you opened them.
+- Model lists also hide outdated models.
 
 ### Fixed
 - Decision 2.0 models now read the complete question. Before, the tokenizer cut the state,
@@ -142,6 +184,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   GNOME Terminal, which sends Shift+Enter as a plain Enter. Before, Shift+Enter sent
   the message or typed characters such as `13;2u` into it, and Windows Terminal kept
   Alt+Enter for full screen, so it had no key for a new line.
+- Sandbox variables survive a sandbox restart, and Vis no longer restarts the sandbox at
+  each turn (#305).
+- An extension's slash command runs in the session where you typed it (#301).
+- Project extension settings show in their project, and a reload from Settings shows the
+  extensions that did not load (#302).
+- GitHub Copilot models get their real limits before Vis sizes the context budget
+  (#304).
+- The web app works over plain HTTP (#299).
+- Commands that use only the host start without loading extensions (#300).
+- A turn recovers when the provider stops an answer at its output limit or drops the
+  stream (#296).
+- GLiNER uploads use the correct size limits, and decision models report their input
+  token limits (#294, #295).
+- Vis asks you to sign in again when a provider rejects the refresh token.
+- Activity no longer loses rows or text.
+- The companion and the TUI have many layout and speed fixes.
 
 ## [v0.2.29] - 2026-09-25
 
