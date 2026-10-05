@@ -329,7 +329,7 @@
     "- Join paths with `/`. Keep results in variables and reuse them. Print only the fields you need.\n"
     "- Read a field of any result or of `session` as `r['key']` or `r.key`. An extension result is a frozen record "
     "of its public fields, without methods. Its declared sequences iterate. For a plain dict, use "
-    "`dataclasses.asdict(r)`, not `dict(r)`.\n"
+    "`dataclasses.asdict(r)`, not `dict(r)`. Import `dataclasses` first.\n"
     "- A wrong name raises an error that lists the real fields; use them. For an unknown shape, print its keys and "
     "types or `dir(value)`.\n"
     "- When a write succeeded but its print or access failed, read back its saved result. Do not write again.\n"

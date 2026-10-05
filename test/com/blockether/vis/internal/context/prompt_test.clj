@@ -653,9 +653,12 @@
   ;; #259: a record's fields come from its model and its errors, never from guessed synonyms.
   (it "reads extension records through their public fields and error-listed names"
       (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
+        ;; User report: a block called `dataclasses.asdict` without the import, after a restart.
+        ;; The sandbox does not pre-import `dataclasses`, so the rule names the import.
         (doseq [rule ["An extension result is a frozen record of its public fields"
                       "without methods. Its declared sequences iterate"
                       "For a plain dict, use `dataclasses.asdict(r)`, not `dict(r)`."
+                      "Import `dataclasses` first."
                       "A wrong name raises an error that lists the real fields"]]
           (expect (str/includes? text rule) rule))))
   (it
