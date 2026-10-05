@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render } from '@testing-library/react';
+import { act, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { setStepsSummarized } from '../lib/transcript-display';
@@ -44,7 +44,7 @@ const FRAME_MS = 70;
  */
 function rampFrames(
   count: number,
-  { unfold = false, summarize = true }: { unfold?: boolean; summarize?: boolean } = {},
+  { summarize = true }: { summarize?: boolean } = {},
 ): { frames: number; segments: number; folded: boolean } {
   const queue: FrameRequestCallback[] = [];
   let clock = 0;
@@ -80,14 +80,7 @@ function rampFrames(
     return frames;
   };
 
-  let frames = pump();
-  if (unfold) {
-    // The rule is the only button a folded trace paints.
-    const rule = view.container.querySelector('button');
-    if (!rule) throw new Error('a folded trace painted no rule to press');
-    fireEvent.click(rule);
-    frames += pump();
-  }
+  const frames = pump();
   const segments = rail();
   const folded = [...view.container.querySelectorAll('button')].some((button) =>
     /earlier step/.test(button.textContent ?? ''),
@@ -103,27 +96,18 @@ afterEach(() => {
 });
 
 describe('a trace backfilling the turns a reader is scrolling into', () => {
-  // Regression, user report ("this session is so big it will not load"): one turn
-  // of a real session held 1,116 iterations, and the trace painted every one of
-  // them — measured in Chromium at 393x852, 107,090 px and 23,806 DOM nodes for
-  // that turn alone, 180 screens a reader had to drag through. The ramp above
-  // decides how FAST the trace mounts; only a fold decides how MUCH of it exists.
-  it('folds separate steps instead of mounting a whole turn nobody scrolled to', () => {
+  // Regression, user request (no earlier-steps control in any mode, as in the TUI). The fold
+  // came from a real turn of 1,116 iterations: painted whole, it measured 107,090 px and
+  // 23,806 DOM nodes in Chromium at 393x852. The ramp still mounts every segment of a long
+  // turn in a handful of frames, not one frame per handful.
+  it('never folds separate steps, and still mounts them in a handful of frames', () => {
     const { frames, segments, folded } = rampFrames(300, { summarize: false });
-
-    // The last 24 steps, plus the rule that says how many are behind them.
-    expect(segments).toBe(25);
-    expect(folded).toBe(true);
-    expect(frames).toBeLessThanOrEqual(20);
-  });
-
-  it('hands the rest back in a handful of frames, not one frame per handful', () => {
-    const { frames, segments } = rampFrames(300, { unfold: true, summarize: false });
 
     // A step that triples until it hurts reaches all 300 segments in well
     // under twenty paid frames. The old floor-bound controller needed one
     // frame per two segments.
     expect(segments).toBe(300);
+    expect(folded).toBe(false);
     expect(frames).toBeLessThanOrEqual(20);
   }, 20_000); // The frame-count assertion owns performance, not jsdom wall time.
 

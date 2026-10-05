@@ -65,10 +65,9 @@ When the steps open live views, a closed row ends its counts with **live**, for 
 To see each step as a separate Activity, turn off **Compact mode** in Settings, under **Responses**.
 The terminal and each app keep their own choice.
 
-In the desktop or phone app, a long turn can start with an **N earlier steps** button. Select it to show the older steps of the turn.
-For a large turn, the app first loads only the newest steps, so that the session opens quickly.
-With Compact mode off, the app also hides the oldest steps of a very long turn, so that scrolling stays smooth.
-In Compact mode, the digests keep a long turn short, so the app shows all the steps that it loaded.
+In the desktop or phone app, a large turn first shows only its newest steps, so that the session opens quickly.
+The app loads the older steps when you scroll near them, and then shows every step, as the terminal does.
+If the app cannot load them, it shows the error and a **Try again** button.
 
 ### Queue a message
 

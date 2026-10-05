@@ -2498,11 +2498,6 @@ const RAMP_STEP_TARGET_MS = 100;
 /** Over this the step really did hurt the scroll: halve and re-learn. */
 const RAMP_STEP_LONG_MS = 200;
 
-// Initially fold exceptionally long traces to their final segments; expansion feeds
-// earlier segments through the frame ramp. Only separate steps fold: in Compact mode
-// the digests already keep a long turn short, so the ramp mounts every segment.
-const SEGMENT_FOLD = 24;
-
 // Only the bottom-most expanding trace ramps at once, avoiding competing layout work.
 const rampQueue: symbol[] = [];
 
@@ -3029,9 +3024,6 @@ export const IterationTrace = memo(function IterationTrace({
     whole ? 0 : Math.max(0, segments.length - SEGMENT_FIRST_PAINT),
   );
 
-  // The reader pressed the rule: this trace never folds again.
-  const [unfolded, setUnfolded] = useState(false);
-
   // `whole` also arrives LATE, and it has to count then too. WHICH reconcile
   // tick retires the running-turn bubble is not this trace's business: the settled row
   // can mount a tick BEFORE the bubble is dropped — the registry still calls the
@@ -3041,14 +3033,9 @@ export const IterationTrace = memo(function IterationTrace({
   // and no frame.
   const hidden = whole ? 0 : hiddenSegments;
 
-  // Where the ramp stops. `hidden` still only ever SHRINKS, so a trace that is
-  // being written never folds away a segment it has already painted: the floor
-  // rises under it and the ramp simply has nothing left to do. A Compact trace
-  // has no floor: its digests are the fold.
-  const foldFloor =
-    whole || unfolded || summarize ? 0 : Math.max(0, segments.length - SEGMENT_FOLD);
-
-  const rampDone = hidden <= foldFloor;
+  // The ramp mounts every segment: no trace folds its earlier steps. Digests keep a long
+  // Compact turn short, and separate steps show every step, as in the TUI.
+  const rampDone = hidden === 0;
 
   // A chunk per frame, so the work the first paint skipped never lands as one
   // long frame either.
@@ -3092,11 +3079,11 @@ export const IterationTrace = memo(function IterationTrace({
       }
 
       step.startedAt = performance.now();
-      setHiddenSegments((count) => Math.max(foldFloor, count - step.size));
+      setHiddenSegments((count) => Math.max(0, count - step.size));
     };
     frame = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(frame);
-  }, [foldFloor, hiddenSegments, rampDone, rampId, whole]);
+  }, [hiddenSegments, rampDone, rampId, whole]);
 
   const shown = hidden > 0 ? segments.slice(hidden) : segments;
   const unmatchedViews = liveViews.filter(
@@ -3116,14 +3103,6 @@ export const IterationTrace = memo(function IterationTrace({
   return (
     <ActivityAttachmentContext.Provider value={iterationAttachment(iterations, client, sid)}>
       <div ref={rootRef} className="mb-2.5 grid gap-2.5">
-        {rampDone && hidden > 0 && (
-          <LoadMore
-            label={`Show ${hidden} earlier step${hidden === 1 ? '' : 's'} of this turn`}
-            onClick={() => setUnfolded(true)}
-          >
-            {hidden} earlier step{hidden === 1 ? '' : 's'}
-          </LoadMore>
-        )}
         {shown.map((segment) => (
           <TraceSegment
             key={segment.key}
@@ -3986,18 +3965,16 @@ function TurnStamp({ position, createdAt }: { position?: number; createdAt?: num
   );
 }
 
-// Summarized, a windowed turn reads its earlier steps when its trace nears the reader. The
-// digests are the fold, as in the ramp (`SEGMENT_FOLD`): a control that counted the hidden
-// steps opened as a few notes and digests. Only separate steps keep that control.
+// A windowed turn reads its earlier steps when its trace nears the reader, in both step modes
+// and without a control, as the TUI shows every step. A control that counted the hidden steps
+// opened in Compact mode as a few notes and digests.
 const HISTORY_NEAR_MARGIN = '100%';
 
 function TurnTrace({
   turn,
   ...props
 }: Omit<ComponentProps<typeof IterationTrace>, 'iterations'> & { turn: TranscriptTurn }) {
-  const summarize = useStepsSummarized();
   const [history, setHistory] = useState<TranscriptIteration[] | null>(null);
-  const [loadingHistory, setLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const markRef = useRef<HTMLDivElement>(null);
   const reading = useRef(false);
@@ -4022,7 +3999,6 @@ function TurnTrace({
     const signal = alive.current;
     if (reading.current || !signal || !props.client || !props.sid) return;
     reading.current = true;
-    setLoadingHistory(true);
     setHistoryError('');
     try {
       const rows = await props.client.turnTrace(props.sid, turn.turn_id, signal);
@@ -4031,7 +4007,6 @@ function TurnTrace({
       if (!signal.aborted) setHistoryError((cause as Error).message);
     } finally {
       reading.current = false;
-      if (!signal.aborted) setLoadingHistory(false);
     }
   };
   const reach = useRef(readHistory);
@@ -4039,7 +4014,7 @@ function TurnTrace({
     reach.current = readHistory;
   });
   // A failed read waits for the reader's retry, not for the next scroll past it.
-  const isArmed = summarize && canRead && !historyError;
+  const isArmed = canRead && !historyError;
   useEffect(() => {
     const mark = markRef.current;
     if (!isArmed || !mark) return;
@@ -4060,18 +4035,9 @@ function TurnTrace({
     <>
       {/* The mark sits above the steps it loads, so it never anchors the reader. */}
       {isArmed && <div ref={markRef} aria-hidden="true" data-anchor="skip" className="h-px" />}
-      {canRead && summarize && historyError && (
+      {canRead && historyError && (
         <LoadMore label="Try loading earlier steps again" tone="error" onClick={() => void readHistory()}>
           Try again
-        </LoadMore>
-      )}
-      {canRead && !summarize && (
-        <LoadMore
-          label={`Show ${earlier} earlier step${earlier === 1 ? '' : 's'} of this turn`}
-          onClick={() => void readHistory()}
-          disabled={loadingHistory}
-        >
-          {loadingHistory ? 'Loading earlier steps…' : `${earlier} earlier step${earlier === 1 ? '' : 's'}`}
         </LoadMore>
       )}
       {historyError && <p role="alert" className="text-ui text-err-ink">{historyError}</p>}
