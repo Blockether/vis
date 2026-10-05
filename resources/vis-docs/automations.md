@@ -2,7 +2,7 @@
 
 An automation gives Vis a prompt without a message from you. It starts on a schedule, at a set
 time or when another service sends a webhook. Vis reports each result in a session, as a phone
-notification or at an address that you choose. **Automations are off by default.**
+notification or at an address that you choose. Automations are always available.
 
 ## When to use
 
@@ -108,29 +108,13 @@ run always reports.
 | `completed` | The run finished with an answer. |
 | `failed` | The run stopped with an error. |
 | `cancelled` | The turn of the run was cancelled. |
-| `skipped` | Vis did not start the run. The reason is `overlap`, `queue_full` or `settings`. |
+| `skipped` | Vis did not start the run. The reason is `overlap` or `queue_full`. |
 | `unknown` | The gateway stopped before the run finished. |
 
-## Turn on automations
+## Keep automations running
 
-Automations are off on each gateway until you turn them on. The gateway is the background service
-that the TUI and the app connect to.
-
-1. Open **Settings** in the TUI or the app.
-2. Turn on **Allow automations**.
-
-You can also set the toggle in a configuration file, as in [Feature
-toggles](configuration.md#feature-toggles). Run `/reload` after editing.
-
-```yaml
-toggles:
-  automations: true   # default false; lets schedules and webhooks start turns
-```
-
-The same setting exists for a project, a group and a session. Set it to `false` there to block
-runs in that scope. A blocked run ends as `skipped` with the reason `settings`. A lower scope cannot
-turn automations on when the global value or a higher scope is off. [Project, group and session
-settings](configuration.md#project-group-and-session-settings) explains the scopes.
+Automations are always available. Each automation starts enabled. To stop its triggers, [pause that
+automation](#manage-automations).
 
 Vis runs automations only while the gateway runs. If the gateway stops during a run, the run ends
 as `unknown`.
@@ -339,8 +323,6 @@ Vis drops a repeated delivery by its delivery ID. It reads the ID from `X-GitHub
 
 ## See also
 
-- [Configuration](configuration.md) — the `automations` toggle and the settings of a project, a group
-  or a session.
 - [Sessions](sessions.md) — find and continue the sessions that runs create.
 - [Running a gateway](gateway-service.md) — keep a gateway online, so that schedules and webhooks
   work.

@@ -7,12 +7,9 @@
    running run of a stopped gateway becomes unknown and never runs again."
   (:require [babashka.http-client :as http]
             [clojure.string :as str]
-            [com.blockether.vis.contract.toggle :as toggle-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.automation.core :as automation]
             [com.blockether.vis.internal.automation.webhook :as webhook]
-            [com.blockether.vis.internal.config.scoped :as scoped]
-            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.util :as util]
@@ -23,17 +20,6 @@
            (java.util UUID)
            (java.util.concurrent ExecutorService Executors)
            (java.util.concurrent.atomic AtomicBoolean)))
-
-(toggles/register-toggle!
-  {:id "automations"
-   :label "Allow automations"
-   :default false
-   :inheritance "restrict"
-   :scopes toggle-contract/scopes
-   :description
-   "Allow schedules and webhooks to start turns. An ancestor denial cannot be overridden."
-   :persist? true
-   :group :automations})
 
 (def ^:private tick-ms 5000)
 
@@ -124,29 +110,10 @@
                          (assoc (into {} (filter #(< cutoff (long (val %)))) turns)
                            turn-id (util/now-ms))))))
 
-;; Settings
-
-(defn- setting-value [rows] (:value (first (filter #(= "automations" (:id %)) rows))))
-
-(defn allowed?
-  "True when the `automations` setting allows runs for this target."
-  [db target]
-  (true? (if (= "session" (get target "mode"))
-           (get (scoped/values db (get target "session_id")) "automations")
-           (setting-value (scoped/settings db
-                                           (if-let [group-id (get target "group_id")]
-                                             (scoped/target db "group" group-id)
-                                             (scoped/target db "global" nil)))))))
-
-(defn globally-enabled?
-  [db]
-  (true? (setting-value (scoped/settings db (scoped/target db "global" nil)))))
-
 (defn overview
-  "Every automation of this machine and the global run gate, as the gateway list
-   route and the Python host answer them."
+  "List every automation of this machine for the gateway and the Python host."
   [db now]
-  {"automations" (automation/list-all db now) "is_enabled" (globally-enabled? db)})
+  {"automations" (automation/list-all db now)})
 
 ;; Delivery
 
@@ -399,8 +366,6 @@
               (cond
                 (and (= "session" mode) (not (call :session? (get target "session_id"))))
                 (finish! db run-id {:status "failed" :error "The target session does not exist."})
-                (not (allowed? db target))
-                (finish! db run-id {:status "skipped" :reason "settings"})
                 (get definition "deliver_only")
                 (finish! db run-id {:status "completed" :answer (:request run)})
                 :else (let [sid (if (= "session" mode)
@@ -776,7 +741,7 @@
 
                      (when (.get running)
                        (let [to (util/now-ms)]
-                         (try (when (globally-enabled? db) (fire-schedules! db from to once-from))
+                         (try (fire-schedules! db from to once-from)
                               (deliver-due! db)
                               (catch Throwable t
                                 (tel/log!

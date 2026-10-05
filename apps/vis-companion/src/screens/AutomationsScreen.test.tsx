@@ -25,11 +25,12 @@ describe('Automations workspace', () => {
     expect(screen.queryByText(/Automations are off/)).toBeNull();
   });
 
-  it('says when the machine stops every run, and how to start without automations', async () => {
-    render(<AutomationsWorkspace client={storyAutomationsClient({ enabled: false, empty: true })} />);
-    expect(await screen.findByText(/Automations are off on this machine/)).toBeVisible();
-    expect(screen.getByText('No automations on this machine')).toBeVisible();
+  it('shows how to create the first automation without a feature switch', async () => {
+    render(<AutomationsWorkspace client={storyAutomationsClient({ empty: true })} />);
+    expect(await screen.findByText('No automations on this machine')).toBeVisible();
     expect(screen.getByText('0 automations')).toBeVisible();
+    expect(screen.queryByText(/Automations are off/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'New automation' })).toBeEnabled();
   });
 
   it('pauses and runs an automation now', async () => {

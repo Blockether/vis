@@ -16,7 +16,7 @@
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import type { GatewayHealth, GatewayProtocol } from './types';
 
-/** Protocol 15 requires the Council rooms answer with one entry for each relay. */
+/** Protocol 16 removes the global automations gate from the list response. */
 export const APP_PROTOCOL = gatewaySchema.$defs.handshake.properties.protocol.const;
 
 /** Read the gateway floor from the same contract as the engine. */

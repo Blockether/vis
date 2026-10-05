@@ -80,7 +80,7 @@ describe('automation labels', () => {
 
   it('explains run reason codes and keeps other text as it is', () => {
     expect(runReason({ ...STORY_AUTOMATION_RUN, status: 'skipped', reason: 'settings' })).toBe(
-      'Automations are off for this target.',
+      'settings',
     );
     expect(runReason({ ...STORY_AUTOMATION_RUN, status: 'skipped', reason: 'overlap' })).toBe(
       'The previous run was still running.',

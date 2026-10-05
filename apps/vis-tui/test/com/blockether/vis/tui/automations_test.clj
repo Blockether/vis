@@ -114,8 +114,8 @@
              (it "reads the automations and reports the gateway error message"
                  (with-redefs [vis/request! (fn [method path _]
                                               (expect (= [:get "/v1/automations"] [method path]))
-                                              (response 200 {"automations" [] "is_enabled" false}))]
-                   (expect (= {:body {"automations" [] "is_enabled" false}} (automations/fetch))))
+                                              (response 200 {"automations" []}))]
+                   (expect (= {:body {"automations" []}} (automations/fetch))))
                  (with-redefs [vis/request!
                                (fn [& _]
                                  (response 409 {"error" {"type" "off" "message" "Turned off"}}))]
@@ -123,6 +123,21 @@
                  (with-redefs [vis/request! (fn [& _]
                                               (throw (ex-info "down" {})))]
                    (expect (= {:error "The gateway did not answer"} (automations/fetch))))))
+
+(defdescribe availability-test
+             (it "opens an empty list without an enablement field"
+                 (with-redefs [automations/fetch
+                               (constantly {:body {"automations" []}})
+
+                               dlg/list-dialog!
+                               (fn [_ title items _]
+                                 (expect (= "Automations" title))
+                                 (expect (= [{:label
+                                              "No automations. Ask Vis in the chat to create one."}]
+                                            items))
+                                 nil)]
+
+                   (automations/show! nil))))
 
 (defn- view-run
   "Run the view with a scripted list choice and action; return the gateway calls,
@@ -144,7 +159,7 @@
                   (fn [method path opts]
                     (swap! calls conj [method path (:body opts)])
                     (cond (= [:get "/v1/automations"] [method path])
-                          (response 200 {"automations" [automation] "is_enabled" true})
+                          (response 200 {"automations" [automation]})
                           (str/ends-with? path "/secrets")
                           (response 201 {"kind" "webhook" "secret" "whsec_new"})
                           (str/starts-with? path "/v1/automations/runs") (response 200 {"runs" []})

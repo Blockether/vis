@@ -36,9 +36,7 @@
   "Run `f` with an in-memory store as the gateway database."
   [f]
   (let [db (ps/db-create-connection! :memory)]
-    (try (with-redefs [lp/db-info (constantly db)
-                       runner/globally-enabled? (constantly true)]
-
+    (try (with-redefs [lp/db-info (constantly db)]
            (f db))
          (finally (ps/db-dispose-connection! db)))))
 
@@ -65,7 +63,7 @@
           (let [{:keys [status json]} (call :get "/v1/automations")]
             (expect (= 200 status))
             (expect (valid? "automations_list" json))
-            (expect (true? (get json "is_enabled")))
+            (expect (not (contains? json "is_enabled")))
             (expect (= [id] (mapv #(get % "id") (get json "automations")))))
           (expect (= id
                      (get-in (call :get "/v1/automations/:automation-id" :params params)

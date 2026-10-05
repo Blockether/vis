@@ -83,7 +83,7 @@
             (expect (= "Morning report" (get read "name")))
             (expect (false? (get paused "enabled")))
             (expect (= [id] (mapv #(get % "id") (get listed "automations"))))
-            (expect (false? (get listed "is_enabled")))
+            (expect (not (contains? listed "is_enabled")))
             (expect (= {"id" id "name" "Morning report" "is_deleted" true} deleted))
             (expect (= [] (get (:result (host/list-automations env)) "automations")))
             (expect (= {"webhook" false "callback" false} (get created "secrets")))
@@ -133,12 +133,11 @@
                           :status 403}
                          (refusal f))))
             (expect (= [] (get (:result (host/list-automations env)) "automations")))))))
-  (it "appears with its guidance only while the automations setting is on"
+  (it "keeps its tools and guidance available without a feature toggle"
+      ;; Regression: automations must stay available even with an old denial.
       (binding [toggles/*overrides* {"automations" false}]
-        (expect (false? (host/enabled?)))
-        (expect (nil? (host/prompt {}))))
-      (binding [toggles/*overrides* {"automations" true}]
-        (expect (true? (host/enabled?)))
+        (expect (nil? (toggles/toggle-spec "automations")))
+        (expect (every? #(nil? (:active-fn %)) host/symbols))
         (expect (str/includes? (host/prompt {}) "automations.create(definition)")))))
 
 (defdescribe
@@ -158,14 +157,13 @@
     "success"
     (it "lists automations and runs as tables"
         (expect (= {"headline" "Listed automations"
-                    "summary" "2 automations · Automations are off"
+                    "summary" "2 automations"
                     "content" [{"type" "table"
                                 "columns" ["Automation" "State"]
                                 "rows" [["Morning report" "On"] ["Build check" "Paused"]]}]}
                    (presentation :automations.list
                                  {"automations" [{"name" "Morning report" "enabled" true}
-                                                 {"name" "Build check" "enabled" false}]
-                                  "is_enabled" false})))
+                                                 {"name" "Build check" "enabled" false}]})))
         (expect (= {"headline" "Listed automation runs"
                     "summary" "1 run"
                     "content" [{"type" "table"
@@ -191,7 +189,7 @@
                         "summary")))))
   (it "shows empty lists"
       (expect (= {"headline" "Listed automations" "summary" "No automations" "content" []}
-                 (presentation :automations.list {"automations" [] "is_enabled" true})))
+                 (presentation :automations.list {"automations" []})))
       (expect (= {"headline" "Listed automation runs" "summary" "No runs" "content" []}
                  (presentation :automations.runs {"runs" []}))))
   (it "keeps the error of a failed or cancelled call"

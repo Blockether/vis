@@ -46,7 +46,7 @@ from blockether.vis.engine import GatewayClient
 
 with GatewayClient(os.environ["VIS_GATEWAY_URL"], token=os.environ["VIS_GATEWAY_TOKEN"]) as client:
     listing = client.get_automations()
-    print("Automations allowed:", listing["is_enabled"])
+    print("Automations:", len(listing["automations"]))
 ```
 
 The next examples are calls on this `client` inside the `with` block.
@@ -116,7 +116,7 @@ automation = client.get_automation(automation_id)
 print(automation["webhook"], automation["secrets"], automation["last_run"])
 ```
 
-`is_enabled` is the global `automations` setting. Each automation has the [parts](automations.md#how-automations-work)
+The list contains `automations`. Each automation has the [parts](automations.md#how-automations-work)
 that you set and these fields:
 
 - `next_run_at` is the next scheduled time in milliseconds since 1970 UTC, or `None`.
@@ -133,8 +133,8 @@ vis_api "$VIS_GATEWAY_URL/v1/automations"
 vis_api "$VIS_GATEWAY_URL/v1/automations/$AUTOMATION_ID"
 ```
 
-The list has `automations` and `is_enabled`, the global `automations` setting. Each automation has
-the [parts](automations.md#how-automations-work) that you set and these fields:
+The list contains `automations`. Each automation has the [parts](automations.md#how-automations-work)
+that you set and these fields:
 
 - `next_run_at` is the next scheduled time in milliseconds since 1970 UTC, or `null`.
 - `webhook` has the `path` of the webhook address, or is `null`.

@@ -73,8 +73,6 @@ export interface Automation {
 
 export interface AutomationList {
   automations: Automation[];
-  /** False while the global `automations` setting stops every run. */
-  is_enabled: boolean;
 }
 
 export interface AutomationRunList {
@@ -182,7 +180,6 @@ export function deliveryLabel(delivery: Automation['delivery']): string {
 const REASONS: Record<string, string> = {
   overlap: 'The previous run was still running.',
   queue_full: 'Too many runs were waiting.',
-  settings: 'Automations are off for this target.',
 };
 
 /** Why a run was skipped or ended, as a sentence. An unknown reason shows as it is. */

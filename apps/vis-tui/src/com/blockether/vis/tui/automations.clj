@@ -286,15 +286,12 @@
       (if error
         (vis/notify! (str "Could not read automations: " error) :level :error)
         (let [automations (get body "automations")
-              title (if (get body "is_enabled")
-                      "Automations"
-                      "Automations · Turn on Allow automations in Settings")
               items (if (seq automations)
                       (rows automations)
                       [{:label "No automations. Ask Vis in the chat to create one."}])
               choice (dlg/list-dialog!
                        screen
-                       title
+                       "Automations"
                        items
                        {:filter? (> (count items) 8) :enter-label "open" :height :content})]
 

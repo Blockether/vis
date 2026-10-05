@@ -201,14 +201,6 @@ export function AutomationsWorkspace({
           </Button>
         </span>
       </div>
-      {list && !list.is_enabled && (
-        <div className="px-3 pt-3">
-          <Banner kind="warn">
-            Automations are off on this machine, so no run starts. Turn on Allow automations in
-            the settings of this machine.
-          </Banner>
-        </div>
-      )}
       {error && (
         <div className="px-3 pt-3">
           <Banner kind="err">{error}</Banner>

@@ -10,8 +10,7 @@ const AutomationsDialog = lazy(async () => ({
 }));
 
 /**
- * The global entry is present only when a paired machine allows automations or still keeps
- * some, so a machine with the feature off adds no control.
+ * Show the global entry for each paired machine that answers the automations request.
  */
 export function AutomationsLauncher({
   gateways,
@@ -31,8 +30,8 @@ export function AutomationsLauncher({
     void Promise.all(
       gateways.map(async (gateway) => {
         try {
-          const list = await new GatewayClient(gateway).automations(controller.signal);
-          return { url: gateway.url, shown: list.is_enabled || list.automations.length > 0 };
+          await new GatewayClient(gateway).automations(controller.signal);
+          return { url: gateway.url, shown: true };
         } catch {
           return { url: gateway.url, shown: null };
         }

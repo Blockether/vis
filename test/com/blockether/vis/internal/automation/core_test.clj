@@ -99,8 +99,7 @@
             (expect (= (+ now 3600000) (get created "next_run_at")))
             (expect (= {"webhook" false "callback" false} (get created "secrets")))
             (expect (nil? (get created "webhook")))
-            (expect (valid-wire? "automation_list"
-                                 {"automations" (automation/list-all db now) "is_enabled" false}))
+            (expect (valid-wire? "automation_list" {"automations" (automation/list-all db now)}))
             (let [changed (automation/update! db
                                               id
                                               {"enabled" false

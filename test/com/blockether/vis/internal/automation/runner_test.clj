@@ -3,7 +3,9 @@
             [com.blockether.vis.internal.automation.core :as automation]
             [com.blockether.vis.internal.automation.runner :as runner]
             [com.blockether.vis.internal.automation.webhook :as webhook]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.persistance.core :as ps]
+            [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (com.sun.net.httpserver HttpExchange HttpHandler HttpServer)
@@ -29,7 +31,7 @@
 
 (defn- install!
   "Install a fake runtime. `submit!` answers the turn result; every call is recorded."
-  [calls submit!]
+  [calls submit! & {:keys [session-id] :or {session-id "s-old"}}]
   (runner/install-runtime! {:submit! (fn [sid opts]
                                        (swap! calls conj [:submit sid opts])
                                        (submit! sid opts))
@@ -39,7 +41,7 @@
                             :delete-session! (fn [sid]
                                                (swap! calls conj [:delete sid]))
                             :session? (fn [sid]
-                                        (= "s-old" sid))
+                                        (= session-id sid))
                             :notify! (fn [alert]
                                        (swap! calls conj [:notify alert]))}))
 
@@ -50,8 +52,8 @@
 (defn- calls-of [calls kind] (filter #(= kind (first %)) @calls))
 
 (defn- with-runner
-  "Run `f` with a fresh store, a fake runtime and the setting `allowed`."
-  [allowed submit! f]
+  "Run `f` with a fresh store and a fake runtime."
+  [submit! f]
   (let [db
         (ps/db-create-connection! :memory)
 
@@ -59,9 +61,7 @@
         (atom [])]
 
     (install! calls submit!)
-    (try (with-redefs [runner/allowed? (constantly allowed)]
-           (f db calls))
-         (finally (ps/db-dispose-connection! db)))))
+    (try (f db calls) (finally (ps/db-dispose-connection! db)))))
 
 (def ^:private input
   {"name" "Nightly check"
@@ -76,8 +76,7 @@
 (defdescribe
   run-test
   (it "runs a temporary session, deletes it and sends one alert"
-      (with-runner true
-                   (answer "The build is green.")
+      (with-runner (answer "The build is green.")
                    (fn [db calls]
                      (let [id
                            (create! db {})
@@ -108,7 +107,6 @@
   (it
     "keeps a silent answer quiet and always reports a failure"
     (with-runner
-      true
       (fn [_ opts]
         (if (str/includes? (:request opts) "fail")
           {"status" "needs_input" "turn_id" "t-2" "content" []}
@@ -129,7 +127,6 @@
           (expect (= [(:id failed)] (map #(get-in % [1 :run "id"]) (calls-of calls :notify))))))))
   (it "uses an existing session and refuses a missing one"
       (with-runner
-        true
         (answer "Done.")
         (fn [db calls]
           (let [kept
@@ -152,8 +149,7 @@
             (expect (empty? (calls-of calls :delete)))))))
   (it "marks the session of a running turn as an automation session"
       (let [during (atom nil)]
-        (with-runner true
-                     (fn [sid _]
+        (with-runner (fn [sid _]
                        (reset! during (runner/automation-session? sid))
                        ((answer "Done.") sid nil))
                      (fn [db _]
@@ -176,48 +172,69 @@
             started
             (atom #{})]
 
-        (with-runner true
-                     (fn [sid opts]
-                       (let [prompt (:display-request opts)]
-                         (swap! started conj prompt)
-                         @(get gates prompt)
-                         ((answer "Done.") sid nil)))
-                     (fn [db _]
-                       (try (let [target
-                                  {"target" {"mode" "session" "session_id" "s-old"}}
+        (with-runner
+          (fn [sid opts]
+            (let [prompt (:display-request opts)]
+              (swap! started conj prompt)
+              @(get gates prompt)
+              ((answer "Done.") sid nil)))
+          (fn [db _]
+            (try (let [target
+                       {"target" {"mode" "session" "session_id" "s-old"}}
 
-                                  start!
-                                  #(get (runner/run-now! db
-                                                         (create! db
-                                                                  (assoc target
-                                                                    "name" %
-                                                                    "prompt" %)))
-                                        "id")
+                       start!
+                       #(get (runner/run-now! db
+                                              (create! db
+                                                       (assoc target
+                                                         "name" %
+                                                         "prompt" %)))
+                             "id")
 
-                                  first-id
-                                  (start! "First")
+                       first-id
+                       (start! "First")
 
-                                  second-id
-                                  (start! "Second")]
+                       second-id
+                       (start! "Second")]
 
-                              (expect (eventually #(= #{"First" "Second"} @started)))
-                              (deliver (get gates "First") true)
-                              (expect (= "completed" (:status (settled db first-id))))
-                              (expect (runner/automation-session? "s-old"))
-                              (expect (runner/quiet-turn? "s-old" {}))
-                              (deliver (get gates "Second") true)
-                              (expect (= "completed" (:status (settled db second-id))))
-                              (expect (false? (runner/automation-session? "s-old")))
-                              (expect (false? (runner/quiet-turn? "s-old" {}))))
-                            (finally (run! #(deliver % true) (vals gates))))))))
-  (it "skips a run that the setting blocks and sends deliver-only text without a model"
-      (with-runner false
-                   (answer "unused")
-                   (fn [db _]
-                     (let [blocked (settled db (get (runner/run-now! db (create! db {})) "id"))]
-                       (expect (= ["skipped" "settings"] [(:status blocked) (:reason blocked)])))))
+                   (expect (eventually #(= #{"First" "Second"} @started)))
+                   (deliver (get gates "First") true)
+                   (expect (= "completed" (:status (settled db first-id))))
+                   (expect (runner/automation-session? "s-old"))
+                   (expect (runner/quiet-turn? "s-old" {}))
+                   (deliver (get gates "Second") true)
+                   (expect (= "completed" (:status (settled db second-id))))
+                   (expect (false? (runner/automation-session? "s-old")))
+                   (expect (false? (runner/quiet-turn? "s-old" {}))))
+                 (finally (run! #(deliver % true) (vals gates))))))))
+  (it "runs in every target despite old global or scoped denials"
+      ;; Regression: the removed permission gate must not stop an automation run.
       (with-runner
-        true
+        (answer "Done.")
+        (fn [db calls]
+          (let [project
+                (ps/db-create-project! db {:name "Automation project"})
+
+                group
+                (ps/db-create-session-group! db (:id project) {:name "Automation group"})
+
+                sid
+                (str (h/store-session! db {:title "Automation target"}))]
+
+            (ps/db-set-session-group! db sid (:id group))
+            (ps/db-set-scoped-setting! db "group" (:id group) "automations" false)
+            (ps/db-set-scoped-setting! db "session" sid "automations" false)
+            (install! calls (answer "Done.") :session-id sid)
+            (binding [toggles/*overrides* {"automations" false}]
+              (doseq [target [{"mode" "temporary"} {"mode" "new"}
+                              {"mode" "new" "group_id" (str (:id group))}
+                              {"mode" "session" "session_id" sid}]]
+                (let [run (settled db
+                                   (get (runner/run-now! db (create! db {"target" target})) "id"))]
+                  (expect (= "completed" (:status run)))
+                  (expect (nil? (:reason run)))))
+              (expect (= 4 (count (calls-of calls :submit)))))))))
+  (it "sends deliver-only text without a model"
+      (with-runner
         (answer "unused")
         (fn [db calls]
           (let [sent (settled db
@@ -225,8 +242,7 @@
             (expect (= ["completed" "Check the build."] [(:status sent) (:answer sent)]))
             (expect (empty? (calls-of calls :submit)))))))
   (it "marks the open runs of a stopped gateway as unknown"
-      (with-runner true
-                   (answer "unused")
+      (with-runner (answer "unused")
                    (fn [db _]
                      (let [id
                            (create! db {})
@@ -247,7 +263,6 @@
   (it
     "keeps the runs of this gateway and marks the runs of a reused process ID"
     (with-runner
-      true
       (answer "unused")
       (fn [db _]
         (let [id
@@ -283,10 +298,22 @@
 
 (defdescribe
   schedule-test
+  (it "starts due schedules without a feature toggle"
+      ;; Regression: the scheduler must run without the old global permission.
+      (with-runner (answer "Done.")
+                   (fn [db _]
+                     (let [id (create! db {"triggers" [{"kind" "once" "at" (util/now-ms)}]})]
+                       (with-redefs [ps/db-shared-connection! (constantly db)]
+                         (let [stop! (runner/start! :memory)]
+                           (try (expect (eventually #(= "completed"
+                                                        (:status (first (ps/db-automation-runs
+                                                                          db
+                                                                          {:automation-id id
+                                                                           :limit 1}))))))
+                                (finally (stop!)))))))))
   (it "claims each due occurrence once and skips an overlap"
       (let [release (promise)]
-        (with-runner true
-                     (fn [_ _]
+        (with-runner (fn [_ _]
                        @release
                        {"status" "done" "turn_id" "t" "content" []})
                      (fn [db _]
@@ -304,8 +331,7 @@
                          (expect (eventually #(= "completed" (:status (last (runs))))))
                          (expect (eventually #(not (runner/busy? id)))))))))
   (it "reads an automation again after a change in the same millisecond"
-      (with-runner true
-                   (answer "Done.")
+      (with-runner (answer "Done.")
                    (fn [db _]
                      (let [t0
                            (System/currentTimeMillis)
@@ -334,7 +360,6 @@
   (it
     "checks, filters, renders and deduplicates deliveries"
     (with-runner
-      true
       (answer "Reviewed.")
       (fn [db calls]
         (let
@@ -394,7 +419,6 @@
       ;; Regression: forged requests used the budget before the signature check,
       ;; so a sender that knew only the URL could block the real webhook.
       (with-runner
-        true
         (answer "unused")
         (fn [db _]
           (let [id
@@ -416,7 +440,6 @@
       ;; Regression: each rejected request also took a place in the window, so a
       ;; sender that stayed above the limit never got a request through again.
       (with-runner
-        true
         (answer "unused")
         (fn [db _]
           (let [id
@@ -486,7 +509,6 @@
   (it "signs the callback with Standard Webhooks headers"
       (let [{:keys [url requests stop]} (receiver 204)]
         (try (with-runner
-               true
                (answer "Green.")
                (fn [db _]
                  (let [id (create! db {"delivery" {"push" false "callback" {"url" url}}})
@@ -509,7 +531,6 @@
       (let [{:keys [url requests stop]} (receiver 500)]
         (try
           (with-runner
-            true
             (answer "Green.")
             (fn [db _]
               (let [id (create! db {"delivery" {"push" false "callback" {"url" url}}})]
@@ -529,7 +550,6 @@
   (it "retries a failed callback and then delivers it once"
       (let [{:keys [url requests stop]} (receiver 500 204)]
         (try (with-runner
-               true
                (answer "Green.")
                (fn [db _]
                  (let [id (create! db {"delivery" {"push" false "callback" {"url" url}}})]

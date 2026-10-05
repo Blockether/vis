@@ -2798,9 +2798,8 @@ export const STORY_AUTOMATIONS: Automation[] = [
 
 /** Deterministic Automations boundary, never a network or model call. */
 export function storyAutomationsClient({
-  enabled = true,
   empty = false,
-}: { enabled?: boolean; empty?: boolean } = {}): AutomationsClient {
+}: { empty?: boolean } = {}): AutomationsClient {
   let automations = empty ? [] : STORY_AUTOMATIONS.map((automation) => ({ ...automation }));
   let runs = empty
     ? []
@@ -2812,7 +2811,7 @@ export function storyAutomationsClient({
     return automation;
   };
   return {
-    automations: async () => ({ automations: [...automations], is_enabled: enabled }),
+    automations: async () => ({ automations: [...automations] }),
     automationRuns: async (automationId) => ({
       runs: runs.filter((run) => run.automation_id === automationId),
     }),

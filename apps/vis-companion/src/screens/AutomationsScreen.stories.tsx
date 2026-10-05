@@ -6,16 +6,14 @@ import { DialogFrame } from '../components/ui';
 import { storyAutomationsClient } from '../dev/story-data';
 
 function Workspace({
-  enabled = true,
   empty = false,
   failed = false,
 }: {
-  enabled?: boolean;
   empty?: boolean;
   failed?: boolean;
 }) {
   const [client] = useState(() => {
-    const fixture = storyAutomationsClient({ enabled, empty });
+    const fixture = storyAutomationsClient({ empty });
     if (failed)
       fixture.automations = async () => {
         throw new Error('Machine unavailable. Retry when it reconnects.');
@@ -43,13 +41,6 @@ export const List: Story = {
   play: async ({ canvas }) => {
     await expect(await canvas.findByText('2 automations')).toBeVisible();
     await expect(canvas.getByText('Morning summary')).toBeVisible();
-  },
-};
-
-export const Off: Story = {
-  args: { enabled: false },
-  play: async ({ canvas }) => {
-    await expect(await canvas.findByText(/Automations are off on this machine/)).toBeVisible();
   },
 };
 

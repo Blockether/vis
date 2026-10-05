@@ -2134,15 +2134,15 @@
       "properties": {
         "protocol": {
           "type": "integer",
-          "const": 15
+          "const": 16
         },
         "min_client": {
           "type": "integer",
-          "const": 15
+          "const": 16
         },
         "min_gateway": {
           "type": "integer",
-          "const": 15
+          "const": 16
         },
         "version": {
           "type": [

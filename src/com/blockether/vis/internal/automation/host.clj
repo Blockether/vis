@@ -4,13 +4,10 @@
   (:require [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.internal.automation.core :as automation]
             [com.blockether.vis.internal.automation.runner :as runner]
-            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.util :as util]))
 
 (defn- ok [value] (extension/success {:result value}))
-
-(defn enabled? "True when the `automations` setting is on." [& _] (toggles/enabled? "automations"))
 
 (defn- check-interactive!
   [env]
@@ -20,8 +17,7 @@
 
 (defn list-automations
   "List the automations of this machine with their triggers, prompt, target, delivery, state,
-   next run and last run. `is_enabled` is false while the global `automations` setting stops
-   every run."
+   next run and last run."
   [env]
   (ok (runner/overview (:db-info env) (util/now-ms))))
 
@@ -51,8 +47,8 @@
    Delivery: `{\"push\": True, \"callback\": {\"url\": \"https://...\"}}`. An answer that starts
    with `[SILENT]` sends nothing. `deliver_only` sends the rendered prompt without a model.
 
-   Runs start only while the `automations` setting allows them. The person creates the webhook
-   and callback secrets in the Companion app or the TUI. This tool never returns a secret."
+   The person creates webhook and callback secrets in the Companion app or the TUI.
+   This tool never returns a secret."
   [env definition]
   (check-interactive! env)
   (ok (automation/create! (:db-info env) definition (util/now-ms))))
@@ -109,7 +105,6 @@
                                      :symbol sym
                                      :inject-env? true
                                      :tag tag
-                                     :active-fn enabled?
                                      :call (if (= 'automations.runs sym)
                                              {:pos [] :rest :always}
                                              {:pos (mapv :name params)})
@@ -118,7 +113,7 @@
                               (seq params)
                               (assoc :params params))))
         [[#'list-automations 'automations.list :observation []
-          (str "`{automations, is_enabled}`. Each automation: " automation-result)]
+          (str "`{automations}`. Each automation: " automation-result)]
          [#'get-automation 'automations.get :observation [{:name "automation_id" :required? true}]
           automation-result]
          [#'create-automation 'automations.create :mutation [{:name "definition" :required? true}]
@@ -135,10 +130,9 @@
           (str "`{runs}`. " run-result)]]))
 
 (defn prompt
-  "Short guidance while the `automations` setting is on."
+  "Short guidance for creating automations."
   [_env]
-  (when (enabled?)
-    (str "## Automations\n"
-         "- `automations.create(definition)` runs a prompt on a schedule or a signed webhook. "
-         "Read `doc(\"automations.create\")` before the first call.\n"
-         "- The person creates webhook and callback secrets in the Companion app or the TUI.")))
+  (str "## Automations\n"
+       "- `automations.create(definition)` runs a prompt on a schedule or a signed webhook. "
+       "Read `doc(\"automations.create\")` before the first call.\n"
+       "- The person creates webhook and callback secrets in the Companion app or the TUI."))

@@ -607,9 +607,7 @@
       "automations.list"
       (let [items (field value "automations")]
         {"headline" headline
-         "summary" (summary-line
-                     [(if (seq items) (counted-label (count items) "automation") "No automations")
-                      (when (false? (field value "is_enabled")) "Automations are off")])
+         "summary" (if (seq items) (counted-label (count items) "automation") "No automations")
          "content" (if (seq items)
                      [{"type" "table"
                        "columns" ["Automation" "State"]

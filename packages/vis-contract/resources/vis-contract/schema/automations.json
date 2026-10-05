@@ -725,17 +725,12 @@
           "items": {
             "$ref": "#/$defs/automation"
           }
-        },
-        "is_enabled": {
-          "type": "boolean"
         }
       },
       "required": [
-        "automations",
-        "is_enabled"
+        "automations"
       ],
-      "additionalProperties": false,
-      "description": "is_enabled is the global automations setting. A session or group can still allow runs when no ancestor denies them."
+      "additionalProperties": false
     },
     "run_list": {
       "type": "object",
