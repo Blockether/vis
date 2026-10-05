@@ -695,8 +695,8 @@ export const RECORDING_SEGMENTS: { start: number; end: number; text: string }[] 
 ];
 
 /** A picture with no bytes to fetch: the plate is what the story is about. */
-function picture(fill: string, label: string): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240"><rect width="240" height="240" fill="${fill}"/><text x="120" y="128" font-family="monospace" font-size="20" fill="#f7f7f7" text-anchor="middle">${label}</text></svg>`;
+function picture(fill: string, label: string, width = 240, height = 240): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}"><rect width="${width}" height="${height}" fill="${fill}"/><text x="${width / 2}" y="${height / 2 + 8}" font-family="monospace" font-size="20" fill="#f7f7f7" text-anchor="middle">${label}</text></svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
@@ -710,6 +710,14 @@ export const STORY_PICTURES = [
   },
   { name: 'settings.png', meta: 'PNG · 96KB', src: picture('#7a4b16', '3') },
 ] as const;
+
+/** A wide screenshot, with the size its header gives before anything decodes. */
+export const STORY_WIDE_PICTURE = {
+  name: 'raw-execution.png',
+  meta: 'PNG · 56KB',
+  size: { width: 851, height: 332 },
+  src: picture('#1f5f5b', 'wide', 851, 332),
+} as const;
 
 /** `3 images · 1.5MB` — the line a grid says about itself. */
 export const PICTURE_SUMMARY = '3 images · 1.5MB';

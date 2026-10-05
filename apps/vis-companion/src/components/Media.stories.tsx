@@ -4,6 +4,7 @@ import {
   RECORDING_SEGMENTS,
   RECORDING_TRANSCRIPT,
   STORY_PICTURES,
+  STORY_WIDE_PICTURE,
 } from '../dev/story-data';
 import { mediaContentClass, mediaTileContentClass } from '../lib/media-frame';
 import { MediaGrid, MediaPlate, MediaRecording, MediaTile, RecordingPlayer } from './Media';
@@ -46,6 +47,19 @@ export const PlateLongName: Story = {
   render: () => (
     <MediaPlate name={second.name} meta={second.meta}>
       <img src={second.src} alt="" className={mediaContentClass} />
+    </MediaPlate>
+  ),
+};
+
+/** A wide screenshot: the frame takes the picture's own ratio, with no mat above or below. */
+export const PlateWide: Story = {
+  render: () => (
+    <MediaPlate
+      name={STORY_WIDE_PICTURE.name}
+      meta={STORY_WIDE_PICTURE.meta}
+      size={STORY_WIDE_PICTURE.size}
+    >
+      <img src={STORY_WIDE_PICTURE.src} alt="" className={mediaContentClass} />
     </MediaPlate>
   ),
 };

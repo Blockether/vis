@@ -18,6 +18,8 @@ import {
   mediaFrameClass,
   mediaGridClass,
   mediaTileFrameClass,
+  plateAspectRatio,
+  type PictureSize,
 } from '../lib/media-frame';
 import { ImageGallery } from '../lib/gallery';
 import type { TranscriptionSegment } from '../lib/types';
@@ -39,6 +41,7 @@ export function MediaPlate({
   name,
   meta,
   action,
+  size,
   children,
 }: {
   /** The caption's file name. Without one or an `action` the plate carries no caption at all. */
@@ -47,15 +50,20 @@ export function MediaPlate({
   meta?: string;
   /** A control docked at the caption's end, e.g. a clip's `MediaShareButton`. */
   action?: ReactNode;
+  /** The picture's own size when it is known before its bytes decode; see `plateAspectRatio`. */
+  size?: PictureSize | null;
   children: ReactNode;
 }) {
+  const aspectRatio = plateAspectRatio(size);
   return (
     // The gap over a picture is the transcript's own rhythm, spelled ONCE: the
     // block that opens a step takes the stack's gap and adds none of its own,
     // or the whitespace above a gallery and the whitespace below it stop
     // matching.
     <figure className="mt-2.5 min-w-0 first:mt-0">
-      <div className={mediaFrameClass}>{children}</div>
+      <div className={mediaFrameClass} style={aspectRatio ? { aspectRatio } : undefined}>
+        {children}
+      </div>
       {name || action ? (
         <figcaption className={mediaCaptionClass}>
           <span className="min-w-0 flex-1 truncate">{name}</span>

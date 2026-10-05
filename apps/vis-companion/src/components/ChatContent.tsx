@@ -107,6 +107,7 @@ import { speechOutput } from '../lib/speech';
 import type { SpokenTrack } from '../lib/speech';
 import { ExpandableImage } from './ImageViewer';
 import {
+  inlinePictureSize,
   mediaContentClass,
   mediaGroupLayout,
   mediaPendingClass,
@@ -4422,7 +4423,9 @@ export const UserMessage = memo(function UserMessage({
   // and on iOS that decode happens as the bubble nears the viewport, i.e.
   // mid-scroll. Same reserved frame as a produced artifact, for the same
   // reason — and the frame is the PLATE's, never a class list on the zoom
-  // trigger, which spells `border-0 bg-transparent` on itself.
+  // trigger, which spells `border-0 bg-transparent` on itself. Inline bytes also
+  // carry their header, so a wide picture's plate takes the picture's own ratio
+  // before anything decodes (`inlinePictureSize`).
   const picture = (att: GatewayAttachment, index: number, fill: boolean) => (
     <ExpandableImage
       key={att.id ?? `pic-${index}`}
@@ -4552,6 +4555,7 @@ export const UserMessage = memo(function UserMessage({
                 key={att.id ?? `plate-${index}`}
                 name={att.filename}
                 meta={mediaMeta(att)}
+                size={inlinePictureSize(att.base64)}
               >
                 {picture(att, index, false)}
               </MediaPlate>

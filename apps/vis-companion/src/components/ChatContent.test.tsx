@@ -773,6 +773,29 @@ describe('user bubble pictures', () => {
     expect(text(html())).toContain('shot.png');
     expect(text(html())).toContain('PNG');
   });
+
+  // Regression, user report with a screenshot: a wide picture the human sent stood
+  // under a band of empty mat in its 4:3 plate. Its bytes are inline, so the plate
+  // takes the picture's own ratio from the header before anything decodes.
+  it("gives a wide picture's plate the picture's own ratio", () => {
+    const wide = renderToStaticMarkup(
+      <UserMessage
+        attachments={[
+          {
+            filename: 'wide.png',
+            media_type: 'image/png',
+            // A PNG header: the signature and an IHDR chunk for 851×332.
+            base64: 'iVBORw0KGgoAAAANSUhEUgAAA1MAAAFMCAYAAAAup+b7',
+            size: 33,
+          },
+        ]}
+      >
+        {'look at this'}
+      </UserMessage>,
+    );
+    expect(wide).toContain('aspect-ratio:851 / 332');
+    expect(html()).not.toContain('aspect-ratio');
+  });
 });
 
 // A voice memo the human sent used to reach this bubble and paint NOTHING: the
