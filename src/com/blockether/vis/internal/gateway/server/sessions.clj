@@ -553,9 +553,14 @@
     (http/session-404 (get-in request [:path-params :sid]))))
 
 (defn- session-model-handler
+  "GET /v1/sessions/:sid/model — the session's pinned `model` (nil without a pin)
+   and the `default` pair that its turns use without a pin. The default follows
+   the project's `.vis/config.yml` overlay. The global `/v1/router` default does
+   not (issue #311)."
   [request]
   (if-let [sid (http/path-sid request)]
-    (http/json-response {:model (state/session-model-cached sid)})
+    (http/json-response {:model (state/session-model-cached sid)
+                         :default (state/session-default-model sid)})
     (http/session-404 (get-in request [:path-params :sid]))))
 
 (defn- set-session-model-handler
@@ -594,7 +599,8 @@
                              (str "provider " pid " is not configured on this gateway")
                              :provider_id pid)
         :else (do (state/set-session-model! sid pid model)
-                  (http/json-response {:model (state/session-model sid)}))))
+                  (http/json-response {:model (state/session-model sid)
+                                       :default (state/session-default-model sid)}))))
     (http/session-404 (get-in request [:path-params :sid]))))
 
 (defn- usage-handler

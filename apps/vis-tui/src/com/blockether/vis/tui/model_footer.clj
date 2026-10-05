@@ -7,9 +7,9 @@
 ;; Model / provider display
 
 (defn- chosen-model-info
-  []
+  [sid]
   (when-let [r (try (vis/get-router) (catch Throwable _ nil))]
-    (try (vis/resolve-effective-model r) (catch Throwable _ nil))))
+    (try (vis/resolve-session-default-model r sid) (catch Throwable _ nil))))
 
 (defn segments
   "Footer-segment contribution returning a VECTOR of segments:
@@ -25,8 +25,8 @@
   (let [;; Per-session model preference (the unified, channel-neutral choice
         ;; — the SAME one the web rail shows and the engine routes). For the
         ;; CURRENT tab `db` already reflects the active session, so its
-        ;; `:session` is the active one. Falls back to the resolved router
-        ;; model when the session has no explicit pick.
+        ;; `:session` is the active one. Falls back to the session's default (a
+        ;; project `.vis/config.yml` overlay can set it) without an explicit pick.
         ;; cached read — the footer renders per frame; no per-paint DB hit.
         ;; pref is {:provider :model} (provider + model both come from it).
         pref
@@ -35,7 +35,7 @@
               (vis/gateway-session-model-cached sid)))
 
         info
-        (chosen-model-info)
+        (chosen-model-info (get-in _db [:session :id]))
 
         model
         (or (:model pref) (:name info))

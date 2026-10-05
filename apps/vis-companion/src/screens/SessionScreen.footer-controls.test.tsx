@@ -415,6 +415,40 @@ describe('composer response controls', () => {
     expect(submitTurn.mock.calls[0]?.[2]?.extraBody).toBeUndefined();
   });
 
+  // Regression, issue #311: a project `.vis/config.yml` overlay sets the session's own
+  // default. The chip named the gateway default from `/v1/router` instead.
+  it('names the default of the session project, not the gateway default', async () => {
+    const own = { provider: 'openai-codex', model: 'gpt-6-luna' };
+    const fleet = [
+      routerProvider('anthropic-coding-plan', { default_model: 'claude-opus-5-5', models: ['claude-opus-5-5'] }),
+      routerProvider('openai-codex', { is_default: false, models: ['gpt-6-astra', 'gpt-6-luna'] }),
+    ];
+    const fetcher = vi.fn(async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith('/v1/router')) return Response.json({ providers: fleet });
+      if (path.endsWith('/v1/sessions/s1/model')) return Response.json({ model: null, default: own });
+      return Response.json(null);
+    });
+    vi.stubGlobal('fetch', fetcher);
+    const gateway = new GatewayClient({ url: 'http://gateway.example.com/session-default' });
+    renderSessionScreen({
+      client: {
+        cachedSessionModel: () => null,
+        sessionModel: () => Promise.resolve(null),
+        cachedDefaultModel: gateway.cachedDefaultModel.bind(gateway),
+        defaultModel: gateway.defaultModel.bind(gateway),
+        cachedRouter: gateway.cachedRouter.bind(gateway),
+        router: gateway.router.bind(gateway),
+      },
+    });
+    const chip = await screen.findByRole('button', { name: 'Change provider and model' });
+    await waitFor(() => expect(chip).toHaveAttribute('title', 'openai-codex/gpt-6-luna'));
+    expect(chip).toHaveTextContent('gpt-6-luna');
+    // A reopened session paints its own default on the first frame.
+    expect(gateway.cachedDefaultModel('s1')).toEqual(own);
+    // Another session keeps its own default.
+    expect(gateway.cachedDefaultModel('s2')).not.toEqual(own);
+  });
   it('enables verbosity when an uncached fleet arrives for the default model', async () => {
     let resolveRouter!: (fleet: RouterProvider[]) => void;
     const router = new Promise<RouterProvider[]>((resolve) => {

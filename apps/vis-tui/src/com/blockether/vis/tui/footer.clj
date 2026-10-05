@@ -75,7 +75,7 @@
 
 (defn- session-model-info
   "Resolved model map for the model THIS SESSION routes to, falling back to the
-   router root when the session made no pick. Every capability chip asks THIS,
+   session's default when it made no pick. Every capability chip asks THIS,
    never `chosen-model-info`: the GLOBAL default leaks one model's knobs onto a
    session routed elsewhere, and hides a knob the session's own model accepts."
   [db]
@@ -83,16 +83,23 @@
     (let [pref (session-model-pref db)]
       (try (if (or (:provider pref) (:model pref))
              (lp/resolve-model-info r (:provider pref) (:model pref))
-             (lp/resolve-effective-model r))
+             (lp/resolve-session-default-model r (get-in db [:session :id])))
            (catch Throwable _ nil)))))
 
 (defn- session-effective-provider
   "Provider keyword the SESSION actually routes through — the per-session pick
-   (`:session-model-pref` / gateway session model) first, falling back to the
-   GLOBAL router default only when the session made no explicit choice. Provider
-   USAGE/limits gate on THIS; model CAPABILITY gates on `session-model-info`."
+   (`:session-model-pref` / gateway session model) first, then the session's
+   default (a project `.vis/config.yml` overlay can set it), and the GLOBAL
+   router default when the gateway names no default. Provider USAGE/limits
+   gate on THIS; model CAPABILITY gates on `session-model-info`."
   [db]
   (or (some-> (session-model-pref db)
+              :provider
+              str
+              not-empty
+              keyword)
+      (some-> (get-in db [:session :id])
+              lp/gateway-session-default-model-cached
               :provider
               str
               not-empty

@@ -3025,6 +3025,57 @@
           (expect (= [nil "glm-5.2"] @wrote)))))))
 
 (defdescribe
+  session-model-handler-answers-the-project-default
+  ;; Regression, issue #311: a project's gitignored `.vis/config.yml` overlay sets
+  ;; its own default pair, and the session's turns use it. The footers read the
+  ;; default from this answer, so it must come from the session's project, not
+  ;; from the global config that `GET /v1/router` reads.
+  (it
+    "GET /model answers the default pair of the session's project overlay"
+    (let [temp-dir
+          (fn [prefix]
+            (.toFile (java.nio.file.Files/createTempDirectory
+                       prefix
+                       (make-array java.nio.file.attribute.FileAttribute 0))))
+
+          store
+          (temp-dir "vis-default-store")
+
+          project
+          (temp-dir "vis-default-project")
+
+          overlay
+          (io/file project ".vis" "config.yml")]
+
+      (try
+        (io/make-parents overlay)
+        (spit overlay "default_provider: openai-codex\ndefault_model: gpt-6-luna\n")
+        (with-redefs-fn {;; An empty global tier: the machine's own ~/.vis stays out.
+                         #'config/config-dir (constantly (.getPath store))
+                         ;; The FIRST provider is the implicit global default.
+                         #'providers/picker-fleet (constantly [{:id :anthropic-coding-plan
+                                                                :models [{:name "claude-opus-5-5"}]}
+                                                               {:id :openai-codex
+                                                                :models [{:name "gpt-6-astra"}
+                                                                         {:name "gpt-6-luna"}]}])
+                         #'lp/db-info (constantly {})
+                         #'state/resolve-workspace (fn [_db _sid]
+                                                     {:root (.getCanonicalPath project)})
+                         #'state/session-model-cached (constantly nil)}
+          (fn []
+            (let [resp
+                  (#'sessions-api/session-model-handler {:path-params {:sid (str (random-uuid))}})
+
+                  body
+                  (wire/parse-json (:body resp))]
+
+              (expect (= 200 (:status resp)))
+              (expect (nil? (get body "model")))
+              (expect (= {"provider" "openai-codex" "model" "gpt-6-luna"} (get body "default"))))))
+        (finally (run! io/delete-file (reverse (file-seq project)))
+                 (run! io/delete-file (reverse (file-seq store))))))))
+
+(defdescribe
   router-handler-assembles-string-keyed-fleet-with-status
   (it
     "GET /v1/router returns every model plus the primary and fallback pairs"

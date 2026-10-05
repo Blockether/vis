@@ -47,6 +47,7 @@
             [com.blockether.vis.internal.provider.auth-health :as auth-health]
             [com.blockether.vis.internal.provider.error :as provider-error]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
+            [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.internal.foundation.shell-log :as shell-log]
             [com.blockether.vis.internal.util :as util]
@@ -1291,6 +1292,37 @@
                (workspace/for-session db))
       (some->> (:workspace/id (live-env sid))
                (persistance/db-workspace-get db))))
+
+(defn session-default-model
+  "The default `{:provider :model}` that the turns of soul `sid` use when the
+   session pins no model, or nil when its workspace is unknown.
+
+   A gitignored project overlay (`<project>/.vis/config.yml`) can set its own
+   default pair, and the session's router follows it. So this reads the config
+   under the session's workspace root, as `loop.router/get-router` does. An
+   unbound read, such as `GET /v1/router`, gives only the GLOBAL default
+   (issue #311).
+
+   The router fleet is the bound config's providers first, then the shared
+   picker fleet. Read that shared fleet OUTSIDE the binding: its cache is global,
+   and a project fleet must never fill it."
+  [sid]
+  (try (when-let [root (some-> (lp/db-info)
+                               (resolve-workspace sid)
+                               :root)]
+         (let [shared-fleet (providers/picker-fleet)
+               {:keys [provider-id model]}
+               (binding [workspace/*workspace-root* root]
+                 (let [cfg (or (config/load-config false) {})
+                       configured (vec (:providers cfg))
+                       ids (into #{} (map :id) configured)]
+
+                   (providers/resolve-default-selection
+                     cfg
+                     (into configured (remove #(contains? ids (:id %))) shared-fleet))))]
+
+           (when provider-id {:provider (name provider-id) :model model})))
+       (catch Throwable _ nil)))
 
 (defn- lean-workspace
   "The lean `workspace` map a session payload carries - `{root repo_root label

@@ -1086,9 +1086,16 @@
   [m]
   (when m {:provider (get m "provider") :model (get m "model")}))
 
-(defn session-model
+(defn- session-model-answer
+  "One `GET /v1/sessions/:sid/model` round-trip as `{:pick :default}`: the
+   session's own pinned pref, and the default pair that its turns use without a
+   pin. The default follows the project's `.vis/config.yml` overlay, which the
+   global router default does not show (issue #311)."
   [sid]
-  (pref<-wire (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/model")) "model")))
+  (let [answer (send-json! "GET" (str "/v1/sessions/" (enc sid) "/model"))]
+    {:pick (pref<-wire (get answer "model")) :default (pref<-wire (get answer "default"))}))
+
+(defn session-model [sid] (:pick (session-model-answer sid)))
 
 (defonce ^:private session-model-cache (atom {}))
 
@@ -1104,8 +1111,8 @@
   [sid k]
   (let [[old _] (swap-vals! session-model-refreshing conj k)]
     (when-not (contains? old k)
-      (future (try (let [v (session-model sid)]
-                     (swap! session-model-cache assoc k {:at (now-ms) :val v}))
+      (future (try (let [{:keys [pick default]} (session-model-answer sid)]
+                     (swap! session-model-cache assoc k {:at (now-ms) :val pick :default default}))
                    (catch Throwable _ nil)
                    (finally (swap! session-model-refreshing disj k)))))))
 
@@ -1130,6 +1137,21 @@
     (when-not (and at (< (- now (long at)) (long session-model-cache-ttl-ms)))
       (refresh-session-model! sid k))
     val))
+
+(defn session-default-model-cached
+  "The default `{:provider :model}` that the turns of session `sid` use without
+   a pin, or nil before the first refresh. A project `.vis/config.yml` overlay
+   can set this default, and the global router default does not show it
+   (issue #311).
+
+   A pure cache read without a refresh: it shares the `session-model-cached`
+   entry. Every caller reads the pick through that function first, and that
+   read keeps the entry fresh."
+  [sid]
+  (some->> sid
+           str
+           (get @session-model-cache)
+           :default))
 
 ;; Managed resources (backgrounds) — the daemon owns the registry (the agent's
 ;; tools register here while a turn runs IN THE DAEMON), so a client in another
@@ -1220,11 +1242,17 @@
    straight through into the `session-model-cached` snapshot so the footer
    chip flips on the very next frame instead of waiting out the cache TTL."
   [sid provider model]
-  (let [pref (pref<-wire (get (send-json! "PATCH"
-                                          (str "/v1/sessions/" (enc sid) "/model")
-                                          {:provider provider :model model})
-                              "model"))]
-    (swap! session-model-cache assoc (str sid) {:at (now-ms) :val pref})
+  (let [answer
+        (send-json! "PATCH"
+                    (str "/v1/sessions/" (enc sid) "/model")
+                    {:provider provider :model model})
+
+        pref
+        (pref<-wire (get answer "model"))]
+
+    (swap! session-model-cache assoc
+      (str sid)
+      {:at (now-ms) :val pref :default (pref<-wire (get answer "default"))})
     pref))
 
 ;; ── Headless provider OAuth ────────────────────────────────────────────────
@@ -2611,6 +2639,8 @@
 
 (def gateway-session-artifacts session-artifacts)
 
+(def gateway-session-default-model-cached session-default-model-cached)
+
 (def gateway-session-model session-model)
 
 (def gateway-session-model-cached session-model-cached)
@@ -2845,6 +2875,17 @@
             (first providers))]
 
     (when provider (provider-model provider model))))
+
+(defn resolve-session-default-model
+  "Resolved model map for the default that session `sid` routes to without a
+   pin. A project `.vis/config.yml` overlay can set that default (issue #311),
+   so the session's own gateway answer comes first. The global router default is
+   the fallback before that answer arrives."
+  [router sid]
+  (or (when-let [{:keys [provider model]} (some-> sid
+                                                  gateway-session-default-model-cached)]
+        (resolve-model-info router provider model))
+      (resolve-effective-model router)))
 
 (defn reasoning-effort-configurable? [model] (not (false? (:reasoning-effort? model))))
 

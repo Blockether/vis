@@ -938,7 +938,7 @@
     (let [pref (session-model-pref db)]
       (try (if (or (:provider pref) (:model pref))
              (vis/resolve-model-info router (:provider pref) (:model pref))
-             (vis/resolve-effective-model router))
+             (vis/resolve-session-default-model router (get-in db [:session :id])))
            (catch Throwable _ nil)))))
 
 (def ^:private ^:const max-tabs 8)
@@ -1497,15 +1497,17 @@
                                                 settings-notification-ttl-ms]]}
                         :else
                         ;; `current` is the explicit per-session preference when present;
-                        ;; otherwise fall back to the effective router model already displayed
-                        ;; in the footer. A fresh session has no stored pref, and the footer
-                        ;; shows the router default; Ctrl+T must advance PAST that default, not
-                        ;; "set" the same first entry and appear to do nothing.
+                        ;; otherwise fall back to the default already displayed in the footer: the
+                        ;; session's own default (a project `.vis/config.yml` overlay can set it), then
+                        ;; the router default. A fresh session has no stored pref, and the footer shows
+                        ;; that default; Ctrl+T must advance PAST that default, not "set" the same first
+                        ;; entry and appear to do nothing.
                         (let [effective
                               (current-model-info)
 
                               current
                               (or (session-model-pref db)
+                                  (vis/gateway-session-default-model-cached sid)
                                   (when effective
                                     {:provider (some-> (:provider effective)
                                                        name)

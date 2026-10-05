@@ -4997,7 +4997,7 @@
   []
   (or
     ;; Use the same provider precedence as the footer: session override, stored model,
-    ;; then router default.
+    ;; then session default, then router default.
     (some-> (:session-model-pref @state/app-db)
             :provider
             not-empty
@@ -5008,6 +5008,12 @@
     ;; usage row fetch the wrong plan's limits after a per-session switch.
     (when-let [sid (get-in @state/app-db [:session :id])]
       (some-> (vis/gateway-session-model sid)
+              :provider
+              not-empty
+              keyword))
+    ;; A project `.vis/config.yml` overlay can set the session's own default.
+    (when-let [sid (get-in @state/app-db [:session :id])]
+      (some-> (vis/gateway-session-default-model-cached sid)
               :provider
               not-empty
               keyword))

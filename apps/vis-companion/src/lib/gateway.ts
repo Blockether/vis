@@ -3006,21 +3006,46 @@ export class GatewayClient {
     return next;
   }
 
-  /** The gateway default as last seen — same first-frame job as above. */
-  cachedDefaultModel(): ModelPref | null {
-    return readSnapshot<ModelPref>(this.snapshotKey('model-default'));
+  /**
+   * The default as last seen — same first-frame job as above. With `sid`, this
+   * session's own default comes first: a project `.vis/config.yml` overlay can set it.
+   */
+  cachedDefaultModel(sid?: string): ModelPref | null {
+    return (
+      (sid ? readSnapshot<ModelPref>(this.snapshotKey('model-default', sid)) : null) ??
+      readSnapshot<ModelPref>(this.snapshotKey('model-default'))
+    );
   }
 
   /**
-   * The gateway's DEFAULT provider+model — what a session with no pin actually
-   * runs on. `sessionModel` answers only the explicit pin (null for "default"),
-   * so any surface that names the live model needs this fallback.
+   * The DEFAULT provider+model — what a session with no pin actually runs on.
+   * `sessionModel` answers only the explicit pin (null for "default"), so any
+   * surface that names the live model needs this fallback.
    *
-   * It rides `/v1/router`, which is a real auth/limits probe per provider on a
-   * cold daemon — seconds. Hence the snapshot: the chip names the model at once
-   * and this answer only ever corrects it.
+   * With `sid`, the session's own `/model` answer comes first. A project
+   * `.vis/config.yml` overlay can set that session's default, and the gateway
+   * default does not show it (issue #311). A failed read, or a gateway that names
+   * no session default, falls back to the gateway default.
+   *
+   * The gateway default rides `/v1/router`, which is a real auth/limits probe per
+   * provider on a cold daemon — seconds. Hence the snapshot: the chip names the
+   * model at once and this answer only ever corrects it.
    */
-  async defaultModel(signal?: AbortSignal): Promise<ModelPref | null> {
+  async defaultModel(signal?: AbortSignal, sid?: string): Promise<ModelPref | null> {
+    if (sid) {
+      const own = await this.request<{ default?: ModelPref | null } | null>(
+        'GET',
+        `/v1/sessions/${encodeURIComponent(sid)}/model`,
+        undefined,
+        signal,
+      ).then(
+        (response) => (response?.default?.model ? response.default : null),
+        () => undefined,
+      );
+      const key = this.snapshotKey('model-default', sid);
+      if (own !== undefined && (own || readSnapshot<ModelPref>(key))) writeSnapshot(key, own);
+      if (own) return own;
+    }
     const rows = await this.router(signal);
     const row =
       rows.find((p) => p.is_default && p.default_model) ?? rows.find((p) => p.default_model);

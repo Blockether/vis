@@ -701,10 +701,11 @@ export function SessionScreen({
     modelPrefRevisionRef.current += 1;
     setModelPref(pref);
   }, []);
-  // The gateway's default route, shown when this session pins nothing. Same
-  // seed: resolving it costs a `/v1/router` probe on a cold daemon.
+  // The default route of THIS session, shown when it pins nothing: a project
+  // `.vis/config.yml` overlay can set it. Same seed: resolving the gateway
+  // default costs a `/v1/router` probe on a cold daemon.
   const [defaultPref, setDefaultPref] = useState<ModelPref | null>(() =>
-    client.cachedDefaultModel(),
+    client.cachedDefaultModel(sid),
   );
   const [modelFleet, setModelFleet] = useState<RouterProvider[] | null>(() =>
     client.cachedRouter(),
@@ -1274,8 +1275,9 @@ export function SessionScreen({
             /* Keep cached controls during a failed read. */
           });
       }
-      // Both reads share the same router request and cache.
-      void Promise.all([client.defaultModel(signal), client.router(signal)])
+      // Both reads share the same router request and cache. The default asks the
+      // session first, because a project overlay can set its own default.
+      void Promise.all([client.defaultModel(signal, sid), client.router(signal)])
         .then(([pref, fleet]) => {
           if (!signal.aborted) {
             setDefaultPref(pref);
