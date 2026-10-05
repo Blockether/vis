@@ -271,10 +271,12 @@ use Vis from your own code, see [Python SDK basics](python-sdk.md) or [HTTP API 
 ### Intro
 
 - [Rationale](rationale.md) — the reasons behind the design of Vis.
+- [Running a gateway](gateway-service.md) — install and operate a shared agent service.
+- [Reporting a bug](reporting-bugs.md) — report a problem without exposing private data.
 
 ### Concepts
 
-Each concept page explains one feature: what it does, when to use it and how to use it in chat.
+Each concept page explains one feature: what it does, when to use it and how to start.
 
 - [Sessions](sessions.md) — continue, stop or find your work.
 - [Context management](context-management.md) — how filtering and summaries keep conversations manageable.
@@ -283,8 +285,11 @@ Each concept page explains one feature: what it does, when to use it and how to 
 - [Drafts](drafts.md) — review changes in a separate working copy.
 - [Council](council.md) — ask another session for help or a second review.
 - [Automations](automations.md) — run a prompt on a schedule or from a webhook.
+- [Forms and user input](human-input.md) — ask for choices, credentials or confirmation.
+- [Live views](live-views.md) — show progress a person can watch and stop.
 - [Python sandbox](python-sandbox.md) — Python execution, packages and permissions.
 - [Configuration](configuration.md) — providers, models and project settings.
+- [Decision models](decision-models.md) — download Laya, train and publish FP32 versions.
 
 ### Programmatic access
 
@@ -296,6 +301,7 @@ To see the same steps as HTTP requests, select **HTTP** at the top of the page.
 
 - [Python SDK basics](python-sdk.md) — install the SDK, run a private agent and connect to a gateway.
 - [HTTP API basics](http-api.md) — authenticate requests, read the OpenAPI document and handle errors.
+- [Extension API](extension-api.md) — declarations, tool contracts and host operations for extensions.
 
 **Feature APIs**
 
@@ -307,14 +313,6 @@ To see the same steps as HTTP requests, select **HTTP** at the top of the page.
 - [Automations API](automations-api.md) — automations, runs, secrets and webhooks from Python or HTTP.
 - [Configuration API](configuration-api.md) — settings and extension reloads from Python or HTTP.
 
-### Guides
-
-Each guide completes one task with the concepts and the programmatic pages above.
-
-- [Running a gateway](gateway-service.md) — install and operate a shared agent service.
-- [Decision models](decision-models.md) — download Laya, train and publish FP32 versions.
-- [Reporting a bug](reporting-bugs.md) — report a problem without exposing private data.
-
 <span id="put-your-expertise-into-code"></span>
 <span id="combine-steps-in-python"></span>
 
@@ -325,10 +323,7 @@ Each guide completes one task with the concepts and the programmatic pages above
 - [Installing and sharing extensions](extension-packages.md) — add an extension or share your own.
 - [Using an existing Python project](extension-development.md) — prepare editable uv packages for Vis.
 - [Native builds for Java and Clojure extensions](jvm-native-image.md) — add Java or Clojure tools to Vis.
-- [Extension API](extension-api.md) — declarations, tool contracts and host operations.
 - [Extension troubleshooting](extension-troubleshooting.md) — diagnose loading and call errors.
-- [Forms and user input](human-input.md) — ask for choices, credentials or confirmation.
-- [Live views](live-views.md) — show progress a person can watch and stop.
 - [Provider extensions](provider-extensions.md) — register an LLM provider from an extension.
 
 <span id="updating-vis"></span>

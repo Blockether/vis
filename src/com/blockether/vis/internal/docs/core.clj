@@ -10,18 +10,21 @@
    `docs-test/docs-page-canon-test`:
 
      * The `:title` in `vis-docs/site.edn` IS the page's `# H1`, spelled
-       identically, on the FIRST line of the file: the sidebar, the browser tab
-       and the page itself must never disagree about a page's name. `index.md` is
+       identically, on the FIRST line of the file: the browser tab and the page
+       itself must never disagree about a page's name. The sidebar shows the same
+       title, or a shorter `:label` inside a group whose name says the rest
+       (`HTTP API` under `Basics`, `Sessions` under `Feature APIs`). `index.md` is
        the ONE exception — its title is rendered from the site navigation, so it
        carries no `#` at all.
      * Under the H1 comes a LEAD paragraph, before the first `##`: what this page
        covers, so a reader who stops there still knows what they found.
      * The `:nav` of `vis-docs/site.edn` is the reading order, in modules: `Intro`
-       (Rationale and Getting started, the `:intro?` module), `Concepts` (one page
-       for each feature), `Programmatic access` (the `Basics` and `Feature APIs`
-       groups), `Guides` (tasks built on the concepts and the programmatic pages),
-       `Extensions` and `Reference`. A Concepts page `X` that a program can drive
-       has one page `X-api` in `Feature APIs`, and `X` links it.
+       (Rationale, Getting started, Running a gateway and Reporting a bug, the
+       `:intro?` module), `Concepts` (one page for each feature), `Programmatic
+       access` (the `Basics` and `Feature APIs` groups), `Extensions` and
+       `Reference`. A Concepts page `X` that a program can drive has one page
+       `X-api` in `Feature APIs`, and `X` links it. On the public site, the
+       Extension Center link ends the module that `:extension-center` names.
      * PAIRED VARIANTS: an `X-api` page gives each example twice. A
        `<div data-variant=\"python\">` block comes first, and a
        `<div data-variant=\"http\">` block follows it at once. Each tag and its
@@ -160,8 +163,9 @@
 (defn- site-file
   "`{:site {...} :nav [{:section _ :intro? _ :pages [{:page :title :blurb} ...]} ...]}`, read
    from `site-resource` and checked. A module with groups has `:groups [{:group _ :pages [...]}]`
-   instead of `:pages`. The nav VECTOR is the order — a page's place in the manual is where it
-   stands here, so there is no order number to keep in step."
+   instead of `:pages`, and a page can add a shorter sidebar `:label`. The nav VECTOR is the
+   order — a page's place in the manual is where it stands here, so there is no order number to
+   keep in step."
   []
   (let [url
         (or (io/resource site-resource)
@@ -201,41 +205,43 @@
         (into {} (map (juxt :name identity)) (doc-corpus/pages))
 
         pages
-        (into []
-              (for [{:keys [section intro? groups] :as module}
-                    nav
+        (into
+          []
+          (for [{:keys [section intro? groups] :as module}
+                nav
 
-                    {:keys [group] group-pages :pages}
-                    (or groups [{:pages (:pages module)}])
+                {:keys [group] group-pages :pages}
+                (or groups [{:pages (:pages module)}])
 
-                    {:keys [page title blurb]}
-                    group-pages]
+                {:keys [page title label blurb]}
+                group-pages]
 
-                (let [record
-                      (or (get by-name page)
-                          (throw (ex-info "The docs site navigates to a page no record carries"
-                                          {:type ::unknown-page :page page})))
+            (let [record
+                  (or (get by-name page)
+                      (throw (ex-info "The docs site navigates to a page no record carries"
+                                      {:type ::unknown-page :page page})))
 
-                      md
-                      (str (:text record))
+                  md
+                  (str (:text record))
 
-                      [html toc]
-                      (anchors+toc (md->html md))]
+                  [html toc]
+                  (anchors+toc (md->html md))]
 
-                  {:slug page
-                   :title (or title (first-h1 md) page)
-                   :section section
-                   :group group
-                   :intro? (boolean intro?)
-                   :blurb blurb
-                   :md md
-                   ;; What an agent reads. The published `<slug>.md` and `llms-full.txt`
-                   ;; give the same Python variant as `doc`. `:md` stays the whole page,
-                   ;; because the site shows both variants.
-                   :agent-md (doc-corpus/variant-text md doc-corpus/agent-variant)
-                   :html html
-                   :toc toc
-                   :variants (doc-corpus/variants md)})))]
+              {:slug page
+               :title (or title (first-h1 md) page)
+               :label label
+               :section section
+               :group group
+               :intro? (boolean intro?)
+               :blurb blurb
+               :md md
+               ;; What an agent reads. The published `<slug>.md` and `llms-full.txt`
+               ;; give the same Python variant as `doc`. `:md` stays the whole page,
+               ;; because the site shows both variants.
+               :agent-md (doc-corpus/variant-text md doc-corpus/agent-variant)
+               :html html
+               :toc toc
+               :variants (doc-corpus/variants md)})))]
 
     (when-let [unreachable (seq (remove (set (map :slug pages)) (keys by-name)))]
       (throw (ex-info "A documentation page the site never navigates to"
@@ -335,20 +341,22 @@
 
                       (str (when grp (str "<div class=\"nav-grp\">" (esc grp) "</div>"))
                            (apply str
-                             (for [{:keys [slug title]} run]
+                             (for [{:keys [slug title label]} run]
                                (str "<a href=\""
                                     (href mode slug)
                                     "\""
                                     (when (= slug active-slug) " class=\"active\"")
                                     ">"
-                                    (esc title)
-                                    "</a>")))))))))
-         (when (and (= mode :static) public?)
-           (str "<div class=\"nav-sec\">"
-                (esc (get-in site [:extension-center :section]))
-                "</div><a href=\"/extensions/\">"
-                (esc (get-in site [:extension-center :title]))
-                "</a>"))
+                                    (esc (or label title))
+                                    "</a>"))))))
+                  ;; The catalog exists only on the public site. Its link ends the
+                  ;; module that `:extension-center` names, after that module's pages.
+                  (when (and (= mode :static)
+                             public?
+                             (= sec (get-in site [:extension-center :section])))
+                    (str "<a href=\"/extensions/\">"
+                         (esc (get-in site [:extension-center :title]))
+                         "</a>")))))
          "</nav>")))
 
 ;; paired variants — one switch shows the Python or the HTTP examples

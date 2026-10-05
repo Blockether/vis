@@ -49,19 +49,23 @@ Read the full [Rationale](resources/vis-docs/rationale.md) in the manual.
 ## Documentation
 
 Read the manual at [vis.blockether.com](https://vis.blockether.com/). The same pages are in
-[`resources/vis-docs/`](resources/vis-docs/). The manual has six modules, in reading order:
+[`resources/vis-docs/`](resources/vis-docs/). The manual has five modules, in reading order:
 
 - **Intro** — [Rationale](resources/vis-docs/rationale.md) explains why Vis exists.
   [Getting started](resources/vis-docs/index.md) installs Vis, connects the apps and runs a first task.
+  [Running a gateway](resources/vis-docs/gateway-service.md) sets up a shared gateway, and
+  [Reporting a bug](resources/vis-docs/reporting-bugs.md) shows how to report a problem safely.
 - **Concepts** — one page for each feature, for example [Sessions](resources/vis-docs/sessions.md),
   [Context management](resources/vis-docs/context-management.md), [Drafts](resources/vis-docs/drafts.md),
-  [Council](resources/vis-docs/council.md) and [Automations](resources/vis-docs/automations.md).
+  [Council](resources/vis-docs/council.md), [Automations](resources/vis-docs/automations.md) and
+  [Live views](resources/vis-docs/live-views.md).
 - **Programmatic access** — the same concepts from your own code. Start with
   [Python SDK basics](resources/vis-docs/python-sdk.md) or [HTTP API basics](resources/vis-docs/http-api.md). Then
   read the API page for each concept, for example [Sessions API](resources/vis-docs/sessions-api.md).
-- **Guides** — tasks that use the concepts and the programmatic pages, for example
-  [Running a gateway](resources/vis-docs/gateway-service.md).
+  Each API page shows Python first, and a switch shows the same steps as HTTP requests. The
+  [Extension API](resources/vis-docs/extension-api.md) describes the Python interface for extensions.
 - **Extensions** — add your own tools and checks with [Extending Vis](resources/vis-docs/extending.md).
+  Find extensions from other people in the [Extension Center](https://vis.blockether.com/extensions/).
 - **Reference** — exact facts, for example every key in
   [Keyboard shortcuts](resources/vis-docs/keyboard-shortcuts.md).
 

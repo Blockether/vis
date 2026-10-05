@@ -8,7 +8,15 @@
     {:blurb
      "Install Vis, try a first task and connect the desktop or phone app to the same sessions."
      :page "index"
-     :title "Getting started"}]
+     :title "Getting started"}
+    {:blurb
+     "Install and secure a shared Vis gateway, connect your clients and keep it running as a Linux service."
+     :page "gateway-service"
+     :title "Running a gateway"}
+    {:blurb
+     "Report a problem with useful evidence, without sharing credentials or private code."
+     :page "reporting-bugs"
+     :title "Reporting a bug"}]
    :section "Intro"}
   {:pages
    [{:blurb
@@ -40,70 +48,81 @@
      :page "automations"
      :title "Automations"}
     {:blurb
+     "Build a form that asks for a choice, credential or confirmation, and handle the answer."
+     :page "human-input"
+     :title "Forms and user input"}
+    {:blurb
+     "Show progress and controls while an extension watches a build or other ongoing work."
+     :page "live-views"
+     :title "Live views"}
+    {:blurb
      "Understand where the agent runs Python, which packages it uses and what it can access."
      :page "python-sandbox"
      :title "Python sandbox"}
     {:blurb
      "Choose providers and models, and save settings for yourself, a project or every gateway client."
      :page "configuration"
-     :title "Configuration"}]
+     :title "Configuration"}
+    {:blurb
+     "Download Laya decision bundles, train both heads, publish a verified FP32 version and select it explicitly."
+     :page "decision-models"
+     :title "Decision models"}]
    :section "Concepts"}
   {:groups
    [{:group "Basics"
      :pages
      [{:blurb
        "Install the SDK, run a private agent in your project, connect to a gateway and handle its errors."
+       :label "Python SDK"
        :page "python-sdk"
        :title "Python SDK basics"}
       {:blurb
        "Get the OpenAPI document, authenticate requests and handle gateway errors from any language."
+       :label "HTTP API"
        :page "http-api"
-       :title "HTTP API basics"}]}
+       :title "HTTP API basics"}
+      {:blurb
+       "Look up Python declarations, callbacks, tool contracts and host operations for Vis extensions."
+       :page "extension-api"
+       :title "Extension API"}]}
     {:group "Feature APIs"
      :pages
      [{:blurb
        "Create sessions, send messages, follow progress, answer forms and manage saved sessions from Python or with HTTP requests."
+       :label "Sessions"
        :page "sessions-api"
        :title "Sessions API"}
       {:blurb
        "Read the context budget, the usage and the cache health of a session from Python or with HTTP requests."
+       :label "Context management"
        :page "context-management-api"
        :title "Context management API"}
       {:blurb
        "Run prompt templates and skills, and set, read or control session goals from Python or with HTTP requests."
+       :label "Project instructions"
        :page "project-instructions-api"
        :title "Project instructions API"}
       {:blurb
        "Turn on drafts, read the draft state of a session and control draft work from Python or with HTTP requests."
+       :label "Drafts"
        :page "drafts-api"
        :title "Drafts API"}
       {:blurb
        "Publish and read Council messages, wake idle sessions and manage rooms from Python or with HTTP requests."
+       :label "Council"
        :page "council-api"
        :title "Council API"}
       {:blurb
        "Create, change, start and delete automations, and read their runs from Python or with HTTP requests."
+       :label "Automations"
        :page "automations-api"
        :title "Automations API"}
       {:blurb
        "Read and change settings for the gateway, a project, a group or a session from Python or with HTTP requests."
+       :label "Configuration"
        :page "configuration-api"
        :title "Configuration API"}]}]
    :section "Programmatic access"}
-  {:pages
-   [{:blurb
-     "Install and secure a shared Vis gateway, connect your clients and keep it running as a Linux service."
-     :page "gateway-service"
-     :title "Running a gateway"}
-    {:blurb
-     "Download Laya decision bundles, train both heads, publish a verified FP32 version and select it explicitly."
-     :page "decision-models"
-     :title "Decision models"}
-    {:blurb
-     "Report a problem with useful evidence, without sharing credentials or private code."
-     :page "reporting-bugs"
-     :title "Reporting a bug"}]
-   :section "Guides"}
   {:pages
    [{:blurb
      "Write a Python tool, register it with Vis and try it in a session, starting with one file."
@@ -126,21 +145,9 @@
      :page "jvm-native-image"
      :title "Native builds for Java and Clojure extensions"}
     {:blurb
-     "Look up Python declarations, callbacks, tool contracts and host operations for Vis extensions."
-     :page "extension-api"
-     :title "Extension API"}
-    {:blurb
      "Find out why your extension will not load, a tool is missing or old code still runs after an edit."
      :page "extension-troubleshooting"
      :title "Extension troubleshooting"}
-    {:blurb
-     "Build a form that asks for a choice, credential or confirmation, and handle the answer."
-     :page "human-input"
-     :title "Forms and user input"}
-    {:blurb
-     "Show progress and controls while an extension watches a build or other ongoing work."
-     :page "live-views"
-     :title "Live views"}
     {:blurb
      "Connect an LLM service to Vis with custom sign-in, model discovery and credential management."
      :page "provider-extensions"
@@ -164,7 +171,7 @@
      :page "logging"
      :title "Logs and diagnostics"}]
    :section "Reference"}]
- :site {:extension-center {:section "Community" :title "Extension Center"}
+ :site {:extension-center {:section "Extensions" :title "Extension Center"}
         :repo "https://github.com/Blockether/vis"
         :tagline "Explore a project, change code and run checks."
         :title "Vis"}}

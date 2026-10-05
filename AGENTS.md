@@ -119,17 +119,18 @@ reference address developers who build with Vis.
 
 Keep the modules of `resources/vis-docs/site.edn` in this order:
 
-1. **Intro**: Rationale, then Getting started.
-2. **Concepts**: one page for each feature, such as sessions, context management, drafts, council and automations.
-3. **Programmatic access**: the **Python SDK** group, then the **HTTP API** group. Each group starts with its basics page.
-4. **Guides**: tasks that build on the concepts and the programmatic pages.
-5. **Extensions**, then **Reference**.
+1. **Intro**: Rationale, Getting started, Running a gateway, then Reporting a bug.
+2. **Concepts**: one page for each feature, such as sessions, drafts, council, automations, forms, live views and decision models.
+3. **Programmatic access**: the **Basics** group (Python SDK, HTTP API and Extension API), then the **Feature APIs** group.
+4. **Extensions**, then **Reference**.
 
-- Give each concept `X` that a program can use two mirror pages: `python-X.md` and `http-X.md`.
-- Give both mirror pages the same `##` headings in the same order.
-- Name gateway routes only on `http-` pages.
-- Keep SDK calls and gateway routes out of concept pages. Link both mirror pages from the concept page's `When to use` and `See also`.
-- Link each guide to the concept pages and the programmatic pages that it uses.
+- Give each concept `X` that a program can use one page `X-api.md` in **Feature APIs**.
+- On an `X-api` page, give each example as a Python block, then as an HTTP block. Follow the `PAIRED VARIANTS` rule in `docs/core.clj`.
+- Name gateway routes only in HTTP blocks and on the `http-api` page.
+- If a feature has an `X-api` page, put its SDK calls and gateway routes there, not on the concept page.
+- Link the `X-api` page from the concept page's `When to use` and `See also`.
+- Inside a group, give a page a sidebar `:label` without the group name, for example `Sessions` under **Feature APIs**. Keep the full name in `:title`.
+- On the public site, show the Extension Center link at the end of the **Extensions** module.
 - In the README, call the introduction `Rationale` and list the manual in module order.
 - `docs-modules-test` and `packages/vis-agent/tests/test_api_guides.py` check these rules.
 

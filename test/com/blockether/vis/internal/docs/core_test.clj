@@ -1216,10 +1216,10 @@
    who arrives with a problem learns first whether this is the right page. The
    intro module of Rationale and Getting started is exempt."
   (it "flags a module page that opens elsewhere or names fewer than two problems"
-      (expect (seq (when-to-use-breaks (canon-fixture "Guides" "Install" ["a" "b"]))))
-      (expect (seq (when-to-use-breaks (canon-fixture "Guides" "When to use" ["only one"])))))
+      (expect (seq (when-to-use-breaks (canon-fixture "Concepts" "Install" ["a" "b"]))))
+      (expect (seq (when-to-use-breaks (canon-fixture "Concepts" "When to use" ["only one"])))))
   (it "accepts a module page that opens with two or more problems"
-      (expect (empty? (when-to-use-breaks (canon-fixture "Guides" "When to use" ["a" "b"])))))
+      (expect (empty? (when-to-use-breaks (canon-fixture "Concepts" "When to use" ["a" "b"])))))
   (it "leaves the intro module alone"
       (expect (empty? (when-to-use-breaks (canon-fixture "Intro" "Rationale" []))))))
 
@@ -1261,17 +1261,46 @@
 (defdescribe
   docs-modules-test
   "The manual reads in modules: the intro, the concepts, the programmatic access to
-   those concepts and the guides built on both. A Feature API page gives each
+   those concepts, the extensions and the reference. A Feature API page gives each
    example in Python and as HTTP requests, so a reader changes between them with
    one switch."
   (it "orders the modules and the programmatic groups"
       (let [{:keys [pages]} (docs/collect)]
-        (expect (= ["Intro" "Concepts" "Programmatic access" "Guides" "Extensions" "Reference"]
+        (expect (= ["Intro" "Concepts" "Programmatic access" "Extensions" "Reference"]
                    (distinct (map :section pages))))
-        (expect (= ["rationale" "index"] (mapv :slug (filter :intro? pages))))
+        (expect (= ["rationale" "index" "gateway-service" "reporting-bugs"]
+                   (mapv :slug (filter :intro? pages))))
         (expect (= ["Basics" "Feature APIs"] (distinct (keep :group pages))))
-        (expect (= ["python-sdk" "http-api"]
-                   (mapv :slug (filter #(= "Basics" (:group %)) pages))))))
+        (expect (= ["python-sdk" "http-api" "extension-api"]
+                   (mapv :slug (filter #(= "Basics" (:group %)) pages))))
+        (expect (every? (set (map :slug (filter #(= "Concepts" (:section %)) pages)))
+                        ["human-input" "live-views" "decision-models"]))))
+  (it "names a grouped page in the sidebar without the words of its group"
+      ;; The group heading says the rest: `Sessions` under `Feature APIs`, not `Sessions API`.
+      (let [words (fn [s]
+                    (map #(str/replace % #"s$" "") (re-seq #"[a-z]+" (str/lower-case s))))]
+        (doseq [{:keys [slug group title label]} (:pages (docs/collect))
+                :when group]
+
+          (expect (not-any? (set (words group)) (words (or label title))) slug))))
+  (it "shows the label in the sidebar and keeps the title on the page and in the tab"
+      (let [site
+            (docs/collect)
+
+            page
+            (first (filter #(= "sessions-api" (:slug %)) (:pages site)))
+
+            html
+            (docs/page-html site page :static)
+
+            nav
+            (re-find #"(?s)<nav class=\"nav\">.*?</nav>" html)]
+
+        (expect (= "Sessions" (:label page)))
+        (expect (str/includes? nav "<a href=\"sessions-api.html\" class=\"active\">Sessions</a>"))
+        (expect (not (str/includes? nav "Sessions API")))
+        (expect (str/includes? (re-find #"<title>[^<]*</title>" html) "Sessions API"))
+        (expect (re-find #"<h1[^>]*>Sessions API</h1>" html))))
   (it "gives each concept that a program drives one API page with both variants"
       (let [{:keys [pages]}
             (docs/collect)
@@ -1302,22 +1331,7 @@
               :when (not= "http-api" slug)]
 
         (expect (not (re-find #"\b(GET|POST|PUT|PATCH|DELETE) /" (dc/variant-text md "python")))
-                slug)))
-  (it "builds every guide on a concept page and a programmatic page"
-      (let [{:keys [pages]}
-            (docs/collect)
-
-            slugs-of
-            (fn [section]
-              (map :slug (filter #(= section (:section %)) pages)))]
-
-        (doseq [{:keys [slug section md]}
-                pages
-
-                :when (= "Guides" section)]
-
-          (expect (some #(links-to? md %) (slugs-of "Concepts")) slug)
-          (expect (some #(links-to? md %) (slugs-of "Programmatic access")) slug)))))
+                slug))))
 
 (defn- plain-english-breaks
   "The page-contract lines a page whose body is `prose` earns for its sentences."
@@ -1382,4 +1396,22 @@
           (expect (str/includes? link (str "aria-label=\"" label "\"")))
           (expect (not (str/includes? link (str ">" label "<")))))
         (expect (not (str/includes? (docs/page-html site page :live) "href=\"/extensions/\"")))
-        (expect (not-any? #(= "extension-center" (:slug %)) (:pages site))))))
+        (expect (not-any? #(= "extension-center" (:slug %)) (:pages site)))))
+  (it "ends the Extensions module of the public sidebar with the catalog link"
+      (let [site
+            (assoc (docs/collect) :public? true)
+
+            nav
+            (re-find #"(?s)<nav class=\"nav\">.*?</nav>"
+                     (docs/page-html site (first (:pages site)) :static))
+
+            extensions
+            (re-find
+              #"(?s)<div class=\"nav-sec\">Extensions</div>.*?(?=<div class=\"nav-sec\">|</nav>)"
+              nav)]
+
+        (expect (= 1 (count (re-seq #"href=\"/extensions/\"" nav))))
+        (expect (str/ends-with? extensions
+                                (str "<a href=\"/extensions/\">"
+                                     (get-in site [:site :extension-center :title])
+                                     "</a>"))))))
