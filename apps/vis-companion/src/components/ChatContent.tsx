@@ -3986,13 +3986,28 @@ function TurnStamp({ position, createdAt }: { position?: number; createdAt?: num
   );
 }
 
+// Summarized, a windowed turn reads its earlier steps when its trace nears the reader. The
+// digests are the fold, as in the ramp (`SEGMENT_FOLD`): a control that counted the hidden
+// steps opened as a few notes and digests. Only separate steps keep that control.
+const HISTORY_NEAR_MARGIN = '100%';
+
 function TurnTrace({
   turn,
   ...props
 }: Omit<ComponentProps<typeof IterationTrace>, 'iterations'> & { turn: TranscriptTurn }) {
+  const summarize = useStepsSummarized();
   const [history, setHistory] = useState<TranscriptIteration[] | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState('');
+  const markRef = useRef<HTMLDivElement>(null);
+  const reading = useRef(false);
+  // A read ends with its turn: a session switch must not keep downloading hidden steps.
+  const alive = useRef<AbortSignal | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    alive.current = controller.signal;
+    return () => controller.abort();
+  }, []);
   const iterations = useMemo(() => {
     const recent = turn.iterations ?? [];
     if (!history) return recent;
@@ -4002,21 +4017,55 @@ function TurnTrace({
     return [...merged.values()].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
   }, [history, turn.iterations]);
   const earlier = history ? 0 : (turn.iterations_offset ?? 0);
+  const canRead = earlier > 0 && !!props.client && !!props.sid;
   const readHistory = async () => {
-    if (loadingHistory || !props.client || !props.sid) return;
+    const signal = alive.current;
+    if (reading.current || !signal || !props.client || !props.sid) return;
+    reading.current = true;
     setLoadingHistory(true);
     setHistoryError('');
     try {
-      setHistory(await props.client.turnTrace(props.sid, turn.turn_id));
+      const rows = await props.client.turnTrace(props.sid, turn.turn_id, signal);
+      if (!signal.aborted) setHistory(rows);
     } catch (cause) {
-      setHistoryError((cause as Error).message);
+      if (!signal.aborted) setHistoryError((cause as Error).message);
     } finally {
-      setLoadingHistory(false);
+      reading.current = false;
+      if (!signal.aborted) setLoadingHistory(false);
     }
   };
+  const reach = useRef(readHistory);
+  useEffect(() => {
+    reach.current = readHistory;
+  });
+  // A failed read waits for the reader's retry, not for the next scroll past it.
+  const isArmed = summarize && canRead && !historyError;
+  useEffect(() => {
+    const mark = markRef.current;
+    if (!isArmed || !mark) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      void reach.current();
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void reach.current();
+      },
+      { root: scrollerOf(mark), rootMargin: HISTORY_NEAR_MARGIN },
+    );
+    observer.observe(mark);
+    return () => observer.disconnect();
+  }, [isArmed]);
   return (
     <>
-      {earlier > 0 && props.client && props.sid && (
+      {/* The mark sits above the steps it loads, so it never anchors the reader. */}
+      {isArmed && <div ref={markRef} aria-hidden="true" data-anchor="skip" className="h-px" />}
+      {canRead && summarize && historyError && (
+        <LoadMore label="Try loading earlier steps again" tone="error" onClick={() => void readHistory()}>
+          Try again
+        </LoadMore>
+      )}
+      {canRead && !summarize && (
         <LoadMore
           label={`Show ${earlier} earlier step${earlier === 1 ? '' : 's'} of this turn`}
           onClick={() => void readHistory()}

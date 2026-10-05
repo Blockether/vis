@@ -650,9 +650,10 @@ describe("a form frame's numeric form_index", () => {
   });
 });
 
-// Reopening a large live turn must not fetch its hidden trace during adoption.
+// Reopening a large live turn must not fetch its hidden trace during adoption. In Compact
+// mode the trace reads it when it nears the reader; no control counts the hidden steps.
 describe('a windowed running turn', () => {
-  it.each([false, true])('keeps the earlier-steps control when live=%s', async (live) => {
+  it.each([false, true])('reads no hidden steps during adoption when live=%s', async (live) => {
     const turnTrace = vi.fn();
     renderSessionScreen({
       session: sessionFixture({ live, current_turn_id: live ? 't-large' : null }),
@@ -665,8 +666,10 @@ describe('a windowed running turn', () => {
         }],
       },
     });
-    expect(await screen.findByText('Latest visible progress')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Show 99 earlier steps of this turn' })).toBeVisible();
+    const progress = await screen.findByText('Latest visible progress');
+    expect(progress).toBeVisible();
+    expect(progress.closest('article')?.querySelector('[data-anchor="skip"]')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /earlier step/ })).toBeNull();
     expect(turnTrace).not.toHaveBeenCalled();
   });
 });
