@@ -1253,9 +1253,9 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
             // sign-out too, for every device on that machine.
             <ConfirmRow
               key={provider.id}
-              question={`Remove ${provider.label}?`}
+              question={`Sign out of ${provider.label}?`}
               cost={`Signs out of ${provider.label} on the gateway machine and deletes its entry there. Every device paired with that machine loses it.`}
-              confirmLabel="Yes, remove"
+              confirmLabel="Yes, sign out"
               isBusy={pending === `remove:${provider.id}`}
               onKeep={() => setRemoving(null)}
               onConfirm={() => {
@@ -1274,7 +1274,6 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
           actions.push({
             key: 'refresh',
             label: 'Refresh',
-            name: `Refresh limits for ${provider.label}`,
             icon: <RefreshIcon isBusy={isProbing} className="size-4" />,
             onSelect: () => {
               if (!pending) void auth.recheck(provider.id);
@@ -1284,7 +1283,7 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
           actions.push({
             key: 'default',
             label: 'Default',
-            name: `Run every turn on ${provider.label}`,
+            name: 'Make default',
             icon: <StarIcon className="size-4" />,
             // A RANK rather than an edit, so it wears the amber every rank mark
             // in this app wears — the same slab `Primary` has.
@@ -1295,15 +1294,14 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
           actions.push({
             key: 'fallback',
             label: 'Fallback',
-            name: `Fall back to ${provider.label}`,
+            name: 'Make fallback',
             icon: <SortIcon className="size-4" />,
             onSelect: (anchor) => openModels(provider, 'fallback', anchor),
           });
         if (!provider.is_managed)
           actions.push({
             key: 'remove',
-            label: 'Remove',
-            name: `Sign out of ${provider.label} and remove it from this machine`,
+            label: 'Sign out',
             icon: <TrashIcon className="size-4" />,
             tone: 'danger',
             onSelect: () => setRemoving(provider.id),

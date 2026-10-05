@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, userEvent } from 'storybook/test';
+import { expect, fn, userEvent, within } from 'storybook/test';
 import {
   STORY_PROVIDERS,
   STORY_BROWSER_AUTH,
@@ -51,23 +51,16 @@ export const ManagedProvider: Story = {
   },
   play: async ({ canvas, args }) => {
     const [managed, ordinary] = args.auth.providers!;
+    const actionsOf = (label: string) =>
+      within(canvas.getByRole('group', { name: `${label} actions`, hidden: true }));
     await expect(
-      canvas.queryByRole('button', {
-        name: `Sign out of ${managed!.label} and remove it from this machine`,
-        hidden: true,
-      }),
+      actionsOf(managed!.label).queryByRole('button', { name: 'Sign out', hidden: true }),
     ).not.toBeInTheDocument();
     await expect(
-      canvas.getByRole('button', {
-        name: `Run every turn on ${managed!.label}`,
-        hidden: true,
-      }),
+      actionsOf(managed!.label).getByRole('button', { name: 'Make default', hidden: true }),
     ).toBeInTheDocument();
     await expect(
-      canvas.getByRole('button', {
-        name: `Sign out of ${ordinary!.label} and remove it from this machine`,
-        hidden: true,
-      }),
+      actionsOf(ordinary!.label).getByRole('button', { name: 'Sign out', hidden: true }),
     ).toBeInTheDocument();
   },
 };
@@ -185,9 +178,7 @@ export const CodexLimits: Story = {
     await userEvent.click(canvas.getByRole('button', { name: /^OpenAI Codex/i, expanded: false }));
     await expect(canvas.getByText('3 resets available')).toBeVisible();
     await expect(canvas.queryByRole('button', { name: 'Refresh limits' })).not.toBeInTheDocument();
-    await userEvent.click(
-      canvas.getByRole('button', { name: 'Refresh limits for OpenAI Codex (ChatGPT OAuth)' }),
-    );
+    await userEvent.click(canvas.getByRole('button', { name: 'Refresh' }));
     await expect(args.auth.recheck).toHaveBeenCalledTimes(2);
     await expect(args.auth.resetLimits).not.toHaveBeenCalled();
   },

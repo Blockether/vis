@@ -158,7 +158,7 @@ it('refreshes missing reset data from the row action without consuming a reset',
     status: 'ok',
     dynamic: { reset_credits: { ...credits, available_count: 3 } },
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh limits for OpenAI Codex' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   await screen.findByText('3 resets available');
   expect(read).toHaveBeenCalledTimes(2);
   expect(consume).not.toHaveBeenCalled();

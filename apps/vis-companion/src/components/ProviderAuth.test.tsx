@@ -1,5 +1,14 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { useState } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -480,7 +489,7 @@ describe('ProviderRows', () => {
           })}
         />,
       );
-      fireEvent.click(screen.getByRole('button', { name: 'Refresh limits for GITHUB-COPILOT' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
       expect(asked).toEqual(pending ? [] : ['github-copilot']);
       expect(
         screen.getByRole('button', { name: /^GITHUB-COPILOT/i, expanded: false }),
@@ -573,7 +582,7 @@ describe('ProviderRows', () => {
         auth={state({ providers: [signedIn({ models: ['glm-5.3', 'glm-5.3-air'] })] })}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Run every turn on GITHUB-COPILOT' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Make default' }));
     expect(screen.getByText('glm-5.3-air')).toBeVisible();
   });
 
@@ -585,8 +594,18 @@ describe('ProviderRows', () => {
         })}
       />,
     );
-    expect(html).toContain('Run every turn on GITHUB-COPILOT');
-    expect(html).not.toContain('Fall back to GITHUB-COPILOT');
+    expect(html).toContain('Make default');
+    expect(html).not.toContain('Make fallback');
+  });
+
+  it.each([
+    ['another provider', false, ['Refresh', 'Make default', 'Make fallback', 'Sign out']],
+    ['the default provider', true, ['Refresh', 'Make default', 'Sign out']],
+  ] as const)('keeps the row menu verbs short for %s', async (_, is_default, verbs) => {
+    render(<ProviderRows auth={state({ providers: [signedIn({ is_default })] })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for GITHUB-COPILOT' }));
+    const menu = within(await screen.findByRole('dialog', { name: 'GITHUB-COPILOT actions' }));
+    expect(menu.getAllByRole('button').map((verb) => verb.textContent)).toEqual(verbs);
   });
 
   it.each(['verified', 'unverified', 'rejected', 'degraded'] as const)(
@@ -598,21 +617,19 @@ describe('ProviderRows', () => {
         status: { is_authenticated: auth_state !== 'rejected', auth_state },
       };
       render(<ProviderRows auth={state({ providers: [row] })} />);
-      expect(screen.queryByRole('button', { name: /remove it from this machine/ })).toBeNull();
-      expect(
-        screen.getByRole('button', { name: 'Run every turn on EXTENSION-OWNED' }),
-      ).toBeVisible();
+      expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Make default' })).toBeVisible();
     },
   );
 
   it('drops an open removal confirmation when the provider becomes extension-managed', () => {
     const row = { ...provider('anthropic'), is_managed: false };
     const view = render(<ProviderRows auth={state({ providers: [row] })} />);
-    fireEvent.click(screen.getByRole('button', { name: /remove it from this machine/ }));
-    expect(screen.getByRole('group', { name: 'Remove ANTHROPIC?' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    expect(screen.getByRole('group', { name: 'Sign out of ANTHROPIC?' })).toBeVisible();
     view.rerender(<ProviderRows auth={state({ providers: [{ ...row, is_managed: true }] })} />);
-    expect(screen.queryByRole('group', { name: 'Remove ANTHROPIC?' })).toBeNull();
-    expect(screen.queryByRole('button', { name: /remove it from this machine/ })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Sign out of ANTHROPIC?' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull();
   });
 
   it('keeps removal as the row’s last verb, and asks inside the row before it destroys', () => {
@@ -628,14 +645,10 @@ describe('ProviderRows', () => {
         })}
       />,
     );
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: 'Sign out of ANTHROPIC and remove it from this machine',
-      }),
-    );
-    expect(screen.getByRole('group', { name: 'Remove ANTHROPIC?' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    expect(screen.getByRole('group', { name: 'Sign out of ANTHROPIC?' })).toBeVisible();
     expect(removed).toEqual([]);
-    fireEvent.click(screen.getByRole('button', { name: 'Yes, remove' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, sign out' }));
     expect(removed).toEqual([row]);
   });
 });
