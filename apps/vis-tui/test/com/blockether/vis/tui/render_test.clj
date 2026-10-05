@@ -11223,6 +11223,57 @@ print(paths)"
             (expect (= (str "▸ 1 " (if (= state "cancelled") "cancelled" "failed"))
                        (str/trim (subs (:line entry) 1))))
             (expect (= :error (get-in entry [:meta :status-tone]))))))
+    ;; Regression, user screenshot: an open digest showed Failed without the CODE that failed.
+    ;; The NameError stopped the block before any tool call, so the step has no Activity.
+    (it
+      "keeps the CODE of a failed step without Activity inside an open digest"
+      (let [source
+            "print([row['title'] for row in digest_members])"
+
+            steps
+            [{:iteration-id "i1"
+              :thinking "Compare the rendered rows."
+              :forms [{:code source
+                       :success? false
+                       :duration-ms 362
+                       :error {:type "NameError"
+                               :message "NameError: name 'digest_members' is not defined"}}]}]
+
+            render
+            (fn [live? expansions]
+              (#'render/trace-render-entries
+               {:iterations steps
+                :live? live?
+                :content-w 76
+                :session-id "s"
+                :session-turn-id "t"
+                :detail-expansions expansions
+                :settings {:summarize-steps true}}))
+
+            text
+            (fn [entries]
+              (str/join "\n" (map (comp strip-ansi :line) entries)))
+
+            line-with
+            (fn [entries word]
+              (some #(when (str/includes? (strip-ansi (:line %)) word) (strip-ansi (:line %)))
+                    entries))]
+
+        (doseq [live? [false true]]
+          (let [closed (render live? {})
+                open (render live? (open-digests "s" "t"))
+                at #(.indexOf ^String (text open) ^String %)]
+
+            (expect (str/includes? (first (digests closed)) "1 failed"))
+            (expect (not (str/includes? (text closed) "CODE")))
+            (expect (not-any? #(= :activity-header (get-in % [:meta :kind])) open))
+            (expect (< -1 (at "CODE") (at "FAILED")))
+            ;; The CODE head carries the time; the FAILED row does not repeat it.
+            (expect (str/includes? (line-with open "CODE") "362ms"))
+            (expect (not (str/includes? (line-with open "FAILED") "362ms")))
+            ;; Source and message stay collapsed until the reader opens them.
+            (expect (= -1 (at source)))
+            (expect (= -1 (at "is not defined")))))))
     ;; Regression, user screenshot: failures must stay inside the closed digest.
     ;; Files remain visible, and opening the digest restores each error.
     (it

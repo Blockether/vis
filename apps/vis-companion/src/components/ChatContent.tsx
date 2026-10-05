@@ -1771,11 +1771,9 @@ const FormTrace = memo(function FormTrace({
   sid?: string;
 }) {
   const form = executionGroup(forms, live);
-  const code = forms
-    .filter((member) => member.error == null || interruptedPython(member))
-    .map(formCode)
-    .filter(Boolean)
-    .join('\n\n');
+  // A failed call keeps its source under CODE, and Failed holds only its message (#181).
+  // Mirrors the TUI (`render/execution-group`).
+  const code = formCode(form);
   const cards = forms
     .flatMap(toolCards)
     .filter((member) => member.error != null || resultBody(member) !== '');
@@ -1791,6 +1789,15 @@ const FormTrace = memo(function FormTrace({
   const { detected: detectedActivity, running, status } = formStep(form, live);
   const { views: ownedViews, runs: ownedAttachments } = formRuns(forms, liveViews, attachments);
   const hasActivity = detectedActivity || ownedViews.length > 0 || ownedAttachments.length > 0;
+  const codeShown = showCode && Boolean(code || stdout);
+  // The CODE head carries the measured time, so a failure does not paint it twice.
+  const failures = (
+    showInterruptionInCode
+      ? cards.filter((card) => !interruptedPython(card) || !formCode(card))
+      : cards
+  ).map((card) =>
+    codeShown && !interruptedPython(card) ? { ...card, duration_ms: undefined } : card,
+  );
   return (
     <div className={live ? `min-w-0 ${transcriptRiseClass}` : 'min-w-0'}>
       {forms[0].comment?.trim() && (
@@ -1798,7 +1805,7 @@ const FormTrace = memo(function FormTrace({
           <Markdown compact>{forms[0].comment}</Markdown>
         </div>
       )}
-      {showCode && (code || stdout) && (
+      {codeShown && (
         <CollapsibleFormCode
           value={code}
           language={formCodeLanguage(form)}
@@ -1810,15 +1817,7 @@ const FormTrace = memo(function FormTrace({
           {stdout && <ToolCard form={{ stdout }} embedded />}
         </CollapsibleFormCode>
       )}
-      {showCode && (
-        <FailedCards
-          cards={
-            showInterruptionInCode
-              ? cards.filter((card) => !interruptedPython(card) || !formCode(card))
-              : cards
-          }
-        />
-      )}
+      {showCode && <FailedCards cards={failures} />}
       <div
         className={hasActivity ? 'relative z-0 min-w-0 bg-code px-3' : 'min-w-0'}
         data-execution-group={hasActivity || undefined}

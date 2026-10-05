@@ -1214,7 +1214,8 @@ describe('a Python evaluation without detected Activity', () => {
     expect(painted.container.textContent).not.toContain('ACTIVITY');
   });
 
-  it('keeps a failed Python message collapsed instead of showing its source', () => {
+  // Regression, user screenshot: an open digest showed Failed without the CODE that failed.
+  it('keeps a failed Python source under CODE and its message under Failed, both collapsed', () => {
     const painted = renderOpenSteps(
       <AssistantMessage
         turn={turnWith({
@@ -1226,15 +1227,24 @@ describe('a Python evaluation without detected Activity', () => {
     );
 
     // Regression, T153: the row shouted FAILED beside a ring that already drew the cross.
-    expect(painted.container.textContent).toContain('29ms');
     expect(painted.container.textContent).not.toContain('FAILED · PYTHON');
     expect(announcedStates(painted.container)).toContain('Failed');
     expect(painted.queryByRole('button', { name: 'Expand execution trace' })).toBeNull();
-    expect(painted.queryByRole('button', { name: 'Expand code' })).toBeNull();
+    const code = painted.getByRole('button', { name: 'Expand code' });
+    expect(code).toHaveTextContent('CODE');
     const toggle = painted.getByRole('button', { name: 'Expand error details' });
     expect(toggle).toHaveTextContent('Failed');
+    expect(code.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    // The CODE head carries the time, so the Failed row does not paint it twice.
+    expect(code.closest('[data-execution-code]')).toHaveTextContent('29ms');
+    expect(toggle.closest('[data-code-result]')).not.toHaveTextContent('29ms');
     expect(painted.queryByText('failed')).toBeNull();
     expect(painted.container.textContent).not.toContain('raise Error()');
+    fireEvent.click(code);
+    expect(painted.container.textContent).toContain('raise Error()');
+    expect(painted.queryByText('failed')).toBeNull();
     fireEvent.click(toggle);
     expect(painted.getByText('failed')).toBeVisible();
     expect(painted.container.querySelector('[data-code-result] .text-err')).toBeInTheDocument();
@@ -1541,7 +1551,8 @@ describe('Activity follows the combined Python source', () => {
     const painted = renderOpenSteps(
       <IterationTrace iterations={turn.iterations ?? []} showCode={showCode} whole />,
     );
-    expect(painted.container.querySelector('[data-execution-code]')).toBeNull();
+    // A visible failure keeps its source under a collapsed CODE band (#181).
+    expect(painted.container.querySelector('[data-execution-code]') !== null).toBe(showCode);
     expect(painted.container.textContent).not.toContain(trace);
     expect(painted.container.textContent).not.toContain('print(private_result)');
     if (!showCode) {
@@ -1592,7 +1603,8 @@ describe('Activity follows the combined Python source', () => {
     }
     expect(painted.container.textContent).not.toContain(source);
     expect(painted.container.textContent).not.toContain('internal trace details');
-    expect(painted.queryByRole('button', { name: 'Expand code' })).toBeNull();
+    // The source stays under a collapsed CODE band, never in the failure message.
+    expect(painted.queryByRole('button', { name: 'Expand code' }) !== null).toBe(showCode);
   });
 
   // Adjacent failures share one collapsed label and reveal their messages together.
