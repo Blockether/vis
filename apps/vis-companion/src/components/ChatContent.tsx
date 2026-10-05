@@ -137,7 +137,7 @@ const INLINE_CODE_CLASS =
 // exactly once — on the element's first paint after insertion — so a re-render
 // can never replay it. Only live subtrees pass `live`, so replaying history (or
 // a finished turn re-keyed out of the live slot into the turn list) stays
-// perfectly still.
+// perfectly still. Inside a live trace, only steps streamed after mount enter.
 export const transcriptEnterClass = 'animate-transcript-enter motion-reduce:animate-none';
 
 // For nodes that land INSIDE a bubble that is already on screen (a new tool
@@ -1538,12 +1538,12 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
 
 const CardGrid = memo(function CardGrid({
   cards,
-  live = false,
+  rises = false,
   bare = false,
   isCopyable = true,
 }: {
   cards: TranscriptForm[];
-  live?: boolean;
+  rises?: boolean;
   bare?: boolean;
   isCopyable?: boolean;
 }) {
@@ -1555,7 +1555,7 @@ const CardGrid = memo(function CardGrid({
   // joined, some are not" - one run of work, one frame.
   return (
     <div
-      className={`grid grid-cols-[minmax(0,1fr)] gap-px${bare ? '' : ' overflow-hidden border border-dialog-edge bg-dialog-edge'}${live ? ` ${transcriptRiseClass}` : ''}`}
+      className={`grid grid-cols-[minmax(0,1fr)] gap-px${bare ? '' : ' overflow-hidden border border-dialog-edge bg-dialog-edge'}${rises ? ` ${transcriptRiseClass}` : ''}`}
       aria-label={`${cards.length} ${cards.length === 1 ? 'result' : 'results'}`}
     >
       {cards.map((card, cardIndex) => (
@@ -1758,6 +1758,7 @@ function OwnedRuns({
 const FormTrace = memo(function FormTrace({
   forms,
   live = false,
+  rises = false,
   showCode,
   liveViews,
   attachments,
@@ -1766,6 +1767,8 @@ const FormTrace = memo(function FormTrace({
 }: {
   forms: TranscriptForm[];
   live?: boolean;
+  /** Rise into place. Only a call streamed while the reader watches rises. */
+  rises?: boolean;
   showCode: boolean;
   liveViews: LiveViewModel[];
   attachments: IterationAttachment[];
@@ -1801,7 +1804,7 @@ const FormTrace = memo(function FormTrace({
     codeShown && !interruptedPython(card) ? { ...card, duration_ms: undefined } : card,
   );
   return (
-    <div className={live ? `min-w-0 ${transcriptRiseClass}` : 'min-w-0'}>
+    <div className={rises ? `min-w-0 ${transcriptRiseClass}` : 'min-w-0'}>
       {forms[0].comment?.trim() && (
         <div className="mb-1 bg-thinking-surface px-3 py-1.5 text-ui text-vis-message mouse:text-title">
           <Markdown compact>{forms[0].comment}</Markdown>
@@ -2574,10 +2577,16 @@ type Chunk =
   | {
       kind: 'code';
       key: string;
+      step: number;
       forms: TranscriptForm[];
       isPython: boolean;
     }
-  | { kind: 'cards'; key: string; cards: TranscriptForm[] };
+  | { kind: 'cards'; key: string; step: number; cards: TranscriptForm[] };
+
+/** A step's number in its turn: its recorded position, else its place in the trace. */
+function stepOf(iteration: TranscriptIteration, index: number): number {
+  return iteration.position ?? index + 1;
+}
 
 // The steps between two progress notes are one run of work, not N bubbles. Mirrors the
 // TUI (`render/render-iteration-entries`): with steps summarized, only a progress note
@@ -2626,6 +2635,8 @@ function buildSegments(
 type TraceSegmentProps = {
   segment: TraceSegmentData;
   live: boolean;
+  /** The newest step that the trace restored at mount. Only later steps enter. */
+  restoredThrough: number;
   showCode: boolean;
   summarize: boolean;
   client?: GatewayClient;
@@ -2652,6 +2663,7 @@ function sameTraceEntry(a: TraceEntry, b: TraceEntry): boolean {
 function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
   if (
     a.live !== b.live ||
+    a.restoredThrough !== b.restoredThrough ||
     a.showCode !== b.showCode ||
     a.summarize !== b.summarize ||
     a.client !== b.client ||
@@ -2958,6 +2970,7 @@ function DeliveredUserInputBand({
 const TraceSegment = memo(function TraceSegment({
   segment,
   live,
+  restoredThrough,
   showCode,
   summarize,
   client,
@@ -2971,6 +2984,7 @@ const TraceSegment = memo(function TraceSegment({
   const chunks = useMemo(() => {
     const built: Chunk[] = [];
     segment.items.forEach((entry) => {
+      const step = stepOf(entry.iteration, entry.index);
       entry.forms.forEach((form, formIndex) => {
         if (hiddenForm(form)) return;
         const key = `${entry.index}-${formIndex}-${form.scope ?? 'form'}`;
@@ -2985,14 +2999,14 @@ const TraceSegment = memo(function TraceSegment({
             pool.isPython
           )
             pool.forms.push(form);
-          else built.push({ kind: 'code', key, forms: [form], isPython });
+          else built.push({ kind: 'code', key, step, forms: [form], isPython });
           return;
         }
         const cards = toolCards(form);
         if (!cards.length) return;
         const pool = built.at(-1);
         if (pool?.kind === 'cards') pool.cards.push(...cards);
-        else built.push({ kind: 'cards', key, cards: [...cards] });
+        else built.push({ kind: 'cards', key, step, cards: [...cards] });
       });
     });
     return built;
@@ -3047,9 +3061,13 @@ const TraceSegment = memo(function TraceSegment({
     return { views, records };
   }, [chunks, liveViews, strayViews, attachments]);
 
+  // A session switch, the ramp and a late history page mount restored steps. Only a step
+  // streamed while the reader watches enters.
+  const enters = live && stepOf(segment.head.iteration, segment.head.index) > restoredThrough;
+
   return (
     <section
-      className={`relative min-w-0 ${live ? transcriptEnterClass : ''}`}
+      className={`relative min-w-0 ${enters ? transcriptEnterClass : ''}`}
       data-transcript-part
     >
       {segment.head.userInput.length > 0 && (
@@ -3092,6 +3110,7 @@ const TraceSegment = memo(function TraceSegment({
                   <FormTrace
                     forms={chunk.forms}
                     live={live}
+                    rises={live && chunk.step > restoredThrough}
                     showCode={showCode || !chunk.isPython}
                     liveViews={liveViews}
                     attachments={attachments}
@@ -3099,7 +3118,7 @@ const TraceSegment = memo(function TraceSegment({
                     sid={sid}
                   />
                 ) : (
-                  <CardGrid cards={chunk.cards} live={live} />
+                  <CardGrid cards={chunk.cards} rises={live && chunk.step > restoredThrough} />
                 )}
               </div>
             );
@@ -3181,6 +3200,15 @@ export const IterationTrace = memo(function IterationTrace({
   const segments = useMemo(
     () => buildSegments(iterations, answered, summarize),
     [iterations, answered, summarize],
+  );
+
+  // The newest step when the trace mounts. A session switch mounts a running turn again,
+  // and its restored steps must not replay their entrance. Steps streamed later enter.
+  const [restoredThrough] = useState(() =>
+    iterations.reduce(
+      (newest, iteration, index) => Math.max(newest, stepOf(iteration, index)),
+      Number.NEGATIVE_INFINITY,
+    ),
   );
 
   // How many segments at the START of the trace are still held back. The ramp
@@ -3285,6 +3313,7 @@ export const IterationTrace = memo(function IterationTrace({
             key={segment.key}
             segment={segment}
             live={live}
+            restoredThrough={restoredThrough}
             showCode={showCode}
             summarize={summarize}
             client={client}

@@ -172,3 +172,81 @@ describe('a trace backfilling the turns a reader is scrolling into', () => {
     view.unmount();
   });
 });
+
+describe('a live trace that a session switch mounts again', () => {
+  // Regression, user report (switching between two running sessions made the step digests
+  // jump): every restored step replayed its entrance. So did the steps that the ramp and a
+  // late history page mounted above the reader. Only a step streamed after mount enters.
+  it('enters only the steps streamed after it mounted', () => {
+    const queue: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      queue.push(cb);
+      return queue.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+
+    // The running turn holds its recent steps. A history page adds the earlier steps later.
+    const recent = Array.from({ length: 20 }, (_, index) => iteration(index + 21));
+    const history = Array.from({ length: 20 }, (_, index) => iteration(index + 1));
+    const view = render(<IterationTrace iterations={recent} live client={client} sid="s1" />);
+    const shown = () => view.container.firstElementChild?.children.length ?? 0;
+    const entering = () =>
+      [...view.container.querySelectorAll('section.animate-transcript-enter')].map(
+        (section) => section.textContent ?? '',
+      );
+    expect(entering()).toEqual([]);
+
+    for (let frame = 0; queue.length > 0 && frame < 100; frame += 1) {
+      const tick = queue.shift();
+      act(() => {
+        tick?.(performance.now());
+      });
+    }
+    expect(shown()).toBe(20);
+    expect(entering()).toEqual([]);
+
+    view.rerender(
+      <IterationTrace iterations={[...history, ...recent]} live whole client={client} sid="s1" />,
+    );
+    expect(shown()).toBe(40);
+    expect(entering()).toEqual([]);
+
+    view.rerender(
+      <IterationTrace
+        iterations={[...history, ...recent, iteration(41)]}
+        live
+        whole
+        client={client}
+        sid="s1"
+      />,
+    );
+    expect(entering()).toEqual([expect.stringContaining('step 41')]);
+    view.unmount();
+  });
+
+  it('keeps the calls of restored separate steps still', () => {
+    setStepsSummarized(false);
+    const called = (position: number): TranscriptIteration => ({
+      ...iteration(position),
+      forms: [{ source: `step_${position}()` }],
+    });
+    const restored = [called(1), called(2)];
+    const view = render(
+      <IterationTrace iterations={restored} live showCode={false} client={client} sid="s1" />,
+    );
+    const rising = () => view.container.querySelectorAll('.animate-transcript-rise').length;
+    expect(rising()).toBe(0);
+
+    view.rerender(
+      <IterationTrace
+        iterations={[...restored, called(3)]}
+        live
+        showCode={false}
+        client={client}
+        sid="s1"
+      />,
+    );
+    expect(rising()).toBe(1);
+    view.unmount();
+  });
+});
