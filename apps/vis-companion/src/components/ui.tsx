@@ -36,21 +36,24 @@ import {
   useContext,
   useEffect,
   useId,
+  useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
   type ButtonHTMLAttributes,
   type HTMLAttributes,
   type InputHTMLAttributes,
+  type KeyboardEvent,
   type MouseEvent,
   type PointerEvent,
   type ReactNode,
 } from 'react';
 
 import { createPortal } from 'react-dom';
-import * as SelectPrimitive from '@radix-ui/react-select';
 import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
 
-import { useEdgeBack } from '../lib/edge-back';
+import { EDGE_MARGIN, menuPosition } from '../lib/anchored-menu';
+import { useBackLayer, useEdgeBack } from '../lib/edge-back';
 import { AlertIcon, CheckIcon, ChevronIcon, CloseIcon, CopyIcon, SidebarIcon } from './icons';
 
 /**
@@ -1992,7 +1995,11 @@ export const Input = forwardRef<
   );
 });
 
-/** Make the modal picker the only interactive branch; restore only attributes we own. */
+/**
+ * Hide every other branch from assistive tools while the picker is open; restore only
+ * attributes we own. This is `aria-hidden`, not `inert`: `inert` restyles the whole
+ * page behind on open and again on close, and the scrim already takes every press.
+ */
 function isolateSelectContent(node: HTMLDivElement | null) {
   if (!node?.isConnected) return;
   const changed: Element[] = [];
@@ -2000,25 +2007,58 @@ function isolateSelectContent(node: HTMLDivElement | null) {
     for (const sibling of branch.parentElement.children) {
       if (
         sibling !== branch &&
-        !sibling.hasAttribute('inert') &&
+        !sibling.hasAttribute('aria-hidden') &&
         !sibling.matches('[aria-live]') &&
         !sibling.querySelector('[aria-live]')
       ) {
-        sibling.setAttribute('inert', '');
+        sibling.setAttribute('aria-hidden', 'true');
         changed.push(sibling);
       }
     }
     if (branch.parentElement === node.ownerDocument.body) break;
   }
-  return () => changed.forEach((element) => element.removeAttribute('inert'));
+  return () => changed.forEach((element) => element.removeAttribute('aria-hidden'));
+}
+
+/** The tallest an open list grows, in CSS pixels, before it scrolls inside itself. */
+const SELECT_LIST_HEIGHT = 320;
+
+/** The part of its frame that an open list can fill: the `70vh` that `menuPosition` places. */
+const SELECT_LIST_SHARE = 0.7;
+
+/** One row of an open list. A `null` value is the filter's none row, which clears every choice. */
+type SelectRow = { key: string; value: string | null; label: string; disabled: boolean; isChosen: boolean };
+
+/** Focus `option` and show it inside the scrolling `list`. Move no other scroller. */
+function showOption(list: HTMLElement, option: HTMLElement) {
+  option.focus({ preventScroll: true });
+  if (option.offsetTop < list.scrollTop) list.scrollTop = option.offsetTop;
+  else if (option.offsetTop + option.offsetHeight > list.scrollTop + list.clientHeight) {
+    list.scrollTop = option.offsetTop + option.offsetHeight - list.clientHeight;
+  }
+}
+
+/** The row that takes the focus when a list opens: the first chosen row, else the first available row. */
+function openingOption(list: HTMLElement) {
+  return (
+    list.querySelector<HTMLElement>('[role="option"][aria-selected="true"]:not([aria-disabled])') ??
+    list.querySelector<HTMLElement>('[role="option"]:not([aria-disabled])')
+  );
 }
 
 /**
- * A choice with app-owned faces and a portalled, collision-aware listbox.
- * Radix owns keyboard navigation, typeahead, touch scrolling and focus return.
- * Arrows explore; Enter/Space commits; Escape cancels without dismissing a parent.
- * While open, Tab stays in the picker (the primitive's native-select convention).
- * Callers own the saved value; rejected saves never replace it optimistically here.
+ * A choice with app-owned faces and a listbox anchored to its trigger.
+ *
+ * The list opens in the frame of the press. It does not lock the scroll, the body
+ * pointer events or the focus of the page behind it: the old primitive did all three,
+ * each one restyled the whole page, and on a phone the list came seconds after the
+ * tap. A scrim over the app takes the press that closes the list, so that press never
+ * reaches the page, and `aria-hidden` keeps assistive tools inside the open list. The
+ * layer mounts on `document.body`: a child added to the app shell lays out the whole app.
+ *
+ * Arrows explore; Enter/Space commits; Escape and Tab cancel without dismissing a
+ * parent; the phone's back closes the list first. Callers own the saved value;
+ * rejected saves never replace it optimistically here.
  *
  * Given `values` instead of `value`, it is a filter that holds any number of choices:
  * Enter, Space or a tap toggles one and the list stays open for the next, and the
@@ -2053,13 +2093,24 @@ export const Select = forwardRef<
   ref,
 ) {
   const [open, setOpen] = useState(false);
-  // Radix closes the list after every pick. A toggle in a filter is the one pick that
-  // keeps it open, so the next choice is one tap away.
-  const toggledRef = useRef(false);
-  // iOS can send a click after an outside press closes the list. Ignore that same gesture.
-  const dismissedPointerRef = useRef(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const layerRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  // The gesture in progress. None of it is rendered.
+  const gestureRef = useRef({
+    // iOS can send a click after a press closed the list. Ignore that same gesture.
+    dismissedPress: false,
+    // A mouse opens the list on press. The click that ends that press must not close it.
+    pressOpened: false,
+    // Only a close that the reader asked for gives the focus back to the trigger.
+    returnFocus: false,
+    typed: '',
+    typedTimer: 0,
+  });
+  useImperativeHandle(ref, () => triggerRef.current as HTMLButtonElement, []);
   const generatedId = useId();
   const triggerId = props.id ?? generatedId;
+  const listboxId = `${generatedId}-listbox`;
   const unavailable = disabled || options.length === 0;
   const isChosen = (option: string) => (values ? values.includes(option) : option === value);
   const chosen = options.filter((option) => isChosen(option.value));
@@ -2072,123 +2123,269 @@ export const Select = forwardRef<
       : chosen.length > 0
         ? chosen.map((option) => option.label).join(', ')
         : `${values.length} selected`;
-  // An empty string is a real choice (Unassigned, No group), not Radix's placeholder.
-  // Prefix every value so the mapping is reversible and cannot collide with caller data.
-  const prefix = 'option:';
-  // A filter's root value matches no row, so Radix reports every row as a change.
-  const several = 'several';
-  const clear = 'clear';
-  const rows = [
-    ...(values ? [{ item: clear, label: noneLabel, disabled: false, isChosen: values.length === 0 }] : []),
+  const rows: SelectRow[] = [
+    ...(values ? [{ key: 'none', value: null, label: noneLabel, disabled: false, isChosen: values.length === 0 }] : []),
     ...options.map((option) => ({
-      item: `${prefix}${option.value}`,
+      key: `option:${option.value}`,
+      value: option.value,
       label: option.label,
       disabled: option.disabled ?? false,
       isChosen: isChosen(option.value),
     })),
   ];
   if (unavailable && open) setOpen(false);
+  const isOpen = open && !unavailable;
+
+  const dismiss = () => {
+    gestureRef.current.returnFocus = true;
+    setOpen(false);
+  };
+  // The phone's back closes the open list before the screen under it.
+  useBackLayer(isOpen ? dismiss : null);
+
+  useLayoutEffect(() => {
+    const layer = layerRef.current;
+    const list = listRef.current;
+    const trigger = triggerRef.current;
+    if (!isOpen || !layer || !list || !trigger) return;
+    const gesture = gestureRef.current;
+    // Measure once before the first paint, so the list shows beside its trigger at once.
+    const place = () => {
+      const box = layer.getBoundingClientRect();
+      // The keyboard can cover the foot of the layer. Place the list in the part that shows.
+      const visible = window.visualViewport;
+      const top = visible ? Math.max(box.top, visible.offsetTop) : box.top;
+      const bottom = visible && visible.height > 0 ? Math.min(box.bottom, visible.offsetTop + visible.height) : box.bottom;
+      const frame = { left: box.left, top, width: box.width, height: Math.max(bottom - top, 0) };
+      const anchor = trigger.getBoundingClientRect();
+      const cap =
+        frame.height > 0
+          ? Math.min(SELECT_LIST_HEIGHT, Math.floor(frame.height * SELECT_LIST_SHARE))
+          : SELECT_LIST_HEIGHT;
+      const room = frame.width > 0 ? frame.width - 2 * EDGE_MARGIN : anchor.width;
+      list.style.minWidth = `${Math.min(anchor.width, room)}px`;
+      list.style.maxHeight = `${cap}px`;
+      const width = list.offsetWidth;
+      // `menuPosition` aligns right edges. This right edge starts the list where its trigger starts.
+      const at = menuPosition(
+        { top: anchor.top - frame.top, bottom: anchor.bottom - frame.top, right: anchor.left - frame.left + width },
+        width,
+        { width: frame.width, height: frame.height },
+        list.offsetHeight,
+      );
+      if (!at) return;
+      list.style.left = `${at.left}px`;
+      list.style.top = at.top === undefined ? '' : `${at.top + frame.top - box.top}px`;
+      list.style.bottom = at.bottom === undefined ? '' : `${at.bottom + box.bottom - bottom}px`;
+      if (at.maxHeight !== undefined) list.style.maxHeight = `${Math.min(cap, at.maxHeight)}px`;
+    };
+    place();
+    const start = openingOption(list);
+    if (start) showOption(list, start);
+    else list.focus({ preventScroll: true });
+    // Hide the page only after the focus left it: a hidden branch must not hold the focus.
+    const restore = isolateSelectContent(layer);
+    const onScroll = (event: Event) => {
+      if (!(event.target instanceof Node && layer.contains(event.target))) place();
+    };
+    // The scrim takes a real press. This listener catches a press on a layer above the scrim.
+    const onOutsidePress = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof Node) || layer.contains(target) || trigger.contains(target)) return;
+      gesture.dismissedPress = true;
+      setOpen(false);
+      // Give the focus back after the press, unless the press gave it to another control.
+      window.setTimeout(() => {
+        const active = document.activeElement;
+        if (!active || active === document.body) trigger.focus({ preventScroll: true });
+      }, 0);
+    };
+    const viewport = window.visualViewport;
+    window.addEventListener('resize', place);
+    viewport?.addEventListener('resize', place);
+    viewport?.addEventListener('scroll', place);
+    document.addEventListener('scroll', onScroll, true);
+    document.addEventListener('pointerdown', onOutsidePress, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      viewport?.removeEventListener('resize', place);
+      viewport?.removeEventListener('scroll', place);
+      document.removeEventListener('scroll', onScroll, true);
+      document.removeEventListener('pointerdown', onOutsidePress, true);
+      window.clearTimeout(gesture.typedTimer);
+      gesture.typed = '';
+      restore?.();
+      if (gesture.returnFocus) {
+        gesture.returnFocus = false;
+        trigger.focus({ preventScroll: true });
+      }
+    };
+  }, [isOpen]);
+
+  const commit = (row: SelectRow, element: HTMLElement) => {
+    if (row.disabled) return;
+    if (values && row.value !== null) {
+      const option = row.value;
+      onValuesChange?.(values.includes(option) ? values.filter((entry) => entry !== option) : [...values, option]);
+      element.focus({ preventScroll: true });
+      return;
+    }
+    if (values) onValuesChange?.([]);
+    else if (row.value !== null && row.value !== value) onValueChange?.(row.value);
+    dismiss();
+  };
+
+  const onListKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    // Do not let the surrounding dialog interpret a picker key as its own.
+    event.stopPropagation();
+    const list = event.currentTarget;
+    const items = [...list.querySelectorAll<HTMLElement>('[role="option"]:not([aria-disabled])')];
+    const at = items.indexOf(event.target as HTMLElement);
+    const gesture = gestureRef.current;
+    const steps: Record<string, number> = {
+      ArrowDown: at + 1,
+      ArrowUp: at < 0 ? items.length - 1 : at - 1,
+      Home: 0,
+      PageUp: 0,
+      End: items.length - 1,
+      PageDown: items.length - 1,
+    };
+    const step = steps[event.key];
+    if (event.key === 'Escape' || event.key === 'Tab') {
+      event.preventDefault();
+      dismiss();
+    } else if (step !== undefined) {
+      event.preventDefault();
+      const item = items[Math.min(Math.max(step, 0), items.length - 1)];
+      if (item) showOption(list, item);
+    } else if (event.key === 'Enter' || (event.key === ' ' && gesture.typed === '')) {
+      event.preventDefault();
+      const item = items[at];
+      const row = item ? rows[Number(item.dataset.index)] : undefined;
+      if (item && row) commit(row, item);
+    } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      // Typeahead: the typed letters move to the next row that starts with them.
+      event.preventDefault();
+      window.clearTimeout(gesture.typedTimer);
+      gesture.typed += event.key.toLowerCase();
+      gesture.typedTimer = window.setTimeout(() => {
+        gesture.typed = '';
+      }, 1000);
+      const typed = gesture.typed;
+      const repeated = [...typed].every((char) => char === typed[0]);
+      const needle = repeated ? typed.slice(0, 1) : typed;
+      const from = repeated ? at + 1 : Math.max(at, 0);
+      const match = [...items.slice(from), ...items.slice(0, from)].find((item) =>
+        (rows[Number(item.dataset.index)]?.label ?? '').toLowerCase().startsWith(needle),
+      );
+      if (match) showOption(list, match);
+    }
+  };
 
   return (
-    <SelectPrimitive.Root
-      value={values ? several : `${prefix}${value}`}
-      onValueChange={(next) => {
-        if (!values) {
-          onValueChange?.(next.slice(prefix.length));
-        } else if (next === clear) {
-          onValuesChange?.([]);
-        } else {
-          const option = next.slice(prefix.length);
-          toggledRef.current = true;
-          queueMicrotask(() => {
-            toggledRef.current = false;
-          });
-          onValuesChange?.(
-            values.includes(option) ? values.filter((entry) => entry !== option) : [...values, option],
-          );
-        }
-      }}
-      open={open && !unavailable}
-      onOpenChange={(next) => {
-        if (!next && toggledRef.current) {
-          toggledRef.current = false;
-          return;
-        }
-        setOpen(next);
-      }}
-      disabled={unavailable}
-    >
-      <SelectPrimitive.Trigger
+    <>
+      <button
         {...props}
+        ref={triggerRef}
+        type="button"
+        role="combobox"
         id={triggerId}
-        ref={ref}
         title={label}
-        onPointerDown={() => { dismissedPointerRef.current = false; }}
-        onClick={(event) => {
-          if (dismissedPointerRef.current && event.detail > 0) event.preventDefault();
-          dismissedPointerRef.current = false;
+        disabled={unavailable}
+        aria-autocomplete="none"
+        aria-expanded={isOpen}
+        aria-controls={isOpen ? listboxId : undefined}
+        data-state={isOpen ? 'open' : 'closed'}
+        onPointerDown={(event) => {
+          const gesture = gestureRef.current;
+          if (unavailable || event.button !== 0 || event.ctrlKey) return;
+          if (isOpen) {
+            // A press on the trigger of an open list closes it. Its click must not open the list again.
+            gesture.dismissedPress = true;
+            dismiss();
+            return;
+          }
+          gesture.dismissedPress = false;
+          gesture.pressOpened = event.pointerType === 'mouse';
+          if (gesture.pressOpened) {
+            // A mouse opens on press, like a native select. Keep the focus that the list takes.
+            event.preventDefault();
+            setOpen(true);
+          }
         }}
-        className={`relative inline-flex h-8 min-w-11 max-w-full items-center justify-between gap-2 self-center rounded-none border border-edge bg-input px-2.5 font-mono text-ui text-white after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-[''] enabled:hover:text-accent-ink focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted data-[state=open]:border-accent mouse:h-7 mouse:after:content-none ${className}`}
-      >
-        <span className="min-w-0 truncate text-left">
-          <SelectPrimitive.Value>{label}</SelectPrimitive.Value>
-        </span>
-        <SelectPrimitive.Icon asChild>
-          <ChevronIcon open className={`size-3 shrink-0 ${open && !unavailable ? 'rotate-180' : ''}`} />
-        </SelectPrimitive.Icon>
-      </SelectPrimitive.Trigger>
-      <SelectPrimitive.Portal container={open ? overlayLayer().host : undefined}>
-        <SelectPrimitive.Content
-          position="popper"
-          ref={isolateSelectContent}
-          onPointerDownOutside={() => { dismissedPointerRef.current = true; }}
-          sideOffset={8}
-          collisionPadding={12}
-          aria-label={props['aria-label']}
-          aria-labelledby={props['aria-labelledby'] ?? (props['aria-label'] ? undefined : triggerId)}
-          aria-multiselectable={values ? true : undefined}
-          className="z-[60] flex max-h-[min(20rem,var(--radix-select-content-available-height))] min-w-[var(--radix-select-trigger-width)] max-w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-none border border-dialog-edge bg-panel font-mono text-ui text-white shadow-float"
-          onKeyDown={(event) => {
-            // Do not let the surrounding dialog interpret a picker key as its own.
+        onClick={(event) => {
+          const gesture = gestureRef.current;
+          // A click with `detail` 0 comes from a keyboard or an assistive tool, never from the press above.
+          const isPressEnd = event.detail > 0 && (gesture.dismissedPress || gesture.pressOpened);
+          gesture.dismissedPress = false;
+          gesture.pressOpened = false;
+          if (isPressEnd) return;
+          if (isOpen) dismiss();
+          else setOpen(true);
+        }}
+        onKeyDown={(event) => {
+          if (isOpen) {
+            // The open list owns the keys, also before the focus reaches it.
             event.stopPropagation();
             if (event.key === 'Escape') {
               event.preventDefault();
-              setOpen(false);
+              dismiss();
             }
-          }}
-        >
-          <SelectPrimitive.ScrollUpButton className="flex min-h-11 shrink-0 items-center justify-center text-dialog-hint mouse:min-h-7">
-            <ChevronIcon open className="size-3 rotate-180" />
-          </SelectPrimitive.ScrollUpButton>
-          <SelectPrimitive.Viewport className="min-h-0 p-1">
-            {rows.map((row) => (
-              <SelectPrimitive.Item
-                key={row.item}
-                value={row.item}
-                disabled={row.disabled}
-                textValue={row.label}
-                aria-selected={row.isChosen}
-                onPointerMove={(event) => {
-                  // Hover changes ink only; keep the keyboard focus indicator in place.
-                  if (event.pointerType === 'mouse') event.preventDefault();
-                }}
-                className="flex min-h-11 cursor-default select-none items-center gap-2 rounded-none px-2 py-1.5 outline-none aria-selected:bg-panel-2 data-[disabled]:text-muted data-[disabled]:pointer-events-none [&:not([data-disabled])]:hover:text-accent-ink focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent mouse:min-h-7"
-              >
-                <SelectPrimitive.ItemText className="min-w-0 flex-1 break-words">
-                  {row.label}
-                </SelectPrimitive.ItemText>
-                <span aria-hidden="true" className="ml-auto flex size-3 shrink-0 items-center justify-center">
-                  {row.isChosen && <CheckIcon className="size-3" />}
-                </span>
-              </SelectPrimitive.Item>
-            ))}
-          </SelectPrimitive.Viewport>
-          <SelectPrimitive.ScrollDownButton className="flex min-h-11 shrink-0 items-center justify-center text-dialog-hint mouse:min-h-7">
-            <ChevronIcon open className="size-3" />
-          </SelectPrimitive.ScrollDownButton>
-        </SelectPrimitive.Content>
-      </SelectPrimitive.Portal>
-    </SelectPrimitive.Root>
+            return;
+          }
+          if (!['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) return;
+          event.preventDefault();
+          setOpen(true);
+        }}
+        className={`relative inline-flex h-8 min-w-11 max-w-full items-center justify-between gap-2 self-center rounded-none border border-edge bg-input px-2.5 font-mono text-ui text-white after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-[''] enabled:hover:text-accent-ink focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted data-[state=open]:border-accent mouse:h-7 mouse:after:content-none ${className}`}
+      >
+        <span className="min-w-0 truncate text-left">{label}</span>
+        <ChevronIcon open className={`size-3 shrink-0 ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+      {isOpen &&
+        createPortal(
+          <div
+            ref={layerRef}
+            role="presentation"
+            className="fixed inset-0 z-[60] touch-none"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) dismiss();
+            }}
+          >
+            <div
+              ref={listRef}
+              id={listboxId}
+              role="listbox"
+              tabIndex={-1}
+              aria-label={props['aria-label']}
+              aria-labelledby={props['aria-labelledby'] ?? (props['aria-label'] ? undefined : triggerId)}
+              aria-multiselectable={values ? true : undefined}
+              className="absolute max-w-[min(24rem,calc(100vw-1.5rem))] overflow-y-auto overscroll-contain rounded-none border border-dialog-edge bg-panel font-mono text-ui text-white shadow-float"
+              onKeyDown={onListKeyDown}
+            >
+              {rows.map((row, index) => (
+                <div
+                  key={row.key}
+                  role="option"
+                  data-index={index}
+                  tabIndex={row.disabled ? undefined : -1}
+                  aria-selected={row.isChosen}
+                  aria-disabled={row.disabled || undefined}
+                  data-disabled={row.disabled ? '' : undefined}
+                  onClick={(event) => commit(row, event.currentTarget)}
+                  className="flex min-h-11 cursor-default select-none items-center gap-2 border-b border-edge-strong px-2.5 py-1.5 outline-none last:border-b-0 aria-selected:bg-panel-2 data-[disabled]:pointer-events-none data-[disabled]:text-muted [&:not([data-disabled])]:hover:text-accent-ink focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent mouse:min-h-7"
+                >
+                  <span className="min-w-0 flex-1 break-words">{row.label}</span>
+                  <span aria-hidden="true" className="ml-auto flex size-3 shrink-0 items-center justify-center">
+                    {row.isChosen && <CheckIcon className="size-3" />}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>,
+          document.body,
+        )}
+    </>
   );
 });
 

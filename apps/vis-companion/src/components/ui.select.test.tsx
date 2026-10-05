@@ -1,8 +1,10 @@
 /** @vitest-environment jsdom */
 import { createRef, useState } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
+
+import { dismissTopLayer } from '../lib/edge-back';
 import { Button, DialogFrame, Modal, Select } from './ui';
 
 const choices = [
@@ -197,29 +199,31 @@ describe('Select', () => {
     expect(trigger).toHaveTextContent('No options available');
   });
 
-  it('isolates the open picker and restores only its own inert attributes on close and unmount', async () => {
-    const alreadyInert = render(<Button>Unavailable</Button>).container;
-    alreadyInert.setAttribute('inert', '');
+  it('hides the page behind the open picker from assistive tools and restores only its own attributes', async () => {
+    // `inert` restyled the whole page on open and again on close. The scrim takes every press instead.
+    const alreadyHidden = render(<Button>Unavailable</Button>).container;
+    alreadyHidden.setAttribute('aria-hidden', 'true');
     const liveRegion = render(<div aria-live="polite">Changes saved</div>).container;
     const { container, unmount } = render(<BackendChoice />);
     const trigger = screen.getByRole('combobox');
-    expect(container).not.toHaveAttribute('inert');
+    expect(container).not.toHaveAttribute('aria-hidden');
 
     await userEvent.click(trigger);
-    expect(container).toHaveAttribute('inert');
-    expect(alreadyInert).toHaveAttribute('inert');
-    expect(liveRegion).not.toHaveAttribute('inert');
-    await userEvent.keyboard('{Escape}');
+    expect(container).toHaveAttribute('aria-hidden', 'true');
     expect(container).not.toHaveAttribute('inert');
-    expect(alreadyInert).toHaveAttribute('inert');
+    expect(alreadyHidden).toHaveAttribute('aria-hidden', 'true');
+    expect(liveRegion).not.toHaveAttribute('aria-hidden');
+    await userEvent.keyboard('{Escape}');
+    expect(container).not.toHaveAttribute('aria-hidden');
+    expect(alreadyHidden).toHaveAttribute('aria-hidden', 'true');
     await waitFor(() => expect(trigger).toHaveFocus());
 
     await userEvent.click(trigger);
-    expect(container).toHaveAttribute('inert');
+    expect(container).toHaveAttribute('aria-hidden', 'true');
     unmount();
-    expect(container).not.toHaveAttribute('inert');
-    expect(alreadyInert).toHaveAttribute('inert');
-    expect(liveRegion).not.toHaveAttribute('inert');
+    expect(container).not.toHaveAttribute('aria-hidden');
+    expect(alreadyHidden).toHaveAttribute('aria-hidden', 'true');
+    expect(liveRegion).not.toHaveAttribute('aria-hidden');
   });
 
   it('preserves unknown saved values instead of silently choosing a different option', () => {
@@ -232,6 +236,61 @@ describe('Select', () => {
       />,
     );
     expect(screen.getByRole('combobox')).toHaveTextContent('remote-backend');
+  });
+
+  it('opens beside its trigger in one pass and leaves the page behind unlocked', async () => {
+    // Regression: the Radix list locked the page scroll and pointer events and placed
+    // itself in later passes, so a phone showed it seconds after the tap.
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    const box = (left: number, top: number, width: number, height: number) =>
+      ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top }) as DOMRect;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.getAttribute('role') === 'combobox') return box(40, 780, 120, 32);
+      if (this.getAttribute('role') === 'presentation') return box(0, 0, 390, 844);
+      return box(0, 0, 0, 0);
+    });
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute('role') === 'listbox' ? 200 : 0;
+    });
+    const styleSheets = document.head.querySelectorAll('style').length;
+    render(<BackendChoice />);
+    await userEvent.click(screen.getByRole('combobox', { name: 'Draft backend' }));
+    const listbox = screen.getByRole('listbox');
+    // A trigger near the foot of the screen has no room under it: the list stands on it.
+    expect(listbox.style.left).toBe('40px');
+    expect(listbox.style.bottom).toBe('70px');
+    expect(listbox.style.top).toBe('');
+    expect(document.body).not.toHaveAttribute('style');
+    expect(document.body).not.toHaveAttribute('data-scroll-locked');
+    expect(document.head.querySelectorAll('style')).toHaveLength(styleSheets);
+  });
+
+  it('closes from its scrim or Tab without committing, and returns focus to the trigger', async () => {
+    render(<BackendChoice />);
+    const trigger = screen.getByRole('combobox', { name: 'Draft backend' });
+    await userEvent.click(trigger);
+    await userEvent.click(screen.getByRole('listbox').parentElement as HTMLElement);
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    await userEvent.keyboard('{ArrowDown}{End}{Tab}');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(trigger).toHaveTextContent('Automatic');
+  });
+
+  it('closes on the phone back before the screen under it', async () => {
+    render(<BackendChoice />);
+    const trigger = screen.getByRole('combobox', { name: 'Draft backend' });
+    await userEvent.click(trigger);
+    act(() => {
+      expect(dismissTopLayer()).toBe(true);
+    });
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(dismissTopLayer()).toBe(false);
   });
 });
 

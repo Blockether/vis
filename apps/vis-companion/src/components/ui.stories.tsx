@@ -1393,7 +1393,7 @@ export const SeveralChoices: Story = {
     const page = within(canvasElement.ownerDocument.body);
     const groups = canvas.getByRole('combobox', { name: 'Groups' });
     await expect(groups).toHaveTextContent('Planning');
-    // While the list is open the rest of the page is inert, so check the empty filter first.
+    // While the list is open the rest of the page is hidden from role queries, so check the empty filter first.
     await expect(canvas.getByRole('combobox', { name: 'Empty groups' })).toBeDisabled();
     await userEvent.click(groups);
     await userEvent.click(page.getByRole('option', { name: 'Review' }));
