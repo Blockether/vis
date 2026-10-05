@@ -56,6 +56,7 @@ import { MicIcon, SendIcon, StopIcon, VoiceLoopIcon } from '../components/icons'
 import { FilePreview } from '../components/FilePreview';
 import { HumanInputPrompt } from '../components/HumanInputPrompt';
 import { JumpToLatestButton } from '../components/JumpToLatestButton';
+import { TranscriptOutline } from '../components/TranscriptOutline';
 import { PasteEditor } from '../components/PasteEditor';
 import { QueuedTurnsTray } from '../components/QueuedTurnsTray';
 import { useLiveViews } from '../components/LiveView';
@@ -132,6 +133,7 @@ import {
   readerRetreatedFrom,
   shouldOfferLatest,
 } from '../lib/reading-position';
+import { JUMP_MARGIN, outlineEntry } from '../lib/transcript-outline';
 import type {
   ContentBlock,
   GatewayCapabilities,
@@ -4412,7 +4414,7 @@ export function SessionScreen({
         // live here is what rendered white placeholder bands and shifted the
         // scroll position when you flew up into a turn on iOS.
         return (
-          <div className={index === 0 ? '' : 'mt-10'} key={turn.turn_id}>
+          <div className={index === 0 ? '' : 'mt-10'} key={turn.turn_id} data-turn-id={turn.turn_id}>
             {(request || (turn.attachments?.length ?? 0) > 0) && (
               <UserMessage
                 position={turn.position}
@@ -4496,6 +4498,7 @@ export function SessionScreen({
       <div
         className={`${turns.length ? 'mt-10 ' : ''}${restored ? '' : transcriptEnterClass}`}
         data-live="true"
+        data-turn-id={runningTurn.id}
       >
         {(runningTurn.request || (liveAttachments?.length ?? 0) > 0) && (
           <UserMessage
@@ -4591,6 +4594,120 @@ export function SessionScreen({
       .catch((cause: unknown) => setError((cause as Error).message))
       .finally(() => setLoadingEarlier(false));
   };
+
+  // THE OUTLINE'S JUMP (Blockether/vis#316). The turn can be anywhere in the session:
+  // on screen, held outside the render window, or still on the gateway. The target
+  // waits until the layout effect below finds its row mounted, and then puts it at
+  // the top of the transcript. A turn still on the gateway is paged in first.
+  const [jumpTarget, setJumpTarget] = useState<string | null>(null);
+  const jumpToTurn = (id: string, index: number) => {
+    setJumpTarget(id);
+    if (runningTurnId === id || paintableTurns.some((turn) => turn.turn_id === id)) return;
+    if (loadingEarlier || earlierRemaining <= 0) return;
+    setLoadingEarlier(true);
+    void (async () => {
+      let older: TranscriptTurn[] | null = null;
+      // Ask for one page that reaches the turn. The byte cap of the gateway can send
+      // fewer turns, so ask again until the turn is held or no page moves the window.
+      for (let remaining = earlierRemaining; ; ) {
+        const limit = Math.max(INITIAL_VISIBLE_TURNS, remaining - index);
+        const page = await client.transcriptEarlier(sid, undefined, limit);
+        if (!page) break;
+        older = page;
+        const left = client.transcriptWindow(sid).offset;
+        if (left >= remaining || page.some((turn) => turn.turn_id === id)) break;
+        remaining = left;
+      }
+      if (!older) return;
+      anchorPrepend();
+      setTurns(older);
+      setEarlierRemaining(client.transcriptWindow(sid).offset);
+    })()
+      .catch((cause: unknown) => setError((cause as Error).message))
+      .finally(() => setLoadingEarlier(false));
+  };
+  useLayoutEffect(() => {
+    if (!jumpTarget) return;
+    const index = paintableTurns.findIndex((turn) => turn.turn_id === jumpTarget);
+    if (index < 0 && runningTurnId !== jumpTarget) {
+      // Not held yet: wait while a page is on its way, and give up when none is.
+      if (!loadingEarlier) setJumpTarget(null);
+      return;
+    }
+    // Mount every row from the target down at once. The ramp is for a session that
+    // opens; a reader who asked for one turn waits for that turn, not for the ramp.
+    const need = index < 0 ? 0 : paintableTurns.length - index;
+    if (visibleTurnCount < need || hydratedTurnCount < need) {
+      anchorPrepend();
+      setVisibleTurnCount((count) => Math.max(count, need));
+      setHydratedTurnCount((count) => Math.max(count, need));
+      return;
+    }
+    setJumpTarget(null);
+    const viewport = scrollRef.current;
+    const row = Array.from(transcriptRef.current?.children ?? []).find(
+      (child): child is HTMLElement =>
+        child instanceof HTMLElement && child.dataset.turnId === jumpTarget,
+    );
+    if (!viewport || !row) return;
+    followingRef.current = false;
+    viewport.scrollTop +=
+      row.getBoundingClientRect().top - viewport.getBoundingClientRect().top - JUMP_MARGIN;
+    // The jump is the reader's new line. The anchor is read again at it, and the
+    // scroll event that the jump raises is the echo of a correction, not a gesture.
+    correctedTopRef.current = -1;
+    captureScrollAnchor();
+    correctedTopRef.current = viewport.scrollTop;
+    syncJump();
+  }, [
+    jumpTarget,
+    paintableTurns,
+    runningTurnId,
+    loadingEarlier,
+    visibleTurnCount,
+    hydratedTurnCount,
+    captureScrollAnchor,
+    syncJump,
+  ]);
+
+  // The outline names each turn that this screen holds, and the running turn last.
+  const runningRequest = runningTurn?.request;
+  const runningRequestKind = runningTurn?.requestKind;
+  const runningCouncil = runningTurn?.council;
+  const runningAttachments = runningTurn?.attachments;
+  const runningStatus = runningTurn?.status;
+  const outlineEntries = useMemo(() => {
+    const held = paintableTurns.map((turn) => outlineEntry(turn));
+    if (runningTurnId)
+      held.push(
+        outlineEntry({
+          turn_id: runningTurnId,
+          request: runningRequest,
+          request_kind: runningRequestKind,
+          council: runningCouncil,
+          attachments: runningAttachments,
+          status: runningStatus,
+        }),
+      );
+    return held;
+  }, [
+    paintableTurns,
+    runningTurnId,
+    runningRequest,
+    runningRequestKind,
+    runningCouncil,
+    runningAttachments,
+    runningStatus,
+  ]);
+  const outlineTotal = earlierRemaining + outlineEntries.length;
+  // The gutter beside the text comes from the turns that the veil already holds, so the
+  // reveal keeps the width of every line. Only the rail waits for the veil to drop.
+  const outlineGutter = outlineTotal >= 2;
+  const showsOutline = !loading && outlineGutter;
+  const readOutline = (signal: AbortSignal) =>
+    client
+      .forkPoints(sid, signal)
+      .then((points) => (points ?? []).map((point) => outlineEntry(point)));
 
   useEffect(() => {
     if (!pendingVoiceSend || voicePhase !== 'idle') return;
@@ -4853,7 +4970,7 @@ export function SessionScreen({
             >
               <div
                 ref={transcriptRef}
-                className={`transcript-column mx-auto min-h-full w-full max-w-3xl pt-4 sm:pt-6 mouse:max-w-6xl ${
+                className={`transcript-column mx-auto min-h-full w-full max-w-3xl pt-4 sm:pt-6 mouse:max-w-6xl ${outlineGutter ? 'has-outline' : ''} ${
                   !turns.length && !runningTurn
                     ? 'flex flex-col pb-4 sm:pb-6'
                     : 'flex flex-col justify-end pb-10'
@@ -4910,6 +5027,22 @@ export function SessionScreen({
                 </>
               </div>
             </div>
+            {showsOutline && (
+              // The rail stands in the gutter that `has-outline` keeps beside the text,
+              // centred on the transcript, and never in the unsafe edge of a notched phone.
+              <div className="pointer-events-none absolute inset-0 z-10 mx-auto flex max-w-3xl items-center justify-end pr-[env(safe-area-inset-right)] mouse:max-w-6xl">
+                <TranscriptOutline
+                  key={sid}
+                  className="pointer-events-auto"
+                  entries={outlineEntries}
+                  total={outlineTotal}
+                  readAll={earlierRemaining > 0 ? readOutline : undefined}
+                  scroller={scrollRef}
+                  column={transcriptRef}
+                  onJump={jumpToTurn}
+                />
+              </div>
+            )}
             {loading && (
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-ink">
                 <LoadingSession

@@ -25,6 +25,7 @@ import type { ImproveClient } from '../screens/ImproveScreen';
 import type { Automation, AutomationRun } from '../lib/automations';
 import type { AutomationsClient } from '../screens/AutomationsScreen';
 import { activityProjectionFromWire, type ActivityProjection } from '../lib/activity';
+import { answerExcerpt, outlineEntry, type OutlineEntry } from '../lib/transcript-outline';
 import activityWire from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json';
 import activityGroupingCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-groups.json';
 import activityArgumentCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-arguments.json';
@@ -1526,6 +1527,106 @@ export const STORY_COMPOSER_SUBSCRIPTIONS = {
   subscribeSession: () => composerStoryNoop,
   subscribeConnection: () => composerStoryNoop,
 } as unknown as SessionSubscriptionHub;
+
+/**
+ * A SESSION LONG ENOUGH TO LOSE ITS START: eight turns, each with an answer of a few
+ * paragraphs, so the first prompt is screens above the composer. The transcript
+ * outline (Blockether/vis#316) is drawn against it. One turn answers a Council
+ * message, because the outline names those turns too.
+ */
+const outlinePrompts: Array<[string, string]> = [
+  [
+    'Why does the login page redirect twice after the token expires?',
+    'The guard on `/login` and the refresh interceptor both react to the same 401. The interceptor starts a refresh and, while it waits, the guard sees no session and sends the reader to `/login`. When the refresh lands, the interceptor replays the request and redirects again.\n\nSo the second redirect is not a loop. It is two owners of one decision, and the slower one wins.',
+  ],
+  [
+    'Show me where the refresh token is written to storage.',
+    'It is written in one place: `session-store.ts`, in `persistTokens`. The access token stays in memory, and only the refresh token goes to storage.\n\nThe write happens after the response is parsed, so a refresh that fails halfway never leaves a half-written pair behind.',
+  ],
+  [
+    'Add a regression test for the double redirect.',
+    'Added `login-redirect.test.ts`. It expires the token, fires two requests at once and checks that the router saw exactly one navigation to `/login`.\n\nThe test fails on `main` with two navigations and passes with the fix below.',
+  ],
+  [
+    'Make the guard wait for a refresh that is already running.',
+    'The guard now asks the interceptor for the refresh in flight and waits for it before it decides. Only a refresh that FAILS sends the reader to `/login`, and it does so once.\n\nThe interceptor keeps no new state: the promise it already held is the answer to the question.',
+  ],
+  [
+    'Which session owns the auth middleware refactor?',
+    'The refactor belongs to the `api-gateway` session. It changes the middleware order, and this fix only touches the client, so the two do not overlap.\n\nI replied on the thread with the files that this session changed.',
+  ],
+  [
+    'Run the auth tests and fix what fails.',
+    'Ran 46 tests. Two failed: both mocked the old guard and expected the redirect before the refresh. I updated the mocks to resolve the refresh first.\n\nAll 46 pass now, and the lint is clean.',
+  ],
+  [
+    'Can you also check the logout flow on Safari?',
+    'Logout clears the refresh token and the in-memory access token, then navigates once. Safari keeps the back-forward cache, so the login page now reloads its session state on `pageshow` as well.\n\nChecked on Safari 18 and on iOS: one redirect, no stale session.',
+  ],
+  [
+    'Summarize what changed in this session.',
+    'The guard waits for a refresh in flight, so an expired token gives one redirect, not two. A regression test pins it, two outdated mocks were fixed, and Safari reloads the session state when it restores a cached page.',
+  ],
+];
+
+export const STORY_OUTLINE_TURNS: TranscriptTurn[] = outlinePrompts.map(([request, answer], index) => ({
+  turn_id: `outline-${index + 1}`,
+  position: index + 1,
+  request,
+  ...(index === 4
+    ? {
+        request_kind: 'council' as const,
+        council: {
+          entry_id: 41,
+          thread_id: 40,
+          kind: 'coordination' as const,
+          content: request,
+          title: 'Auth middleware owner',
+        },
+      }
+    : {}),
+  status: 'completed',
+  created_at: STORY_TURN_STAMP + index * 240_000,
+  content: [{ id: `outline-${index + 1}-answer`, type: 'prose', markdown: answer }],
+  iterations: [],
+  model: 'claude-opus-5',
+  provider: 'anthropic',
+  duration_ms: 9_000 + index * 1_500,
+}));
+
+/** The same session as outline rows. */
+export const STORY_OUTLINE_ENTRIES: OutlineEntry[] = STORY_OUTLINE_TURNS.map((turn) => outlineEntry(turn));
+
+/** A session of forty turns: more turns than the rail has lines. */
+export const STORY_OUTLINE_LONG_ENTRIES: OutlineEntry[] = Array.from({ length: 40 }, (_, index) => ({
+  id: `long-${index + 1}`,
+  label: `Pass ${Math.floor(index / outlinePrompts.length) + 1}: ${outlinePrompts[index % outlinePrompts.length][0]}`,
+  answer: answerExcerpt(outlinePrompts[index % outlinePrompts.length][1]),
+  status: index === 39 ? 'running' : index === 12 ? 'cancelled' : index === 25 ? 'failed' : 'done',
+  isCouncil: index % outlinePrompts.length === 4,
+}));
+
+export const STORY_OUTLINE_SESSION: Session = {
+  ...STORY_COMPOSER_SESSION,
+  id: 'outline-story',
+  title: 'Login redirect',
+  turn_count: STORY_OUTLINE_TURNS.length,
+};
+
+const outlineStoryAnswers: Record<string, unknown> = {
+  session: async () => STORY_OUTLINE_SESSION,
+  cachedTranscript: () => STORY_OUTLINE_TURNS,
+  transcript: async () => STORY_OUTLINE_TURNS,
+  transcriptWindow: () => ({ offset: 0, total: STORY_OUTLINE_TURNS.length }),
+};
+
+/** The session screen over the eight-turn session, with the whole transcript held. */
+export const STORY_OUTLINE_CLIENT = new Proxy(outlineStoryAnswers, {
+  get(target, key) {
+    if (typeof key === 'string' && key in target) return target[key];
+    return Reflect.get(STORY_COMPOSER_CLIENT, key);
+  },
+}) as unknown as GatewayClient;
 
 export const STORY_COMPACT_EXECUTIONS: TranscriptIteration[] = [
   {

@@ -403,6 +403,18 @@
   }
 }
 
+/* The transcript outline rail (#316) stands in a gutter of its own, beside the text.
+   The rail is 2rem wide at the right edge, so the text stops well before it. */
+.transcript-column.has-outline {
+  padding-right: calc(env(safe-area-inset-right) + 2.5rem);
+}
+
+@media (width >= 40rem) {
+  .transcript-column.has-outline {
+    padding-right: calc(env(safe-area-inset-right) + 4rem);
+  }
+}
+
 .live-view-panel {
   --live-view-inset: max(0.75rem, env(safe-area-inset-left), env(safe-area-inset-right));
 }

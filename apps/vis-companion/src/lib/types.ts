@@ -1318,6 +1318,22 @@ export interface CouncilRequest {
   reply_required?: boolean;
 }
 
+/**
+ * One turn of a session, named by the words that opened it, as the gateway lists
+ * them for a fork or an outline: oldest first. `answer` is the start of the turn's
+ * answer as Markdown, cut with `…`. It is absent when the turn has no prose answer.
+ * `status` is the wire status that the transcript gives the same turn.
+ */
+export interface ForkPoint {
+  turn_id: string;
+  request?: string;
+  request_kind?: RequestKind;
+  council?: CouncilRequest;
+  answer?: string;
+  status?: string;
+  created_at?: number;
+}
+
 export interface TranscriptTurn {
   turn_id: string;
   position?: number;

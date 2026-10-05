@@ -66,6 +66,7 @@ import type {
   Toggle,
   TranscriptIteration,
   TranscriptTurn,
+  ForkPoint,
   PushDevice,
   PushDeviceInput,
   PushStatus,
@@ -4057,6 +4058,21 @@ export class GatewayClient {
       throughTurnId ? { through_turn_id: throughTurnId } : {},
     );
     return res.session;
+  }
+
+  /**
+   * Every turn of `sid`, oldest first, named by the words that opened it. The rows
+   * carry no answers, so a long session's turns can be listed without paging the
+   * whole transcript.
+   */
+  async forkPoints(sid: string, signal?: AbortSignal): Promise<ForkPoint[]> {
+    const res = await this.request<{ turns?: ForkPoint[] }>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/forks`,
+      undefined,
+      signal,
+    );
+    return res.turns ?? [];
   }
 
   async agents(sid: string, signal?: AbortSignal): Promise<Subagent[]> {

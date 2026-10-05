@@ -101,6 +101,35 @@ describe('opening a session', () => {
     expect(await screen.findByText('Preparing 2 of 8 recent turns…')).toBeInTheDocument();
   });
 
+  // Regression, Blockether/vis#316: the gutter of the outline rail came only when the veil
+  // dropped. Every line of the transcript then wrapped again at a new width in the first
+  // frames after the reveal, and the reader saw the text jump.
+  it('keeps the outline gutter under the veil, so the reveal keeps the text width', async () => {
+    renderSessionScreen({
+      client: {
+        // The real client answers its window at once; the harness default is a promise.
+        transcriptWindow: () => ({ offset: 0, total: 8 }),
+        transcript: () =>
+          Promise.resolve(
+            Array.from({ length: 8 }, (_, index) => ({
+              turn_id: `t${index + 1}`,
+              request: `Turn ${index + 1}`,
+              status: 'completed',
+              iterations: [],
+            })),
+          ),
+      },
+    });
+
+    expect(await screen.findByText(/Preparing \d of 8 recent turns…/)).toBeInTheDocument();
+    const column = document.querySelector('.transcript-column');
+    expect(column).toHaveClass('has-outline');
+    expect(screen.queryByRole('button', { name: 'Jump to a message' })).not.toBeInTheDocument();
+
+    expect(await screen.findByRole('button', { name: 'Jump to a message' })).toBeInTheDocument();
+    expect(column).toHaveClass('has-outline');
+  });
+
   // Regression, Vis session 77fc84b5-5d0a-4780-ae96-b7f5e3f78b46: switching
   // among several live sessions while one transcript read was still in flight let
   // that old response repaint the new session, and left each abandoned request

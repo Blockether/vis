@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, userEvent, within } from 'storybook/test';
+import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
 import {
   STORY_COMPOSER_CLIENT as client,
@@ -8,6 +8,9 @@ import {
   STORY_QUEUED_TURNS,
   STORY_COMPOSER_PASTE,
   STORY_PENDING_ATTACHMENTS,
+  STORY_OUTLINE_CLIENT,
+  STORY_OUTLINE_SESSION,
+  STORY_OUTLINE_TURNS,
 } from '../dev/story-data';
 import { openStepDigests } from '../dev/story-steps';
 import { draftMessageKey, hydrateDraftMessages, writeDraftMessage } from '../lib/draft-messages';
@@ -245,5 +248,36 @@ export const ImageReferencesMixed: Story = {
     await expect(await page.findByText('[IMAGE #1]')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Edit pasted block 4' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Remove release-note.m4a' })).toBeVisible();
+  },
+};
+
+/**
+ * The transcript outline over a session of eight turns (Blockether/vis#316). The
+ * rail stands at the right edge of the reading column. The session opens at its
+ * newest turn, and picking the first prompt puts that turn at the top.
+ */
+export const JumpToAMessage: Story = {
+  args: { client: STORY_OUTLINE_CLIENT, sid: STORY_OUTLINE_SESSION.id },
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    const rail = await page.findByRole('button', { name: 'Jump to a message' });
+    const transcript = page.getByRole('region', { name: 'Transcript' });
+    await waitFor(() =>
+      expect(transcript.querySelectorAll('[data-turn-id]')).toHaveLength(STORY_OUTLINE_TURNS.length),
+    );
+
+    await userEvent.click(rail);
+    const panel = await within(document.body).findByRole('dialog', { name: 'Jump to a message' });
+    const rows = within(panel).getAllByRole('button');
+    await expect(rows).toHaveLength(STORY_OUTLINE_TURNS.length);
+    await waitFor(() => expect(rows.at(-1)).toHaveAttribute('aria-current', 'true'));
+
+    await userEvent.click(rows[0]);
+    const first = transcript.querySelector('[data-turn-id="outline-1"]')!;
+    await waitFor(() => {
+      const offset = first.getBoundingClientRect().top - transcript.getBoundingClientRect().top;
+      expect(offset).toBeGreaterThanOrEqual(0);
+      expect(offset).toBeLessThan(40);
+    });
   },
 };
