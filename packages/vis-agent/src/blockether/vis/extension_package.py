@@ -18,6 +18,7 @@ import tomllib
 import uuid
 from http.client import HTTPException
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -28,18 +29,12 @@ try:
     from packaging.utils import canonicalize_name
     from packaging.version import Version
 except ImportError:  # The engine's Python can lack packaging; pip vendors a copy.
-    from pip._vendor.packaging.requirements import (  # pyright: ignore[reportMissingImports]
-        Requirement,
-    )
-    from pip._vendor.packaging.specifiers import (  # pyright: ignore[reportMissingImports]
-        SpecifierSet,
-    )
-    from pip._vendor.packaging.utils import (  # pyright: ignore[reportMissingImports]
-        canonicalize_name,
-    )
-    from pip._vendor.packaging.version import (  # pyright: ignore[reportMissingImports]
-        Version,
-    )
+    if TYPE_CHECKING:  # Type checkers see only the declared packaging dependency.
+        raise
+    from pip._vendor.packaging.requirements import Requirement
+    from pip._vendor.packaging.specifiers import SpecifierSet
+    from pip._vendor.packaging.utils import canonicalize_name
+    from pip._vendor.packaging.version import Version
 
 CATALOG = "https://vis.blockether.com"
 CATEGORIES = ("tools", "providers", "workflows")
