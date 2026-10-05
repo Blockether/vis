@@ -278,43 +278,41 @@ export function SettingsDialog({
               </div>
             )}
 
-            <SettingsPanel title="Responses">
-              <div className="divide-y divide-dialog-edge">
-                <div className="flex items-center justify-between gap-4 px-3 py-3 sm:px-4">
-                  <div className="min-w-0 space-y-1">
-                    <Text as="p" variant="label">
-                      Show Python code and results
-                    </Text>
-                    <Text as="p" variant="description">
-                      Show source code and raw results before Activity. Turn off to show only
-                      Activity.
-                    </Text>
-                  </div>
-                  <Switch
-                    label="Show Python code and results"
-                    isOn={showPythonCode}
-                    onClick={() => setPythonCodeShown(!showPythonCode)}
-                  />
+            <div className="min-w-0 divide-y divide-dialog-edge bg-panel">
+              <div className="flex items-center justify-between gap-4 px-3 py-3 sm:px-4">
+                <div className="min-w-0 space-y-1">
+                  <Text as="p" variant="label">
+                    Code mode
+                  </Text>
+                  <Text as="p" variant="description">
+                    Show Python code and raw results before Activity. Turn off to show only
+                    Activity.
+                  </Text>
                 </div>
-                <div className="flex items-center justify-between gap-4 px-3 py-3 sm:px-4">
-                  <div className="min-w-0 space-y-1">
-                    <Text as="p" variant="label">
-                      Compact mode
-                    </Text>
-                    <Text as="p" variant="description">
-                      Fold the steps between progress notes into one row with their state, live
-                      views and time. Open the row to see their thinking, code and Activity. Turn
-                      off to show Activity for each step.
-                    </Text>
-                  </div>
-                  <Switch
-                    label="Compact mode"
-                    isOn={summarizeSteps}
-                    onClick={() => setStepsSummarized(!summarizeSteps)}
-                  />
-                </div>
+                <Switch
+                  label="Code mode"
+                  isOn={showPythonCode}
+                  onClick={() => setPythonCodeShown(!showPythonCode)}
+                />
               </div>
-            </SettingsPanel>
+              <div className="flex items-center justify-between gap-4 px-3 py-3 sm:px-4">
+                <div className="min-w-0 space-y-1">
+                  <Text as="p" variant="label">
+                    Compact mode
+                  </Text>
+                  <Text as="p" variant="description">
+                    Fold the steps between progress notes into one row with their state, live
+                    views and time. Open the row to see their thinking, code and Activity. Turn
+                    off to show Activity for each step.
+                  </Text>
+                </div>
+                <Switch
+                  label="Compact mode"
+                  isOn={summarizeSteps}
+                  onClick={() => setStepsSummarized(!summarizeSteps)}
+                />
+              </div>
+            </div>
             <SettingsPanel title="Theme">
               <div className="grid grid-cols-1 gap-px bg-dialog-edge">
                 {/* NO MODE COLUMN. Every theme is named `Blockether Light`, `Solarized

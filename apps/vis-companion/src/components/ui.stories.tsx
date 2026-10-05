@@ -131,10 +131,10 @@ export const Typography: Story = {
       </Text>
       <div className="space-y-1">
         <Text as="p" variant="label">
-          Show Python code and results
+          Code mode
         </Text>
         <Text as="p" variant="description">
-          Show source code and raw results before Activity. Turn off to show only Activity.
+          Show Python code and raw results before Activity. Turn off to show only Activity.
         </Text>
         <Text as="p" variant="meta">
           Signed-in session · expires in 6 days

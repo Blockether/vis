@@ -183,11 +183,9 @@ export const ReadingLayout: Story = {
     await openStepDigests(canvasElement);
     const application = page.queryByRole('button', { name: 'Show application settings' });
     if (application) await userEvent.click(application);
-    const sections = ['Responses', 'Theme'].map((name) => page.getByRole('heading', { name }));
-    for (const section of sections) {
-      await expect(section).toHaveAttribute('aria-level', '4');
-    }
-    const toggle = page.getByRole('switch', { name: /^Show Python code and results:/ });
+    await expect(page.getByRole('heading', { name: 'Theme' })).toHaveAttribute('aria-level', '4');
+    await expect(page.queryByRole('heading', { name: 'Responses' })).toBeNull();
+    const toggle = page.getByRole('switch', { name: /^Code mode:/ });
     const checked = toggle.getAttribute('aria-checked');
     for (const shown of [checked !== 'true', checked === 'true']) {
       await userEvent.click(toggle);

@@ -62,7 +62,7 @@ The Interrupted message of a stopped step shows only in the open digest.
 
 When the steps open live views, a closed row ends its counts with **live**, for example `1 mutation · 1 running · live`. Select **live** to open the newest running live view, or else the newest recording.
 
-To see each step as a separate Activity, turn off **Compact mode** in Settings, under **Responses**.
+To see each step as a separate Activity, turn off **Compact mode** in Settings.
 The terminal and each app keep their own choice.
 
 In the desktop or phone app, a large turn first shows only its newest steps, so that the session opens quickly.

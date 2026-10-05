@@ -1358,7 +1358,7 @@
                                     "Settings stays"))
              (finally (.stopScreen screen))))))
   (it
-    "Settings is ONE flat list (no tabs): Responses + Theme + grouped toggles + Models"
+    "Settings is ONE flat list (no tabs): Code mode + Compact mode + Theme + grouped toggles"
     (let [settings-rows (var-get #'dlg/settings-rows)]
       (with-redefs [vis/get-router (constantly nil)]
         (let [rows (settings-rows)
@@ -1366,10 +1366,12 @@
                             (filter #(= :section (:type %)))
                             (mapv :label))]
 
-          ;; flat list, web-shaped: Responses and Theme lead, as in the app. The
-          ;; Models section was retired (it only carried reasoning-effort,
-          ;; which moved to Ctrl+R).
-          (expect (= ["Responses" "Theme" "Agent"] (take 3 sections)))
+          ;; flat list, web-shaped: Code mode and Compact mode lead without a section
+          ;; header, then Theme, as in the app. The Models section was retired (it
+          ;; only carried reasoning-effort, which moved to Ctrl+R).
+          (expect (= ["Code mode" "Compact mode"] (mapv :label (take 2 rows))))
+          (expect (= ["Theme" "Agent"] (take 2 sections)))
+          (expect (not-any? #{"Responses"} sections))
           (expect (= [:show-python-code :summarize-steps :theme-name]
                      (vec (keep :key (take 5 rows)))))
           (expect (not-any? #{"Models"} sections))

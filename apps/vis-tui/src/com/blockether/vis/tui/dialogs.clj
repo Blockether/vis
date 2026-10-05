@@ -3310,12 +3310,11 @@
   "Terminal-local response and theme preferences, grouped like the app's Settings.
    Engine settings use the registry."
   []
-  [{:type :section :label "Responses"}
-   {:key :show-python-code
+  [{:key :show-python-code
     :type :toggle
-    :label "Show Python code and results"
+    :label "Code mode"
     :description
-    "Show source code and raw results before Activity. Turn off to show only Activity."}
+    "Show Python code and raw results before Activity. Turn off to show only Activity."}
    {:key :summarize-steps
     :type :toggle
     :label "Compact mode"
