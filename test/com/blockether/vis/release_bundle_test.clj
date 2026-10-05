@@ -1707,6 +1707,33 @@
         (expect (str/includes? ios
                                "- name: Restore the runner keychain state\n        if: always()\n"))
         (expect (not (str/includes? ios "steps.keychain.outcome == 'success'")))))
+  ;; Release run 37313317237: the treeless native checkout made the shared macOS
+  ;; workspace a partial clone, and the next full iOS checkout crashed git.
+  (it "keeps the shared self-hosted workspace a full clone"
+      (let [native-checkout
+            (->> (get-in (yaml/load (slurp ".github/workflows/native-release.yml"))
+                         ["jobs" "macos" "steps"])
+                 (filter #(= "actions/checkout@v7" (get % "uses")))
+                 first)
+
+            steps
+            (get-in (yaml/load (slurp ".github/workflows/ci.yml")) ["jobs" "tests" "steps"])
+
+            position
+            (fn [pred]
+              (first (keep-indexed #(when (pred %2) %1) steps)))
+
+            guard
+            (some #(when (= "Drop a partial clone from the shared workspace" (get % "name")) %)
+                  steps)]
+
+        (expect (= 0 (get-in native-checkout ["with" "fetch-depth"])) (pr-str native-checkout))
+        (expect (nil? (get-in native-checkout ["with" "filter"])) (pr-str native-checkout))
+        (expect (= "runner.environment == 'self-hosted'" (get guard "if")) (pr-str guard))
+        (expect (str/includes? (get guard "run") "remote.origin.promisor") (pr-str guard))
+        (expect (str/includes? (get guard "run") "rm -rf \"$GITHUB_WORKSPACE/.git\"")
+                (pr-str guard))
+        (expect (< (position #{guard}) (position #(= "actions/checkout@v7" (get % "uses")))))))
   ;; The tuning history in native-release.yml records runs labelled "no extra
   ;; args" that still carried build.clj's computed `-J-Xmx`/`-J-Xms` pair, so
   ;; native-image's OWN sizing has never actually been measured for this image.

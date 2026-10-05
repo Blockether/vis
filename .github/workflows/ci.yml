@@ -40,6 +40,15 @@ jobs:
           echo "HOME=$RUNNER_TEMP/vis-ci-home" >> "$GITHUB_ENV"
           # The classpath resolver and execution JVM must use the same home.
           echo "JAVA_TOOL_OPTIONS=-Duser.home=$RUNNER_TEMP/vis-ci-home" >> "$GITHUB_ENV"
+      # Every workflow shares the self-hosted workspace. Git cannot unshallow a
+      # treeless partial clone there, so start that workspace from a fresh clone.
+      - name: Drop a partial clone from the shared workspace
+        if: runner.environment == 'self-hosted'
+        run: |
+          config="$GITHUB_WORKSPACE/.git/config"
+          if [ -f "$config" ] && git config --file "$config" --get remote.origin.promisor >/dev/null; then
+            rm -rf "$GITHUB_WORKSPACE/.git"
+          fi
       - uses: actions/checkout@v7
       # Oracle GraalVM's 25.1 feature train is GDS-token gated (not on the free
       # download channel) and setup-graalvm's CE resolver predates the 25.1

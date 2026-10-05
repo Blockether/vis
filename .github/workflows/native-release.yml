@@ -471,9 +471,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
-          # bin/sdk-version numbers the bundled SDK by commit count: full history, no trees.
+          # bin/sdk-version numbers the bundled SDK by commit count: full history.
+          # Keep a full clone: this self-hosted workspace is shared, and a later full
+          # checkout cannot unshallow a treeless partial clone.
           fetch-depth: 0
-          filter: tree:0
       - uses: ./.github/actions/require-draft-release
         if: steps.target.outputs.publish == 'true'
         with:
