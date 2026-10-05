@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.31] - 2026-10-05
+
+### Added
+- An extension package can keep a bundled skill out of settings. In `[tool.vis] skills`,
+  write the entry as a table, for example `{ path = "skills/browser", settings = false }`.
+  The skill then has no switch of its own and follows its extension's Auto, On or Off
+  choice. The Extension Center accepts the table form. A package that uses it needs
+  `vis-agent>=0.2.31`.
+- You can send a queued message into the running turn. Mark messages with "→ Send now" in
+  the queue header or with "→" on a row. The turn takes them as user input at its next
+  step, in queue order. By default, a queued message still waits for the end of the turn.
+- Each published beta puts the Python SDK that it bundles on PyPI as a development
+  release. `vis-agent==<version>` then installs the same SDK code as the beta.
+
+### Changed
+- Settings show the packaged skills of an extension last, under a Skills label, and show
+  each extension name once.
+- Settings reload extensions with one header button and show the result as header text.
+- The Responses heading is gone from settings, and its setting is now Code mode.
+- Activity shows `fold_session` as a Folded steps row.
+- Mid-turn notes follow the language of your message more consistently. The
+  reply-language rules no longer name a language.
+
+### Removed
+- The unused `resource_stop` sandbox verb. Stop a background shell with `sh.stop()`.
+
+### Fixed
+- Extension results keep working after the sandbox restarts (#317).
+- The companion loads the earlier steps of a long turn before it shows the session, so the
+  content above does not move. Pictures from those steps show as images again, in the
+  companion and the TUI, not as bare links.
+- The companion no longer shows an empty band around a wide picture that you sent.
+- A release publishes its Python SDK to PyPI again. The publication reads the SDK version
+  from `VIS_VERSION`.
+
 ## [v0.2.30] - 2026-10-05
 
 ### Added
