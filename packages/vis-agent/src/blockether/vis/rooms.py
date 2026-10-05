@@ -375,7 +375,7 @@ class RoomsClient:
         *,
         lease_seconds: int | None = None,
     ) -> int:
-        body = {"sessions": sessions}
+        body: dict[str, Any] = {"sessions": sessions}
         if lease_seconds is not None:
             body["lease_seconds"] = lease_seconds
         return self._request("POST", self._path(room_id, "/presence"), body)[

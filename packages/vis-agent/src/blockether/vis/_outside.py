@@ -21,11 +21,15 @@ import uuid
 from copy import deepcopy
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from blockether.vis import _contracts
 
+if TYPE_CHECKING:
+    from blockether.vis.extension import Host
 
-def check_host(host):
+
+def check_host(host) -> Host:
     """Refuse a host that does not answer every implemented host operation.
 
     Returns the host, so a constructor can `return check_host(built)`. An incomplete
@@ -412,7 +416,7 @@ class _Run:
 def _result(run, stage, **extra):
     code = run.poll()
     now = time.time()
-    result = dict.fromkeys(_SHELL_RESULT_KEYS)
+    result: dict[str, Any] = dict.fromkeys(_SHELL_RESULT_KEYS)
     out, next_offset, omitted = run.read(
         extra.pop("_offset", None), extra.pop("_limit", None)
     )
@@ -1083,6 +1087,7 @@ def _live_apply(view, op):
         complaint = _live_check_node(spec, _live_ids(view["nodes"]))
         if complaint:
             raise Refused(complaint)
+        assert isinstance(spec, dict)  # _live_check_node refuses any other spec.
         found = _live_find(view["nodes"], op.get("after"))
         # A new node joins the row that holds the node it named, not the top of
         # the view: `after` is a sibling, so the arrangement stays the one declared.
@@ -1234,6 +1239,7 @@ def live(envelope_json):
         complaint = _check_view(view)
         if complaint:
             raise Refused(complaint)
+        assert isinstance(view, dict)  # _check_view refuses any other view.
         view_id = str(uuid.uuid4())
         held = {"view_id": view_id, "view": json.loads(json.dumps(view)), "seq": 0}
         held["condition"] = threading.Condition()

@@ -46,47 +46,60 @@ class Host(Protocol):
 
     def workspace_root(self) -> str:
         """Read the active session working copy, or the outside process directory."""
+        ...
 
     def setting_declaration(self, spec: Mapping[str, Any]) -> Mapping[str, Any]:
         """Validate a declaration and fill defaults from the contract schema."""
+        ...
 
     def setting(self, id: str, default: bool | str) -> bool | str:
         """Read one setting from the current callback snapshot."""
+        ...
 
     def state_get(self, key: str) -> Any:
         """Read one value out of the extension's durable state."""
+        ...
 
     def state_put(self, key: str, value: Any) -> Any:
         """Write one JSON value into the extension's durable state."""
+        ...
 
     def state_del(self, key: str) -> Any:
         """Drop one key from the extension's durable state."""
+        ...
 
     def state_keys(self) -> Any:
         """List every key the extension's durable state holds."""
+        ...
 
     def log(self, level: str, message: str) -> Any:
         """Emit one engine log line at a level."""
+        ...
 
     def notify(self, text: str, level: str) -> Any:
         """Show one notification on the user's channel."""
+        ...
 
     def council_wake(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
         """Publish to the bound session. Only an eligible managed subagent wakes itself."""
+        ...
 
     def shell(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
         """Run one shell operation. Return the contract's result shape."""
+        ...
 
     def jailed_shell(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
         """Run one shell op inside the workspace jail."""
+        ...
 
     def request_input(
         self,
         request_json: str,
         validator_arities_json: str,
-        run_validator: Callable[[str, str], str],
+        run_validator: Callable[[str, int, str, str], str],
     ) -> str:
         """Ask the human, and block until the answer settles or is cancelled."""
+        ...
 
     def live(self, envelope_json: str) -> str:
         """Open, patch, read or close a live view.
@@ -96,28 +109,34 @@ class Host(Protocol):
         An unchanged timeout returns is_open=True, timed_out=True, without view.
         Ordinary state reads and changed waits return the current view with seq.
         """
+        ...
 
     def activity(self, presentation: dict[str, Any]) -> bool:
         """Replace the running symbol's headline, summary, content and sections."""
+        ...
 
     def reveal_secret(self, handle: str) -> Any:
         """Resolve a `vis-secret:` handle to its plaintext."""
+        ...
 
     def forget_secret(self, handle: str) -> Any:
         """Drop the plaintext a secret handle stands for."""
+        ...
 
     def declare_env(self, declarations_json: str) -> str:
         """Resolve the environment variables the extension declared."""
+        ...
 
     def call_tool(
         self, tool: str, args: Sequence[Any], kwargs: Mapping[str, Any]
     ) -> Any:
         """Run one active session tool by the name `python_execution` calls."""
+        ...
 
 
-try:
-    _host  # noqa: B018, F821 — the host seeds this into the module dict before exec.
-except NameError:  # Installed from PyPI: no host in the room, so bring one.
+# The engine seeds `_host` into the module dict before exec.
+_host: Host
+if "_host" not in globals():  # Installed from PyPI: no host in the room, so bring one.
     from blockether.vis import _outside as outside
 
     _host = outside.host
@@ -253,7 +272,7 @@ def _tool_value(value):
     return value
 
 
-def _tool_data(value):
+def _tool_data(value) -> Any:
     """One argument as JSON data. A dataclass instance travels as its public fields."""
     if is_dataclass(value) and not isinstance(value, type):
         return {
@@ -333,7 +352,7 @@ def _bounded_text(value, limit, name):
         raise ValueError(f"{name} must be text of at most {limit} characters")
 
 
-def _wire_value(value):
+def _wire_value(value) -> Any:
     if isinstance(value, Mapping):
         return {key: _wire_value(item) for key, item in value.items()}
     if isinstance(value, (tuple, list)):
@@ -341,7 +360,7 @@ def _wire_value(value):
     return value
 
 
-def _freeze_config(value):
+def _freeze_config(value) -> Any:
     if isinstance(value, Mapping):
         if not all(isinstance(key, str) for key in value):
             raise TypeError("provider JSON keys must be strings")
@@ -359,6 +378,7 @@ def _freeze_config(value):
 
 class _ActivityBlock:
     __slots__ = ()
+    __dataclass_fields__: ClassVar[dict[str, Any]]  # Each subclass is a dataclass.
     type: ClassVar[str]
 
     def to_wire(self) -> dict[str, Any]:
@@ -510,7 +530,9 @@ class ActivityProgress(_ActivityBlock):
         if self.value is None and self.total is None:
             return
         if (
-            type(self.value) not in (int, float)
+            self.value is None
+            or self.total is None
+            or type(self.value) not in (int, float)
             or type(self.total) not in (int, float)
             or not math.isfinite(self.value)
             or not math.isfinite(self.total)
@@ -762,9 +784,10 @@ def _activity_call(fn, activity):
         except Exception:
             pass  # Presentation must not alter the operation's result or error.
 
+    # Each branch declares `invoke`; only one of them runs.
     if inspect.iscoroutinefunction(fn):
 
-        async def invoke(*args, **kwargs):
+        async def invoke(*args, **kwargs):  # pyright: ignore[reportRedeclaration]
             if activity.show_start:
                 render("start", args, kwargs)
             try:
@@ -792,7 +815,7 @@ def _activity_call(fn, activity):
     return wraps(fn)(invoke)
 
 
-_registration = {"spec": None}
+_registration: dict[str, Any] = {"spec": None}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1863,8 +1886,9 @@ def sequence(*, field: str) -> Callable[[_SequenceClass], _SequenceClass]:
             )
         if field not in {item.name for item in fields(cls)}:
             raise ValueError(f"sequence field {field!r} is not a dataclass field")
-        cls.__vis_sequence_field__ = field
-        return cls
+        # Pyright narrows `cls` to a plain dataclass type and cannot see the marker.
+        cls.__vis_sequence_field__ = field  # pyright: ignore[reportAttributeAccessIssue]
+        return cls  # pyright: ignore[reportReturnType]
 
     return decorate
 
@@ -1877,6 +1901,11 @@ _Method = TypeVar(
 
 class _MethodDecorator(Protocol):
     def __call__(self, actual: _Method) -> _Method: ...
+
+
+def _method_function(value: Any) -> Any:
+    """Return the function under a `staticmethod` or `classmethod`, else `value`."""
+    return value.__func__ if isinstance(value, (staticmethod, classmethod)) else value
 
 
 @overload
@@ -1900,12 +1929,12 @@ def method(
 
 
 def method(
-    fn: _Method | None = None,
+    fn: Any = None,
     *,
     tag: _SymbolTag = "observation",
     is_hidden: bool = False,
     activity: Activity | None = None,
-) -> _Method | _MethodDecorator:
+) -> Any:
     """Describe a public method on an object exported through `Symbol`.
 
     Args:
@@ -1950,16 +1979,13 @@ def method(
     _activity_spec(activity)
 
     def _mark(actual: _Method) -> _Method:
-        declared = (
-            actual.__func__
-            if isinstance(actual, (staticmethod, classmethod))
-            else actual
-        )
+        declared = _method_function(actual)
         if not callable(declared):
             raise ValueError("vis.method(...) requires a callable method")
-        declared.__vis_symbol_tag__ = tag
-        declared.__vis_symbol_hidden__ = bool(is_hidden)
-        declared.__vis_symbol_activity__ = activity
+        # Pyright does not model attributes that code sets on a function.
+        declared.__vis_symbol_tag__ = tag  # pyright: ignore[reportFunctionMemberAccess]
+        declared.__vis_symbol_hidden__ = bool(is_hidden)  # pyright: ignore[reportFunctionMemberAccess]
+        declared.__vis_symbol_activity__ = activity  # pyright: ignore[reportFunctionMemberAccess]
         return actual
 
     return _mark if fn is None else _mark(fn)
@@ -1972,9 +1998,7 @@ def _public_members(obj):
         for name, raw in vars(cls).items():
             if name.startswith("_"):
                 continue
-            declared = (
-                raw.__func__ if isinstance(raw, (staticmethod, classmethod)) else raw
-            )
+            declared = _method_function(raw)
             candidates[name] = (
                 "method" if inspect.isroutine(declared) else "value",
                 declared,
@@ -2223,7 +2247,7 @@ def _catalog_type(contract):
     )
 
 
-def _catalog_presentation(*, phase, result=None, error=None, **_):
+def _catalog_presentation(*, phase, result: Any = None, error=None, **_):
     if phase == "failure":
         return ActivityPresentation("Tool reference", str(error))
     if phase == "start":
@@ -2565,10 +2589,11 @@ def _provider_wire(value):
 
 class _ProviderValue:
     __slots__ = ()
+    __dataclass_fields__: ClassVar[dict[str, Any]]  # Each subclass is a dataclass.
 
     def to_wire(self) -> dict[str, ProviderJSON]:
         """Return fresh host data. Declared optional fields are omitted, not null."""
-        value = {
+        value: dict[str, ProviderJSON] = {
             f.name: _provider_wire(getattr(self, f.name))
             for f in fields(self)
             if f.name != "extra" and getattr(self, f.name) is not None
@@ -2839,13 +2864,14 @@ def _provider_callback(name, fn):
             raise TypeError(f"vis.Provider {name} returned an awaitable")
         if result is None or name in ("logout_fn", "on_selected_fn"):
             return None
-        expected = {
+        expected_types: dict[str, type[_ProviderValue]] = {
             "get_token_fn": ProviderCredential,
             "detect_fn": ProviderCredential,
             "refresh_token_fn": ProviderCredential,
             "status_fn": ProviderStatus,
             "limits_fn": ProviderLimits,
-        }.get(name)
+        }
+        expected = expected_types.get(name)
         if expected is not None:
             if not isinstance(result, expected):
                 raise TypeError(
@@ -3092,7 +3118,7 @@ class Shell(dict):
 
     def logs(self, offset=None, limit=None):
         # A NEGATIVE offset reads the last n LINES; a positive one is a byte cursor.
-        opts = {"op": "logs"}
+        opts: dict[str, Any] = {"op": "logs"}
         if offset is not None:
             opts["offset"] = int(offset)
         if limit is not None:
@@ -3152,7 +3178,8 @@ class _Fs:
 
     @staticmethod
     def _door():
-        import _vis_fs
+        # Only the engine's sandbox provides this module.
+        import _vis_fs  # pyright: ignore[reportMissingImports]
 
         return _vis_fs
 
@@ -3634,7 +3661,8 @@ class _Node:
 class _KeyedNode(_Node):
     """A node holding items the extension addresses by id: it can drop them."""
 
-    def remove(self, *item_ids):
+    def remove(self: _Node, *item_ids):
+        # Stat and Steps borrow this method, so `self` can be any node.
         # Ids as arguments or as one iterable, because a caller with a list
         # should not have to spread it.
         ids = (
@@ -4346,13 +4374,17 @@ class _LiveRecorder:
             yield node
             yield from _LiveRecorder._nodes(node.get("fields"))
 
-    def node(self, node_id):
-        """Return one materialized node by id, at any depth."""
+    def _open_view(self):
+        """Return the materialized view; a test must open one first."""
         if self._view is None:
             raise AssertionError("no test live view is open")
+        return self._view
+
+    def node(self, node_id):
+        """Return one materialized node by id, at any depth."""
         return next(
             node
-            for node in self._nodes(self._view.get("nodes"))
+            for node in self._nodes(self._open_view().get("nodes"))
             if node["id"] == node_id
         )
 
@@ -4408,7 +4440,7 @@ class _LiveRecorder:
                     return found
             return None
 
-        return find(self._view.get("nodes"))
+        return find(self._open_view().get("nodes"))
 
     def _apply(self, op):
         action = op["op"]
@@ -4417,10 +4449,9 @@ class _LiveRecorder:
             found = (
                 self._parent(op.get("after")) if op.get("after") is not None else None
             )
+            view = self._open_view()
             siblings, at = (
-                (self._view["nodes"], len(self._view["nodes"]))
-                if found is None
-                else found
+                (view["nodes"], len(view["nodes"])) if found is None else found
             )
             siblings.insert(at + (1 if found is not None else 0), node)
             return
@@ -4537,7 +4568,7 @@ class _LiveRecorder:
             for op in (envelope.get("patch") or {}).get("ops") or []:
                 self._apply(op)
             self._seq += 1
-            self._view["seq"] = self._seq
+            self._open_view()["seq"] = self._seq
             answer = {"view_id": self.view_id, "is_open": True, "seq": self._seq}
         elif action == "state":
             answer = {"view_id": self.view_id, "is_open": True, "view": self._view}
@@ -4684,9 +4715,11 @@ def _assert_catalog(
     mutation names. Test invocation, validation, IO and cancellation separately. Any and
     opaque types are allowed. Unresolved annotations fail with their path.
     """
+    roots = catalog.spec()
+    assert isinstance(roots, tuple), "Catalog.spec() lists the top-level specs"
     tools = tuple(
         tool
-        for spec in catalog.spec()
+        for spec in roots
         for tool in (spec.members if isinstance(spec, NamespaceSpec) else (spec,))
     )
     actual_names = [tool.name for tool in tools]

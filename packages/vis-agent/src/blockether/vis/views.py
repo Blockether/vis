@@ -177,6 +177,7 @@ class ViewEvent:
             "view.close": "close_event",
         }[event_type]
         validate("view", definition, value)
+        payload: dict[str, Any]
         if event_type == "view.open":
             model = InputView if value["kind"] == "input" else LiveView
             document = model.from_wire(value["view"])

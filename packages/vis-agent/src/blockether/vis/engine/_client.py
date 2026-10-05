@@ -7,6 +7,7 @@ means that a submitted mutation was rolled back.
 
 from __future__ import annotations
 
+import inspect
 import json
 import math
 import threading
@@ -135,7 +136,7 @@ def _field(data: Any, name: str, kind: type) -> Any:
     value = data.get(name) if isinstance(data, dict) else None
     if type(value) is not kind or (kind is str and not value):
         raise ProtocolError(f"invalid response field: {name}")
-    if kind is int and value < 0:
+    if type(value) is int and value < 0:
         raise ProtocolError(f"invalid response field: {name}")
     return value
 
@@ -286,7 +287,7 @@ class ExecutionLayer(ABC):
     @abstractmethod
     def _open(
         self, method, route, *, query=None, body=None, content=None, timeout=None
-    ):
+    ) -> Any:
         """Run one transport exchange. Do not retry mutations."""
 
     def _ensure_client_lease(self, *, pid: int | None = None) -> str:
@@ -297,7 +298,8 @@ class ExecutionLayer(ABC):
             if pid is not None:
                 body["pid"] = pid
             lease = self._request("POST", "/v1/clients", body=body).json()
-            self._lease = _field(lease, "client_id", str)
+            client_id: str = _field(lease, "client_id", str)
+            self._lease = client_id
         return self._lease
 
     def __enter__(self):
@@ -364,7 +366,8 @@ class ExecutionLayer(ABC):
                     f"maximum is {_MAX_DECISION_ARCHIVE} bytes"
                 )
         names = {s[1:] for s in route.split("/") if s.startswith(":")}
-        if set(path or {}) != names:
+        path = path or {}
+        if set(path) != names:
             raise ValueError("path parameters do not match route")
         resolved = "/".join(
             _segment(path[s[1:]]) if s.startswith(":") else s for s in route.split("/")
@@ -2995,6 +2998,9 @@ class GatewayClient(ExecutionLayer):
         if upload_sha256 is not None:
             headers["Content-Type"] = "application/zip"
             headers["Transfer-Encoding"] = "chunked"
+            # _request sends a hash only with a bounded stream and its length.
+            assert content is not None and not isinstance(content, bytes)
+            assert upload_length is not None
             content = _UploadStream(content, upload_length)
             headers["X-Content-SHA256"] = upload_sha256
         url = self._url + route + ("?" + urlencode(query) if query else "")
@@ -3136,7 +3142,7 @@ class Session:
     client: ExecutionLayer
     id: str
 
-    def _call(self, method, suffix="", **kwargs):
+    def _call(self, method, suffix="", **kwargs) -> Any:
         path = {"sid": self.id, **kwargs.pop("path", {})}
         response = self.client._request(
             method, "/v1/sessions/:sid" + suffix, path=path, **kwargs
@@ -3476,7 +3482,7 @@ class _EventStream:
         if self._raw is not None:
             self._raw.close()
         # A pipe failure can close its owning client from inside this generator.
-        if not self._iterator.gi_running:
+        if inspect.getgeneratorstate(self._iterator) != inspect.GEN_RUNNING:
             self._iterator.close()
         self.client._streams.discard(self)
 
@@ -3533,8 +3539,16 @@ class _EventStream:
     def _terminal(self, event):
         return False
 
+    def _endpoint(self):
+        """Return the route and query of this subscription."""
+        raise NotImplementedError
 
-class _PollingEvents:
+    def _accept(self, name, value):
+        """Return the event of one frame, or None to skip the frame."""
+        raise NotImplementedError
+
+
+class _PollingEvents(_EventStream):
     """Poll finite event pages so callback code runs on the SDK calling thread."""
 
     def _iterate(self):
@@ -3557,6 +3571,10 @@ class _PollingEvents:
 
     def _pump(self):
         pass
+
+    def _page(self):
+        """Return the next finite page of `(event name, value)` pairs."""
+        raise NotImplementedError
 
 
 class Events(_EventStream):
@@ -3604,6 +3622,7 @@ class Events(_EventStream):
         if name is not None and name != event.type:
             raise ProtocolError("event name disagrees with payload")
         seq = event.cursor if event.type == "subscription.ready" else event.seq
+        assert seq is not None  # Event.from_wire requires the field of each type.
         if event.type == "subscription.ready" or seq > self.cursor:
             self.cursor = seq
             return event

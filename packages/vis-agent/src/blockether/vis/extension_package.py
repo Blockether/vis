@@ -27,11 +27,19 @@ try:
     from packaging.specifiers import SpecifierSet
     from packaging.utils import canonicalize_name
     from packaging.version import Version
-except ImportError:
-    from pip._vendor.packaging.requirements import Requirement
-    from pip._vendor.packaging.specifiers import SpecifierSet
-    from pip._vendor.packaging.utils import canonicalize_name
-    from pip._vendor.packaging.version import Version
+except ImportError:  # The engine's Python can lack packaging; pip vendors a copy.
+    from pip._vendor.packaging.requirements import (  # pyright: ignore[reportMissingImports]
+        Requirement,
+    )
+    from pip._vendor.packaging.specifiers import (  # pyright: ignore[reportMissingImports]
+        SpecifierSet,
+    )
+    from pip._vendor.packaging.utils import (  # pyright: ignore[reportMissingImports]
+        canonicalize_name,
+    )
+    from pip._vendor.packaging.version import (  # pyright: ignore[reportMissingImports]
+        Version,
+    )
 
 CATALOG = "https://vis.blockether.com"
 CATEGORIES = ("tools", "providers", "workflows")
@@ -961,6 +969,7 @@ def update(
     if subdirectory is None and not folder:
         folder = None
     active, current = _installed_repository(directory, repository, folder)
+    assert active is not None and current is not None  # A required lookup raises.
     name = current["name"]
     release = _select(
         _releases(current["repository_url"], current["subdirectory"]), version
@@ -1011,6 +1020,7 @@ def rollback(
     if subdirectory is None and not folder:
         folder = None
     active, current = _installed_repository(directory, repository, folder)
+    assert active is not None and current is not None  # A required lookup raises.
     name = current["name"]
     if version is not None:
         release = _select(
@@ -1356,8 +1366,7 @@ def sync(
     if not dry_run:
         directory.mkdir(parents=True, exist_ok=True)
     lock = directory / ".sync-lock"
-    if not dry_run:
-        fd = _acquire(lock)
+    fd = None if dry_run else _acquire(lock)
     try:
         records = _sync_records(directory)
         results = []
@@ -1381,7 +1390,8 @@ def sync(
                             _save_sync_records(directory, records)
                 elif dry_run:
                     unchanged = (
-                        _sync_owned(destination, current)
+                        current is not None
+                        and _sync_owned(destination, current)
                         and current["spec"] == spec
                         and not refresh
                         and not _tracks_latest(spec)

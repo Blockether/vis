@@ -11,7 +11,7 @@ from typing import Any, TypeVar, overload
 from jsonschema import Draft202012Validator, validators
 from jsonschema.exceptions import ValidationError, best_match
 from pydantic import BaseModel
-from pydantic_core import SchemaError, SchemaValidator, core_schema
+from pydantic_core import ErrorDetails, SchemaError, SchemaValidator, core_schema
 from pydantic_core import ValidationError as PydanticValidationError
 from referencing import Registry
 from referencing.exceptions import Unresolvable
@@ -173,7 +173,7 @@ def _schema_problems(error: ValidationError, show_input: bool):
     """Describe a JSON Schema error without printing whole objects or arrays."""
     path = tuple(error.absolute_path)
     keyword, expected, value = error.validator, error.validator_value, error.instance
-    if keyword == "required" and isinstance(value, dict):
+    if keyword == "required" and isinstance(value, dict) and isinstance(expected, list):
         for name in expected:
             if name not in value:
                 yield _problem("schema", (*path, name), "required property is missing")
@@ -352,7 +352,7 @@ class _ResponseContract:
             for item in details
         )
 
-    def _pydantic_message(self, item: dict) -> str:
+    def _pydantic_message(self, item: ErrorDetails) -> str:
         value = item.get("input")
         if self.show_input and item["type"] != "missing" and _is_scalar(value):
             return f"{item['msg']} (input: {_brief(value)})"
@@ -426,7 +426,7 @@ class Agent:
                 self._session = self.execution_layer.create_session(
                     **self._session_options
                 )
-                self._mount_extensions(self._extensions)
+                self._mount_extensions(self._session, self._extensions)
             except BaseException:
                 try:
                     self.close()
@@ -435,13 +435,13 @@ class Agent:
                 raise
         return self._session
 
-    def _mount_extensions(self, extensions):
+    def _mount_extensions(self, session: Session, extensions):
         if extensions.manifest:
             self.execution_layer._ensure_client_lease()
             self.execution_layer.put_session_client_extensions(
-                self._session.id, body={"extensions": extensions.manifest}
+                session.id, body={"extensions": extensions.manifest}
             )
-        self.execution_layer._client_extensions[self._session.id] = extensions
+        self.execution_layer._client_extensions[session.id] = extensions
 
     def register_extension(self, extension):
         """Add an application-owned Extension before this Agent's first request.
@@ -458,7 +458,7 @@ class Agent:
             raise RuntimeError("register extensions before the Agent's first request")
         candidate = ClientExtensions((*self._extensions.declarations, extension))
         if self._session is not None:
-            self._mount_extensions(candidate)
+            self._mount_extensions(self._session, candidate)
         self._extensions = candidate
 
     def send(self, request: str, **options) -> Turn:

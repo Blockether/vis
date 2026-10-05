@@ -117,11 +117,13 @@ class LocalEngine(ExecutionLayer):
             raise NotADirectoryError(str(path))
         return {"root": str(path)}
 
-    def _ensure_client_lease(self) -> str:
+    def _ensure_client_lease(self, *, pid: int | None = None) -> str:
         # Stdio shares the application host; its PID keeps idle callbacks alive.
-        return super()._ensure_client_lease(pid=os.getpid())
+        return super()._ensure_client_lease(pid=os.getpid() if pid is None else pid)
 
     def _read_line(self, deadline):
+        # connect() starts the engine with piped stdio before any read.
+        assert self._process is not None and self._process.stdout is not None
         while b"\n" not in self._buffer:
             remaining = deadline - time.monotonic()
             if (
@@ -176,6 +178,7 @@ class LocalEngine(ExecutionLayer):
                     stderr=stderr,
                     start_new_session=True,
                 )
+            assert self._process.stdin is not None  # Popen got stdin=PIPE.
             os.set_blocking(self._process.stdin.fileno(), False)
             hello = self._read_line(time.monotonic() + self._startup_timeout)
             if (
@@ -197,6 +200,7 @@ class LocalEngine(ExecutionLayer):
         self, method, route, *, query=None, body=None, content=None, timeout=None
     ):
         self.connect()
+        assert self._process is not None and self._process.stdin is not None
         deadline = time.monotonic() + _duration(
             self.timeout if timeout is None else timeout
         )
@@ -296,14 +300,14 @@ class LocalEngine(ExecutionLayer):
             if process.stdout:
                 process.stdout.close()
         if self._home is not None:
-            self._stderr_tail = self._stderr_end()
+            self._stderr_tail = self._stderr_end(self._home.name)
             self._home.cleanup()
         self._cleanup_complete = True
 
-    def _stderr_end(self):
-        """Return the end of the engine's stderr log, from a line start."""
+    def _stderr_end(self, home):
+        """Return the end of the engine's stderr log in `home`, from a line start."""
         try:
-            with open(Path(self._home.name) / "stderr.log", "rb") as stream:
+            with open(Path(home) / "stderr.log", "rb") as stream:
                 size = stream.seek(0, os.SEEK_END)
                 stream.seek(max(0, size - _STDERR_TAIL))
                 end = stream.read()
