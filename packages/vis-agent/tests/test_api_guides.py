@@ -65,7 +65,11 @@ def _variant_text(md, variant):
     kept, fenced, current = [], False, None
     for line in md.splitlines():
         fence = bool(_FENCE.match(line))
-        opening = None if (fenced or fence or current) else _VARIANT_OPEN.fullmatch(line.strip())
+        opening = (
+            None
+            if (fenced or fence or current)
+            else _VARIANT_OPEN.fullmatch(line.strip())
+        )
         closing = current and not fenced and not fence and line.strip() == "</div>"
         if opening:
             current = opening[1]
@@ -95,14 +99,18 @@ def test_pages_name_gateway_routes_only_on_http_pages():
             continue
         # Only the HTTP variant of a merged page may name a route.
         text = _variant_text(page.read_text(), "python")
-        assert not _ROUTE.search(text), f"{page.name} names a route outside its HTTP variant"
+        assert not _ROUTE.search(text), (
+            f"{page.name} names a route outside its HTTP variant"
+        )
 
 
 @pytest.mark.parametrize("concept", sorted(set(_CONCEPTS)))
 def test_each_merged_page_has_both_variants_and_a_concept_page(concept):
     page = (_DOCS / f"{concept}-api.md").read_text()
     for variant in ("python", "http"):
-        assert f'data-variant="{variant}"' in page, f"{concept}-api.md: no {variant} variant"
+        assert f'data-variant="{variant}"' in page, (
+            f"{concept}-api.md: no {variant} variant"
+        )
     assert (_DOCS / f"{concept}.md").exists(), f"{concept}: no concept page"
 
 
@@ -137,4 +145,6 @@ def test_python_and_http_variants_cover_the_same_routes(concept):
         and route not in methods
         and not re.search(rf"\.{name}\(", python)
     )
-    assert not typed, f"{concept}-api.md: typed calls missing from the Python variant {typed}"
+    assert not typed, (
+        f"{concept}-api.md: typed calls missing from the Python variant {typed}"
+    )
