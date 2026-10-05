@@ -2099,7 +2099,8 @@
                  :created_at started-at)
           (update :status #(if (= "running" %) "streaming" %))))))
 
-(def ^:private terminal-turn-statuses #{"completed" "failed" "cancelled" "suspended" "error"})
+(def ^:private terminal-turn-statuses
+  #{"completed" "failed" "cancelled" "suspended" "error" "sent"})
 
 (defn- date->ms [d] (when (instance? java.util.Date d) (.getTime ^java.util.Date d)))
 
@@ -2157,16 +2158,29 @@
    drag-drop and clipboard paste, which upload nothing), and the attachment store
    once the turn lands. This serves them, in the SAME shape a transcript row
    carries, so a channel can lazily fetch what it does not have. nil when the
-   turn is unknown or carried no images."
+   turn is unknown or carried no images.
+
+   A queued message that was sent into a running turn (`→ Send now`) answers the
+   files its step stored on that turn, also after a gateway restart."
   [sid tid]
   (when (and sid tid)
-    (let [turn (read-turn-record (turn-record sid tid))]
-      (or (seq (wire/canonical (distinct-attachments (into (vec (:attachments turn))
-                                                           (request-text-attachments turn)))))
-          (try (seq (wire/canonical (vec (get (persistance/db-list-turns-attachments (lp/db-info)
-                                                                                     [tid])
-                                              (str tid)))))
-               (catch Throwable _ nil))))))
+    (let [turn
+          (read-turn-record (turn-record sid tid))
+
+          live
+          #(seq (wire/canonical (distinct-attachments (into (vec (:attachments turn))
+                                                            (request-text-attachments turn)))))
+
+          stored
+          (fn [lister]
+            (try (seq (wire/canonical (vec (get (lister (lp/db-info) [tid]) (str tid)))))
+                 (catch Throwable _ nil)))]
+
+      (if (= "sent" (:status turn))
+        (or (stored persistance/db-list-queued-turn-attachments) (live))
+        (or (live)
+            (stored persistance/db-list-turns-attachments)
+            (stored persistance/db-list-queued-turn-attachments))))))
 
 (def ^:private persisted-status->wire
   "Durable engine turn status -> wire status. A map lookup rather than `case`:
@@ -3475,6 +3489,137 @@
              :stack (mapv #(util/redact-secret-text (str %)) (take 64 (.getStackTrace cause)))}))
         (take 8 (take-while some? (iterate #(.getCause ^Throwable %) throwable)))))
 
+(defn- left-queued-by-cancel?
+  "True when queued turn `head` was submitted BEFORE the session's cancel floor
+   — the wall-clock of the last USER cancel, stamped on the entry as
+   `:cancel-floor` by [[drop-cancelled-backlog!]]. Such a turn was deliberately
+   stopped (the user pressed Esc while it sat in the backlog) so it must NEVER
+   auto-start again, no matter which path reaches the queue: a later terminal or
+   an attach/resume kick. This is the ONE provenance gate;
+   [[drain-next-queued!]] enforces it for every caller, and
+   [[take-marked-queued!]] applies it before a delivery into the running turn.
+
+   The floor is read from ONE entry-level key rather than scanning per-turn
+   `:cancelling_at` stamps, because a STALL force-cancel stamps `:cancelling_at`
+   too — that is a failure, not a user stop, and its backlog must still run.
+
+   A head queued AFTER the floor (\"stop that, run THIS\") — or a session with no
+   user cancel at all — drains normally."
+  [entry head]
+  (let [floor
+        (long (or (:cancel-floor entry) 0))
+
+        queued-at
+        (long (or (:queued_at head) 0))]
+
+    (and (pos? floor) (< queued-at floor))))
+
+(defn- marked-for-next-iteration?
+  "True when queued `turn` was marked `next_iteration` (send now)."
+  [turn]
+  (and (= "queued" (:status turn)) (= "next_iteration" (:deliver turn))))
+
+(defn- queued-turn-input
+  "The delivered shape of one queued turn record: what the engine adds to the next
+   request and what the step record keeps. Attachments ride in full here; the
+   persisted copy keeps metadata only."
+  [turn]
+  (cond-> {:queued-turn-id (:turn_id turn) :request (:request turn)}
+    (:display_request turn)
+    (assoc :display-request (:display_request turn))
+
+    (seq (:attachments turn))
+    (assoc :attachments (vec (:attachments turn)))
+
+    (seq (:attachment_previews turn))
+    (assoc :attachment-previews (vec (:attachment_previews turn)))))
+
+(defn- take-marked-queued!
+  "Atomically remove every queued turn of `sid` marked `next_iteration`, in queue
+   order, for delivery into running turn `into-tid` at step `iteration`. Returns the
+   taken rows as [[queued-turn-input]] maps, or nil when nothing was marked.
+
+   The gateway owns this take: the engine asks once per step through its
+   `:take-user-input` hook and never keeps a queue of its own. A row the cancel
+   gate holds ([[left-queued-by-cancel?]]) stays queued. Every channel drops its
+   mirrored row on `turn.queued.sent`; the stored `turn.input` places the messages
+   on the step for live viewers and for replay.
+
+   A taken row leaves `:turn-order` (no queue view or turn list shows it again) but
+   stays in `:turns` as a terminal `sent` record with its idempotency keys: a replayed
+   submit answers that receipt instead of a second delivery, and `get-turn` or an
+   attach that missed the live `turn.queued.sent` still learns where the message went."
+  [sid into-tid iteration]
+  (let [taken (volatile! [])]
+    (update-session!
+      sid
+      (fn [entry]
+        (let [tids (filterv (fn [tid]
+                              (let [turn (get-in entry [:turns tid])]
+                                (and (marked-for-next-iteration? turn)
+                                     (not (left-queued-by-cancel? entry turn)))))
+                     (:turn-order entry))]
+          (vreset! taken (mapv #(get-in entry [:turns %]) tids))
+          (if (seq tids)
+            (-> entry
+                (update :turns
+                        (fn [turns]
+                          (reduce (fn [m tid]
+                                    (update m
+                                            tid
+                                            #(-> %
+                                                 (dissoc :deliver
+                                                         :messages
+                                                         :attachments
+                                                         :cancel-token
+                                                         ::cancel-disposer)
+                                                 (assoc :status "sent"
+                                                        :into_turn_id into-tid
+                                                        :iteration iteration
+                                                        :sent_at (System/currentTimeMillis)))))
+                                  turns
+                                  tids)))
+                (update :turn-order
+                        (fn [order]
+                          (vec (remove (set tids) order)))))
+            entry))))
+    (when (seq @taken)
+      (doseq [turn @taken]
+        (when-let [dispose (::cancel-disposer turn)]
+          (dispose)))
+      ;; The swap above is the one mutation. A failed publication costs a live
+      ;; mirror event, never the message: the rows are returned regardless and the
+      ;; step record keeps the durable copy.
+      (try (doseq [turn @taken]
+             (append-event! sid
+                            "turn.queued.sent"
+                            {:turn_id (:turn_id turn) :into_turn_id into-tid :iteration iteration}
+                            {:store? false}))
+           (append-event!
+             sid
+             "turn.input"
+             {:turn_id into-tid
+              :iteration iteration
+              :messages (mapv (fn [turn]
+                                (cond-> {:queued_turn_id (:turn_id turn) :request (:request turn)}
+                                  (:display_request turn)
+                                  (assoc :display_request (:display_request turn))
+
+                                  (seq (:attachment_previews turn))
+                                  (assoc :attachment_previews (vec (:attachment_previews turn)))))
+                              @taken)})
+           (catch Throwable t
+             (tel/log! {:level :warn
+                        :id ::queued-sent-publish-failed
+                        :data {:session-id sid
+                               :turn-id into-tid
+                               :iteration iteration
+                               :turn-ids (mapv :turn_id @taken)
+                               :error (ex-message t)}
+                        :msg
+                        "queue send-now: event publication failed; messages still delivered"})))
+      (mapv queued-turn-input @taken))))
+
 (defn- run-turn!
   "Worker body for one submitted turn. Streams phased chunks into the
   event log, runs the blocking `lp/send!`, then lands the terminal turn
@@ -3609,6 +3754,8 @@
             (cond-> (assoc (or engine-opts {})
                       :hooks {:on-chunk on-chunk
                               :claim-terminal! claim-terminal!
+                              :take-user-input (fn [{:keys [iteration]}]
+                                                 (take-marked-queued! sid tid iteration))
                               :prepare-result (fn [result]
                                                 ;; Normalize before the engine claims and persists the terminal.
                                                 ;; A watchdog abort must not survive in history as a user Stop.
@@ -4074,34 +4221,12 @@
       (fail-orphaned-turn! sid tid cancel-token (str "turn launch failed: " (ex-message t)))
       nil)))
 
-(defn- left-queued-by-cancel?
-  "True when queued turn `head` was submitted BEFORE the session's cancel floor
-   — the wall-clock of the last USER cancel, stamped on the entry as
-   `:cancel-floor` by [[drop-cancelled-backlog!]]. Such a turn was deliberately
-   stopped (the user pressed Esc while it sat in the backlog) so it must NEVER
-   auto-start again, no matter which path reaches the queue: a later terminal or
-   an attach/resume kick. This is the ONE provenance gate;
-   [[drain-next-queued!]] enforces it for every caller.
-
-   The floor is read from ONE entry-level key rather than scanning per-turn
-   `:cancelling_at` stamps, because a STALL force-cancel stamps `:cancelling_at`
-   too — that is a failure, not a user stop, and its backlog must still run.
-
-   A head queued AFTER the floor (\"stop that, run THIS\") — or a session with no
-   user cancel at all — drains normally."
-  [entry head]
-  (let [floor
-        (long (or (:cancel-floor entry) 0))
-
-        queued-at
-        (long (or (:queued_at head) 0))]
-
-    (and (pos? floor) (< queued-at floor))))
-
 (defn- next-drainable-turn
   "The oldest queued turn for `entry` that may auto-start: the first `queued`
    entry in `:turn-order` that is not [[left-queued-by-cancel?]] (every turn when
-   `force?`, the explicit user resume). Returns `[tid turn]` or nil.
+   `force?`, the explicit user resume). A row marked `next_iteration` (send now)
+   that the running turn ended before delivering goes first, in queue order among
+   marked rows: the mark means \"as soon as possible\". Returns `[tid turn]` or nil.
 
    Gating at SELECTION, not after picking the head, is what keeps the queue from
    wedging: a pre-cancel straggler that survived [[drop-cancelled-backlog!]]
@@ -4109,12 +4234,15 @@
    parked at the head blocking the message queued AFTER the cancel — the \"stop
    that, run THIS\" intent."
   [entry force?]
-  (some (fn [tid]
-          (let [turn (get-in entry [:turns tid])]
-            (when (and (= "queued" (:status turn))
-                       (or force? (not (left-queued-by-cancel? entry turn))))
-              [tid turn])))
-        (:turn-order entry)))
+  (let [drainable (fn [pred]
+                    (some (fn [tid]
+                            (let [turn (get-in entry [:turns tid])]
+                              (when (and (= "queued" (:status turn))
+                                         (pred turn)
+                                         (or force? (not (left-queued-by-cancel? entry turn))))
+                                [tid turn])))
+                          (:turn-order entry)))]
+    (or (drainable marked-for-next-iteration?) (drainable (constantly true)))))
 
 (defn- replace-last-user-message-content
   "Return `messages` with the last user message content replaced by `text`.
@@ -4176,8 +4304,12 @@
                    (assoc :current-turn tid
                           :last-active started-at)
                    (update-in [:turns tid]
-                              merge
-                              {:status "running" :cancel-token token :started_at started-at})))
+                              (fn [turn]
+                                ;; The mark meant \"as soon as possible\"; starting as a turn is that.
+                                (-> (dissoc turn :deliver)
+                                    (merge {:status "running"
+                                            :cancel-token token
+                                            :started_at started-at}))))))
              entry))))
      (when-let [{:keys [tid request display-request messages provider model reasoning-default
                         cancel-token extra-body turn-features engine-opts attachments]}
@@ -4443,7 +4575,8 @@
                                  :status "queued"
                                  :request request
                                  :queued_at queued-at
-                                 :engine-opts engine-opts}
+                                 :engine-opts engine-opts
+                                 :deliver gateway-contract/default-queued-turn-deliver}
                           ;; The submitter's OWN correlation id, echoed back on
                           ;; every wire view of this turn and on turn.queued. A
                           ;; channel paints no queue row of its own, so this is
@@ -4566,7 +4699,9 @@
           :queued
           (do (append-event! sid
                              "turn.queued"
-                             (cond-> {:turn_id tid :request request}
+                             (cond-> {:turn_id tid
+                                      :request request
+                                      :deliver gateway-contract/default-queued-turn-deliver}
                                idempotency-key
                                (assoc :idempotency_key idempotency-key)
 
@@ -4723,7 +4858,16 @@
                       ;; cancelled terminal so the blocking submit never hangs.
                       (when (= "turn.queued.deleted" type)
                         (deliver terminal
-                                 {"type" "turn.completed" "turn_id" turn_id "status" "cancelled"})))
+                                 {"type" "turn.completed" "turn_id" turn_id "status" "cancelled"}))
+                      ;; Delivered into the running turn (send now): the queued
+                      ;; turn never starts, so its waiter ends with status `sent`.
+                      (when (= "turn.queued.sent" type)
+                        (deliver terminal
+                                 {"type" "turn.completed"
+                                  "turn_id" turn_id
+                                  "status" "sent"
+                                  "into_turn_id" (get event "into_turn_id")
+                                  "iteration" (get event "iteration")})))
                   ;; ANOTHER turn's queue event: forward so the channel can
                   ;; mirror the session's queued backlog; never terminal here.
                   (contains? gateway-contract/queue-mirror-event-types type) (when on-event
@@ -4824,7 +4968,16 @@
                       ;; cancelled terminal so the attach never hangs.
                       (when (= "turn.queued.deleted" type)
                         (deliver terminal
-                                 {"type" "turn.completed" "turn_id" tid "status" "cancelled"})))
+                                 {"type" "turn.completed" "turn_id" tid "status" "cancelled"}))
+                      ;; Delivered into the running turn (send now): the queued
+                      ;; turn never starts, so its waiter ends with status `sent`.
+                      (when (= "turn.queued.sent" type)
+                        (deliver terminal
+                                 {"type" "turn.completed"
+                                  "turn_id" tid
+                                  "status" "sent"
+                                  "into_turn_id" (get event "into_turn_id")
+                                  "iteration" (get event "iteration")})))
                   ;; ANOTHER turn's queue event: forward so the channel can
                   ;; mirror the session's queued backlog; never terminal here.
                   (contains? gateway-contract/queue-mirror-event-types type) (when on-event
@@ -4847,71 +5000,152 @@
            (terminal-event->result (deref terminal) tid))
          (finally (unsubscribe! sid sub-id)))))
 
+(defn- queued-row-updated-payload
+  "The `turn.queued.updated` payload: the WHOLE current row presentation, so a
+   channel that mirrors the queue never has to merge a partial update."
+  [turn]
+  (cond-> {:turn_id (:turn_id turn) :request (:request turn) :deliver (:deliver turn)}
+    (:request_preview turn)
+    (assoc :request_preview (:request_preview turn))
+
+    (seq (:attachment_previews turn))
+    (assoc :attachment_previews (:attachment_previews turn))))
+
 (defn update-queued-turn!
-  "Replace the prompt text for a queued turn. Returns the updated turn or an error.
+  "Change a queued turn: its prompt text (`:request`), its delivery mode
+   (`:deliver`, `turn_end` or `next_iteration`), or both. Returns the updated turn
+   or an error.
 
    The row's presentation is re-derived from the NEW text: image chips are
    re-resolved and the stale `:display_request` (which described the text the
    submitter authored BEFORE this edit) is dropped, so an edited row never
-   keeps painting the old prompt."
-  [sid tid request]
-  (cond (or (not (string? request)) (str/blank? request))
+   keeps painting the old prompt.
+
+   `next_iteration` marks the row for delivery into the running turn at its next
+   step ([[take-marked-queued!]]). A slash or bang command runs only as its own
+   turn, so marking one answers `:not-steerable`. `turn_end` clears the mark."
+  [sid tid {:keys [request deliver] :as changes}]
+  (cond (not (or (contains? changes :request) (contains? changes :deliver)))
+        {:error :invalid-request :message "request or deliver is required"}
+        (and (contains? changes :request) (or (not (string? request)) (str/blank? request)))
         {:error :invalid-request :message "request must be a non-blank string"}
-        :else (let [decision
-                    (volatile! nil)
+        (and (contains? changes :deliver)
+             (not (contains? gateway-contract/queued-turn-deliver-values deliver)))
+        {:error :invalid-request :message "deliver must be turn_end or next_iteration"}
+        :else
+        (let [decision
+              (volatile! nil)
 
                     existing
                     (turn-record sid tid)
 
-                    previews
-                    (attachment-previews request (:attachments existing) (:workspace existing))
+              previews
+              (when (contains? changes :request)
+                (attachment-previews request (:attachments existing) (:workspace existing)))
 
-                    request-preview
-                    (request-preview-text request previews)]
+              request-preview
+              (when (contains? changes :request) (request-preview-text request previews))]
 
-                (update-session!
-                  sid
-                  (fn [entry]
-                    (let [turn (get-in entry [:turns tid])]
-                      (cond (nil? turn) (do (vreset! decision [:missing]) entry)
-                            (not= "queued" (:status turn))
-                            (do (vreset! decision [:not-queued (:status turn)]) entry)
-                            :else (do (vreset! decision [:updated])
-                                      (-> entry
-                                          (assoc-in [:turns tid :request] request)
-                                          (update-in [:turns tid] dissoc :display_request)
-                                          (update-in [:turns tid]
-                                                     (fn [t]
-                                                       (cond-> (dissoc t
-                                                                 :attachment_previews
-                                                                 :request_preview)
-                                                         (seq previews)
-                                                         (assoc :attachment_previews previews)
+          (update-session!
+            sid
+            (fn [entry]
+              (let [turn
+                    (get-in entry [:turns tid])
 
-                                                         request-preview
-                                                         (assoc :request_preview request-preview))))
-                                          (update-in [:turns tid :messages]
-                                                     replace-last-user-message-content
-                                                     request)))))))
-                (let [[kind status] @decision]
-                  (case kind
-                    :updated
-                    (do (append-event! sid
-                                       "turn.queued.updated"
-                                       (cond-> {:turn_id tid :request request}
-                                         request-preview
-                                         (assoc :request_preview request-preview)
+                    ;; Judge the row THIS patch leaves behind, inside the swap: a
+                    ;; marked row edited to a command would otherwise keep its mark.
+                    next-text
+                    (if (contains? changes :request) request (:request turn))
 
-                                         (seq previews)
-                                         (assoc :attachment_previews previews))
-                                       {:store? false})
-                        {:turn (get-turn sid tid)})
+                    next-deliver
+                    (if (contains? changes :deliver) deliver (:deliver turn))]
 
-                    :missing
-                    {:error :turn-not-found}
+                (cond (nil? turn) (do (vreset! decision [:missing]) entry)
+                      (not= "queued" (:status turn))
+                      (do (vreset! decision [:not-queued (:status turn)]) entry)
+                      (and (= "next_iteration" next-deliver)
+                           (gateway-contract/command-request? next-text))
+                      (do (vreset! decision [:not-steerable]) entry)
+                      :else (do (vreset! decision [:updated])
+                                (cond-> entry
+                                  (contains? changes :request)
+                                  (-> (assoc-in [:turns tid :request] request)
+                                      (update-in [:turns tid] dissoc :display_request)
+                                      (update-in
+                                        [:turns tid]
+                                        (fn [t]
+                                          (cond-> (dissoc t :attachment_previews :request_preview)
+                                            (seq previews)
+                                            (assoc :attachment_previews previews)
 
-                    :not-queued
-                    {:error :not-queued :status status})))))
+                                            request-preview
+                                            (assoc :request_preview request-preview))))
+                                      (update-in [:turns tid :messages]
+                                                 replace-last-user-message-content
+                                                 request))
+
+                                  (contains? changes :deliver)
+                                  (assoc-in [:turns tid :deliver] deliver)))))))
+          (let [[kind status] @decision]
+            (case kind
+              :updated
+              (do (append-event! sid
+                                 "turn.queued.updated"
+                                 (queued-row-updated-payload (turn-record sid tid))
+                                 {:store? false})
+                  {:turn (get-turn sid tid)})
+
+              :missing
+              {:error :turn-not-found}
+
+              :not-queued
+              {:error :not-queued :status status}
+
+              :not-steerable
+              {:error :not-steerable
+               :status "queued"
+               :message "a slash or bang command runs only as its own turn"})))))
+
+(defn send-queue-now!
+  "Mark every queued turn of `sid` for delivery at the next step of the running turn
+   (`deliver: next_iteration`), in queue order. Returns `{:marked [tid …]
+   :skipped [{:turn_id :reason} …]}`: a command row is skipped as `not_steerable`,
+   a row the cancel gate holds as `held_by_cancel`. A row already marked counts as
+   marked and emits nothing again."
+  [sid]
+  (let [decision (volatile! {:marked [] :skipped [] :changed []})]
+    (update-session!
+      sid
+      (fn [entry]
+        (vreset! decision {:marked [] :skipped [] :changed []})
+        (reduce
+          (fn [e tid]
+            (let [turn (get-in e [:turns tid])]
+              (cond
+                (not= "queued" (:status turn)) e
+                (gateway-contract/command-request? (:request turn))
+                (do (vswap! decision update :skipped conj {:turn_id tid :reason "not_steerable"}) e)
+                (left-queued-by-cancel? e turn)
+                (do (vswap! decision update :skipped conj {:turn_id tid :reason "held_by_cancel"})
+                    e)
+                (= "next_iteration" (:deliver turn)) (do (vswap! decision update :marked conj tid)
+                                                         e)
+                :else (do (vswap! decision
+                                  (fn [d]
+                                    (-> d
+                                        (update :marked conj tid)
+                                        (update :changed conj tid))))
+                          (assoc-in e [:turns tid :deliver] "next_iteration")))))
+          entry
+          (:turn-order entry))))
+    (let [{:keys [marked skipped changed]} @decision]
+      (doseq [tid changed]
+        (when-let [turn (turn-record sid tid)]
+          (append-event! sid
+                         "turn.queued.updated"
+                         (queued-row-updated-payload turn)
+                         {:store? false})))
+      {:marked marked :skipped skipped})))
 
 (defn delete-queued-turn!
   "Remove a queued turn before it starts. Returns deleted status or an error."

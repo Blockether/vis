@@ -2653,6 +2653,54 @@
           (expect (false? (:loading? cancelled-db))))))))
 
 (defdescribe
+  sent-queued-turn-settles-with-a-notice-test
+  ;; Review of send now (Council #250): a blocking submit or attach whose queued
+  ;; turn was sent into the running turn ends with status `sent` and no answer.
+  ;; The placeholder must settle with a notice that names the step, never as an
+  ;; empty assistant bubble.
+  (let [session-turn-fx
+        (get @@#'state/fx-registry :session-turn)
+
+        session-attach-fx
+        (get @@#'state/fx-registry :session-attach)
+
+        sent-result
+        {"content" [] "status" "sent" "into_turn_id" "r0" "iteration" 3 "session_turn_id" "q1"}
+
+        settle!
+        (fn [run-fx!]
+          (let [received (atom [])]
+            (with-redefs [vis/worker-future (fn [_ thunk]
+                                              (thunk)
+                                              :future)
+                          vis/cancellation-set-future! (fn [& _])
+                          vis/gateway-turn-trace (fn [_ _]
+                                                   [])
+                          state/dispatch #(swap! received conj %)
+                          chat/turn! (fn [& _]
+                                       sent-result)
+                          chat/attach! (fn [& _]
+                                         sent-result)]
+
+              (run-fx!))
+            (last (filter #(= :message-received (first %)) @received))))]
+
+    (it "a blocking submit settles its placeholder with the sent notice"
+        (let [[_ workspace-id content metadata]
+              (settle!
+                #(session-turn-fx :main {:id "session-1"} "steer" :token nil nil {} {} "client-1"))]
+          (expect (= :main workspace-id))
+          (expect (= ["notice"] (mapv #(get % "type") content)))
+          (expect (= "Sent into the running turn · step 3" (get-in content [0 "message"])))
+          (expect (= :sent (:status metadata)))
+          (expect (= "client-1" (:client-turn-id metadata)))))
+    (it "an attach to the sent queued turn settles the same way"
+        (let [[_ _ content metadata]
+              (settle! #(session-attach-fx :main {:id "session-1"} "q1" :token "client-1"))]
+          (expect (= "turn_sent" (get-in content [0 "code"])))
+          (expect (= :sent (:status metadata)))))))
+
+(defdescribe
   gateway-disconnect-reattach-test
   (let [session-turn-fx
         (get @@#'state/fx-registry :session-turn)
@@ -6305,3 +6353,100 @@
         (expect (= [{:id "r1"} {:id "r2"}] (:rows activity)))
         (expect (= "failed" (:state activity)))
         (expect (nil? (:vis.channel-tui/head activity))))))
+
+(defdescribe
+  queue-send-now-test
+  ;; "Send now": `→` marks ONE mirrored queue row for the running turn's next step
+  ;; (`deliver next_iteration`), the header's `→ Send now` marks every markable row.
+  ;; The row is echoed locally at once and reconciled by the gateway's
+  ;; `turn.queued.updated` (`:sync-queued-turn` carries `:deliver`).
+  (let [handler
+        (fn [id]
+          (-> #'state/event-registry
+              deref
+              deref
+              (get id)
+              :fn))
+
+        rows
+        [{:text "first" :turn-id "t-1"} {:text "/help" :turn-id "t-2"}
+         {:text "local only" :unsent? true}
+         {:text "already marked" :turn-id "t-4" :deliver "next_iteration"}]
+
+        db
+        {:active-tab-id :b :tab-locals {:a {:session {:id "s1"} :pending-sends rows}}}
+
+        pending
+        (fn [db]
+          (vec (get-in db [:tab-locals :a :pending-sends])))]
+
+    (it "mirrors `deliver` from the gateway on add and update"
+        (let [sync-fn
+              (handler :sync-queued-turn)
+
+              {db1 :db}
+              (sync-fn db
+                       [:sync-queued-turn :a
+                        {:op :add :turn-id "t-5" :text "new" :deliver "next_iteration"}])
+
+              {db2 :db}
+              (sync-fn db1
+                       [:sync-queued-turn :a {:op :update :turn-id "t-5" :text "new" :deliver nil}])
+
+              {db3 :db}
+              (sync-fn db2
+                       [:sync-queued-turn :a
+                        {:op :update :turn-id "t-1" :text "first" :deliver "next_iteration"}])
+
+              row
+              (fn [db tid]
+                (first (filter #(= tid (:turn-id %)) (pending db))))]
+
+          (expect (= "next_iteration" (:deliver (row db1 "t-5"))))
+          ;; An update without a mark takes it back (turn-end delivery again).
+          (expect (nil? (:deliver (row db2 "t-5"))))
+          (expect (= "next_iteration" (:deliver (row db3 "t-1"))))
+          (expect (= "first" (:text (row db3 "t-1"))))))
+    (it "`→` on a markable row echoes the mark and asks the gateway, and undoes the same way"
+        (let [send-fn
+              (handler :queue-send-now)
+
+              {db' :db :keys [fx]}
+              (send-fn db [:queue-send-now :a "t-1" "next_iteration"])
+
+              {db'' :db fx' :fx}
+              (send-fn db' [:queue-send-now :a "t-1" "turn_end"])]
+
+          (expect (= ["next_iteration" nil nil "next_iteration"] (mapv :deliver (pending db'))))
+          (expect (= [[:gateway-mark-queued "s1" "t-1" "next_iteration" :a]] (vec fx)))
+          (expect (= ["turn_end" nil nil "next_iteration"] (mapv :deliver (pending db''))))
+          (expect (= [[:gateway-mark-queued "s1" "t-1" "turn_end" :a]] (vec fx')))))
+    (it "`→` never marks a command, a local-only row or an unknown turn"
+        (let [send-fn (handler :queue-send-now)]
+          (doseq [tid ["t-2" nil "t-9"]]
+            (let [{db' :db :keys [fx]} (send-fn db [:queue-send-now :a tid "next_iteration"])]
+              (expect (= rows (pending db')))
+              (expect (empty? fx))))))
+    (it "`→ Send now` marks every markable unmarked row, in queue order, with one gateway call"
+        (let [send-all-fn
+              (handler :queue-send-all-now)
+
+              {db' :db :keys [fx]}
+              (send-all-fn db [:queue-send-all-now :a])
+
+              {db'' :db fx' :fx}
+              (send-all-fn db' [:queue-send-all-now :a])]
+
+          (expect (= ["next_iteration" nil nil "next_iteration"] (mapv :deliver (pending db'))))
+          (expect (= [[:gateway-send-queue-now "s1" :a ["t-1"]]] (vec fx)))
+          ;; Nothing left to mark: no change, no call.
+          (expect (= (pending db') (pending db'')))
+          (expect (empty? fx'))))
+    (it "`:set-queued-deliver` rolls one row back when the gateway refused"
+        (let [set-fn
+              (handler :set-queued-deliver)
+
+              db'
+              (set-fn db [:set-queued-deliver :a "t-4" "turn_end"])]
+
+          (expect (= [nil nil nil "turn_end"] (mapv :deliver (pending db'))))))))

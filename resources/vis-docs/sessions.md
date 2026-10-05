@@ -10,6 +10,8 @@ apps and the command line.
 - **You think of a follow-up while Vis is still working.** Send it now. It [waits in
   the queue](#queue-a-message) and runs when the current turn finishes. You can edit
   it until then.
+- **Vis must read your correction before the turn ends.** [Send the queued message
+  now](#send-a-queued-message-now). The running turn reads it at its next step.
 - **Vis is going in the wrong direction and you want to stop it.** [Cancel the
   turn](#cancel-a-turn). Your queued messages return to the composer so you can
   send them again.
@@ -85,6 +87,33 @@ To edit a queued message:
   remove it.
 
 The queue is stored in memory and cleared when the gateway restarts.
+
+### Send a queued message now
+
+Use this when the running turn must read your message before it finishes, for example
+a correction or a fact that changes the next step. By default a queued message waits
+for the turn end.
+
+- **Terminal:** press **Ctrl+X k** to send the whole queue now. To send one message,
+  click the **→** at the start of its row, or press **Ctrl+X z** and type the label of
+  that **→**.
+- **Desktop or phone app:** choose **→ Send now** in the queue header to send the whole
+  queue, or **→** on one row to send only that message.
+
+A sent message shows **next step** on its row. Choose its **→** again to let it wait
+for the turn end. The running turn reads the sent messages, in queue order, when it
+starts its next step. The conversation then shows them as **You · sent now** inside
+that turn, with the step they reached.
+
+Images attached to a sent message go with it to the running turn. Vis keeps them with
+that turn, so the desktop and phone app show them, also after a reload.
+
+Two cases keep a different order:
+
+- If the turn ends before its next step, the sent messages start their own turns first,
+  before the rest of the queue.
+- A queued command (`/` or `!`) cannot go into a running turn. It stays in the queue
+  and runs as its own turn.
 
 ### Cancel a turn
 

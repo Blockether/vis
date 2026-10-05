@@ -976,7 +976,8 @@
   [db session-id turns]
   (when (seq turns)
     (let [attached (group-by (comp str :turn-soul-id)
-                             (filter #(nil? (:iteration-id %))
+                             ;; A message sent into the turn names its files on its own step.
+                             (filter #(and (nil? (:iteration-id %)) (nil? (:queued-turn-id %)))
                                      (persistance/db-list-session-attachments-meta db session-id)))]
       (into {}
             (map
@@ -1082,7 +1083,10 @@
          (into (if prose [{:type "text" :text prose}] []) (map #(assoc % :type "tool_use")) calls)})
 
       (:council-input body)
-      (assoc :council-input (:council-input body)))))
+      (assoc :council-input (:council-input body))
+
+      (seq (:user-input body))
+      (assoc :user-input (:user-input body)))))
 
 (defn prior-turn-trailer
   "The conversation before the current turn as trailer entries, oldest first:
@@ -1547,6 +1551,72 @@
                                                              (:capabilities target)))))
                   :vision)))
 
+(defn user-input-messages
+  "The user messages one step received from the queue (`→ Send now`), in queue
+   order, or `[]`. Each entry becomes one `user` message: its request text, then
+   one image block for each attachment that carries bytes when `vision?` is true.
+   A file that cannot go on the wire is named in the text, so the model can open
+   it itself: by its attachment id when the step stored it, as a prior turn's
+   request names its files, and otherwise by its name."
+  [user-input vision?]
+  (into []
+        (keep
+          (fn [{:keys [request attachments skipped]}]
+            (let [images
+                  (when vision? (filter #(not-empty (str (:base64 %))) attachments))
+
+                  unsent
+                  (remove (set images) attachments)
+
+                  stored
+                  (filter #(not-empty (str (:id %))) unsent)
+
+                  named
+                  (distinct (keep #(or (not-empty (str (:path %))) (not-empty (str (:filename %))))
+                                  (concat (remove (set stored) unsent) skipped)))
+
+                  text
+                  (cond-> (str request)
+                    (seq stored)
+                    (str (apply str
+                           (for [file stored]
+                             (str "\n\nAttached file: "
+                                  (or (not-empty (str (:filename file)))
+                                      (not-empty (str (:path file)))
+                                      "image")
+                                  " (attachment id: "
+                                  (:id file)
+                                  ")"))))
+
+                    (seq named)
+                    (str "\n\n[Attached files not sent as images: " (str/join ", " named) "]"))]
+
+              (cond (seq images) {:role "user"
+                                  :content (into [{:type "text" :text text}]
+                                                 (map attachment->image-block images))}
+                    (not (str/blank? text)) {:role "user" :content text}))))
+        user-input))
+
+(defn persisted-user-input
+  "`user-input` as the step record stores it, without image bytes. When the step
+   stored its files on the turn, `:attachments` keeps their row metadata, so a
+   replay names each one by attachment id and a channel can fetch its pixels; a
+   file the wire refused is then named once, by that id."
+  [user-input]
+  (when (seq user-input)
+    (mapv (fn [{:keys [stored skipped] :as entry}]
+            (if (seq stored)
+              (let [labels (set (map attachments/image-label stored))]
+                (-> (dissoc entry :stored)
+                    (assoc :attachments (vec stored)
+                           :skipped (into [] (remove #(contains? labels (:path %))) skipped))))
+              (update entry
+                      :attachments
+                      #(mapv (fn [row]
+                               (dissoc row :base64))
+                             %))))
+          user-input)))
+
 (defn- wire-image-attachment
   "One stored iteration attachment as the wire will carry it, or nil.
 
@@ -1871,6 +1941,8 @@
              [pos
               (vec (concat (when (and (not (:collapsed? iter-rec)) (:council-input iter-rec))
                              [(council/input-message (:council-input iter-rec))])
+                           (when-not (:collapsed? iter-rec)
+                             (user-input-messages (:user-input iter-rec) vision?))
                            (group-of entry)))])
            iters))))
 

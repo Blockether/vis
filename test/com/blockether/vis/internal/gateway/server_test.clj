@@ -681,6 +681,90 @@
                           (expect (= 200 (:status (#'turns-api/list-turns-handler request))))
                           (expect (= [[:all sid]] @calls)))))))
 
+;; Send now (`→`): PATCH carries `deliver`, POST /queue/send-now marks the whole queue.
+(defdescribe
+  queue-send-now-routes
+  (it
+    "PATCH forwards request and deliver and maps the refusals"
+    (let [sid
+          (random-uuid)
+
+          calls
+          (atom [])
+
+          answer
+          (atom {:turn {"turn_id" "q1" "deliver" "next_iteration"}})
+
+          patch-turn
+          (fn [body]
+            (#'turns-api/update-queued-turn-handler
+             {:request-method :patch
+              :path-params {:sid (str sid) :tid "q1"}
+              :body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str body) "UTF-8"))}))]
+
+      (with-redefs-fn {#'state/soul (fn [actual]
+                                      (= sid actual))
+                       #'state/update-queued-turn! (fn [actual tid changes]
+                                                     (swap! calls conj [actual tid changes])
+                                                     @answer)}
+        #(do (let [response (patch-turn {:deliver "next_iteration"})]
+               (expect (= 200 (:status response)))
+               (expect (= "next_iteration" (get (wire/parse-json (:body response)) "deliver"))))
+             (expect (= [[sid "q1" {:deliver "next_iteration"}]] @calls))
+             (reset! calls [])
+             (expect (= 200 (:status (patch-turn {:request "new text" :deliver "turn_end"}))))
+             (expect (= [[sid "q1" {:request "new text" :deliver "turn_end"}]] @calls))
+             ;; A command cannot be steered: 409 with the gateway's reason.
+             (reset! answer {:error :not-steerable
+                             :status "queued"
+                             :message "a command runs only as its own turn"})
+             (let [response
+                   (patch-turn {:deliver "next_iteration"})
+
+                   body
+                   (wire/parse-json (:body response))]
+
+               (expect (= 409 (:status response)))
+               (expect (= "not-steerable" (get-in body ["error" "type"])))
+               (expect (= "queued" (get-in body ["error" "turn_status"])))
+               (expect (= "a command runs only as its own turn" (get-in body ["error" "message"]))))
+             (reset! answer {:error :invalid-request
+                             :message "deliver must be turn_end or next_iteration"})
+             (expect (= 400 (:status (patch-turn {:deliver "soon"}))))
+             (reset! answer {:error :turn-not-found})
+             (expect (= 404 (:status (patch-turn {:deliver "next_iteration"}))))))))
+  (it "POST /queue/send-now answers the marked and skipped rows, 404 without a session"
+      (let [sid
+            (random-uuid)
+
+            calls
+            (atom [])
+
+            request
+            {:request-method :post :path-params {:sid (str sid)}}]
+
+        (with-redefs-fn {#'state/soul (fn [actual]
+                                        (= sid actual))
+                         #'state/send-queue-now!
+                         (fn [actual]
+                           (swap! calls conj actual)
+                           {:marked ["q1"] :skipped [{:turn_id "qc" :reason "not_steerable"}]})}
+          #(do (let [response
+                     (#'turns-api/send-queue-now-handler request)
+
+                     body
+                     (wire/parse-json (:body response))]
+
+                 (expect (= 200 (:status response)))
+                 (expect (= ["q1"] (get body "marked")))
+                 (expect (= [{"turn_id" "qc" "reason" "not_steerable"}] (get body "skipped"))))
+               (expect (= [sid] @calls))
+               (expect (= 404
+                          (:status (#'turns-api/send-queue-now-handler
+                                    {:request-method :post
+                                     :path-params {:sid (str (random-uuid))}}))))
+               (expect (= [sid] @calls)))))))
+
 ;; Regression, Vis session 57dfea5e-0c2d-4190-a82c-0e1992e352c3: a client that
 ;; missed queue.paused could recover the queued rows but not the paused marker, so it
 ;; had no way to continue work after the provider recovered.

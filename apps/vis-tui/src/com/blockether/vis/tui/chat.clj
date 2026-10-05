@@ -118,6 +118,29 @@
      (and (map? raw) (map? provider-info))
      (assoc :provider-error-info (vis/wire->engine provider-info)))))
 
+(defn- user-input-rows
+  "Queued messages one step received through `→ Send now`, as the trace entry
+   keeps them: the wire rows of a `turn.input` event or of a persisted
+   iteration's `user_input`, in queue order, without blank requests."
+  [rows]
+  (into []
+        (keep (fn [row]
+                (when (map? row)
+                  (let [request (some-> (get row "request")
+                                        str
+                                        not-empty)]
+                    (when request
+                      (cond-> {:request request}
+                        (get row "queued_turn_id")
+                        (assoc :queued-turn-id (str (get row "queued_turn_id")))
+
+                        (get row "display_request")
+                        (assoc :display-request (str (get row "display_request")))
+
+                        (seq (get row "attachment_previews"))
+                        (assoc :attachment-previews (vec (get row "attachment_previews")))))))))
+        (vec (or rows []))))
+
 (defn- it->iteration-entry
   "Turn one persisted iteration row into the same shape the live
    progress tracker produces — a map carrying `:thinking`, `:forms`,
@@ -265,22 +288,26 @@
         forms
         (mapv block->form-record visible)]
 
-    (iteration/canonicalize {:position (when-let [p (get it "position")]
-                                         (dec (long p)))
-                             :thinking (visible-thinking (get it "thinking"))
-                             ;; The commentary the model wrote beside its code. The live
-                             ;; tracker keeps it from the `:assistant-prose` chunk; the row
-                             ;; persists the same text, so a settled or reopened bubble paints
-                             ;; the prose block the reader watched land between THINKING and
-                             ;; the code band instead of dropping it.
-                             :assistant-prose (some-> (get it "assistant_prose")
-                                                      str
-                                                      str/trim
-                                                      not-empty)
-                             :provider-fallbacks (get it "llm_routing_trace")
-                             :iteration-id (get it "id")
-                             :attachments (vec (or (get it "attachments") []))
-                             :forms forms})))
+    (iteration/canonicalize
+      {:position (when-let [p (get it "position")]
+                   (dec (long p)))
+       :thinking (visible-thinking (get it "thinking"))
+       ;; The commentary the model wrote beside its code. The live
+       ;; tracker keeps it from the `:assistant-prose` chunk; the row
+       ;; persists the same text, so a settled or reopened bubble paints
+       ;; the prose block the reader watched land between THINKING and
+       ;; the code band instead of dropping it.
+       :assistant-prose (some-> (get it "assistant_prose")
+                                str
+                                str/trim
+                                not-empty)
+       :provider-fallbacks (get it "llm_routing_trace")
+       :iteration-id (get it "id")
+       :attachments (vec (or (get it "attachments") []))
+       ;; The queued messages this step received (`→ Send now`),
+       ;; painted as a "You" block at the top of the step.
+       :user-input (not-empty (user-input-rows (get it "user_input")))
+       :forms forms})))
 
 (defn iteration-rows->trace
   "Project canonical gateway iteration rows into the TUI trace shape. Used both
@@ -376,6 +403,21 @@
         ;; word twice (`turn_failed ERROR: turn failed`). Keep the bare message.
         "message" (vis/error-message (get result "error"))
         "retryable" false}])))
+
+(defn completion-content
+  "Canonical blocks for a settled gateway result. A queued turn that the running
+   turn took (send now) settles with status `sent` and no answer; it gets one
+   notice that names the step, so the bubble says where the message went
+   instead of standing empty."
+  [result]
+  (if (and (= "sent" (get result "status")) (empty? (get result "content")))
+    [{"id" (str (java.util.UUID/randomUUID))
+      "type" "notice"
+      "code" "turn_sent"
+      "message" (if-let [step (get result "iteration")]
+                  (str "Sent into the running turn · step " step)
+                  "Sent into the running turn.")}]
+    (get result "content")))
 
 (defn- provider-attempt->text
   "One canonical provider attempt as `provider/model: status reason`."
@@ -1293,13 +1335,23 @@
         (assoc :preview-text (event-get event :request-preview))
 
         (event-get event :idempotency-key)
-        (assoc :client-id (event-get event :idempotency-key)))
+        (assoc :client-id (event-get event :idempotency-key))
+
+        (event-get event :deliver)
+        (assoc :deliver (event-get event :deliver)))
 
       "turn.queued.updated"
+      ;; The WHOLE row rides along, `deliver` included: `next_iteration` is a
+      ;; row marked to send into the running turn at its next step (from ANY
+      ;; channel), `turn_end` is the default turn-end delivery. A row without the
+      ;; field keeps the mode the mirror already holds.
       (cond-> {:phase :queue-sync
                :op :update
                :turn-id (event-get event :turn-id)
                :text (event-get event :request)}
+        (contains? event (vis/wire-key :deliver))
+        (assoc :deliver (event-get event :deliver))
+
         (event-get event :request-preview)
         (assoc :preview-text (event-get event :request-preview)))
 
@@ -1320,6 +1372,20 @@
       ;; turn itself; a replayed log nets to zero (queued … drained).
       "turn.queued.drained"
       {:phase :queue-sync :op :delete :turn-id (event-get event :turn-id)}
+
+      ;; A marked row left the queue because the running turn TOOK it at its
+      ;; next step (gateway `take-marked-queued!`). Drop the mirrored entry; the
+      ;; delivered text paints as a "You" bubble inside the running turn.
+      "turn.queued.sent"
+      {:phase :queue-sync :op :delete :turn-id (event-get event :turn-id)}
+
+      ;; The messages a running turn received at step `iteration` (`→ Send now`).
+      ;; They paint as ONE "You" block at the top of that step, live and on
+      ;; replay alike (the step record keeps them as `user_input`).
+      "turn.input"
+      {:phase :user-input
+       :iteration iteration
+       :messages (user-input-rows (event-get event :messages))}
 
       ;; The gateway PAUSED this session's queue after a provider failure instead
       ;; of cascading the next message into a failing provider (see state.clj
@@ -1640,7 +1706,9 @@
                                     ;; raw so pulling the row back into the editor re-attaches.
                                     :preview-text (or (get t "request_preview") (get t "request"))
                                     :client-id (get t "idempotency_key")
-                                    :queued-at-ms (get t "queued_at")})))
+                                    :queued-at-ms (get t "queued_at")
+                                    ;; `next_iteration` = marked to send at the next step.
+                                    :deliver (get t "deliver")})))
          ;; Open on the NEWEST turns only. Hydrating the whole session before
          ;; the first paint cost seconds of gateway work and megabytes of JSON
          ;; for content the user never sees (the view lands at the bottom);

@@ -1621,6 +1621,19 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def post_session_queue_send_now(
+        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """POST /v1/sessions/:sid/queue/send-now — json response."""
+        response = self._request(
+            "POST",
+            "/v1/sessions/:sid/queue/send-now",
+            path={"sid": sid},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
     def put_session_read(
         self,
         sid: str,

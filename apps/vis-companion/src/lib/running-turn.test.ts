@@ -279,3 +279,45 @@ describe('the turn this device started', () => {
     );
   });
 });
+
+// A queued message sent with `→` (PLAN-queue-send-now, Task 4): the gateway's stored
+// `turn.input` frame names the step the message reached, and the bubble belongs to
+// that step, before any of its reasoning.
+describe('a queued message delivered into the running turn', () => {
+  const input = (iteration: number, messages: unknown[]) =>
+    event({ type: 'turn.input', turn_id: runningTurn.id, seq: 9, iteration, messages });
+  const sent = { queued_turn_id: 'q-1', request: 'Also check the tests' };
+
+  it('places the messages on the step the frame names, creating that step', () => {
+    const turn = reduceRunningTurnEvent(runningTurn, input(2, [sent]));
+
+    expect(turn?.iterations.map((iteration) => iteration.position)).toEqual([2]);
+    expect(turn?.iterations[0]?.user_input).toEqual([sent]);
+  });
+
+  it('keeps the reasoning that step already streamed', () => {
+    const thinking = reduceRunningTurnEvent(runningTurn, reasoning('plan'));
+    const turn = reduceRunningTurnEvent(thinking, input(0, [sent]));
+
+    expect(turn?.iterations[0]).toMatchObject({ thinking: 'plan', user_input: [sent] });
+  });
+
+  it('replaces the list on a replayed frame instead of doubling it', () => {
+    const once = reduceRunningTurnEvent(runningTurn, input(1, [sent]));
+    const twice = reduceRunningTurnEvent(once, input(1, [sent]));
+
+    expect(twice?.iterations[0]?.user_input).toEqual([sent]);
+  });
+
+  it('ignores a frame without a readable message', () => {
+    const turn = reduceRunningTurnEvent(runningTurn, input(1, [{ queued_turn_id: 'q-2' }]));
+
+    expect(turn).toBe(runningTurn);
+  });
+
+  it('leaves a settled bubble alone', () => {
+    const settled = { ...runningTurn, status: 'completed' as const };
+
+    expect(reduceRunningTurnEvent(settled, input(1, [sent]))).toBe(settled);
+  });
+});

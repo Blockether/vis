@@ -2167,6 +2167,7 @@
      :stable-prompt-messages stable-prompt-messages
      :standing-ctx-atom standing-ctx-atom
      :summaries-at-turn-start summaries-at-turn-start
+     :take-user-input (:take-user-input hooks)
      :trace-store trace-store
      :turn-position turn-position
      :turn-pricing turn-pricing
@@ -2359,14 +2360,95 @@
       :route-change route-change
       :routing routing)))
 
+(defn- store-delivered-attachments!
+  "Store the prepared files of one delivered message on the running turn, so a
+   reopened transcript and later turns keep them, and return the stored ids. A
+   message without a queued turn id or a turn stores nothing. Never throws."
+  [environment session-turn-id queued-turn-id prepared]
+  (if-not (and (seq prepared) session-turn-id (not (str/blank? (str queued-turn-id))))
+    #{}
+    (try (set (persistance/db-store-queued-turn-attachments! (:db-info environment)
+                                                             session-turn-id
+                                                             queued-turn-id
+                                                             (attachment-storage/offload-attachments
+                                                               prepared)))
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::user-input-store-failed
+                      :data {:queued-turn-id queued-turn-id :error (ex-message t)}})
+           #{}))))
+
+(defn- delivered-user-input
+  "Queued messages the user marked `→ Send now`, taken once for the step
+   `iteration` and prepared for the wire. Inline uploads and image paths in each
+   request become attachments with their bytes. The prepared files are stored on the
+   running turn first, and `:stored` keeps their metadata for the step record. A
+   stored file that cannot go on the wire stays in `:attachments` without bytes, so
+   the model gets its id; any other such file stays named in `:skipped`. Never throws: a
+   failed take delivers nothing, a failed image scan keeps the text and a failed
+   store keeps the delivery."
+  [take-user-input environment session-turn-id iteration vision?]
+  (when take-user-input
+    (let [entries (try (take-user-input {:iteration iteration})
+                       (catch Throwable t
+                         (tel/log! {:level :warn
+                                    :id ::user-input-take-failed
+                                    :data {:iteration iteration :error (ex-message t)}})
+                         nil))]
+      (when (seq entries)
+        (mapv
+          (fn [{:keys [request attachments queued-turn-id] :as entry}]
+            (try
+              (let [inline (attachments/prepare-inline-attachments (vec attachments))
+                    disk (attachments/collect-user-images request
+                                                          {:workspace-root (:workspace/root
+                                                                             environment)})
+                    prepared (mapv #(assoc % :id (str (java.util.UUID/randomUUID)))
+                                   (into (vec (:attached inline)) (:attached disk)))
+                    stored-ids (store-delivered-attachments! environment
+                                                             session-turn-id
+                                                             queued-turn-id
+                                                             prepared)
+                    ;; Only a stored row may be named by its id.
+                    prepared (mapv #(cond-> % (not (contains? stored-ids (:id %))) (dissoc :id))
+                                   prepared)
+                    wired (attachments/wire-images prepared {:vision? vision?})
+                    stored (into []
+                                 (comp (filter :id)
+                                       (map #(select-keys %
+                                                          [:id :media-type :filename :path :size
+                                                           :kind :reference])))
+                                 prepared)
+                    ;; A stored file that stays off the wire is named by its id, not by
+                    ;; its name: the model can open it by that id.
+                    wired-ids (into #{} (keep :id) (:attached wired))
+                    unsent (into [] (remove #(contains? wired-ids (:id %))) stored)
+                    unsent-labels (set (map attachments/image-label unsent))]
+
+                (cond-> (assoc entry
+                          :attachments (into (vec (:attached wired)) unsent)
+                          :skipped (into
+                                     []
+                                     (remove #(contains? unsent-labels (:path %)))
+                                     (concat (:skipped inline) (:skipped disk) (:skipped wired))))
+                  (seq stored)
+                  (assoc :stored stored)))
+              (catch Throwable t
+                (tel/log!
+                  {:level :warn :id ::user-input-images-failed :data {:error (ex-message t)}})
+                (assoc entry
+                  :attachments []
+                  :skipped []))))
+          entries)))))
+
 (defn- project-context
   "Projects the conversation the iteration sends: the prompt base, the summarized
    trailer, the council input and the provider messages, with the context-recovery
    state the provider call shares."
   [{:keys [canonical-messages effective-fold-budget emergency-summaries-atom environment iteration
            iteration-extra-body loop-state message-base-atom pre-resolved-model raw-reasoning-level
-           reasoning-effort reasoning-level replay-target routing session-turn-id trailer-iters
-           turn-position user-request]
+           reasoning-effort reasoning-level replay-target routing session-turn-id take-user-input
+           trailer-iters turn-position user-request]
     :as state}]
   (let [summaries
         (transcript/current-session-summaries environment)
@@ -2446,16 +2528,35 @@
                                                   provider-base))
                                           256))))
 
+        ;; Queued messages the user marked `→ Send now`: taken once for this
+        ;; step and delivered as user messages after the Council input.
+        user-input-vision?
+        (transcript/target-supports-vision? replay-target)
+
+        user-input
+        (delivered-user-input take-user-input
+                              environment
+                              session-turn-id
+                              (inc (long iteration))
+                              user-input-vision?)
+
+        user-input-messages
+        (transcript/user-input-messages user-input user-input-vision?)
+
         council-trailer
         (cond-> (vec trailer-iters)
-          (council/input-message council-input)
+          (or (council/input-message council-input) (seq user-input))
           (conj [(inc (long iteration))
                  {:iteration-scope (str "t" (or turn-position 1) "/i" (inc (long iteration)))
-                  :council-input council-input}]))
+                  :council-input council-input
+                  :user-input user-input}]))
 
         append-live-input
         (fn [provider-messages]
-          (cond-> (council/append-input provider-messages council-input)
+          (cond-> (vec (council/append-input provider-messages council-input))
+            (seq user-input-messages)
+            (into user-input-messages)
+
             (:provider-error-feedback loop-state)
             (conj {:role "user" :content (:provider-error-feedback loop-state)})))
 
@@ -2534,7 +2635,8 @@
       :provider-output-started? provider-output-started?
       :provider-replay-unsafe? provider-replay-unsafe?
       :recall-options recall-options
-      :summaries summaries)))
+      :summaries summaries
+      :user-input user-input)))
 
 (defn- call-provider
   "Sends the iteration's request under the council execution scope, retrying through
@@ -2780,7 +2882,7 @@
            last-context-atom loop-state max-context-tokens messages note-prompt-cache-status!
            on-chunk pre-resolved-model prompt-cache-status-atom reasoning-effort request-budget-atom
            resolved-model session-turn-id stable-prompt-messages standing-ctx-atom trace trace-store
-           trailer-iters turn-position turn-pricing user-request]}]
+           trailer-iters turn-position turn-pricing user-input user-request]}]
   (if-let [iteration-error-data (::loop-errors/iteration-error iteration-result)]
     ;; Cancellation short-circuit. When the user pressed Esc
     ;; mid-call, `cancel!` flipped the flag BEFORE
@@ -2834,6 +2936,7 @@
 
                 (cond-> {:session-turn-id session-turn-id
                          :council-input council-input
+                         :user-input (transcript/persisted-user-input user-input)
                          :council-publications (:council-publications iteration-result)
                          :vars []
                          :code (or err-partial-content "")
@@ -3046,6 +3149,7 @@
 
               (cond-> {:session-turn-id session-turn-id
                        :council-input council-input
+                       :user-input (transcript/persisted-user-input user-input)
                        :council-publications (:council-publications iteration-result)
                        :request-health (cond-> (assoc (:request-health iteration-result)
                                                  :budget-tokens budget
@@ -3270,6 +3374,7 @@
                                       (or trailer-iters []))
                                 [(inc (long iteration))
                                  {:council-input council-input
+                                  :user-input user-input
                                   :thinking thinking
                                   :goal-continuation goal-continuation
                                   :blocks blocks

@@ -1,19 +1,40 @@
 import { useState } from 'react';
 
 import type { GatewayClient } from '../lib/gateway';
+import { isCommandRequest } from '../lib/gateway';
 import type { QueuedTurn, QueuePausedInfo } from '../lib/types';
-import { Button, CloseButton, TextButton } from './ui';
+import { Button, CloseButton, IconButton, TextButton } from './ui';
 
 type QueuedTurnsTrayProps = {
   client: GatewayClient;
   sid: string;
   queued: readonly QueuedTurn[];
   paused: QueuePausedInfo | null;
+  /**
+   * A turn is running, so a queued message has a next step to go into. Without one
+   * the `→` controls stay hidden: an unmarked row waits for the turn end as before.
+   */
+  running: boolean;
   onError: (message: string) => void;
 };
 
-/** Gateway-owned queued turns, including edit, remove, and paused-queue recovery. */
-export function QueuedTurnsTray({ client, sid, queued, paused, onError }: QueuedTurnsTrayProps) {
+/** `→` applies to plain messages only; a slash or bang command runs as its own turn. */
+function canSendNow(item: QueuedTurn): boolean {
+  return !isCommandRequest(item.request);
+}
+
+/**
+ * Gateway-owned queued turns, including edit, remove, `→` (send into the running
+ * turn at its next step) and paused-queue recovery.
+ */
+export function QueuedTurnsTray({
+  client,
+  sid,
+  queued,
+  paused,
+  running,
+  onError,
+}: QueuedTurnsTrayProps) {
   // The gateway is the one writer of the queue. A mutation marks the row busy,
   // but never hides or rewrites it before the daemon confirms its own truth.
   const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -22,6 +43,9 @@ export function QueuedTurnsTray({ client, sid, queued, paused, onError }: Queued
     text: string;
   } | null>(null);
   const [resuming, setResuming] = useState(false);
+  const [sendingAll, setSendingAll] = useState(false);
+  const markable = running ? queued.filter(canSendNow) : [];
+  const unmarked = markable.filter((item) => item.deliver !== 'next_iteration');
 
   const markBusy = (turnId: string, busy: boolean) => {
     setBusyIds((current) => {
@@ -67,6 +91,24 @@ export function QueuedTurnsTray({ client, sid, queued, paused, onError }: Queued
           <div className="flex items-center gap-1.5 border-b border-dialog-edge bg-dialog-title px-2.5 py-1 font-mono text-meta font-bold text-dialog-title-foreground">
             <span aria-hidden="true">┌</span>
             Queued · {queued.length}
+            {markable.length > 0 && (
+              <TextButton
+                isBand
+                aria-label="Send all queued messages now"
+                title="Deliver every queued message into the running turn at its next step"
+                disabled={sendingAll || unmarked.length === 0}
+                className="ml-auto shrink-0"
+                onClick={() => {
+                  setSendingAll(true);
+                  void client
+                    .sendQueueNow(sid)
+                    .catch(report)
+                    .finally(() => setSendingAll(false));
+                }}
+              >
+                → Send now
+              </TextButton>
+            )}
           </div>
           <div
             role="region"
@@ -78,6 +120,8 @@ export function QueuedTurnsTray({ client, sid, queued, paused, onError }: Queued
               {queued.map((item, index) => {
                 const isEditing = editing?.turnId === item.turnId;
                 const isBusy = busyIds.has(item.turnId);
+                const isMarked = item.deliver === 'next_iteration';
+                const sendNow = running && canSendNow(item);
                 return (
                   <div
                     key={item.turnId}
@@ -133,6 +177,36 @@ export function QueuedTurnsTray({ client, sid, queued, paused, onError }: Queued
                         </span>
                       </TextButton>
                     )}
+                    {isMarked && (
+                      <span className="shrink-0 font-mono text-meta text-accent-ink">next step</span>
+                    )}
+                    {/* The `→` column stays aligned: a command row keeps the cell empty. */}
+                    {running &&
+                      (sendNow ? (
+                        <IconButton
+                          label={
+                            isMarked
+                              ? `Keep queued message ${index + 1} for the turn end`
+                              : `Send queued message ${index + 1} now`
+                          }
+                          title={isMarked ? 'Keep for the turn end' : 'Send at the next step'}
+                          variant={isMarked ? 'primary' : 'secondary'}
+                          aria-pressed={isMarked}
+                          disabled={isBusy}
+                          onClick={() => {
+                            const deliver = isMarked ? 'turn_end' : 'next_iteration';
+                            markBusy(item.turnId, true);
+                            void client
+                              .markQueuedTurn(sid, item.turnId, deliver)
+                              .catch(report)
+                              .finally(() => markBusy(item.turnId, false));
+                          }}
+                        >
+                          →
+                        </IconButton>
+                      ) : (
+                        <span aria-hidden="true" className="size-8 shrink-0 mouse:size-7" />
+                      ))}
                     <CloseButton
                       label={`Remove queued message ${index + 1}`}
                       isStandalone

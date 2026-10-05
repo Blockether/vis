@@ -476,6 +476,9 @@ CREATE TABLE session_turn_iteration (
   request_health                 BLOB,
   council_input                  BLOB,
   council_publications           BLOB,
+  -- Queued user messages delivered into this iteration (send now); text and
+  -- attachment metadata only, never image bytes.
+  user_input                     BLOB,
   llm_thinking                    TEXT,
   -- Model markdown PROSE returned ALONGSIDE a tool call. NULL = no prose.
   llm_assistant_prose             TEXT,
@@ -774,6 +777,8 @@ CREATE INDEX idx_log_iteration
 -- Every row carries session_turn_soul_id (ALWAYS set: the turn it belongs to).
 -- A row with session_turn_iteration_id set is a TOOL artifact (OUTBOUND); NULL
 -- means a USER image (INBOUND). `source` is DERIVED from that, never stored.
+-- A user image that came with a message sent into a running turn (`→ Send now`)
+-- also names that message in `queued_turn_id`.
 -- Storage: inline `bytes` now, `storage_uri` reserved for externalization;
 -- exactly one is set.
 --
@@ -794,6 +799,12 @@ CREATE TABLE session_attachment (
                             REFERENCES session_turn_iteration(id) ON DELETE CASCADE,
 
   tool_call_id              TEXT,
+
+  -- The queued message this user image came with, when the human sent that
+  -- message into the running turn (`→ Send now`). The row stays on the user rail
+  -- of the receiving turn, apart from the turn's own request images, and the
+  -- step's `user_input` names it by id. NULL for every other row.
+  queued_turn_id            TEXT,
 
   position                  INTEGER NOT NULL CHECK (position >= 0),
   kind                      TEXT NOT NULL DEFAULT 'image',
@@ -867,6 +878,11 @@ CREATE INDEX idx_attachment_iteration
 -- gallery's "previous versions" read are the same indexed walk.
 CREATE INDEX idx_attachment_version
   ON session_attachment(filename, version);
+
+-- The images of one message sent into a running turn, by its queued turn id.
+CREATE INDEX idx_attachment_queued_turn
+  ON session_attachment(queued_turn_id, position)
+  WHERE queued_turn_id IS NOT NULL;
 
 -- =============================================================================
 -- transcript full-text search (FTS5)

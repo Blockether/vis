@@ -269,15 +269,21 @@
     "Due pending callbacks, with the current `callback_url` and `callback_secret`.")
   (db-automation-update-delivery! [db-info id attrs]))
 
+(defprotocol QueueStore
+  "Queued-turn operations of a persistence backend, with the `Store` dispatch. They
+   are a separate protocol for the same JVM method-size limit as `AutomationStore`."
+  (db-store-queued-turn-attachments! [db-info session-turn-soul-id queued-turn-id attachments])
+  (db-list-queued-turn-attachments [db-info queued-turn-ids]))
+
 (defmacro store-implementation
-  "Expand, inside a backend namespace, to its op map for `Store` and
-   `AutomationStore`: every op keyed to the backend's own fn of the same name. A
+  "Expand, inside a backend namespace, to its op map for `Store`, `AutomationStore`
+   and `QueueStore`: every op keyed to the backend's own fn of the same name. A
    backend missing an op fails to compile instead of failing at its first call."
   []
   (into {}
         (map (fn [op]
                [op (symbol (name op))]))
-        (keys (merge (:sigs Store) (:sigs AutomationStore)))))
+        (keys (merge (:sigs Store) (:sigs AutomationStore) (:sigs QueueStore)))))
 
 ;; Turn outcome
 
@@ -405,19 +411,27 @@
   "Every `AutomationStore` op forwarded to the backend."
   (into {} (map (juxt identity forward)) (keys (:sigs AutomationStore))))
 
+(def ^:private queue-ops
+  "Every `QueueStore` op forwarded to the backend."
+  (into {} (map (juxt identity forward)) (keys (:sigs QueueStore))))
+
 ;; Extended once, while this namespace loads: re-exports copy the protocol fns,
 ;; and a later `extend` would rebind them behind those copies.
 (extend nil
   Store
     store-ops
     AutomationStore
-    automation-ops)
+    automation-ops
+    QueueStore
+    queue-ops)
 
 (extend Object
   Store
     store-ops
     AutomationStore
-    automation-ops)
+    automation-ops
+    QueueStore
+    queue-ops)
 
 ;; Connection lifecycle
 

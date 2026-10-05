@@ -1453,6 +1453,74 @@
                  (expect (= "landed.png" (get (first rows) "filename")))
                  (expect (= "REVG" (get (first rows) "base64")))))
              (finally (reset! registry saved)))))
+  (it
+    "serves a sent queued message's files from the step that stored them"
+    (let [sid
+          (str (java.util.UUID/randomUUID))
+
+          registry
+          @#'state/registry
+
+          saved
+          @registry
+
+          asked
+          (atom [])]
+
+      (try
+        (reset! registry {sid {:next-seq 0
+                               :turn-order ["r0"]
+                               :turns
+                               {"r0"
+                                {:turn_id "r0" :session_id sid :status "running" :request "run"}
+                                "q1" {:turn_id "q1"
+                                      :session_id sid
+                                      :status "sent"
+                                      :into_turn_id "r0"
+                                      :iteration 2
+                                      :request "look"}}}})
+        (with-redefs [persistance/db-list-queued-turn-attachments
+                      (fn [_ ids]
+                        (swap! asked conj (vec ids))
+                        {"q1"
+                         [{:id "a1" :filename "chart.png" :media-type "image/png" :base64 "REVG"}]})
+
+                      persistance/db-list-turns-attachments
+                      (fn [_ ids]
+                        {(str (first ids))
+                         [{:filename "other.png" :media-type "image/png" :base64 "T1RI"}]})]
+
+          (let [rows (state/turn-attachments sid "q1")]
+            (expect (= ["chart.png"] (mapv #(get % "filename") rows)))
+            (expect (= "REVG" (get (first rows) "base64")))
+            (expect (= [["q1"]] @asked))))
+        (finally (reset! registry saved)))))
+  (it "serves a sent queued message's files after the gateway forgets its receipt"
+      (let [sid
+            (str (java.util.UUID/randomUUID))
+
+            registry
+            @#'state/registry
+
+            saved
+            @registry]
+
+        (try (reset! registry {sid {:next-seq 0 :turns {}}})
+             (with-redefs [persistance/db-list-turns-attachments
+                           (fn [_ _]
+                             {})
+
+                           persistance/db-list-queued-turn-attachments
+                           (fn [_ ids]
+                             {(str (first ids)) [{:id "a1"
+                                                  :filename "chart.png"
+                                                  :media-type "image/png"
+                                                  :base64 "REVG"}]})]
+
+               (let [rows (state/turn-attachments sid "q1")]
+                 (expect (= ["chart.png"] (mapv #(get % "filename") rows)))
+                 (expect (= "REVG" (get (first rows) "base64")))))
+             (finally (reset! registry saved)))))
   ;; Regression, issue #1: an image sent from the TUI painted only a filename
   ;; chip in the companion's live user bubble - the picture appeared only after
   ;; the turn landed and the session was reloaded. The TUI authors a message that
@@ -4924,6 +4992,404 @@
                  (expect (= "clipboard-shot.png LOOK AT THIS" (:request_preview queued)))
                  (expect (= 1 (count (:attachment_previews queued)))))))
            (finally (swap! registry dissoc sid) (.delete png) (.delete dir))))))
+
+;; Send now (`→`): a queued message marked `next_iteration` is delivered into the
+;; running turn at its next step, in queue order; the default stays `turn_end`.
+(defdescribe
+  queue-send-now-test
+  (it
+    "marks one queued row for the next step, mirrors the whole row and unmarks it again"
+    (let [registry
+          @#'state/registry
+
+          sid
+          (str "send-now-mark-" (java.util.UUID/randomUUID))
+
+          events
+          (atom [])]
+
+      (try (swap! registry assoc
+             sid
+             {:next-seq 0
+              :current-turn "r0"
+              :turns {"r0" {:turn_id "r0" :session_id sid :status "running" :request "run"}}
+              :turn-order ["r0"]})
+           (with-redefs-fn {#'state/append-event! (fn [_sid type payload & _]
+                                                    (swap! events conj [type payload])
+                                                    nil)
+                            #'lp/by-id (fn [_]
+                                         {:id sid})
+                            #'scoped/values (constantly {})
+                            #'state/session-model (fn [_]
+                                                    nil)}
+             (fn []
+               (state/submit-turn! sid {:request "first queued"})
+               (state/submit-turn! sid {:request "second queued"})
+               (let [[q1 q2] (subvec (get-in @registry [sid :turn-order]) 1)]
+                 ;; Nobody marked anything: both rows wait for the turn end.
+                 (expect (= ["turn_end" "turn_end"]
+                            (mapv #(get % "deliver") (state/list-queued-turns sid))))
+                 (let [res (state/update-queued-turn! sid q1 {:deliver "next_iteration"})]
+                   (expect (= "next_iteration" (get-in res [:turn "deliver"])))
+                   (expect (= "queued" (get-in res [:turn "status"]))))
+                 (expect (= ["next_iteration" "turn_end"]
+                            (mapv #(get % "deliver") (state/list-queued-turns sid))))
+                 ;; The mirror carries the WHOLE row, so a sibling channel merges nothing.
+                 (let [updated (->> @events
+                                    (filter (comp #{"turn.queued.updated"} first))
+                                    (mapv second))]
+                   (expect (= 1 (count updated)))
+                   (expect (= {:turn_id q1 :request "first queued" :deliver "next_iteration"}
+                              (select-keys (first updated) [:turn_id :request :deliver]))))
+                 ;; A second press unmarks the row.
+                 (state/update-queued-turn! sid q1 {:deliver "turn_end"})
+                 (expect (= ["turn_end" "turn_end"]
+                            (mapv #(get % "deliver") (state/list-queued-turns sid))))
+                 (expect (= "second queued" (get-in @registry [sid :turns q2 :request]))))))
+           (finally (swap! registry dissoc sid)))))
+  (it
+    "rejects an invalid deliver value and refuses to steer a command"
+    (let [registry
+          @#'state/registry
+
+          sid
+          (str "send-now-refuse-" (java.util.UUID/randomUUID))]
+
+      (try
+        (swap! registry assoc
+          sid
+          {:next-seq 0
+           :current-turn "r0"
+           :turns {"r0" {:turn_id "r0" :session_id sid :status "running" :request "run"}
+                   "qc" {:turn_id "qc"
+                         :session_id sid
+                         :status "queued"
+                         :request "/compact now"
+                         :deliver "turn_end"
+                         :queued_at 10}
+                   "qb" {:turn_id "qb"
+                         :session_id sid
+                         :status "queued"
+                         :request "!ls -la"
+                         :deliver "turn_end"
+                         :queued_at 11}}
+           :turn-order ["r0" "qc" "qb"]})
+        (with-redefs-fn {#'state/append-event! (fn [& _]
+                                                 nil)}
+          (fn []
+            (expect (= :not-steerable
+                       (:error (state/update-queued-turn! sid "qc" {:deliver "next_iteration"}))))
+            (expect (= :not-steerable
+                       (:error (state/update-queued-turn! sid "qb" {:deliver "next_iteration"}))))
+            (expect (= :invalid-request
+                       (:error (state/update-queued-turn! sid "qc" {:deliver "soon"}))))
+            (expect (= :turn-not-found
+                       (:error (state/update-queued-turn! sid "zz" {:deliver "next_iteration"}))))
+            (expect (= ["turn_end" "turn_end"]
+                       (mapv #(get % "deliver") (state/list-queued-turns sid))))
+            ;; A marked row cannot be edited INTO a command: the resulting row is judged.
+            (swap! registry assoc-in
+              [sid :turns "qp"]
+              {:turn_id "qp"
+               :session_id sid
+               :status "queued"
+               :request "prose"
+               :deliver "next_iteration"
+               :queued_at 12})
+            (swap! registry update-in [sid :turn-order] conj "qp")
+            (expect (= :not-steerable
+                       (:error (state/update-queued-turn! sid "qp" {:request "/goal finish it"}))))
+            (expect (= :not-steerable
+                       (:error (state/update-queued-turn! sid "qp" {:request "!make"}))))
+            (expect (= :not-steerable
+                       (:error (state/update-queued-turn! sid
+                                                          "qp"
+                                                          {:request "/goal finish it"
+                                                           :deliver "next_iteration"}))))
+            (expect (= "prose" (get-in @registry [sid :turns "qp" :request])))
+            ;; Unmarking in the same patch makes the command edit legal again.
+            (expect (= "/goal finish it"
+                       (get-in (state/update-queued-turn! sid
+                                                          "qp"
+                                                          {:request "/goal finish it"
+                                                           :deliver "turn_end"})
+                               [:turn "request"])))
+            (expect (= "turn_end" (get-in @registry [sid :turns "qp" :deliver])))
+            ;; An unmarked row may hold a command; it runs as its own turn.
+            (expect (= "/compact later"
+                       (get-in (state/update-queued-turn! sid "qc" {:request "/compact later"})
+                               [:turn "request"])))))
+        (finally (swap! registry dissoc sid)))))
+  (it
+    "send-queue-now! marks every steerable row once and names what it skipped"
+    (let [registry
+          @#'state/registry
+
+          sid
+          (str "send-now-all-" (java.util.UUID/randomUUID))
+
+          events
+          (atom [])]
+
+      (try
+        (swap! registry assoc
+          sid
+          {:next-seq 0
+           :current-turn "r0"
+           :cancel-floor 50
+           :turns {"r0" {:turn_id "r0" :session_id sid :status "running" :request "run"}
+                   "q1" {:turn_id "q1"
+                         :session_id sid
+                         :status "queued"
+                         :request "one"
+                         :deliver "turn_end"
+                         :queued_at 100}
+                   "q2" {:turn_id "q2"
+                         :session_id sid
+                         :status "queued"
+                         :request "two"
+                         :deliver "next_iteration"
+                         :queued_at 101}
+                   "qc" {:turn_id "qc"
+                         :session_id sid
+                         :status "queued"
+                         :request "/compact"
+                         :deliver "turn_end"
+                         :queued_at 102}
+                   "qh" {:turn_id "qh"
+                         :session_id sid
+                         :status "queued"
+                         :request "held"
+                         :deliver "turn_end"
+                         :queued_at 20}}
+           :turn-order ["r0" "q1" "q2" "qc" "qh"]})
+        (with-redefs-fn {#'state/append-event! (fn [_sid type payload & _]
+                                                 (swap! events conj [type payload])
+                                                 nil)}
+          (fn []
+            (expect (= {:marked ["q1" "q2"]
+                        :skipped [{:turn_id "qc" :reason "not_steerable"}
+                                  {:turn_id "qh" :reason "held_by_cancel"}]}
+                       (state/send-queue-now! sid)))
+            ;; Only the row that CHANGED is mirrored; q2 was already marked.
+            (expect (= [["turn.queued.updated" "q1"]]
+                       (mapv (fn [[type payload]]
+                               [type (:turn_id payload)])
+                             @events)))
+            (expect (= {"q1" "next_iteration" "q2" "next_iteration" "qc" "turn_end" "qh" "turn_end"}
+                       (into {}
+                             (map (juxt #(get % "turn_id") #(get % "deliver")))
+                             (state/list-queued-turns sid))))))
+        (finally (swap! registry dissoc sid)))))
+  (it
+    "take-marked-queued! delivers the marked rows into the running turn atomically"
+    (let [registry
+          @#'state/registry
+
+          sid
+          (str "send-now-take-" (java.util.UUID/randomUUID))
+
+          events
+          (atom [])]
+
+      (try
+        (swap! registry assoc
+          sid
+          {:next-seq 0
+           :current-turn "r0"
+           :turns {"r0" {:turn_id "r0" :session_id sid :status "running" :request "run"}
+                   "q1" {:turn_id "q1"
+                         :session_id sid
+                         :status "queued"
+                         :request "one"
+                         :display_request "ONE"
+                         :deliver "next_iteration"
+                         :queued_at 100
+                         :attachments [{:base64 "AAAA" :filename "a.png" :media-type "image/png"}]
+                         :attachment_previews [{:filename "a.png" :media_type "image/png"}]}
+                   "q2" {:turn_id "q2"
+                         :session_id sid
+                         :status "queued"
+                         :request "two"
+                         :deliver "turn_end"
+                         :queued_at 101}
+                   "q3" {:turn_id "q3"
+                         :session_id sid
+                         :status "queued"
+                         :request "three"
+                         :deliver "next_iteration"
+                         :queued_at 102}}
+           :turn-order ["r0" "q1" "q2" "q3"]
+           :idempotency {"k1" "q1" "k2" "q2"}})
+        (with-redefs-fn {#'state/append-event! (fn [_sid type payload & [opts]]
+                                                 (swap! events conj [type payload opts])
+                                                 nil)}
+          (fn []
+            (let [taken (#'state/take-marked-queued! sid "r0" 2)]
+              ;; Queue order, with the full attachments for the engine.
+              (expect (= [{:queued-turn-id "q1"
+                           :request "one"
+                           :display-request "ONE"
+                           :attachments [{:base64 "AAAA" :filename "a.png" :media-type "image/png"}]
+                           :attachment-previews [{:filename "a.png" :media_type "image/png"}]}
+                          {:queued-turn-id "q3" :request "three"}]
+                         taken))
+              ;; The unmarked row stays in the queue. A taken row leaves the order but
+              ;; keeps a terminal `sent` receipt and its idempotency key.
+              (expect (= ["r0" "q2"] (get-in @registry [sid :turn-order])))
+              (expect (= #{"r0" "q1" "q2" "q3"} (set (keys (get-in @registry [sid :turns])))))
+              (expect (= {"k1" "q1" "k2" "q2"} (get-in @registry [sid :idempotency])))
+              (expect (= ["q2"] (mapv #(get % "turn_id") (state/list-queued-turns sid))))
+              (expect (= {"status" "sent" "into_turn_id" "r0" "iteration" 2}
+                         (select-keys (state/get-turn sid "q1")
+                                      ["status" "into_turn_id" "iteration"])))
+              (expect (not (contains? (get-in @registry [sid :turns "q1"]) :attachments)))
+              ;; One queue-mirror event per row (live only), then one stored turn.input.
+              (expect (= [["turn.queued.sent" {:turn_id "q1" :into_turn_id "r0" :iteration 2}
+                           {:store? false}]
+                          ["turn.queued.sent" {:turn_id "q3" :into_turn_id "r0" :iteration 2}
+                           {:store? false}]]
+                         (filterv (comp #{"turn.queued.sent"} first) @events)))
+              (let [[input] (filterv (comp #{"turn.input"} first) @events)]
+                (expect (nil? (nth input 2)))
+                (expect (= {:turn_id "r0"
+                            :iteration 2
+                            :messages [{:queued_turn_id "q1"
+                                        :request "one"
+                                        :display_request "ONE"
+                                        :attachment_previews [{:filename "a.png"
+                                                               :media_type "image/png"}]}
+                                       {:queued_turn_id "q3" :request "three"}]}
+                           (second input)))
+                ;; No pixel bytes on the wire.
+                (expect (not (str/includes? (pr-str (second input)) "AAAA")))))
+            ;; Nothing marked: nothing taken, nothing emitted.
+            (reset! events [])
+            (expect (nil? (#'state/take-marked-queued! sid "r0" 3)))
+            (expect (= [] @events))))
+        (finally (swap! registry dissoc sid)))))
+  (it "keeps the delivery when the event publication fails"
+      ;; A failed publication costs the live mirror event, never the message: the
+      ;; take is the one mutation, and the step record keeps the durable copy.
+      (let [registry
+            @#'state/registry
+
+            sid
+            (str "send-now-publish-" (java.util.UUID/randomUUID))]
+
+        (try (swap! registry assoc
+               sid
+               {:next-seq 0
+                :current-turn "r0"
+                :turns {"r0" {:turn_id "r0" :session_id sid :status "running" :request "run"}
+                        "q1" {:turn_id "q1"
+                              :session_id sid
+                              :status "queued"
+                              :request "one"
+                              :deliver "next_iteration"
+                              :queued_at 100}}
+                :turn-order ["r0" "q1"]})
+             (with-redefs-fn {#'state/append-event! (fn [& _]
+                                                      (throw (ex-info "journal down" {})))}
+               (fn []
+                 (expect (= [{:queued-turn-id "q1" :request "one"}]
+                            (#'state/take-marked-queued! sid "r0" 2)))
+                 (expect (= ["r0"] (get-in @registry [sid :turn-order])))
+                 (expect (= "sent" (get (state/get-turn sid "q1") "status")))
+                 (expect (empty? (state/list-queued-turns sid)))
+                 ;; Taken once: the next step finds nothing to deliver again.
+                 (expect (nil? (#'state/take-marked-queued! sid "r0" 3)))))
+             (finally (swap! registry dissoc sid)))))
+  (it
+    "answers a replayed submit with the sent receipt instead of a second delivery"
+    (let [registry
+          @#'state/registry
+
+          sid
+          (str "send-now-idem-" (java.util.UUID/randomUUID))
+
+          launched
+          (atom [])]
+
+      (try (swap! registry assoc
+             sid
+             {:next-seq 0
+              :current-turn "r0"
+              :turns {"r0" {:turn_id "r0" :session_id sid :status "running" :request "run"}}
+              :turn-order ["r0"]})
+           (with-redefs-fn {#'state/append-event! (fn [& _]
+                                                    nil)
+                            #'lp/by-id (fn [_]
+                                         {:id sid})
+                            #'scoped/values (constantly {})
+                            #'state/session-model (fn [_]
+                                                    nil)
+                            #'state/launch-turn-worker! (fn [& args]
+                                                          (swap! launched conj (vec args)))}
+             (fn []
+               (let [first-res
+                     (state/submit-turn! sid {:request "hello" :idempotency-key "cid-1"})
+
+                     tid
+                     (get-in first-res [:turn "turn_id"])]
+
+                 (expect (= "queued" (get-in first-res [:turn "status"])))
+                 (state/update-queued-turn! sid tid {:deliver "next_iteration"})
+                 (expect (= [tid] (mapv :queued-turn-id (#'state/take-marked-queued! sid "r0" 1))))
+                 (let [replay (state/submit-turn! sid {:request "hello" :idempotency-key "cid-1"})]
+                   (expect (true? (:idempotent? replay)))
+                   (expect (= tid (get-in replay [:turn "turn_id"])))
+                   (expect (= "sent" (get-in replay [:turn "status"])))
+                   (expect (= "r0" (get-in replay [:turn "into_turn_id"]))))
+                 (expect (= [] (state/list-queued-turns sid)))
+                 (expect (= [] @launched)))))
+           (finally (swap! registry dissoc sid)))))
+  (it
+    "drains a marked row first when the turn ends before the next step"
+    (let [registry
+          @#'state/registry
+
+          sid
+          (str "send-now-drain-" (java.util.UUID/randomUUID))
+
+          launched
+          (atom [])]
+
+      (try (swap! registry assoc
+             sid
+             {:next-seq 0
+              :current-turn nil
+              :turns {"q1" {:turn_id "q1"
+                            :session_id sid
+                            :status "queued"
+                            :request "one"
+                            :deliver "turn_end"
+                            :queued_at 100
+                            :messages [{:role "user" :content "one"}]}
+                      "q2" {:turn_id "q2"
+                            :session_id sid
+                            :status "queued"
+                            :request "two"
+                            :deliver "next_iteration"
+                            :queued_at 101
+                            :messages [{:role "user" :content "two"}]}}
+              :turn-order ["q1" "q2"]})
+           (with-redefs-fn {#'state/append-event! (fn [& _]
+                                                    nil)
+                            #'lp/by-id (fn [_]
+                                         {:id sid})
+                            #'scoped/values (constantly {})
+                            #'state/session-model (fn [_]
+                                                    nil)
+                            #'state/launch-turn-worker! (fn [& args]
+                                                          (swap! launched conj (vec args)))}
+             (fn []
+               (state/drain-idle! sid)
+               (expect (= ["q2"] (mapv second @launched)))
+               ;; A started row is a plain turn again: the mark does not outlive the queue.
+               (expect (nil? (get-in @registry [sid :turns "q2" :deliver])))
+               (expect (= "turn_end" (get-in @registry [sid :turns "q1" :deliver])))))
+           (finally (swap! registry dissoc sid))))))
 
 (defdescribe
   concurrent-hydrate-test

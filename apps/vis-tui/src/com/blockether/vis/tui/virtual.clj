@@ -625,16 +625,39 @@
                                                               fold-w)]
                                         (if (pos? r) (+ r 2) 0)))))
                            0
+                           trace))
+
+             ;; Queued messages a step received (`→ Send now`) paint as ONE
+             ;; bracketed "You" block at its top: header, the wrapped words of each
+             ;; message (one rail row between messages), border and a blank.
+             input-rows
+             (long (reduce (fn [^long acc it]
+                             (let [texts (keep #(some-> (or (not-empty (str (:display-request %)))
+                                                            (:request %))
+                                                        str
+                                                        not-empty)
+                                               (:user-input it))]
+                               (if (seq texts)
+                                 (+ acc
+                                    3
+                                    (long (reduce +
+                                                  (dec (count texts))
+                                                  (map #(prose-rows-est % (max 1 (- fold-w 2)))
+                                                       texts))))
+                                 acc)))
+                           0
                            trace))]
 
-         (long (+ 5          ;; label + footer + note + gap
-                  img-rows   ;; reserved picture boxes
-                  n-iter     ;; iteration headers
-                  step-rows  ;; code + result (+ error) rows, or the digests
-                  think-rows ;; per-iteration reasoning + band
-                  prose-rows ;; per-iteration assistant prose
-                  run-rows   ;; the rail of finished runs + its margin
-                  (prose-rows-est text (max 1 (min 60 fold-w))))))
+         (long
+           (+ 5          ;; label + footer + note + gap
+              img-rows   ;; reserved picture boxes
+              n-iter     ;; iteration headers
+              step-rows  ;; code + result (+ error) rows, or the digests
+              think-rows ;; per-iteration reasoning + band
+              prose-rows ;; per-iteration assistant prose
+              input-rows ;; per-iteration delivered queue messages
+              run-rows   ;; the rail of finished runs + its margin
+              (prose-rows-est text (max 1 (min 60 fold-w))))))
        (= role :assistant)
        ;; label + footer + gap chrome for a plain answer bubble.
        (long (+ 5 img-rows run-rows (prose-rows-est text prose-w)))

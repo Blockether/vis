@@ -72,6 +72,7 @@ once it can act.
 | Ctrl+X t | Fork from an earlier turn: choose the last turn the new session keeps |
 | Ctrl+X d | Move this session to a group |
 | Ctrl+X u | Show session metrics: context health, totals and cache |
+| Ctrl+X k | Send the queued messages now: the running turn reads them at its next step |
 
 ### Models and answers
 

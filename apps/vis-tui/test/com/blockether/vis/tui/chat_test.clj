@@ -5,6 +5,7 @@
             [com.blockether.vis.contract.activity :as activity]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.chat :as chat]
+            [com.blockether.vis.tui.progress :as progress]
             [lazytest.core :refer [defdescribe expect it]]))
 
 ;; `rebuild-history` now reads `vis/gateway-transcript` (which delegates to
@@ -810,6 +811,24 @@
                    (expect (= "turn_failed" (get-in out [0 "code"])))
                    (expect (not (str/includes? (get-in out [0 "message"]) "ERROR:"))))))
 
+(defdescribe completion-content-test
+             (it "keeps the answer blocks of a completed turn"
+                 (let [blocks [{"id" "b1" "type" "prose" "markdown" "done"}]]
+                   (expect (= blocks
+                              (chat/completion-content {"content" blocks "status" "completed"})))))
+             (it "settles a sent queued turn with one notice that names the step"
+                 ;; `→ Send now`: the running turn took the message, so the queued
+                 ;; turn has no answer of its own. An empty bubble would say nothing.
+                 (let [out (chat/completion-content
+                             {"status" "sent" "content" [] "into_turn_id" "r0" "iteration" 3})]
+                   (expect (= 1 (count out)))
+                   (expect (= "notice" (get-in out [0 "type"])))
+                   (expect (= "turn_sent" (get-in out [0 "code"])))
+                   (expect (= "Sent into the running turn · step 3" (get-in out [0 "message"])))))
+             (it "a sent receipt without a step still gets the notice"
+                 (expect (= "Sent into the running turn."
+                            (get-in (chat/completion-content {"status" "sent"}) [0 "message"])))))
+
 (defdescribe
   gateway-disconnect-propagation-test
   (let [disconnect (ex-info "SSE disconnected" {:gateway-disconnected true :turn-id "turn-1"})]
@@ -844,6 +863,22 @@
     (it "turn.queued.updated projects to :update"
         (expect (= {:phase :queue-sync :op :update :turn-id "q1" :text "hi2"}
                    (g->c {"type" "turn.queued.updated" "turn_id" "q1" "request" "hi2"}))))
+    ;; "Send now": the gateway mirrors the whole row, `deliver` included, so a row
+    ;; marked from ANY channel paints as `→ · next step` here too; an unmarked
+    ;; row comes back as `turn_end`.
+    (it "turn.queued and turn.queued.updated carry the row's delivery mode"
+        (expect
+          (= {:phase :queue-sync :op :add :turn-id "q1" :text "hi" :deliver "next_iteration"}
+             (g->c
+               {"type" "turn.queued" "turn_id" "q1" "request" "hi" "deliver" "next_iteration"})))
+        (expect
+          (= {:phase :queue-sync :op :update :turn-id "q1" :text "hi" :deliver "turn_end"}
+             (g->c
+               {"type" "turn.queued.updated" "turn_id" "q1" "request" "hi" "deliver" "turn_end"}))))
+    (it "turn.queued.sent (delivered into the running turn) projects to :delete"
+        (expect
+          (= {:phase :queue-sync :op :delete :turn-id "q1"}
+             (g->c {"type" "turn.queued.sent" "turn_id" "q1" "into_turn_id" "t1" "iteration" 3}))))
     ;; An image queued as a path: the gateway ships the chip preview beside the
     ;; raw request, and the chunk carries BOTH - `:text` still re-attaches on
     ;; edit, `:preview-text` is what the queue strip paints.
@@ -1217,3 +1252,44 @@
       (with-redefs [vis/activity-export (fn [& _]
                                           :activity-changed)]
         (expect (= {:failed true :stale true} (chat/activity-export "sid" "a1" 4))))))
+
+(defdescribe
+  delivered-user-input-chunk-test
+  ;; `→ Send now`: the step that read the queued messages shows them as a "You"
+  ;; block, live (the `turn.input` event) and on replay (the iteration row's
+  ;; `user_input`), through the ONE trace-entry key `:user-input`.
+  (let [g->c
+        @#'chat/gateway-event->chunk
+
+        wire-rows
+        [{"queued_turn_id" "q1" "request" "ship it"}
+         {"queued_turn_id" "q2"
+          "request" "/tmp/shot.png\nlook"
+          "display_request" "\ud83d\uddbc shot.png look"
+          "attachment_previews" [{"name" "shot.png"}]} {"queued_turn_id" "q3" "request" ""}]
+
+        rows
+        [{:request "ship it" :queued-turn-id "q1"}
+         {:request "/tmp/shot.png\nlook"
+          :queued-turn-id "q2"
+          :display-request "\ud83d\uddbc shot.png look"
+          :attachment-previews [{"name" "shot.png"}]}]]
+
+    (it "turn.input projects to :user-input on its step, dropping blank requests"
+        (expect (= {:phase :user-input :iteration 3 :messages rows}
+                   (g->c {"type" "turn.input" "turn_id" "t1" "iteration" 3 "messages" wire-rows}))))
+    (it "a replayed iteration row carries the same messages on its trace entry"
+        (let [[entry] (chat/iteration-rows->trace
+                        [{"id" "it-3" "position" 3 "forms" [] "user_input" wire-rows}]
+                        false)]
+          (expect (= rows (:user-input entry)))))
+    (it "a replayed iteration row without delivered messages has no :user-input"
+        (let [[entry] (chat/iteration-rows->trace [{"id" "it-1" "position" 1 "forms" []}] false)]
+          (expect (nil? (:user-input entry)))))
+    (it "the live tracker keeps the messages on the step the chunk names"
+        (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)]
+          (on-chunk {:phase :user-input :iteration 2 :messages rows})
+          (let [[entry] (get-timeline)]
+            (expect (= 1 (count (get-timeline))))
+            (expect (= 2 (:iteration entry)))
+            (expect (= rows (:user-input entry))))))))

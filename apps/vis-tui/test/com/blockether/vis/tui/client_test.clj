@@ -694,3 +694,99 @@
               ["POST" "/v1/mcp/servers/docs/actions/enable" (merge target {:enabled false})]
               ["DELETE" "/v1/mcp/servers/docs?scope=session&target_id=a%2Fb"]]
              @asked)))))
+
+(defn- rv
+  "Resolve a (possibly private) var in the client namespace for with-redefs-fn."
+  [sym]
+  (ns-resolve 'com.blockether.vis.tui.client sym))
+
+(defdescribe
+  sse-event-action-test
+  (it "own turn terminal returns the event"
+      (expect (= [:terminal {"type" "turn.completed" "turn_id" "t1"}]
+                 (client/sse-event-action {"type" "turn.completed" "turn_id" "t1"} "t1"))))
+  (it "own queued record deleted synthesizes a cancelled terminal (no hang)"
+      (let [[action event'] (client/sse-event-action {"type" "turn.queued.deleted" "turn_id" "t1"}
+                                                     "t1")]
+        (expect (= :terminal action))
+        (expect (= "cancelled" (get event' "status")))
+        (expect (= "turn.completed" (get event' "type")))))
+  (it "own queued record sent into the running turn synthesizes a sent terminal (no hang)"
+      ;; `→ Send now`: the running turn takes the queued message at its next
+      ;; step, so the queued turn never starts. The waiter ends with a receipt
+      ;; that names where the message went instead of blocking forever.
+      (let [[action event']
+            (client/sse-event-action
+              {"type" "turn.queued.sent" "turn_id" "t1" "into_turn_id" "r0" "iteration" 2}
+              "t1")]
+        (expect (= :terminal action))
+        (expect (= "turn.completed" (get event' "type")))
+        (expect (= "sent" (get event' "status")))
+        (expect (= "r0" (get event' "into_turn_id")))
+        (expect (= 2 (get event' "iteration")))))
+  (it "a SIBLING turn's queue lifecycle events forward (cross-TUI queue mirror)"
+      (doseq [type ["turn.queued" "turn.queued.updated" "turn.queued.deleted" "turn.queued.drained"
+                    "turn.queued.sent"]]
+        (expect (= :forward (first (client/sse-event-action {"type" type "turn_id" "OTHER"} "t1")))
+                type)))
+  (it "a sibling turn's non-queue events are dropped"
+      (expect (= :skip
+                 (first (client/sse-event-action {"type" "block.output" "turn_id" "OTHER"}
+                                                 "t1"))))))
+
+(defdescribe
+  read-sse-stream!-recovers-a-sent-receipt
+  (it "a queued turn the running turn already took ends on subscription.ready from the stored row"
+      ;; `turn.queued.sent` is live-only: a reader that subscribes after it fired
+      ;; never sees it in the replay. The stored row says `sent`, and the daemon
+      ;; registers the subscription before `subscription.ready`, so one lookup on
+      ;; that frame recovers the receipt without a race.
+      (let [looked-up
+            (atom [])
+
+            forwarded
+            (atom [])]
+
+        (with-redefs-fn {(rv 'open-sse-events!)
+                         (fn [_sid _cursor _cursor* handle]
+                           (or (handle {"type" "subscription.ready" "current_turn_id" "r0"})
+                               (handle {"type" "block.output" "turn_id" "r0"})
+                               [:closed]))
+                         #'client/get-turn
+                         (fn [sid tid]
+                           (swap! looked-up conj [sid tid])
+                           {"turn_id" tid "status" "sent" "into_turn_id" "r0" "iteration" 2})}
+          (fn []
+            (expect (= [:terminal
+                        {"type" "turn.completed"
+                         "turn_id" "q1"
+                         "status" "sent"
+                         "into_turn_id" "r0"
+                         "iteration" 2}]
+                       ((rv 'read-sse-stream!) "s" 0 "q1" #(swap! forwarded conj %) (atom 0))))
+            (expect (= [["s" "q1"]] @looked-up))
+            (expect (= [] @forwarded) "nothing to repaint: the queued turn never ran")))))
+  (it "the daemon's current turn is never looked up and a waiting row keeps reading"
+      (let [looked-up
+            (atom 0)
+
+            ready-then-eof
+            (fn [current-turn-id]
+              (fn [_sid _cursor _cursor* handle]
+                (or (handle {"type" "subscription.ready" "current_turn_id" current-turn-id})
+                    [:closed])))]
+
+        (with-redefs-fn {(rv 'open-sse-events!) (ready-then-eof "q1")
+                         #'client/get-turn (fn [_ _]
+                                             (swap! looked-up inc)
+                                             nil)}
+          (fn []
+            (expect (= [:closed] ((rv 'read-sse-stream!) "s" 0 "q1" nil (atom 0))))
+            (expect (= 0 @looked-up) "the running turn cannot be a sent queued row")))
+        (with-redefs-fn {(rv 'open-sse-events!) (ready-then-eof "r0")
+                         #'client/get-turn (fn [_ _]
+                                             (swap! looked-up inc)
+                                             {"turn_id" "q1" "status" "queued"})}
+          (fn []
+            (expect (= [:closed] ((rv 'read-sse-stream!) "s" 0 "q1" nil (atom 0))))
+            (expect (= 1 @looked-up)))))))

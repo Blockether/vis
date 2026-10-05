@@ -2572,6 +2572,13 @@
       (vis/worker-future "vis-tui-open-file-label"
                          #(try (open-file-target! (:url target)) (catch Throwable _ nil)))
 
+      ;; A jump label presses a queue control exactly as a click does.
+      :queue-send-now
+      (state/dispatch [:queue-send-now nil (:turn-id target) (:deliver target)])
+
+      :queue-send-all-now
+      (state/dispatch [:queue-send-all-now nil])
+
       nil)
     (state/dispatch [:set-detail-labels false])
     (state/dispatch [:bump-render-version])))
@@ -8557,6 +8564,15 @@
                                                 (:turn-id hit)
                                                 "Forked session at turn")
 
+                                 ;; Queue controls: one row's `→`, or the header's
+                                 ;; `→ Send now` (see state/:queue-send-now).
+                                 :queue-send-now
+                                 (state/dispatch [:queue-send-now nil (:turn-id hit)
+                                                  (:deliver hit)])
+
+                                 :queue-send-all-now
+                                 (state/dispatch [:queue-send-all-now nil])
+
                                  :copy-id
                                  (copy-session-id! (:text hit))
 
@@ -8975,6 +8991,9 @@
                                      :session-metrics
                                      (show-session-metrics!)
 
+                                     :queue-send-all-now
+                                     (state/dispatch [:queue-send-all-now nil])
+
                                      :show-sessions
                                      (show-sessions!)
 
@@ -9188,6 +9207,11 @@
 
                          :session-metrics
                          (do (show-session-metrics!) (recur))
+
+                         ;; C-x k — mark the whole queue for the running turn's
+                         ;; next step (the header's `→ Send now`).
+                         :queue-send-all-now
+                         (do (state/dispatch [:queue-send-all-now nil]) (recur))
 
                          :show-sessions
                          (do (show-sessions!) (recur))

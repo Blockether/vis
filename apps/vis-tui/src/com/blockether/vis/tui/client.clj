@@ -1426,6 +1426,19 @@
   [sid tid request]
   (send-json! "PATCH" (str "/v1/sessions/" (enc sid) "/turns/" (enc tid)) {:request request}))
 
+(defn mark-queued-turn!
+  "Set the delivery mode of ONE queued turn: `next_iteration` sends it into the
+   running turn at its next step, `turn_end` (the default) keeps it for the turn
+   end. The gateway answers 409 for a slash or bang command."
+  [sid tid deliver]
+  (send-json! "PATCH" (str "/v1/sessions/" (enc sid) "/turns/" (enc tid)) {:deliver deliver}))
+
+(defn send-queue-now!
+  "Mark EVERY markable queued turn of `sid` for the next step of the running turn.
+   Returns `{\"marked\" [...] \"skipped\" [...]}`; commands are skipped."
+  [sid]
+  (send-json! "POST" (str "/v1/sessions/" (enc sid) "/queue/send-now")))
+
 (defn delete-queued-turn!
   [sid tid]
   (send-json! "DELETE" (str "/v1/sessions/" (enc sid) "/turns/" (enc tid))))
@@ -2329,7 +2342,10 @@
      :skip     — another turn's non-queue event, drop it.
    A `turn.queued.deleted` for the WANTED turn is terminal too: the queued
    record was pulled back into an editor before it ever ran, so a cancelled
-   terminal is synthesized instead of blocking on a turn that never starts."
+   terminal is synthesized instead of blocking on a turn that never starts.
+   A `turn.queued.sent` for the WANTED turn is terminal in the same way: the
+   running turn took the message at its next step (send now), so the waiter
+   ends with a `sent` receipt that names `into_turn_id` and `iteration`."
   [event wanted-turn-id]
   (let [type
         (get event "type")
@@ -2342,9 +2358,27 @@
                                                      (assoc event
                                                        "type" "turn.completed"
                                                        "status" "cancelled")]
+          (and own? (= "turn.queued.sent" type)) [:terminal
+                                                  (assoc event
+                                                    "type" "turn.completed"
+                                                    "status" "sent")]
           own? [:forward event]
           (contains? gateway-contract/queue-mirror-event-types type) [:forward event]
           :else [:skip event])))
+
+(defn- sent-receipt
+  "The synthesized terminal for a queued turn whose stored row already says
+   `sent`: the running turn took the message (send now) before this reader
+   subscribed, and `turn.queued.sent` is live-only, so no replay repeats it.
+   Nil when the row is absent or still waits."
+  [sid wanted-turn-id]
+  (let [turn (get-turn sid wanted-turn-id)]
+    (when (= "sent" (get turn "status"))
+      {"type" "turn.completed"
+       "turn_id" (str wanted-turn-id)
+       "status" "sent"
+       "into_turn_id" (get turn "into_turn_id")
+       "iteration" (get turn "iteration")})))
 
 (defn- read-sse-stream!
   "Read ONE SSE connection for `sid` from `cursor` until the wanted turn reaches
@@ -2352,21 +2386,31 @@
    `on-event` and advances `cursor*` (an atom holding the highest `:seq` seen)
    so a reconnect resumes losslessly. Returns `[:terminal event]` on a terminal
    event, or `[:closed]` when the daemon dropped the stream before the turn
-   finished (EOF)."
+   finished (EOF).
+
+   On `subscription.ready` for a turn that is not the daemon's current turn, the
+   stored row is checked once for a `sent` receipt ([[sent-receipt]]). The daemon
+   registers the subscription before it writes that frame, so a `turn.queued.sent`
+   that fired before this connection (a late attach, a reconnect gap) is recovered
+   here, and a later one still arrives live."
   [sid cursor wanted-turn-id on-event cursor*]
   (open-sse-events! sid
                     cursor
                     cursor*
                     (fn [event]
-                      (let [[action event'] (sse-event-action event wanted-turn-id)]
-                        (case action
-                          :terminal
-                          (do (when on-event (on-event event)) [:terminal event'])
+                      (if (= "subscription.ready" (get event "type"))
+                        (when-not (= (str (get event "current_turn_id")) (str wanted-turn-id))
+                          (when-let [receipt (sent-receipt sid wanted-turn-id)]
+                            [:terminal receipt]))
+                        (let [[action event'] (sse-event-action event wanted-turn-id)]
+                          (case action
+                            :terminal
+                            (do (when on-event (on-event event)) [:terminal event'])
 
-                          :forward
-                          (do (when on-event (on-event event)) nil)
+                            :forward
+                            (do (when on-event (on-event event)) nil)
 
-                          nil)))))
+                            nil))))))
 
 (defn- read-events-until!
   "Block on the session SSE stream until the wanted turn reaches a terminal
@@ -2470,6 +2514,10 @@
 (def gateway-reload-extensions! reload-extensions!)
 
 (def gateway-delete-queued-turn! delete-queued-turn!)
+
+(def gateway-mark-queued-turn! mark-queued-turn!)
+
+(def gateway-send-queue-now! send-queue-now!)
 
 (def gateway-delete-session-group! delete-session-group!)
 

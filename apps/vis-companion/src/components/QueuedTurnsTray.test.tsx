@@ -20,11 +20,20 @@ const queued: QueuedTurn[] = [
 function gateway(methods: Partial<GatewayClient> = {}): GatewayClient {
   return {
     updateQueuedTurn: vi.fn().mockResolvedValue(undefined),
+    markQueuedTurn: vi.fn().mockResolvedValue(undefined),
+    sendQueueNow: vi.fn().mockResolvedValue(undefined),
     deleteQueuedTurn: vi.fn().mockResolvedValue(undefined),
     resumeQueue: vi.fn().mockResolvedValue(undefined),
     ...methods,
   } as unknown as GatewayClient;
 }
+
+const second: QueuedTurn = {
+  turnId: 'turn-3',
+  request: 'Summarize the failed checks',
+  preview: 'Summarize the failed checks',
+  attachments: [],
+};
 
 describe('queued turns tray', () => {
   it('shows image references once, without a redundant filename badge', () => {
@@ -35,6 +44,7 @@ describe('queued turns tray', () => {
         sid="session-1"
         queued={[{ ...queued[0], request: preview, preview }]}
         paused={null}
+        running={false}
         onError={() => {}}
       />,
     );
@@ -55,6 +65,7 @@ describe('queued turns tray', () => {
           { turnId: 'empty', request: '', preview: '', attachments: [] },
         ]}
         paused={null}
+        running={false}
         onError={() => {}}
       />,
     );
@@ -72,6 +83,7 @@ describe('queued turns tray', () => {
         sid="session-1"
         queued={queued}
         paused={null}
+        running={false}
         onError={() => {}}
       />,
     );
@@ -106,6 +118,7 @@ describe('queued turns tray', () => {
         sid="session-1"
         queued={queued}
         paused={{ held: 2, reason: 'turn_failed' }}
+        running={false}
         onError={onError}
       />,
     );
@@ -126,6 +139,7 @@ describe('queued turns tray', () => {
         sid="session-1"
         queued={queued}
         paused={null}
+        running={false}
         onError={() => {}}
       />,
     );
@@ -160,6 +174,7 @@ describe('queued turns tray', () => {
           attachments: [],
         }))}
         paused={null}
+        running={false}
         onError={() => {}}
       />,
     );
@@ -167,5 +182,158 @@ describe('queued turns tray', () => {
     const queue = screen.getByRole('region', { name: 'Queued messages' });
     expect(queue.tabIndex).toBe(0);
     expect(screen.getAllByRole('listitem')).toHaveLength(12);
+  });
+});
+
+describe('send now', () => {
+  it('marks one row through the gateway and keeps the row until the mirror arrives', async () => {
+    const client = gateway();
+    render(
+      <QueuedTurnsTray
+        client={client}
+        sid="session-1"
+        queued={[queued[0], second]}
+        paused={null}
+        running
+        onError={() => {}}
+      />,
+    );
+
+    const arrow = screen.getByRole('button', { name: 'Send queued message 2 now' });
+    expect(arrow).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(arrow);
+    expect(client.markQueuedTurn).toHaveBeenCalledTimes(1);
+    expect(client.markQueuedTurn).toHaveBeenCalledWith('session-1', 'turn-3', 'next_iteration');
+    // Busy, not rewritten: the gateway's `turn.queued.updated` paints the mark.
+    expect(screen.getByText('Summarize the failed checks')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Send queued message 1 now' })).toBeEnabled();
+    expect(screen.queryByText('next step')).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Send queued message 2 now' })).toBeEnabled(),
+    );
+  });
+
+  it('shows a marked row and unmarks it on the second press', () => {
+    const client = gateway();
+    render(
+      <QueuedTurnsTray
+        client={client}
+        sid="session-1"
+        queued={[queued[0], { ...second, deliver: 'next_iteration' }]}
+        paused={null}
+        running
+        onError={() => {}}
+      />,
+    );
+
+    expect(screen.getByText('next step')).toBeVisible();
+    const keep = screen.getByRole('button', { name: 'Keep queued message 2 for the turn end' });
+    expect(keep).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(keep);
+    expect(client.markQueuedTurn).toHaveBeenCalledWith('session-1', 'turn-3', 'turn_end');
+  });
+
+  it('marks the whole queue from the header and disables it once all rows are marked', async () => {
+    const client = gateway({ sendQueueNow: vi.fn().mockRejectedValue(new Error('gateway away')) });
+    const onError = vi.fn();
+    const { rerender } = render(
+      <QueuedTurnsTray
+        client={client}
+        sid="session-1"
+        queued={[queued[0], second]}
+        paused={null}
+        running
+        onError={onError}
+      />,
+    );
+
+    const all = screen.getByRole('button', { name: 'Send all queued messages now' });
+    expect(all).toHaveTextContent('→ Send now');
+    fireEvent.click(all);
+    expect(client.sendQueueNow).toHaveBeenCalledWith('session-1');
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('gateway away'));
+
+    rerender(
+      <QueuedTurnsTray
+        client={client}
+        sid="session-1"
+        queued={[
+          { ...queued[0], deliver: 'next_iteration' },
+          { ...second, deliver: 'next_iteration' },
+        ]}
+        paused={null}
+        running
+        onError={onError}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Send all queued messages now' })).toBeDisabled();
+  });
+
+  // Regression, user report: on the dark queue band, "→ Send now" wore the page's ink, not the
+  // band's own ink. It read at 1.44:1 in the default theme and vanished in tokyonight-day.
+  it('writes the header verb in the ink of the band it stands on', () => {
+    render(
+      <QueuedTurnsTray
+        client={gateway()}
+        sid="session-1"
+        queued={[queued[0], second]}
+        paused={null}
+        running
+        onError={vi.fn()}
+      />,
+    );
+
+    const all = screen.getByRole('button', { name: 'Send all queued messages now' });
+    expect(all.parentElement).toHaveClass('bg-dialog-title', 'text-dialog-title-foreground');
+    expect(all).toHaveClass('text-current');
+    expect(all).not.toHaveClass('text-white');
+  });
+
+  it('offers no controls without a running turn and none on command rows', () => {
+    const client = gateway();
+    const { rerender } = render(
+      <QueuedTurnsTray
+        client={client}
+        sid="session-1"
+        queued={[queued[0], second]}
+        paused={null}
+        running={false}
+        onError={() => {}}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /now$/ })).not.toBeInTheDocument();
+
+    rerender(
+      <QueuedTurnsTray
+        client={client}
+        sid="session-1"
+        queued={[
+          { ...second, turnId: 'cmd-1', request: '/compact', preview: '/compact' },
+          { ...second, turnId: 'cmd-2', request: '!git status', preview: '!git status' },
+        ]}
+        paused={null}
+        running
+        onError={() => {}}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /^Send/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Remove queued message/ })).toHaveLength(2);
+
+    rerender(
+      <QueuedTurnsTray
+        client={client}
+        sid="session-1"
+        queued={[{ ...second, turnId: 'cmd-1', request: '/compact', preview: '/compact' }, second]}
+        paused={null}
+        running
+        onError={() => {}}
+      />,
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Send queued message 1 now' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send queued message 2 now' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Send all queued messages now' })).toBeEnabled();
   });
 });

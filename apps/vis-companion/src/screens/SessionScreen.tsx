@@ -476,12 +476,13 @@ function LoadingSession({ ready, total }: { ready: number; total: number }) {
  * persisted turn replaces it.
  */
 
-/** The work one iteration record can SHOW: prose, thinking, steps or an error. */
+/** The work one iteration record can SHOW: prose, thinking, steps, delivered input or an error. */
 function iterationCarriesOutput(iteration: TranscriptIteration): boolean {
   return Boolean(
     iteration.assistant_prose?.trim() ||
       iteration.thinking?.trim() ||
       iteration.forms?.length ||
+      iteration.user_input?.length ||
       iteration.error,
   );
 }
@@ -2633,18 +2634,16 @@ export function SessionScreen({
             );
             break;
           }
-          case 'turn.queued.updated':
+          case 'turn.queued.updated': {
+            // The frame carries the WHOLE row; note it so an older queue read cannot
+            // put back the text or the delivery mode it replaced.
+            const row = queuedTurnFromWire(event as unknown as Record<string, unknown>);
+            noteQueueDelta(tid, row);
             setQueued((current) =>
-              current.map((item) =>
-                item.turnId === tid
-                  ? {
-                      ...item,
-                      ...queuedTurnFromWire(event as unknown as Record<string, unknown>),
-                    }
-                  : item,
-              ),
+              current.map((item) => (item.turnId === tid ? { ...item, ...row } : item)),
             );
             break;
+          }
           case 'turn.queued.deleted':
             noteQueueDelta(tid, null);
             setQueued((current) => current.filter((item) => item.turnId !== tid));
@@ -2657,6 +2656,12 @@ export function SessionScreen({
             }
             break;
           case 'turn.queued.drained':
+            noteQueueDelta(tid, null);
+            setQueued((current) => current.filter((item) => item.turnId !== tid));
+            break;
+          // `→` delivered the row into the running turn; the `turn.input` frame that
+          // follows places the message in the transcript, so the queue row just goes.
+          case 'turn.queued.sent':
             noteQueueDelta(tid, null);
             setQueued((current) => current.filter((item) => item.turnId !== tid));
             break;
@@ -4954,6 +4959,7 @@ export function SessionScreen({
               sid={sid}
               queued={queued}
               paused={queuePaused}
+              running={running}
               onError={setError}
             />
 

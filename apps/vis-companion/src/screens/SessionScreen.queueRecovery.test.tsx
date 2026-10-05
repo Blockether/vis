@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderSessionScreen, sessionFixture, subscriptionHub } from './session-screen-harness';
-import type { Session, SseEvent } from '../lib/types';
+import type { QueuedTurn, Session, SseEvent } from '../lib/types';
 
 afterEach(() => {
   cleanup();
@@ -162,6 +162,63 @@ describe('a queued turn after a failed request', () => {
     expect(screen.queryByText('Queue paused') !== null).toBe(resumes);
   });
 
+  // Review of `→` (Council #240): `turn.queued.updated` changed the row but left no
+  // live delta, so a queue read that started before a mark or unmark put the old
+  // delivery mode back when it resolved.
+  it.each([
+    ['session', 'next_iteration'],
+    ['session', 'turn_end'],
+    ['backlog', 'next_iteration'],
+    ['backlog', 'turn_end'],
+  ] as const)('an older %s read keeps the newer %s delivery mode', async (source, deliver) => {
+    vi.useFakeTimers();
+    const events = subscriptionHub();
+    const staleRead = deferred<void>();
+    const marks = deliver === 'next_iteration';
+    const snapshotRow: QueuedTurn = { ...waiting, deliver: marks ? 'turn_end' : 'next_iteration' };
+    let reads = 0;
+    const readSession = vi.fn(async () => {
+      reads += 1;
+      if ((source === 'session' && reads === 1) || (source === 'backlog' && reads === 2)) {
+        await staleRead.promise;
+      }
+      return sessionFixture();
+    });
+    await act(async () => {
+      renderSessionScreen({
+        client: {
+          session: readSession,
+          cachedQueuedTurns: () => [snapshotRow],
+          cachedQueuePaused: () => null,
+        },
+        subscriptions: events,
+      });
+    });
+    if (source === 'backlog') {
+      await advance(5000);
+      expect(readSession).toHaveBeenCalledTimes(2);
+    }
+    expect(screen.queryByText('next step') !== null).toBe(!marks);
+
+    act(() =>
+      events.emit({
+        type: 'turn.queued.updated',
+        seq: 1,
+        turn_id: 'waiting',
+        request: 'Next request',
+        deliver,
+      } as unknown as SseEvent),
+    );
+    await advance(150);
+    expect(screen.queryByText('next step') !== null).toBe(marks);
+
+    await act(async () => {
+      staleRead.resolve();
+    });
+    expect(screen.queryByText('next step') !== null).toBe(marks);
+    expect(screen.getByText('Next request')).toBeInTheDocument();
+  });
+
   it('does not carry a late paused snapshot into another session', async () => {
     const oldSession = deferred<Session>();
     const view = renderSessionScreen({
@@ -182,5 +239,74 @@ describe('a queued turn after a failed request', () => {
     });
     expect(screen.queryByText('Queue paused')).toBeNull();
     expect(screen.getByText('Next request')).toBeInTheDocument();
+  });
+});
+
+// `turn.queued.sent` is a live-only frame: the gateway does not store it, so a stream
+// that was down when the step took the row never replays it. The queue read repairs
+// the mirror, and a read older than the frame must not bring the row back.
+describe('a queued turn sent into the running turn', () => {
+  const marked: QueuedTurn = { ...waiting, deliver: 'next_iteration' };
+
+  it('drops a row sent while the stream was down at the next queue read', async () => {
+    vi.useFakeTimers();
+    const events = subscriptionHub();
+    let rows: QueuedTurn[] = [marked];
+    await act(async () => {
+      renderSessionScreen({
+        client: {
+          session: async () => sessionFixture(),
+          cachedQueuedTurns: () => rows,
+          cachedQueuePaused: () => null,
+        },
+        subscriptions: events,
+      });
+    });
+    expect(screen.getByText('Next request')).toBeInTheDocument();
+
+    rows = [];
+    await advance(5000);
+    expect(screen.queryByText('Next request')).toBeNull();
+  });
+
+  it('keeps a sent row gone when an older queue read resolves later', async () => {
+    vi.useFakeTimers();
+    const events = subscriptionHub();
+    const staleRead = deferred<void>();
+    let reads = 0;
+    const readSession = vi.fn(async () => {
+      reads += 1;
+      if (reads === 2) await staleRead.promise;
+      return sessionFixture();
+    });
+    await act(async () => {
+      renderSessionScreen({
+        client: {
+          session: readSession,
+          cachedQueuedTurns: () => [marked],
+          cachedQueuePaused: () => null,
+        },
+        subscriptions: events,
+      });
+    });
+    await advance(5000);
+    expect(readSession).toHaveBeenCalledTimes(2);
+
+    act(() =>
+      events.emit({
+        type: 'turn.queued.sent',
+        seq: 1,
+        turn_id: 'waiting',
+        into_turn_id: 'running',
+        iteration: 2,
+      } as unknown as SseEvent),
+    );
+    await advance(150);
+    expect(screen.queryByText('Next request')).toBeNull();
+
+    await act(async () => {
+      staleRead.resolve();
+    });
+    expect(screen.queryByText('Next request')).toBeNull();
   });
 });

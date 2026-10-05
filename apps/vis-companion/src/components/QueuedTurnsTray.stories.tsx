@@ -17,6 +17,7 @@ const meta = {
     sid: 'session-preview',
     queued: STORY_QUEUED_TURNS,
     paused: STORY_QUEUE_PAUSED,
+    running: true,
     onError: () => {},
   },
   render: (args) => (
@@ -30,6 +31,14 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const PausedWithTwoTurns: Story = {};
+
+/** No turn runs: the queue waits for a turn start and shows no `→` controls. */
+export const Idle: Story = {
+  args: {
+    paused: null,
+    running: false,
+  },
+};
 
 export const LongQueue: Story = {
   args: {

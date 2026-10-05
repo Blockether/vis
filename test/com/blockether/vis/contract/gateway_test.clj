@@ -38,13 +38,13 @@
     (let [{:keys [ttl-ms touch-ms keepalive-ms keepalive-timeout-ms]} contract/client-lease]
       (expect (< 0 touch-ms keepalive-ms ttl-ms))
       (expect (< 0 keepalive-timeout-ms keepalive-ms)))
-    (expect (= 154 (count contract/route-table)))
-    (expect (= 193 (count (contract/route-methods))))
-    (expect (= {:none 124 :json 64 :binary 5}
+    (expect (= 155 (count contract/route-table)))
+    (expect (= 194 (count (contract/route-methods))))
+    (expect (= {:none 125 :json 64 :binary 5}
                (frequencies (map :request (mapcat (comp vals :operations) contract/route-table)))))
-    (expect (= {:json 175 :resource 2 :sse 5 :empty 3 :binary 5 :negotiated 1 :html 1 :markdown 1}
+    (expect (= {:json 176 :resource 2 :sse 5 :empty 3 :binary 5 :negotiated 1 :html 1 :markdown 1}
                (frequencies (map :response (mapcat (comp vals :operations) contract/route-table)))))
-    (expect (= 35 (count contract/event-types)))
+    (expect (= 37 (count contract/event-types)))
     (expect (= {:transcribe "voice.job" :synthesize "speech.job"} contract/job-events))
     (expect (= #{"model" "provider" "llm_selected" "llm_actual" "is_llm_fallback"
                  "llm_routing_trace" "tokens" "cost" "confidence" "eval" "duration_ms"
@@ -211,11 +211,12 @@
       (expect (= #{"turn.completed" "turn.failed" "turn.cancelled"}
                  contract/turn-terminal-event-types))
       (expect (= #{"turn.queued" "turn.queued.deleted" "turn.queued.updated" "turn.queued.drained"
-                   "queue.paused" "queue.resumed"}
+                   "turn.queued.sent" "queue.paused" "queue.resumed"}
                  contract/queue-mirror-event-types))
       (expect (= #{"block.activity" "block.output" "block.preview" "block.started"
                    "content.block.completed" "content.block.delta" "content.block.started"
-                   "iteration.completed" "iteration.error" "provider.retry" "turn.progress"}
+                   "iteration.completed" "iteration.error" "provider.retry" "turn.input"
+                   "turn.progress"}
                  contract/turn-stream-event-types)))
   (it "keeps the session-group palette closed, ordered and derived from the schema"
       ;; BLO-167: a group carries a palette TOKEN, never a hex colour, so every

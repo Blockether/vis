@@ -901,6 +901,16 @@
       "operations": {
         "post": {
           "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/queue/send-now"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "none",
           "response": "empty"
         }
       },
@@ -2332,6 +2342,10 @@
           "x-vis-turn-terminal": true
         },
         {
+          "const": "turn.input",
+          "x-vis-turn-stream": true
+        },
+        {
           "const": "turn.progress",
           "x-vis-turn-stream": true
         },
@@ -2345,6 +2359,10 @@
         },
         {
           "const": "turn.queued.drained",
+          "x-vis-queue-mirror": true
+        },
+        {
+          "const": "turn.queued.sent",
           "x-vis-queue-mirror": true
         },
         {

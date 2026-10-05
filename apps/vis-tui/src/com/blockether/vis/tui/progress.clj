@@ -356,6 +356,12 @@
                  :activity nil)
           (dissoc :error)))
 
+    :user-input
+    ;; The queued messages this step received (`→ Send now`), in queue order. The
+    ;; renderer paints them as ONE "You" block at the top of the step, exactly
+    ;; where a replayed iteration row's `user_input` puts them.
+    (assoc entry :user-input (not-empty (vec (:messages chunk))))
+
     :assistant-prose
     ;; Full end-of-iteration commentary (the "prose beyond the code"). The loop
     ;; emits this AFTER the parse (content-stream already cleared) and BEFORE the

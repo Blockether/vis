@@ -1325,7 +1325,9 @@ export function MetaButton({
  * sharing its line with the state word after it. It takes the band's weight, caps
  * and tracking, and wears no face at all — a box inside a line of text reads as a
  * box — so it says it is pressable by underlining itself under the pointer. The
- * 44px touch reach lives in a pseudo-element, leaving the row its own height.
+ * 44px touch reach lives in a pseudo-element, leaving the row its own height. It takes
+ * the band's ink too (`text-current`), as `CloseButton` does: the page's ink was
+ * almost invisible on the queue's dark title band.
  *
  * `isCaption` is the same prose standing INSIDE a caption — a project header's arrival,
  * beside the total it interrupts. A caption drops to the step a band counts in under a
@@ -1352,7 +1354,7 @@ export function TextButton({
   isTally?: boolean;
 }) {
   const face = isBand
-    ? 'relative select-none whitespace-nowrap font-bold uppercase tracking-[0.06em] text-white after:absolute after:inset-x-0 after:-inset-y-3.5 after:content-[""] enabled:hover:underline focus-visible:underline disabled:opacity-60 mouse:after:content-none'
+    ? 'relative select-none whitespace-nowrap font-bold uppercase tracking-[0.06em] text-current after:absolute after:inset-x-0 after:-inset-y-3.5 after:content-[""] enabled:hover:underline focus-visible:underline disabled:opacity-60 mouse:after:content-none'
     : isTally
       ? 'relative select-none whitespace-nowrap after:absolute after:inset-x-0 after:-inset-y-3.5 after:content-[""] enabled:hover:underline focus-visible:underline mouse:after:content-none'
       : `px-1 text-dialog-foreground enabled:hover:text-accent-ink focus-visible:bg-hover ${

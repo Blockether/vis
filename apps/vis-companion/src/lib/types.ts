@@ -1267,6 +1267,21 @@ export interface TranscriptForm {
   [key: string]: unknown;
 }
 
+/**
+ * A queued message the gateway delivered into the running turn at the start of a
+ * step (`→`). The engine recorded it as a user message of that step.
+ */
+export interface DeliveredUserInput {
+  queued_turn_id?: string;
+  /** Raw request text, exactly as authored. */
+  request: string;
+  /** Paste-collapsed text to paint instead of `request`, when the two differ. */
+  display_request?: string;
+  /** Byte-free image chips, `{filename, media_type, size_label}` wire rows. */
+  attachment_previews?: Array<Record<string, unknown>>;
+  [key: string]: unknown;
+}
+
 export interface TranscriptIteration {
   id?: string;
   position?: number;
@@ -1277,6 +1292,8 @@ export interface TranscriptIteration {
   forms?: TranscriptForm[];
   /** Artifacts this iteration's tool calls produced (bytes fetched lazily). */
   attachments?: IterationAttachment[];
+  /** Queued messages the human sent with `→`; they landed at the start of this step. */
+  user_input?: DeliveredUserInput[];
   duration_ms?: number;
   cost_usd?: number;
   error?: JsonValue;
@@ -1370,6 +1387,13 @@ export interface QueuedAttachment {
   sizeLabel: string;
 }
 
+/**
+ * When the gateway delivers a queued message: as its own turn after the running turn
+ * ends (`turn_end`, the default), or into the running turn at its next step
+ * (`next_iteration`, after `→`).
+ */
+export type QueuedTurnDeliver = 'turn_end' | 'next_iteration';
+
 /** A message enqueued behind the running turn, mirrored from the gateway. */
 export interface QueuedTurn {
   turnId: string;
@@ -1378,6 +1402,8 @@ export interface QueuedTurn {
   /** What the row PAINTS: image paths already collapsed to `🖼 name.png`. */
   preview: string;
   attachments: QueuedAttachment[];
+  /** The gateway's delivery mode; a cached row from before the field means `turn_end`. */
+  deliver?: QueuedTurnDeliver;
 }
 
 /** The gateway paused distinct queued requests after a turn failed. */

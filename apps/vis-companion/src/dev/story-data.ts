@@ -1104,6 +1104,8 @@ export const STORY_INERT_CLIENT = {} as GatewayClient;
 /** Queue actions settle locally in previews; the rows still remain gateway-owned. */
 export const STORY_QUEUE_CLIENT = {
   updateQueuedTurn: async () => undefined,
+  markQueuedTurn: async () => undefined,
+  sendQueueNow: async () => undefined,
   deleteQueuedTurn: async () => undefined,
   resumeQueue: async () => undefined,
 } as unknown as GatewayClient;
@@ -1149,6 +1151,7 @@ export const STORY_QUEUED_TURNS: QueuedTurn[] = [
     request: 'Summarize the failed checks',
     preview: 'Summarize the failed checks',
     attachments: [],
+    deliver: 'next_iteration',
   },
 ];
 

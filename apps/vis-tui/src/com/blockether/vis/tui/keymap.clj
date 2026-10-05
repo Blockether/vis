@@ -115,6 +115,9 @@
    {:action :new-session :key \n :label "new session" :group "Session"}
    {:action :show-sessions :key \s :label "switch session" :group "Session"}
    {:action :session-metrics :key \u :label "session metrics" :group "Session"}
+   ;; `k` = kick the queue: mark every queued message for the running turn's next
+   ;; step (the header's `→ Send now`). Palette-only — the Session band is full.
+   {:action :queue-send-all-now :key \k :label "send queue now" :group "Session" :show-when :never}
    ;; fork: `y` = the Y-shaped split of a branch; `t` = fork AT a chosen turn.
    {:action :fork-session :key \y :label "fork session" :group "Session" :show-when :has-turns}
    {:action :fork-at-turn :key \t :label "fork at turn" :group "Session" :show-when :has-turns}

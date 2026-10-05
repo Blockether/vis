@@ -94,6 +94,7 @@ import { isViewportRotating, onViewportRotation } from '../lib/viewport';
 import type {
   ContentBlock,
   GatewayAttachment,
+  DeliveredUserInput,
   IterationAttachment,
   JsonValue,
   TranscriptForm,
@@ -2558,6 +2559,7 @@ function traceEntry(iteration: TranscriptIteration, index: number, answered: Rea
     prose: traceProse(iteration, answered),
     forms: iteration.forms ?? [],
     attachments: iteration.attachments ?? [],
+    userInput: iteration.user_input ?? [],
   };
 }
 
@@ -2581,7 +2583,8 @@ type Chunk =
 // TUI (`render/render-iteration-entries`): with steps summarized, only a progress note
 // opens a run, and later steps join it with their reasoning and attachments, which
 // render after the run's Activity. Otherwise reasoning opens a run too, and an iteration
-// that produced attachments closes its run, since those render last.
+// that produced attachments closes its run, since those render last. A message the
+// human sent into the turn (`→`) always opens a run: it came before that step's work.
 function buildSegments(
   iterations: TranscriptIteration[],
   answered: ReadonlySet<string> = NOTHING_ANSWERED,
@@ -2590,17 +2593,18 @@ function buildSegments(
   const visible = iterations
     .map((iteration, index) => traceEntry(iteration, index, answered))
     .filter(
-      ({ thinking, prose, forms, attachments }) =>
+      ({ thinking, prose, forms, attachments, userInput }) =>
         thinking ||
         prose ||
         attachments.length ||
+        userInput.length ||
         forms.some((form) => showFormCode(form, formCode(form)) || toolCards(form).length),
     );
 
   const segments: TraceSegmentData[] = [];
   visible.forEach((entry) => {
     const open = segments.at(-1);
-    const narrated = entry.prose || (!summarize && entry.thinking);
+    const narrated = entry.prose || entry.userInput.length > 0 || (!summarize && entry.thinking);
     // Regression: an artifact split its run into two Activities between the same notes.
     const closing = !summarize && entry.attachments.length > 0;
     if (open && !open.closed && !narrated && !closing) open.items.push(entry);
@@ -2799,6 +2803,155 @@ function DigestLive({
   );
 }
 
+/** What a delivered message paints: the paste-collapsed text when the gateway made one. */
+function deliveredText(message: DeliveredUserInput): string {
+  return message.display_request?.trim() ? message.display_request : message.request;
+}
+
+/** Reads of a delivered message's pictures before its chips stay: the first and three more. */
+const DELIVERED_PICTURE_READS = 4;
+
+/**
+ * The stored pictures of one message sent with `→`, read by its queued turn id. The
+ * step stores them just after the gateway publishes the message, so an early read
+ * can come back short: the hook asks again, a second later each time, then stops.
+ */
+function useDeliveredPictures(
+  client: GatewayClient | undefined,
+  sid: string | undefined,
+  message: DeliveredUserInput,
+): GatewayAttachment[] {
+  const [pictures, setPictures] = useState<GatewayAttachment[]>([]);
+  const tid = message.queued_turn_id;
+  const expected = (message.attachment_previews ?? []).filter(
+    (preview) =>
+      typeof preview.media_type !== 'string' || preview.media_type.startsWith('image/'),
+  ).length;
+  useEffect(() => {
+    if (!client || !sid || !tid || expected === 0) return undefined;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const read = async (attempt: number) => {
+      const rows = await client
+        .fetchTurnAttachments(sid, tid, controller.signal)
+        .catch((): GatewayAttachment[] => []);
+      if (controller.signal.aborted) return;
+      const found = rows.filter(
+        (att) => !!att.base64 && (att.source ?? 'user') === 'user' && att.media_type.startsWith('image/'),
+      );
+      if (found.length > 0) setPictures(found);
+      if (found.length < expected && attempt + 1 < DELIVERED_PICTURE_READS)
+        timer = setTimeout(() => void read(attempt + 1), 1000 * (attempt + 1));
+    };
+    void read(0);
+    return () => {
+      controller.abort();
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [client, sid, tid, expected]);
+  return pictures;
+}
+
+/** One delivered message: its text, its stored pictures once read, else its chips. */
+function DeliveredMessage({
+  message,
+  index,
+  client,
+  sid,
+}: {
+  message: DeliveredUserInput;
+  index: number;
+  client?: GatewayClient;
+  sid?: string;
+}) {
+  const pictures = useDeliveredPictures(client, sid, message);
+  const layout = mediaGroupLayout(pictures.length);
+  const painted = new Set(pictures.map((att) => att.filename));
+  const chips = (message.attachment_previews ?? []).filter(
+    (preview) => typeof preview.filename !== 'string' || !painted.has(preview.filename),
+  );
+  const picture = (att: GatewayAttachment, at: number, fill: boolean) => (
+    <ExpandableImage
+      key={att.id ?? `pic-${at}`}
+      src={attachmentSrc(att)}
+      alt={att.filename ?? 'attachment'}
+      galleryAt={at}
+      frameClassName="h-full w-full"
+      className={fill ? mediaTileContentClass : mediaContentClass}
+    />
+  );
+  return (
+    <div
+      className={`min-w-0 whitespace-pre-wrap break-words ${PROSE} ${index > 0 ? 'mt-2 border-t border-code-edge pt-2' : ''}`}
+    >
+      <UserRequestText text={deliveredText(message)} />
+      {pictures.length > 0 && (
+        <div className="mt-2 min-w-0 whitespace-normal">
+          {layout === 'grid' ? (
+            <MediaGrid summary={mediaSummary(pictures)}>
+              {pictures.map((att, at) => (
+                <MediaTile key={att.id ?? `tile-${at}`}>{picture(att, at, true)}</MediaTile>
+              ))}
+            </MediaGrid>
+          ) : (
+            pictures.map((att, at) => (
+              <MediaPlate key={att.id ?? `plate-${at}`} name={att.filename} meta={mediaMeta(att)}>
+                {picture(att, at, false)}
+              </MediaPlate>
+            ))
+          )}
+        </div>
+      )}
+      {chips.map((preview, previewIndex) => (
+        <span
+          key={previewIndex}
+          className="my-1 mr-1 inline-flex items-center gap-1 border border-code-edge bg-code px-2 py-1 align-middle font-mono text-meta text-dialog-hint"
+        >
+          {`🖼 ${typeof preview.filename === 'string' ? preview.filename : 'image'}`}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Queued messages the human sent with `→` while this turn ran. They landed at the
+ * start of `step`, so they paint above that step's reasoning, in the `You` colors of
+ * the request bubble, with the step they reached.
+ */
+function DeliveredUserInputBand({
+  messages,
+  step,
+  client,
+  sid,
+}: {
+  messages: DeliveredUserInput[];
+  step: number;
+  client?: GatewayClient;
+  sid?: string;
+}) {
+  return (
+    <div className="mb-2.5 min-w-0" data-transcript-user-input>
+      <div className="mb-1.5 font-mono text-meta font-bold text-you-role">
+        You · sent now · step {step}
+      </div>
+      <div
+        className={`${RAIL_SPINE} border-l-2 border-you-role bg-code px-3 py-2 text-ui text-you-message-foreground mouse:text-title`}
+      >
+        {messages.map((message, index) => (
+          <DeliveredMessage
+            key={message.queued_turn_id ?? index}
+            message={message}
+            index={index}
+            client={client}
+            sid={sid}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const TraceSegment = memo(function TraceSegment({
   segment,
   live,
@@ -2892,6 +3045,14 @@ const TraceSegment = memo(function TraceSegment({
       className={`relative min-w-0 ${live ? transcriptEnterClass : ''}`}
       data-transcript-part
     >
+      {segment.head.userInput.length > 0 && (
+        <DeliveredUserInputBand
+          messages={segment.head.userInput}
+          step={segment.head.iteration.position ?? segment.head.index + 1}
+          client={client}
+          sid={sid}
+        />
+      )}
       {!digest && thinking && <ThinkingBand railed>{thinking}</ThinkingBand>}
       {segment.head.prose && (
         // The trace owns outer gaps; prose only separates bands within this segment.

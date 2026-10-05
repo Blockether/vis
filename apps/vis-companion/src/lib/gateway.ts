@@ -34,6 +34,7 @@ import type {
   ModelPref,
   QueuedAttachment,
   QueuedTurn,
+  QueuedTurnDeliver,
   QueuePausedInfo,
   ProviderLimits,
   ProviderResetOutcome,
@@ -1109,8 +1110,9 @@ function reconcileSession(
 }
 
 /**
- * One live queue delta a screen has already applied: the row as it was added, or
- * `null` for a row that LEFT the queue (`turn.queued.drained` / `.deleted`).
+ * One live queue delta a screen has already applied: the row as the last live frame
+ * left it (`turn.queued`, or `turn.queued.updated` after an edit or a `→` mark), or
+ * `null` for a row that LEFT the queue (`turn.queued.drained` / `.deleted` / `.sent`).
  */
 export interface QueueDelta {
   at: number;
@@ -1131,8 +1133,10 @@ export interface QueueDelta {
  *
  * So a read is authoritative only for rows it could actually have seen. A delta
  * older than the read start is settled (the gateway knew) and is forgotten; a
- * delta NEWER than it wins over the read. `forget` names the ids whose removal
- * the read has just written back into the cache, to be dropped there too.
+ * delta NEWER than it wins over the read: a newer row replaces the read's copy in
+ * place (an edit, or a `→` mark or unmark), and a newer removal drops it. `forget`
+ * names the ids whose removal the read has just written back into the cache, to be
+ * dropped there too.
  *
  * `deltas` is the caller's live journal and is pruned in place.
  */
@@ -1150,14 +1154,19 @@ export function mergeQueueBacklog(
       continue;
     }
     if (delta.row) {
-      if (!byId.has(tid)) appended.push(delta.row);
+      if (byId.has(tid)) byId.set(tid, delta.row);
+      else appended.push(delta.row);
     } else {
       byId.delete(tid);
       forget.push(tid);
     }
   }
+  const kept = rows.flatMap((row) => {
+    const current = byId.get(row.turnId);
+    return current ? [current] : [];
+  });
   return {
-    rows: [...rows.filter((row) => byId.has(row.turnId)), ...appended],
+    rows: [...kept, ...appended],
     forget,
   };
 }
@@ -1300,7 +1309,19 @@ export function queuedTurnFromWire(row: Record<string, unknown>): QueuedTurn {
     request,
     preview: preview || request,
     attachments,
+    deliver: row.deliver === 'next_iteration' ? 'next_iteration' : 'turn_end',
   };
+}
+
+/**
+ * True when a queued message can run only as its own turn: a slash command
+ * (`/name …`) or a bang shell line (`!cmd`). The gateway refuses `→` on these rows
+ * (`409 not-steerable`); the tray mirrors `gateway-contract/command-request?` so it
+ * never offers the control. A bare `!` is prose.
+ */
+export function isCommandRequest(request: string): boolean {
+  const text = request.trimStart();
+  return /^\/[A-Za-z]/.test(text) || (text.startsWith('!') && text.slice(1).trim() !== '');
 }
 
 /** The gateway-owned hold paired with a queued backlog, or no hold at all. */
@@ -5126,6 +5147,24 @@ export class GatewayClient {
       `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}`,
       { request },
     );
+  }
+
+  /**
+   * `→` on one queued row: `next_iteration` delivers it into the running turn at
+   * its next step, `turn_end` keeps it for the turn end. The gateway mirrors the
+   * change to every channel with `turn.queued.updated`.
+   */
+  markQueuedTurn(sid: string, tid: string, deliver: QueuedTurnDeliver): Promise<unknown> {
+    return this.request(
+      'PATCH',
+      `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}`,
+      { deliver },
+    );
+  }
+
+  /** `→ Send now` on the queue header: mark every markable queued row at once. */
+  sendQueueNow(sid: string): Promise<unknown> {
+    return this.request('POST', `/v1/sessions/${encodeURIComponent(sid)}/queue/send-now`);
   }
 
   /** Drop a queued turn before it ever runs. */

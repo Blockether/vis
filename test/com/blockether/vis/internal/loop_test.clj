@@ -4984,6 +4984,113 @@
         (finally (loop-env/dispose-environment! environment))))))
 
 (defdescribe
+  queued-user-input-transcript-test
+  ;; A message sent into the running turn (`→ Send now`) names each stored file
+  ;; that stays off the wire by its attachment id, live and on replay.
+  (it "sends images to a vision target and names the other stored files by id"
+      (let [entry {:request "look"
+                   :attachments
+                   [{:id "a1" :filename "photo.png" :media-type "image/png" :base64 "AAAA"}
+                    {:id "a2" :filename "scan.heic" :media-type "image/heic"}]
+                   :skipped [{:path "gone.png" :reason "missing"}]}]
+        (expect (= [{:role "user"
+                     :content [{:type "text"
+                                :text (str "look"
+                                           "\n\nAttached file: scan.heic (attachment id: a2)"
+                                           "\n\n[Attached files not sent as images: gone.png]")}
+                               {:type "image_url" :image_url {:url "data:image/png;base64,AAAA"}}]}]
+                   (transcript/user-input-messages [entry] true)))
+        (expect (= [{:role "user"
+                     :content (str "look" "\n\nAttached file: photo.png (attachment id: a1)"
+                                   "\n\nAttached file: scan.heic (attachment id: a2)"
+                                   "\n\n[Attached files not sent as images: gone.png]")}]
+                   (transcript/user-input-messages [entry] false)))
+        (expect (= []
+                   (transcript/user-input-messages [{:request "" :attachments [] :skipped []}]
+                                                   true)))))
+  (it "records stored files without bytes and names each one once"
+      (let [entry
+            {:queued-turn-id "q1"
+             :request "look"
+             :attachments [{:id "a1" :filename "photo.png" :media-type "image/png" :base64 "AAAA"}]
+             :skipped [{:path "photo.png" :reason "no vision"} {:path "gone.png" :reason "missing"}]
+             :stored [{:id "a1" :filename "photo.png" :media-type "image/png"}]}
+
+            recorded
+            (transcript/persisted-user-input [entry])]
+
+        (expect (= [{:queued-turn-id "q1"
+                     :request "look"
+                     :attachments [{:id "a1" :filename "photo.png" :media-type "image/png"}]
+                     :skipped [{:path "gone.png" :reason "missing"}]}]
+                   recorded))
+        (expect (= [{:role "user"
+                     :content (str "look"
+                                   "\n\nAttached file: photo.png (attachment id: a1)"
+                                   "\n\n[Attached files not sent as images: gone.png]")}]
+                   (transcript/user-input-messages recorded true)))
+        (expect
+          (= [{:request "x" :attachments [{:filename "x.png"}] :skipped []}]
+             (transcript/persisted-user-input
+               [{:request "x" :attachments [{:filename "x.png" :base64 "AAAA"}] :skipped []}])))
+        (expect (nil? (transcript/persisted-user-input nil))))))
+
+(defdescribe
+  send-now-user-input-loop-test
+  ;; A queued message sent into the running turn (`→ Send now`) reaches the next
+  ;; request, keeps its image on the turn and replays it by attachment id.
+  (doseq [vision? [true false]]
+    (it
+      (if vision? "vision target" "text-only target")
+      (let
+        [environment (loop-env/create-environment (helper-router :lmstudio nil) {:db :memory})
+         db (:db-info environment)
+         tid (persistance/db-store-session-turn! db
+                                                 {:parent-session-id (:session-id environment)
+                                                  :user-request "start"})
+         qtid (str (random-uuid))
+         png
+         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+         requests (atom [])
+         takes (atom 0)]
+
+        (try
+          (with-redefs [transcript/target-supports-vision? (constantly vision?)
+                        svar/ask-code! (fn [_ opts]
+                                         (swap! requests conj (select-keys opts [:messages]))
+                                         {:stop-reason :end :content "Done."})]
+
+            (iteration/iteration-loop environment
+                                      "start"
+                                      {:session-turn-id tid
+                                       :hooks {:take-user-input
+                                               (fn [_]
+                                                 (when (= 1 (swap! takes inc))
+                                                   [{:queued-turn-id qtid
+                                                     :request "also check this"
+                                                     :attachments [{:media-type "image/png"
+                                                                    :base64 png
+                                                                    :filename "chart.png"}]}]))}}))
+          (let [rows (get (persistance/db-list-queued-turn-attachments db [qtid]) qtid)
+                stored-id (:id (first rows))
+                sent (pr-str (:messages (first @requests)))
+                recorded (some :user-input (persistance/db-list-session-turn-iterations db tid))]
+
+            (expect (= ["chart.png"] (mapv :filename rows)))
+            (expect (some? stored-id))
+            ;; The turn's own request images never include a delivered message's files.
+            (expect (empty? (persistance/db-list-turn-attachments db tid)))
+            (expect (str/includes? sent "also check this"))
+            (expect (= vision? (str/includes? sent png)))
+            (expect (= (not vision?) (str/includes? sent (str "(attachment id: " stored-id ")"))))
+            (expect (= [stored-id] (mapv :id (:attachments (first recorded)))))
+            (expect (not (str/includes? (pr-str recorded) png)))
+            (expect (str/includes?
+                      (pr-str (transcript/user-input-messages recorded true))
+                      (str "Attached file: chart.png (attachment id: " stored-id ")"))))
+          (finally (loop-env/dispose-environment! environment)))))))
+
+(defdescribe
   llm-provider-error-context-test
   ;; Iteration-error-data shape (built by `format-exception`):
   ;;   {:class "..."      — exception class name

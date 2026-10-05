@@ -10,6 +10,7 @@ import { eventBlockKey, eventFormKey, eventIterationPosition, eventString } from
 import type {
   ContentBlock,
   CouncilRequest,
+  DeliveredUserInput,
   RequestKind,
   GatewayAttachment,
   IterationAttachment,
@@ -197,6 +198,22 @@ export function reduceRunningTurnEvent(
   }
   // A settled bubble never re-animates on a trailing or replayed body frame.
   if (turn.status !== 'running') return turn;
+
+  // A queued message sent with `→` lands at the start of the step it names, so its
+  // bubble opens before that step's reasoning and work. A replayed frame repeats the
+  // same list; it replaces, never doubles.
+  if (type === 'turn.input') {
+    const messages = Array.isArray(event.messages)
+      ? (event.messages as DeliveredUserInput[]).filter(
+          (message) => typeof message?.request === 'string',
+        )
+      : [];
+    if (!messages.length) return turn;
+    return updateRunningIteration(turn, eventIterationPosition(event), (iteration) => ({
+      ...iteration,
+      user_input: messages,
+    }));
+  }
 
   if (type === 'content.block.delta') {
     const field = eventString(event, 'field');

@@ -501,6 +501,28 @@
       (h/store-iteration! s {:session-turn-id tid :code "" :error {:message "No measurement"}})
       (expect (true? (get-in (persistance/db-session-usage-stats s (str sid)) [:health :stale])))
       (expect (= 2 (get-in (persistance/db-session-usage-stats s (str sid)) [:health :call])))))
+  (it "stores the queued user input delivered into an iteration as a blob and reads it back"
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {:channel :api})
+
+            tid
+            (persistance/db-store-session-turn! s
+                                                {:parent-session-id (str sid)
+                                                 :user-request "measure"})
+
+            delivered
+            [{:turn-id "q1" :text "also check the tests" :attachments []}]]
+
+        (h/store-iteration! s {:session-turn-id tid :code "" :tokens {"input" 10 "output" 1}})
+        (h/store-iteration!
+          s
+          {:session-turn-id tid :code "" :tokens {"input" 10 "output" 1} :user-input delivered})
+        (let [iterations (persistance/db-list-session-turn-iterations s tid)]
+          (expect (nil? (:user-input (first iterations))))
+          (expect (= delivered (:user-input (last iterations)))))))
   (it "marks the last measured request stale when a new turn has not answered"
       (let [s
             (h/store)
@@ -1377,7 +1399,7 @@
                        ["ALTER TABLE session_state DROP COLUMN prompt_cache_state"])
         (doseq [table ["council_machine" "council_ping" "council_entry"]]
           (jdbc/execute! (:datasource s1) [(str "DROP TABLE " table)]))
-        (doseq [column ["council_input" "council_publications"]]
+        (doseq [column ["council_input" "council_publications" "user_input"]]
           (jdbc/execute! (:datasource s1)
                          [(str "ALTER TABLE session_turn_iteration DROP COLUMN " column)]))
         (jdbc/execute! (:datasource s1) ["CREATE TABLE topup_probe (id INTEGER)"])
@@ -1400,7 +1422,7 @@
               (expect (not (contains? cols "media_type"))))
             (expect (contains? (table-columns s2 "session_state") "prompt_cache_state"))
             (expect (every? (table-columns s2 "session_turn_iteration")
-                            ["council_input" "council_publications"]))
+                            ["council_input" "council_publications" "user_input"]))
             (expect (contains? (table-columns s2 "council_entry") "thread_id"))
             (expect (contains? (table-columns s2 "council_ping") "activation_id"))
             (expect (contains? (table-columns s2 "council_machine") "name"))
@@ -4546,6 +4568,175 @@
                                    :from [:session_attachment]
                                    :where [:= :session_turn_soul_id (str tid)]
                                    :order-by [[:position :asc]]})))))))
+
+(defdescribe
+  queued-turn-attachment-test
+  (it
+    "stores the images of a message sent into a running turn apart from the turn's own images"
+    (let [s
+          (h/store)
+
+          cid
+          (h/store-session! s {:channel :cli})
+
+          b64
+          (.encodeToString (java.util.Base64/getEncoder) (byte-array [1 2 3]))
+
+          tid
+          (vis/db-store-session-turn! s
+                                      {:parent-session-id cid
+                                       :user-request "describe this"
+                                       :attachments
+                                       [{:media-type "image/png" :base64 b64 :filename "own.png"}]})
+
+          qtid
+          (str (random-uuid))
+
+          given-id
+          (str (random-uuid))
+
+          ids
+          (persistance/db-store-queued-turn-attachments!
+            s
+            tid
+            qtid
+            [{:id given-id :media-type "image/png" :base64 b64 :filename "first.png"}
+             {:media-type "image/jpeg" :base64 b64 :filename "second.jpg"}])
+
+          rows
+          (get (persistance/db-list-queued-turn-attachments s [qtid nil "missing"]) qtid)]
+
+      (expect (= 2 (count ids)))
+      (expect (= given-id (first ids)))
+      (expect (= ids (mapv :id rows)))
+      (expect (= ["first.png" "second.jpg"] (mapv :filename rows)))
+      (expect (= [qtid qtid] (mapv :queued-turn-id rows)))
+      (expect (= [:user :user] (mapv :source rows)))
+      (expect (= [b64 b64] (mapv :base64 rows)))
+      (expect (= [qtid] (keys (persistance/db-list-queued-turn-attachments s [qtid "missing"]))))
+      ;; The turn's own request images stay its own: the model gets them as the
+      ;; request, and the delivered message names its images by id instead.
+      (expect (= ["own.png"] (mapv :filename (vis/db-list-turn-attachments s tid))))
+      (expect (= ["own.png"]
+                 (mapv :filename (get (vis/db-list-turns-attachments s [tid]) (str tid)))))
+      (expect (= [] (persistance/db-store-queued-turn-attachments! s tid qtid [])))
+      (expect (= []
+                 (persistance/db-store-queued-turn-attachments!
+                   s
+                   tid
+                   nil
+                   [{:media-type "image/png" :base64 b64 :filename "lost.png"}])))
+      (expect (= {} (persistance/db-list-queued-turn-attachments s [])))
+      (expect (= {} (persistance/db-list-queued-turn-attachments nil [qtid])))))
+  (it
+    "answers with the original rows after a fork copies them"
+    (let [s
+          (h/store)
+
+          cid
+          (h/store-session! s {:channel :cli})
+
+          b64
+          (.encodeToString (java.util.Base64/getEncoder) (byte-array [4 5 6]))
+
+          tid
+          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Q1" :status :done})
+
+          qtid
+          (str (random-uuid))
+
+          ids
+          (persistance/db-store-queued-turn-attachments!
+            s
+            tid
+            qtid
+            [{:media-type "image/png" :base64 b64 :filename "a.png"}
+             {:media-type "image/png" :base64 b64 :filename "b.png"}])
+
+          fork-state
+          (h/fork-session-at-turn! s cid {:through-turn-id tid :title "Forked"})
+
+          copies
+          (raw-query s
+                     {:select [:id] :from [:session_attachment] :where [:= :queued_turn_id qtid]})]
+
+      (expect (some? fork-state))
+      (expect (= 4 (count copies)))
+      (expect (= ids
+                 (mapv :id (get (persistance/db-list-queued-turn-attachments s [qtid]) qtid))))))
+  (it
+    "names the fork's own copies in a forked step record"
+    ;; `read_attachment` opens only ids that the active session lists, so a forked
+    ;; step record must name the fork's copies, not the source rows.
+    (let [s
+          (h/store)
+
+          cid
+          (h/store-session! s {:channel :cli})
+
+          b64
+          (.encodeToString (java.util.Base64/getEncoder) (byte-array [7 8 9]))
+
+          tid
+          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Q1" :status :done})
+
+          qtid
+          (str (random-uuid))
+
+          ids
+          (persistance/db-store-queued-turn-attachments!
+            s
+            tid
+            qtid
+            [{:media-type "image/png" :base64 b64 :filename "a.png"}])
+
+          user-input
+          [{:queued-turn-id qtid
+            :request "look"
+            :attachments [{:id (first ids) :filename "a.png" :media-type "image/png"}]}
+           {:queued-turn-id (str (random-uuid)) :request "no files"}]
+
+          _iteration
+          (h/store-iteration! s {:session-turn-id tid :code "" :user-input user-input})
+
+          fork-sid
+          (h/fork-session-at-turn! s cid {:through-turn-id tid :title "Forked"})
+
+          fork-tid
+          (:id (first (raw-query s
+                                 {:select [:id]
+                                  :from :session_turn_soul
+                                  :where [:= :session_state_id
+                                          {:select [:id]
+                                           :from :session_state
+                                           :where [:= :session_soul_id (str fork-sid)]}]})))
+
+          recorded
+          (fn [turn-id]
+            (into [] (mapcat :user-input) (persistance/db-list-session-turn-iterations s turn-id)))
+
+          named
+          (fn [turn-id]
+            (into [] (comp (mapcat :attachments) (map :id)) (recorded turn-id)))
+
+          readable
+          (fn [sid]
+            (set (map (comp str :id) (vis/db-list-session-attachments-meta s sid))))]
+
+      (expect (= ids (named tid)))
+      (expect (= 1 (count (named fork-tid))))
+      (expect (not= ids (named fork-tid)))
+      (expect (every? (readable fork-sid) (named fork-tid)))
+      (expect (not-any? (readable fork-sid) ids))
+      (expect (every? (readable cid) (named tid)))
+      ;; Asked in Council #261: the source record stays as it was, and the fork changes
+      ;; only file ids, so an entry without files is copied unchanged.
+      (expect (= user-input (recorded tid)))
+      (expect (= (map #(dissoc % :attachments) user-input)
+                 (map #(dissoc % :attachments) (recorded fork-tid))))
+      (expect (= (map #(dissoc % :id) (:attachments (first user-input)))
+                 (map #(dissoc % :id) (:attachments (first (recorded fork-tid))))))
+      (expect (= (second user-input) (second (recorded fork-tid)))))))
 
 (defdescribe
   attachment-transcription-round-trip-test

@@ -1040,6 +1040,8 @@
 
 (def MARKER_STEP_DIGEST "\uE014") ;; digest of the steps after a progress note, on transcript paper
 
+(def MARKER_USER_INPUT "\uE016") ;; queued message delivered into the running turn (`→ Send now`) -> accent rail, the user's words in the user bubble fg
+
 (def MARKER_ACTIVITY "\uE015") ;; compact Activity timeline surface
 
 (def MARKER_TH_MD_H1 "\uE021") ;; markdown heading 1 (thinking)

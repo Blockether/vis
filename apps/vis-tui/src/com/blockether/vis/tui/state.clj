@@ -5403,7 +5403,10 @@
   ;; text, deletes remove rows, and live or retracted turns can never be resurrected
   ;; by late events.
   (fn [db
-       [_ workspace-id {:keys [op turn-id client-id text preview-text reason] mine-hint? :mine?}]]
+       [_ workspace-id
+        {:keys [op turn-id client-id text preview-text reason deliver]
+         mine-hint? :mine?
+         :as chunk}]]
     (let [workspace-id (or workspace-id (current-tab-id db))]
       (cond (not (and workspace-id turn-id)) {:db db}
             (and (contains? #{:add :update} op) (submission-retracted? db workspace-id client-id))
@@ -5433,6 +5436,10 @@
                                  client-id
                                  (assoc :client-id client-id)
 
+                                 ;; `next_iteration` = marked for the running turn's next step.
+                                 deliver
+                                 (assoc :deliver deliver)
+
                                  mine?
                                  (assoc :mine? true))
                            live? (live-turn-mirror? w turn-id client-id)
@@ -5446,49 +5453,51 @@
                            ;; Ordinary deletes and drains restore nothing, preventing duplicates.
                            restore?
                            (and (= op :delete) (= reason "cancelled") (some? mirrored) (not live?))
-                           w' (update w
-                                      :pending-sends
-                                      (fn [q]
-                                        (let [q (vec (or q []))
-                                              same? #(same-submission? % turn-id client-id)
-                                              mirrored? (boolean (some same? q))]
+                           w' (update
+                                w
+                                :pending-sends
+                                (fn [q]
+                                  (let [q (vec (or q []))
+                                        same? #(same-submission? % turn-id client-id)
+                                        mirrored? (boolean (some same? q))]
 
-                                          (if live?
-                                            (vec (remove same? q))
-                                            (case op
-                                              :add
-                                              ;; Bind gateway truth into the row the user has been
-                                              ;; looking at since Enter — never append a second one.
-                                              (if mirrored?
-                                                (mapv (fn [e]
-                                                        (if (same? e)
-                                                          (-> (merge e
-                                                                     (into {}
-                                                                           (filter
-                                                                             (comp some? val)
+                                    (if live?
+                                      (vec (remove same? q))
+                                      (case op
+                                        :add
+                                        ;; Bind gateway truth into the row the user has been
+                                        ;; looking at since Enter — never append a second one.
+                                        (if mirrored?
+                                          (mapv (fn [e]
+                                                  (if (same? e)
+                                                    (-> (merge e
+                                                               (into {}
+                                                                     (filter (comp some? val)
                                                                              (dissoc row
                                                                                :queued-at-ms))))
-                                                              (dissoc :awaiting-ack? :unsent?))
-                                                          e))
-                                                      q)
-                                                (conj q row))
+                                                        (dissoc :awaiting-ack? :unsent?))
+                                                    e))
+                                                q)
+                                          (conj q row))
 
-                                              :update
-                                              (if mirrored?
-                                                (mapv (fn [e]
-                                                        (if (same? e)
-                                                          (assoc e
-                                                            :text text
-                                                            :preview-text (or preview-text text)
-                                                            :agent-text text)
-                                                          e))
-                                                      q)
-                                                (conj q row))
+                                        :update
+                                        (if mirrored?
+                                          (mapv (fn [e]
+                                                  (if (same? e)
+                                                    (cond-> (assoc e
+                                                              :text text
+                                                              :preview-text (or preview-text text)
+                                                              :agent-text text)
+                                                      (contains? chunk :deliver)
+                                                      (assoc :deliver deliver))
+                                                    e))
+                                                q)
+                                          (conj q row))
 
-                                              :delete
-                                              (vec (remove same? q))
+                                        :delete
+                                        (vec (remove same? q))
 
-                                              q)))))]
+                                        q)))))]
 
                        (cond-> w'
                          restore?
@@ -5521,6 +5530,81 @@
                                      (when-let [tid (:turn-id e)]
                                        [:gateway-delete-queued sid tid tab-id e])))
                              pending)})))
+
+(defn- set-queued-deliver
+  "Write the delivery mode of ONE mirrored queue row: `next_iteration` (marked for
+   the running turn's next step) or `turn_end` (the default). Used for the fast
+   local echo of a `→` press and for the roll-back when the gateway refused it.
+   Gateway truth still arrives through `:sync-queued-turn` (`turn.queued.updated`)."
+  [db workspace-id turn-id deliver]
+  (if-not (and workspace-id turn-id)
+    db
+    (update-tab
+      db
+      workspace-id
+      (fn [w]
+        (update w
+                :pending-sends
+                (fn [q]
+                  (mapv (fn [e]
+                          (if (= (str (:turn-id e)) (str turn-id)) (assoc e :deliver deliver) e))
+                        (vec (or q [])))))))))
+
+(reg-event-db :set-queued-deliver
+              (fn [db [_ workspace-id turn-id deliver]]
+                (set-queued-deliver db (or workspace-id (current-tab-id db)) turn-id deliver)))
+
+(reg-event-fx :queue-send-now
+              ;; `→` on ONE queue row. `next_iteration` sends the message into the
+              ;; running turn at its next step; `turn_end` takes the mark back. The row
+              ;; is echoed locally at once; `:gateway-mark-queued` rolls it back when the
+              ;; gateway refuses.
+              (fn [db [_ workspace-id turn-id deliver]]
+                (let [workspace-id
+                      (or workspace-id (current-tab-id db))
+
+                      tab
+                      (db-for-tab db workspace-id)
+
+                      sid
+                      (:id (:session tab))
+
+                      row
+                      (some #(when (= (str (:turn-id %)) (str turn-id)) %) (:pending-sends tab))]
+
+                  (if-not (and sid row (render/markable-queued-row? row))
+                    {:db db}
+                    {:db (set-queued-deliver db workspace-id turn-id deliver)
+                     :fx [[:gateway-mark-queued sid turn-id deliver workspace-id]]}))))
+
+(reg-event-fx
+  :queue-send-all-now
+  ;; `→ Send now` on the queue header: mark EVERY markable row for the next
+  ;; step, in queue order. Commands and local-only rows stay as they are.
+  (fn [db [_ workspace-id]]
+    (let [workspace-id
+          (or workspace-id (current-tab-id db))
+
+          tab
+          (db-for-tab db workspace-id)
+
+          sid
+          (:id (:session tab))
+
+          rows
+          (filterv #(and (render/markable-queued-row? %) (not (render/marked-queued-row? %)))
+            (:pending-sends tab))]
+
+      (if-not (and sid (seq rows))
+        {:db db}
+        {:db (reduce (fn [db row]
+                       (set-queued-deliver db
+                                           workspace-id
+                                           (:turn-id row)
+                                           gateway-contract/queued-turn-deliver-next-iteration))
+                     db
+                     rows)
+         :fx [[:gateway-send-queue-now sid workspace-id (mapv :turn-id rows)]]}))))
 
 (reg-event-fx :drain-pending
               ;; Pop one queued submission for `workspace-id`. When it carries a
@@ -5659,7 +5743,8 @@
                           (let [q (vec (or q []))]
                             (into q
                                   (keep
-                                    (fn [{:keys [turn-id client-id text preview-text queued-at-ms]}]
+                                    (fn [{:keys [turn-id client-id text preview-text queued-at-ms
+                                                 deliver]}]
                                       (when-not (or (some #(same-submission? % turn-id client-id) q)
                                                     (live-turn-mirror? w turn-id client-id))
                                         (cond-> {:text text
@@ -5671,6 +5756,9 @@
                                                                    (System/currentTimeMillis))}
                                           client-id
                                           (assoc :client-id client-id)
+
+                                          deliver
+                                          (assoc :deliver deliver)
 
                                           ;; Re-attach (tab reopen / project switch) seeds the
                                           ;; backlog from the gateway snapshot: ownership comes
@@ -6708,7 +6796,7 @@
                                 :status :failed
                                 :terminal-trace terminal-trace}])
                     (do (dispatch
-                          [:message-received workspace-id (get result "content")
+                          [:message-received workspace-id (chat/completion-content result)
                            ;; Field-by-field pick from the canonical string-keyed
                            ;; gateway result into the TUI's internal message map —
                            ;; never a blanket re-keying of wire data.
@@ -6731,6 +6819,11 @@
 
                                       "cancelled"
                                       :cancelled
+
+                                      ;; The queued turn was sent into the running turn
+                                      ;; (send now); it never runs on its own.
+                                      "sent"
+                                      :sent
 
                                       nil)
                             :utilization (get result "utilization")
@@ -6832,7 +6925,7 @@
                     (dispatch [:message-received workspace-id (chat/error-content result)
                                {:client-turn-id client-turn-id}])
                     (do (dispatch
-                          [:message-received workspace-id (get result "content")
+                          [:message-received workspace-id (chat/completion-content result)
                            ;; Same field-by-field pick as :session-turn (above).
                            {:model (get result "model")
                             :provider (get result "provider")
@@ -6853,6 +6946,11 @@
 
                                       "cancelled"
                                       :cancelled
+
+                                      ;; The queued turn was sent into the running turn
+                                      ;; (send now); it never runs on its own.
+                                      "sent"
+                                      :sent
 
                                       nil)
                             :utilization (get result "utilization")
@@ -7104,6 +7202,44 @@
           (when (and sid tid)
             (gateway-queue-io! (fn []
                                  (retract-queued-turn! sid tid))))))
+
+(reg-fx :gateway-mark-queued
+        ;; Set the delivery mode of ONE queued record. The caller already echoed the
+        ;; mark locally, so this RECONCILES: a refusal (409 for a command, a record
+        ;; that already left the queue, a transport failure) rolls the row back to
+        ;; the mode the gateway still holds and says why.
+        (fn [sid tid deliver workspace-id]
+          (when (and sid tid)
+            (gateway-queue-io!
+              (fn []
+                (let [failure (try (vis/gateway-mark-queued-turn! sid tid deliver)
+                                   nil
+                                   (catch Throwable t (or (ex-message t) (str t))))]
+                  (when failure
+                    (dispatch [:set-queued-deliver workspace-id tid
+                               (if (= deliver gateway-contract/queued-turn-deliver-next-iteration)
+                                 gateway-contract/default-queued-turn-deliver
+                                 gateway-contract/queued-turn-deliver-next-iteration)])
+                    (try (vis/notify! (str "Send now failed: " failure) :level :warn :ttl-ms 3000)
+                         (catch Throwable _ nil)))))))))
+
+(reg-fx :gateway-send-queue-now
+        ;; Mark the whole queue for the next step. The gateway mirrors every changed
+        ;; row back with `turn.queued.updated`; on failure the rows echoed by the
+        ;; caller (`turn-ids`) return to turn-end delivery.
+        (fn [sid workspace-id turn-ids]
+          (when sid
+            (gateway-queue-io!
+              (fn []
+                (let [failure (try (vis/gateway-send-queue-now! sid)
+                                   nil
+                                   (catch Throwable t (or (ex-message t) (str t))))]
+                  (when failure
+                    (doseq [tid turn-ids]
+                      (dispatch [:set-queued-deliver workspace-id tid
+                                 gateway-contract/default-queued-turn-deliver]))
+                    (try (vis/notify! (str "Send now failed: " failure) :level :warn :ttl-ms 3000)
+                         (catch Throwable _ nil)))))))))
 
 (reg-fx :submit-orphan-sends
         ;; A closing tab still held AUTHORED submissions that never reached the

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Warm transforms outside timed cases; beforeEach still resets module state.
-import './gateway';
+import { mergeQueueBacklog } from './gateway';
 import { STORY_GOAL } from '../dev/story-data';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import type { Session } from './types';
@@ -2043,5 +2043,41 @@ describe('GatewayClient search scopes', () => {
     const client = new GatewayClient(conn);
     expect(await client.listProjects()).toEqual(projects);
     expect(String(fetches.mock.calls[0][0])).toContain('/v1/projects?archived=include');
+  });
+});
+
+describe('mergeQueueBacklog', () => {
+  // Review of `→` (Council #240): a newer live row must replace the read's stale copy.
+  const row = (turnId: string, deliver: 'turn_end' | 'next_iteration' = 'turn_end') => ({
+    turnId,
+    request: turnId,
+    preview: turnId,
+    attachments: [],
+    deliver,
+  });
+
+  it('replaces a stale row in place with the newer live row', () => {
+    const deltas = new Map([['b', { at: 200, row: row('b', 'next_iteration') }]]);
+    const merged = mergeQueueBacklog([row('a'), row('b'), row('c')], deltas, 100);
+    expect(merged.rows.map((item) => [item.turnId, item.deliver])).toEqual([
+      ['a', 'turn_end'],
+      ['b', 'next_iteration'],
+      ['c', 'turn_end'],
+    ]);
+    expect(merged.forget).toEqual([]);
+  });
+
+  it('trusts the read over a delta that it already saw, and prunes that delta', () => {
+    const deltas = new Map([['b', { at: 50, row: row('b', 'next_iteration') }]]);
+    const merged = mergeQueueBacklog([row('a'), row('b')], deltas, 100);
+    expect(merged.rows.map((item) => item.deliver)).toEqual(['turn_end', 'turn_end']);
+    expect(deltas.size).toBe(0);
+  });
+
+  it('still drops a row that left the queue after the read started', () => {
+    const deltas = new Map([['a', { at: 200, row: null }]]);
+    const merged = mergeQueueBacklog([row('a'), row('b')], deltas, 100);
+    expect(merged.rows.map((item) => item.turnId)).toEqual(['b']);
+    expect(merged.forget).toEqual(['a']);
   });
 });

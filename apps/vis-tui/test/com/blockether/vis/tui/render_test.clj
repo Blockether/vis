@@ -6257,7 +6257,32 @@
                    (calls [(tool 0 "cat" "a")
                            [1 {:forms [(result-form "patch" "b")] :assistant-prose "Patching now."}]
                            (tool 2 "rg" "c")]
-                          true))))))
+                          true))))
+    ;; Regression (Council review of the send-now work): a message delivered with
+    ;; `→` on an INTERIOR tool step was merged into the run, which rebuilds from the
+    ;; head entry alone, so the `You · sent now` band was never painted.
+    (it "a delivered message breaks the run in both layouts and heads its own run"
+        (doseq [summarize? [false true]]
+          (expect (= ["CALL#0×1" "CALL#1×2"]
+                     (calls [(tool 0 "cat" "a")
+                             [1
+                              {:forms [(result-form "patch" "b")]
+                               :user-input [{"request" "Also check the lint config."}]}]
+                             (tool 2 "rg" "c")]
+                            summarize?)))))
+    (it "a merged run keeps the delivered message of its head"
+        (let [seen (atom [])]
+          (render-iteration-entries
+            [[0
+              {:forms [(result-form "cat" "a")] :user-input [{"request" "Stop after the tests."}]}]
+             (tool 1 "rg" "c")]
+            (fn [[idx entry]]
+              (swap! seen conj [idx (:user-input entry) (count (:forms entry))])
+              [])
+            false
+            true
+            true)
+          (expect (= [[0 [{"request" "Stop after the tests."}] 2]] @seen))))))
 
 ;; wrap-text* — the plain-text wrap path
 ;;
@@ -11342,3 +11367,190 @@ print(paths)"
                     (expect (= -1 (at "Step timed out")))
                     (expect (< -1 (at "report.html") (at note)))))))
           (expect (= 5 (headers (render false live? {})))))))))
+
+(defdescribe
+  queue-send-now-controls-test
+  ;; "Send now": while a turn runs, the Queued block offers `→ Send now` on its
+  ;; header and an aligned `→` on every markable row. A marked row keeps its place
+  ;; and says `· next step`; a command (`/…`, `!…`) and a local-only row show no `→`;
+  ;; a held queue (no running turn) shows no control at all.
+  (let [settings
+        {:show-thinking true :show-iterations true}
+
+        extra
+        {:now-ms 1700000005000
+         :turn-start-ms 1699999900000
+         :session-id "s1"
+         :session-turn-id "turn-abc12345"
+         :viewport-rows 40}
+
+        pending
+        [{:text "first queued message" :turn-id "t1"} {:text "/help" :turn-id "t2"}
+         {:text "local only" :unsent? true}
+         {:text "third queued message" :turn-id "t3" :deliver "next_iteration"}]
+
+        payload
+        (fn [progress pending-sends more]
+          (render/invalidate-cache!)
+          (render/progress->lines-data progress
+                                       130
+                                       settings
+                                       (merge extra {:pending-sends pending-sends} more)))
+
+        rows
+        (fn [{:keys [lines line-meta]}]
+          (mapv vector lines line-meta))
+
+        row-with
+        (fn [payload needle]
+          (first (filter #(str/includes? (str (first %)) needle) (rows payload))))]
+
+    (it
+      "paints `→ Send now` on the header and a `→` column on markable rows while a turn runs"
+      (let [d
+            (payload {:iterations [{:activity :provider-call}]} pending {})
+
+            [_ hdr-meta]
+            (row-with d "Queued")
+
+            [first-line first-meta]
+            (row-with d "first queued message")
+
+            [cmd-line cmd-meta]
+            (row-with d "/help")
+
+            [local-line local-meta]
+            (row-with d "local only")
+
+            [marked-line marked-meta]
+            (row-with d "third queued message")]
+
+        (expect (= {:session-id "s1" :label "→ Send now"} (:queue-send-all hdr-meta)))
+        ;; One aligned column: `→ 1. ` for a markable row, two spaces otherwise.
+        (expect (str/includes? first-line "→ 1. first queued message"))
+        (expect (= {:session-id "s1" :turn-id "t1" :marked? false :deliver "next_iteration"}
+                   (:queue-send first-meta)))
+        (expect (str/includes? cmd-line "  2. /help"))
+        (expect (nil? (:queue-send cmd-meta)))
+        (expect (str/includes? local-line "  3. ⚠ unsent · local only"))
+        (expect (nil? (:queue-send local-meta)))
+        ;; The marked row stays in place, says so, and its `→` undoes the mark.
+        (expect (str/includes? marked-line "→ 4. third queued message · next step"))
+        (expect (= {:session-id "s1" :turn-id "t3" :marked? true :deliver "turn_end"}
+                   (:queue-send marked-meta)))
+        (expect (= " · next step" (:queue-suffix marked-meta)))))
+    (it "drops the header control once every markable row is marked"
+        (let [d
+              (payload {:iterations [{:activity :provider-call}]}
+                       (mapv #(cond-> % (:turn-id %) (assoc :deliver "next_iteration")) pending)
+                       {})
+
+              [_ hdr-meta]
+              (row-with d "Queued")
+
+              [cmd-line cmd-meta]
+              (row-with d "/help")]
+
+          (expect (nil? (:queue-send-all hdr-meta)))
+          ;; A command stays a turn of its own, whatever its `deliver` says.
+          (expect (str/includes? cmd-line "  2. /help"))
+          (expect (nil? (:queue-send cmd-meta)))))
+    (it "paints no control while the queue is held, because no turn runs"
+        (let [d
+              (payload {:iterations []} pending {:queue-paused {:reason "turn_failed"}})
+
+              [hdr-line hdr-meta]
+              (row-with d "Queued")
+
+              [first-line first-meta]
+              (row-with d "first queued message")]
+
+          (expect (str/includes? hdr-line "Queued · paused"))
+          (expect (nil? (:queue-send-all hdr-meta)))
+          (expect (str/includes? first-line "1. first queued message"))
+          (expect (not (str/includes? first-line "→")))
+          (expect (nil? (:queue-send first-meta)))))
+    (it
+      "registers the header control and each `→` as hit regions"
+      (let [d
+            (payload {:iterations [{:activity :provider-call}]} pending {})
+
+            _
+            (do (.reset interactions/hit-map) (.beginFrame interactions/hit-map))
+
+            _
+            (render/draw-chat-bubble!
+              (dummy-text-graphics)
+              {:role :assistant :text "" :prewrapped-lines (:lines d) :line-meta (:line-meta d)}
+              0 2
+              130 {:viewport-top 0 :viewport-h 80})
+
+            _
+            (.commitFrame interactions/hit-map)
+
+            regions
+            (filterv #(contains? #{:queue-send-now :queue-send-all-now} (:kind %))
+              (.current interactions/hit-map))
+
+            by-kind
+            (group-by :kind regions)
+
+            send-all
+            (first (:queue-send-all-now by-kind))
+
+            sends
+            (sort-by :turn-id (:queue-send-now by-kind))]
+
+        (expect (= 1 (count (:queue-send-all-now by-kind))))
+        (expect (= "s1" (:session-id send-all)))
+        (expect (= (count "→ Send now") (long (:width (:bounds send-all)))))
+        ;; One `→` per markable row (t1, t3): not the command, not the local row.
+        (expect (= ["t1" "t3"] (mapv :turn-id sends)))
+        (expect (= ["next_iteration" "turn_end"] (mapv :deliver sends)))
+        ;; The `z` overlay addresses each control once, by the turn it marks.
+        (expect (= [[:queue-send-now "s1" "t1"] [:queue-send-now "s1" "t3"]]
+                   (mapv interactions/label-key sends)))
+        (expect (= [:queue-send-all-now "s1"] (interactions/label-key send-all)))
+        (expect (= 3 (count (interactions/assign-labels regions))))))))
+
+(defdescribe
+  delivered-user-input-test
+  ;; A queued message the running turn received through `→ Send now` paints as
+  ;; ONE bracketed "You" block at the top of the step that read it: the queue
+  ;; header glyph with the delivery meta, the words on the rail, the border.
+  (let [entry
+        (iteration/canonicalize {:iteration 2
+                                 :forms []
+                                 :user-input [{:request "ship it" :queued-turn-id "q1"}
+                                              {:request "/tmp/shot.png\nlook"
+                                               :display-request "\ud83d\uddbc shot.png look"}]})
+
+        lines
+        (format-iteration-entry entry 60 2)
+
+        hdr
+        (str p/MARKER_QUEUE_HDR "You · sent now · step 2")]
+
+    (it "opens with the delivery header, then the words in queue order on the rail"
+        (expect (some #(= hdr %) lines))
+        ;; The display copy (chips, not paths) is what the reader sees; one rail-only
+        ;; row separates two messages.
+        (expect (= [(str p/MARKER_USER_INPUT "ship it") (str p/MARKER_USER_INPUT "")
+                    (str p/MARKER_USER_INPUT "\ud83d\uddbc shot.png look")]
+                   (filterv #(str/starts-with? % p/MARKER_USER_INPUT) lines))))
+    (it "caps the block with the rail border, above the step's own rows"
+        (let [hdr-at
+              (.indexOf ^java.util.List lines hdr)
+
+              border-at
+              (.indexOf ^java.util.List lines (str p/MARKER_QUEUE_BORDER ""))]
+
+          (expect (<= 0 hdr-at))
+          (expect (< hdr-at border-at))))
+    (it "paints no block for a step that received nothing"
+        (let [plain (format-iteration-entry (iteration/canonicalize {:iteration 1 :forms []}) 60 1)]
+          (expect (not-any? #(str/starts-with? % p/MARKER_QUEUE_HDR) plain))
+          (expect (not-any? #(str/starts-with? % p/MARKER_USER_INPUT) plain))))
+    (it "invalidates the live render cache when the messages land"
+        (let [fingerprint @#'render/iteration-fingerprint]
+          (expect (not= (fingerprint entry) (fingerprint (dissoc entry :user-input))))))))

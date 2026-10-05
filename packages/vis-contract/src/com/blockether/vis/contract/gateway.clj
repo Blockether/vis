@@ -132,6 +132,28 @@
         (comp (filter #(get % "x-vis-queue-mirror")) (map #(get % "const")))
         session-event-variants))
 
+(def queued-turn-deliver-values
+  "Delivery modes of a queued turn. `turn_end` starts it as its own turn after the
+   running turn ends; `next_iteration` delivers it into the running turn at its next
+   step."
+  #{"turn_end" "next_iteration"})
+
+(def default-queued-turn-deliver "Delivery mode of a queued turn that nobody marked." "turn_end")
+
+(def queued-turn-deliver-next-iteration
+  "Delivery mode of a queued turn marked to send at the running turn's next step."
+  "next_iteration")
+
+(defn command-request?
+  "True when `text` can run only as its own turn: a slash command (`/name …`) or a
+   bang shell line (`!cmd`, `!&cmd`). The engine dispatches both at turn start, so a
+   delivery into a running turn cannot run them. A bare `!` is prose."
+  [text]
+  (boolean (when (string? text)
+             (let [t (str/triml text)]
+               (or (some? (re-find #"^/[A-Za-z]" t))
+                   (and (str/starts-with? t "!") (not (str/blank? (subs t 1)))))))))
+
 (def view-events
   "Open, patch and close event names for both View kinds."
   (into {}
@@ -162,7 +184,8 @@
    wins over the row, and the event's own content stands in when the row has none,
    so a failure still renders when the lookup races the terminal event. A suspended
    turn reports `needs_input`; a failed one carries `error` from its first error
-   block, the event, or a generic message."
+   block, the event, or a generic message. A queued turn that was sent into the
+   running turn reports `sent` with `into_turn_id` and `iteration`."
   [event fallback-turn-id lookup-turn]
   (let [turn-id
         (or (get event "turn_id") fallback-turn-id)
@@ -186,6 +209,12 @@
 
       (= "cancelled" status)
       (assoc "status" "cancelled")
+
+      ;; A queued turn delivered into the running turn (send now) never starts.
+      (= "sent" status)
+      (merge {"status" "sent"
+              "into_turn_id" (get event "into_turn_id")
+              "iteration" (get event "iteration")})
 
       (or (= "turn.failed" (get event "type")) (= "failed" status))
       (assoc "error"

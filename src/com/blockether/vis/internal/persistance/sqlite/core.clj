@@ -3546,6 +3546,60 @@
                                     :created_at now}
                                    payload)]})))))
 
+(defn db-store-queued-turn-attachments!
+  "Insert one `session_attachment` row per image of a queued message that the human
+   sent into running turn `session-turn-soul-id` (`→ Send now`). The rows stay on
+   that turn's user rail (NULL iteration) and carry `queued_turn_id`, so the turn's
+   own request images never include them. An entry that carries an `:id` is inserted
+   under it, because the step record names the row by that id. Skips an entry whose
+   payload fails to decode. Returns the ids it inserted, in order."
+  [db-info session-turn-soul-id queued-turn-id attachments]
+  (if-not (and (ds db-info)
+               session-turn-soul-id
+               (not (str/blank? (str queued-turn-id)))
+               (seq attachments))
+    []
+    (sqlite-write-tx!
+      db-info
+      (fn [tx-info]
+        (let [soul-id-s
+              (->ref session-turn-soul-id)
+
+              next-version
+              (version-allocator tx-info soul-id-s)
+
+              now
+              (now-ms)]
+
+          (into []
+                (keep
+                  (fn [[position att]]
+                    (when-let [payload (attachment-payload-cols att)]
+                      (let [id (or (not-empty (some-> (:id att)
+                                                      str))
+                                   (str (new-uuid)))]
+                        (execute! tx-info
+                                  {:insert-into :session_attachment
+                                   :values [(merge {:id id
+                                                    :session_turn_soul_id soul-id-s
+                                                    :session_turn_iteration_id nil
+                                                    :tool_call_id nil
+                                                    :queued_turn_id (str queued-turn-id)
+                                                    :position position
+                                                    :kind (or (some-> (:kind att)
+                                                                      name)
+                                                              "image")
+                                                    :media_type (str (:media-type att))
+                                                    :filename (:filename att)
+                                                    :reference (:reference att)
+                                                    :version (next-version (:filename att))
+                                                    :audience (attachments/normalize-audience
+                                                                (:audience att))
+                                                    :created_at now}
+                                                   payload)]})
+                        id))))
+                (map-indexed vector attachments)))))))
+
 (defn db-store-session-turn!
   "Create session_turn_soul + initial session_turn_state (version 0).
 
@@ -3650,6 +3704,9 @@
              :storage-uri (:storage_uri row)
              :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
              :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))}
+      (:queued_turn_id row)
+      (assoc :queued-turn-id (:queued_turn_id row))
+
       (:view_id row)
       (assoc :view-id (:view_id row))
 
@@ -3675,7 +3732,7 @@
                     {:select [:*]
                      :from :session_attachment
                      :where [:and [:= :session_turn_soul_id soul-id-s]
-                             [:= :session_turn_iteration_id nil]]
+                             [:= :session_turn_iteration_id nil] [:= :queued_turn_id nil]]
                      :order-by [[:position :asc]]})))))
 
 (defn db-list-turns-attachments
@@ -3702,8 +3759,40 @@
                                       "WHERE session_turn_soul_id IN ("
                                       (str/join "," (repeat (count ids) "?"))
                                       ") AND session_turn_iteration_id IS NULL "
+                                      "AND queued_turn_id IS NULL "
                                       "ORDER BY session_turn_soul_id ASC, position ASC")]
                                 ids))))))
+
+(defn db-list-queued-turn-attachments
+  "The images of messages that the human sent into a running turn (`→ Send now`),
+   keyed by queued turn id: `{queued-turn-id-string [{:id :source :position :kind
+   :media-type :filename :size :base64} …]}`, each vector ordered by `:position`. A
+   forked session copies these rows, so one queued turn id can own rows of two turns;
+   the oldest copy answers. Missing ids are absent. No ids or no datasource -> `{}`."
+  [db-info queued-turn-ids]
+  (let [ids (->> queued-turn-ids
+                 (keep #(some-> %
+                                str
+                                not-empty))
+                 distinct
+                 vec)]
+    (if-not (and (ds db-info) (seq ids))
+      {}
+      (into {}
+            (map (fn [[queued-turn-id rows]]
+                   (let [soul (:session_turn_soul_id (first rows))]
+                     [queued-turn-id
+                      (into []
+                            (comp (filter #(= soul (:session_turn_soul_id %)))
+                                  (map row->attachment))
+                            (sort-by :position rows))])))
+            (group-by :queued_turn_id
+                      (query-sql! db-info
+                                  (into [(str "SELECT * FROM session_attachment "
+                                              "WHERE queued_turn_id IN ("
+                                              (str/join "," (repeat (count ids) "?"))
+                                              ") ORDER BY rowid ASC")]
+                                        ids)))))))
 
 (defn db-list-iteration-attachments
   "Ordered OUTBOUND tool artifacts persisted for ONE `session_turn_iteration`
@@ -3755,9 +3844,9 @@
    projection, the byte endpoint's own index lookup - must never pay for the
    payload: `SELECT *` over a 20-figure iteration reads megabytes off disk and
    then base64-ENCODES every one of them into a String the caller throws away."
-  [:id :session_turn_soul_id :session_turn_iteration_id :tool_call_id :position :kind :media_type
-   :filename :reference :view_id :live_invocation_id :live_activity_id :version :audience
-   :commentable :storage_uri :size_bytes :transcription :transcription_segments
+  [:id :session_turn_soul_id :session_turn_iteration_id :tool_call_id :queued_turn_id :position
+   :kind :media_type :filename :reference :view_id :live_invocation_id :live_activity_id :version
+   :audience :commentable :storage_uri :size_bytes :transcription :transcription_segments
    [[:case [:= :bytes nil] 0 :else 1] :has_bytes]])
 
 (defn- row->attachment-meta
@@ -3881,8 +3970,9 @@
    session-wide INDEX must not read a session's worth of payload off disk."
   (into [[:a.id :id] [:a.session_turn_soul_id :session_turn_soul_id]
          [:a.session_turn_iteration_id :session_turn_iteration_id] [:a.tool_call_id :tool_call_id]
-         [:a.position :position] [:a.kind :kind] [:a.media_type :media_type] [:a.filename :filename]
-         [:a.reference :reference] [:a.view_id :view_id] [:a.live_invocation_id :live_invocation_id]
+         [:a.queued_turn_id :queued_turn_id] [:a.position :position] [:a.kind :kind]
+         [:a.media_type :media_type] [:a.filename :filename] [:a.reference :reference]
+         [:a.view_id :view_id] [:a.live_invocation_id :live_invocation_id]
          [:a.live_activity_id :live_activity_id] [:a.version :version] [:a.audience :audience]
          [:a.commentable :commentable] [:a.storage_uri :storage_uri]
          [:a.transcription :transcription] [:a.transcription_segments :transcription_segments]
@@ -4312,7 +4402,8 @@
         (fn [tx-info]
           (let [where
                 [:and [:= :session_turn_soul_id (->ref session-turn-soul-id)]
-                 [:= :session_turn_iteration_id nil] [:= :position position]]
+                 [:= :session_turn_iteration_id nil] [:= :queued_turn_id nil]
+                 [:= :position position]]
 
                 segments-json
                 (->segments-json segments)
@@ -4678,6 +4769,9 @@
                         (seq (:council-publications opts))
                         (assoc :council_publications (->blob (:council-publications opts)))
 
+                        (seq (:user-input opts))
+                        (assoc :user_input (->blob (:user-input opts)))
+
                         (and (pos? (long (or (get tokens "input") 0))) (:request-health opts))
                         (assoc :request_health (->blob (:request-health opts)))
 
@@ -4908,6 +5002,27 @@
                       (assoc-in form [:activity :history :id] new-id)
                       form))
                   (<-blob tool-calls)))))
+
+(defn- fork-user-input
+  "The copied iteration's `user_input` BLOB with each stored file id moved to its
+   copy in the fork through `att-id-map`, so the fork's step record names rows of
+   the fork's own session. The original bytes when nothing is remapped."
+  [user-input att-id-map]
+  (let [entries (some-> user-input
+                        <-blob)]
+    (if (and (sequential? entries) (seq att-id-map))
+      (->blob (mapv (fn [entry]
+                      (cond-> entry
+                        (seq (:attachments entry))
+                        (update :attachments
+                                (fn [files]
+                                  (mapv (fn [file]
+                                          (if-let [new-id (get att-id-map (:id file))]
+                                            (assoc file :id new-id)
+                                            file))
+                                        files)))))
+                    entries))
+      user-input)))
 
 (defn db-routing-locked?
   [db sid]
@@ -5143,7 +5258,13 @@
                       atts (query! tx-info
                                    {:select [:*]
                                     :from :session_attachment
-                                    :where [:= :session_turn_soul_id old-soul-s]})]
+                                    :where [:= :session_turn_soul_id old-soul-s]})
+                      ;; Each copy gets its new id first: a copied step record
+                      ;; (`user_input`) names its stored files by id.
+                      att-id-map (into {}
+                                       (map (fn [a]
+                                              [(:id a) (str (new-uuid))]))
+                                       atts)]
 
                   (when soul-row
                     (execute! tx-info
@@ -5171,9 +5292,10 @@
                                :values [(assoc it
                                           :id (get iter-id-map (:id it))
                                           :session_turn_state_id new-ts-id
-                                          :tool_calls (fork-iteration-tool-calls
-                                                        (:tool_calls it)
-                                                        history-id-map))]}))
+                                          :tool_calls (fork-iteration-tool-calls (:tool_calls it)
+                                                                                 history-id-map)
+                                          :user_input (fork-user-input (:user_input it)
+                                                                       att-id-map))]}))
                   ;; Attachments: user-rail rows (nil iteration) always copy; tool-rail
                   ;; rows copy only when their iteration was copied (latest state), with
                   ;; the iteration FK remapped. Skip tool rows from older versions.
@@ -5184,7 +5306,7 @@
                     (execute! tx-info
                               {:insert-into :session_attachment
                                :values [(assoc a
-                                          :id (str (new-uuid))
+                                          :id (get att-id-map (:id a))
                                           :session_turn_soul_id new-turn-soul-id
                                           :session_turn_iteration_id (some-> it-id
                                                                              iter-id-map))]}))))
@@ -5350,6 +5472,9 @@
 
       (:council_publications row)
       (assoc :council-publications (<-blob (:council_publications row)))
+
+      (:user_input row)
+      (assoc :user-input (<-blob (:user_input row)))
 
       (some? (:request_health row))
       (assoc :request-health (<-blob (:request_health row)))

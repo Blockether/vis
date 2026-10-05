@@ -214,6 +214,8 @@
       (http/error-response 404 :turn-not-found "unknown turn" :turn_id tid))))
 
 (defn- update-queued-turn-handler
+  "PATCH /sessions/:sid/turns/:tid — change a queued turn's text (`request`), its
+   delivery mode (`deliver`: `turn_end` or `next_iteration`), or both."
   [request]
   (let [sid
         (http/path-sid request)
@@ -221,14 +223,25 @@
         tid
         (path-tid request)
 
+        body
+        (http/body-json request)
+
+        changes
+        (cond-> {}
+          (contains? body "request")
+          (assoc :request (get body "request"))
+
+          (contains? body "deliver")
+          (assoc :deliver (get body "deliver")))
+
         result
-        (if sid
-          (state/update-queued-turn! sid tid (get (http/body-json request) "request"))
-          {:error :turn-not-found})]
+        (if sid (state/update-queued-turn! sid tid changes) {:error :turn-not-found})]
 
     (cond (:turn result) (http/json-response (:turn result))
           (= :turn-not-found (:error result))
           (http/error-response 404 :turn-not-found "unknown turn" :turn_id tid)
+          (= :invalid-request (:error result))
+          (http/error-response 400 :invalid-request (:message result) :turn_id tid)
           :else (http/error-response 409
                                      (or (:error result) :not-queued)
                                      (or (:message result) "turn is not queued")
@@ -325,6 +338,15 @@
   (let [sid (http/path-sid request)]
     (if (and sid (state/soul sid))
       (http/json-response {:turn (state/resume-queue! sid {:auto? false})})
+      (http/session-404 (get-in request [:path-params :sid])))))
+
+(defn- send-queue-now-handler
+  "POST /sessions/:sid/queue/send-now — mark every queued turn for delivery into the
+   running turn at its next step. Returns `{:marked [...] :skipped [...]}`."
+  [request]
+  (let [sid (http/path-sid request)]
+    (if (and sid (state/soul sid))
+      (http/json-response (state/send-queue-now! sid))
       (http/session-404 (get-in request [:path-params :sid])))))
 
 (defn- turn-trace-handler
@@ -488,4 +510,5 @@
    [:post "/v1/sessions/:sid/turns/:tid/cancel"] cancel-turn-handler
    [:post "/v1/sessions/:sid/cancel-current"] cancel-current-turn-handler
    [:post "/v1/sessions/:sid/drain-queue"] drain-idle-handler
-   [:post "/v1/sessions/:sid/resume-queue"] resume-queue-handler})
+   [:post "/v1/sessions/:sid/resume-queue"] resume-queue-handler
+   [:post "/v1/sessions/:sid/queue/send-now"] send-queue-now-handler})

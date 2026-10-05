@@ -27,11 +27,12 @@
   (mapv str "asdfghjklqwertyuiopzxcvbnm"))
 
 (defn label-key
-  "Stable identity for keyboard-addressable transcript disclosures and live cards.
-   A card's border, padding and content rows share one target, an Activity
-   paging rule is addressed by the record and cursor it would fetch, and its
-   search rule by the record it would search, and a path by the file it opens.
-   Other artifacts do not."
+  "Stable identity for keyboard-addressable transcript disclosures, live cards and
+   queue controls. A card's border, padding and content rows share one target, an
+   Activity paging rule is addressed by the record and cursor it would fetch, and its
+   search rule by the record it would search, and a path by the file it opens. A
+   queue row's `→` is addressed by the queued turn it marks, the header's `→ Send
+   now` by its session. Other artifacts do not."
   [region]
   (case (:kind region)
     :toggle-details
@@ -52,6 +53,12 @@
     (when (:live-card? region)
       [:artifact (:session-id region) (get-in region [:artifact :iteration-id])
        (get-in region [:artifact :index])])
+
+    :queue-send-now
+    [:queue-send-now (:session-id region) (:turn-id region)]
+
+    :queue-send-all-now
+    [:queue-send-all-now (:session-id region)]
 
     nil))
 
