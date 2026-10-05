@@ -3892,25 +3892,18 @@
       nil)))
 
 (defn- extension-action-rows
-  "Refresh reads the catalog alone; reload runs trusted extension code where Settings applies.
-   Both are buttons on one row."
+  "The Extensions header holds one button. It runs trusted extension code again where
+   Settings applies, then reads the catalog again."
   []
-  [{:type :section :label "Extensions"}
-   {:type :buttons
-    :buttons
-    [{:type :action
-      :id :extensions-refresh
-      :label "Refresh list"
-      :short-label "Refresh"
-      :description "Read the settings catalog again. This does not run extension code."}
-     {:type :action
-      :id :extensions-reload
-      :label "Reload extensions"
-      :short-label "Reload"
-      :description
-      (if *settings-target*
-        "Run trusted machine and project extension code again. Stored settings stay unchanged."
-        "Run trusted machine extension code again. Stored settings stay unchanged.")}]}])
+  [{:type :section
+    :label "Extensions"
+    :button {:type :action
+             :id :extensions-reload
+             :label "Reload"
+             :description (str (if *settings-target*
+                                 "Run trusted machine and project extension code again."
+                                 "Run trusted machine extension code again.")
+                               " Then read the settings again. Stored settings stay unchanged.")}}])
 
 (defn- extension-settings-rows
   "The Extensions section: its actions, then one subsection for each extension in catalog
@@ -4156,10 +4149,12 @@
   values)
 
 (defn- settings-selectable?
-  [{:keys [type]}]
-  (contains? #{:toggle :choice :action :buttons :agent-name :text-setting :number-setting
-               :structured-setting :set-toggle :registry-toggle :mcp :provider}
-             type))
+  [{:keys [type button]}]
+  (or (contains? #{:toggle :choice :action :agent-name :text-setting :number-setting
+                   :structured-setting :set-toggle :registry-toggle :mcp :provider}
+                 type)
+      ;; A section header with a button takes the selection like a setting.
+      (and (= :section type) (some? button))))
 
 (defn- first-selectable-index
   [rows]
@@ -4168,74 +4163,40 @@
                            rows))
       0))
 
-(defn- settings-button-focus
-  "Keep a button `focus` inside the `buttons` of one row."
-  ^long [buttons focus]
-  (p/clamp (long focus) 0 (max 0 (dec (count buttons)))))
-
 (defn- settings-focused-row
-  "The row that Enter, a click and F1 use: the focused button of a button row, else `row`."
-  [{:keys [type buttons] :as row} focus]
-  (if (= :buttons type) (nth buttons (settings-button-focus buttons focus)) row))
+  "The row that Enter, a click and F1 use: the button of a section header, else `row`."
+  [row]
+  (or (:button row) row))
 
-(defn- settings-move-button
-  "Move the focus of a button row by `step`, and stop at the first and last button.
-   Other rows keep `focus`."
-  [{:keys [type buttons]} focus step]
-  (if (= :buttons type) (settings-button-focus buttons (+ (long focus) (long step))) focus))
-
-(defn- settings-button-layout
-  "Place `buttons` on one row from column `x` within `width` columns. Try the full labels,
-   then the short labels, with 2 columns between buttons as in the action bar of a form.
-   Then try the short labels with 1 column, and last cut each short label to an equal
-   share. Returns one `{:x :label}` map for each button."
-  [buttons x width]
-  (let [n
-        (count buttons)
+(defn- settings-section-layout
+  "Fit a section header into its rule of `width` columns from column `x`. A header button keeps
+   its whole label before two closing rule characters, and the section label gives way first.
+   Returns the label to show, and with room for a button also `:button {:x :end :label}` with an
+   exclusive `:end`."
+  [{:keys [label button]} x width]
+  (let [x
+        (long x)
 
         width
         (long width)
 
-        row-width
-        (fn [labels ^long gap]
-          (+ (* gap (max 0 (dec n))) (long (reduce + 0 (map #(+ 2 (p/display-width %)) labels)))))
+        ;; `── `, one label column and ` ─ ` stand before the button. Its padding and ` ──`
+        ;; take 5 more columns.
+        room
+        (- width 12)
 
-        full
-        (mapv :label buttons)
+        text
+        (when (and button (pos? room)) (ellipsize (:label button) room))
 
-        short-labels
-        (mapv #(or (:short-label %) (:label %)) buttons)
+        end
+        (- (+ x width) 3)
 
-        [labels gap]
-        (or (first (filter (fn [[labels gap]]
-                             (<= (long (row-width labels gap)) width))
-                           [[full 2] [short-labels 2] [short-labels 1]]))
-            (let [share (max 1 (- (quot (- width (max 0 (dec n))) (max 1 n)) 2))]
-              [(mapv #(ellipsize % share) short-labels) 1]))]
+        button-x
+        (when text (- end 2 (long (p/display-width text))))]
 
-    (loop [labels
-           (seq labels)
-
-           col
-           (long x)
-
-           placed
-           []]
-
-      (if-let [label (first labels)]
-        (recur (next labels)
-               (+ col 2 (p/display-width label) (long gap))
-               (conj placed {:x col :label label}))
-        placed))))
-
-(defn- settings-button-at
-  "The index of the button under a pointer press, or nil when the press hits no button."
-  [buttons ^MouseAction key x width]
-  (let [col (long (.getColumn (.getPosition key)))]
-    (first (keep-indexed (fn [i {bx :x label :label}]
-                           (let [bx (long bx)]
-                             (when (and (<= bx col) (< col (+ bx 2 (p/display-width label)))) i)))
-                         (settings-button-layout buttons x width)))))
+    (cond-> {:label (ellipsize label (max 0 (if button-x (- (long button-x) x 6) (- width 2))))}
+      button-x
+      (assoc :button {:x button-x :end end :label text}))))
 
 (defn- settings-initial-index
   "Focus a section's first setting, or its header when the section is empty."
@@ -4264,11 +4225,11 @@
               :else (recur (p/clamp (+ idx delta) 0 (dec n))))))))
 
 (defn- settings-page-selection
-  "Move by painted settings lines, skipping headings and wrapped descriptions."
+  "Move by painted settings lines, skipping wrapped descriptions and headings without a button."
   [rows entries selected visible-h direction]
   (let [selectable?
         (fn [{:keys [row-idx part]}]
-          (and (= part :option) (settings-selectable? (nth rows row-idx))))
+          (and (contains? #{:option :section} part) (settings-selectable? (nth rows row-idx))))
 
         options
         (filterv selectable? entries)
@@ -4815,38 +4776,34 @@
           (when (Double/isFinite (double number)) number)))))
 
 (defn- settings-extension-action!
-  "Refresh the catalog, or first run trusted extension code again, and report the result."
-  [^TerminalScreen screen g region reload?]
+  "Run trusted extension code again, then read the settings catalog again, and report the
+   result."
+  [^TerminalScreen screen g region]
   (let [region (host-band-region screen region)]
-    (band-question-frame! g region (if reload? "Reloading extensions…" "Refreshing list…") [])
+    (band-question-frame! g region "Reloading extensions…" [])
     (frame/refresh! screen)
-    (try
-      (let [{:strs [loaded failed]} (when reload?
-                                      (vis/gateway-reload-extensions! *settings-target*))
-            {:keys [status error]} (load-settings-inventory!)
-            failed (long (or failed 0))
-            counts (when reload? (str (or loaded 0) " loaded, " failed " failed."))]
+    (try (let [{:strs [loaded failed]} (vis/gateway-reload-extensions! *settings-target*)
+               {:keys [status error]} (load-settings-inventory!)
+               failed (long (or failed 0))
+               counts (str (or loaded 0) " loaded, " failed " failed.")]
 
-        (mini-note!
-          screen
-          g
-          region
-          (cond reload? "Extensions reloaded"
-                (= :error status) "List not refreshed"
-                :else "List refreshed")
-          (cond (= :error status)
-                (str/join " " (remove nil? [counts (str "Settings unavailable: " error)]))
-                reload? (str counts (when (pos? failed) " Each failed extension shows its error."))
-                :else "No extension code ran.")))
-      (catch Exception e
-        (mini-note! screen
-                    g
-                    region
-                    "Extensions not reloaded"
-                    (if (and (= 404 (:http-status (ex-data e)))
-                             (= "not-found" (get-in (ex-data e) ["error" "type"])))
-                      "This gateway does not support extension reload. Update Vis on that machine."
-                      (ex-message e)))))))
+           (mini-note! screen
+                       g
+                       region
+                       "Extensions reloaded"
+                       (cond (= :error status) (str counts " Settings unavailable: " error)
+                             (pos? failed) (str counts " Each failed extension shows its error.")
+                             :else counts)))
+         (catch Exception e
+           (mini-note!
+             screen
+             g
+             region
+             "Extensions not reloaded"
+             (if (and (= 404 (:http-status (ex-data e)))
+                      (= "not-found" (get-in (ex-data e) ["error" "type"])))
+               "This gateway does not support extension reload. Update Vis on that machine."
+               (ex-message e)))))))
 
 (defn- activate-unlocked-row!
   [^TerminalScreen screen g region values callbacks row]
@@ -4917,11 +4874,8 @@
 
     :action
     (case (:id row)
-      :extensions-refresh
-      (settings-extension-action! screen g region false)
-
       :extensions-reload
-      (settings-extension-action! screen g region true)
+      (settings-extension-action! screen g region)
 
       (when-let [f (get callbacks (:id row))]
         ;; An action paints its transient in the current Settings frame.
@@ -5023,9 +4977,6 @@
                               {:row-idx idx :part :info-line :text line})
                             (settings-wrap-lines description desc-w)))
 
-                :buttons
-                [{:row-idx idx :part :buttons}]
-
                 [{:row-idx idx :part :option}]))
             (range)
             rows)))
@@ -5034,25 +4985,9 @@
 
 (defn- settings-row-search-text
   "Lowercased haystack for a row's search match: its label + description, and those of
-   its buttons."
-  [{:keys [label description source buttons]}]
-  (str/lower-case
-    (str/join " " (into [label description source] (mapcat (juxt :label :description)) buttons))))
-
-(defn- settings-search-focus
-  "The first button of a button row that `query` finds, or 0. Enter then runs the
-   button that the search found."
-  [rows query]
-  (let [q (str/lower-case (str/trim (str query)))]
-    (or (when-not (str/blank? q)
-          (some (fn [{:keys [type buttons]}]
-                  (when (= :buttons type)
-                    (first (keep-indexed (fn [i button]
-                                           (when (str/includes? (settings-row-search-text button) q)
-                                             i))
-                                         buttons))))
-                rows))
-        0)))
+   its header button."
+  [{:keys [label description source button]}]
+  (str/lower-case (str/join " " [label description source (:label button) (:description button)])))
 
 (defn- filter-settings-rows
   "Live-filter settings `rows` by `query` (case-insensitive substring over
@@ -5126,7 +5061,8 @@
                   (:label (nth rows start))]
 
               {:label label
-               :count (count (filter settings-selectable? (subvec rows start end)))
+               ;; The count covers the settings, not a button in the section header.
+               :count (count (filter settings-selectable? (subvec rows (inc (long start)) end)))
                :start start
                :end end
                :active? (<= start selected (dec (long end)))}))
@@ -5276,9 +5212,8 @@
      :pane-width (if split? (- inner-w rail-w 1) inner-w)}))
 
 (defn- settings-pointer-target
-  "Map a primary pointer press to a painted setting, button or section scroll target."
-  [key rows entries scroll
-   {:keys [split? left rail-w pane-left pane-width list-top visible-h toc option-x option-w]}]
+  "Map a primary pointer press to a painted setting, header button or section scroll target."
+  [key rows entries scroll {:keys [split? left rail-w pane-left pane-width list-top visible-h toc]}]
   (or (when split?
         (when-let [offset (mouse-row-offset key
                                             (inc (long left))
@@ -5288,12 +5223,18 @@
           {:kind :toc :row-idx (settings-initial-index rows (:label (nth toc offset)))}))
       (when-let [offset (mouse-row-offset key (inc (long pane-left)) list-top pane-width visible-h)]
         (let [entry-idx (+ (long scroll) (long offset))]
-          (when-let [{:keys [row-idx]} (get entries entry-idx)]
-            (let [{:keys [type buttons] :as row} (nth rows row-idx)]
-              (if (= :buttons type)
-                ;; A press beside the buttons of a button row runs nothing.
-                (when-let [button (settings-button-at buttons key option-x option-w)]
-                  {:kind :setting :row-idx row-idx :button button})
+          (when-let [{:keys [row-idx part]} (get entries entry-idx)]
+            (let [row (nth rows row-idx)]
+              (if (= :section (:type row))
+                ;; A press on a section header runs its button only on the button itself.
+                (when-let [{:keys [x end]} (when (= :section part)
+                                             (:button (settings-section-layout
+                                                        row
+                                                        (+ (long pane-left) 2)
+                                                        (- (long pane-width) 2))))]
+                  (let [col (long (.getColumn (.getPosition ^MouseAction key)))]
+                    (when (and (<= (long x) col) (< col (long end)))
+                      {:kind :setting :row-idx row-idx})))
                 (when (settings-selectable? row) {:kind :setting :row-idx row-idx}))))))))
 
 (defn settings-dialog!
@@ -5304,8 +5245,8 @@
    wheel and paging cross section boundaries. Sidebar clicks scroll to a section.
    Enter or a primary pointer click changes a setting. F1 opens its description,
    source and inherited-value action. Search matches the whole catalog, including
-   descriptions hidden from the list. Left and Right move between the buttons of a
-   button row.
+   descriptions hidden from the list. A section header can hold one button, such as
+   Reload under Extensions.
 
    `settings` is the persisted TUI settings map (see
    `state/default-settings`). `callbacks` also carries `:focus-section` (a
@@ -5366,10 +5307,6 @@
 
              query
              (atom "")
-
-             ;; The focused button of a button row. Left and Right move it.
-             button-focus
-             (atom 0)
 
              ;; One status glyph and a gap precede each compact setting label.
              check-w
@@ -5619,23 +5556,29 @@
 
                     (if (< entry-idx visual-n)
                       (let [{:keys [row-idx part text head?]} (nth entries entry-idx)
-                            {:keys [label tone tag depth buttons]} (nth rows row-idx)
+                            {:keys [label tone tag depth]} (nth rows row-idx)
                             option-label (nth labels row-idx)
                             selected? (= row-idx @selected)
                             [mark mark-color] (settings-row-mark (nth rows row-idx) @values)]
 
                         (case part
                           :section
-                          (do (p/set-colors! g t/dialog-border t/dialog-bg)
-                              (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                              (p/put-str! g (+ lleft 2) row-y (settings-section-text label paint-w))
-                              (p/set-fg! g t/dialog-hint-key)
-                              (p/styled g
-                                        [p/BOLD]
-                                        (p/put-str! g
-                                                    (+ lleft 5)
-                                                    row-y
-                                                    (ellipsize label (max 0 (- paint-w 4))))))
+                          (let [{shown :label button :button} (settings-section-layout
+                                                                (nth rows row-idx)
+                                                                (+ lleft 2)
+                                                                (- paint-w 2))]
+                            (p/set-colors! g t/dialog-border t/dialog-bg)
+                            (p/fill-rect! g (inc lleft) row-y paint-w 1)
+                            (p/put-str! g (+ lleft 2) row-y (settings-section-text shown paint-w))
+                            (p/set-fg! g t/dialog-hint-key)
+                            (p/styled g [p/BOLD] (p/put-str! g (+ lleft 5) row-y shown))
+                            ;; A header button stands inside the rule. The selection gives it the
+                            ;; accent fill, as in a confirm dialog.
+                            (when-let [{:keys [x end]} button]
+                              (p/set-colors! g t/dialog-border t/dialog-bg)
+                              (p/put-str! g (dec (long x)) row-y " ")
+                              (p/put-str! g (long end) row-y " ")
+                              (draw-button! g x row-y (:label button) {:is-focused selected?})))
 
                           :subsection
                           (do (p/set-colors! g t/dialog-hint-key t/dialog-bg)
@@ -5663,22 +5606,6 @@
                                           [p/BOLD]
                                           (p/put-str! g desc-x row-y (ellipsize text desc-w)))
                                 (p/put-str! g desc-x row-y (ellipsize text desc-w))))
-
-                          ;; Buttons share one row. The focused button takes the accent fill,
-                          ;; so the row itself takes no selection style.
-                          :buttons
-                          (let [focus (settings-button-focus buttons @button-focus)]
-                            (p/set-colors! g t/dialog-fg t/dialog-bg)
-                            (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                            (doseq [[i {:keys [x] :as button}]
-                                    (map-indexed
-                                      vector
-                                      (settings-button-layout buttons option-x option-w))]
-                              (draw-button! g
-                                            x
-                                            row-y
-                                            (:label button)
-                                            {:is-focused (and selected? (= focus i))})))
 
                           ;; Highlight the setting while its status and value keep their meaning.
                           (p/styled
@@ -5765,19 +5692,14 @@
                                 t/dialog-bg
                                 t/dialog-hint-key
                                 t/dialog-bg)
-                (draw-hint-bar!
-                  g
-                  left
-                  hint-row
-                  inner-w
-                  (let [buttons? (= :buttons (:type (get rows @selected)))]
-                    (cond (and buttons? (< inner-w 50)) [["←/→" "switch"] ["Enter" "run"]
-                                                         ["Esc" "clear/close"]]
-                          (< inner-w 50) [["↑/↓" "scroll"] ["F1" "details"] ["Esc" "clear/close"]]
-                          buttons? [["↑/↓" "scroll"] ["←/→" "switch"] ["Enter" "run"]
-                                    ["F1" "details"] ["Esc" "clear/close"]]
-                          :else [["↑/↓" "scroll"] ["PgUp/PgDn" "scroll"] ["Enter" "change"]
-                                 ["F1" "details"] ["Esc" "clear/close"]])))
+                (draw-hint-bar! g
+                                left
+                                hint-row
+                                inner-w
+                                (if (< inner-w 50)
+                                  [["↑/↓" "scroll"] ["F1" "details"] ["Esc" "clear/close"]]
+                                  [["↑/↓" "scroll"] ["PgUp/PgDn" "scroll"] ["Enter" "change"]
+                                   ["F1" "details"] ["Esc" "clear/close"]]))
                 (when-not paint-only?
                   (.setCursorPosition screen search-cursor)
                   (frame/refresh! screen))
@@ -5795,11 +5717,10 @@
                     (let [key
                           (read-modal-key! screen)
 
-                          ;; Enter and F1 use the focused button of a button row.
+                          ;; Enter and F1 use the button of a section header.
                           selected-row
                           (let [row (get rows @selected)]
-                            (when (settings-selectable? row)
-                              (settings-focused-row row @button-focus)))
+                            (when (settings-selectable? row) (settings-focused-row row)))
 
                           activate-row!
                           (fn [row]
@@ -5857,8 +5778,6 @@
                                                                            :pane-width paint-w
                                                                            :list-top list-top
                                                                            :visible-h visible-h
-                                                                           :option-x option-x
-                                                                           :option-w option-w
                                                                            :toc visible-toc})
                                   scrollbar-interaction? (or was-dragging?
                                                              (and drag (not (.release drag))))]
@@ -5888,11 +5807,9 @@
                                       (when (and pressed (= pressed pointer-target))
                                         (let [row-idx (:row-idx pressed)]
                                           (reset! selected row-idx)
-                                          (when-some [button (:button pressed)]
-                                            (reset! button-focus button))
                                           (when (= :setting (:kind pressed))
-                                            (activate-row! (settings-focused-row (nth rows row-idx)
-                                                                                 @button-focus)))))
+                                            (activate-row! (settings-focused-row (nth rows
+                                                                                      row-idx))))))
                                       (recur))
                                     :else (do (when (= action MouseActionType/DRAG)
                                                 (vreset! pointer-down-target nil))
@@ -5900,13 +5817,10 @@
                           :else
                           (condp = (key-type key)
                             ;; Esc clears an active search first, then closes on the next press.
-                            KeyType/Escape (if (str/blank? @query)
-                                             @values
-                                             (do (reset! query "")
-                                                 (reset! selected 0)
-                                                 (reset! scroll 0)
-                                                 (reset! button-focus 0)
-                                                 (recur)))
+                            KeyType/Escape
+                            (if (str/blank? @query)
+                              @values
+                              (do (reset! query "") (reset! selected 0) (reset! scroll 0) (recur)))
                             KeyType/F1
                             (do (when selected-row
                                   (let [restore!
@@ -5929,15 +5843,6 @@
                             (do (swap! selected #(move-settings-selection rows % -1)) (recur))
                             KeyType/ArrowDown
                             (do (swap! selected #(move-settings-selection rows % 1)) (recur))
-                            ;; Left and Right move between the buttons of a button row.
-                            KeyType/ArrowLeft (do
-                                                (swap! button-focus
-                                                  #(settings-move-button (get rows @selected) % -1))
-                                                (recur))
-                            KeyType/ArrowRight (do
-                                                 (swap! button-focus
-                                                   #(settings-move-button (get rows @selected) % 1))
-                                                 (recur))
                             KeyType/PageUp
                             (do (swap! selected
                                   #(settings-page-selection rows entries % visible-h -1))
@@ -5959,10 +5864,7 @@
                             KeyType/Backspace (do (when (seq @query)
                                                     (swap! query #(subs % 0 (dec (count %))))
                                                     (reset! selected 0)
-                                                    (reset! scroll 0)
-                                                    (reset! button-focus (settings-search-focus
-                                                                           (settings-rows)
-                                                                           @query)))
+                                                    (reset! scroll 0))
                                                   (recur))
                             ;; Any printable character types into the search query (VS Code feel);
                             ;; Enter is the only key that toggles/activates the selected row.
@@ -5971,9 +5873,6 @@
                                                   (do (swap! query str c)
                                                       (reset! selected 0)
                                                       (reset! scroll 0)
-                                                      (reset! button-focus (settings-search-focus
-                                                                             (settings-rows)
-                                                                             @query))
                                                       (recur))
                                                   (recur)))
                             KeyType/Enter (do (when selected-row (activate-row! selected-row))

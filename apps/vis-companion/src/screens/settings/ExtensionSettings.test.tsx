@@ -87,17 +87,18 @@ it('keeps a failed project extension visible and runs its code only on request',
   expect(within(notifier).getByText(/Vis uses the last loaded version/)).toHaveTextContent('NameError: sound');
   expect(within(notifier).getByRole('switch', { name: 'Desktop alerts: on' })).toBeInTheDocument();
 
-  const reads = read.mock.calls.length;
-  await user.click(screen.getByRole('button', { name: 'Refresh list' }));
-  expect(await screen.findByText('List refreshed. No extension code ran.')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Refresh list' })).not.toBeInTheDocument();
+  const button = screen.getByRole('button', { name: 'Reload extensions' });
+  expect(band.querySelector('header')).toContainElement(button);
   expect(reload).not.toHaveBeenCalled();
-  expect(read.mock.calls.length).toBeGreaterThan(reads);
 
-  await user.click(screen.getByRole('button', { name: 'Reload extensions' }));
+  const reads = read.mock.calls.length;
+  await user.click(button);
   expect(
     await screen.findByText('1 loaded, 1 failed. Each failed extension shows its error.'),
   ).toBeInTheDocument();
   expect(reload).toHaveBeenCalledWith({ scope: 'project', target_id: 'p1' });
+  expect(read.mock.calls.length).toBeGreaterThan(reads);
 });
 
 it('keeps matching extensions under Extensions while a search hides the actions', async () => {

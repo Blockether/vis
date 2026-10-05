@@ -604,18 +604,25 @@
 (defn- rgb [^TextColor color] [(.getRed color) (.getGreen color) (.getBlue color)])
 
 (defn- extension-action-calls
-  "Use the Extensions buttons with `keys`, and return the catalog reads and reloads."
-  [keys]
-  (let [calls (atom [])]
-    (with-redefs [vis/gateway-reload-extensions! (fn [scope]
-                                                   (swap! calls conj [:reload scope])
-                                                   {"loaded" 1 "failed" 0})]
-      (with-redefs-fn {#'dlg/load-settings-inventory! (fn []
-                                                        (swap! calls conj [:catalog])
-                                                        {:status :ok})
-                       #'dlg/mini-note! (constantly nil)}
-        #(capture-settings (#'dlg/extension-action-rows) keys)))
-    @calls))
+  "Use the Extensions header button in `rows` with `keys`, and return the catalog reads and
+   reloads."
+  ([keys] (extension-action-calls (#'dlg/extension-action-rows) keys))
+  ([rows keys]
+   (let [calls (atom [])]
+     (with-redefs [vis/gateway-reload-extensions! (fn [scope]
+                                                    (swap! calls conj [:reload scope])
+                                                    {"loaded" 1 "failed" 0})]
+       (with-redefs-fn {#'dlg/load-settings-inventory! (fn []
+                                                         (swap! calls conj [:catalog])
+                                                         {:status :ok})
+                        #'dlg/mini-note! (constantly nil)}
+         #(capture-settings rows keys)))
+     @calls)))
+
+(defn- extension-test-actions
+  "`n` plain action rows whose ids start with `prefix`."
+  [prefix n]
+  (mapv #(hash-map :type :action :id (keyword (str prefix %)) :label (str prefix %)) (range n)))
 
 (defdescribe
   extension-catalog-test
@@ -708,15 +715,16 @@
             (first (filter #(str/includes? % text) lines)))]
 
       (expect (= [[:section "Planning" nil nil] [:registry-toggle "Plans" nil nil]
-                  [:section "Extensions" nil nil] [:buttons nil nil nil]
-                  [:registry-toggle "foundation-mcp" nil nil]
+                  [:section "Extensions" nil nil] [:registry-toggle "foundation-mcp" nil nil]
                   [:registry-toggle "vis-spel" "global" nil]
                   [:registry-toggle "vis-spel/browser" nil 1]]
                  (mapv (juxt :type :label :tag :depth) rows)))
-      (expect (= ["Refresh list" "Reload extensions"]
-                 (mapv :label (:buttons (first (filter #(= :buttons (:type %)) rows))))))
-      (expect (some? (line "Refresh list    Reload extensions")))
-      (expect (= ["Planning" "Extensions"] (mapv :label (#'dlg/settings-toc rows 0))))
+      ;; The one action stands inside the Extensions header rule, not on a row of its own.
+      (expect (= "Reload" (:label (:button (nth rows 2)))))
+      (expect (re-find #"── Extensions ─+  Reload  ──" (str (line "── Extensions"))))
+      ;; The Reload button in the Extensions header is not counted as a setting.
+      (expect (= [["Planning" 1] ["Extensions" 3]]
+                 (mapv (juxt :label :count) (#'dlg/settings-toc rows 0))))
       ;; The choice row is the extension's own row, so its name shows once.
       (expect (= 1 (count (filter #(str/includes? % "foundation-mcp") lines))))
       (expect (re-find #"vis-spel\s+global\s+Auto" (str (line "vis-spel "))))
@@ -753,7 +761,7 @@
       (expect (= ["notifier" "Desktop alerts"] (labels "desktop")))
       (expect (= ["notifier" "Desktop alerts"] (labels "notifier")))
       (expect (= ["broken.py" "Extension failed to load"] (labels "broken")))))
-  (it "refreshes without running extension code and reloads only on request"
+  (it "reloads extension code only from the Extensions header button, then reads the list"
       (let [target
             {:scope :project :target-id "example-project"}
 
@@ -763,6 +771,7 @@
             notes
             (atom [])]
 
+        (expect (= [] (extension-action-calls [:esc])))
         (with-redefs [vis/gateway-reload-extensions! (fn [scope]
                                                        (swap! calls conj [:reload scope])
                                                        {"loaded" 2 "failed" 1})]
@@ -772,77 +781,80 @@
                            #'dlg/mini-note! (fn [_ _ _ title text]
                                               (swap! notes conj [title text]))}
             #(capture-settings (#'dlg/extension-action-rows)
-                               [:enter :right :enter :esc]
+                               [:enter :esc]
                                :callbacks
                                {:settings-target target})))
-        (expect (= [[:catalog] [:reload target] [:catalog]] @calls))
-        (expect (= [["List refreshed" "No extension code ran."]
-                    ["Extensions reloaded"
+        (expect (= [[:reload target] [:catalog]] @calls))
+        (expect (= [["Extensions reloaded"
                      "2 loaded, 1 failed. Each failed extension shows its error."]]
                    @notes))))
-  (it "shows Refresh list and Reload extensions as two buttons on one row"
-      ;; The focused button takes the accent fill. Right moves the focus to Reload.
+  (it "fills the Reload button with the accent only while it is selected"
       (let [capture
-            (capture-settings (#'dlg/extension-action-rows) [:right :esc])
+            (capture-settings (conj (#'dlg/extension-action-rows)
+                                    {:type :action :id :other :label "Other"})
+                              [:down :esc])
 
-            [y refresh-x reload-x]
-            (text-row (cap/frame-text capture 0) "Refresh list" "Reload extensions")
+            [y rule-x reload-x]
+            (text-row (cap/frame-text capture 0) "── Extensions" "Reload")
 
             bg
             (fn [frame x]
               (:bg (get-in frame [y x])))
 
-            before
-            (first (:frames capture))
-
-            after
-            (peek (:frames capture))
-
             accent
             (rgb t/header-active-tab-bg)]
 
-        (expect (< (long refresh-x) (long reload-x)))
-        (expect (= accent (bg before refresh-x)))
-        (expect (not= accent (bg before reload-x)))
-        (expect (= accent (bg after reload-x)))
-        (expect (not= accent (bg after refresh-x)))))
-  (it "moves between the buttons with Left and Right and stops at each end"
-      (expect (= [[:catalog]] (extension-action-calls [:right :left :left :enter :esc])))
-      (expect (= [[:reload nil] [:catalog]] (extension-action-calls [:right :right :enter :esc]))))
-  (it "runs the button that you click"
-      (let [[y _ reload-x] (text-row (cap/frame-text (capture-settings (#'dlg/extension-action-rows)
-                                                                       [:esc]))
-                                     "Refresh list"
-                                     "Reload extensions")]
+        (expect (< (long rule-x) (long reload-x)))
+        (expect (= accent (bg (first (:frames capture)) reload-x)))
+        (expect (not= accent (bg (peek (:frames capture)) reload-x)))))
+  (it "runs Reload when you click the button, not the rest of the header"
+      (let [[y rule-x reload-x]
+            (text-row (cap/frame-text (capture-settings (#'dlg/extension-action-rows) [:esc]))
+                      "── Extensions"
+                      "Reload")
+
+            click
+            (fn [x]
+              [(MouseAction. MouseActionType/CLICK_DOWN 0 (TerminalPosition. x y))
+               (MouseAction. MouseActionType/CLICK_RELEASE 0 (TerminalPosition. x y)) :esc])]
+
+        (expect (= [[:reload nil] [:catalog]] (extension-action-calls (click reload-x))))
+        (expect (= [] (extension-action-calls (click rule-x))))))
+  (it "selects the Reload button that a search finds"
+      (let [rows (into (extension-test-actions "a" 2) (#'dlg/extension-action-rows))]
+        (expect (= [] (extension-action-calls rows [:enter :esc])))
         (expect (= [[:reload nil] [:catalog]]
-                   (extension-action-calls
-                     [(MouseAction. MouseActionType/CLICK_DOWN 0 (TerminalPosition. reload-x y))
-                      (MouseAction. MouseActionType/CLICK_RELEASE 0 (TerminalPosition. reload-x y))
-                      :esc])))))
-  (it "focuses the button that a search finds"
-      (expect (= [[:reload nil] [:catalog]]
-                 (extension-action-calls (concat "reload" [:enter :esc :esc])))))
-  (it "keeps whole short labels in a narrow window"
+                   (extension-action-calls rows (concat "reload" [:enter :esc :esc]))))))
+  (it "pages down from the Reload button instead of a jump back to the top"
+      (let [rows
+            (vec (concat [{:type :section :label "General"}]
+                         (extension-test-actions "a" 10)
+                         (#'dlg/extension-action-rows)
+                         (extension-test-actions "c" 3)))
+
+            entries
+            (vec (map-indexed (fn [i {:keys [type]}]
+                                {:row-idx i :part (if (= :section type) :section :option)})
+                              rows))]
+
+        (expect (< 11 (long (#'dlg/settings-page-selection rows entries 11 3 1))))))
+  (it "keeps the whole Reload button in a narrow window and cuts the section name first"
       (let [frame
             (cap/frame-text (capture-settings (#'dlg/extension-action-rows) [:esc] :cols 48))
 
             [y]
-            (text-row frame " Refresh " " Reload ")]
+            (text-row frame "── Ext…" " Reload  ──")]
 
-        (expect (some? y))
-        (expect (not (str/includes? (nth (str/split-lines frame) y) "…")))
-        (expect (not (str/includes? frame "Refresh list")))))
-  (it "narrows the gap before it cuts a label"
-      (let [buttons
-            (:buttons (second (#'dlg/extension-action-rows)))
-
-            layout
-            #(#'dlg/settings-button-layout buttons 0 %)]
-
-        (expect (= [{:x 0 :label "Refresh list"} {:x 16 :label "Reload extensions"}] (layout 35)))
-        (expect (= [{:x 0 :label "Refresh"} {:x 11 :label "Reload"}] (layout 34)))
-        (expect (= [{:x 0 :label "Refresh"} {:x 10 :label "Reload"}] (layout 18)))
-        (expect (= ["Refre…" "Reload"] (mapv :label (layout 17))))))
+        (expect (some? y))))
+  (it "places the button before two rule characters and cuts the section label first"
+      (let [place #(#'dlg/settings-section-layout (first (#'dlg/extension-action-rows)) 0 %)]
+        ;; `── Extensions ─ ` + ` Reload ` + ` ──` takes 27 columns.
+        (expect (= {:label "Extensions" :button {:x 16 :end 24 :label "Reload"}} (place 27)))
+        (expect (= {:label "Ext…" :button {:x 10 :end 18 :label "Reload"}} (place 21)))
+        (expect (= {:label "…" :button {:x 7 :end 14 :label "Relo…"}} (place 17)))
+        (expect (= {:label "Extensions"} (place 12)))
+        (expect (= {:label "Planning"}
+                   (#'dlg/settings-section-layout {:type :section :label "Planning"} 0 80)))))
   (it "asks for a Vis update when the gateway has no reload route"
       (let [notes (atom [])]
         (with-redefs [vis/gateway-reload-extensions!
@@ -852,7 +864,7 @@
           (with-redefs-fn {#'dlg/load-settings-inventory! (constantly {:status :ok})
                            #'dlg/mini-note! (fn [_ _ _ title text]
                                               (swap! notes conj [title text]))}
-            #(capture-settings (#'dlg/extension-action-rows) [:right :enter :esc])))
+            #(capture-settings (#'dlg/extension-action-rows) [:enter :esc])))
         (expect (= [["Extensions not reloaded"
                      "This gateway does not support extension reload. Update Vis on that machine."]]
                    @notes)))))

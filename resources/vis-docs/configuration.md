@@ -661,28 +661,30 @@ and lifecycle commands remain global-only.
 
 ### Extension settings
 
-The **Extensions** section holds the settings of all extensions. It starts with
-its actions. Each extension with settings then has its own group under its name.
-The `project` tag marks an extension of the current project. The `global` tag
-marks a machine extension. Extensions that ship with Vis have no tag.
+The **Extensions** section holds the settings of all extensions. Each extension
+with settings has its own group under its name. The `project` tag marks an
+extension of the current project. The `global` tag marks a machine extension.
+Extensions that ship with Vis have no tag.
 
-Opening or refreshing Settings never runs extension code. After you add, change
-or remove an extension file, use the **Extensions** section:
+Opening Settings never runs extension code. After you add, change or remove an
+extension file, reload the extensions:
 
-- To read the settings list again, select **Refresh list**.
-- To run the extension files again, select **Reload extensions**.
+- In the TUI, select **Reload** in the **Extensions** header line.
+- In the app, select the round arrows next to the **Extensions** heading.
 
-In global settings, **Reload extensions** reloads machine extensions. In project,
-group or session settings, it also reloads the extensions of that project. Vis
-then shows how many extensions loaded and how many failed.
+Vis runs the extension files again, then reads the settings list again.
+
+In global settings, the reload covers machine extensions. In project, group or
+session settings, it also covers the extensions of that project. Vis then shows
+how many extensions loaded and how many failed.
 
 If an extension fails to load, its group stays in the list and shows the
 error. If a reload fails after an earlier load, Vis keeps using the earlier
 version. The group then says so. Your stored values do not change when an
 extension fails, goes away or loads again.
 
-If the gateway runs an older Vis, **Reload extensions** shows a message. Update
-Vis on that machine to use the action.
+If the gateway runs an older Vis, the reload shows a message. Update Vis on that
+machine to reload extensions.
 
 ## Session titling
 

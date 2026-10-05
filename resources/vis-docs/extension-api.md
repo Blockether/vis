@@ -139,8 +139,8 @@ name. That group also holds the extension's engine choice and its packaged skill
 `global` tag shows where your extension is installed.
 
 If your extension fails to load, the group stays and shows the error. After you change the file,
-select **Reload extensions** in Settings. Opening Settings does not run your code. See [extension
-settings](configuration.md#extension-settings).
+select **Reload** in the **Extensions** header of Settings. Opening Settings does not run your
+code. See [extension settings](configuration.md#extension-settings).
 
 `scopes` accepts any non-empty, duplicate-free subset of `global`, `project`, `group` and `session`.
 Without it, only `global` is permitted. The backend enforces eligibility for writes and resolution,

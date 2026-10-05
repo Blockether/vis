@@ -1,5 +1,6 @@
 import { useId, useState, type ReactNode } from 'react';
-import { Banner, Button, Text } from '../../components/ui';
+import { RefreshIcon } from '../../components/icons';
+import { Banner, IconButton, Text } from '../../components/ui';
 import { GatewayError, type GatewayClient } from '../../lib/gateway';
 import type { SettingsTarget, ToggleGroup } from '../../lib/types';
 import { SettingsPanel } from './SettingsLayout';
@@ -82,9 +83,8 @@ function actionError(error: unknown): string {
 }
 
 /**
- * Every extension section stands under one Extensions heading, after the actions that
- * read them again. Refresh reads the settings catalog again and runs no extension code.
- * Reload runs trusted extension code where these settings apply, then reads the catalog.
+ * Every extension section stands under one Extensions heading. Its reload button runs trusted
+ * extension code where these settings apply, then reads the settings catalog again.
  */
 export function ExtensionsPanel({
   client,
@@ -98,60 +98,57 @@ export function ExtensionsPanel({
   target?: SettingsTarget;
   /** Extension sections in catalog order. */
   groups: ToggleGroup[];
-  /** A search shows only the matching sections, without the actions. */
+  /** A search shows only the matching sections, without the reload button. */
   hasActions?: boolean;
   onRefresh: () => Promise<unknown>;
   /** The setting rows of one extension; the dialog that saves them draws them. */
   renderSettings: (group: ToggleGroup) => ReactNode;
 }) {
-  const [busy, setBusy] = useState<'refresh' | 'reload' | null>(null);
+  const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ kind: 'ok' | 'warn' | 'err'; text: string } | null>(null);
   const scoped = Boolean(target && target.scope !== 'global');
   const headingLevel = scoped ? 3 : 4;
 
-  const run = async (reload: boolean) => {
-    setBusy(reload ? 'reload' : 'refresh');
+  const reload = async () => {
+    setBusy(true);
     setResult(null);
     try {
-      const counts = reload ? await client.reloadExtensions(target) : null;
+      const counts = await client.reloadExtensions(target);
       await onRefresh();
-      setResult(
-        counts
-          ? {
-              kind: counts.failed > 0 ? 'warn' : 'ok',
-              text: `${counts.loaded} loaded, ${counts.failed} failed.${
-                counts.failed > 0 ? ' Each failed extension shows its error.' : ''
-              }`,
-            }
-          : { kind: 'ok', text: 'List refreshed. No extension code ran.' },
-      );
+      setResult({
+        kind: counts.failed > 0 ? 'warn' : 'ok',
+        text: `${counts.loaded} loaded, ${counts.failed} failed.${
+          counts.failed > 0 ? ' Each failed extension shows its error.' : ''
+        }`,
+      });
     } catch (error) {
       setResult({ kind: 'err', text: actionError(error) });
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
   return (
-    <SettingsPanel title="Extensions" headingLevel={headingLevel}>
-      {hasActions && (
-        <div className="flex flex-col gap-3 px-4 py-3">
-          <Text as="p" variant="description">
-            Refresh list reads the settings again. Reload extensions runs trusted{' '}
-            {scoped ? 'machine and project' : 'machine'} extension code again. Stored settings stay
-            unchanged.
-          </Text>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="secondary" density="panel" disabled={busy !== null}
-              onClick={() => void run(false)}>
-              {busy === 'refresh' ? 'Refreshing…' : 'Refresh list'}
-            </Button>
-            <Button type="button" variant="secondary" density="panel" disabled={busy !== null}
-              onClick={() => void run(true)}>
-              {busy === 'reload' ? 'Reloading…' : 'Reload extensions'}
-            </Button>
-          </div>
-          {result && <Banner kind={result.kind}>{result.text}</Banner>}
+    <SettingsPanel
+      title="Extensions"
+      headingLevel={headingLevel}
+      action={
+        hasActions ? (
+          <IconButton
+            variant="quiet"
+            align="trailing"
+            label="Reload extensions"
+            disabled={busy}
+            onClick={() => void reload()}
+          >
+            <RefreshIcon isBusy={busy} className="size-4" />
+          </IconButton>
+        ) : undefined
+      }
+    >
+      {hasActions && result && (
+        <div className="px-4 py-3">
+          <Banner kind={result.kind}>{result.text}</Banner>
         </div>
       )}
       {groups.map((group) => (
