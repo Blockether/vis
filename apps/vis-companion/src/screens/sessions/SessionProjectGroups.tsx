@@ -172,7 +172,7 @@ function NameForm({
 }) {
   return (
     <form
-      className="flex items-center gap-2 border-b border-dialog-edge p-3"
+      className="flex items-center gap-2 border-b border-dialog-edge px-3 py-1.5 mouse:py-1"
       onSubmit={(event) => {
         event.preventDefault();
         if (value.trim() !== '') onCommit();

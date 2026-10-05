@@ -270,6 +270,48 @@ export const Groups: Story = {
   },
 };
 
+// Regression: excess vertical padding made group creation taller than the menu rows.
+export const GroupCreation: Story = {
+  ...Groups,
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    await userEvent.click(
+      await page.findByRole('button', { name: `Actions for groups in ${fixture.root}` }),
+    );
+    const sheet = within(canvasElement.ownerDocument.body).getByRole('dialog', {
+      name: `Groups in ${fixture.name}`,
+    });
+    const newGroup = within(sheet).getByRole('button', { name: 'New group' });
+    const rowHeight = newGroup.getBoundingClientRect().height;
+    await userEvent.click(newGroup);
+    const input = within(sheet).getByRole('textbox', { name: 'Group name' });
+    const form = input.closest('form')!;
+    await expect(input).toHaveFocus();
+    await expect(form).toHaveClass('px-3', 'py-1.5', 'mouse:py-1');
+    await expect(within(sheet).getByRole('button', { name: 'Create' })).toBeDisabled();
+
+    // The browser checks geometry; jsdom checks the spacing and controls above.
+    if (rowHeight > 0) {
+      await expect(form.getBoundingClientRect().height).toBe(rowHeight);
+      const pointer = matchMedia('(width >= 40rem) and (pointer: fine)').matches;
+      for (const control of form.querySelectorAll('input, button')) {
+        const box = control.getBoundingClientRect();
+        await expect(box.height).toBe(pointer ? 28 : 32);
+        await expect(box.left).toBeGreaterThanOrEqual(form.getBoundingClientRect().left);
+        await expect(box.right).toBeLessThanOrEqual(form.getBoundingClientRect().right);
+      }
+    }
+
+    await userEvent.type(input, 'New work');
+    await expect(within(sheet).getByRole('button', { name: 'Create' })).toBeEnabled();
+  },
+};
+
+export const GroupCreationDesktop: Story = {
+  ...GroupCreation,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+};
+
 /** Drag one element onto another the way a desktop pointer does: take hold, hover, drop. */
 function dragOnto(source: HTMLElement, target: HTMLElement) {
   const values = new Map<string, string>();
