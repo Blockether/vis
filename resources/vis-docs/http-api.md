@@ -7,8 +7,8 @@ its tasks.
 ## When to use
 
 - **Your program is not written in Python.** [Authenticate requests](#authenticate-requests).
-  Then follow the page for your task in [Find the requests for a
-  feature](#find-the-requests-for-a-feature).
+  Then open the API page of your feature, for example [Sessions API](sessions-api.md), and select
+  **HTTP** at the top of that page.
 - **You need the exact request and answer formats.** [Get the OpenAPI
   document](#get-the-openapi-document).
 - **A request fails with an error status.** [Handle gateway errors](#handle-gateway-errors).
@@ -70,21 +70,6 @@ An error answer has a JSON body with `error.type` and `error.message`:
 | `401` | The token is missing or not correct. |
 | `426` | The type is `incompatible_protocol`. The client and the gateway have no common protocol. Update the client or the gateway to compatible versions. |
 | Other `4xx` and `5xx` | The feature page of the route explains the `type`. |
-
-## Find the requests for a feature
-
-Each concept page has an API page. The API page shows the Python calls first. To see the same
-steps as HTTP requests, select **HTTP** at the top of the API page.
-
-| Concept | API page |
-|---|---|
-| [Sessions](sessions.md) | [Sessions API](sessions-api.md) |
-| [Context management](context-management.md) | [Context management API](context-management-api.md) |
-| [Project instructions](project-instructions.md) | [Project instructions API](project-instructions-api.md) |
-| [Drafts](drafts.md) | [Drafts API](drafts-api.md) |
-| [Council](council.md) | [Council API](council-api.md) |
-| [Automations](automations.md) | [Automations API](automations-api.md) |
-| [Configuration](configuration.md) | [Configuration API](configuration-api.md) |
 
 ## See also
 

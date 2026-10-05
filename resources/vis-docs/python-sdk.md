@@ -21,8 +21,9 @@ Use this guide for installation and task examples.
   functions](#give-the-agent-your-functions) without installing an extension.
 - **Conversations must outlive your script or appear in the Vis app.** [Connect to a
   gateway](#connect-to-a-gateway-and-run-a-task).
-- **Your program must work with sessions, Council, automations or settings.** [Find the calls for a
-  feature](#find-the-calls-for-a-feature).
+- **Your program must work with sessions, Council, automations or settings.** Read [Sessions
+  API](sessions-api.md), [Council API](council-api.md), [Automations API](automations-api.md) or
+  [Configuration API](configuration-api.md).
 
 For a program in another language, read [HTTP API](http-api.md).
 
@@ -482,21 +483,6 @@ a transport from a mixture of gateway and process options. Use the complete
 installed wrapper, not a bare native binary without its Python sidecar. Each
 client and its session handles use one calling thread.
 `conversation.delete()` is a separate, destructive operation.
-
-## Find the calls for a feature
-
-Each concept page has an API page. The API page shows the Python calls first. To see the same
-steps as HTTP requests, select **HTTP** at the top of the API page.
-
-| Concept | API page |
-|---|---|
-| [Sessions](sessions.md) | [Sessions API](sessions-api.md) |
-| [Context management](context-management.md) | [Context management API](context-management-api.md) |
-| [Project instructions](project-instructions.md) | [Project instructions API](project-instructions-api.md) |
-| [Drafts](drafts.md) | [Drafts API](drafts-api.md) |
-| [Council](council.md) | [Council API](council-api.md) |
-| [Automations](automations.md) | [Automations API](automations-api.md) |
-| [Configuration](configuration.md) | [Configuration API](configuration-api.md) |
 
 ## See also
 
