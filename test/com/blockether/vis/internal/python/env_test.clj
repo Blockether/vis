@@ -358,7 +358,8 @@
              (finally (ep/forget-session-defs! sid) (io/delete-file file true)))))))
 
 ;; #317: an extension result is a record whose class exists for that result alone.
-;; It comes back after a restart, with the runtime types inside it.
+;; It comes back after a restart, with the runtime types inside it. A small result
+;; keeps its type too, because a literal names only the base type.
 (defdescribe
   session-defs-restart-record-test
   (it "restores extension records into a fresh sandbox"
@@ -392,6 +393,29 @@
                                             "print(type(res).__name__, [i.number for i in res], "
                                             "meta['state'], type(meta) is __VisDict__, "
                                             "type(kept['all'][0]).__name__)"))))))
+               (finally (ep/forget-session-defs! sid) (io/delete-file file true))))))
+  (it "keeps the type of small results after a restart"
+      (doseq [worker? [false true]]
+        (let [sid (str "vis-test-defs-small-" (random-uuid))
+              file (io/file (paths/sandbox-defs-file sid))]
+
+          (try (tpc/with-own
+                 [ctx {} nil {:worker? worker?}]
+                 (expect (nil? (:error (ep/run-python-block
+                                         ctx
+                                         (str "small = __vis_typed_result__({'state': 'open'})\n"
+                                              "rows = __VisResultList__([small])\n"
+                                              "title = __VisResultStr__('Snapshot types')\n")))))
+                 (expect (some? (ep/persist-session-defs! ctx sid))))
+               (ep/forget-session-defs! sid)
+               (tpc/with-own [ctx {} nil {:worker? worker?}]
+                             (expect (= 0 (ep/restore-session-defs! ctx sid)))
+                             (expect (= "__VisDict__ open __VisResultList__ open __VisResultStr__\n"
+                                        (:stdout (ep/run-python-block
+                                                   ctx
+                                                   (str "print(type(small).__name__, small.state, "
+                                                        "type(rows).__name__, rows[0].state, "
+                                                        "type(title).__name__)"))))))
                (finally (ep/forget-session-defs! sid) (io/delete-file file true)))))))
 
 (defdescribe
