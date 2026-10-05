@@ -39,4 +39,29 @@
                       (when (= "s1" sid) {:provider "openai-codex" :model "gpt-6-luna"}))]
 
         (let [label (get-in (first (model-footer/segments {:session {:id "s1"}} 0)) [:ast 2 2 2])]
-          (expect (str/includes? label "openai-codex/gpt-6-luna"))))))
+          (expect (str/includes? label "openai-codex/gpt-6-luna")))))
+  ;; A project can also define a provider or a model that the global fleet does not
+  ;; list. The footer showed the global default model in place of that pair.
+  (it "names a default pair that the global fleet does not list"
+      (with-redefs [vis/get-router
+                    (constantly {:providers [{:id :anthropic-coding-plan
+                                              :is-default true
+                                              :default-model "claude-opus-5-5"
+                                              :models [{:name "claude-opus-5-5"}]}
+                                             {:id :openai-codex
+                                              :default-model "gpt-6-astra"
+                                              :models [{:name "gpt-6-astra"}]}]})
+
+                    vis/gateway-session-model-cached
+                    (constantly nil)
+
+                    vis/gateway-session-default-model-cached
+                    (fn [sid]
+                      (get {"s1" {:provider "openai-codex" :model "gpt-6-luna"}
+                            "s2" {:provider "project-llm" :model "local-1"}}
+                           sid))]
+
+        (let [label (fn [sid]
+                      (get-in (first (model-footer/segments {:session {:id sid}} 0)) [:ast 2 2 2]))]
+          (expect (str/includes? (label "s1") "openai-codex/gpt-6-luna"))
+          (expect (str/includes? (label "s2") "project-llm/local-1"))))))

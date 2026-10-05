@@ -26,7 +26,11 @@
 (defn fetch!
   [sid]
   (let [enabled?
-        (try (true? (get (vis/setting "subagents") "enabled")) (catch Exception _ false))
+        ;; Subagents accepts project, group and session overrides, and the session's
+        ;; turns use its resolved value (issue #311). The global value can differ.
+        (try (true? (get (vis/setting "subagents" {:scope "session" :target-id (str sid)})
+                         "enabled"))
+             (catch Exception _ false))
 
         result
         (if enabled?

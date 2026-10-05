@@ -28,7 +28,7 @@
             (atom 0)]
 
         (with-redefs [vis/setting
-                      (fn [id]
+                      (fn [id _target]
                         (expect (= "subagents" id))
                         {"enabled" @enabled})
 
@@ -49,11 +49,26 @@
           (team/fetch! "experimental-team")
           (expect (not (team/enabled? "experimental-team")))
           (expect (= 1 @requests)))
-        (with-redefs [vis/setting (fn [_]
+        (with-redefs [vis/setting (fn [& _]
                                     (throw (java.io.IOException. "offline")))]
           (team/fetch! "experimental-team")
           (expect (not (team/enabled? "experimental-team")))))))
 
+(defdescribe subagents-follow-the-session-scope-test
+             ;; Regression, issue #311: a project `.vis/config.yml` overlay can turn Subagents on
+             ;; for its sessions. The team header read the GLOBAL value instead.
+             (it "reads Subagents for the session, not the global value"
+                 (let [reads (atom [])]
+                   (with-redefs [vis/setting (fn [id target]
+                                               (swap! reads conj [id target])
+                                               {"enabled" (= "session" (:scope target))})
+                                 vis/request! (fn [& _]
+                                                {:status 200 :body "[]"})]
+
+                     (team/fetch! "project-session")
+                     (expect (team/enabled? "project-session"))
+                     (expect (= [["subagents" {:scope "session" :target-id "project-session"}]]
+                                @reads))))))
 (defdescribe read-errors-are-recoverable-test
              (it "read errors are recoverable"
                  (doseq [response [{:status 503} {:status 200 :body "not json"}

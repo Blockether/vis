@@ -2880,12 +2880,30 @@
   "Resolved model map for the default that session `sid` routes to without a
    pin. A project `.vis/config.yml` overlay can set that default (issue #311),
    so the session's own gateway answer comes first. The global router default is
-   the fallback before that answer arrives."
+   the fallback before that answer arrives.
+
+   The answer names an exact pair. A project can define a provider or a model that
+   the global fleet does not list. Such a pair keeps its own names, without
+   capability data. It never changes to another listed model."
   [router sid]
-  (or (when-let [{:keys [provider model]} (some-> sid
-                                                  gateway-session-default-model-cached)]
-        (resolve-model-info router provider model))
-      (resolve-effective-model router)))
+  (let [{:keys [provider model]}
+        (some-> sid
+                gateway-session-default-model-cached)
+
+        provider-id
+        (some-> provider
+                keyword)
+
+        wanted
+        (some-> model
+                str
+                not-empty)]
+
+    (if (and provider-id wanted)
+      (let [entry (some #(when (= provider-id (:id %)) %) (:providers router))]
+        (assoc (or (some #(when (= wanted (model-name %)) %) (:models entry)) {:name wanted})
+          :provider provider-id))
+      (resolve-effective-model router))))
 
 (defn reasoning-effort-configurable? [model] (not (false? (:reasoning-effort? model))))
 
