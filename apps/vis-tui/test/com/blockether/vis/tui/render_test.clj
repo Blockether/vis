@@ -10753,6 +10753,123 @@ print(paths)"
           (expect (nil? error))
           (expect (= #{{:kind :file :session-id "fixture" :url "src/example.clj"}} targets))))))
 
+;; Regression, user report: digest and Activity durations must end in the same terminal column.
+(defdescribe
+  digest-duration-alignment-test
+  (let [row-text
+        #(apply str (map :ch %))
+
+        right-col
+        #(last (keep-indexed (fn [col cell]
+                               (when-not (str/blank? (str (:ch cell))) col))
+                             %))
+
+        painted
+        (fn [width live? open? duration-ms runs]
+          (let [row
+                {:id "read-1"
+                 :sequence 1
+                 :operation "cat"
+                 :signal "observation"
+                 :state "succeeded"
+                 :summary "src/a_long_directory/example.clj"
+                 :duration-ms duration-ms
+                 :presentation
+                 {:headline "Read" :summary "src/a_long_directory/example.clj" :content []}}
+
+                entries
+                (#'render/trace-render-entries
+                 {:iterations [{:forms [{:code "read_source()"
+                                         :duration-ms duration-ms
+                                         :activity {:rows [row]}
+                                         :runs runs}]}]
+                  :content-w (- width 4)
+                  :bubble-w width
+                  :live? live?
+                  :session-id "alignment"
+                  :session-turn-id "turn"
+                  :detail-expansions (if open? {:vis.channel-tui/expand-all-details? true} {})
+                  :settings {}})]
+
+            (cap/capture! {:cols (+ width 10)
+                           :rows 40
+                           :paint! (fn [{:keys [g]}]
+                                     (render/draw-chat-bubble! g
+                                                               {:role :assistant
+                                                                :prewrapped-lines (mapv :line
+                                                                                        entries)
+                                                                :line-meta (mapv :meta entries)}
+                                                               0
+                                                               7
+                                                               width
+                                                               {:viewport-h 40}))})))]
+
+    (it
+      "aligns open and closed digests with Activity at every terminal width"
+      (doseq [width
+              [32 40 80 120]
+
+              live?
+              [false true]
+
+              duration-ms
+              [45 1400 65000]
+
+              :let [opened
+                    (painted width live? true duration-ms [])
+
+                    closed
+                    (painted width live? false duration-ms [])
+
+                    activity-row
+                    (first (filter #(str/includes? (row-text %) "Read") (first (:frames opened))))
+
+                    duration
+                    (vis/format-duration duration-ms)]]
+
+        (expect (nil? (:error opened)))
+        (expect (nil? (:error closed)))
+        (expect (some? activity-row))
+        (expect (not-any? #(str/includes? (row-text %) "Read") (first (:frames closed))))
+        (expect (= (+ 7 width -3) (right-col activity-row)))
+        (doseq [[capture mark]
+                [[opened "▾"] [closed "▸"]]
+
+                :let [digest-row
+                      (first (filter #(re-find #"[▸▾] 1 observation" (row-text %))
+                                     (first (:frames capture))))]]
+
+          (expect (some? digest-row))
+          (expect (str/starts-with? (str/trim (row-text digest-row)) mark))
+          (expect (str/ends-with? (str/trimr (row-text digest-row)) duration))
+          (expect (= (right-col activity-row) (right-col digest-row))))))
+    (it "keeps the live label before the right-aligned duration"
+        (doseq [width
+                [24 32 80]
+
+                live?
+                [false true]
+
+                open?
+                [false true]
+
+                :let [capture
+                      (painted width
+                               live?
+                               open?
+                               1400
+                               [{:view-id "build-1" :title "Build" :lines 1}
+                                {:view-id "build-2" :title "Build" :lines 1}])
+
+                      digest-row
+                      (first (filter #(str/includes? (row-text %) "2 live")
+                                     (first (:frames capture))))]]
+
+          (expect (nil? (:error capture)))
+          (expect (some? digest-row))
+          (expect (str/ends-with? (str/trimr (row-text digest-row)) "1.4s"))
+          (expect (= (+ 7 width -3) (right-col digest-row)))))))
+
 ;; Progress notes are the only visible separators of a turn's work: the steps after each note
 ;; fold into one digest row, live and after the turn finishes. The digest adds up their cost,
 ;; and an open digest shows their thinking, code and Activity.

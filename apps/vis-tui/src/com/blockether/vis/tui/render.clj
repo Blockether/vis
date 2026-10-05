@@ -8541,6 +8541,12 @@
                      :node-id node-id
                      :collapsed? (not open?)
                      :status-tone tone}
+              duration
+              (assoc :headline-prefix
+                text :right-suffix
+                duration :right-inset
+                2)
+
               live
               (assoc :digest-live
                 (assoc live
