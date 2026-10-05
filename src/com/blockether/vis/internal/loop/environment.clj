@@ -675,11 +675,12 @@
                   ;; PROMPT-CACHE STABILITY: the standing `session = {…}` block rides
                   ;; in the cached system prefix and is normally frozen across turns.
                   ;; State changes ride as appended `session[...] = …` deltas. A large
-                  ;; fold deliberately rebases this block to the current materialized
-                  ;; session, bounding the delta chain while spending a cache miss that
-                  ;; compaction already made useful. The latest fresh terminal persists
-                  ;; this exact block and baseline so a quick restart can retain the same
-                  ;; provider prefix; stale checkpoints render a fresh canonical block.
+                  ;; fold rebases this block to the current materialized session in the
+                  ;; request that the fold already rewrites, which bounds the delta chain
+                  ;; without a second cache miss at the next turn. The latest fresh
+                  ;; terminal persists this exact block and baseline so a quick restart
+                  ;; can retain the same provider prefix; stale checkpoints render a
+                  ;; fresh canonical block.
                   :standing-ctx-atom (atom (:standing-ctx persisted-prompt-cache-state))
                   :state-atom state-atom
                   ;; The session's sandbox, unbuilt until something enters Python.

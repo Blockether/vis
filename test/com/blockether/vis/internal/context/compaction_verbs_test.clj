@@ -1388,37 +1388,41 @@
 
 (defdescribe
   fold-session-card-test
-  (it "a real fold crossing 200k rebases the snapshot and emits a full same-turn delta"
-      (let [ctx
-            (atom {"session_turn" 2
-                   "engine_iter_universe" ["t1/i1" "t1/i2"]
-                   "engine_iter_weights" {"t1/i1" 120000 "t1/i2" 80000}
-                   "engine_utilization" {"auto_compress_above" 200000}})
+  (it
+    "a real fold crossing 200k rebases the snapshot without a same-turn delta"
+    (let [ctx
+          (atom {"session_turn" 2
+                 "engine_iter_universe" ["t1/i1" "t1/i2"]
+                 "engine_iter_weights" {"t1/i1" 120000 "t1/i2" 80000}
+                 "engine_utilization" {"auto_compress_above" 200000}})
 
-            rebase
-            (atom {:reclaimed-tokens 0 :pending? false})
+          rebase
+          (atom {:reclaimed-tokens 0 :pending? false})
 
-            standing
-            (atom {:block "old cached prefix" :baseline {"old" true}})
+          standing
+          (atom {:block "old cached prefix" :baseline {"old" true}})
 
-            current
-            {"turn" 2 "workspace" {"root" "/repo"}}
+          current
+          {"turn" 2 "workspace" {"root" "/repo"}}
 
-            sf
-            (get (compaction-verbs ctx rebase) 'fold-session)]
+          sf
+          (get (compaction-verbs ctx rebase) 'fold-session)]
 
-        ;; Invoke the same bound verb used by real Python/native fold_session calls.
-        (sf ["t1/i1"] "first large fold")
-        (expect (= {:reclaimed-tokens 120000 :pending? false} @rebase))
-        (sf ["t1/i2"] "second large fold")
-        (expect (= {:reclaimed-tokens 200000 :pending? true} @rebase))
-        ;; Invoke the exact iteration-end transition used after that tool result.
-        (let [delta (rebase-session-context! standing rebase current)]
-          (expect (= {:reclaimed-tokens 0 :pending? false} @rebase))
-          (expect (= current (:baseline @standing)))
-          (expect (str/includes? (:block @standing) "session ="))
-          (expect (str/includes? delta "session[\"turn\"] = 2"))
-          (expect (str/includes? delta "session[\"workspace\"]")))))
+      ;; Invoke the same bound verb used by real Python/native fold_session calls.
+      (sf ["t1/i1"] "first large fold")
+      (expect (= {:reclaimed-tokens 120000 :pending? false} @rebase))
+      (sf ["t1/i2"] "second large fold")
+      (expect (= {:reclaimed-tokens 200000 :pending? true} @rebase))
+      ;; Invoke the exact iteration-end transition used after that tool result.
+      (let [snapshot (rebase-session-context! standing rebase current)]
+        (expect (= {:reclaimed-tokens 0 :pending? false} @rebase))
+        (expect (= snapshot @standing))
+        (expect (= current (:baseline @standing)))
+        (expect (str/includes? (:block @standing) "session ="))
+        (expect (str/includes? (:block @standing) "\"workspace\""))
+        ;; Without a pending rebase, the standing snapshot stays as it is.
+        (expect (nil? (rebase-session-context! standing rebase {"turn" 3})))
+        (expect (= current (:baseline @standing))))))
   (it
     "a broader re-fold charges only scopes newly visible since the earlier fold"
     ;; Multiple `fold_session` calls can happen before the next provider projection

@@ -21,15 +21,15 @@
 (def ^:private SESSION_REBASE_RECLAIMED_TOKENS 200000)
 
 (defn rebase-session-context!
-  "Materialize `cur` as both the same-turn full delta and next-turn standing
-   snapshot when a fold crossed the rebase threshold. Returns nil otherwise."
+  "Materialize `cur` as the standing snapshot when a fold crossed the rebase
+   threshold. The caller sends this block in the system prefix of the request
+   that the fold already rewrites. Returns the new snapshot, or nil otherwise."
   [standing-ctx-atom session-rebase-atom cur]
   (when (and cur
              (true? (:pending? (some-> session-rebase-atom
                                        deref))))
-    (reset! standing-ctx-atom {:block (ctx-renderer/render-ctx-map cur) :baseline cur})
     (reset! session-rebase-atom {:reclaimed-tokens 0 :pending? false})
-    (ctx-renderer/render-ctx-delta {} cur)))
+    (reset! standing-ctx-atom {:block (ctx-renderer/render-ctx-map cur) :baseline cur})))
 
 (defn durable-context-snapshot
   "Normalize both in-turn checkpoints and terminal context snapshots for resume."

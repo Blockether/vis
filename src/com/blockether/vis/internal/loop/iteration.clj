@@ -1933,11 +1933,15 @@
                                      deref))
                   (ctx-loop/render-block! environment ctx-renderer/ctx-static-map)))
 
+        stable-prompt-messages-for
+        (fn [session-context]
+          (prompt/assemble-stable-prompt-messages environment
+                                                  {:system-prompt system-prompt
+                                                   :active-extensions active-exts
+                                                   :session-context session-context}))
+
         stable-prompt-messages
-        (prompt/assemble-stable-prompt-messages environment
-                                                {:system-prompt system-prompt
-                                                 :active-extensions active-exts
-                                                 :session-context static-context-str})
+        (stable-prompt-messages-for static-context-str)
 
         ;; Image attachments: paths of readable image files mentioned in the
         ;; user message (terminal drop pastes the path) become multimodal
@@ -2067,10 +2071,27 @@
                                            :image-descriptions initial-image-descriptions})
 
         ;; The canonical base is the stable system prefix alone: the trailer
-        ;; carries the conversation, earlier turns included.
+        ;; carries the conversation, earlier turns included. A large fold rebases
+        ;; the standing block inside the turn. The canonical rewrite that the fold
+        ;; forces carries the new block, so the next turn keeps the same prefix.
+        canonical-stable-atom
+        (atom [static-context-str stable-prompt-messages])
+
         canonical-messages
         (fn []
-          (vec stable-prompt-messages))
+          (let [session-context
+                (or (:block (some-> standing-ctx-atom
+                                    deref))
+                    static-context-str)
+
+                [built-for messages]
+                @canonical-stable-atom]
+
+            (if (= session-context built-for)
+              (vec messages)
+              (let [messages (stable-prompt-messages-for session-context)]
+                (reset! canonical-stable-atom [session-context messages])
+                (vec messages)))))
 
         summaries-at-turn-start
         (transcript/current-session-summaries environment)
@@ -2900,12 +2921,13 @@
 (defn- apply-result
   "Applies the iteration result. Answers the turn's final result, or
    `{::next-state loop-state}` to run the next iteration from `loop-state`."
-  [{:keys [accounting-atom cancel-atom compact-trailer council-input council-trailer
-           effective-messages emit-hook! environment goal-at-turn-start iteration iteration-result
-           last-context-atom loop-state max-context-tokens messages note-prompt-cache-status!
-           on-chunk pre-resolved-model prompt-cache-status-atom reasoning-effort request-budget-atom
-           resolved-model session-turn-id stable-prompt-messages standing-ctx-atom trace trace-store
-           trailer-iters turn-position turn-pricing user-input user-request]}]
+  [{:keys [accounting-atom cancel-atom canonical-messages compact-trailer council-input
+           council-trailer effective-messages emit-hook! environment goal-at-turn-start iteration
+           iteration-result last-context-atom loop-state max-context-tokens message-base-atom
+           messages note-prompt-cache-status! on-chunk pre-resolved-model prompt-cache-status-atom
+           reasoning-effort request-budget-atom resolved-model session-turn-id
+           stable-prompt-messages standing-ctx-atom trace trace-store trailer-iters turn-position
+           turn-pricing user-input user-request]}]
   (if-let [iteration-error-data (::loop-errors/iteration-error iteration-result)]
     ;; Cancellation short-circuit. When the user pressed Esc
     ;; mid-call, `cancel!` flipped the flag BEFORE
@@ -3377,9 +3399,18 @@
                     (when (and cur (or rebase? (not= cur prev)))
                       (reset! last-context-atom cur)
                       (if rebase?
-                        (compaction/rebase-session-context! standing-ctx-atom
-                                                            (:session-rebase-atom environment)
-                                                            cur)
+                        ;; The fold already forces a canonical rewrite. Carry the
+                        ;; rebased block in its system prefix, not as a full delta,
+                        ;; so the next turn starts from the same cached prefix.
+                        (do (compaction/rebase-session-context! standing-ctx-atom
+                                                                (:session-rebase-atom environment)
+                                                                cur)
+                            (reset! message-base-atom {:messages (canonical-messages)
+                                                       :summaries
+                                                       (transcript/current-session-summaries
+                                                         environment)
+                                                       :resumed? false})
+                            nil)
                         (do
                           ;; carry the baseline ACROSS turns so the next turn
                           ;; diffs against the last-emitted state, not a re-render.

@@ -10219,6 +10219,80 @@
         (expect (= 20000 (get-in @ctx-atom ["engine_utilization" "last_request_tokens"])))
         (expect (= 10000 (get-in @ctx-atom ["engine_utilization" "model_input_limit"])))))))
 
+(defdescribe
+  session-rebase-prompt-prefix-test
+  ;; Regression: a large fold rebased the standing session block only at the next
+  ;; turn start, so that turn changed its stable prefix and missed the prompt cache.
+  (it
+    "carries the rebased session block in the fold request and keeps it next turn"
+    (let [router
+          (svar/make-router [{:id :lmstudio
+                              :base-url "http://127.0.0.1:1234/v1"
+                              :api-key "test"
+                              :models [{:name "model" :input-limit 50000}]}])
+
+          environment
+          (loop-env/create-environment router {:db :memory})
+
+          requests
+          (atom [])
+
+          texts
+          (fn [messages]
+            (filter string? (tree-seq coll? seq messages)))
+
+          system-prefix
+          (fn [messages]
+            (filterv #(= "system" (:role %)) messages))
+
+          delta-count
+          (fn [messages]
+            (->> (texts (remove #(= "system" (:role %)) messages))
+                 (map #(count (re-seq #"session\[\"" %)))
+                 (reduce + 0)))
+
+          run-turn!
+          (fn [request]
+            (iteration/iteration-loop environment
+                                      request
+                                      {:session-turn-id (persistance/db-store-session-turn!
+                                                          (:db-info environment)
+                                                          {:parent-session-id (:session-id
+                                                                                environment)
+                                                           :user-request request})}))]
+
+      (try (with-redefs [svar/ask-code!
+                         (fn [_ opts]
+                           (let [idx (count (swap! requests conj (:messages opts)))]
+                             ;; The first iteration folds enough settled work to rebase.
+                             (when (= 1 idx)
+                               (swap! (:session-rebase-atom environment) assoc :pending? true))
+                             (merge {:api-usage {:input-tokens 1000 :output-tokens 1}
+                                     :routed/provider-id :lmstudio
+                                     :routed/model "model"
+                                     :tokens {}}
+                                    (if (= 1 idx)
+                                      {:stop-reason :tool-calls
+                                       :tool-calls [{:id "call-1"
+                                                     :name "python_execution"
+                                                     :input {:code "print('settled evidence')"}}]}
+                                      {:stop-reason :end :tool-calls [] :content "done"}))))]
+             (run-turn! "fold settled work")
+             (run-turn! "continue"))
+           (let [[first-request fold-request next-turn]
+                 @requests
+
+                 block
+                 (:block @(:standing-ctx-atom environment))]
+
+             (expect (= 3 (count @requests)))
+             (expect (not= (system-prefix first-request) (system-prefix fold-request)))
+             (expect (some #(str/includes? % block) (texts (system-prefix fold-request))))
+             ;; The new block replaces the full same-turn delta.
+             (expect (= (delta-count first-request) (delta-count fold-request)))
+             (expect (= (system-prefix fold-request) (system-prefix next-turn))))
+           (finally (loop-env/dispose-environment! environment))))))
+
 (defn- overflow-loop-scenario
   "Exercise overflow handling, Python execution and the following provider request."
   [{:keys [carried responses request-estimate]}]
