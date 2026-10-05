@@ -340,10 +340,10 @@
 
 (defdescribe
   cache-breakpoints-test
-  "The four prompt-cache breakpoints: the last `:role \"system\"` message (the
-   frozen `session={…}` prefix) plus the three trailing transcript messages, so a
-   request's read anchor lands exactly where its predecessor wrote. The 1-hour
-   tier is asked for only on a route measured to honour it."
+  "The four prompt-cache breakpoints: the last shared `:role \"system\"` message
+   (before the per-session `session = {…}` block) plus the three trailing transcript
+   messages, so a request's read anchor lands exactly where its predecessor wrote. The
+   1-hour tier is asked for only on a route measured to honour it."
   (let [apply-bp
         @#'transcript/apply-cache-breakpoints
 
@@ -373,6 +373,19 @@
           (expect (cached? (nth out 5)))
           (expect (cached? (nth out 6))) ; moving recency
           (expect (= 4 (count (filter cached? out))))))
+    (it "anchors before the session context, so other sessions reuse the system prefix"
+        (let [session-context (cr/render-ctx-map {"session_id" "s-1"})]
+          (expect (cr/session-context-text? session-context))
+          (doseq [content [session-context [{:type "text" :text session-context}]]]
+            (let [out (apply-bp [{:role "system" :content "core"}
+                                 {:role "system" :content "extensions"}
+                                 {:role "system" :content content} {:role "user" :content "task"}]
+                                :anthropic-coding-plan)]
+              (expect (not (cached? (nth out 0))))
+              (expect (cached? (nth out 1))) ; last shared system block
+              (expect (not (cached? (nth out 2)))) ; per-session block rides after the anchor
+              (expect (cached? (nth out 3))) ; the transcript anchor covers it
+              (expect (= 2 (count (filter cached? out))))))))
     (it "never spends more than Anthropic's four breakpoints"
         (let [msgs (into [{:role "system" :content "s"}]
                          (map (fn [i]

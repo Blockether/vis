@@ -112,12 +112,22 @@
       (get-in m ["env" "host" "clock"])
       (update-in ["env" "host"] dissoc "clock"))))
 
+(def SESSION_CONTEXT_HEADER
+  "Opening line of every rendered session context block. The block names one
+   session and workspace, so prompt-cache placement keeps it after the shared anchor."
+  "```python\n# Your live session context (read-only — never reassign `session`).\n")
+
+(defn session-context-text?
+  "True when `s` is a rendered session context block."
+  [s]
+  (and (string? s) (str/starts-with? s SESSION_CONTEXT_HEADER)))
+
 (defn render-ctx-map
   "Render an already-materialized model-facing session map as the fenced Python
    baseline block. Used when a large fold deliberately rebases cached context."
   [m]
   (when (seq m)
-    (str "```python\n" "# Your live session context (read-only — never reassign `session`).\n"
+    (str SESSION_CONTEXT_HEADER
          "# The host keeps it current; mid-session changes arrive as later\n"
          "# `session[...] = …` / `del session[...]` lines. Tool results live in `r`, not here.\n"
          "session = " (env/ctx->python-str m)
@@ -133,7 +143,7 @@
   [{:keys [ctx warnings]}]
   (let [m (project-ctx-static (eng/session-view ctx warnings))]
     (when (seq m)
-      (str "```python\n" "# Your live session context (read-only — never reassign `session`).\n"
+      (str SESSION_CONTEXT_HEADER
            "# The host keeps it current; mid-session changes arrive as later\n"
            "# `session[...] = …` / `del session[...]` lines. Tool results live in `r`, not here.\n"
            "session = " (env/ctx->python-str m)

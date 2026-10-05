@@ -18,6 +18,7 @@
             [com.blockether.vis.internal.context.engine :as ctx-engine]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.context.prompt :as prompt]
+            [com.blockether.vis.internal.context.renderer :as ctx-renderer]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.loop.errors :as loop-errors]
             [com.blockether.vis.internal.persistance.core :as persistance]
@@ -2298,9 +2299,9 @@
    `python_execution`, whose final wire schema is fingerprinted separately by Svar."
   [provider]
   (let [{:keys [strategy ttl]} (provider-prompt-cache provider)]
-    {:version 1
+    {:version 2
      :strategy strategy
-     :system-anchor :last-system
+     :system-anchor :last-shared-system
      :transcript-anchors TRANSCRIPT_CACHE_BREAKPOINTS
      :ttl ttl}))
 
@@ -2343,6 +2344,15 @@
             m)
           :else m)))
 
+(defn- session-context-message?
+  "True for a message that carries the rendered `session = {…}` block. That block
+   names this session and workspace, so no other session can reuse a prefix through it."
+  [message]
+  (let [content (:content message)]
+    (ctx-renderer/session-context-text? (cond (string? content) content
+                                              (and (sequential? content) (map? (first content)))
+                                              (:text (first content))))))
+
 (defn- cache-breakpoint-indexes
   "Ordered message indexes marked by [[apply-cache-breakpoints]]."
   [messages]
@@ -2352,28 +2362,37 @@
         n
         (count messages)
 
+        system-indexes
+        (keep-indexed (fn [i message]
+                        (when (= "system"
+                                 (some-> (:role message)
+                                         name))
+                          i))
+                      messages)
+
         last-system
-        (last (keep-indexed (fn [i message]
-                              (when (= "system"
-                                       (some-> (:role message)
-                                               name))
-                                i))
-                            messages))
+        (last system-indexes)
+
+        ;; Tools and the system text before the session context are the same for
+        ;; every session with one configuration, so their anchor serves them all.
+        ;; The transcript anchors after it also cover the session context.
+        system-anchor
+        (last (remove #(session-context-message? (nth messages %)) system-indexes))
 
         transcript-from
         (max (long (if last-system (inc (long last-system)) 0))
              (- (long n) (long TRANSCRIPT_CACHE_BREAKPOINTS)))]
 
     (vec (cond->> (range transcript-from n)
-           last-system
-           (cons last-system)))))
+           system-anchor
+           (cons system-anchor)))))
 
 (defn- apply-cache-breakpoints
   "Place the four prompt-cache breakpoints on `messages` for `provider`: the last
-   system-role message (frozen prefix) plus the last [[TRANSCRIPT_CACHE_BREAKPOINTS]]
-   messages after it (moving recency and the
-   previous request's write anchor). Anchors COLLAPSE instead of overlapping, so a
-   system-only first call marks exactly one. No-op on empty."
+   system-role message before the session context (the prefix that sessions share)
+   plus the last [[TRANSCRIPT_CACHE_BREAKPOINTS]] messages after the system messages
+   (moving recency and the previous request's write anchor). Anchors COLLAPSE instead
+   of overlapping, so a system-only first call marks exactly one. No-op on empty."
   [messages provider]
   (let [messages
         (vec messages)
