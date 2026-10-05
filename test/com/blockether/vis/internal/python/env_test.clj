@@ -357,6 +357,43 @@
                          unknown)))
              (finally (ep/forget-session-defs! sid) (io/delete-file file true)))))))
 
+;; #317: an extension result is a record whose class exists for that result alone.
+;; It comes back after a restart, with the runtime types inside it.
+(defdescribe
+  session-defs-restart-record-test
+  (it "restores extension records into a fresh sandbox"
+      (doseq [worker? [false true]]
+        (let [sid (str "vis-test-defs-record-" (random-uuid))
+              file (io/file (paths/sandbox-defs-file sid))]
+
+          (try (tpc/with-own
+                 [ctx {} nil {:worker? worker?}]
+                 (expect (nil? (:error
+                                 (ep/run-python-block
+                                   ctx
+                                   (str
+                                     "issue = {'__vis_object__': 'Issue', '__vis_attrs__': "
+                                     "{'number': 317, 'meta': {'state': 'open'}}}\n"
+                                     "res = __vis_typed_result__({'__vis_object__': 'IssueSearch', "
+                                     "'__vis_sequence_field__': 'results', "
+                                     "'__vis_attrs__': {'results': [issue], 'total': 1}})\n"
+                                     "kept = {'all': [res]}\n")))))
+                 (expect (some? (ep/persist-session-defs! ctx sid))))
+               (ep/forget-session-defs! sid)
+               (tpc/with-own
+                 [ctx {} nil {:worker? worker?}]
+                 (expect (= 0 (ep/restore-session-defs! ctx sid)))
+                 (let [notice (str (ep/take-restore-notice! ctx))]
+                   (expect (not (str/includes? notice "NOT restored")) notice))
+                 (expect (= "IssueSearch [317] open True IssueSearch\n"
+                            (:stdout (ep/run-python-block
+                                       ctx
+                                       (str "meta = res.results[0].meta\n"
+                                            "print(type(res).__name__, [i.number for i in res], "
+                                            "meta['state'], type(meta) is __VisDict__, "
+                                            "type(kept['all'][0]).__name__)"))))))
+               (finally (ep/forget-session-defs! sid) (io/delete-file file true)))))))
+
 (defdescribe
   session-defs-lifecycle-test
   (it
