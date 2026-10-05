@@ -3,8 +3,9 @@
             [lazytest.core :refer [defdescribe describe expect it]]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.dialogs :as dlg]
-            [com.blockether.vis.tui.client :as vis])
-  (:import [com.googlecode.lanterna TerminalPosition]
+            [com.blockether.vis.tui.client :as vis]
+            [com.blockether.vis.tui.theme :as t])
+  (:import [com.googlecode.lanterna TerminalPosition TextColor]
            [com.googlecode.lanterna.input MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]))
 
@@ -592,6 +593,30 @@
         (expect (= ["read-only" "read-write" "none"]
                    (mapv :value (get @menus "Host rules · access")))))))
 
+(defn- text-row
+  "The line and the columns of `texts`, when all of them are on one line of `frame`."
+  [frame & texts]
+  (first (keep-indexed (fn [y ^String line]
+                         (when (every? #(str/includes? line %) texts)
+                           (into [y] (map #(.indexOf line ^String %)) texts)))
+                       (str/split-lines frame))))
+
+(defn- rgb [^TextColor color] [(.getRed color) (.getGreen color) (.getBlue color)])
+
+(defn- extension-action-calls
+  "Use the Extensions buttons with `keys`, and return the catalog reads and reloads."
+  [keys]
+  (let [calls (atom [])]
+    (with-redefs [vis/gateway-reload-extensions! (fn [scope]
+                                                   (swap! calls conj [:reload scope])
+                                                   {"loaded" 1 "failed" 0})]
+      (with-redefs-fn {#'dlg/load-settings-inventory! (fn []
+                                                        (swap! calls conj [:catalog])
+                                                        {:status :ok})
+                       #'dlg/mini-note! (constantly nil)}
+        #(capture-settings (#'dlg/extension-action-rows) keys)))
+    @calls))
+
 (defdescribe
   extension-catalog-test
   ;; #302: a failed extension must remain visible even without registered settings.
@@ -683,11 +708,14 @@
             (first (filter #(str/includes? % text) lines)))]
 
       (expect (= [[:section "Planning" nil nil] [:registry-toggle "Plans" nil nil]
-                  [:section "Extensions" nil nil] [:action "Refresh list" nil nil]
-                  [:action "Reload extensions" nil nil] [:registry-toggle "foundation-mcp" nil nil]
+                  [:section "Extensions" nil nil] [:buttons nil nil nil]
+                  [:registry-toggle "foundation-mcp" nil nil]
                   [:registry-toggle "vis-spel" "global" nil]
                   [:registry-toggle "vis-spel/browser" nil 1]]
                  (mapv (juxt :type :label :tag :depth) rows)))
+      (expect (= ["Refresh list" "Reload extensions"]
+                 (mapv :label (:buttons (first (filter #(= :buttons (:type %)) rows))))))
+      (expect (some? (line "Refresh list    Reload extensions")))
       (expect (= ["Planning" "Extensions"] (mapv :label (#'dlg/settings-toc rows 0))))
       ;; The choice row is the extension's own row, so its name shows once.
       (expect (= 1 (count (filter #(str/includes? % "foundation-mcp") lines))))
@@ -744,7 +772,7 @@
                            #'dlg/mini-note! (fn [_ _ _ title text]
                                               (swap! notes conj [title text]))}
             #(capture-settings (#'dlg/extension-action-rows)
-                               [:enter :down :enter :esc]
+                               [:enter :right :enter :esc]
                                :callbacks
                                {:settings-target target})))
         (expect (= [[:catalog] [:reload target] [:catalog]] @calls))
@@ -752,6 +780,69 @@
                     ["Extensions reloaded"
                      "2 loaded, 1 failed. Each failed extension shows its error."]]
                    @notes))))
+  (it "shows Refresh list and Reload extensions as two buttons on one row"
+      ;; The focused button takes the accent fill. Right moves the focus to Reload.
+      (let [capture
+            (capture-settings (#'dlg/extension-action-rows) [:right :esc])
+
+            [y refresh-x reload-x]
+            (text-row (cap/frame-text capture 0) "Refresh list" "Reload extensions")
+
+            bg
+            (fn [frame x]
+              (:bg (get-in frame [y x])))
+
+            before
+            (first (:frames capture))
+
+            after
+            (peek (:frames capture))
+
+            accent
+            (rgb t/header-active-tab-bg)]
+
+        (expect (< (long refresh-x) (long reload-x)))
+        (expect (= accent (bg before refresh-x)))
+        (expect (not= accent (bg before reload-x)))
+        (expect (= accent (bg after reload-x)))
+        (expect (not= accent (bg after refresh-x)))))
+  (it "moves between the buttons with Left and Right and stops at each end"
+      (expect (= [[:catalog]] (extension-action-calls [:right :left :left :enter :esc])))
+      (expect (= [[:reload nil] [:catalog]] (extension-action-calls [:right :right :enter :esc]))))
+  (it "runs the button that you click"
+      (let [[y _ reload-x] (text-row (cap/frame-text (capture-settings (#'dlg/extension-action-rows)
+                                                                       [:esc]))
+                                     "Refresh list"
+                                     "Reload extensions")]
+        (expect (= [[:reload nil] [:catalog]]
+                   (extension-action-calls
+                     [(MouseAction. MouseActionType/CLICK_DOWN 0 (TerminalPosition. reload-x y))
+                      (MouseAction. MouseActionType/CLICK_RELEASE 0 (TerminalPosition. reload-x y))
+                      :esc])))))
+  (it "focuses the button that a search finds"
+      (expect (= [[:reload nil] [:catalog]]
+                 (extension-action-calls (concat "reload" [:enter :esc :esc])))))
+  (it "keeps whole short labels in a narrow window"
+      (let [frame
+            (cap/frame-text (capture-settings (#'dlg/extension-action-rows) [:esc] :cols 48))
+
+            [y]
+            (text-row frame " Refresh " " Reload ")]
+
+        (expect (some? y))
+        (expect (not (str/includes? (nth (str/split-lines frame) y) "…")))
+        (expect (not (str/includes? frame "Refresh list")))))
+  (it "narrows the gap before it cuts a label"
+      (let [buttons
+            (:buttons (second (#'dlg/extension-action-rows)))
+
+            layout
+            #(#'dlg/settings-button-layout buttons 0 %)]
+
+        (expect (= [{:x 0 :label "Refresh list"} {:x 16 :label "Reload extensions"}] (layout 35)))
+        (expect (= [{:x 0 :label "Refresh"} {:x 11 :label "Reload"}] (layout 34)))
+        (expect (= [{:x 0 :label "Refresh"} {:x 10 :label "Reload"}] (layout 18)))
+        (expect (= ["Refre…" "Reload"] (mapv :label (layout 17))))))
   (it "asks for a Vis update when the gateway has no reload route"
       (let [notes (atom [])]
         (with-redefs [vis/gateway-reload-extensions!
@@ -761,7 +852,7 @@
           (with-redefs-fn {#'dlg/load-settings-inventory! (constantly {:status :ok})
                            #'dlg/mini-note! (fn [_ _ _ title text]
                                               (swap! notes conj [title text]))}
-            #(capture-settings (#'dlg/extension-action-rows) [:down :enter :esc])))
+            #(capture-settings (#'dlg/extension-action-rows) [:right :enter :esc])))
         (expect (= [["Extensions not reloaded"
                      "This gateway does not support extension reload. Update Vis on that machine."]]
                    @notes)))))
