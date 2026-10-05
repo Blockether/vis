@@ -599,9 +599,9 @@ describe('ProviderRows', () => {
   });
 
   it.each([
-    ['another provider', false, ['Refresh', 'Make default', 'Make fallback', 'Sign out']],
-    ['the default provider', true, ['Refresh', 'Make default', 'Sign out']],
-  ] as const)('keeps the row menu verbs short for %s', async (_, is_default, verbs) => {
+    ['another provider', false, ['Make default', 'Refresh', 'Make fallback', 'Sign out']],
+    ['the default provider', true, ['Make default', 'Refresh', 'Sign out']],
+  ] as const)('puts Make default first in the row menu for %s', async (_, is_default, verbs) => {
     render(<ProviderRows auth={state({ providers: [signedIn({ is_default })] })} />);
     fireEvent.click(screen.getByRole('button', { name: 'Actions for GITHUB-COPILOT' }));
     const menu = within(await screen.findByRole('dialog', { name: 'GITHUB-COPILOT actions' }));

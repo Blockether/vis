@@ -1270,15 +1270,6 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
         // carries neither; the default provider cannot also hold the fallback,
         // which is the whole point of a fallback.
         const actions: SwipeAction[] = [];
-        if (authed)
-          actions.push({
-            key: 'refresh',
-            label: 'Refresh',
-            icon: <RefreshIcon isBusy={isProbing} className="size-4" />,
-            onSelect: () => {
-              if (!pending) void auth.recheck(provider.id);
-            },
-          });
         if (provider.models.length > 0)
           actions.push({
             key: 'default',
@@ -1289,6 +1280,15 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
             // in this app wears — the same slab `Primary` has.
             tone: 'accent',
             onSelect: (anchor) => openModels(provider, 'default', anchor),
+          });
+        if (authed)
+          actions.push({
+            key: 'refresh',
+            label: 'Refresh',
+            icon: <RefreshIcon isBusy={isProbing} className="size-4" />,
+            onSelect: () => {
+              if (!pending) void auth.recheck(provider.id);
+            },
           });
         if (provider.models.length > 0 && !provider.is_default)
           actions.push({
