@@ -2720,7 +2720,11 @@
          [])))
 
 (defn- hydrated-turn-trace
-  "Canonical persisted iteration rows for `turn-id`."
+  "Canonical persisted iteration rows for `turn-id`.
+
+   Each iteration carries the same attachment descriptors as the transcript: the
+   human's own list, without bytes. `:iteration_id` and `:index` name the byte
+   endpoint row, so a client loads an earlier step's image from there."
   [db turn-id]
   (let [iters
         (->> (persistance/db-list-session-turn-iterations db turn-id)
@@ -2730,13 +2734,13 @@
         (when (seq iters)
           (try (into {}
                      (map (fn [[iter-id rows]]
-                            [(str iter-id) (attachment-storage/hydrate-all rows)]))
-                     (persistance/db-list-iterations-attachments db (keep :id iters)))
+                            [(str iter-id) (into [] (remove attachments/hidden-from-user?) rows)]))
+                     (persistance/db-list-iterations-attachments-meta db (keep :id iters)))
                (catch Throwable _ {})))]
 
     (wire/canonical (mapv (fn [it]
-                            (if-let [atts (seq (get atts-by-iter (str (:id it))))]
-                              (assoc it :attachments (vec atts))
+                            (if-let [rows (seq (get atts-by-iter (str (:id it))))]
+                              (assoc it :attachments (attachment-descriptors (:id it) rows))
                               it))
                           iters))))
 

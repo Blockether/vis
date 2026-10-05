@@ -5136,12 +5136,12 @@
                    sources))))
 
 (defn- iteration-artifact-rows
-  "Normalize durable produced attachments in byte-endpoint index order."
-  [iteration-id attachments]
+  "Durable document rows from a step's gateway attachment descriptors. Each row
+   opens at the descriptor's own byte-endpoint `iteration_id` and `index`."
+  [attachments]
   (->> attachments
-       (filter #(= "tool" (str (get % "source"))))
-       (keep-indexed
-         (fn [index artifact]
+       (keep
+         (fn [artifact]
            (let [kind
                  (str (get artifact "kind"))
 
@@ -5155,8 +5155,8 @@
                         :media-type media-type
                         :size (get artifact "size")
                         ;; A summarized run's artifact still opens from its own step.
-                        :iteration-id (str (or (::iteration-id artifact) iteration-id))
-                        :index (or (::index artifact) index)}
+                        :iteration-id (str (get artifact "iteration_id"))
+                        :index (get artifact "index")}
                  (get artifact "view_id")
                  (assoc :view-id (get artifact "view_id"))
 
@@ -7325,7 +7325,7 @@
   ;; `show-header?` argument is retained as a no-op for callers; we
   ;; never paint the right-aligned ITERATION N band any more.
   (let [{:keys [thinking content-stream assistant-prose forms recaps provider-fallbacks error
-                repeat-count attachments iteration-id user-input]}
+                repeat-count attachments user-input]}
         entry
 
         ;; Summarized steps share one source and Activity per adjacent Python run;
@@ -7337,7 +7337,7 @@
         ;; recording rows are redundant when an execution already shows RUN.
         ;; With no RUN section, every durable recording remains reachable.
         iteration-artifacts
-        (cond->> (iteration-artifact-rows iteration-id attachments)
+        (cond->> (iteration-artifact-rows attachments)
           (some #(seq (:runs %)) forms)
           (remove (fn [artifact]
                     (and (attach/live-artifact? artifact)
@@ -7596,18 +7596,16 @@
                                       :else (activity-row-tone activity))
                    :elapsed-ms duration-ms
                    :activity-rows (:rows activity)
-                   :activity-artifacts
-                   (into {}
-                         (keep-indexed (fn [index artifact]
-                                         (let [id (get artifact "attachment_id")]
-                                           (when id
-                                             [id
-                                              {:filename (get artifact "filename")
-                                               :media-type (get artifact "media_type")
-                                               :iteration-id (str (or (::iteration-id artifact)
-                                                                      iteration-id))
-                                               :index (or (::index artifact) index)}])))
-                                       (filter #(= "tool" (get % "source")) attachments)))
+                   :activity-artifacts (into {}
+                                             (keep (fn [artifact]
+                                                     (when-let [id (get artifact "attachment_id")]
+                                                       [id
+                                                        {:filename (get artifact "filename")
+                                                         :media-type (get artifact "media_type")
+                                                         :iteration-id (str (get artifact
+                                                                                 "iteration_id"))
+                                                         :index (get artifact "index")}])))
+                                             attachments)
                    :activity-histories (vec (or (seq (:histories activity))
                                                 (when-let [history (:history activity)]
                                                   [history])))
@@ -8483,22 +8481,10 @@
   (filterv #(and (string? %) (not (str/blank? %))) (if (sequential? thinking) thinking [thinking])))
 
 (defn- run-attachments
-  "Attachments of a merged run's steps. Each tool attachment keeps the step and the
-   index its bytes are served under, so an artifact from any step still opens."
+  "Attachments of a merged run's steps. Each gateway descriptor names its own step
+   and byte-endpoint index, so an artifact from any step still opens."
   [entries]
-  (into []
-        (mapcat (fn [{:keys [iteration-id attachments]}]
-                  (let [tool-index
-                        (volatile! -1)
-
-                        stamp
-                        (fn [attachment]
-                          (assoc attachment
-                            ::iteration-id iteration-id
-                            ::index (vswap! tool-index #(inc (long %)))))]
-
-                    (mapv #(cond-> % (= "tool" (str (get % "source"))) stamp) attachments))))
-        entries))
+  (into [] (mapcat :attachments) entries))
 
 (defn- render-iteration-entries
   "Turn the visible `[idx entry]` iteration pairs into painter entries. A MAXIMAL
@@ -8599,11 +8585,11 @@
     (into (mapv (fn [{:keys [view-id reason]}]
                   {:view-id (str view-id) :running? (nil? reason)})
                 runs)
-          (for [{{:keys [iteration-id attachments]} :entry}
+          (for [{{:keys [attachments]} :entry}
                 steps
 
                 artifact
-                (iteration-artifact-rows iteration-id attachments)
+                (iteration-artifact-rows attachments)
 
                 :when (and (attach/live-artifact? artifact)
                            (not (contains? run-ids (:view-id artifact))))]

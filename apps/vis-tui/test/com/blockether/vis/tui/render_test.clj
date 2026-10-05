@@ -6807,9 +6807,9 @@ h = 8"
   produced-attachment-receipt-test
   (let [entry
         {:iteration-id "iteration-1"
-         :attachments [{"source" "tool"
+         :attachments [{"index" 0
+                        "iteration_id" "iteration-1"
                         "tool_call_id" "call-1"
-                        "position" 0
                         "kind" "doc"
                         "media_type" "text/html"
                         "filename" "report.html"
@@ -6858,20 +6858,41 @@ h = 8"
         (expect (not (str/includes? expanded-text "is_pending")))
         (expect (not (str/includes? expanded-text "vis-doc"))))))
 
-(defdescribe
-  produced-attachment-inline-dedup-test
-  (it "keeps inline images out of the durable document card without shifting indexes"
-      (let [rows
-            (@#'render/iteration-artifact-rows
-             "iteration-1"
-             [{"source" "tool" "kind" "image" "media_type" "image/png" "filename" "preview.png"}
-              {"source" "tool" "kind" "doc" "media_type" "text/html" "filename" "report.html"}])]
-        (expect (= [{:filename "report.html"
-                     :media-type "text/html"
-                     :size nil
-                     :iteration-id "iteration-1"
-                     :index 1}]
-                   rows)))))
+(defdescribe produced-attachment-inline-dedup-test
+             (it "keeps inline images out of the durable document card without shifting indexes"
+                 (let [rows (@#'render/iteration-artifact-rows
+                             [{"index" 0
+                               "iteration_id" "iteration-1"
+                               "kind" "image"
+                               "media_type" "image/png"
+                               "filename" "preview.png"}
+                              {"index" 1
+                               "iteration_id" "iteration-1"
+                               "kind" "doc"
+                               "media_type" "text/html"
+                               "filename" "report.html"}])]
+                   (expect (= [{:filename "report.html"
+                                :media-type "text/html"
+                                :size nil
+                                :iteration-id "iteration-1"
+                                :index 1}]
+                              rows))))
+             ;; Regression: the TUI kept only rows with "source" "tool" and numbered them
+             ;; itself. Gateway descriptors have no source, so documents vanished on reload.
+             (it "opens each document at its own gateway descriptor's step and index"
+                 (let [rows (@#'render/iteration-artifact-rows
+                             [{"index" 1
+                               "iteration_id" "iteration-1"
+                               "kind" "doc"
+                               "media_type" "text/html"
+                               "filename" "report.html"}
+                              {"index" 0
+                               "iteration_id" "iteration-2"
+                               "kind" "doc"
+                               "media_type" "text/plain"
+                               "filename" "notes.txt"}])]
+                   (expect (= [["report.html" "iteration-1" 1] ["notes.txt" "iteration-2" 0]]
+                              (mapv (juxt :filename :iteration-id :index) rows))))))
 
 ;; ── A failed turn is a CARD, in the terminal too ──
 ;;
@@ -9874,13 +9895,19 @@ print(paths)"
                                    false))
                              "Stopped"))))
   (it
-    "resolves symbol media in tool-only byte-endpoint order"
+    "resolves symbol media at its gateway descriptor's step and index"
     (let [entry
           (iteration/canonicalize
             {:id "i"
              :position 0
-             :attachments [{"source" "user" "filename" "input.txt"}
-                           {"source" "tool"
+             ;; A merged run lists the descriptors of several steps.
+             :attachments [{"index" 0
+                            "iteration_id" "i0"
+                            "attachment_id" "notes"
+                            "filename" "notes.txt"
+                            "media_type" "text/plain"}
+                           {"index" 0
+                            "iteration_id" "i"
                             "attachment_id" "clip"
                             "filename" "clip.mp4"
                             "media_type" "video/mp4"}]
@@ -9912,7 +9939,8 @@ print(paths)"
           artifacts
           (keep #(get-in % [:meta :artifact]) entries)]
 
-      (expect (some #(and (= "clip.mp4" (:filename %)) (= 0 (:index %))) artifacts)))))
+      (expect (some #(and (= "clip.mp4" (:filename %)) (= "i" (:iteration-id %)) (= 0 (:index %)))
+                    artifacts)))))
 
 (defdescribe activity-summary-markdown-test
              (it "keeps opted-in root and section links through disclosure (#254)"
@@ -10259,7 +10287,8 @@ print(paths)"
       (let [entries
             (format-iteration-entry-entries
               {:iteration-id "iteration-live"
-               :attachments [{"source" "tool"
+               :attachments [{"index" 0
+                              "iteration_id" "iteration-live"
                               "kind" "doc"
                               "filename" "Release.live.ndjson"
                               "media_type" "application/vnd.vis.live+ndjson"
@@ -11304,7 +11333,8 @@ print(paths)"
     (it
       "keeps failures and step errors inside a closed digest, with files visible"
       (let [artifact
-            {"source" "tool"
+            {"index" 0
+             "iteration_id" "i2"
              "kind" "doc"
              "media_type" "text/html"
              "filename" "report.html"

@@ -1295,7 +1295,7 @@
                                    (expect (= tid turn-id))
                                    [{:id (random-uuid) :forms [{:src "attach(page)"}]}])
 
-                                 persistance/db-list-iterations-attachments
+                                 persistance/db-list-iterations-attachments-meta
                                  (constantly {})]
 
                      (expect (= "attach(page)"
@@ -6867,7 +6867,44 @@
             ;; TOTAL: a corrupt payload or a vanished row is a clean nil (404),
             ;; never a decoder exception thrown out of the byte endpoint.
             (expect (nil? (state/attachment-bytes {:base64 "!!! not base64 !!!"})))
-            (expect (nil? (state/attachment-bytes {})))))))))
+            (expect (nil? (state/attachment-bytes {}))))))))
+  ;; Regression: the turn trace shipped raw rows with base64 but without
+  ;; `iteration_id` or `index`, so a client showed an earlier step's image as a
+  ;; bare link. It also listed model-only rows and read every blob.
+  (it
+    "the turn trace ships the same lean descriptors as history"
+    (let [iteration-id
+          (random-uuid)
+
+          rows
+          [{:id "a" :filename "MODEL-ONLY.png" :audience "model" :size 1}
+           {:id "b"
+            :filename "SHOWN.png"
+            :audience "both"
+            :size 2
+            :kind "image"
+            :media-type "image/png"}]
+
+          byte-lister-calls
+          (atom 0)]
+
+      (with-redefs-fn {#'lp/db-info (constantly ::db)
+                       #'persistance/db-list-session-turn-iterations (fn [_ _]
+                                                                       [{:id iteration-id}])
+                       #'persistance/db-list-iterations-attachments (fn [_ _]
+                                                                      (swap! byte-lister-calls inc)
+                                                                      {(str iteration-id) rows})
+                       #'persistance/db-list-iterations-attachments-meta (fn [_ _]
+                                                                           {(str iteration-id)
+                                                                            rows})}
+        (fn []
+          (let [atts (get-in (state/turn-trace (random-uuid) (random-uuid)) [0 "attachments"])]
+            (expect (= ["SHOWN.png"] (mapv #(get % "filename") atts)))
+            (expect (= [0] (mapv #(get % "index") atts)))
+            (expect (= [(str iteration-id)] (mapv #(get % "iteration_id") atts)))
+            (expect (= ["b"] (mapv #(get % "attachment_id") atts)))
+            (expect (not-any? #(contains? % "base64") atts))
+            (expect (zero? @byte-lister-calls))))))))
 
 ;; Regression, issue #112: a GitHub-Copilot stream went silent and the turn failed with
 ;; "Provider stream stalled: no output for 362142ms in phase :provider-call" — the error
