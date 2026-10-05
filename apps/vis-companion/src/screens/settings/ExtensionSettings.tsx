@@ -51,6 +51,11 @@ export function isEngineToggle(toggle: Toggle): boolean {
   return toggle.id.startsWith('engines_');
 }
 
+/** A skill that the extension packages. The gateway gives its row a `skills_` id. */
+function isSkillToggle(toggle: Toggle): boolean {
+  return toggle.id.startsWith('skills_');
+}
+
 /** A packaged skill repeats its extension's name, for example `vis-spel/browser` under `vis-spel`. */
 function memberLabel(group: ToggleGroup, label: string): string {
   const prefix = `${group.title}/`;
@@ -60,7 +65,8 @@ function memberLabel(group: ToggleGroup, label: string): string {
 /**
  * One extension under the Extensions heading. Its first row names it and shows its scope: the
  * Auto/On/Off choice, or only the name when the extension has no such choice. A load error
- * follows, and the other settings stand one step in. The left rail draws the depth.
+ * follows, then the other settings one step in, and last its packaged skills under Skills.
+ * The left rail draws the depth.
  */
 function ExtensionGroup({
   group,
@@ -72,9 +78,12 @@ function ExtensionGroup({
   renderSetting: (toggle: Toggle, head?: SettingHead) => ReactNode;
 }) {
   const headingId = useId();
+  const skillsId = useId();
   const scope = extensionScope(group);
   const engine = group.toggles.find(isEngineToggle);
-  const members = group.toggles.filter((toggle) => toggle !== engine);
+  const members = group.toggles.filter((toggle) => toggle !== engine && !isSkillToggle(toggle));
+  const skills = group.toggles.filter(isSkillToggle);
+  const memberRow = (toggle: Toggle) => renderSetting({ ...toggle, label: memberLabel(group, toggle.label) });
   return (
     <section
       aria-labelledby={headingId}
@@ -96,9 +105,17 @@ function ExtensionGroup({
         </div>
       )}
       <ExtensionNotice group={group} />
-      {members.length > 0 && (
+      {(members.length > 0 || skills.length > 0) && (
         <div className="divide-y divide-dialog-edge ps-3 sm:ps-4">
-          {members.map((toggle) => renderSetting({ ...toggle, label: memberLabel(group, toggle.label) }))}
+          {members.map(memberRow)}
+          {skills.length > 0 && (
+            <section aria-labelledby={skillsId} className="min-w-0">
+              <Text role="heading" aria-level={headingLevel + 1} id={skillsId} variant="meta" className="block px-3 pt-2 sm:px-4">
+                Skills
+              </Text>
+              <div className="divide-y divide-dialog-edge">{skills.map(memberRow)}</div>
+            </section>
+          )}
         </div>
       )}
     </section>

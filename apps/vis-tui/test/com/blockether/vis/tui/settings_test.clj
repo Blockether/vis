@@ -716,7 +716,8 @@
 
       (expect (= [[:section "Planning" nil nil] [:registry-toggle "Plans" nil nil]
                   [:section "Extensions" nil nil] [:registry-toggle "foundation-mcp" nil nil]
-                  [:registry-toggle "vis-spel" "global" nil] [:registry-toggle "browser" nil 1]]
+                  [:registry-toggle "vis-spel" "global" nil] [:subsection "Skills" nil 1]
+                  [:registry-toggle "browser" nil 1]]
                  (mapv (juxt :type :label :tag :depth) rows)))
       ;; The one action stands inside the Extensions header rule, not on a row of its own.
       (expect (= "Reload" (:label (:button (nth rows 2)))))
@@ -731,8 +732,14 @@
       ;; A packaged skill stands one level in from its extension, without its name again.
       (expect (= (+ 2 (long (str/index-of (line "vis-spel ") "vis-spel")))
                  (long (str/index-of (line " browser") "browser"))))
+      ;; The skills of an extension stand under their own label, in line with their marks.
+      (let [head (count (take-while #(not (str/includes? % "vis-spel ")) lines))]
+        (expect (str/includes? (nth lines (inc head)) " Skills "))
+        (expect (str/includes? (nth lines (+ 2 head)) " browser ")))
+      (expect (= (long (str/index-of (line " browser") "●"))
+                 (long (str/index-of (line " Skills ") "Skills"))))
       ;; A search for the whole skill name still finds the shorter row.
-      (expect (= ["Extensions" "vis-spel" "browser"]
+      (expect (= ["Extensions" "vis-spel" "Skills" "browser"]
                  (mapv :label (#'dlg/filter-settings-rows rows "vis-spel/browser"))))
       ;; A narrow pane drops the scope before it cuts a name.
       (let [narrow (str/split-lines (cap/frame-text (capture-settings rows [:esc] :cols 48)))]
@@ -742,7 +749,11 @@
     "keeps the extension name row with the settings that a search finds"
     (let [rows
           (#'dlg/catalog-toggle-rows
-           [{"title" "notifier"
+           [{"title" "vis-spel"
+             "extension" {"name" "vis-spel" "origin" "global" "status" "loaded"}
+             "toggles"
+             [{"id" "skills_1" "label" "vis-spel/browser" "type" "boolean" "enabled" true}]}
+            {"title" "notifier"
              "extension" {"name" "notifier" "origin" "global" "status" "loaded"}
              "toggles"
              [{"id" "engines_1"
@@ -761,9 +772,13 @@
           labels
           #(mapv :label (#'dlg/filter-settings-rows rows %))]
 
+      ;; The Skills label of an earlier extension stays out of a later extension's match.
       (expect (= ["notifier" "Desktop alerts"] (labels "desktop")))
       (expect (= ["notifier" "Desktop alerts"] (labels "notifier")))
-      (expect (= ["broken.py" "Extension failed to load"] (labels "broken")))))
+      (expect (= ["broken.py" "Extension failed to load"] (labels "broken")))
+      ;; A skill keeps its extension and its Skills label.
+      (expect (= ["vis-spel" "Skills" "browser"] (labels "browser")))
+      (expect (= ["vis-spel" "Skills" "browser"] (labels "vis-spel")))))
   (it "reloads extension code only from the Extensions header button, then reads the list"
       (let [target
             {:scope :project :target-id "example-project"}

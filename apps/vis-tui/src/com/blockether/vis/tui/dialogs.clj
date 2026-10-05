@@ -3455,7 +3455,7 @@
   "One extension as settings rows. Its first row is the Auto/On/Off choice of the extension,
    or only its name when it has no such choice. That row carries the install scope. A load
    failure follows it, and the other settings stand one level in, without the extension name
-   in front of their own."
+   in front of their own. Packaged skills come last, under their own Skills label."
   [group rows]
   (let [{:strs [title extension]}
         group
@@ -3484,7 +3484,19 @@
           (let [prefix (str ext-name "/")]
             (if (and (str/starts-with? label prefix) (> (count label) (count prefix)))
               (subs label (count prefix))
-              label)))]
+              label)))
+
+        member-row
+        #(member (-> (catalog-setting-row %)
+                     (update :label member-label)
+                     (assoc :depth 1)))
+
+        ;; The gateway gives a packaged skill a `skills_` id.
+        skill?
+        #(str/starts-with? (str (get % "id")) "skills_")
+
+        others
+        (remove engine? rows)]
 
     (when (or (seq rows) (seq info))
       (concat [(member
@@ -3498,10 +3510,9 @@
                    scope
                    (assoc :tag scope)))]
               (map member info)
-              (map #(member (-> (catalog-setting-row %)
-                                (update :label member-label)
-                                (assoc :depth 1)))
-                   (remove engine? rows))))))
+              (map member-row (remove skill? others))
+              (when (some skill? others) [(member {:type :subsection :label "Skills" :depth 1})])
+              (map member-row (filter skill? others))))))
 
 (defn- catalog-toggle-rows
   "Project the gateway catalog without repeating metadata or reset actions in the list. An
@@ -4949,8 +4960,10 @@
 (defn- settings-option-indent [] t/settings-option-indent)
 
 (defn- settings-subsection-text
+  "A label inside a group, such as the Skills of an extension. It has no status glyph, so it
+   does not read as a setting."
   [label inner-w]
-  (ellipsize (str "◆ " label) (max 0 (- (long inner-w) 2))))
+  (ellipsize (str label) (max 0 (- (long inner-w) 2))))
 
 (defn- settings-wrap-lines
   [s w]
@@ -5032,6 +5045,14 @@
             (fn [i pred]
               (or (first (filter #(and (> (long %) (long i)) (pred (nth rows %))) (range n))) n))
 
+            ;; A subsection inside an extension ends where that extension ends.
+            subsection-end
+            (fn [i]
+              (let [extension-name (:extension-name (nth rows i))]
+                (next-idx i
+                          #(or (settings-header-row? %)
+                               (not= extension-name (:extension-name %))))))
+
             headers
             (for [i
                   (range n)
@@ -5044,7 +5065,7 @@
                     (some matched (range (inc (long i)) (next-idx i #(= :section (:type %)))))
 
                     :subsection
-                    (some matched (range (inc (long i)) (next-idx i settings-header-row?)))
+                    (some matched (range (inc (long i)) (subsection-end i)))
 
                     false)]
 
@@ -5594,14 +5615,17 @@
                               (draw-button! g x row-y (:label button) {:is-focused selected?})))
 
                           :subsection
-                          (do (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                              (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                              (p/styled g
-                                        [p/BOLD]
-                                        (p/put-str! g
-                                                    (+ lleft 2)
-                                                    row-y
-                                                    (settings-subsection-text label paint-w))))
+                          (let [x (+ (long option-x) (* 2 (long (or depth 0))))]
+                            (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                            (p/fill-rect! g (inc lleft) row-y paint-w 1)
+                            (p/styled g
+                                      [p/BOLD]
+                                      (p/put-str! g
+                                                  x
+                                                  row-y
+                                                  (settings-subsection-text
+                                                    label
+                                                    (- (long paint-w) (- x (long lleft) 2))))))
 
                           ;; Prose ABOUT the section (empty state, gateway error): a
                           ;; bold head line plus its own wrapped body, both in the

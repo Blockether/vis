@@ -76,7 +76,7 @@ export const Extensions: Story = {
           toggles: [engine('vis-optmem')] },
         { id: 'extension:vis-spel', title: 'vis-spel',
           extension: { name: 'vis-spel', origin: 'global', path: '~/.vis/extensions/vis-spel/0.1.13/extension.py', status: 'loaded' },
-          toggles: [engine('vis-spel'), { id: 'vis-spel_browser', label: 'vis-spel/browser', type: 'boolean', enabled: true,
+          toggles: [engine('vis-spel'), { id: 'skills_browser', label: 'vis-spel/browser', type: 'boolean', enabled: true,
             scopes: ['global', 'group'], source: 'global', is_override: false }] },
         { id: 'extension:review.py', title: 'review.py',
           extension: { name: 'review.py', origin: 'project', path: '.vis/extensions/review.py', status: 'failed',
@@ -97,9 +97,10 @@ export const Extensions: Story = {
     await expect(scope('vis-optmem')).toBe('global');
     await expect(scope('vis-spel')).toBe('global');
     await expect(scope('review.py')).toBe('project');
-    // The Auto/On/Off choice is the extension's own row, and a skill drops the extension prefix.
+    // The Auto/On/Off choice is the extension's own row. Its skills stand under Skills, without the extension prefix.
     await expect(within(extensions!).getAllByText('vis-spel')).toHaveLength(1);
-    await expect(within(extensions!).getByRole('switch', { name: /^browser:/ })).toBeInTheDocument();
+    const skills = within(within(extensions!).getByRole('region', { name: 'vis-spel' })).getByRole('region', { name: 'Skills' });
+    await expect(within(skills).getByRole('switch', { name: /^browser:/ })).toBeInTheDocument();
     // The band explains the Auto/On/Off choice once.
     await expect(within(extensions!).getAllByText(/^Auto detects applicability/)).toHaveLength(1);
     await expect(extensions).not.toHaveTextContent('.vis/extensions');

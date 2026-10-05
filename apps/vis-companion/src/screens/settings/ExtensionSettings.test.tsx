@@ -199,6 +199,7 @@ it('names each extension once, on the row of its Auto/On/Off choice', async () =
         extension: { name: 'vis-spel', origin: 'global', status: 'loaded' },
         toggles: [
           engine('vis-spel'),
+          { id: 'spel_headless', label: 'Headless', type: 'boolean', enabled: false, source: 'global' },
           { id: 'skills_1', label: 'vis-spel/browser', type: 'boolean', enabled: true, source: 'global' },
         ],
       },
@@ -215,7 +216,11 @@ it('names each extension once, on the row of its Auto/On/Off choice', async () =
   expect(scope('vis-spel')).toBe('global');
   const spel = within(band).getByRole('region', { name: 'vis-spel' });
   expect(within(spel).getByRole('combobox', { name: 'vis-spel' })).toBeInTheDocument();
-  expect(within(spel).getByRole('switch', { name: 'browser: on' })).toBeInTheDocument();
+  // The extension's own settings come first, and its skills stand under their own Skills heading.
+  const skills = within(spel).getByRole('region', { name: 'Skills' });
+  expect(within(skills).getByRole('switch', { name: 'browser: on' })).toBeInTheDocument();
+  expect(within(spel).getByRole('switch', { name: 'Headless: off' })).toBeInTheDocument();
+  expect(within(skills).queryByRole('switch', { name: 'Headless: off' })).toBeNull();
   expect(band).not.toHaveTextContent('vis-spel/browser');
   // The band explains the Auto/On/Off choice once, not on each extension.
   expect(within(band).getAllByText(/^Auto detects applicability/)).toHaveLength(1);

@@ -965,9 +965,9 @@
                    (expect (= (dlg/default-content-height 50) (settings-content-height 50)))
                    (expect (<= (+ (dlg/default-content-width 60) 4) 60))
                    (expect (<= (+ (dlg/default-content-height 16) 6) 16))))
-             (it "extension headings are flush; options are indented by renderer"
+             (it "a subsection label has no status glyph, so it does not read as a setting"
                  (let [settings-subsection-text (var-get #'dlg/settings-subsection-text)]
-                   (expect (= "◆ Exa" (settings-subsection-text "Exa" 80))))))
+                   (expect (= "Skills" (settings-subsection-text "Skills" 80))))))
 
 (defn- exercise-backend-picker
   "Run the production Settings picker on a virtual terminal with a fixture gateway."
