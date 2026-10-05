@@ -119,6 +119,23 @@ for arg in "$@"; do
 done
 if (( ${#args[@]} > 0 )); then set -- "${args[@]}"; else set --; fi
 
+# `--gateway` and `--gateway-token` name the gateway of the whole invocation, so
+# they can come before the command word. Before the launcher's own `tui` and
+# `desktop`, move them after it: `vis-agent --gateway HOST desktop` is
+# `vis-agent desktop --gateway HOST`. The engine reads them anywhere.
+gateway_args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --gateway|--gateway-token) [[ $# -ge 2 ]] || break; gateway_args+=("$1" "$2"); shift 2 ;;
+    --gateway=*|--gateway-token=*) gateway_args+=("$1"); shift ;;
+    *) break ;;
+  esac
+done
+case "${1:-}" in
+  tui|desktop) set -- "$1" ${gateway_args[@]+"${gateway_args[@]}"} "${@:2}" ;;
+  *) set -- ${gateway_args[@]+"${gateway_args[@]}"} "$@" ;;
+esac
+
 # `tui` is a launcher-owned surface: the terminal client is a separate process,
 # never prompt text for the one-shot agent. Keep its arguments verbatim after
 # swallowing the command word.
@@ -1766,12 +1783,13 @@ case "$runtime" in
       die "the source runtime needs the Clojure CLI" \
           "Automatic installation failed; set VIS_NO_AUTO_INSTALL=1 to disable it"
     fi
-    # A source checkout serves its own Companion web build, and `vis-agent web`
-    # builds it first when it is missing or stale. Every other command names the
-    # build folder too: the gateway looks it up per request, so a gateway started
-    # before the first build serves it without a restart.
+    # A source checkout serves its own Companion web build. `vis-agent web` builds
+    # it first when it is missing or stale, unless the command names another
+    # gateway. Every other command names the build folder too: the gateway looks
+    # it up per request, so a gateway started before the first build serves it
+    # without a restart.
     if [[ -z "${VIS_WEB_DIR:-}" ]]; then
-      if [[ "${1:-}" == web && " $* " != *" --help "* && " $* " != *" -h "* ]]; then
+      if [[ "${1:-}" == web ]] && vis_serves_local_web "$@"; then
         vis_prepare_dev_web "$source_root"
       else
         export VIS_WEB_DIR="$source_root/apps/vis-companion/dist-web"

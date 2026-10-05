@@ -2727,6 +2727,9 @@
           :checkout dir
           :bin bin
           :dev-desktop (io/file home ".vis/install/desktop/dev" dev-platform)
+          :launch! (fn [args extra-env]
+                     (run-bash (into ["bash" (.getAbsolutePath launcher)] args)
+                               (merge env extra-env)))
           :run! (fn [args extra-env]
                   (run-bash (into ["bash" (.getAbsolutePath launcher) "desktop"] args)
                             (merge env extra-env)))})
@@ -2771,36 +2774,45 @@
               (expect (str/includes? output "desktop-open<-W>") output)
               (expect (str/includes? output (.getAbsolutePath (io/file desktop "9.8.7/Vis.app")))
                       output)))))))
-  (it "opens the app alone for --no-gateway, --gateway, VIS_GATEWAY_URL or no installed engine"
-      (doseq [[os arch] [["Darwin" "arm64"] ["Linux" "x86_64"]]]
-        (with-desktop-fixture
-          os
-          arch
-          (fn [{:keys [bin run!]}]
-            (let [opened (if (= os "Darwin") "desktop-open<-n>" "desktop-app extract=1")
-                  {:keys [exit output]} (run! ["--help"] {})]
+  (it
+    "opens the app alone for --no-gateway, --gateway, VIS_GATEWAY_URL or no installed engine"
+    (doseq [[os arch] [["Darwin" "arm64"] ["Linux" "x86_64"]]]
+      (with-desktop-fixture
+        os
+        arch
+        (fn [{:keys [bin launch! run!]}]
+          (let [opened (if (= os "Darwin") "desktop-open<-n>" "desktop-app extract=1")
+                {:keys [exit output]} (run! ["--help"] {})]
 
-              (expect (zero? exit) output)
-              (expect (str/includes? output "--no-gateway") output)
-              (expect (str/includes? output "--gateway HOST") output)
-              (let [{:keys [exit output]} (run! ["--gateway"] {})]
-                (expect (not (zero? exit)) output)
-                (expect (str/includes? output "desktop: --gateway needs a value") output))
-              (doseq [[args extra-env] [[["--no-gateway"] {}]
-                                        [["--gateway" "10.0.0.5" "--gateway-token" "token"] {}]
-                                        [["--gateway=gateway.example.com"] {}]
-                                        [[] {"VIS_GATEWAY_URL" "http://gateway.example.com:7890"}]]]
-                (let [{:keys [exit output]} (run! args extra-env)]
-                  (expect (zero? exit) output)
-                  (expect (str/includes? output opened) output)
-                  (expect (not (str/includes? output "desktop-gateway<")) output)
-                  (expect (not (str/includes? output "desktop-open<-W>")) output)))
-              (io/delete-file (io/file bin "vis-agent-native"))
-              (let [{:keys [exit output]} (run! [] {})]
+            (expect (zero? exit) output)
+            (expect (str/includes? output "--no-gateway") output)
+            (expect (str/includes? output "--gateway HOST") output)
+            (let [{:keys [exit output]} (run! ["--gateway"] {})]
+              (expect (not (zero? exit)) output)
+              (expect (str/includes? output "desktop: --gateway needs a value") output))
+            (doseq [[args extra-env] [[["--no-gateway"] {}]
+                                      [["--gateway" "10.0.0.5" "--gateway-token" "token"] {}]
+                                      [["--gateway=gateway.example.com"] {}]
+                                      [[] {"VIS_GATEWAY_URL" "http://gateway.example.com:7890"}]]]
+              (let [{:keys [exit output]} (run! args extra-env)]
                 (expect (zero? exit) output)
                 (expect (str/includes? output opened) output)
-                (expect (str/includes? output "no gateway started") output)
-                (expect (not (str/includes? output "desktop-gateway<")) output)))))))
+                (expect (not (str/includes? output "desktop-gateway<")) output)
+                (expect (not (str/includes? output "desktop-open<-W>")) output)))
+            ;; Root gateway flags before `desktop` work the same way.
+            (doseq [args [["--gateway" "10.0.0.5" "desktop"]
+                          ["--gateway-token" "token" "--gateway=10.0.0.5" "desktop"]]]
+              (let [{:keys [exit output]} (launch! args {})]
+                (expect (zero? exit) output)
+                (expect (str/includes? output opened) output)
+                (expect (not (str/includes? output "desktop-gateway<")) output)
+                (expect (not (str/includes? output "desktop-open<-W>")) output)))
+            (io/delete-file (io/file bin "vis-agent-native"))
+            (let [{:keys [exit output]} (run! [] {})]
+              (expect (zero? exit) output)
+              (expect (str/includes? output opened) output)
+              (expect (str/includes? output "no gateway started") output)
+              (expect (not (str/includes? output "desktop-gateway<")) output)))))))
   (it
     "checks updates without redownloading the same release, and preserves the previous cache on failure"
     (with-desktop-fixture "Linux"
@@ -3266,6 +3278,15 @@
                (expect (zero? exit) output)
                (expect (not (str/includes? output "engine<")) output)
                (expect (str/includes? output (str "<" (last args) ">")) output)))
+           ;; Root gateway flags before `tui` reach the terminal client the same way.
+           (let [{:keys [exit output]} (run-bash ["bash" (.getAbsolutePath launcher) "--gateway"
+                                                  "gateway.example.com" "tui" "--continue"]
+                                                 {"HOME" (.getAbsolutePath home)
+                                                  "VIS_HOME" (.getAbsolutePath (io/file home
+                                                                                        ".vis"))})]
+             (expect (zero? exit) output)
+             (expect (not (str/includes? output "engine<")) output)
+             (expect (str/includes? output "<--gateway><gateway.example.com><--continue>") output))
            (finally (delete-tree! root))))))
 
 (defdescribe
@@ -3322,6 +3343,8 @@
                 [[["tui" "--jvm" "--continue"] "<-M:vis><gateway><tui><-->"]
                  [["--jvm" "tui" "--continue"] "<-M:vis><gateway><tui><-->"]
                  [["tui" "--jvm" "--gateway" "gateway.example.com" "--continue"]
+                  "<-M:run><--gateway><gateway.example.com><--continue>"]
+                 [["--gateway" "gateway.example.com" "tui" "--jvm" "--continue"]
                   "<-M:run><--gateway><gateway.example.com><--continue>"]
                  [["tui" "--jvm" "--help"] "<-M:run><--help>"]
                  [["--jvm" "--version"] "<-M:vis><--version>"]
@@ -3460,11 +3483,15 @@
         (let [{:keys [exit output]} (launch! ["web" "--jvm"] {})]
           (expect (zero? exit) output)
           (expect (= ["ci" "run build:web" "run build:web"] (npm-calls))))
-        ;; Help, other commands and an explicit directory never build.
-        (doseq [[args extra-env expected] [[["web" "--help" "--jvm"] {} "<-M:vis><web><--help>"]
-                                           [["--version" "--jvm"] {} "<-M:vis><--version>"]
-                                           [["web" "--jvm"] {"VIS_WEB_DIR" "/srv/vis-web"}
-                                            "<-M:vis><web> web=/srv/vis-web"]]]
+        ;; Help, other commands, another gateway and an explicit directory never build.
+        (doseq [[args extra-env expected]
+                [[["web" "--help" "--jvm"] {} "<-M:vis><web><--help>"]
+                 [["--version" "--jvm"] {} "<-M:vis><--version>"]
+                 [["web" "--gateway" "gateway.example.com" "--jvm"] {}
+                  "<-M:vis><web><--gateway><gateway.example.com>"]
+                 [["web" "--jvm"] {"VIS_GATEWAY_URL" "http://gateway.example.com:7890"}
+                  "<-M:vis><web> web="]
+                 [["web" "--jvm"] {"VIS_WEB_DIR" "/srv/vis-web"} "<-M:vis><web> web=/srv/vis-web"]]]
           (let [{:keys [exit output]} (launch! args extra-env)]
             (expect (zero? exit) output)
             (expect (str/includes? output expected) output)
