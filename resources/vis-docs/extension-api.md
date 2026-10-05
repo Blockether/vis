@@ -134,10 +134,12 @@ load. The load error names that owner.
 `type` defaults to `"boolean"` with a boolean `default`. For a choice row, use `type="enum"`,
 string `choices` and a `default` from those choices.
 
-The app and the TUI show your settings in a section with your extension's name. That section also
-holds the extension's engine choice and its packaged skills. If your extension fails to load, the
-section stays and shows the error. After you change the file, select **Reload extensions** in
-Settings. Opening Settings does not run your code. See [extension
+The app and the TUI show your settings under **Extensions**, in a group with your extension's
+name. That group also holds the extension's engine choice and its packaged skills. A `project` or
+`global` tag shows where your extension is installed.
+
+If your extension fails to load, the group stays and shows the error. After you change the file,
+select **Reload extensions** in Settings. Opening Settings does not run your code. See [extension
 settings](configuration.md#extension-settings).
 
 `scopes` accepts any non-empty, duplicate-free subset of `global`, `project`, `group` and `session`.

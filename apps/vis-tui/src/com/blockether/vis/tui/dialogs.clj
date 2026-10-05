@@ -3396,26 +3396,30 @@
                           (mapv #(if (= id (get % "id")) (merge % row) %) rows))))
               (or groups []))))))
 
-(defn- extension-info-rows
-  "Provenance and load failures for one extension section. Built-in extensions need neither
-   while they load, so their sections stay one line per setting."
-  [{:strs [origin path status error]}]
-  (cond-> []
-    (contains? #{"project" "global"} origin)
-    (conj {:type :info
-           :label (if (= "project" origin) "Project extension" "Machine extension")
-           :description path})
+(defn- extension-group?
+  "True for a catalog group that an extension owns. Its settings stand under Extensions."
+  [group]
+  (some? (get group "extension")))
 
-    (contains? #{"failed" "stale"} status)
-    (conj {:type :info
-           :tone :bad
-           :label (if (= "stale" status)
-                    "Reload failed — using last loaded version"
-                    "Extension failed to load")
-           :description error})))
+(defn- extension-scope
+  "Where an extension is installed: `project` or `global`. Built-in extensions ship with Vis
+   and need no scope."
+  [{:strs [origin]}]
+  (when (contains? #{"project" "global"} origin) origin))
+
+(defn- extension-failure-rows
+  "The load failure of one extension section. A loaded extension needs no notice."
+  [{:strs [status error]}]
+  (when (contains? #{"failed" "stale"} status)
+    [{:type :info
+      :tone :bad
+      :label
+      (if (= "stale" status) "Reload failed — using last loaded version" "Extension failed to load")
+      :description error}]))
 
 (defn- catalog-toggle-rows
-  "Project the gateway catalog without repeating metadata or reset actions in the list.
+  "Project the gateway catalog without repeating metadata or reset actions in the list. An
+   extension group becomes a subsection, tagged `project` or `global` where it is installed.
    Global settings are the root scope: an explicit value there overrides nothing, so only a
    scoped target marks overrides and offers their reset."
   [groups]
@@ -3425,48 +3429,55 @@
         (let [rows
               (filterv #(not= "agent_name" (get % "id")) (get group "toggles"))
 
+              extension
+              (get group "extension")
+
               info
-              (some-> (get group "extension")
-                      extension-info-rows)]
+              (extension-failure-rows extension)
+
+              scope
+              (extension-scope extension)]
 
           (when (or (seq rows) (seq info))
-            (concat [{:type :section :label (str (get group "title"))}]
-                    info
-                    (mapv (fn [row]
-                            (let [type
-                                  (get row "type")
+            (concat
+              [(cond-> {:type (if extension :subsection :section) :label (str (get group "title"))}
+                 scope
+                 (assoc :tag scope))]
+              info
+              (mapv (fn [row]
+                      (let [type
+                            (get row "type")
 
-                                  id
-                                  (get row "id")
+                            id
+                            (get row "id")
 
-                                  override?
-                                  (and *settings-target* (get row "is_override"))]
+                            override?
+                            (and *settings-target* (get row "is_override"))]
 
-                              {:key (keyword (str "toggle::" id))
-                               :type (case type
-                                       "string"
-                                       :text-setting
+                        {:key (keyword (str "toggle::" id))
+                         :type (case type
+                                 "string"
+                                 :text-setting
 
-                                       "number"
-                                       :number-setting
+                                 "number"
+                                 :number-setting
 
-                                       ("array" "object")
-                                       :structured-setting
+                                 ("array" "object")
+                                 :structured-setting
 
-                                       :registry-toggle)
-                               :toggle-id id
-                               :toggle-type (keyword type)
-                               :toggle-value (if (= "boolean" type)
-                                               (boolean (get row "enabled"))
-                                               (get row "value"))
-                               :setting row
-                               :choices (vec (get row "choices"))
-                               :experimental? (boolean (get row "is_experimental"))
-                               :source (get row "source")
-                               :is-override? (boolean override?)
-                               :label (str (get row "label"))
-                               :description (str (get row "description"))}))
-                          rows)))))
+                                 :registry-toggle)
+                         :toggle-id id
+                         :toggle-type (keyword type)
+                         :toggle-value
+                         (if (= "boolean" type) (boolean (get row "enabled")) (get row "value"))
+                         :setting row
+                         :choices (vec (get row "choices"))
+                         :experimental? (boolean (get row "is_experimental"))
+                         :source (get row "source")
+                         :is-override? (boolean override?)
+                         :label (str (get row "label"))
+                         :description (str (get row "description"))}))
+                    rows)))))
       (or groups []))))
 
 (defn- override-note
@@ -3504,12 +3515,13 @@
    every row is a projection of `GET /v1/settings?channel=tui` — the SAME
    groups, order and rows the companion app renders, so a toggle the engine or
    an extension registers shows up here without a mirrored registration in this
-   binary. Until that first answer, and whenever the daemon cannot be reached,
-   the process registry renders the pane instead of leaving it blank."
+   binary. Extension groups stand under Extensions (`extension-settings-rows`). Until
+   that first answer, and whenever the daemon cannot be reached, the process registry
+   renders the pane instead of leaving it blank."
   []
   (let [groups (:groups @(settings-inventory-atom))]
     (if (or *settings-target* (seq groups))
-      (lock-overridden-rows groups (catalog-toggle-rows groups))
+      (lock-overridden-rows groups (catalog-toggle-rows (remove extension-group? groups)))
       ;; `toggles-for-channel` drops provider-specific knobs whose provider
       ;; isn't configured (`:visible-fn`) AND toggles scoped to OTHER channels
       ;; (`:channels`) — e.g. the web theme never shows in the TUI dialog.
@@ -3846,9 +3858,16 @@
       "Run trusted machine and project extension code again. Stored settings stay unchanged."
       "Run trusted machine extension code again. Stored settings stay unchanged.")}])
 
+(defn- extension-settings-rows
+  "The Extensions section: its actions, then one subsection for each extension in catalog
+   order."
+  []
+  (let [groups (filterv extension-group? (:groups @(settings-inventory-atom)))]
+    (into (extension-action-rows) (lock-overridden-rows groups (catalog-toggle-rows groups)))))
+
 (defn- settings-rows
   "Every setting in one flat grouped list. A failed catalog read keeps the last catalog and
-   says so; extension actions follow the catalog sections they change."
+   says so. The Extensions section holds its actions, then the settings of each extension."
   []
   (vec (concat (when-not *settings-target*
                  (concat (settings-ui-options)
@@ -3861,7 +3880,7 @@
                (or (registry-toggle-rows) [])
                (when-let [error (:error @(settings-inventory-atom))]
                  [{:type :info :tone :bad :label "Settings unavailable" :description error}])
-               (extension-action-rows)
+               (extension-settings-rows)
                (when-not *settings-target* (or (provider-settings-rows) []))
                (or (mcp-settings-rows) []))))
 
@@ -5441,7 +5460,7 @@
 
                     (if (< entry-idx visual-n)
                       (let [{:keys [row-idx part text head?]} (nth entries entry-idx)
-                            {:keys [label tone]} (nth rows row-idx)
+                            {:keys [label tone tag]} (nth rows row-idx)
                             option-label (nth labels row-idx)
                             selected? (= row-idx @selected)
                             [mark mark-color] (settings-row-mark (nth rows row-idx) @values)]
@@ -5459,15 +5478,25 @@
                                                     row-y
                                                     (ellipsize label (max 0 (- paint-w 4))))))
 
+                          ;; An extension's install scope sits at the right edge, where an
+                          ;; option shows its value. A narrow pane keeps only the name.
                           :subsection
-                          (do (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                              (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                              (p/styled g
-                                        [p/BOLD]
-                                        (p/put-str! g
-                                                    (+ lleft 2)
-                                                    row-y
-                                                    (settings-subsection-text label paint-w))))
+                          (let [tag-w (long (p/display-width (str tag)))
+                                tagged? (and (pos? tag-w) (< (+ tag-w 12) paint-w))]
+
+                            (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                            (p/fill-rect! g (inc lleft) row-y paint-w 1)
+                            (p/styled g
+                                      [p/BOLD]
+                                      (p/put-str! g
+                                                  (+ lleft 2)
+                                                  row-y
+                                                  (settings-subsection-text
+                                                    label
+                                                    (if tagged? (- paint-w tag-w 2) paint-w))))
+                            (when tagged?
+                              (p/set-fg! g t/dialog-hint)
+                              (p/put-str! g (- (+ lleft paint-w) tag-w) row-y (str tag))))
 
                           ;; Prose ABOUT the section (empty state, gateway error): a
                           ;; bold head line plus its own wrapped body, both in the

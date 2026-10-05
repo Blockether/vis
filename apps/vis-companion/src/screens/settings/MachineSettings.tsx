@@ -52,7 +52,7 @@ import {
 import { NotificationsPanel } from './NotificationSettings';
 import { SpeechEnginesPanel, type SaveSpeechPrefs } from './SpeechSettings';
 import { FormLabel, SettingsPanel } from './SettingsLayout';
-import { ExtensionNotice, ExtensionsPanel, extensionMeta } from './ExtensionSettings';
+import { ExtensionsPanel, isExtensionGroup } from './ExtensionSettings';
 import { SettingField } from './SettingField';
 import { CouncilRooms } from './CouncilRooms';
 import { IMPROVE_MODE_LABELS, type ImproveMode } from '../../lib/improve';
@@ -460,6 +460,17 @@ export function MachineSettings({
     }
   }
 
+  // A Vis band and an extension under Extensions draw and save their rows the same way.
+  const settingRows = (group: ToggleGroup) =>
+    group.toggles.length > 0 && (
+      <div className="divide-y divide-dialog-edge">
+        {group.toggles.map((toggle) => (
+          <SettingRow key={toggle.id} toggle={toggle} busy={pending === toggle.id}
+            onToggle={() => void flip(toggle)} onPick={(value) => pick(toggle, value)} />
+        ))}
+      </div>
+    );
+
   return (
     // Groups run FULL BLEED and are divided by one rule, so the dialog's own frame is
     // the only box on the screen. A banner still needs air, so it brings its own
@@ -554,17 +565,9 @@ export function MachineSettings({
         // A band's meta says what the list itself CANNOT — `unauthorized`, `app
         // logs`, `this device`. A tally of the rows you are already looking at is
         // not that, and it said the same nothing over every group.
-        groups.map((group) => (
-          <SettingsPanel key={group.id} title={group.title} meta={extensionMeta(group)}>
-            <ExtensionNotice group={group} />
-            {group.toggles.length > 0 && (
-              <div className="divide-y divide-dialog-edge">
-                {group.toggles.map((toggle) => (
-                  <SettingRow key={toggle.id} toggle={toggle} busy={pending === toggle.id}
-                    onToggle={() => void flip(toggle)} onPick={(value) => pick(toggle, value)} />
-                ))}
-              </div>
-            )}
+        groups.filter((group) => !isExtensionGroup(group)).map((group) => (
+          <SettingsPanel key={group.id} title={group.title}>
+            {settingRows(group)}
             {/* Room membership is part of Council, so it stands under the Council switches. */}
             {group.id === 'council' && (
               <CouncilRooms
@@ -577,7 +580,10 @@ export function MachineSettings({
         ))
       )}
 
-      {failure === null && groups !== null && <ExtensionsPanel client={client} onRefresh={load} />}
+      {failure === null && groups !== null && (
+        <ExtensionsPanel client={client} groups={groups.filter(isExtensionGroup)} onRefresh={load}
+          renderSettings={settingRows} />
+      )}
     </div>
   );
 }

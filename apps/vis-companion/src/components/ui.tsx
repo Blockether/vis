@@ -71,7 +71,7 @@ export function Text({
   ...props
 }: HTMLAttributes<HTMLElement> & {
   variant: 'heading' | 'section' | 'label' | 'option' | 'description' | 'meta';
-  as?: 'span' | 'p' | 'h3' | 'h4';
+  as?: 'span' | 'p' | 'h3' | 'h4' | 'h5';
   tone?: 'default' | 'inherit';
 }) {
   const role = {

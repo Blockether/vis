@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, within } from 'storybook/test';
 import type { ComponentProps } from 'react';
-import type { SettingsResponse, SettingsTarget } from '../../lib/types';
+import type { SettingsResponse, SettingsTarget, Toggle } from '../../lib/types';
 import { ScopedSettingsDialog } from './ScopedSettingsDialog';
 
 const target: SettingsTarget = { scope: 'group', target_id: 'wallet', label: 'Wallet work' };
@@ -54,6 +54,50 @@ export const Catalog: Story = {
     await expect(Array.from(sections?.children ?? [])).toEqual([
       panel('Agent'), panel('Experimental'), panel('Extensions'), panel('MCP servers'),
     ]);
+  },
+};
+
+const engine = (name: string): Toggle => ({
+  id: `${name}_engine`, label: name, description: 'Auto detects applicability; On stays active; Off denies tools.',
+  type: 'enum', choices: ['auto', 'on', 'off'], value: 'auto', scopes: ['global', 'group'], source: 'global', is_override: false,
+});
+
+/** Every extension stands under Extensions with its install scope, never its file path. */
+export const Extensions: Story = {
+  args: {
+    client: fixtureClient({
+      ...settings,
+      groups: [
+        ...settings.groups,
+        { id: 'extension:foundation-mcp', title: 'foundation-mcp',
+          extension: { name: 'foundation-mcp', origin: 'built_in', status: 'loaded' }, toggles: [engine('foundation-mcp')] },
+        { id: 'extension:vis-optmem', title: 'vis-optmem',
+          extension: { name: 'vis-optmem', origin: 'global', path: '~/.vis/extensions/vis-optmem/0.1.0/extension.py', status: 'loaded' },
+          toggles: [engine('vis-optmem')] },
+        { id: 'extension:vis-spel', title: 'vis-spel',
+          extension: { name: 'vis-spel', origin: 'global', path: '~/.vis/extensions/vis-spel/0.1.13/extension.py', status: 'loaded' },
+          toggles: [engine('vis-spel'), { id: 'vis-spel_browser', label: 'vis-spel/browser', type: 'boolean', enabled: true,
+            scopes: ['global', 'group'], source: 'global', is_override: false }] },
+        { id: 'extension:review.py', title: 'review.py',
+          extension: { name: 'review.py', origin: 'project', path: '.vis/extensions/review.py', status: 'failed',
+            error: 'SyntaxError: invalid syntax' }, toggles: [] },
+      ],
+    }),
+  },
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    const panel = (title: string) => page.getByRole('heading', { name: title }).closest('section');
+    const extensions = panel('Extensions');
+    await expect(Array.from(extensions?.parentElement?.children ?? [])).toEqual([
+      panel('Agent'), panel('Experimental'), extensions, panel('MCP servers'),
+    ]);
+    const scope = (name: string) =>
+      within(within(extensions!).getByRole('region', { name })).queryByText(/^(global|project)$/)?.textContent ?? null;
+    await expect(scope('foundation-mcp')).toBeNull();
+    await expect(scope('vis-optmem')).toBe('global');
+    await expect(scope('vis-spel')).toBe('global');
+    await expect(scope('review.py')).toBe('project');
+    await expect(extensions).not.toHaveTextContent('.vis/extensions');
   },
 };
 

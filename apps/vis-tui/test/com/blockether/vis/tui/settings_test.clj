@@ -596,7 +596,7 @@
   extension-catalog-test
   ;; #302: a failed extension must remain visible even without registered settings.
   (it
-    "shows failed and stale extensions with their source and error"
+    "shows failed and stale extensions with their scope and error"
     (let [groups
           [{"title" "broken.py"
             "extension" {"name" "broken.py"
@@ -618,18 +618,66 @@
           (#'dlg/catalog-toggle-rows groups)
 
           frame
-          (cap/frame-text (capture-settings rows [:esc]))]
+          (cap/frame-text (capture-settings rows [:esc]))
 
-      (expect (str/includes? frame "broken.py"))
-      (expect (str/includes? frame "Project extension"))
+          heading
+          (fn [label]
+            (first (filter #(str/includes? % (str "◆ " label)) (str/split-lines frame))))]
+
+      (expect (= [{:type :subsection :label "broken.py" :tag "project"}
+                  {:type :subsection :label "notifier" :tag "global"}]
+                 (filterv #(= :subsection (:type %)) rows)))
+      (expect (str/includes? (str (heading "broken.py")) "project"))
+      (expect (str/includes? (str (heading "notifier")) "global"))
       (expect (str/includes? frame "Invalid Python syntax"))
       (expect (str/includes? frame "last loaded version"))
-      (expect (str/includes? frame "Machine extension"))
+      (expect (not (str/includes? frame "Project extension")))
+      (expect (not (str/includes? frame "Machine extension")))
+      (expect (not (str/includes? frame ".vis/extensions")))
       (expect (some #(= "Desktop alerts" (:label %)) rows))
       (expect (empty? (#'dlg/catalog-toggle-rows
                        [{"title" "builtin"
                          "extension" {"name" "builtin" "origin" "built_in" "status" "loaded"}
-                         "toggles" []}])))))
+                         "toggles" []}])))
+      (expect (= {:type :subsection :label "builtin"}
+                 (first (#'dlg/catalog-toggle-rows
+                         [{"title" "builtin"
+                           "extension" {"name" "builtin" "origin" "built_in" "status" "loaded"}
+                           "toggles" [{"id" "builtin_enabled"
+                                       "label" "Built-in tools"
+                                       "type" "boolean"
+                                       "enabled" true}]}]))))))
+  (it "lists extension settings under Extensions, after its actions"
+      (let [groups
+            [{"title" "Planning"
+              "toggles" [{"id" "plans" "label" "Plans" "type" "boolean" "enabled" true}]}
+             {"title" "vis-spel"
+              "extension" {"name" "vis-spel" "origin" "global" "status" "loaded"}
+              "toggles" [{"id" "vis_spel" "label" "Browser" "type" "boolean" "enabled" true}]}
+             {"title" "foundation-mcp"
+              "extension" {"name" "foundation-mcp" "origin" "built_in" "status" "loaded"}
+              "toggles"
+              [{"id" "foundation_mcp" "label" "MCP tools" "type" "boolean" "enabled" true}]}]
+
+            rows
+            (binding [dlg/*settings-target*
+                      {:scope :project :target-id "example-project"}
+
+                      dlg/*local-settings-inventory*
+                      (atom {:status :ok :groups groups :error nil})
+
+                      dlg/*local-mcp-inventory*
+                      (atom {:status :unloaded :servers [] :error nil})]
+
+              (#'dlg/settings-rows))]
+
+        (expect (= [[:section "Planning" nil] [:registry-toggle "Plans" nil]
+                    [:section "Extensions" nil] [:action "Refresh list" nil]
+                    [:action "Reload extensions" nil] [:subsection "vis-spel" "global"]
+                    [:registry-toggle "Browser" nil] [:subsection "foundation-mcp" nil]
+                    [:registry-toggle "MCP tools" nil]]
+                   (mapv (juxt :type :label :tag) rows)))
+        (expect (= ["Planning" "Extensions"] (mapv :label (#'dlg/settings-toc rows 0))))))
   (it "refreshes without running extension code and reloads only on request"
       (let [target
             {:scope :project :target-id "example-project"}

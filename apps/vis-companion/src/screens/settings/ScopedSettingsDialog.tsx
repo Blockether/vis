@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { SearchIcon } from '../../components/icons';
 import type { GatewayClient } from '../../lib/gateway';
-import type { SettingValue, SettingsResponse, SettingsTarget, Toggle } from '../../lib/types';
+import type { SettingValue, SettingsResponse, SettingsTarget, Toggle, ToggleGroup } from '../../lib/types';
 import { Banner, Button, CloseButton, DialogFrame, Input, Modal, Text } from '../../components/ui';
 import { McpServersPanel, SettingRow } from './MachineSettings';
-import { ExtensionNotice, ExtensionsPanel, extensionMeta, hasExtensionNotice } from './ExtensionSettings';
+import { ExtensionsPanel, hasExtensionNotice, isExtensionGroup } from './ExtensionSettings';
 import { SettingsPanel } from './SettingsLayout';
 
 type ScopedSettingsProps = {
@@ -80,6 +80,11 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
       group.toggles.length || (hasExtensionNotice(group) && group.title.toLowerCase().includes(needle)),
     );
   const matches = groups.reduce((count, group) => count + group.toggles.length, 0);
+  const extensions = groups.filter(isExtensionGroup);
+  const rows = (group: ToggleGroup) => group.toggles.length > 0 && (
+    <div className="divide-y divide-dialog-edge">{group.toggles.map((toggle) => <SettingRow key={toggle.id} toggle={toggle} busy={pending !== null}
+      onToggle={() => void save(toggle, 'toggle')} onPick={(value) => save(toggle, 'value', value)} onInherit={() => void save(toggle, 'inherit')} />)}</div>
+  );
   const clearSearch = () => {
     setSearch('');
     searchInput.current?.focus();
@@ -131,12 +136,11 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
           )}
           {(groups.length > 0 || !needle) && (
             <div className="divide-y divide-dialog-edge">
-              {groups.map((group) => <SettingsPanel key={group.id} title={group.title} meta={extensionMeta(group)} headingLevel={3}>
-                <ExtensionNotice group={group} />
-                {group.toggles.length > 0 && <div className="divide-y divide-dialog-edge">{group.toggles.map((toggle) => <SettingRow key={toggle.id} toggle={toggle} busy={pending !== null}
-                  onToggle={() => void save(toggle, 'toggle')} onPick={(value) => save(toggle, 'value', value)} onInherit={() => void save(toggle, 'inherit')} />)}</div>}
+              {groups.filter((group) => !isExtensionGroup(group)).map((group) => <SettingsPanel key={group.id} title={group.title} headingLevel={3}>
+                {rows(group)}
               </SettingsPanel>)}
-              {!needle && <ExtensionsPanel client={client} target={owner} onRefresh={reread} />}
+              {(!needle || extensions.length > 0) && <ExtensionsPanel client={client} target={owner} groups={extensions} hasActions={!needle}
+                onRefresh={reread} renderSettings={rows} />}
               {!needle && <McpServersPanel client={client} target={owner} />}
             </div>
           )}

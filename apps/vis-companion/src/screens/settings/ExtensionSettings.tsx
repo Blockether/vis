@@ -1,15 +1,18 @@
-import { useState } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { Banner, Button, Text } from '../../components/ui';
 import { GatewayError, type GatewayClient } from '../../lib/gateway';
 import type { SettingsTarget, ToggleGroup } from '../../lib/types';
 import { SettingsPanel } from './SettingsLayout';
 
-/** Where an extension section's code comes from. Built-in sections need no label. */
-export function extensionMeta(group: ToggleGroup): string | undefined {
-  const extension = group.extension;
-  if (!extension || extension.origin === 'built_in') return undefined;
-  const origin = extension.origin === 'project' ? 'Project extension' : 'Machine extension';
-  return extension.path ? `${origin} · ${extension.path}` : origin;
+/** Extension sections stand under Extensions. Older gateways do not mark them. */
+export function isExtensionGroup(group: ToggleGroup): boolean {
+  return Boolean(group.extension);
+}
+
+/** Where an extension is installed. Built-in extensions ship with Vis and need no scope. */
+export function extensionScope(group: ToggleGroup): 'project' | 'global' | undefined {
+  const origin = group.extension?.origin;
+  return origin === 'project' || origin === 'global' ? origin : undefined;
 }
 
 /** A failed load keeps its section visible, even when it has no settings. */
@@ -32,6 +35,43 @@ export function ExtensionNotice({ group }: { group: ToggleGroup }) {
   );
 }
 
+/**
+ * One extension under the Extensions heading: its name, its scope, a load error and its
+ * settings. The left rail draws the depth, so the name never reads as a band of its own.
+ */
+function ExtensionGroup({
+  group,
+  headingLevel,
+  children,
+}: {
+  group: ToggleGroup;
+  headingLevel: 4 | 5;
+  children: ReactNode;
+}) {
+  const headingId = useId();
+  const scope = extensionScope(group);
+  return (
+    <section
+      aria-labelledby={headingId}
+      className="min-w-0 divide-y divide-dialog-edge border-l-2 border-dialog-edge"
+    >
+      <header className="flex min-w-0 items-baseline gap-3 px-3 pb-1.5 pt-3 sm:px-4">
+        <Text
+          as={headingLevel === 4 ? 'h4' : 'h5'}
+          id={headingId}
+          variant="section"
+          className="min-w-0 flex-auto truncate"
+        >
+          {group.title}
+        </Text>
+        {scope && <Text variant="meta">{scope}</Text>}
+      </header>
+      <ExtensionNotice group={group} />
+      {children}
+    </section>
+  );
+}
+
 function actionError(error: unknown): string {
   const type = error instanceof GatewayError && error.status === 404
     ? (error.body as { error?: { type?: unknown } } | undefined)?.error?.type
@@ -42,21 +82,32 @@ function actionError(error: unknown): string {
 }
 
 /**
- * Refresh reads the settings catalog again and runs no extension code. Reload runs
- * trusted extension code where these settings apply, then reads the catalog.
+ * Every extension section stands under one Extensions heading, after the actions that
+ * read them again. Refresh reads the settings catalog again and runs no extension code.
+ * Reload runs trusted extension code where these settings apply, then reads the catalog.
  */
 export function ExtensionsPanel({
   client,
   target,
+  groups,
+  hasActions = true,
   onRefresh,
+  renderSettings,
 }: {
   client: GatewayClient;
   target?: SettingsTarget;
+  /** Extension sections in catalog order. */
+  groups: ToggleGroup[];
+  /** A search shows only the matching sections, without the actions. */
+  hasActions?: boolean;
   onRefresh: () => Promise<unknown>;
+  /** The setting rows of one extension; the dialog that saves them draws them. */
+  renderSettings: (group: ToggleGroup) => ReactNode;
 }) {
   const [busy, setBusy] = useState<'refresh' | 'reload' | null>(null);
   const [result, setResult] = useState<{ kind: 'ok' | 'warn' | 'err'; text: string } | null>(null);
   const scoped = Boolean(target && target.scope !== 'global');
+  const headingLevel = scoped ? 3 : 4;
 
   const run = async (reload: boolean) => {
     setBusy(reload ? 'reload' : 'refresh');
@@ -82,25 +133,32 @@ export function ExtensionsPanel({
   };
 
   return (
-    <SettingsPanel title="Extensions" headingLevel={scoped ? 3 : 4}>
-      <div className="flex flex-col gap-3 px-4 py-3">
-        <Text as="p" variant="description">
-          Refresh list reads the settings again. Reload extensions runs trusted{' '}
-          {scoped ? 'machine and project' : 'machine'} extension code again. Stored settings stay
-          unchanged.
-        </Text>
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="secondary" density="panel" disabled={busy !== null}
-            onClick={() => void run(false)}>
-            {busy === 'refresh' ? 'Refreshing…' : 'Refresh list'}
-          </Button>
-          <Button type="button" variant="secondary" density="panel" disabled={busy !== null}
-            onClick={() => void run(true)}>
-            {busy === 'reload' ? 'Reloading…' : 'Reload extensions'}
-          </Button>
+    <SettingsPanel title="Extensions" headingLevel={headingLevel}>
+      {hasActions && (
+        <div className="flex flex-col gap-3 px-4 py-3">
+          <Text as="p" variant="description">
+            Refresh list reads the settings again. Reload extensions runs trusted{' '}
+            {scoped ? 'machine and project' : 'machine'} extension code again. Stored settings stay
+            unchanged.
+          </Text>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="secondary" density="panel" disabled={busy !== null}
+              onClick={() => void run(false)}>
+              {busy === 'refresh' ? 'Refreshing…' : 'Refresh list'}
+            </Button>
+            <Button type="button" variant="secondary" density="panel" disabled={busy !== null}
+              onClick={() => void run(true)}>
+              {busy === 'reload' ? 'Reloading…' : 'Reload extensions'}
+            </Button>
+          </div>
+          {result && <Banner kind={result.kind}>{result.text}</Banner>}
         </div>
-        {result && <Banner kind={result.kind}>{result.text}</Banner>}
-      </div>
+      )}
+      {groups.map((group) => (
+        <ExtensionGroup key={group.id} group={group} headingLevel={headingLevel === 3 ? 4 : 5}>
+          {renderSettings(group)}
+        </ExtensionGroup>
+      ))}
     </SettingsPanel>
   );
 }

@@ -661,8 +661,10 @@ and lifecycle commands remain global-only.
 
 ### Extension settings
 
-Each extension with settings has its own section. The section title is the
-extension name. A project or machine extension also shows the path of its file.
+The **Extensions** section holds the settings of all extensions. It starts with
+its actions. Each extension with settings then has its own group under its name.
+The `project` tag marks an extension of the current project. The `global` tag
+marks a machine extension. Extensions that ship with Vis have no tag.
 
 Opening or refreshing Settings never runs extension code. After you add, change
 or remove an extension file, use the **Extensions** section:
@@ -674,9 +676,9 @@ In global settings, **Reload extensions** reloads machine extensions. In project
 group or session settings, it also reloads the extensions of that project. Vis
 then shows how many extensions loaded and how many failed.
 
-If an extension fails to load, its section stays in the list and shows the
+If an extension fails to load, its group stays in the list and shows the
 error. If a reload fails after an earlier load, Vis keeps using the earlier
-version. The section then says so. Your stored values do not change when an
+version. The group then says so. Your stored values do not change when an
 extension fails, goes away or loads again.
 
 If the gateway runs an older Vis, **Reload extensions** shows a message. Update
