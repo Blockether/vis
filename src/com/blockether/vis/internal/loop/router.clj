@@ -637,6 +637,13 @@
     (refresh-router-models! r)
     r))
 
+(defn forget-routers!
+  "Drop the router of every project, so that each project builds it again from its
+   current config on its next [[get-router]]. Answers the set of canonical project
+   roots that had a router."
+  []
+  (set (keys (first (reset-vals! router-atom {})))))
+
 ;; ── OAuth credential hydration + 401 recovery ────────────────────────────
 ;;
 ;; svar routers intentionally retain provider health/budget state, but their

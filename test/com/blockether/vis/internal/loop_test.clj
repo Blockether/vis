@@ -11129,93 +11129,132 @@
         (expect (= "provider_quota_exhausted" (get block "code")))
         (expect (str/includes? (get block "message") "plan, usage limits")))))
 
-(defdescribe reload-router-hook-test
-             ;; `/reload` used to re-read vis.yml WITHOUT rebuilding the router, so a
-             ;; changed `default_model` kept routing to the old model and the TUI footer
-             ;; chip kept naming it until a restart.
-             (describe "reload-router!"
-                       (it "no-ops while the router was never built (lazy first use is preserved)"
-                           (with-redefs [loop-router/router-initialized?
-                                         (fn []
-                                           false)
+;; The default pair before and after a Settings change, over one two-provider fleet.
+(def ^:private luna-route {:default-provider :openai-codex :default-model "gpt-5.6-luna"})
 
-                                         loop-router/rebuild-router!
-                                         (fn [_]
-                                           (throw (ex-info "must not build" {})))
+(def ^:private opus-route
+  {:default-provider :anthropic-coding-plan :default-model "claude-opus-5-5"})
 
-                                         loop-env/refresh-cached-routers!
-                                         (fn [_]
-                                           (throw (ex-info "must not reseat" {})))]
+(defn- with-project-routers
+  "Call `(f context)` with an empty router cache, an empty session cache and a stub
+   fleet whose default pair is `@selection`. `context` holds a temporary `:project`
+   root, the session `:cache` and `:builds`, the root of each router build."
+  [selection f]
+  (let [fleet
+        [{:id :openai-codex :models [{:name "gpt-5.6-luna"}]}
+         {:id :anthropic-coding-plan :models [{:name "claude-opus-5-5"}]}]
 
-                             (expect (nil? (loop-env/reload-router!)))))
-                       (it "rebuilds from the reloaded config and reseats cached session envs"
-                           (let [built
-                                 (atom nil)
+        current
+        (fn []
+          (merge {:providers fleet} @selection))
 
-                                 seated
-                                 (atom nil)
+        builds
+        (atom [])
 
-                                 cfg
-                                 {:providers [{:id :acme}] :default-model "new-model"}]
+        cache
+        (atom {})
 
-                             (with-redefs [loop-router/router-initialized?
-                                           (fn []
-                                             true)
+        project
+        (.getCanonicalPath (.toFile (java.nio.file.Files/createTempDirectory
+                                      "vis-route"
+                                      (make-array java.nio.file.attribute.FileAttribute 0))))]
 
-                                           config/current-config
-                                           (fn []
-                                             cfg)
+    (with-redefs-fn {#'loop-router/router-atom (atom {})
+                     #'loop-router/build-router (fn [config]
+                                                  (swap! builds conj (workspace/cwd-root))
+                                                  {:providers (mapv #(select-keys % [:id :models])
+                                                                    (:providers config))})
+                     #'loop-router/refresh-router-models! (fn [_]
+                                                            nil)
+                     #'config/load-config (fn [& _]
+                                            (current))
+                     #'config/current-config current
+                     #'loop-env/cache cache}
+      #(f {:project project :cache cache :builds builds}))))
 
-                                           loop-router/rebuild-router!
-                                           (fn [c]
-                                             (reset! built c)
-                                             ::rebuilt)
+(defn- routed-pair
+  "The provider and model that a turn without a session pick runs on with `router`."
+  [router]
+  ((juxt :provider :name) (loop-router/resolve-effective-model router)))
 
-                                           loop-env/refresh-cached-routers!
-                                           (fn [r]
-                                             (reset! seated r))]
+(defn- project-router
+  "The router that a new session in `project` gets."
+  [project]
+  (binding [workspace/*workspace-root* project]
+    (loop-router/get-router)))
 
-                               (expect (nil? (loop-env/reload-router!))))
-                             (expect (= cfg @built))
-                             (expect (= ::rebuilt @seated)))))
-             (describe
-               "/reload wiring"
-               (it
-                 "is registered as a reload hook that rebuilds the router"
-                 (let [hook
-                       (get @@#'extension/reload-hooks
-                            :com.blockether.vis.internal.loop.environment/router-reload)
+(defdescribe
+  reload-router-hook-test
+  ;; `/reload` used to re-read vis.yml WITHOUT rebuilding the router, so a
+  ;; changed `default_model` kept routing to the old model and the TUI footer
+  ;; chip kept naming it until a restart.
+  (describe
+    "reload-router!"
+    (it
+      "builds nothing while no router exists and no session is cached (lazy first use is preserved)"
+      (with-project-routers (atom luna-route)
+                            (fn [{:keys [builds]}]
+                              (expect (nil? (loop-env/reload-router!)))
+                              (expect (= [] @builds)))))
+    (it "rebuilds the caller's root from the reloaded config when it had a router"
+        (let [selection (atom luna-route)]
+          (with-project-routers selection
+                                (fn [_]
+                                  (expect (= [:openai-codex "gpt-5.6-luna"]
+                                             (routed-pair (loop-router/get-router))))
+                                  (reset! selection opus-route)
+                                  (loop-env/reload-router!)
+                                  (expect (loop-router/router-initialized?))
+                                  (expect (= [:anthropic-coding-plan "claude-opus-5-5"]
+                                             (routed-pair (loop-router/get-router))))))))
+    ;; Regression, issue #311: the gateway runs this hook on a request thread with no
+    ;; project bound, so the caller's root is the daemon's launch directory. That root
+    ;; had no router, so the hook did nothing. The footer named the new default, but
+    ;; existing and new sessions of every project kept the old default.
+    (it "moves every project router to the new default when the caller's root has none"
+        (let [selection (atom luna-route)]
+          (with-project-routers
+            selection
+            (fn [{:keys [project]}]
+              (expect (= [:openai-codex "gpt-5.6-luna"] (routed-pair (project-router project))))
+              (expect (not= project (workspace/cwd-root)))
+              (reset! selection opus-route)
+              (loop-env/reload-router!)
+              (expect (= [:anthropic-coding-plan "claude-opus-5-5"]
+                         (routed-pair (project-router project))))
+              (expect (not (loop-router/router-initialized?)) "the caller's root stays lazy")))))
+    (it "reseats a cached session of another project on the new default"
+        (let [selection (atom luna-route)]
+          (with-project-routers
+            selection
+            (fn [{:keys [project cache]}]
+              (swap! cache assoc
+                "s-311"
+                {:environment
+                 {:session-id "s-311" :workspace/root project :router (project-router project)}})
+              (reset! selection opus-route)
+              (loop-env/reload-router!)
+              (expect (= [:anthropic-coding-plan "claude-opus-5-5"]
+                         (routed-pair (get-in @cache ["s-311" :environment :router]))))
+              (expect (= [:anthropic-coding-plan "claude-opus-5-5"]
+                         (routed-pair (project-router project)))))))))
+  (describe "/reload wiring"
+            (it "is registered as a reload hook that moves project routers to the reloaded config"
+                (let [hook
+                      (get @@#'extension/reload-hooks
+                           :com.blockether.vis.internal.loop.environment/router-reload)
 
-                       built
-                       (atom nil)
+                      selection
+                      (atom luna-route)]
 
-                       seated
-                       (atom nil)
-
-                       cfg
-                       {:providers [] :default-model "after-reload"}]
-
-                   (expect (ifn? hook))
-                   (with-redefs [loop-router/router-initialized?
-                                 (fn []
-                                   true)
-
-                                 config/current-config
-                                 (fn []
-                                   cfg)
-
-                                 loop-router/rebuild-router!
-                                 (fn [c]
-                                   (reset! built c)
-                                   ::rebuilt)
-
-                                 loop-env/refresh-cached-routers!
-                                 (fn [r]
-                                   (reset! seated r))]
-
-                     (hook))
-                   (expect (= cfg @built))
-                   (expect (= ::rebuilt @seated))))))
+                  (expect (ifn? hook))
+                  (with-project-routers selection
+                                        (fn [{:keys [project]}]
+                                          (project-router project)
+                                          (reset! selection opus-route)
+                                          (hook)
+                                          (expect (= [:anthropic-coding-plan "claude-opus-5-5"]
+                                                     (routed-pair (project-router project))))))))))
 
 (defdescribe human-input-parks-the-eval-wall-test
              ;; REGRESSION: HITL. Code that ASKS the operator blocks in

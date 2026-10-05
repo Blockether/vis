@@ -1282,11 +1282,13 @@
 (defonce ^:private _scoped-settings-sync-listener (scoped/add-listener! refresh-cached-settings!))
 
 (defn- kickoff-cached-sessions
-  "Run provider kickoff for each cached entry against `router`, outside any cache
-   swap: extension hooks have side effects, and a contended `swap!` would repeat
-   them. Answers `{:refreshed {id [environment refreshed]} :failures {id throwable}}`."
+  "Run provider kickoff for each cached entry against the router of its project,
+   outside any cache swap: extension hooks have side effects, and a contended `swap!`
+   would repeat them. `router`, when not nil, is the router of the caller's project;
+   every other project rebuilds its router from its own config. Answers
+   `{:refreshed {id [environment refreshed]} :failures {id throwable}}`."
   [router entries]
-  (let [routers (atom {(workspace/cwd-root) router})]
+  (let [routers (atom (if router {(workspace/cwd-root) router} {}))]
     (reduce-kv (fn [acc id {:keys [environment]}]
                  (try (extension/with-context {:env environment}
                                               (let [root (workspace/cwd-root)
@@ -1337,46 +1339,47 @@
    environment while every other session moves; the failures are then thrown as
    one ex-info naming the affected session ids, with the first failure as cause.
    Call this immediately after `rebuild-router!` so the next `send!` on any cached
-   session picks up the new router."
+   session picks up the new router. `router` is the new router of the caller's
+   project, or nil when that project has none. Every other cached env gets the
+   router of its own project, rebuilt from the config of that project."
   [router]
-  (when router
-    (loop [entries
-           @cache
+  (loop [entries
+         @cache
 
-           failures
-           {}]
+         failures
+         {}]
 
-      (let [{:keys [refreshed] :as kicked}
-            (kickoff-cached-sessions router entries)
+    (let [{:keys [refreshed] :as kicked}
+          (kickoff-cached-sessions router entries)
 
-            failures
-            (merge failures (:failures kicked))
+          failures
+          (merge failures (:failures kicked))
 
-            seated
-            (swap! cache seat-refreshed-environments refreshed)
+          seated
+          (swap! cache seat-refreshed-environments refreshed)
 
-            replaced
-            (into {}
-                  (keep (fn [[id [_ refreshed-environment]]]
-                          (when-let [entry (get seated id)]
-                            (when-not (identical? refreshed-environment (:environment entry))
-                              [id entry]))))
-                  refreshed)]
+          replaced
+          (into {}
+                (keep (fn [[id [_ refreshed-environment]]]
+                        (when-let [entry (get seated id)]
+                          (when-not (identical? refreshed-environment (:environment entry))
+                            [id entry]))))
+                refreshed)]
 
-        (cond (seq replaced) (recur replaced failures)
-              (seq failures) (throw (ex-info
-                                      (str "Provider kickoff failed for " (count failures)
-                                           " cached session(s), which keep their previous router: "
-                                           (str/join ", " (keys failures)))
-                                      {:type :vis/provider-kickoff-failed
-                                       :session-ids (vec (keys failures))
-                                       :errors (update-vals failures #(or (ex-message %) (str %)))}
-                                      (val (first failures))))))))
+      (cond (seq replaced) (recur replaced failures)
+            (seq failures) (throw (ex-info
+                                    (str "Provider kickoff failed for " (count failures)
+                                         " cached session(s), which keep their previous router: "
+                                         (str/join ", " (keys failures)))
+                                    {:type :vis/provider-kickoff-failed
+                                     :session-ids (vec (keys failures))
+                                     :errors (update-vals failures #(or (ex-message %) (str %)))}
+                                    (val (first failures)))))))
   nil)
 
 (defn reload-router!
-  "Rebuild the shared LLM router from the freshly reloaded config and reseat it
-   on every cached env. Registered as a `/reload` hook.
+  "Rebuild the LLM routers from the freshly reloaded config and reseat them on
+   every cached env. Registered as a `/reload` hook and as the provider rebuild hook.
 
    `reload-slash` re-reads vis.yml through `config/reload-config!`, but the
    router is an immutable SNAPSHOT: built once by `get-router` and captured
@@ -1386,11 +1389,20 @@
    every frontend that names the router default (the TUI footer model chip via
    `resolve-effective-model`) kept showing the OLD model.
 
-   No-ops when the router was never built, so lazy first use is preserved: a
-   `/reload` must not force OAuth token fetches at TUI boot. Returns nil."
+   `get-router` keeps one router for each project root, and a config edit can
+   change all of them. A gateway request binds no project, so its root is the
+   launch directory of the daemon, which often has no router. A check of only that
+   root left every project router on the old default: the footer named the new
+   default, but turns ran on the old one. So every router is dropped. The caller's
+   root rebuilds at once when it had a router, and the project of each cached env
+   rebuilds with it. Any other project rebuilds on its next `get-router`.
+
+   Builds nothing when no router exists and no env is cached, so lazy first use is
+   preserved: a `/reload` must not force OAuth token fetches at TUI boot. Returns nil."
   []
-  (when (loop-router/router-initialized?)
-    (refresh-cached-routers! (loop-router/rebuild-router! (config/current-config))))
+  (let [built (loop-router/forget-routers!)]
+    (refresh-cached-routers! (when (contains? built (workspace/cwd-root))
+                               (loop-router/rebuild-router! (config/current-config)))))
   nil)
 
 ;; Wire `reload-router!` into the `/reload` slash. `run-reload-hooks!` runs
