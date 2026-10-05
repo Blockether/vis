@@ -3580,7 +3580,7 @@
                                                  (assoc :status "sent"
                                                         :into_turn_id into-tid
                                                         :iteration iteration
-                                                        :sent_at (System/currentTimeMillis)))))
+                                                         :sent_at (util/now-ms)))))
                                   turns
                                   tids)))
                 (update :turn-order
