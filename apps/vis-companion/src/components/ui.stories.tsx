@@ -955,7 +955,7 @@ export const Bands: Story = {
       </Group>
       <Group of="States a project can be in, told apart">
         <HeaderMeta>
-          <ProjectStatusCounts live={3} awaiting={1} unread={4} />
+          <ProjectStatusCounts live={3} awaiting={1} stopped={1} unread={4} />
           <ProjectStatusCounts live={0} />
         </HeaderMeta>
       </Group>

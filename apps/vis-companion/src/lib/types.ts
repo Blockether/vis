@@ -793,6 +793,12 @@ export interface ProjectOverview {
    * before the gateway counted NEW does not carry it.
    */
   unread_count?: number;
+  /**
+   * The part of `unread_count` whose newest turn stopped without a reply (`was_interrupted`
+   * or `was_failed`). A header shows it as STOPPED and only the rest as NEW. A snapshot saved
+   * before the gateway counted STOPPED does not carry it.
+   */
+  stopped_count?: number;
   last_activity_ms: number;
 }
 
@@ -873,6 +879,8 @@ export interface GatewayOverview {
   awaiting_count: number;
   /** Every conversation on this gateway holding an unseen answer, as each project counts it. */
   unread_count?: number;
+  /** The part of `unread_count` whose newest turn stopped, as each project counts it. */
+  stopped_count?: number;
   server_time_ms?: number;
 }
 

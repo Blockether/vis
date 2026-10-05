@@ -6285,8 +6285,8 @@
 (defn- projects-overview-fingerprint
   "Everything `projects-overview` counts, as ONE comparable value: the channel,
    the asking device's unsent ids, the per-session facts the tally reads (project
-   id, recency, liveness, a parked request, an unread answer) and the persisted
-   project names.
+   id, recency, liveness, a parked request, an unread answer, a stopped turn) and
+   the persisted project names.
 
    This is what makes the cache safe to keep. A cached COUNT is a bug, so the key
    is not a timestamp and not a session total: it is the inputs themselves, cheap
@@ -6294,13 +6294,14 @@
    resolves a single workspace. The workspace grouping is the expensive part and
    the only part the cache actually saves, and the epoch above covers the one way
    a workspace moves while these facts stand still."
-  [channel unsent ranked live waiting named unread?]
+  [channel unsent ranked live waiting named unread? stopped?]
   [@projects-overview-epoch
    (str channel)
    unsent
    (mapv (fn [row]
            [(:id row) (:project-id row) (:recency-ms row) (contains? live (:id row))
-            (contains? waiting (:id row)) (boolean (unread? (:id row)))])
+            (contains? waiting (:id row)) (boolean (unread? (:id row)))
+            (boolean (stopped? (:id row)))])
          ranked)
    (mapv (fn [[root project]]
            [root
@@ -6313,9 +6314,9 @@
    with its own counts, plus the gateway's totals beside them.
 
    `{:projects [{root project_id name session_count live_count awaiting_count
-                 unread_count last_activity_ms} ...]
+                 unread_count stopped_count last_activity_ms} ...]
      :project_count n :session_count n :live_count n :awaiting_count n
-     :unread_count n :server_time_ms ms}`
+     :unread_count n :stopped_count n :server_time_ms ms}`
 
    A client used to DERIVE this: download the fleet, group it by working
    directory, tally each group. That made a project header cost the whole
@@ -6337,6 +6338,10 @@
    answers that landed after the reader's watermark. A header therefore counts every
    unread conversation in the project, including the ones outside whatever window a
    client happens to hold - a client tallying its own rows reads it low.
+
+   `stopped_count` is the part of `unread_count` whose newest turn stopped without
+   a reply: the `was_interrupted` or `was_failed` that a session row carries. A
+   client shows it as STOPPED and only the rest of `unread_count` as NEW.
 
    Projects are ordered by canonical root, ascending. Activity, liveness and
    demand update counts only; they never move project headers.
@@ -6382,6 +6387,14 @@
            (when-let [seen (get marks (str sid))]
              (> (long (or (:answer-count (get stats (str sid))) 0)) (long seen))))
 
+         ;; STOPPED is the unread part whose newest turn ended without a reply, by the
+         ;; same stats a row reads for `was_interrupted` and `was_failed`.
+         stopped?
+         (fn [sid]
+           (and (unread? sid)
+                (let [st (get stats (str sid))]
+                  (boolean (or (:latest-turn-interrupted? st) (:latest-turn-failed? st))))))
+
          ;; Persisted projects by their bound root: the only thing the tally cannot
          ;; read off a session is the NAME a human gave the project.
          named
@@ -6392,7 +6405,7 @@
                (try (lp/projects {}) (catch Throwable _ nil)))
 
          fingerprint
-         (projects-overview-fingerprint channel unsent ranked live waiting named unread?)
+         (projects-overview-fingerprint channel unsent ranked live waiting named unread? stopped?)
 
          cached
          (let [entry @projects-overview-cache]
@@ -6407,6 +6420,7 @@
               :live-count 0
               :awaiting-count 0
               :unread-count 0
+              :stopped-count 0
               :last-activity-ms 0}
 
              groups
@@ -6431,6 +6445,9 @@
                                  :unread-count (cond-> (long (:unread-count g))
                                                  (unread? sid)
                                                  inc)
+                                 :stopped-count (cond-> (long (:stopped-count g))
+                                                  (stopped? sid)
+                                                  inc)
                                  :last-activity-ms (max (long (:last-activity-ms g))
                                                         (long (:recency-ms row)))})))
                      (into {}
@@ -6450,6 +6467,7 @@
                                            :live_count (long (:live-count g))
                                            :awaiting_count (long (:awaiting-count g))
                                            :unread_count (long (:unread-count g))
+                                           :stopped_count (long (:stopped-count g))
                                            :last_activity_ms (long (:last-activity-ms g))})))
                   (sort-by #(str (get % "root")))
                   vec)
@@ -6463,7 +6481,8 @@
               :session_count (count ranked)
               :live_count (count (filterv listed (keys live)))
               :awaiting_count (count (filterv listed waiting))
-              :unread_count (count (filterv unread? (map :id ranked)))}]
+              :unread_count (count (filterv unread? (map :id ranked)))
+              :stopped_count (count (filterv stopped? (map :id ranked)))}]
 
          (reset! projects-overview-cache {:fingerprint fingerprint :answer answer})
          (assoc answer :server_time_ms (util/now-ms)))))))

@@ -956,6 +956,9 @@ export function SessionsScreen({
               ...(typeof overview.unread_count === 'number' && {
                 unread_count: projects.reduce((total, entry) => total + (entry.unread_count ?? 0), 0),
               }),
+              ...(typeof overview.stopped_count === 'number' && {
+                stopped_count: projects.reduce((total, entry) => total + (entry.stopped_count ?? 0), 0),
+              }),
             };
           }
         }

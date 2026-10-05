@@ -572,6 +572,8 @@ export interface Tally {
   awaiting?: number;
   /** Conversations holding an answer the reader has not seen yet. */
   unread?: number;
+  /** The part of `unread` whose newest turn stopped without a reply. */
+  stopped?: number;
 }
 
 /**
@@ -667,6 +669,12 @@ export function projectGroups(
         live: project.live_count ?? 0,
         awaiting: project.awaiting_count ?? 0,
         unread: unreadTally(project.unread_count, sessions, isUnread, isReadSince),
+        stopped: unreadTally(
+          project.stopped_count,
+          sessions,
+          (session) => sessionWasStopped(session) && isUnread(session),
+          (session) => sessionWasStopped(session) && isReadSince(session),
+        ),
       },
       sessions,
     };
@@ -716,6 +724,7 @@ function localGroup(
       live: sessions.filter(sessionIsLive).length,
       awaiting: sessions.filter(sessionNeedsInput).length,
       unread: sessions.filter(isUnread).length,
+      stopped: sessions.filter((session) => sessionWasStopped(session) && isUnread(session)).length,
     },
     sessions,
   };

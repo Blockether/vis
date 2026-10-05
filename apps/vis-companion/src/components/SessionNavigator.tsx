@@ -611,16 +611,22 @@ export function sessionStatusTone(status: string): string {
   }
 }
 
-/** Count sessions with each status. A session waiting for input does not also count as LIVE. */
+/**
+ * Count sessions with each status. A session waiting for input does not also count as LIVE,
+ * and a stopped session does not also count as NEW: `live` holds `awaiting` and `unread`
+ * holds `stopped`, as the gateway counts them.
+ */
 export function ProjectStatusCounts({
   live,
   awaiting = 0,
+  stopped = 0,
   unread = 0,
   isAfterTotal = false,
   renderLive,
 }: {
   live: number;
   awaiting?: number;
+  stopped?: number;
   unread?: number;
   isAfterTotal?: boolean;
   renderLive?: (label: ReactNode) => ReactNode;
@@ -629,7 +635,8 @@ export function ProjectStatusCounts({
   const statuses = [
     { label: 'HITL', count: awaiting },
     { label: 'LIVE', count: running },
-    { label: 'NEW', count: unread },
+    { label: 'STOPPED', count: stopped },
+    { label: 'NEW', count: Math.max(0, unread - stopped) },
   ].filter((status) => status.count > 0);
 
   return statuses.map((status, index) => {

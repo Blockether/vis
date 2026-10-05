@@ -8,7 +8,7 @@
 // paint the next test's first frame.
 import { render } from '@testing-library/react';
 
-import { projectPath, sessionIsArchived, sessionIsLive } from '../lib/fleet';
+import { projectPath, sessionIsArchived, sessionIsLive, sessionWasStopped } from '../lib/fleet';
 import { SessionsScreen } from './SessionsScreen';
 import type { GatewayConn, ProjectOverview, Session, SessionGroup } from '../lib/types';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
@@ -154,7 +154,8 @@ function listCursor(row: Session, dirty: ReadonlySet<string>, recent = false): s
 /**
  * The stable totals the real gateway carries beside its session-list head. NEW is the
  * verdict each row is served with (`is_unread`), over every row, as the gateway's
- * watermarks decide it for the whole store.
+ * watermarks decide it for the whole store. STOPPED is the part of NEW whose newest
+ * turn stopped.
  */
 function overviewFor(rows: Session[], saved: ProjectOverview[] = []) {
   const byRoot = new Map<string, Session[]>();
@@ -173,6 +174,7 @@ function overviewFor(rows: Session[], saved: ProjectOverview[] = []) {
       live_count: group.filter(sessionIsLive).length,
       awaiting_count: group.filter((row) => row.is_awaiting_input === true).length,
       unread_count: group.filter((row) => row.is_unread === true).length,
+      stopped_count: group.filter((row) => row.is_unread === true && sessionWasStopped(row)).length,
       last_activity_ms: project?.last_activity_ms ?? 0,
     };
   });
@@ -183,6 +185,7 @@ function overviewFor(rows: Session[], saved: ProjectOverview[] = []) {
     live_count: rows.filter(sessionIsLive).length,
     awaiting_count: rows.filter((row) => row.is_awaiting_input === true).length,
     unread_count: rows.filter((row) => row.is_unread === true).length,
+    stopped_count: rows.filter((row) => row.is_unread === true && sessionWasStopped(row)).length,
   };
 }
 /**

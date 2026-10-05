@@ -1123,7 +1123,27 @@
       (expect (= "2 tabs | 1 HITL · 2 LIVE · 2 NEW" (#'projects/row-status (first headers) nil 60)))
       ;; A project the overview never mentions keeps exactly what it came with.
       (expect (= [project-a] (projects/with-gateway-counts [project-a] {"projects" []})))
-      (expect (= [project-a] (projects/with-gateway-counts [project-a] nil))))))
+      (expect (= [project-a] (projects/with-gateway-counts [project-a] nil)))))
+  ;; Regression, user report (paraphrased: STOPPED is missing from the project and
+  ;; group headers): a header counted a stopped conversation as NEW.
+  (it "project header paints the gateways STOPPED apart from NEW"
+      (let [items
+            (projects/with-gateway-counts [project-a]
+                                          {"projects" [{"root" "/work/vis"
+                                                        "project_id" "a"
+                                                        "live_count" 1
+                                                        "awaiting_count" 0
+                                                        "unread_count" 3
+                                                        "stopped_count" 1}]})
+
+            header
+            (first (filterv #(= :project-select (:kind %))
+                     (projects/sidebar-entries {:project-sidebar {:items items} :tabs []})))]
+
+        (expect (= 1 (get (first items) "stopped_count")))
+        (expect (= {:running 1 :stopped 1 :unread 2}
+                   (select-keys header [:running :stopped :unread])))
+        (expect (= "2 tabs | 1 LIVE · 1 STOPPED · 2 NEW" (#'projects/row-status header nil 60))))))
 
 (defdescribe
   project-input-grid-and-navigation-test
@@ -1705,7 +1725,10 @@
               [[{} []] [{:running 2} [["2 LIVE" "LIVE"]]]
                [{:running 2 :unread 3} [["2 LIVE" "LIVE"] [" · " nil] ["3 NEW" "NEW"]]]
                [{:needs-input 1 :running 2 :unread 3}
-                [["1 HITL" "HITL"] [" · " nil] ["2 LIVE" "LIVE"] [" · " nil] ["3 NEW" "NEW"]]]]]
+                [["1 HITL" "HITL"] [" · " nil] ["2 LIVE" "LIVE"] [" · " nil] ["3 NEW" "NEW"]]]
+               [{:running 2 :stopped 1 :unread 3}
+                [["2 LIVE" "LIVE"] [" · " nil] ["1 STOPPED" "STOPPED"] [" · " nil]
+                 ["3 NEW" "NEW"]]]]]
 
         (expect (= (if (< width 48)
                      (mapv (fn [[text tone]]
@@ -1714,10 +1737,11 @@
                      expected)
                    (#'projects/row-status-parts (merge {:kind :project-group} counts) nil width)))))
   (it "separates session totals from uppercase status counts"
-      (doseq [[counts expected] [[{} "14 sessions"] [{:running 2} "14 sessions | 2 LIVE"]
-                                 [{:needs-input 1 :unread 3} "14 sessions | 1 HITL · 3 NEW"]
-                                 [{:running 2 :needs-input 1 :unread 3}
-                                  "14 sessions | 1 HITL · 2 LIVE · 3 NEW"]]]
+      (doseq [[counts expected]
+              [[{} "14 sessions"] [{:running 2} "14 sessions | 2 LIVE"]
+               [{:needs-input 1 :unread 3} "14 sessions | 1 HITL · 3 NEW"]
+               [{:running 2 :needs-input 1 :unread 3} "14 sessions | 1 HITL · 2 LIVE · 3 NEW"]
+               [{:running 2 :stopped 1 :unread 3} "14 sessions | 2 LIVE · 1 STOPPED · 3 NEW"]]]
         (let [entry (merge {:kind :project-select
                             :project project-a
                             :tab-count 14
@@ -1731,6 +1755,40 @@
                          (str/replace " | " "|")
                          (str/replace " · " "·"))
                      (#'projects/row-status entry nil 40))))))
+  ;; Regression, user report (paraphrased: STOPPED is missing from the group headers):
+  ;; a group counted a stopped conversation as NEW.
+  (it "counts a stopped grouped session as STOPPED, never as NEW"
+      (let [sessions
+            [{"id" "stopped"
+              "group_id" "g1"
+              "is_unread" true
+              "unread_answers" 1
+              "was_interrupted" true}
+             {"id" "failed" "group_id" "g1" "is_unread" true "unread_answers" 2 "was_failed" true}
+             {"id" "new" "group_id" "g1" "is_unread" true "unread_answers" 1}
+             ;; A stopped turn that the reader saw is not news.
+             {"id" "read" "group_id" "g1" "was_interrupted" true}
+             ;; A running session is LIVE, whatever its last turn did.
+             {"id" "live"
+              "group_id" "g1"
+              "live" true
+              "is_unread" true
+              "unread_answers" 1
+              "was_interrupted" true}]
+
+            db
+            (-> (fixture-db)
+                (assoc-in [:project-sidebar :items] [(assoc project-a "session_count" 5)])
+                (assoc-in [:project-sidebar :expanded] #{"a"})
+                (assoc-in [:project-sidebar :groups "a"] [group-release])
+                (assoc-in [:project-sidebar :pages "a"] {:sessions [] :grouped sessions}))
+
+            group
+            (first (filter #(= :project-group (:kind %)) (projects/sidebar-entries db)))]
+
+        (expect (= {:running 1 :stopped 2 :unread 1}
+                   (select-keys group [:running :stopped :unread])))
+        (expect (= "1 LIVE · 2 STOPPED · 1 NEW" (#'projects/row-status group nil 60)))))
   (it
     "counts each grouped session once, including folded groups and later loose pages"
     ;; Group totals use the complete sidecar, not visible rows or prompt counts.

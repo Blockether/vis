@@ -104,14 +104,17 @@ function heading(name = NAME, expanded = false) {
   return screen.getByRole('button', { name: `${expanded ? 'Collapse' : 'Expand'} ${name}` });
 }
 
-function expectCounts(input: number, live: number, unread: number, name = NAME, expanded = false) {
+function expectCounts(
+  input: number, live: number, unread: number, name = NAME, expanded = false, stopped = 0,
+) {
   const scope = within(heading(name, expanded));
-  for (const [label, count] of [['HITL', input], ['LIVE', live], ['NEW', unread]] as const) {
+  const labels = [['HITL', input], ['LIVE', live], ['STOPPED', stopped], ['NEW', unread]] as const;
+  for (const [label, count] of labels) {
     if (count > 0) expect(scope.getByText(`${count} ${label}`)).toBeVisible();
     else expect(scope.queryByText(new RegExp(`^[0-9]+ ${label}$`))).toBeNull();
   }
   // Regression: group statuses need neutral dots, without leading or trailing separators.
-  const counts = [input, live, unread].filter((count) => count > 0);
+  const counts = labels.map(([, count]) => count).filter((count) => count > 0);
   const separators = scope.queryAllByText('·');
   expect(separators).toHaveLength(Math.max(0, counts.length - 1));
   for (const separator of separators) expect(separator).toHaveAttribute('aria-hidden', 'true');
@@ -205,5 +208,24 @@ describe('session group status counts', () => {
       expectCounts(1, 0, 0, 'Other work');
     });
     expect(heading()).not.toHaveAttribute('aria-describedby');
+  });
+
+  // Regression, user report (paraphrased: STOPPED is missing from the group headers): a
+  // stopped conversation was counted as NEW.
+  it('counts a stopped conversation as STOPPED, never as NEW', async () => {
+    const { update } = mount([
+      row('stopped', { is_unread: true, unread_answers: 1, was_interrupted: true }),
+      row('failed', { is_unread: true, unread_answers: 2, was_failed: true }),
+      row('new', { is_unread: true, unread_answers: 1 }),
+      // A stopped turn that the reader has seen is not news.
+      row('read', { was_interrupted: true }),
+    ]);
+    await waitFor(() => expectCounts(0, 0, 1, NAME, false, 2));
+    expect(within(heading()).getByText('2 STOPPED')).toHaveClass('text-err');
+    expect(heading()).toHaveAccessibleDescription('2 stopped sessions. 1 session with new answers.');
+
+    // The reader opens one stopped conversation: it leaves STOPPED, and NEW stays.
+    update({ openRow: sessionRowKey(conn, 'stopped') });
+    expectCounts(0, 0, 1, NAME, false, 1);
   });
 });

@@ -237,6 +237,20 @@ describe('ProjectStatusCounts', () => {
     expect(container.textContent).toBe(expected);
     expect(container.querySelector('.animate-pulse')).toBeNull();
   });
+
+  // Regression, user report (paraphrased: STOPPED is missing from the group and project
+  // headers): a stopped conversation was counted as NEW.
+  it('paints STOPPED as the part of NEW whose newest turn stopped', () => {
+    const { container, rerender } = render(
+      <ProjectStatusCounts live={2} stopped={1} unread={3} isAfterTotal />,
+    );
+
+    expect(container.textContent).toBe('|2 LIVE·1 STOPPED·2 NEW');
+    expect(container.querySelector('.text-err')).toHaveTextContent('1 STOPPED');
+
+    rerender(<ProjectStatusCounts live={0} stopped={2} unread={2} isAfterTotal />);
+    expect(container.textContent).toBe('|2 STOPPED');
+  });
 });
 
 describe('Pager', () => {

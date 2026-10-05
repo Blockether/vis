@@ -63,6 +63,7 @@ import {
   sessionMillis,
   sessionNeedsInput,
   sessionRowKey,
+  sessionWasStopped,
   type FleetMachine,
   type ProjectGroupView,
 } from '../../lib/fleet';
@@ -108,6 +109,8 @@ type GroupBandView = {
 type GroupStatusCounts = {
   awaiting: number;
   live: number;
+  /** Unread rows whose newest turn stopped. They do not also count as NEW. */
+  stopped: number;
   unread: number;
 };
 
@@ -482,6 +485,11 @@ function GroupBand({
       label: 'LIVE',
       count: status.live,
       description: `${status.live} live ${status.live === 1 ? 'session' : 'sessions'}.`,
+    },
+    {
+      label: 'STOPPED',
+      count: status.stopped,
+      description: `${status.stopped} stopped ${status.stopped === 1 ? 'session' : 'sessions'}.`,
     },
     {
       label: 'NEW',
@@ -1305,7 +1313,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     const banded = new Set(bands.map((band) => band.id));
     const byGroup = new Map<string, Session[]>();
     const statuses = new Map<string, GroupStatusCounts>(
-      bands.map((band) => [band.id, { awaiting: 0, live: 0, unread: 0 }]),
+      bands.map((band) => [band.id, { awaiting: 0, live: 0, stopped: 0, unread: 0 }]),
     );
     const loose: Session[] = [];
     // The groups rows name that this page of the wall does not hold.
@@ -1328,7 +1336,8 @@ export const ProjectGroup = memo(function ProjectGroup({
           else if (sessionIsLive(session)) counts.live += 1;
           const key = sessionRowKey(conn, session.id);
           if (key !== openRow && unreadAfterVisit(session, readFloors?.get(key)) > 0) {
-            counts.unread += 1;
+            if (sessionWasStopped(session)) counts.stopped += 1;
+            else counts.unread += 1;
           }
         }
         continue;
@@ -1864,6 +1873,7 @@ export const ProjectGroup = memo(function ProjectGroup({
         <ProjectStatusCounts
           live={tally.live}
           awaiting={tally.awaiting}
+          stopped={tally.stopped}
           unread={tally.unread}
           isAfterTotal
           renderLive={(label) => (

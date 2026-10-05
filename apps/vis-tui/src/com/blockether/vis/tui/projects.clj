@@ -96,7 +96,8 @@
               (assoc project
                 "live_count" (long (or (get row "live_count") 0))
                 "awaiting_count" (long (or (get row "awaiting_count") 0))
-                "unread_count" (long (or (get row "unread_count") 0)))
+                "unread_count" (long (or (get row "unread_count") 0))
+                "stopped_count" (long (or (get row "stopped_count") 0)))
               project))
           projects)))
 
@@ -109,17 +110,27 @@
    unread marks had. The gateway tallies every session in the project
    (`with-gateway-counts`), and a session parked on a human is a LIVE one, so
    running is what is live beside the demand. A local flag is a strict subset of
-   the gateway's answer and moves first, so each count is the larger of the two."
+   the gateway's answer and moves first, so each count is the larger of the two.
+
+   STOPPED is the part of the unread news whose newest turn stopped. Only the
+   gateway knows it, so NEW paints the rest and no conversation counts twice."
   [project running waiting unread]
   (let [demand
         (long (or (get project "awaiting_count") 0))
 
         live
-        (long (or (get project "live_count") 0))]
+        (long (or (get project "live_count") 0))
+
+        news
+        (max (long unread) (long (or (get project "unread_count") 0)))
+
+        stopped
+        (min news (long (or (get project "stopped_count") 0)))]
 
     {:running (max (long running) (- live (min live demand)))
      :needs-input (max (long waiting) demand)
-     :unread (max (long unread) (long (or (get project "unread_count") 0)))}))
+     :stopped stopped
+     :unread (- news stopped)}))
 
 (defn project-label
   "What a project row paints: the project's name, never its folder. An older gateway
@@ -175,7 +186,8 @@
           :else "Idle")))
 
 (defn- group-counts
-  "Count each active session once, without counting HITL sessions as LIVE."
+  "Count each active session once, without counting HITL sessions as LIVE or
+   STOPPED sessions as NEW."
   [sessions current-id]
   (reduce (fn [counts session]
             (let [live?
@@ -188,7 +200,13 @@
                   (and (true? (get session "is_unread"))
                        (pos? (long (or (get session "unread_answers") 0)))
                        (not live?)
-                       (not= current-id (str (get session "id"))))]
+                       (not= current-id (str (get session "id"))))
+
+                  ;; The row's STOPPED rule: unread news whose newest turn stopped.
+                  stopped?
+                  (and unread?
+                       (or (true? (get session "was_interrupted"))
+                           (true? (get session "was_failed"))))]
 
               (if (get session "archived_at")
                 counts
@@ -199,9 +217,12 @@
                   (and live? (not waiting?))
                   (update :running inc)
 
-                  unread?
+                  stopped?
+                  (update :stopped inc)
+
+                  (and unread? (not stopped?))
                   (update :unread inc)))))
-          {:running 0 :needs-input 0 :unread 0}
+          {:running 0 :needs-input 0 :stopped 0 :unread 0}
           (vals (into {} (map (juxt #(str (get % "id")) identity)) sessions))))
 
 (defn- saved-entries
@@ -487,6 +508,7 @@
                           :tab-count (if (seq tabs) (count tabs) (get project "session_count" 0))
                           :running (:running counts)
                           :needs-input (:needs-input counts)
+                          :stopped (:stopped counts)
                           :unread (:unread counts)
                           :action [:select project]}]
                         (concat
@@ -766,7 +788,7 @@
     (keep (fn [[key label]]
             (let [n (long (or (get entry key) 0))]
               (when (pos? n) [(str n " " label) label])))
-          [[:needs-input "HITL"] [:running "LIVE"] [:unread "NEW"]])))
+          [[:needs-input "HITL"] [:running "LIVE"] [:stopped "STOPPED"] [:unread "NEW"]])))
 
 (defn- row-status-parts
   [entry sidebar width]

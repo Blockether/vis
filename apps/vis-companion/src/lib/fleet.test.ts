@@ -567,8 +567,8 @@ describe('projectGroups', () => {
     const groups = projectGroups(overview, []);
     expect(groups.map((group) => group.root)).toEqual(['/repo/busy', '/repo/quiet']);
     expect(groups.map((group) => group.tally)).toEqual([
-      { count: 12, live: 2, awaiting: 0, unread: 0 },
-      { count: 400, live: 0, awaiting: 0, unread: 0 },
+      { count: 12, live: 2, awaiting: 0, unread: 0, stopped: 0 },
+      { count: 400, live: 0, awaiting: 0, unread: 0, stopped: 0 },
     ]);
     expect(overview.projects.map((project) => project.root)).toEqual(['/repo/quiet', '/repo/busy']);
     const refreshed = {
@@ -610,7 +610,7 @@ describe('projectGroups', () => {
     const draft = session('d', { workspace: { root: '/drafts/x', is_draft: true } });
     const groups = projectGroups(overview, [draft]);
     expect(groups.map((group) => group.root)).toEqual(['/drafts/x', '/repo/a']);
-    expect(groups[0]?.tally).toEqual({ count: 1, live: 0, awaiting: 0, unread: 0 });
+    expect(groups[0]?.tally).toEqual({ count: 1, live: 0, awaiting: 0, unread: 0, stopped: 0 });
     expect(groups[0]?.sessions).toEqual([draft]);
     overview.projects.unshift({
       root: '/drafts/x',
@@ -657,13 +657,13 @@ describe('machineTally', () => {
 
   it('says what the GATEWAY holds, not what this device has paged in', () => {
     const groups = projectGroups(overview, window());
-    expect(groups[0]?.tally).toEqual({ count: 400, live: 3, awaiting: 0, unread: 0 });
+    expect(groups[0]?.tally).toEqual({ count: 400, live: 3, awaiting: 0, unread: 0, stopped: 0 });
     expect(machineTally(overview, groups)).toEqual({ count: 412, live: 4 });
   });
 
   it('falls back to the rows on screen for a machine that has not answered one', () => {
     const groups = projectGroups(null, window());
-    expect(groups[0]?.tally).toEqual({ count: 2, live: 1, awaiting: 0, unread: 0 });
+    expect(groups[0]?.tally).toEqual({ count: 2, live: 1, awaiting: 0, unread: 0, stopped: 0 });
     expect(machineTally(undefined, groups)).toEqual({ count: 2, live: 1 });
   });
 
@@ -674,6 +674,7 @@ describe('machineTally', () => {
       live: 0,
       awaiting: 0,
       unread: 0,
+      stopped: 0,
     });
   });
 });
@@ -761,6 +762,80 @@ describe('the NEW a header counts', () => {
     const overview = overviewOf();
     expect(projectGroups(overview, woken(), isUnread)[0]?.tally.unread).toBe(1);
     expect(machineCounts(held(woken(), overview), sessionIsLive, isUnread).unread).toBe(1);
+  });
+});
+
+// Regression, user report (paraphrased: STOPPED is missing from the group and project
+// headers): a header counted a stopped conversation as NEW.
+describe('the STOPPED a header counts', () => {
+  const inA = { root: '/repo/a' };
+  const overviewOf = (stopped?: number): GatewayOverview => {
+    const counted = stopped === undefined ? {} : { stopped_count: stopped };
+    return {
+      projects: [
+        {
+          root: '/repo/a',
+          project_id: 'p-a',
+          name: 'Vis',
+          session_count: 40,
+          live_count: 0,
+          awaiting_count: 0,
+          unread_count: 3,
+          ...counted,
+          last_activity_ms: 300,
+        },
+      ],
+      project_count: 1,
+      session_count: 40,
+      live_count: 0,
+      awaiting_count: 0,
+      unread_count: 3,
+      ...counted,
+    };
+  };
+  // The window holds one stopped and one answered conversation. The gateway also counts
+  // a stopped conversation that the window does not hold.
+  const rows = (): Session[] => [
+    session('s1', {
+      answer_count: 2,
+      is_unread: true,
+      unread_answers: 1,
+      was_interrupted: true,
+      workspace: inA,
+    }),
+    session('n1', { answer_count: 4, is_unread: true, unread_answers: 1, workspace: inA }),
+  ];
+  const isUnread = (row: Session) => unreadTurnCount(row) > 0;
+
+  it('takes the gateway count, also for a conversation outside the window', () => {
+    const tally = projectGroups(overviewOf(2), rows(), isUnread)[0]?.tally;
+    expect(tally).toMatchObject({ unread: 3, stopped: 2 });
+  });
+
+  it('takes a stopped row read here off STOPPED as well as off the unread total', () => {
+    const held: FleetMachine = {
+      ...machine(studio, rows()),
+      overview: overviewOf(2),
+      countedUnread: servedUnread(rows()),
+    };
+    const seen = readSinceCounted(held, (row) => row.id === 's1');
+    const tally = projectGroups(held.overview, rows(), isUnread, seen)[0]?.tally;
+    expect(tally).toMatchObject({ unread: 2, stopped: 1 });
+  });
+
+  it('counts the stopped rows on screen for an overview without a STOPPED count', () => {
+    expect(projectGroups(overviewOf(), rows(), isUnread)[0]?.tally.stopped).toBe(1);
+  });
+
+  it('counts the stopped rows of a project that no overview counts', () => {
+    const failed = session('f1', {
+      is_unread: true,
+      unread_answers: 1,
+      was_failed: true,
+      workspace: { root: '/repo/b' },
+    });
+    const local = projectGroups(overviewOf(0), [failed], isUnread).find((group) => group.root === '/repo/b');
+    expect(local?.tally).toMatchObject({ unread: 1, stopped: 1 });
   });
 });
 

@@ -6775,6 +6775,38 @@
             (expect (= 2 (:live_count overview)))
             (expect (= 2 (get (first (:projects overview)) "unread_count")))
             (expect (= 2 (:unread_count overview)))))))
+  ;; Regression, user report (paraphrased: STOPPED is missing from the group and project
+  ;; headers): a header counted a stopped conversation as NEW.
+  (it "counts STOPPED as the part of NEW whose newest turn stopped"
+      (let [stats
+            (atom
+              {"s1"
+               {:latest-turn-at 400 :turn-count 2 :answer-count 2 :latest-turn-interrupted? true}
+               "s2" {:latest-turn-at 300 :turn-count 2 :answer-count 2 :latest-turn-failed? true}
+               "s3" {:latest-turn-at 200 :turn-count 2 :answer-count 2}
+               "s4"
+               {:latest-turn-at 100 :turn-count 1 :answer-count 1 :latest-turn-interrupted? true}})]
+        (with-redefs-fn {#'lp/db-info (constantly ::db)
+                         #'lp/projects (constantly [])
+                         #'persistance/db-session-turn-stats (fn [_]
+                                                               @stats)
+                         #'lp/by-channel (constantly [{:id "s1"} {:id "s2"} {:id "s3"} {:id "s4"}])
+                         ;; s4 stopped too, but its reader is caught up: no news.
+                         #'lp/session-read-marks (constantly {"s1" 1 "s2" 1 "s3" 1 "s4" 1})
+                         #'state/session-project-root (constantly "/repo/a")
+                         #'bus/live-turns (constantly {})
+                         #'bus/waiting-requests (constantly {})}
+          (fn []
+            (let [overview (state/projects-overview)]
+              (expect (= 3 (get (first (:projects overview)) "unread_count")))
+              (expect (= 2 (get (first (:projects overview)) "stopped_count")))
+              (expect (= 3 (:unread_count overview)))
+              (expect (= 2 (:stopped_count overview))))
+            ;; Only the stopped fact changes, so the cached answer must miss.
+            (swap! stats update "s1" dissoc :latest-turn-interrupted?)
+            (let [overview (state/projects-overview)]
+              (expect (= 1 (get (first (:projects overview)) "stopped_count")))
+              (expect (= 1 (:stopped_count overview))))))))
   ;; Regression: live updates must not move project headers.
   (it "keeps root order across activity, liveness and input-order changes"
       (let [stats
@@ -6828,6 +6860,7 @@
                          "live_count" 0
                          "awaiting_count" 0
                          "unread_count" 0
+                         "stopped_count" 0
                          "last_activity_ms" 0}]
                        (:projects overview)))))))
   (it "answers empty totals, never an exception, when nothing is persisted"
