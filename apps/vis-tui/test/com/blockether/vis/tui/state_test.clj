@@ -412,6 +412,25 @@
         (state/dispatch [:select-tab-index 0])
         (expect (nil? (:layout @state/app-db)))
         (expect (= (scroll/parked 40) (:scroll @state/app-db)))))
+  ;; Regression, user report: a live view shows its picture only after a click. A
+  ;; viewer that the reader opened on a tab came back open when the reader
+  ;; returned to that tab.
+  (it "closes a tab's opened live viewer when the reader leaves that tab"
+      (reset! state/app-db {:session {:id "main-c"}
+                            :live-viewer-id "view-1"
+                            :live-viewer-search {:node-id "log"}
+                            :tabs [{:id :main :label "Main" :active? true}
+                                   {:id :tab-1 :label "Tab 1"}]
+                            :active-tab-id :main
+                            :tab-locals {:tab-1 {:session {:id "tab-c"}}}
+                            :render-version 0})
+      (state/dispatch [:select-tab-index 0])
+      (expect (= "view-1" (:live-viewer-id @state/app-db)) "a tab that stays keeps its viewer")
+      (state/dispatch [:select-tab-index 1])
+      (expect (nil? (:live-viewer-id @state/app-db)))
+      (state/dispatch [:select-tab-index 0])
+      (expect (nil? (:live-viewer-id @state/app-db)))
+      (expect (nil? (:live-viewer-search @state/app-db))))
   (it "snaps a FOLLOWing tab to the live bottom instead of easing down to it"
       ;; The regression: a hidden FOLLOW tab keeps `:pos` pinned at the bottom of
       ;; the `total-h` it had when last painted, and that grows while it is hidden

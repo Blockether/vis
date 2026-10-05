@@ -1173,7 +1173,12 @@
   [db workspace-id]
   (-> (cond-> db
         (:active-project-id db)
-        (assoc-in [:project-active-tabs (:active-project-id db)] (current-tab-id db)))
+        (assoc-in [:project-active-tabs (:active-project-id db)] (current-tab-id db))
+
+        ;; A live view shows its picture only after a click. The tab that the reader
+        ;; leaves closes its viewer, so a return shows the step digest again.
+        (not= workspace-id (current-tab-id db))
+        (dissoc :live-viewer-id :live-viewer-search))
       sync-active-tab
       (assoc :active-tab-id workspace-id
              :active-project-id (or (:project-id (some #(when (= workspace-id (:id %)) %)
