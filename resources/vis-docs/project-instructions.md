@@ -81,13 +81,14 @@ While a task runs, Vis writes short progress notes:
 
 The last reply starts with the answer. You can read it without the progress notes.
 
-Unless you ask for another language, Vis writes notes and answers in the language of your latest
-message. If that message is short or mixes languages, Vis keeps the language of the conversation.
-Quoted text, code, logs, tool output, files and messages from other sessions do not change the
-language.
+Unless you ask for another language, Vis writes each progress note and each answer in the language
+of your latest request. If that request is short or mixes languages, Vis keeps the language of your
+earlier requests. English technical terms alone do not make a request mixed. Only your requests set
+the language. The system prompt, project rules, quoted text, code, logs, tool output, files and
+messages from other sessions do not change it.
 
-Vis applies [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/) to that text, at
-about 80% of the full standard. It uses these rules:
+Vis applies the [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/) writing rules
+to that text, at about 80% of the full standard. It uses these rules:
 
 1. Keep sentences short.
 2. Put one action in each step.

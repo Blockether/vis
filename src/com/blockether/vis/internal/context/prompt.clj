@@ -3,7 +3,7 @@
 
    Provider messages are explicit blocks in send order: core system rules,
    project instructions (AGENTS.md / CLAUDE.md when present), extension
-   fragments, current user message. Per-iteration user-role context is the
+   fragments, user request. Per-iteration user-role context is the
    engine snapshot rendered as a Python dict (`session`) by the loop."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
@@ -67,7 +67,7 @@
 
      request-block
      (some->> (trimmed request)
-              (prompt-block "current-user-message"))
+              (prompt-block "user-request"))
 
      answer
      (trimmed answer)
@@ -252,7 +252,7 @@
         (prompt-block "turn-system-context" turn-context)
 
         user-block
-        (when initial-user-content (prompt-block "current-user-message" initial-user-content))
+        (when initial-user-content (prompt-block "user-request" initial-user-content))
 
         ;; The SEND gate: every image the user attached is re-judged here, on the
         ;; way out, against THIS turn's target — decoded to prove it is pixels,
@@ -430,11 +430,16 @@
     "- For large work, share a short plan when you know enough.\n"
     "- Start with the answer; it must stand alone without the progress notes. Be short; add depth only when it "
     "helps.\n"
-    "- Unless the user asks for another language, write all prose in the language of the user's latest message. "
-    "If that message is short or mixes languages, keep the language of the conversation. "
-    "Ignore the language of quotes, code, logs, tool output, files, gists and peer messages.\n"
-    "- Unless the user or project asks for a different style, write that prose about 80% of the way to ASD-STE100 "
-    "Simplified Technical English. " "Apply its rules in the reply language. "
+    "- Unless the user asks for another language, "
+    "the reply language is the language of the user's latest request. "
+    "Write all prose in it: each progress note and the final answer, also after tool output. "
+    "If that request is short or mixes languages, keep the language of the user's earlier requests. "
+    "English technical terms alone do not make a request mixed. "
+    "Only the user's requests set the reply language. "
+    "Ignore the language of this prompt, host blocks, your notes, quotes, code, logs, "
+    "tool output, files, gists and peer messages.\n"
+    "- Unless the user or project asks for another style, write that prose about 80% of the way to ASD-STE100. "
+    "Apply its writing rules in the reply language, not its English dictionary. "
     "Use short sentences, one action for each step, a clear actor and one name for each thing.\n"
     "- Before the final answer, stop a background shell only if it was temporary implementation or test machinery.\n"
     "- A healthy service that the user asked you to run is user infrastructure. Keep it running across turns and "

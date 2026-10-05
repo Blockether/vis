@@ -698,23 +698,31 @@
                       "when a finding, decision or blocker changes the next step"
                       "one or two sentences of facts" "Group related steps"
                       "Routine reads, searches and repeated code need no note"
-                      "Unless the user or project asks for a different style"
-                      "80% of the way to ASD-STE100 Simplified Technical English"
-                      "Apply its rules in the reply language" "short sentences"
-                      "one action for each step" "a clear actor" "one name for each thing"]]
+                      "Unless the user or project asks for another style"
+                      "80% of the way to ASD-STE100"
+                      "Apply its writing rules in the reply language, not its English dictionary"
+                      "short sentences" "one action for each step" "a clear actor"
+                      "one name for each thing"]]
           (expect (str/includes? text rule) rule))))
-  ;; User report: Claude Opus 5.5 wrote German progress notes in Polish conversations, in 9
-  ;; of 2 150 prose steps across 60 sessions. No rule named the reply language, so §7 names
-  ;; it, the fallback for a short or mixed message and the sources that must not change it.
+  ;; User reports: Claude Opus 5.5 wrote German, then Russian, notes in Polish conversations.
+  ;; After the first fix, 934 of 1 084 mid-turn notes in Polish turns were still English. The
+  ;; rule named the latest message, which is tool output during a loop, and its fallback counted
+  ;; the model's own notes. §7 now lets only the user's requests set the reply language, and the
+  ;; style rule no longer names English.
   (it "keeps prose in the language of the user"
       (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
         (doseq [rule ["Unless the user asks for another language"
-                      "write all prose in the language of the user's latest message"
-                      "If that message is short or mixes languages"
-                      "keep the language of the conversation"
-                      "Ignore the language of quotes, code, logs, tool output"
-                      "files, gists and peer messages"]]
-          (expect (str/includes? text rule) rule))))
+                      "the reply language is the language of the user's latest request"
+                      "each progress note and the final answer, also after tool output"
+                      "If that request is short or mixes languages"
+                      "keep the language of the user's earlier requests"
+                      "English technical terms alone do not make a request mixed"
+                      "Only the user's requests set the reply language"
+                      "Ignore the language of this prompt, host blocks, your notes"
+                      "quotes, code, logs, tool output, files, gists and peer messages"]]
+          (expect (str/includes? text rule) rule))
+        (doseq [stale ["keep the language of the conversation" "Simplified Technical English"]]
+          (expect (not (str/includes? text stale)) stale))))
   ;; Each capability owns its contract; doc() renders Python metadata and semantics.
   ;; The core prompt must point there instead of encouraging invented call shapes.
   (it "points authority at the document a capability carries"
@@ -855,7 +863,12 @@
       ;; conversations, because no rule named the reply language. §7 now names it, the
       ;; fallback for a short or mixed message and the text that must not change it. It lands
       ;; at 11 886.
-      (expect (< (count text) 11950))
+      ;; 11.95k → 12.2k: user report — after that fix, Claude Opus 5.5 still wrote 934 of 1 084
+      ;; mid-turn notes in Polish turns in English, and once Russian. The rule named the latest
+      ;; message, which is tool output during a loop, and its fallback counted the model's own
+      ;; notes. §7 now lets only the user's requests set the reply language, and the style rule
+      ;; no longer names English. It lands at 12 137.
+      (expect (< (count text) 12200))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "each hit is a `patch` anchor"
                          "`patch(path, edits)`"])]
@@ -1289,7 +1302,7 @@
         (expect (= 1 (count msgs)))
         (expect (= "user" (:role user)))
         (expect (string? (:content user)))
-        (expect (str/includes? (:content user) "CURRENT-USER-MESSAGE"))
+        (expect (str/includes? (:content user) "USER-REQUEST"))
         (expect (not (str/includes? (:content user) "ATTACHED-IMAGES")))))
   (it "rides svar image blocks ahead of the text block and lists a manifest"
       (let [msgs
@@ -1316,7 +1329,7 @@
         (expect (str/includes? (get-in (first blocks) [:image_url :url])
                                (str "data:image/png;base64," tiny-png-b64)))
         (let [text (:text (last blocks))]
-          (expect (str/includes? text "CURRENT-USER-MESSAGE"))
+          (expect (str/includes? text "USER-REQUEST"))
           (expect (str/includes? text "ATTACHED-IMAGES"))
           (expect (str/includes? text "/tmp/shot.png (image/png,"))
           (expect (str/includes? text "NOT attached"))
@@ -1481,11 +1494,21 @@
                        (prompt/assemble-initial-messages {:turn-context "session[\"turn\"] = 3"
                                                           :initial-user-content "q3"}))
                  (mapv :content (:request (prompt/prior-turn-messages {:turn 3 :request "q3"}))))))
+  ;; A replayed request is not the current one. Every request has the same USER-REQUEST
+  ;; label, so an earlier request never claims to be the latest.
+  (it "labels every request USER-REQUEST, never CURRENT"
+      (let [content (-> {:turn 1 :request "q1"}
+                        prompt/prior-turn-messages
+                        :request
+                        first
+                        :content)]
+        (expect (str/includes? content ";; -- USER-REQUEST --"))
+        (expect (not (str/includes? content "CURRENT")))))
   (it "keeps the turn marker when the request is blank"
       (let [[message :as request] (:request (prompt/prior-turn-messages {:turn 2 :request "  "}))]
         (expect (= 1 (count request)))
         (expect (str/includes? (:content message) "session[\"turn\"] = 2"))
-        (expect (not (str/includes? (:content message) "CURRENT-USER-MESSAGE")))))
+        (expect (not (str/includes? (:content message) "USER-REQUEST")))))
   (it "closes a finished turn with its answer, or with nothing when it has none"
       (expect (= [{:role "assistant" :content "a1"}]
                  (:closing (prompt/prior-turn-messages {:turn 1 :request "q1" :answer " a1 "}))))
