@@ -338,6 +338,7 @@ vis-agent desktop --update         # check for a release or beta update, or rebu
 vis-agent desktop --track release  # download and open stable for this launch
 vis-agent desktop --track beta     # download and open the newest beta for this launch
 vis-agent desktop --track dev      # build and open your current source checkout
+vis-agent desktop --no-gateway     # open the app without the local gateway
 vis-agent desktop --help
 ```
 
@@ -350,8 +351,8 @@ Otherwise the default is release.
 On macOS and Linux, the release track chooses the universal macOS app (Apple
 silicon or Intel), or the Linux AppImage for x64 or ARM64. Downloads need `curl`
 and network access. On macOS, the launcher copies `Vis.app` from the signed
-disk image into your Vis cache. On Linux, it runs the AppImage in the foreground
-with built-in extraction, so FUSE is not required. You still need a graphical
+disk image into your Vis cache. On Linux, it runs the AppImage with built-in
+extraction, so FUSE is not required. You still need a graphical
 desktop and the system libraries required by the app.
 
 Later release launches reuse the cached app and do not contact GitHub. `vis-agent update` updates an
@@ -417,10 +418,16 @@ on disk. The other tracks keep their files. Release and beta apps deleted this w
 download again when you need them, and dev builds are rebuilt from source on every
 launch.
 
-A desktop launch does not use Java, change your engine track, or start or restart
-a gateway.
+A desktop launch does not change your engine track. It starts the local gateway in the
+background through your installed engine. The gateway stays up while the app runs.
+After you quit the app, a gateway started this way stops when no other client or work
+remains. A gateway that you started with `vis-agent gateway start` keeps running.
 
-On first launch, pair with your gateway in the app using its URL and bearer token.
+`--no-gateway` opens the app alone. A launch with `VIS_GATEWAY_URL` set, or without an
+installed engine, also opens the app alone.
+
+On first launch, add this machine in the app with `http://127.0.0.1:7890` and an empty
+bearer token. For a gateway on another machine, use its URL and bearer token.
 See [Desktop and mobile setup](index.md#connect-an-app) for connection options.
 
 ## Automatic native betas

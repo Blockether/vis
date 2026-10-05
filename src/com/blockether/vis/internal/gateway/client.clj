@@ -20,11 +20,14 @@
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.diagnostics :as diagnostics]
             [com.blockether.vis.internal.gateway.runtime :as protocol]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util])
   (:import (java.io BufferedReader File InputStream InputStreamReader)
+           (java.lang ProcessBuilder$Redirect)
            (java.net InetAddress NetworkInterface URI URLEncoder)
            (java.nio.charset StandardCharsets)
+           (java.util.concurrent TimeUnit)
            (java.util.concurrent.locks ReentrantLock)))
 
 (def ^:private DEFAULT_PORT 7890)
@@ -1283,6 +1286,76 @@
                       (try (.removeShutdownHook (Runtime/getRuntime) hook)
                            (catch IllegalStateException _ nil))))))
     (finally (release-client!))))
+
+(def ^:private desktop-start-grace-ms
+  "How long [[run-desktop!]] watches a new desktop app for an early exit. A failed
+   `open` or a broken AppImage exits inside this window; a running app outlives it."
+  1000)
+
+(defn- warn-desktop!
+  [& lines]
+  (binding [*out* *err*]
+    (doseq [line lines]
+      (println line))
+    (flush)))
+
+(defn- lease-desktop!
+  "Lease the gateway to the desktop app process `pid`. The daemon's reaper drops
+   the lease when that process exits. A managed daemon whose last client just left
+   can stop between discovery and this lease, so retry once on a new discovery."
+  [entry pid]
+  (let [lease! #(send-json-with-entry! % "POST" "/v1/clients" {:kind "desktop" :pid pid})]
+    (try (lease! entry) (catch Throwable _ (reset! cached-entry nil) (lease! (ensure-gateway!))))))
+
+(defn run-desktop!
+  "Open the desktop app with `argv` and keep the local gateway up while it runs.
+   Start or reuse the managed gateway first. A failure there only warns: the app
+   can still use other paired machines. A remote gateway (`VIS_GATEWAY_URL`) is
+   never started from here. The lease names the APP's pid, not this process, so
+   the daemon's reaper drops it when the app exits, and this call can return while
+   the app runs. Returns 0, or the app's exit code when it exits inside
+   [[desktop-start-grace-ms]]. The app's output goes to a new log under `~/.vis/logs/`."
+  [argv]
+  (when (empty? argv) (throw (ex-info "desktop executable is required" {:vis/user-error true})))
+  (let [entry
+        (try (when-not (remote-gateway) (ensure-gateway!))
+             (catch Throwable t
+               (warn-desktop! (str "vis-agent: could not start the gateway: " (ex-message t)))
+               nil))
+
+        log
+        (File/createTempFile (str "desktop-" (util/now-ms) "-")
+                             ".log"
+                             (io/file (paths/ensure-log-date-dir!)))
+
+        pb
+        (doto (ProcessBuilder. ^java.util.List argv)
+          (.directory (io/file (System/getProperty "user.dir")))
+          (.redirectErrorStream true)
+          (.redirectOutput (ProcessBuilder$Redirect/appendTo log)))
+
+        ^Process child
+        (try (.start pb)
+             (catch java.io.IOException e
+               (throw (ex-info (str "could not start the desktop app: " (ex-message e))
+                               {:vis/user-error true}
+                               e))))]
+
+    ;; The app reads no input. EOF keeps the background child off the terminal.
+    (.close (.getOutputStream child))
+    (when entry
+      (try (lease-desktop! entry (.pid child))
+           (catch Throwable t
+             (warn-desktop! (str "vis-agent: the gateway did not accept the desktop lease: "
+                                 (ex-message t))))))
+    (if (.waitFor child (long desktop-start-grace-ms) TimeUnit/MILLISECONDS)
+      (let [exit (.exitValue child)]
+        (when-not (zero? exit)
+          (apply warn-desktop!
+            (str "vis-agent: the desktop app exited with code " exit "; log: " (.getPath log))
+            (discovery/boot-log-tail (.getPath log) 20)))
+        exit)
+      0)))
 
 (def ^:private channel-read-timeout-ms
   "Ceiling for a read a CHANNEL makes while a person waits at an open dialog.

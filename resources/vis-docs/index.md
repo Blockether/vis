@@ -107,7 +107,20 @@ Your files and commands stay on that computer. You can use the same sessions as 
 
 ### Connect the desktop app
 
-Check for a running gateway:
+On macOS and Linux, open the app from a terminal:
+
+```bash
+vis-agent desktop
+```
+
+This command opens the app and starts the local gateway in the background. The gateway stays up while the app runs.
+
+1. In **Add a machine**, enter `http://127.0.0.1:7890`.
+2. Leave the bearer token empty for the default local gateway.
+
+You add the machine only once.
+
+If you open the app another way, no gateway starts. Check for a running gateway:
 
 ```bash
 vis-agent gateway status
@@ -120,10 +133,6 @@ vis-agent gateway start --host 127.0.0.1
 ```
 
 Keep that terminal open. This command runs the gateway in the foreground.
-
-1. Open the desktop app.
-2. In **Add a machine**, enter `http://127.0.0.1:7890`.
-3. Leave the bearer token empty for the default local gateway.
 
 If you enabled token authentication, enter its token. If you reused a running gateway,
 use the address shown by `vis-agent gateway status`.

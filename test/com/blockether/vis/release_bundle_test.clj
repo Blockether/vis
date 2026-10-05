@@ -2598,6 +2598,8 @@
          "VIS_HOME" (.getAbsolutePath (io/file home ".vis"))
          "VIS_REPO_SLUG" "example/project"
          "VIS_NO_AUTO_INSTALL" "1"
+         "VIS_GATEWAY_URL" ""
+         "JAVA_CMD" "java"
          "PATH" (str (.getAbsolutePath bin) ":" (System/getenv "PATH"))
          "DESKTOP_CALLS" (.getAbsolutePath calls)
          "DESKTOP_RELEASE" (.getAbsolutePath release)
@@ -2650,9 +2652,23 @@
       (write-executable!
         (io/file bin "uname")
         (str "#!/usr/bin/env bash\ncase $1 in -s) echo " os ";; -m) echo " arch ";; esac\n"))
-      (doseq [command ["vis-agent-native" "java" "clojure"]]
-        (write-executable! (io/file bin command)
-                           "#!/usr/bin/env bash\necho unexpected-engine\nexit 95\n"))
+      (write-executable!
+        (io/file bin "java")
+        (str
+          "#!/usr/bin/env bash\n"
+          "[[ \"$*\" == '-XshowSettings:properties -version' ]] || { echo unexpected-engine; exit 95; }\n"
+          "echo '    java.specification.version = 25'\n"))
+      ;; Both engines may only open the app through `gateway desktop`; the JVM one
+      ;; also answers the launcher's dependency preparation and classpath queries.
+      (doseq [command ["vis-agent-native" "clojure"]]
+        (write-executable!
+          (io/file bin command)
+          (str
+            "#!/usr/bin/env bash\n"
+            "case \"$*\" in '-X:deps prep') exit 0 ;; *-Spath*) printf src:resources; exit 0 ;; esac\n"
+            "while (( $# )) && [[ $1 != gateway ]]; do shift; done\n"
+            "[[ \"$*\" == 'gateway desktop -- '* ]] || { echo unexpected-engine; exit 95; }\n"
+            "shift 3\nprintf 'desktop-gateway<%s>\\n' \"$@\"\nexec \"$@\"\n")))
       (doseq [command ["node" "cargo" "rustc"]]
         (write-executable! (io/file bin command) "#!/usr/bin/env bash\nexit 0\n"))
       (write-executable!
@@ -2718,34 +2734,67 @@
 
 (defdescribe
   desktop-launcher-test
-  (it "downloads the platform release, launches it, and reuses it without network or engine startup"
-      (doseq [[os arch] [["Darwin" "arm64"] ["Darwin" "x86_64"] ["Linux" "x86_64"]
-                         ["Linux" "aarch64"]]]
+  ;; Issue #307: the launcher opens the app through the engine, which starts the
+  ;; local gateway in the background and keeps it up while the app runs.
+  (it
+    "downloads the platform release, opens it with the local gateway, and reuses it without network"
+    (doseq [[os arch] [["Darwin" "arm64"] ["Darwin" "x86_64"] ["Linux" "x86_64"]
+                       ["Linux" "aarch64"]]]
+      (with-desktop-fixture
+        os
+        arch
+        (fn [{:keys [desktop calls run!]}]
+          (let [{:keys [exit output]} (run! [] {})
+                downloaded (slurp calls)]
+
+            (expect (zero? exit) output)
+            (expect (str/includes? output
+                                   (if (= os "Darwin") "desktop-open" "desktop-app extract=1"))
+                    output)
+            (expect (not (str/includes? output "unexpected-engine")) output)
+            (expect (str/includes? output
+                                   (if (= os "Darwin")
+                                     "desktop-gateway<-W>"
+                                     "desktop-gateway<APPIMAGE_EXTRACT_AND_RUN=1>"))
+                    output)
+            (expect (= "9.8.7\n"
+                       (when (.exists (io/file desktop "current"))
+                         (slurp (io/file desktop "current")))))
+            (expect (= 2 (count (re-seq #"(?m)^curl " downloaded))) downloaded)
+            (expect (not (str/includes? downloaded ".sha256")) downloaded)
+            (let [{:keys [exit output]} (run! [] {"DESKTOP_FAIL" "api"})]
+              (expect (zero? exit) output)
+              (expect (= 2 (count (re-seq #"(?m)^curl " (slurp calls))))))
+            (when (= os "Darwin")
+              (expect (str/includes? downloaded "hdiutil detach") downloaded)
+              (expect (str/includes? output "desktop-open<-n>") output)
+              (expect (str/includes? output "desktop-open<-W>") output)
+              (expect (str/includes? output (.getAbsolutePath (io/file desktop "9.8.7/Vis.app")))
+                      output)))))))
+  (it "opens the app alone for --no-gateway, a remote gateway, or no installed engine"
+      (doseq [[os arch] [["Darwin" "arm64"] ["Linux" "x86_64"]]]
         (with-desktop-fixture
           os
           arch
-          (fn [{:keys [desktop calls run!]}]
-            (let [{:keys [exit output]} (run! [] {})
-                  downloaded (slurp calls)]
+          (fn [{:keys [bin run!]}]
+            (let [opened (if (= os "Darwin") "desktop-open<-n>" "desktop-app extract=1")
+                  {:keys [exit output]} (run! ["--help"] {})]
 
               (expect (zero? exit) output)
-              (expect (str/includes? output
-                                     (if (= os "Darwin") "desktop-open" "desktop-app extract=1"))
-                      output)
-              (expect (not (str/includes? output "unexpected-engine")) output)
-              (expect (= "9.8.7\n"
-                         (when (.exists (io/file desktop "current"))
-                           (slurp (io/file desktop "current")))))
-              (expect (= 2 (count (re-seq #"(?m)^curl " downloaded))) downloaded)
-              (expect (not (str/includes? downloaded ".sha256")) downloaded)
-              (let [{:keys [exit output]} (run! [] {"DESKTOP_FAIL" "api"})]
+              (expect (str/includes? output "--no-gateway") output)
+              (doseq [[args extra-env] [[["--no-gateway"] {}]
+                                        [[] {"VIS_GATEWAY_URL" "http://gateway.example.com:7890"}]]]
+                (let [{:keys [exit output]} (run! args extra-env)]
+                  (expect (zero? exit) output)
+                  (expect (str/includes? output opened) output)
+                  (expect (not (str/includes? output "desktop-gateway<")) output)
+                  (expect (not (str/includes? output "desktop-open<-W>")) output)))
+              (io/delete-file (io/file bin "vis-agent-native"))
+              (let [{:keys [exit output]} (run! [] {})]
                 (expect (zero? exit) output)
-                (expect (= 2 (count (re-seq #"(?m)^curl " (slurp calls))))))
-              (when (= os "Darwin")
-                (expect (str/includes? downloaded "hdiutil detach") downloaded)
-                (expect (str/includes? output "desktop-open<-n>") output)
-                (expect (str/includes? output (.getAbsolutePath (io/file desktop "9.8.7/Vis.app")))
-                        output)))))))
+                (expect (str/includes? output opened) output)
+                (expect (str/includes? output "no gateway started") output)
+                (expect (not (str/includes? output "desktop-gateway<")) output)))))))
   (it
     "checks updates without redownloading the same release, and preserves the previous cache on failure"
     (with-desktop-fixture "Linux"
@@ -2821,15 +2870,27 @@
                 ^Process stale (start! "9.8.6")
                 ;; Every macOS copy answers to one bundle id per track, so the
                 ;; app that is already the selected version has to survive.
-                ^Process selected (when (= os "Darwin") (start! "9.8.7"))]
+                ^Process selected (when (= os "Darwin") (start! "9.8.7"))
+                ;; An `open -W` waiter ends with its app, so it is not another app to close.
+                waiter (io/file checkout "waiter/open")
+                ^Process waiting (do (.mkdirs (.getParentFile waiter))
+                                     (write-executable! waiter "#!/usr/bin/env bash\nsleep 120\n")
+                                     (.start (ProcessBuilder.
+                                               ^java.util.List
+                                               [(.getAbsolutePath waiter) "-W" "-n" "-a"
+                                                (.getAbsolutePath (io/file desktop
+                                                                           "9.8.6/Vis.app"))])))]
 
             (try (let [{:keys [exit output]} (run! [] {})]
                    (expect (zero? exit) output)
-                   (expect (str/includes? output "closed the desktop app still running (") output)
+                   (expect (= 1 (count (re-seq #"closed the desktop app still running \(" output)))
+                           output)
                    (expect (str/includes? output "9.8.6") output)
                    (expect (.waitFor stale 10 java.util.concurrent.TimeUnit/SECONDS) output)
-                   (expect (or (nil? selected) (.isAlive selected)) output))
+                   (expect (or (nil? selected) (.isAlive selected)) output)
+                   (expect (.isAlive waiting) output))
                  (finally (.destroyForcibly stale)
+                          (.destroyForcibly waiting)
                           (when selected (.destroyForcibly selected)))))))))
   (it
     "removes the versions a launch supersedes and leaves the other track alone"

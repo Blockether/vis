@@ -67,7 +67,7 @@ screenshots and command arguments. The CLI can use the local token automatically
 needs its documented connection settings.
 
 The terminal client starts a managed gateway if needed. It stops after the last client disconnects and no work remains.
-Opening the desktop app does not start a gateway.
+`vis-agent desktop` starts one too and keeps it while the app runs. Opening the app another way does not start a gateway.
 Explicit `gateway start` stays running without clients. Use this mode under a service manager.
 
 ### Stop or restart a gateway

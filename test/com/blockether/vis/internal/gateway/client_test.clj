@@ -9,9 +9,11 @@
             [lazytest.core :refer [defdescribe expect it]]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.gateway.client :as client]
-            [com.blockether.vis.internal.gateway.discovery :as discovery])
+            [com.blockether.vis.internal.gateway.discovery :as discovery]
+            [com.blockether.vis.internal.paths :as paths])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.io ByteArrayInputStream]
+           [java.lang ProcessHandle]
            [java.net InetSocketAddress]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files]))
@@ -56,6 +58,100 @@
                                     false
                                     (catch java.io.IOException _ true)))
                        (expect (= 1 @released)))))))
+
+(defn- run-desktop-with
+  "Run [[client/run-desktop!]] on `argv` with the gateway calls replaced by
+   `redefs`. Return its exit code, the lease calls, its stderr and its log text."
+  [redefs argv]
+  (let [leases
+        (atom [])
+
+        dir
+        (.toFile (Files/createTempDirectory "vis-desktop-log"
+                                            (make-array java.nio.file.attribute.FileAttribute 0)))
+
+        err
+        (java.io.StringWriter.)
+
+        exit
+        (with-redefs-fn (merge {(rv 'remote-gateway) (constantly nil)
+                                (rv 'ensure-gateway!) (constantly fake-entry)
+                                (rv 'send-json-with-entry!) (fn [& call]
+                                                              (swap! leases conj (vec call))
+                                                              {})
+                                #'paths/ensure-log-date-dir! (constantly (.getPath dir))}
+                               redefs)
+          (fn []
+            (binding [*err* err]
+              (client/run-desktop! argv))))]
+
+    {:exit exit :leases @leases :err (str err) :log (str/join (map slurp (.listFiles dir)))}))
+
+(defdescribe
+  desktop-app-holds-the-gateway-lease
+  ;; Issue #307: `vis-agent desktop` starts the gateway that the app uses.
+  (it "leases the gateway to the app's own pid and returns while the app runs"
+      (let [{:keys [exit leases]}
+            (run-desktop-with {} ["/bin/sh" "-c" "sleep 30"])
+
+            [[entry method path body]]
+            leases
+
+            ^ProcessHandle app
+            (.orElse (ProcessHandle/of (long (:pid body))) nil)]
+
+        (try (expect (= 0 exit))
+             (expect (= [fake-entry "POST" "/v1/clients"] [entry method path]))
+             (expect (= "desktop" (:kind body)))
+             (expect (and app (.isAlive app)))
+             (finally (when app (.destroy app))))))
+  (it "returns the exit code and the output of an app that fails at once"
+      (let [{:keys [exit err log]}
+            (run-desktop-with {} ["/bin/sh" "-c" "echo broken-app >&2; exit 6"])]
+        (expect (= 6 exit))
+        (expect (str/includes? log "broken-app"))
+        (expect (str/includes? err "exited with code 6"))
+        (expect (str/includes? err "broken-app"))))
+  (it "opens the app without a lease when the gateway cannot start"
+      (let [{:keys [exit leases err]} (run-desktop-with {(rv 'ensure-gateway!)
+                                                         (fn [& _]
+                                                           (throw (ex-info "port busy" {})))}
+                                                        ["/bin/sh" "-c" "exit 0"])]
+        (expect (= 0 exit))
+        (expect (empty? leases))
+        (expect (str/includes? err "could not start the gateway: port busy"))))
+  (it "leases a new gateway when the one that it found stops first"
+      (let [calls
+            (atom [])
+
+            {:keys [exit err]}
+            (run-desktop-with {(rv 'ensure-gateway!) #(do (swap! calls conj :discover) fake-entry)
+                               (rv 'send-json-with-entry!)
+                               (fn [& _]
+                                 (swap! calls conj :lease)
+                                 (when (= 1 (count (filter #{:lease} @calls)))
+                                   (throw (ex-info "connection refused" {})))
+                                 {})}
+                              ["/bin/sh" "-c" "exit 0"])]
+
+        (expect (= 0 exit))
+        (expect (= [:discover :lease :discover :lease] @calls))
+        (expect (not (str/includes? err "did not accept")))))
+  (it "never starts a local gateway when a remote gateway is set"
+      (let [started
+            (atom false)
+
+            {:keys [exit leases]}
+            (run-desktop-with {(rv 'remote-gateway) (constantly {:remote? true
+                                                                 :base-url "http://10.0.0.5:7890"})
+                               (rv 'ensure-gateway!) (fn [& _]
+                                                       (reset! started true)
+                                                       fake-entry)}
+                              ["/bin/sh" "-c" "exit 0"])]
+
+        (expect (= 0 exit))
+        (expect (false? @started))
+        (expect (empty? leases)))))
 
 (defdescribe
   web-app-holds-the-lease-until-its-gateway-stops-answering

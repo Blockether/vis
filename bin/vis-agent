@@ -1222,7 +1222,7 @@ vis_do_switch() {
 # ── Desktop companion ────────────────────────────────────────────────────────
 vis_desktop_usage() {
   cat <<'EOF'
-Usage: vis-agent desktop [--track release|beta|dev] [--update]
+Usage: vis-agent desktop [--track release|beta|dev] [--update] [--no-gateway]
 
 Open the desktop for your installed track; --track overrides it for this launch.
   release  Download the stable app once; --update checks for a newer release.
@@ -1241,8 +1241,10 @@ first, and older copies of the track it opens are removed.
 Supports macOS (Apple silicon and Intel) and Linux (x64 and ARM64).
 Files live in ${VIS_HOME:-~/.vis}/install/desktop; no administrator access needed
 for the app itself. Dev build prerequisites may need administrator installation.
-The desktop uses Companion pairing; this command does not start a gateway or
-change the engine's installed track. Pair with your gateway in the app.
+The desktop uses Companion pairing. This command also starts the local gateway in
+the background and keeps it up while the app runs. In the app, add this machine
+once with http://127.0.0.1:7890. --no-gateway, or a remote VIS_GATEWAY_URL, opens
+the app alone. This command does not change the engine's installed track.
 EOF
 }
 
@@ -1393,6 +1395,8 @@ vis_close_other_desktops() {
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
     case "$command" in
       *"$keep"/*) continue ;;
+      # An `open -W` waiter or the engine that started it ends with its app.
+      open\ *|*/open\ *|*" gateway desktop -- "*) continue ;;
       *"$vis_install_dir"/desktop/*) ;;
       *) continue ;;
     esac
@@ -1433,14 +1437,30 @@ vis_prune_desktops() {
   return 0
 }
 
+# The engine starts the local gateway with the app and keeps it up for the app.
+# Skip it for --no-gateway or a remote VIS_GATEWAY_URL. Without an installed
+# engine, warn and open the app alone.
+vis_desktop_gateway() {
+  (( $1 )) || return 1
+  [[ -z "${VIS_GATEWAY_URL:-}" || -z "${VIS_GATEWAY_URL// /}" ]] || return 1
+  if [[ "$(runtime_effective)" == jvm ]]; then
+    find_jvm_source >/dev/null 2>&1 && return 0
+  else
+    find_native >/dev/null 2>&1 && return 0
+  fi
+  warn "desktop: no Vis engine is installed, so no gateway started. Install it: vis-agent update"
+  return 1
+}
+
 vis_do_desktop() {
-  local update=0 track os arch desktop_dir version cmd
+  local update=0 gateway=1 track os arch desktop_dir version cmd
   local source destination artifact
   track="$(read_state "$vis_track_file")"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help) vis_desktop_usage; exit 0 ;;
       --update) update=1 ;;
+      --no-gateway) gateway=0 ;;
       --track)
         [[ $# -ge 2 && -n "$2" ]] || die "desktop: --track needs release, beta, or dev"
         track="$2"; shift ;;
@@ -1503,11 +1523,18 @@ vis_do_desktop() {
   if [[ "$os" == Darwin ]]; then
     # Nothing else answers to the track's bundle id now, so this opens the
     # selected version instead of activating a copy left over from another one.
-    exec open -n -a "$desktop_dir/$version/Vis.app"
+    desktop_open=(open -n -a "$desktop_dir/$version/Vis.app")
   else
     # AppImage's built-in extraction avoids requiring a system FUSE installation.
-    exec env APPIMAGE_EXTRACT_AND_RUN=1 "$desktop_dir/$version/Vis.AppImage"
+    desktop_open=(env APPIMAGE_EXTRACT_AND_RUN=1 "$desktop_dir/$version/Vis.AppImage")
   fi
+  if vis_desktop_gateway "$gateway"; then
+    # The engine opens the app and leases the gateway to its process. With -W,
+    # `open` runs as long as the app, so the lease ends when the app quits.
+    [[ "$os" != Darwin ]] || desktop_open=(open -W "${desktop_open[@]:1}")
+    return 0
+  fi
+  exec "${desktop_open[@]}"
 }
 
 # The desktop belongs to the same installation as the engine, so an engine update
@@ -1615,7 +1642,12 @@ vis_install_native_web() {
 # ── Wrapper-owned commands. The Vis app never sees these. ────────────────────
 case "${1:-}" in
   runtime) die "unknown command: runtime" "Run: vis-agent update --help" ;;
-  desktop) shift; vis_do_desktop "$@" ;;
+  desktop)
+    shift
+    vis_do_desktop "$@"
+    # The engine opens the app and keeps the local gateway up while it runs.
+    set -- gateway desktop -- "${desktop_open[@]}"
+    ;;
   update|upgrade)
     shift
     (( ! jvm_requested )) || die "update: --jvm selects a launch runtime, not an update track" \

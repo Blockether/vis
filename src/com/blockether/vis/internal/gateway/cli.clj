@@ -428,6 +428,14 @@
                   (let [exit (gateway-client/run-tui! (vec (drop-while #{"--"} args)))]
                     (shutdown-agents)
                     (System/exit (int exit))))}
+   {:cmd/name "desktop"
+    :cmd/parent ["gateway"]
+    :cmd/doc
+    "Open the desktop app with a local gateway that stays up while the app runs (used by the launcher)."
+    :cmd/run-fn (fn [_ args]
+                  (let [exit (gateway-client/run-desktop! (vec (drop-while #{"--"} args)))]
+                    (shutdown-agents)
+                    (System/exit (int exit))))}
    {:cmd/name "start"
     :cmd/parent ["gateway"]
     :cmd/doc

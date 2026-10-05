@@ -2457,7 +2457,8 @@
      (help-row "vis-agent web" "Open the web app, starting the local gateway when needed.")
      (help-row "vis-agent web --port PORT"
                "Use the gateway on PORT, or start it there (also --host).") "" "DESKTOP APP"
-     (help-row "vis-agent desktop" "Open the selected track: release download or dev source build.")
+     (help-row "vis-agent desktop" "Open the selected track and start the local gateway.")
+     (help-row "vis-agent desktop --no-gateway" "Open the app without the local gateway.")
      (help-row "vis-agent desktop --update"
                "Check release updates, or rebuild the current dev source.")
      (help-row "vis-agent desktop --track dev"
