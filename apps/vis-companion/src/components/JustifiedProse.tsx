@@ -343,7 +343,8 @@ type Composition = {
 /**
  * A width arrives as a BURST — the desk rail riding off its seam, a window dragged by
  * its corner — and the width a paragraph is composed for is its last frame. Composing
- * on each of the others solves and rewrites every line for a width nobody reads.
+ * on each of the others solves and rewrites every line for a width nobody reads. A
+ * move this soon after the last one belongs to a burst; a later one is a single step.
  */
 const SETTLE_MS = 80;
 
@@ -365,6 +366,12 @@ const REST_MS = 150;
 
 /** Prose that is not on screen yet never takes more than this from one frame. */
 const FRAME_BUDGET_MS = 6;
+
+/**
+ * How many times one placement measures again after it composes the prose on screen.
+ * Each composition can move more unpainted prose onto the screen; `pump` takes the rest.
+ */
+const PLACE_PASSES = 4;
 
 type Paragraph = {
   element: HTMLElement;
@@ -497,22 +504,36 @@ function compose(list: Paragraph[]) {
  * Runs once after each commit that mounts or changes prose: after every layout effect,
  * including the one that scrolls a screen to where it opens, and still before paint.
  * Only prose that this paint shows is composed here; `pump` composes the rest near it.
+ * Composed lines can stand shorter or taller than the native wrap, so a screen pinned to
+ * its end then shows prose that stood just outside it. That prose is not painted yet
+ * either: measure it again and compose it before the same paint.
  */
 function place() {
   placementQueued = false;
-  const views = new Map<Element | null, View>();
-  const visible: Paragraph[] = [];
+  let unpainted: Paragraph[] = [];
   for (const paragraph of placing) {
     if (paragraph.disposed) continue;
     paragraph.root = scrollerOf(paragraph.element);
-    const spot = locate(paragraph, views);
-    paragraph.near = spot.distance <= spot.reach;
-    if (spot.distance === 0) visible.push(paragraph);
-    else if (paragraph.near) waiting.add(paragraph);
+    unpainted.push(paragraph);
     observe(paragraph);
   }
   placing.clear();
-  compose(visible);
+  for (let pass = 0; pass < PLACE_PASSES && unpainted.length; pass++) {
+    const views = new Map<Element | null, View>();
+    const visible: Paragraph[] = [];
+    const rest: Paragraph[] = [];
+    for (const paragraph of unpainted) {
+      if (paragraph.disposed) continue;
+      const spot = locate(paragraph, views);
+      paragraph.near = spot.distance <= spot.reach;
+      if (spot.distance === 0) visible.push(paragraph);
+      else rest.push(paragraph);
+    }
+    unpainted = rest;
+    if (!visible.length) break;
+    compose(visible);
+  }
+  for (const paragraph of unpainted) if (paragraph.near) waiting.add(paragraph);
   if (waiting.size) schedulePump();
 }
 
@@ -730,6 +751,10 @@ export function JustifiedProse({
     let settleTimer = 0;
     /** True while the box is moving and the paragraph is left to wrap natively. */
     let riding = false;
+    /** When the width last moved: a move within `SETTLE_MS` of it belongs to a burst. */
+    let movedAt = Number.NEGATIVE_INFINITY;
+    /** The width a single step went to, until the next frame composes it there. */
+    let stepTo = 0;
     const { text } = content;
     const words = [...content.measured.matchAll(/[^ \t\r\n\f]+/g)];
     // Snapshot only the original markup, never a previous composition's line spans.
@@ -867,6 +892,12 @@ export function JustifiedProse({
       compose: () => {
         // Nothing is composed while the box is moving; `rest` asks again once it stops.
         if (riding) return;
+        // A step that moved on before this frame composed it was the first move of a burst.
+        if (stepTo && (parseFloat(getComputedStyle(element).width) || 0) !== stepTo) {
+          ride();
+          return;
+        }
+        stepTo = 0;
         paragraph.stale = false;
         if (isSelected()) {
           held.add(paragraph);
@@ -890,11 +921,23 @@ export function JustifiedProse({
       riding = false;
       request(paragraph);
     };
+    /** The box is moving: wrap natively until it rests, then compose where it stops. */
+    const ride = () => {
+      riding = true;
+      lastWidth = 0;
+      stepTo = 0;
+      setComposition(null);
+      window.clearTimeout(settleTimer);
+      settleTimer = window.setTimeout(rest, SETTLE_MS);
+    };
     /**
      * A paragraph that already stands composed goes back to NATIVE wrapping for as
-     * long as its width keeps changing, and is composed again once it stops. One with
-     * nothing composed yet — a paragraph still streaming in, or one arriving into a
-     * column that just gained width — is composed straight away and never waits.
+     * long as its width keeps changing, and is composed again once it stops. A single
+     * step of the column, such as a gutter that opens beside it, keeps the lines on and
+     * below the screen and composes them again in the next frame: native wrapping in
+     * between would move the reader's lines twice. One with nothing composed yet — a
+     * paragraph still streaming in, or one arriving into a column that just gained
+     * width — is composed straight away and never waits.
      */
     const resized = () => {
       // A selected passage keeps the composition it was selected in, moving or not,
@@ -906,6 +949,9 @@ export function JustifiedProse({
       const width = parseFloat(getComputedStyle(element).width) || 0;
       const moved = width !== seenWidth;
       seenWidth = width;
+      const now = performance.now();
+      const burst = moved && now - movedAt < SETTLE_MS;
+      if (moved) movedAt = now;
       if (riding) {
         if (moved) {
           window.clearTimeout(settleTimer);
@@ -914,10 +960,11 @@ export function JustifiedProse({
         return;
       }
       if (moved && lastWidth > 0) {
-        riding = true;
-        lastWidth = 0;
-        setComposition(null);
-        settleTimer = window.setTimeout(rest, SETTLE_MS);
+        // Prose above the view waits for the scroller to rest: native lines fit meanwhile.
+        if (!burst && paragraph.near && !locate(paragraph, new Map()).above) {
+          stepTo = width;
+          request(paragraph);
+        } else ride();
         return;
       }
       // A delivery that keeps the width may still bring a new font size or style.

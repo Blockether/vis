@@ -394,6 +394,33 @@ git\tstatus`;
     expect(view.getByRole('paragraph')).toHaveAttribute('data-justice');
   });
 
+  // Composed lines can stand shorter than the native wrap. A screen pinned to its end then
+  // shows prose that stood just above it when the paragraphs were placed.
+  it('composes prose that composing brings into view, before any frame', async () => {
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    const above = `${paragraph} It stood just above the screen.`;
+    measure.mockImplementation(function (this: HTMLElement) {
+      if (this.dataset.testid === 'scroller') return { top: 0, bottom: 800 } as DOMRect;
+      if (this.tagName === 'P') {
+        const [first, last] = Array.from(document.querySelectorAll('p'));
+        // The prose on screen composes 20px shorter, so the pinned end moves the rest down.
+        const shift = last.hasAttribute('data-justice') ? 20 : 0;
+        return this === first
+          ? ({ width, top: shift - 70, bottom: shift - 10 } as DOMRect)
+          : ({ width, top: shift + 400, bottom: 480 } as DOMRect);
+      }
+      return { width: (this.textContent?.length ?? 0) * glyphWidth } as DOMRect;
+    });
+    const view = render(
+      <div data-testid="scroller" style={{ overflowY: 'auto' }}>
+        <JustifiedProse>{above}</JustifiedProse>
+        <JustifiedProse>{paragraph}</JustifiedProse>
+      </div>,
+    );
+    await settle();
+    for (const prose of view.getAllByRole('paragraph')) expect(prose).toHaveAttribute('data-justice');
+  });
+
   it('composes prose above the reader once they stop scrolling, without moving what they read', async () => {
     let notify: IntersectionObserverCallback = () => {};
     vi.stubGlobal(
@@ -612,6 +639,45 @@ git\tstatus`;
 
     expect(prose.children.length).toBeLessThan(narrowLines);
     expect(wordMeasurements()).toBe(measurements);
+  });
+
+  it('composes a single step of its column in the next frame, with no native lines between', async () => {
+    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
+    const prose = view.getByRole('paragraph');
+    await composed(prose);
+    const narrowLines = prose.children.length;
+    const native: boolean[] = [];
+    const watch = new MutationObserver(() => native.push(!prose.hasAttribute('data-justice')));
+    watch.observe(prose, { attributes: true, attributeFilter: ['data-justice'] });
+
+    // A gutter opens beside the column once: one step, not a ride. Native wrapping until
+    // the next composition would move every line the reader sees two times.
+    width = 480;
+    resized();
+    expect(prose).toHaveAttribute('data-justice');
+    await waitFor(() => expect(prose.children.length).toBeLessThan(narrowLines));
+    watch.disconnect();
+
+    expect(native).not.toContain(true);
+    expect(prose.textContent).toBe(paragraph);
+  });
+
+  it('wraps natively when its column moves on before a step is composed', async () => {
+    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
+    const prose = view.getByRole('paragraph');
+    await composed(prose);
+    const narrowLines = prose.children.length;
+
+    // The desk rail starts its ride: the next frame stands at another width before it
+    // composes the step, so the step was the first move of a burst.
+    width = 420;
+    resized();
+    width = 480;
+    await waitFor(() => expect(prose).not.toHaveAttribute('data-justice'));
+    expect(prose.textContent).toBe(paragraph);
+
+    await composed(prose);
+    expect(prose.children.length).toBeLessThan(narrowLines);
   });
 
   it('keeps lines composed for a width the observer reports later, on new line nodes', async () => {
