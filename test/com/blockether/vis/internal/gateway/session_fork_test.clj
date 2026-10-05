@@ -85,6 +85,39 @@
                                  nil
                                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
              (finally (ps/db-close! store)))))
+  (it "lists the start of each prose answer with its fork point"
+      (let [store (ps/db-open! :memory)]
+        (try
+          (let [{:keys [sid]} (seeded-session! store [])
+                answered!
+                (fn [request content]
+                  (let [tid (ps/db-store-session-turn!
+                              store
+                              {:parent-session-id sid :user-request request :status :running})]
+                    (ps/db-update-session-turn! store tid {:content content :status :success})))]
+
+            (answered! "short" [{"id" "p" "type" "prose" "markdown" "**Done.**"}])
+            (answered! "code only" [{"id" "c" "type" "code" "text" "(+ 1 2)"}])
+            (answered! "long" [{"id" "p" "type" "prose" "markdown" (apply str (repeat 500 "a"))}])
+            (with-redefs [lp/db-info (constantly store)]
+              (let [points (state/fork-points sid)]
+                (expect (= "**Done.**" (get-in points [0 "answer"])))
+                ;; Code is not an answer that a person reads in a list.
+                (expect (not (contains? (points 1) "answer")))
+                (expect (= 400 (count (get-in points [2 "answer"]))))
+                (expect (= "…" (str (last (get-in points [2 "answer"]))))))))
+          (finally (ps/db-close! store)))))
+  (it "gives each fork point the wire status of its turn"
+      (let [store (ps/db-open! :memory)]
+        (try (let [{:keys [sid]} (seeded-session! store [])]
+               (doseq [status [:success :running :cancelled :error]]
+                 (ps/db-store-session-turn!
+                   store
+                   {:parent-session-id sid :user-request (name status) :status status}))
+               (with-redefs [lp/db-info (constantly store)]
+                 (expect (= ["completed" "streaming" "cancelled" "failed"]
+                            (mapv #(get % "status") (state/fork-points sid))))))
+             (finally (ps/db-close! store)))))
   (it "keeps ordinary forks in the source session group"
       (let [store (ps/db-open! :memory)]
         (try (let [{:keys [sid turn-ids]} (seeded-session! store ["first ask" "second ask"])

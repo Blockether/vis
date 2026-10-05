@@ -2193,6 +2193,13 @@
    "error" "failed"
    "running" "streaming"})
 
+(defn- wire-turn-status
+  "The wire status of one durable turn row. `list-turns` and the fork points send it."
+  [row]
+  (let [raw (some-> (:status row)
+                    name)]
+    (get persisted-status->wire raw raw)))
+
 (defn- persisted-turn->wire
   "Project one durable engine turn into the canonical role/content message shape."
   [sid row]
@@ -2200,9 +2207,7 @@
         (str (:id row))
 
         status
-        (let [raw (some-> (:status row)
-                          name)]
-          (get persisted-status->wire raw raw))
+        (wire-turn-status row)
 
         created-at
         (some-> (:created-at row)
@@ -5557,13 +5562,32 @@
           (nat-int? (:created_at current-turn))
           (assoc :running_created_at (:created_at current-turn)))))))
 
+(def ^:private fork-answer-chars
+  "The longest answer excerpt that a fork point carries, in characters."
+  400)
+
+(defn- answer-excerpt
+  "The opening words of a turn's answer, as Markdown, or nil. Only prose and speech
+   count. A longer answer is cut to `fork-answer-chars` and ends with `…`."
+  [blocks]
+  (when-let [text (some->> blocks
+                           (filterv #(contains? #{"prose" "speech"} (get % "type")))
+                           content/text-projection
+                           str/trim
+                           not-empty)]
+    (if (> (count text) fork-answer-chars)
+      (str (str/trimr (util/truncate text (dec fork-answer-chars))) "…")
+      text)))
+
 (defn fork-points
   "Every turn of `sid` a fork can be cut AT, oldest-first, as lean wire rows
-   `{turn_id request created_at}`.
+   `{turn_id request status answer created_at}`.
 
-   The picker needs the id and the words that OPENED each turn, never the
-   transcript hanging off it — `list-turns` carries whole content vectors and a
-   long session's picker would pull megabytes to paint one list of lines."
+   The picker and the transcript outline need the id, the words that OPENED each
+   turn, its status and the start of its answer, never the transcript hanging off it.
+   `list-turns` carries whole content vectors, and a long session's list would pull
+   megabytes to paint one list of lines. `status` is the wire status that
+   `list-turns` gives the same turn. A turn without a prose answer has no `answer`."
   [sid]
   (let [db
         (try (lp/db-info) (catch Throwable _ nil))
@@ -5572,11 +5596,16 @@
         (when db (try (persistance/db-list-session-turns db sid) (catch Throwable _ nil)))]
 
     (mapv (fn [row]
-            (wire/canonical {:turn_id (str (:id row))
-                             :request (or (get-in row [:council :content]) (:user-request row))
-                             :request_kind (:request-kind row)
-                             :council (:council row)
-                             :created_at (date->ms (:created-at row))}))
+            (let [answer (answer-excerpt (:content row))]
+              (wire/canonical (cond-> {:turn_id (str (:id row))
+                                       :request (or (get-in row [:council :content])
+                                                    (:user-request row))
+                                       :request_kind (:request-kind row)
+                                       :council (:council row)
+                                       :status (wire-turn-status row)
+                                       :created_at (date->ms (:created-at row))}
+                                answer
+                                (assoc :answer answer)))))
           (or rows []))))
 
 (defn- agent-view
