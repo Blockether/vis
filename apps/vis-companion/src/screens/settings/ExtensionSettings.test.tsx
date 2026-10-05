@@ -73,7 +73,13 @@ it('keeps a failed project extension visible and runs its code only on request',
   });
   vi.spyOn(client, 'cachedMcpServers').mockReturnValue([]);
   vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
-  const reload = vi.spyOn(client, 'reloadExtensions').mockResolvedValue({ loaded: 1, failed: 1 });
+  let finishReload: (counts: Awaited<ReturnType<GatewayClient['reloadExtensions']>>) => void = () => {};
+  const reload = vi.spyOn(client, 'reloadExtensions').mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finishReload = resolve;
+      }),
+  );
   render(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
 
   expect(await screen.findByText(/Extension failed to load/)).toHaveTextContent('SyntaxError: invalid syntax');
@@ -94,9 +100,13 @@ it('keeps a failed project extension visible and runs its code only on request',
 
   const reads = read.mock.calls.length;
   await user.click(button);
+  // The result stands as plain text in the header band, not in a box below it.
+  const header = band.querySelector('header')!;
+  expect(within(header).getByRole('status')).toHaveTextContent('Reloading…');
+  finishReload({ loaded: 1, failed: 1 });
   expect(
-    await screen.findByText('1 loaded, 1 failed. Each failed extension shows its error.'),
-  ).toBeInTheDocument();
+    await within(header).findByText('1 loaded, 1 failed. Each failed extension shows its error.'),
+  ).toHaveAttribute('role', 'status');
   expect(reload).toHaveBeenCalledWith({ scope: 'project', target_id: 'p1' });
   expect(read.mock.calls.length).toBeGreaterThan(reads);
 });
@@ -148,12 +158,13 @@ it('reloads machine extensions from machine settings and explains an older gatew
   expect(scope('foundation-mcp')).toBeNull();
   expect(band).not.toHaveTextContent('Machine extension');
   expect(band).not.toContainElement(screen.getByRole('heading', { name: 'Agent' }));
+  const header = band.querySelector('header')!;
   await user.click(screen.getByRole('button', { name: 'Reload extensions' }));
-  expect(await screen.findByText('3 loaded, 0 failed.')).toBeInTheDocument();
+  expect(await within(header).findByText('3 loaded, 0 failed.')).toBeInTheDocument();
   expect(reload).toHaveBeenLastCalledWith(undefined);
 
   await user.click(screen.getByRole('button', { name: 'Reload extensions' }));
   expect(
-    await screen.findByText('This gateway does not support extension reload. Update Vis on that machine.'),
+    await within(header).findByText('This gateway does not support extension reload. Update Vis on that machine.'),
   ).toBeInTheDocument();
 });

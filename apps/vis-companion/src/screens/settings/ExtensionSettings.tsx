@@ -105,24 +105,23 @@ export function ExtensionsPanel({
   renderSettings: (group: ToggleGroup) => ReactNode;
 }) {
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ kind: 'ok' | 'warn' | 'err'; text: string } | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
   const scoped = Boolean(target && target.scope !== 'global');
   const headingLevel = scoped ? 3 : 4;
 
   const reload = async () => {
     setBusy(true);
-    setResult(null);
+    setStatus('Reloading…');
     try {
       const counts = await client.reloadExtensions(target);
       await onRefresh();
-      setResult({
-        kind: counts.failed > 0 ? 'warn' : 'ok',
-        text: `${counts.loaded} loaded, ${counts.failed} failed.${
+      setStatus(
+        `${counts.loaded} loaded, ${counts.failed} failed.${
           counts.failed > 0 ? ' Each failed extension shows its error.' : ''
         }`,
-      });
+      );
     } catch (error) {
-      setResult({ kind: 'err', text: actionError(error) });
+      setStatus(actionError(error));
     } finally {
       setBusy(false);
     }
@@ -132,6 +131,8 @@ export function ExtensionsPanel({
     <SettingsPanel
       title="Extensions"
       headingLevel={headingLevel}
+      /* The reload result stands as plain text in the header, beside its button. */
+      meta={hasActions && status ? <span role="status">{status}</span> : undefined}
       action={
         hasActions ? (
           <IconButton
@@ -146,11 +147,6 @@ export function ExtensionsPanel({
         ) : undefined
       }
     >
-      {hasActions && result && (
-        <div className="px-4 py-3">
-          <Banner kind={result.kind}>{result.text}</Banner>
-        </div>
-      )}
       {groups.map((group) => (
         <ExtensionGroup key={group.id} group={group} headingLevel={headingLevel === 3 ? 4 : 5}>
           {renderSettings(group)}
