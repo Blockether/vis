@@ -29,13 +29,6 @@ import {
 import { Markdown } from './ChatContent';
 import { readArtifactText } from './TextArtifact';
 import { CheckIcon, CommentIcon, TrashIcon } from './icons';
-import {
-  actionRequest,
-  availableActions,
-  documentInfo,
-  planName,
-  type PlanAction,
-} from '../lib/plans';
 import { BandButton, Button, IconButton, PROSE, Spinner } from './ui';
 import { useSafeBottomStyle } from '../lib/viewport';
 
@@ -81,8 +74,8 @@ export function annotationWash(index: number): string {
 
 /**
  * The annotator supplies header actions, metadata and the document column to its
- * enclosing frame. Ordinary documents save from the header; specifications keep
- * their single review action below the document and comments.
+ * enclosing frame. Ordinary documents save from the header; a diff review keeps
+ * its single review action below the document and comments.
  */
 /**
  * What the band REPORTS while remarks are waiting to be saved.
@@ -144,30 +137,6 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
 }) {
   const [loaded, setLoaded] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
-  const [plansEnabled, setPlansEnabled] = useState(false);
-
-  useEffect(() => {
-    if (!commentable || !planName(name)) return;
-    const controller = new AbortController();
-    void client
-      .setting('plans', controller.signal, { scope: 'session', target_id: sid })
-      .then((toggle) => setPlansEnabled(toggle.enabled === true))
-      .catch(() => setPlansEnabled(false));
-    return () => controller.abort();
-  }, [client, sid, name, commentable]);
-
-  const sendPlan = useCallback(
-    async (action: PlanAction, savedVersion: number) => {
-      if ((await client.setting('plans', undefined, { scope: 'session', target_id: sid })).enabled !== true) {
-        setPlansEnabled(false);
-        throw new Error(
-          'Plan before coding is off. Enable it in Settings and reopen this document.',
-        );
-      }
-      await client.submitTurn(sid, actionRequest(name, savedVersion, action));
-    },
-    [client, sid, name],
-  );
 
   useEffect(() => {
     let alive = true;
@@ -227,18 +196,12 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
   return (
     <MarkdownAnnotator
       key={`${name}:${version ?? source}`}
-      planning={plansEnabled && version ? { filename: name, version, onSend: sendPlan } : undefined}
       text={loaded}
       onSave={save}
       plain={plain}
       chrome={chrome}
       onOpenAttachment={onOpenAttachment}
-      draftKey={annotationDraftKey(
-        client.base,
-        sid,
-        iterationId,
-        planName(name) ? `${name}:v${version}` : name,
-      )}
+      draftKey={annotationDraftKey(client.base, sid, iterationId, name)}
     />
   );
 });
@@ -331,20 +294,6 @@ function diffLine(line: string, anchor?: number): ReactNode {
   );
 }
 
-const PLAN_LABELS: Record<PlanAction, string> = {
-  revise: 'Send for revision',
-  approve: 'Approve and start',
-};
-
-const SPEC_STATUSES: Record<string, string> = {
-  draft: 'Draft',
-  'in-review': 'In review',
-  ready: 'Ready to implement',
-  accepted: 'Ready to implement',
-  implementing: 'Implementing',
-  done: 'Done',
-};
-
 /**
  * The rendered note plus its comments — pure apart from `onSave`, so the whole
  * select/comment/save loop is testable without a gateway.
@@ -356,7 +305,6 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   chrome,
   onOpenAttachment,
   draftKey,
-  planning,
   review,
   initialComments,
 }: {
@@ -374,11 +322,6 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
    * memory alone, and leaving the screen throws them away.
    */
   draftKey?: string;
-  planning?: {
-    filename: string;
-    version: number;
-    onSend: (action: PlanAction, version: number) => Promise<void>;
-  };
   /** A code diff keeps its patch separate from the comments being saved. */
   initialComments?: MarkdownComment[];
   review?: {
@@ -413,19 +356,12 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   const [savedVersion, setSavedVersion] = useState<number>();
   const [sent, setSent] = useState(false);
   const operation = useRef(false);
-  const version = savedVersion ?? planning?.version ?? review?.version;
-  const plan = planning ? documentInfo(planning.filename, body) : null;
+  const version = savedVersion ?? review?.version;
   // A saved edit still needs review if sending fails, even when it removed the
-  // final comment. Retrying must not turn that revision request into approval.
+  // final comment, so a retry sends the same revision again.
   const pendingReview =
     comments.length > 0 || dirty || savedVersion !== undefined || quote !== null;
-  const actions: PlanAction[] = review
-    ? pendingReview
-      ? ['revise']
-      : []
-    : availableActions(plan, pendingReview);
-  const action = actions[0];
-  const hasReview = !!plan || !!review;
+  const canSend = !!review && pendingReview;
   // The column carries `--safe-bottom` itself rather than inheriting it from the
   // document root; see `useSafeBottomStyle`.
   const safeBottomStyle = useSafeBottomStyle();
@@ -607,9 +543,9 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
     };
   }, [comments, body, quote, review]);
 
-  const perform = async (action?: PlanAction) => {
+  const perform = async (send = false) => {
     if (operation.current || sent || quote !== null) return;
-    if (action && ((!planning && !review) || !actions.includes(action))) return;
+    if (send && !canSend) return;
     operation.current = true;
     setSaving(true);
     let nextVersion = version;
@@ -618,24 +554,19 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         setStatus('Saving changes…');
         const nextText = renderAnnotated(body, comments);
         nextVersion = await (initialComments ? onSave(nextText, comments) : onSave(nextText));
-        if (hasReview && (!Number.isSafeInteger(nextVersion) || !nextVersion || nextVersion < 1)) {
+        if (review && (!Number.isSafeInteger(nextVersion) || !nextVersion || nextVersion < 1)) {
           throw new Error('The saved version could not be confirmed. Nothing was sent.');
         }
         setSavedVersion(nextVersion);
         setDirty(false);
         if (draftKey) clearAnnotationDraft(draftKey);
       }
-      if (action && (planning || review)) {
+      if (send && review) {
         if (!nextVersion) throw new Error('Open a saved version before sending a review action.');
-        setStatus(`Sending ${PLAN_LABELS[action].toLowerCase()} for v${nextVersion}…`);
-        if (review) await review.onSend(nextVersion);
-        else await planning!.onSend(action, nextVersion);
+        setStatus(`Sending v${nextVersion} for revision…`);
+        await review.onSend(nextVersion);
         setSent(true);
-        setStatus(
-          action === 'approve'
-            ? `Implementation requested for v${nextVersion}. Follow progress in the session.`
-            : `Revision requested for v${nextVersion}. Reopen the next revision to continue.`,
-        );
+        setStatus(`Revision requested for v${nextVersion}. Reopen the next revision to continue.`);
       } else {
         setStatus(nextVersion ? `Saved as v${nextVersion}` : 'Saved');
       }
@@ -652,7 +583,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
       style={safeBottomStyle}
       className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden pb-[var(--safe-bottom,env(safe-area-inset-bottom))]"
     >
-      {/* Prose scrolls independently; the composer, remarks and specification
+      {/* Prose scrolls independently; the composer, remarks and diff review
           action stay below it, above the keyboard and safe area. */}
       <div
         ref={proseRef}
@@ -757,22 +688,14 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         </ul>
       ) : null}
 
-      {hasReview ? (
+      {review ? (
         <section
-          aria-label={review ? 'Diff review' : 'Specification workflow'}
+          aria-label="Diff review"
           className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-dialog-edge bg-panel-2 px-3 py-3 font-mono text-ui sm:px-4"
         >
           <div className="min-w-0 flex-1 text-dialog-hint">
             <span>
-              {sent
-                ? action === 'approve'
-                  ? 'Implementation requested'
-                  : 'Revision requested'
-                : comments.length > 0 || dirty || savedVersion !== undefined || quote !== null
-                  ? 'In review'
-                  : review
-                    ? 'Review changes'
-                    : SPEC_STATUSES[plan!.status]}{' '}
+              {sent ? 'Revision requested' : pendingReview ? 'In review' : 'Review changes'}{' '}
               · v{version}
             </span>
             <p role="status">
@@ -786,14 +709,14 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
                       : '')}
             </p>
           </div>
-          {action && quote === null ? (
+          {canSend && quote === null ? (
             <Button
               type="button"
               variant="primary"
               disabled={saving || sent}
-              onClick={() => void perform(action)}
+              onClick={() => void perform(true)}
             >
-              {PLAN_LABELS[action]}
+              Send for revision
             </Button>
           ) : null}
         </section>
@@ -806,8 +729,8 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   );
 
   return chrome({
-    // Specifications submit the whole review round from their footer, not a
-    // second save control in the header.
+    // A diff review submits its whole round from the footer, not a second save
+    // control in the header.
     actions: (
       <>
         <BandButton
@@ -823,7 +746,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         >
           <CommentIcon />
         </BandButton>
-        {!hasReview ? (
+        {!review ? (
           <BandButton
             type="button"
             label={saving ? 'Saving changes' : 'Save changes'}
@@ -838,13 +761,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
     ),
     // What just happened to this document, said under its name — and until it
     // does, that something is waiting to.
-    note: review
-      ? `Diff · ${review.sourceLabel}`
-      : plan
-        ? plan.kind === 'plan'
-          ? 'Specification'
-          : 'Implementation record'
-        : status || (dirty ? UNSAVED_NOTE : ''),
+    note: review ? `Diff · ${review.sourceLabel}` : status || (dirty ? UNSAVED_NOTE : ''),
     body: column,
   });
 });

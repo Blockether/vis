@@ -49,9 +49,6 @@ export const Review: Story = {
       'Keep archived sessions optional.',
     );
     await userEvent.click(canvas.getByRole('button', { name: 'Add comment' }));
-    await expect(
-      canvas.queryByRole('button', { name: 'Approve and start' }),
-    ).not.toBeInTheDocument();
     await expect(canvas.queryByRole('button', { name: 'Save changes' })).not.toBeInTheDocument();
     await userEvent.click(canvas.getByRole('button', { name: 'Send for revision' }));
     await expect(canvas.getByRole('status')).toHaveTextContent('Revision requested for v4');

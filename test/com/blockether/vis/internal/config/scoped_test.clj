@@ -299,7 +299,7 @@
                                                               "path" "/tmp/project-access"}]}
                                   "jail" {"enabled" true}
                                   "environment" {"FROM_PROJECT" "yes"}})
-            (config/update-machine-config! #(assoc-in % ["toggles" "plans"] false))
+            (config/update-machine-config! #(assoc-in % ["toggles" "subagents"] false))
             (expect (= filesystem
                        (get-in (config/load-global-config-raw) ["workspace" "filesystem"])))
             (expect (false? (get-in (config/load-global-config-raw) ["jail" "enabled"])))
@@ -328,7 +328,7 @@
           (io/file dir "vis.yml")]
 
       (try (spit authored "toggles:
-  plans: true
+  subagents: true
 ")
            (binding [workspace/*workspace-root* root]
              (with-redefs [config/load-global-yaml-config-raw (constantly {})
@@ -338,8 +338,8 @@
                      project (store/db-create-project! db {:name "Disk" :workspace-root root})
                      target (scoped/target db "project" (:id project))]
 
-                 (scoped/set-setting! db target "plans" "value" false)
-                 (expect (false? (get-in (config/load-project-config-raw) ["toggles" "plans"])))
+                 (scoped/set-setting! db target "subagents" "value" false)
+                 (expect (false? (get-in (config/load-project-config-raw) ["toggles" "subagents"])))
                  (let [writes (mapv (fn [n]
                                       (future
                                         (config/update-project-config!
@@ -347,11 +347,11 @@
                                     (range 8))]
                    (run! deref writes)
                    (expect (= 9 (count (get (config/load-project-config-raw) "toggles")))))
-                 (scoped/set-setting! db target "plans" "inherit" nil)
-                 (expect (true? (:value (first (filter #(= "plans" (:id %))
+                 (scoped/set-setting! db target "subagents" "inherit" nil)
+                 (expect (true? (:value (first (filter #(= "subagents" (:id %))
                                                        (scoped/settings db target)))))))))
            (expect (= "toggles:
-  plans: true
+  subagents: true
 " (slurp authored)))
            (finally (doseq [file (reverse (file-seq dir))]
                       (io/delete-file file true))))))
@@ -367,16 +367,56 @@
             sid
             (h/store-session! db {:title "Persist"})]
 
-        (try (store/db-set-scoped-setting! db "session" sid "plans" false)
+        (try (store/db-set-scoped-setting! db "session" sid "subagents" false)
              (store/db-dispose-connection! db)
              (let [reopened (store/db-create-connection! (.getPath file))]
-               (try (expect (= {"plans" false} (store/db-scoped-settings reopened "session" sid)))
+               (try (expect (= {"subagents" false}
+                               (store/db-scoped-settings reopened "session" sid)))
                     (store/db-delete-session-tree! reopened sid)
                     (expect (empty? (store/db-scoped-settings reopened "session" sid)))
                     (finally (store/db-dispose-connection! reopened))))
              (finally (store/db-dispose-connection! db)
                       (doseq [f (reverse (file-seq file))]
-                        (io/delete-file f true)))))))
+                        (io/delete-file f true))))))
+  (it
+    "ignores a retired plans value at every scope without an error"
+    (with-redefs [config/load-global-yaml-config-raw
+                  (constantly {"toggles" {"plans" true}})
+
+                  config/load-global-config-raw
+                  (constantly {"toggles" {"plans" true}})
+
+                  config/load-project-tiers-raw
+                  (constantly {"toggles" {"plans" true}})
+
+                  config/load-project-config-raw
+                  (constantly {"toggles" {"plans" true}})]
+
+      (let [db
+            (h/store)
+
+            project
+            (store/db-create-project! db
+                                      {:name "Retired"
+                                       :workspace-root (.getCanonicalPath
+                                                         (java.io.File. "/tmp/scoped-retired"))})
+
+            group
+            (store/db-create-session-group! db (:id project) {:name "Work"})
+
+            sid
+            (h/store-session! db {:title "Retired"})
+
+            retired?
+            #(= "plans" (:id %))]
+
+        (store/db-set-session-group! db sid (:id group))
+        (store/db-set-scoped-setting! db "group" (:id group) "plans" true)
+        (store/db-set-scoped-setting! db "session" sid "plans" true)
+        (doseq [[scope id] [["global" nil] ["project" (:id project)] ["group" (:id group)]
+                            ["session" sid]]]
+          (expect (not-any? retired? (scoped/settings db (scoped/target db scope id)))))
+        (expect (not (contains? (scoped/values db sid) "plans")))))))
 
 (defdescribe
   scoped-http-boundary

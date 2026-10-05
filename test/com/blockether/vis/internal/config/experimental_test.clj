@@ -23,14 +23,14 @@
 
 (wiring/install!)
 
-(h/use-mem-store! {"subagents" false "improve" false "plans" false})
+(h/use-mem-store! {"subagents" false "improve" false})
 
 (defn- failure-data [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
 
 (defdescribe
   experimental-settings-contract-and-hydration
   (it "experimental settings contract and hydration"
-      (doseq [id ["subagents" "improve" "plans"]]
+      (doseq [id ["subagents" "improve"]]
         (let [spec (toggles/toggle-spec id)]
           (expect (false? (:default spec)))
           (expect (false? (toggles/enabled? id)))
@@ -46,15 +46,15 @@
             rows
             (get (first (filter #(= "experimental" (get % "id")) groups)) "toggles")]
 
-        (expect (= #{"subagents" "improve" "plans" "draft_backend"} (set (map #(get % "id") rows))))
+        (expect (= #{"subagents" "improve" "draft_backend"} (set (map #(get % "id") rows))))
         (expect (every? #(true? (get % "is_experimental")) rows))
         (expect (every? #(false? (get % "enabled")) (filter #(= "boolean" (get % "type")) rows)))
         (expect (= "off" (get (first (filter #(= "draft_backend" (get % "id")) rows)) "value"))))
-      (toggles/hydrate-from-config! {"toggles" {"subagents" true "improve" "on" "plans" true}})
-      (expect (every? toggles/enabled? ["subagents" "improve" "plans"]))
+      (toggles/hydrate-from-config! {"toggles" {"subagents" true "improve" "on"}})
+      (expect (every? toggles/enabled? ["subagents" "improve"]))
       (expect (some #(= "improve_mode" (:id %)) (toggles/visible-toggles)))
-      (expect (= {"subagents" true "improve" true "plans" true}
-                 (select-keys (toggles/snapshot) ["subagents" "improve" "plans"])))))
+      (expect (= {"subagents" true "improve" true}
+                 (select-keys (toggles/snapshot) ["subagents" "improve"])))))
 
 (defdescribe disabled-subagents-refuse-host-and-gateway-before-bootstrap
              (it

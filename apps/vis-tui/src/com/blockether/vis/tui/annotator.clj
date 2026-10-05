@@ -5,7 +5,6 @@
             [clojure.string :as str]
             [com.blockether.vis.contract.annotations :as annotations]
             [com.blockether.vis.contract.diff :as diff]
-            [com.blockether.vis.contract.plan :as plan]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.external-opener :as opener]
@@ -168,15 +167,11 @@
   [state]
   (or (:dirty? state) (:revision-pending? state) (seq (:comments state))))
 
-(defn- review-actions
-  [info state]
-  (if (:diff state)
-    (if (pending-review? state) [:revise] [])
-    (plan/available-actions info (pending-review? state))))
+(defn- review-actions [state] (if (and (:diff state) (pending-review? state)) [:revise] []))
 
 (defn modal-component
   "Read and optionally review an explicitly commentable artifact with production rendering."
-  [filename plain? plans? initial]
+  [filename plain? initial]
   (let [blocks
         (document-blocks (if (and (:diff initial) (empty? (:body initial)))
                            "No changes in this diff."
@@ -187,14 +182,12 @@
         (true? (:commentable initial))
 
         info
-        (if (:diff initial)
-          {:kind :diff
-           :status (str/join " · "
+        (when (:diff initial)
+          {:status (str/join " · "
                              (remove nil?
                                [(get-in initial [:diff "source" "type"])
                                 (get-in initial [:diff "source" "backend"])
-                                (get-in initial [:diff "source" "label"])]))}
-          (when plans? (plan/document-info filename (:body initial))))]
+                                (get-in initial [:diff "source" "label"])]))})]
 
     {:init initial
      :measure (fn [state cols rows]
@@ -250,86 +243,68 @@
            :comment-index
            (p/clamp (long (:comment-index state)) 0 (max 0 (dec (count (:comments state)))))
            :scroll (p/clamp (long scroll) 0 (max 0 (- (count lines) (long doc-h)))))))
-     :paint (fn [g state
-                 {:keys [cols rows content-w height left inner-w content-top hint-row lines doc-h
-                         notes-h]}]
-              (dlg/draw-dialog-chrome! g
-                                       cols
-                                       rows
-                                       (case (:kind info)
-                                         :plan
-                                         "Specification"
-
-                                         :implementation
-                                         "Implementation record"
-
-                                         :diff
-                                         "Code changes"
-
-                                         filename)
-                                       content-w
-                                       height)
-              (p/set-colors! g t/dialog-hint t/dialog-bg)
-              (when info
-                (p/put-str! g
-                            (+ (long left) 2)
-                            content-top
-                            (p/ellipsize (str filename " · v" (:version state))
-                                         (- (long inner-w) 3))))
-              (p/put-str! g
-                          (+ (long left) 2)
-                          (+ (long content-top) (if info 1 0))
-                          (p/ellipsize
-                            (str (if info (:status info) (str "v" (:version state)))
-                                 (if commentable
-                                   (str " · "
-                                        (count (:comments state))
-                                        (if (= 1 (count (:comments state))) " comment" " comments")
-                                        (when (:dirty? state) " · Unsaved draft"))
-                                   " · Read only"))
-                            (- (long inner-w) 3)))
-              (doseq [[i line] (map-indexed vector (take doc-h (drop (:scroll state) lines)))]
-                (let [row (+ (long content-top) (if info 2 1) (long i))]
-                  (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                  (p/put-str! g
-                              (inc (long left))
-                              row
-                              (if (and (or commentable (:diff state))
-                                       (= :document (:focus state))
-                                       (= (:selected state) (:block line)))
-                                ">"
-                                " "))
-                  (reduce (fn [x run]
-                            (dlg/md-run-paint! g x row run))
-                          (+ (long left) 3)
-                          (:runs line))))
-              (let [first-comment (max 0 (inc (- (long (:comment-index state)) (long notes-h))))]
-                (doseq [[i comment]
-                        (map-indexed vector (take notes-h (drop first-comment (:comments state))))]
-                  (dlg/draw-selectable-row!
-                    g
-                    left
-                    (+ (long content-top) (if info 2 1) (long doc-h) (long i))
-                    inner-w
-                    (and (= :comments (:focus state))
-                         (= (:comment-index state) (+ first-comment (long i))))
-                    (str (inc (+ first-comment (long i)))
-                         ". " (if (str/blank? (:quote comment)) "Whole document" (:quote comment))
-                         " — " (:body comment)))))
-              (p/set-colors! g t/dialog-hint t/dialog-bg)
-              (p/put-str! g
-                          (+ (long left) 2)
-                          (- (long hint-row) 1)
-                          (p/ellipsize (or (not-empty (:note state))
-                                           (when commentable
-                                             (if info
-                                               (when-not (:sent? state)
-                                                 (case (first (review-actions info state))
-                                                   :approve
-                                                   "a Approve and start"
-
-                                                   :revise
-                                                   "r Send for revision"
+     :paint
+     (fn [g state
+          {:keys [cols rows content-w height left inner-w content-top hint-row lines doc-h
+                  notes-h]}]
+       (dlg/draw-dialog-chrome! g cols rows (if info "Code changes" filename) content-w height)
+       (p/set-colors! g t/dialog-hint t/dialog-bg)
+       (when info
+         (p/put-str! g
+                     (+ (long left) 2)
+                     content-top
+                     (p/ellipsize (str filename " · v" (:version state)) (- (long inner-w) 3))))
+       (p/put-str! g
+                   (+ (long left) 2)
+                   (+ (long content-top) (if info 1 0))
+                   (p/ellipsize (str (if info (:status info) (str "v" (:version state)))
+                                     (if commentable
+                                       (str
+                                         " · "
+                                         (count (:comments state))
+                                         (if (= 1 (count (:comments state))) " comment" " comments")
+                                         (when (:dirty? state) " · Unsaved draft"))
+                                       " · Read only"))
+                                (- (long inner-w) 3)))
+       (doseq [[i line] (map-indexed vector (take doc-h (drop (:scroll state) lines)))]
+         (let [row (+ (long content-top) (if info 2 1) (long i))]
+           (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+           (p/put-str! g
+                       (inc (long left))
+                       row
+                       (if (and (or commentable (:diff state))
+                                (= :document (:focus state))
+                                (= (:selected state) (:block line)))
+                         ">"
+                         " "))
+           (reduce (fn [x run]
+                     (dlg/md-run-paint! g x row run))
+                   (+ (long left) 3)
+                   (:runs line))))
+       (let [first-comment (max 0 (inc (- (long (:comment-index state)) (long notes-h))))]
+         (doseq [[i comment] (map-indexed vector
+                                          (take notes-h (drop first-comment (:comments state))))]
+           (dlg/draw-selectable-row!
+             g
+             left
+             (+ (long content-top) (if info 2 1) (long doc-h) (long i))
+             inner-w
+             (and (= :comments (:focus state))
+                  (= (:comment-index state) (+ first-comment (long i))))
+             (str (inc (+ first-comment (long i)))
+                  ". " (if (str/blank? (:quote comment)) "Whole document" (:quote comment))
+                  " — " (:body comment)))))
+       (p/set-colors! g t/dialog-hint t/dialog-bg)
+       (p/put-str! g
+                   (+ (long left) 2)
+                   (- (long hint-row) 1)
+                   (p/ellipsize (or (not-empty (:note state))
+                                    (when commentable
+                                      (if info
+                                        (when-not (:sent? state)
+                                          (case (first (review-actions state))
+                                            :revise
+                                            "r Send for revision"
 
                                                    "Add comments to request changes"))
                                                "s Save · w Whole")))
@@ -359,39 +334,34 @@
                \r
                :revise
 
-               \a
-               :approve
-
                nil)]
 
-         (cond (= KeyType/Escape (.getKeyType key)) (done :close)
-               (and (= \o (.getCharacter key)) (named-file state plain?)) (done :open)
-               (and (not commentable)
-                    (not (#{KeyType/ArrowUp KeyType/ArrowDown KeyType/PageUp KeyType/PageDown}
-                          (.getKeyType key))))
-               state
-               (= KeyType/Tab (.getKeyType key))
-               (assoc state :focus (if (= :document (:focus state)) :comments :document))
-               (= KeyType/ArrowUp (.getKeyType key)) (-> state
-                                                         (update selection #(dec (long %)))
-                                                         (assoc :jump? true))
-               (= KeyType/ArrowDown (.getKeyType key)) (-> state
-                                                           (update selection #(inc (long %)))
-                                                           (assoc :jump? true))
-               (= KeyType/PageUp (.getKeyType key))
-               (update state :scroll #(- (long %) (long doc-h)))
-               (= KeyType/PageDown (.getKeyType key))
-               (update state :scroll #(+ (long %) (long doc-h)))
-               (= KeyType/Enter (.getKeyType key))
-               (done (if (= :comments (:focus state)) :edit :comment))
-               (= KeyType/Delete (.getKeyType key))
-               (if (= :comments (:focus state)) (done :delete) state)
-               (= \w (.getCharacter key)) (done :whole)
-               (= \s (.getCharacter key)) (if (and (nil? info) (:dirty? state)) (done :save) state)
-               (= \? (.getCharacter key)) (done :help)
-               (and action (not (:sent? state)) (some #{action} (review-actions info state)))
-               (done action)
-               :else state)))}))
+         (cond
+           (= KeyType/Escape (.getKeyType key)) (done :close)
+           (and (= \o (.getCharacter key)) (named-file state plain?)) (done :open)
+           (and (not commentable)
+                (not (#{KeyType/ArrowUp KeyType/ArrowDown KeyType/PageUp KeyType/PageDown}
+                      (.getKeyType key))))
+           state
+           (= KeyType/Tab (.getKeyType key))
+           (assoc state :focus (if (= :document (:focus state)) :comments :document))
+           (= KeyType/ArrowUp (.getKeyType key)) (-> state
+                                                     (update selection #(dec (long %)))
+                                                     (assoc :jump? true))
+           (= KeyType/ArrowDown (.getKeyType key)) (-> state
+                                                       (update selection #(inc (long %)))
+                                                       (assoc :jump? true))
+           (= KeyType/PageUp (.getKeyType key)) (update state :scroll #(- (long %) (long doc-h)))
+           (= KeyType/PageDown (.getKeyType key)) (update state :scroll #(+ (long %) (long doc-h)))
+           (= KeyType/Enter (.getKeyType key)) (done
+                                                 (if (= :comments (:focus state)) :edit :comment))
+           (= KeyType/Delete (.getKeyType key))
+           (if (= :comments (:focus state)) (done :delete) state)
+           (= \w (.getCharacter key)) (done :whole)
+           (= \s (.getCharacter key)) (if (and (nil? info) (:dirty? state)) (done :save) state)
+           (= \? (.getCharacter key)) (done :help)
+           (and action (not (:sent? state)) (some #{action} (review-actions state))) (done action)
+           :else state)))}))
 
 (defn save-state!
   "Only a confirmed saved version clears dirty state."
@@ -421,20 +391,15 @@
   "Save before revision; retain that version on a failed send so retry never saves twice."
   [session-id row state action]
   (when-not (and (true? (:commentable row))
-                 (or (:diff state) (vis/toggle-enabled? "plans"))
                  (not (:sent? state))
-                 (some #{action}
-                       (review-actions (plan/document-info (:filename row) (:body state)) state)))
+                 (some #{action} (review-actions state)))
     (throw (ex-info "This review action is not available" {})))
   (let [saved (cond-> (if (:dirty? state) (save-state! session-id row state) state)
                 (= :revise action)
                 (assoc :revision-pending? true))]
-    (try (let [result (vis/submit-turn!
-                        session-id
-                        {:request
-                         (if (:diff saved)
-                           (diff/review-request (:filename row) (:version saved))
-                           (plan/action-request (:filename row) (:version saved) action))})]
+    (try (let [result (vis/submit-turn! session-id
+                                        {:request (diff/review-request (:filename row)
+                                                                       (:version saved))})]
            (if (get-in result [:turn "turn_id"])
              (assoc saved
                :sent? true
@@ -506,9 +471,9 @@
       (when open?
         (loop [state (artifact-state row text (when-not stale? draft))]
           (let
-            [component (modal-component filename plain? (vis/toggle-enabled? "plans") state)
+            [component (modal-component filename plain? state)
              {:keys [action state]} (dlg/run-modal! screen component)
-             _ (when (#{:save :revise :approve} action)
+             _ (when (#{:save :revise} action)
                  (let [size (.getTerminalSize screen)
                        busy (assoc state
                               :note (if (= :save action)
@@ -560,7 +525,7 @@
                  :save
                  (save-state! session-id row state)
 
-                 (:revise :approve)
+                 :revise
                  (send-state! session-id row state action)
 
                  :help
@@ -572,10 +537,7 @@
                        "Up/Down: choose a block or comment\nPage Up/Down: scroll\nEnter: quote a block or edit a comment\nTab: switch document/comments\nw: whole-document comment\nDelete: remove selected comment\n"
                        (if (:diff state)
                          "o: open the file this line names\nr: send comments for revision\n"
-                         (if (and (vis/toggle-enabled? "plans")
-                                  (plan/document-info filename (:body state)))
-                           "r: send comments for revision\na: approve this specification and start implementation\n"
-                           "s: save as a new version\n"))
+                         "s: save as a new version\n")
                        "Esc: close and keep draft"))
                    state)
 

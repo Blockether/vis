@@ -677,18 +677,18 @@
                                                {})}
           (fn []
             (client/settings :tui target)
-            (client/setting "plans" target)
-            (client/set-setting-value! "plans" false target)
-            (client/inherit-setting! "plans" target)
+            (client/setting "subagents" target)
+            (client/set-setting-value! "subagents" false target)
+            (client/inherit-setting! "subagents" target)
             (client/mcp-servers target)
             (client/mcp-save-server! "docs" {"command" "echo"} target)
             (client/mcp-set-server-enabled! "docs" false target)
             (client/mcp-delete-server! "docs" target)))
         (expect
           (= [["GET" "/v1/settings?channel=tui&scope=session&target_id=a%2Fb"]
-              ["GET" "/v1/settings/plans?scope=session&target_id=a%2Fb"]
-              ["POST" "/v1/settings" (merge target {:id "plans" :action "value" :value false})]
-              ["POST" "/v1/settings" (merge target {:id "plans" :action "inherit"})]
+              ["GET" "/v1/settings/subagents?scope=session&target_id=a%2Fb"]
+              ["POST" "/v1/settings" (merge target {:id "subagents" :action "value" :value false})]
+              ["POST" "/v1/settings" (merge target {:id "subagents" :action "inherit"})]
               ["GET" "/v1/mcp/servers?scope=session&target_id=a%2Fb"]
               ["POST" "/v1/mcp/servers" (merge target {:name "docs" :server {"command" "echo"}})]
               ["POST" "/v1/mcp/servers/docs/actions/enable" (merge target {:enabled false})]

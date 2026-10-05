@@ -2468,15 +2468,13 @@ export function storySettingsFetch(populated = false): typeof fetch {
       enabled: true,
     },
   ];
-  const features = ['subagents', 'improve', 'plans'].map((id) => ({
+  const features = ['subagents', 'improve'].map((id) => ({
     id,
-    label: id === 'plans' ? 'Plan before coding' : id === 'improve' ? 'Improve' : 'Subagents',
+    label: id === 'improve' ? 'Improve' : 'Subagents',
     description:
-      id === 'subagents'
-        ? 'Delegate work to managed agents.'
-        : id === 'improve'
-          ? 'Collect improvement reports and review them.'
-          : 'Review a versioned plan before implementation.',
+      id === 'improve'
+        ? 'Collect improvement reports and review them.'
+        : 'Delegate work to managed agents.',
     type: 'boolean',
     enabled: false,
     is_experimental: true,

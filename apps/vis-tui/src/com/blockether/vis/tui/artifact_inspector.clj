@@ -3,7 +3,6 @@
    artifacts remain separate lifecycles, but share one discoverable C-x i surface."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.diff :as diff]
-            [com.blockether.vis.contract.plan :as plan]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.primitives :as p]
@@ -82,25 +81,16 @@
          (str "  ·  " label))))
 
 (defn- display-rows
-  [rows load-error plans?]
+  [rows load-error]
   (let [staged
         (filterv #(= :staged (:source %)) rows)
 
         produced
-        (filterv #(= :produced (:source %)) rows)
-
-        plans
-        (when plans? (filterv #(plan/plan-name (:filename %)) produced))
-
-        produced
-        (if plans? (filterv #(not (plan/plan-name (:filename %))) produced) produced)]
+        (filterv #(= :produced (:source %)) rows)]
 
     (cond-> []
       (seq staged)
       (into (cons {:header "Ready to send"} staged))
-
-      (seq plans)
-      (into (cons {:header "Specifications"} plans))
 
       (seq produced)
       (into (cons {:header "Produced in this session"} produced))
@@ -125,18 +115,13 @@
       0)))
 
 (defn inspector-modal-component
-  "Pure attachment inspector. Text opens in the annotator; o keeps the external opener.
-   The plans option groups planning documents without hiding other artifacts."
-  [staged artifacts load-error & {:keys [plans?]}]
+  "Pure attachment inspector. Text opens in the annotator; o keeps the external opener."
+  [staged artifacts load-error]
   (let [rows
-        (vec (sort-by (fn [row]
-                        (cond (= :staged (:source row)) 0
-                              (and plans? (plan/plan-name (:filename row))) 1
-                              :else 2))
-                      (inspector-rows staged artifacts)))
+        (vec (sort-by #(if (= :staged (:source %)) 0 1) (inspector-rows staged artifacts)))
 
         display
-        (display-rows rows load-error plans?)
+        (display-rows rows load-error)
 
         total
         (long (count rows))]
@@ -268,9 +253,7 @@
 (defn show!
   "Open the inspector and return its selected action, or nil on close."
   [^TerminalScreen screen staged artifacts load-error]
-  (dlg/run-modal!
-    screen
-    (inspector-modal-component staged artifacts load-error :plans? (vis/toggle-enabled? "plans"))))
+  (dlg/run-modal! screen (inspector-modal-component staged artifacts load-error)))
 
 (defn- artifact-link-row!
   [session-id url]

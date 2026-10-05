@@ -4,7 +4,9 @@
    internal toggles. Toggle ids are plain strings (no namespaces)."
   (:require [com.blockether.vis.contract.toggle :as toggle-contract]
             [com.blockether.vis.internal.config.toggles :as t]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [com.blockether.vis.internal.config.validation :as validation]
+            [lazytest.core :refer [defdescribe expect it]]
+            [taoensso.telemere :as tel]))
 
 (defn- with-clean-state
   [f]
@@ -399,14 +401,14 @@
                  (expect (nil? (t/toggle-spec "compact_model_stdout")))))
 
 (defdescribe plans-toggle-test
-             (it "is one persisted opt-in switch exposed in both clients"
-                 (let [spec (t/toggle-spec "plans")]
-                   (expect (= :boolean (:type spec)))
-                   (expect (false? (:default spec)))
-                   (expect (true? (:persist? spec)))
-                   (expect (toggle-contract/settings-description? (:description spec)))
-                   (doseq [channel [:tui :web]]
-                     (expect (some #(= "plans" (:id %)) (t/toggles-for-channel channel)))))))
+             (it "is retired, and a value saved by an earlier build stays silent"
+                 (expect (nil? (t/toggle-spec "plans")))
+                 (doseq [channel [:tui :web]]
+                   (expect (not-any? #(= "plans" (:id %)) (t/toggles-for-channel channel))))
+                 (let [saved {"toggles" {"plans" true}}]
+                   (expect (validation/valid? saved))
+                   (expect (nil? (tel/with-signal (t/hydrate-from-config! saved)))))
+                 (expect (not (contains? (t/snapshot) "plans")))))
 
 (defdescribe
   speech-preload-toggle-test

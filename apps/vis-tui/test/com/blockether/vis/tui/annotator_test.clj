@@ -2,7 +2,6 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.diff :as diff]
-            [com.blockether.vis.contract.plan :as plan]
             [com.blockether.vis.tui.annotator :as annotator]
             [com.blockether.vis.tui.artifact-inspector :as inspector]
             [com.blockether.vis.tui.capture :as cap]
@@ -22,6 +21,8 @@
 (def ^String implementation-text
   "# Session search\n\n**Feature:** search\n**Status:** done\n\n## Completed tasks\nSearch sessions by title and restore the selected session.\n\n## Verification\nSearch and keyboard navigation tests passed.\n\n## Changes\nReview the attached DIFF-search.json.\n")
 
+;; Sessions from the retired "Plan before coding" setting can still hold PLAN- files.
+;; They open as ordinary Markdown documents.
 (def review-row
   {:filename "PLAN-search.md"
    :media-type "text/markdown"
@@ -32,12 +33,10 @@
 
 (defn review-component
   "Deterministic production fixture for virtual-terminal and HTML review."
-  ([] (review-component true))
-  ([plans?]
-   (annotator/modal-component "PLAN-search.md"
-                              false
-                              plans?
-                              (annotator/artifact-state review-row review-text nil))))
+  []
+  (annotator/modal-component "PLAN-search.md"
+                             false
+                             (annotator/artifact-state review-row review-text nil)))
 
 (defn component-view
   "Production modal painter wrapped in the shared GUI2 grid for browser review."
@@ -62,7 +61,7 @@
                   ((:paint component) graphics state geom)))))
 
 (defn review-view
-  "The specification review fixture rendered by the production modal."
+  "The Markdown review fixture rendered by the production modal."
   [cols rows]
   (component-view (review-component) cols rows))
 
@@ -71,10 +70,10 @@
                  (doseq [[cols rows] [[40 24] [96 32]]]
                    (let [html (HtmlTerminalView/render (review-view cols rows)
                                                        (TerminalSize. cols rows)
-                                                       "Specification review")]
+                                                       "Markdown review")]
                      (expect (str/includes? html "PLAN-search.md"))
-                     (expect (str/includes? html "Approve and start"))
-                     (expect (str/includes? html "ready"))))))
+                     (expect (str/includes? html "0 comments"))
+                     (expect (not (str/includes? html "Approve and start")))))))
 
 (defdescribe production-review-layout
              (it "production review layout"
@@ -88,50 +87,39 @@
 
                      (expect (nil? (:error capture)))
                      (expect (str/includes? text "PLAN-search.md"))
-                     (expect (str/includes? text "PLAN-search.md · v3"))
-                     (expect (str/includes? text "ready · 0 comments"))
+                     (expect (str/includes? text "v3 · 0 comments"))
                      (expect (str/includes? text "Session search"))
-                     (expect (str/includes? text "a Approve and start"))
-                     (expect (str/includes? text "Specification"))
-                     (expect (not (str/includes? text "s Save")))
+                     (expect (str/includes? text "s Save · w Whole"))
+                     (expect (not (str/includes? text "Approve and start")))
                      (expect (not (str/includes? text "r Send for revision")))
                      (expect (= :close (get-in capture [:ret :action])))))))
 
-(defdescribe
-  one-workflow-action-for-each-review-state
-  (it "one workflow action for each review state"
-      (let [component
-            (review-component)
+(defdescribe markdown-review-only-saves
+             (it "markdown review only saves"
+                 (let [component
+                       (review-component)
 
             state
             (:init component)
 
-            key!
-            #((:on-key component) %1 (cap/key-stroke %2) {:doc-h 10})]
+                       dirty
+                       (assoc state :dirty? true)
 
-        (expect (= :approve (get-in (key! state \a) [::dlg/done :action])))
-        (expect (= state (key! state \i)))
-        (expect (= state (key! state \r)))
-        (expect (= (assoc state :dirty? true) (key! (assoc state :dirty? true) \s)))
-        (expect (= (assoc state :dirty? true) (key! (assoc state :dirty? true) \a)))
-        (expect (= :revise (get-in (key! (assoc state :dirty? true) \r) [::dlg/done :action])))
-        (expect (= (assoc state :sent? true) (key! (assoc state :sent? true) \a))))
-      (let [component (review-component false)]
-        (expect (= (:init component)
-                   ((:on-key component) (:init component) (cap/key-stroke \r) {:doc-h 10})))
-        (expect (= :save
-                   (get-in ((:on-key component)
-                             (assoc (:init component) :dirty? true)
-                             (cap/key-stroke \s)
-                             {:doc-h 10})
-                           [::dlg/done :action]))))))
+                       key!
+                       #((:on-key component) %1 (cap/key-stroke %2) {:doc-h 10})]
 
-(defdescribe pending-comments-offer-only-revision
-             (it "pending comments offer only revision"
+                   (doseq [key [\a \i \r]]
+                     (expect (= state (key! state key)))
+                     (expect (= dirty (key! dirty key))))
+                   (expect (= state (key! state \s)))
+                   (expect (= :save (get-in (key! dirty \s) [::dlg/done :action]))))))
+
+(defdescribe pending-comments-offer-only-save
+             (it "pending comments offer only save"
                  (doseq [[cols rows] [[40 24] [96 32]]]
                    (let [component (annotator/modal-component
-                                     "PLAN-search.md" false
-                                     true
+                                     "PLAN-search.md"
+                                     false
                                      (assoc (annotator/artifact-state review-row review-text nil)
                                        :comments [{:quote "" :body "Include archived sessions"}]))
                          capture (cap/capture! {:cols cols
@@ -141,32 +129,8 @@
                          text (cap/frame-text capture)]
 
                      (expect (nil? (:error capture)))
-                     (expect (str/includes? text "r Send for revision"))
-                     (expect (not (str/includes? text "Approve and start")))
-                     (expect (not (str/includes? text "s Save")))))))
-
-(defdescribe
-  approval-sends-one-exact-version-without-an-extra-save
-  (it "approval sends one exact version without an extra save"
-      (doseq [status ["ready" "accepted"]]
-        (let [sent (atom [])
-              text (str/replace review-text "**Status:** ready" (str "**Status:** " status))
-              state (annotator/initial-state text 3 nil)]
-
-          (with-redefs [vis/toggle-enabled? (constantly true)
-                        vis/save-artifact-text! (fn [& _]
-                                                  (throw (ex-info "Unexpected save" {})))
-                        vis/submit-turn! (fn [_ opts]
-                                           (swap! sent conj opts)
-                                           {:turn {"turn_id" "new"}})]
-
-            (let [submitted (annotator/send-state! "s" review-row state :approve)]
-              (expect (:sent? submitted))
-              (expect (= [{:request (plan/action-request "PLAN-search.md" 3 :approve)}] @sent))
-              (expect (= :blocked
-                         (try (annotator/send-state! "s" review-row submitted :approve)
-                              :sent
-                              (catch clojure.lang.ExceptionInfo _ :blocked))))))))))
+                     (expect (str/includes? text "s Save · w Whole"))
+                     (expect (not (str/includes? text "Send for revision")))))))
 
 (defdescribe
   commenting-keeps-a-draft-without-saving-or-sending
@@ -174,7 +138,6 @@
       (let [drafts (atom [])]
         (with-redefs [vis/gateway-iteration-attachment-bytes (fn [& _]
                                                                (.getBytes review-text "UTF-8"))
-                      vis/toggle-enabled? (constantly true)
                       annotator/read-draft (constantly nil)
                       annotator/keep-draft! (fn [_ _ state]
                                               (swap! drafts conj state))
@@ -208,27 +171,21 @@
       (expect (= ["Name" "State" "Search" "Ready"] (:passages (nth blocks 3)))))))
 
 (defdescribe
-  comment-save-and-send-round-trip
+  comment-and-save-round-trip
   (it
-    "comment save and send round trip"
+    "comment and save round trip"
     (let [saved
-          (atom [])
-
-          sent
           (atom [])
 
           drafts
           (atom [])
 
           keys
-          (concat [\w] (seq "Keep scope narrow") [:enter \r :esc])]
+          (concat [\w] (seq "Keep scope narrow") [:enter \r \s :esc])]
 
       (with-redefs [vis/gateway-iteration-attachment-bytes
                     (fn [& _]
                       (.getBytes review-text "UTF-8"))
-
-                    vis/toggle-enabled?
-                    (constantly true)
 
                     annotator/read-draft
                     (fn [& _]
@@ -244,9 +201,8 @@
                       {"version" 4})
 
                     vis/submit-turn!
-                    (fn [_ opts]
-                      (swap! sent conj opts)
-                      {:turn {"turn_id" "new-turn"}})]
+                    (fn [& _]
+                      (throw (AssertionError. "Unexpected send")))]
 
         (let [capture (cap/capture! {:cols 96
                                      :rows 32
@@ -256,116 +212,7 @@
           (expect (nil? (:error capture)))
           (expect (= 1 (count @saved)))
           (expect (str/includes? (last (first @saved)) "- **Whole document** — Keep scope narrow"))
-          (expect (str/includes? (:request (first @sent)) "version=4"))
-          (expect (str/includes? (:request (first @sent)) "Do not implement"))
           (expect (false? (:dirty? (last @drafts)))))))))
-
-(defdescribe
-  failed-send-keeps-the-saved-version-for-retry
-  (it "failed send keeps the saved version for retry"
-      (let [saves
-            (atom 0)
-
-            sends
-            (atom 0)
-
-            state
-            (assoc (annotator/initial-state review-text 3 nil)
-              :dirty? true
-              :comments [{:quote "" :body "Keep this"}])]
-
-        (with-redefs [vis/toggle-enabled?
-                      (constantly true)
-
-                      vis/save-artifact-text!
-                      (fn [& _]
-                        (swap! saves inc)
-                        {"version" 4})
-
-                      vis/submit-turn!
-                      (fn [& _]
-                        (when (= 2 (swap! sends inc)) {:turn {"turn_id" "new"}}))]
-
-          (let [failed
-                (annotator/send-state! "s" review-row state :revise)
-
-                retried
-                (annotator/send-state! "s" review-row failed :revise)]
-
-            (expect (= 4 (:version failed)))
-            (expect (false? (:dirty? failed)))
-            (expect (:sent? retried))
-            (expect (= 1 @saves)))))))
-
-(defdescribe
-  removed-final-comment-retries-revision-instead-of-approving
-  (it
-    "removed final comment retries revision instead of approving"
-    (let [saves
-          (atom 0)
-
-          requests
-          (atom [])
-
-          state
-          (assoc (annotator/initial-state review-text 3 nil) :dirty? true)]
-
-      (with-redefs [vis/toggle-enabled?
-                    (constantly true)
-
-                    vis/save-artifact-text!
-                    (fn [& _]
-                      (swap! saves inc)
-                      {"version" 4})
-
-                    vis/submit-turn!
-                    (fn [_ opts]
-                      (swap! requests conj (:request opts))
-                      (when (= 2 (count @requests)) {:turn {"turn_id" "new"}}))]
-
-        (let [failed
-              (annotator/send-state! "s" review-row state :revise)
-
-              component
-              (annotator/modal-component "PLAN-search.md" false true failed)
-
-              key!
-              #((:on-key component) failed (cap/key-stroke %) {:doc-h 10})
-
-              retried
-              (annotator/send-state! "s" review-row failed :revise)]
-
-          (expect (= failed (key! \a)))
-          (expect (= :revise (get-in (key! \r) [::dlg/done :action])))
-          (expect (= 4 (:version retried)))
-          (expect (:sent? retried))
-          (expect (= 1 @saves))
-          (expect (= (repeat 2 (plan/action-request "PLAN-search.md" 4 :revise)) @requests)))))))
-
-(defdescribe failed-save-does-not-send-or-clear-comments
-             (it "failed save does not send or clear comments"
-                 (let [sent
-                       (atom false)
-
-                       state
-                       (assoc (annotator/initial-state review-text 3 nil) :dirty? true)]
-
-                   (with-redefs [vis/toggle-enabled?
-                                 (constantly true)
-
-                                 vis/save-artifact-text!
-                                 (fn [& _]
-                                   (throw (ex-info "offline" {})))
-
-                                 vis/submit-turn!
-                                 (fn [& _]
-                                   (reset! sent true))]
-
-                     (expect (= :failed
-                                (try (annotator/send-state! "s" review-row state :revise)
-                                     :sent
-                                     (catch clojure.lang.ExceptionInfo _ :failed))))
-                     (expect (false? @sent))))))
 
 (defdescribe
   drafts-survive-reopening-but-never-silently-overwrite-a-newer-body
@@ -403,9 +250,7 @@
                                                               "version" 3
                                                               "iteration_id" "i"
                                                               "index" 0}]
-                                                            nil
-                                                            :plans?
-                                                            true)
+                                                            nil)
 
                        key!
                        #((:on-key component) (:init component) (cap/key-stroke %) {})]
@@ -434,29 +279,27 @@
                                          :comments [{:quote "" :body "Old draft"}]})
 
               component
-              (annotator/modal-component filename false true state)]
+              (annotator/modal-component filename false state)]
 
           (expect (false? (:commentable state)))
           (expect (empty? (:comments state)))
           (doseq [key [:enter :delete :tab \w \s \r \a \?]]
             (expect (= state ((:on-key component) state (cap/key-stroke key) {:doc-h 10}))))))))
 
-(defdescribe
-  read-only-report-renders-without-review-controls-or-draft-io
-  (it "read only report renders without review controls or draft io"
-      (doseq [[cols rows] [[40 24] [96 32]]]
-        (with-redefs [vis/gateway-iteration-attachment-bytes (fn [& _]
-                                                               (.getBytes implementation-text
-                                                                          "UTF-8"))
-                      vis/toggle-enabled? (constantly true)
-                      annotator/read-draft (fn [& _]
-                                             (throw (AssertionError. "Read draft")))
-                      annotator/keep-draft! (fn [& _]
-                                              (throw (AssertionError. "Wrote draft")))
-                      vis/save-artifact-text! (fn [& _]
-                                                (throw (AssertionError. "Saved")))
-                      vis/submit-turn! (fn [& _]
-                                         (throw (AssertionError. "Sent")))]
+(defdescribe read-only-report-renders-without-review-controls-or-draft-io
+             (it "read only report renders without review controls or draft io"
+                 (doseq [[cols rows] [[40 24] [96 32]]]
+                   (with-redefs [vis/gateway-iteration-attachment-bytes
+                                 (fn [& _]
+                                   (.getBytes implementation-text "UTF-8"))
+                                 annotator/read-draft (fn [& _]
+                                                        (throw (AssertionError. "Read draft")))
+                                 annotator/keep-draft! (fn [& _]
+                                                         (throw (AssertionError. "Wrote draft")))
+                                 vis/save-artifact-text! (fn [& _]
+                                                           (throw (AssertionError. "Saved")))
+                                 vis/submit-turn! (fn [& _]
+                                                    (throw (AssertionError. "Sent")))]
 
           (let [capture (cap/capture! {:cols cols
                                        :rows rows
@@ -469,11 +312,11 @@
                                                                    "IMPLEMENTATION-search.md"))})
                 text (cap/frame-text capture)]
 
-            (expect (nil? (:error capture)))
-            (expect (str/includes? text "Read only"))
-            (expect (str/includes? text "Session search"))
-            (doseq [label ["Approve and start" "Send for revision" "s Save" "comment" "whole"]]
-              (expect (not (str/includes? text label)))))))))
+                       (expect (nil? (:error capture)))
+                       (expect (str/includes? text "Read only"))
+                       (expect (str/includes? text "Session search"))
+                       (doseq [label ["Send for revision" "s Save" "comment" "whole"]]
+                         (expect (not (str/includes? text label)))))))))
 
 (defdescribe read-only-cannot-call-save-or-send-directly
              (it "read only cannot call save or send directly"
@@ -522,10 +365,7 @@
             :dirty? true
             :comments [{:quote "+(search title" :body "Make this optional."}])]
 
-      (with-redefs [vis/toggle-enabled?
-                    (constantly false)
-
-                    vis/save-artifact-text!
+      (with-redefs [vis/save-artifact-text!
                     (fn [& args]
                       (swap! saves conj args)
                       {"version" 4})
@@ -545,21 +385,86 @@
               (diff/parse! (last (first @saves)))]
 
           (expect (= 1 (count @saves)))
+          (expect (= 4 (:version failed)))
+          (expect (false? (:dirty? failed)))
           (expect (= (dissoc diff-envelope "comments") (dissoc envelope "comments")))
           (expect (= [{"quote" "+(search title" "body" "Make this optional."}]
                      (get envelope "comments")))
           (expect (= (repeat 2 (diff/review-request "DIFF-search.json" 4)) @sends))
           (expect (:sent? retried))
           (expect (= :blocked
-                     (try (annotator/send-state! "s" diff-row state :approve)
+                     (try (annotator/send-state! "s" diff-row retried :revise)
                           nil
                           (catch clojure.lang.ExceptionInfo _ :blocked)))))))))
 
 (defdescribe
-  diff-view-renders-source-lines-empty-and-malformed-states
-  (it "diff view renders source lines empty and malformed states"
-      (doseq [[cols rows]
-              [[40 24] [96 32]]
+  removed-final-comment-keeps-revision-retry
+  (it
+    "removed final comment keeps revision retry"
+    (let [saves
+          (atom 0)
+
+          requests
+          (atom [])
+
+          state
+          (assoc (annotator/artifact-state diff-row (diff/render diff-envelope) nil) :dirty? true)]
+
+      (with-redefs [vis/save-artifact-text!
+                    (fn [& _]
+                      (swap! saves inc)
+                      {"version" 4})
+
+                    vis/submit-turn!
+                    (fn [_ opts]
+                      (swap! requests conj (:request opts))
+                      (when (= 2 (count @requests)) {:turn {"turn_id" "new"}}))]
+
+        (let [failed
+              (annotator/send-state! "s" diff-row state :revise)
+
+              component
+              (annotator/modal-component "DIFF-search.json" true failed)
+
+              retried
+              (annotator/send-state! "s" diff-row failed :revise)]
+
+          (expect (= :revise
+                     (get-in ((:on-key component) failed (cap/key-stroke \r) {:doc-h 10})
+                             [::dlg/done :action])))
+          (expect (= 4 (:version retried)))
+          (expect (:sent? retried))
+          (expect (= 1 @saves))
+          (expect (= (repeat 2 (diff/review-request "DIFF-search.json" 4)) @requests)))))))
+
+(defdescribe failed-save-does-not-send-or-clear-comments
+             (it "failed save does not send or clear comments"
+                 (let [sent
+                       (atom false)
+
+                       state
+                       (assoc (annotator/artifact-state diff-row (diff/render diff-envelope) nil)
+                         :dirty? true
+                         :comments [{:quote "" :body "Keep this"}])]
+
+                   (with-redefs [vis/save-artifact-text!
+                                 (fn [& _]
+                                   (throw (ex-info "offline" {})))
+
+                                 vis/submit-turn!
+                                 (fn [& _]
+                                   (reset! sent true))]
+
+                     (expect (= :failed
+                                (try (annotator/send-state! "s" diff-row state :revise)
+                                     :sent
+                                     (catch clojure.lang.ExceptionInfo _ :failed))))
+                     (expect (false? @sent))))))
+
+(defdescribe diff-view-renders-source-lines-empty-and-malformed-states
+             (it "diff view renders source lines empty and malformed states"
+                 (doseq [[cols rows]
+                         [[40 24] [96 32]]
 
               [payload expected]
               [[(diff/render diff-envelope) "-(search title)"]
@@ -569,8 +474,8 @@
         (let [state
               (annotator/artifact-state diff-row payload nil)
 
-              component
-              (annotator/modal-component "DIFF-search.json" true false state)
+                         component
+                         (annotator/modal-component "DIFF-search.json" true state)
 
               capture
               (cap/capture!
@@ -582,13 +487,12 @@
               text
               (cap/frame-text capture)]
 
-          (expect (nil? (:error capture)))
-          (expect (str/includes? text expected))
-          (expect (not (str/includes? text "Approve and start")))
-          (if (:invalid-diff? state)
-            (expect (not (str/includes? text "comment")))
-            (do (expect (str/includes? text "draft · rift · search"))
-                (expect (str/includes? text "Code changes"))))))))
+                     (expect (nil? (:error capture)))
+                     (expect (str/includes? text expected))
+                     (if (:invalid-diff? state)
+                       (expect (not (str/includes? text "comment")))
+                       (do (expect (str/includes? text "draft · rift · search"))
+                           (expect (str/includes? text "Code changes"))))))))
 
 (defdescribe diff-comments-round-is-explicit
              (it "diff comments round is explicit"
@@ -596,7 +500,7 @@
                        (annotator/artifact-state diff-row (diff/render diff-envelope) nil)
 
                        component
-                       (annotator/modal-component "DIFF-search.json" true false state)
+                       (annotator/modal-component "DIFF-search.json" true state)
 
                        with-comments
                        (assoc state :comments [{:quote "" :body "Review this."}])
@@ -618,7 +522,7 @@
             (annotator/artifact-state diff-row (diff/render diff-envelope) nil)
 
             component
-            (annotator/modal-component "DIFF-search.json" true false state)
+            (annotator/modal-component "DIFF-search.json" true state)
 
             key!
             #(get-in ((:on-key component) (assoc state :selected %) (cap/key-stroke \o) {:doc-h 10})

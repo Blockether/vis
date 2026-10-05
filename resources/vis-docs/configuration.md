@@ -590,8 +590,8 @@ effective value and where it comes from. **Use inherited value** removes only th
 the scope you opened.
 
 Vis resolves each setting in this order: **global → project → group → session**. A scope with no
-value is skipped. `false` is an explicit value, not inheritance. For example, disable plans in a
-group and enable them in one session. To make that session follow the group again, choose **Use
+value is skipped. `false` is an explicit value, not inheritance. For example, turn a setting off in
+a group and turn it on in one session. To make that session follow the group again, choose **Use
 inherited value** in it. A change to the group does not overwrite an explicit choice in another
 session.
 

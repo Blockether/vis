@@ -684,8 +684,8 @@
              "description" "Auto detects applicability; On stays active; Off denies tools."})
 
           groups
-          [{"title" "Planning"
-            "toggles" [{"id" "plans" "label" "Plans" "type" "boolean" "enabled" true}]}
+          [{"title" "Agents"
+            "toggles" [{"id" "subagents" "label" "Subagents" "type" "boolean" "enabled" true}]}
            {"title" "foundation-mcp"
             "extension" {"name" "foundation-mcp" "origin" "built_in" "status" "loaded"}
             "toggles" [(engine "engines_1" "foundation-mcp")]}
@@ -714,7 +714,7 @@
           (fn [text]
             (first (filter #(str/includes? % text) lines)))]
 
-      (expect (= [[:section "Planning" nil nil] [:registry-toggle "Plans" nil nil]
+      (expect (= [[:section "Agents" nil nil] [:registry-toggle "Subagents" nil nil]
                   [:section "Extensions" nil nil] [:registry-toggle "foundation-mcp" nil nil]
                   [:registry-toggle "vis-spel" "global" nil] [:subsection "Skills" nil 1]
                   [:registry-toggle "browser" nil 1]]
@@ -723,7 +723,7 @@
       (expect (= "Reload" (:label (:button (nth rows 2)))))
       (expect (re-find #"── Extensions ─+  Reload  ──" (str (line "── Extensions"))))
       ;; The Reload button in the Extensions header is not counted as a setting.
-      (expect (= [["Planning" 1] ["Extensions" 3]]
+      (expect (= [["Agents" 1] ["Extensions" 3]]
                  (mapv (juxt :label :count) (#'dlg/settings-toc rows 0))))
       ;; The choice row is the extension's own row, so its name shows once.
       (expect (= 1 (count (filter #(str/includes? % "foundation-mcp") lines))))

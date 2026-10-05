@@ -22,7 +22,9 @@ const catalog = (revision: string | undefined, enabled: boolean) =>
       {
         id: 'agent',
         title: 'Agent',
-        toggles: [{ id: 'plans', label: 'Plans', type: 'boolean', enabled, source: 'session' }],
+        toggles: [
+          { id: 'subagents', label: 'Subagents', type: 'boolean', enabled, source: 'session' },
+        ],
       },
     ],
   }) as SettingsResponse;

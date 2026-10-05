@@ -10,7 +10,7 @@ const settings: SettingsResponse = {
   scope: 'group', target_id: 'wallet',
   groups: [
     { id: 'agent', title: 'Agent', toggles: [
-      { id: 'plans', label: 'Plans', description: 'Plan work before changing files.',
+      { id: 'subagents', label: 'Subagents', description: 'Delegate work to managed agents.',
         type: 'boolean', enabled: true, scopes: ['global', 'group'], source: 'group', is_override: true },
       { id: 'summary', label: 'Summaries', description: 'Show a short summary after each turn.',
         type: 'boolean', enabled: false, scopes: ['global', 'group'], source: 'global', is_override: false },

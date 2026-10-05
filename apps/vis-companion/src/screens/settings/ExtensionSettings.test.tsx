@@ -15,7 +15,9 @@ const catalog = (origin: 'global' | 'project', path: string): SettingsResponse =
     {
       id: 'agent',
       title: 'Agent',
-      toggles: [{ id: 'plans', label: 'Plans', type: 'boolean', enabled: true, source: origin }],
+      toggles: [
+        { id: 'subagents', label: 'Subagents', type: 'boolean', enabled: true, source: origin },
+      ],
     },
     {
       id: 'extension:broken.py',
@@ -128,7 +130,7 @@ it('keeps matching extensions under Extensions while a search hides the actions'
   expect(screen.queryByRole('button', { name: 'Reload extensions' })).not.toBeInTheDocument();
 
   await user.clear(screen.getByRole('searchbox', { name: 'Search settings' }));
-  await user.type(screen.getByRole('searchbox', { name: 'Search settings' }), 'plans');
+  await user.type(screen.getByRole('searchbox', { name: 'Search settings' }), 'subagents');
   expect(screen.queryByRole('heading', { name: 'Extensions' })).not.toBeInTheDocument();
 });
 

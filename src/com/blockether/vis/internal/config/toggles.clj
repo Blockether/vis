@@ -719,18 +719,6 @@
                        :owner :vis
                        :group :experimental
                        :persist? true})
-    (register-toggle!
-      {:id "plans"
-       :label "Plan before coding"
-       :description
-       "Clarify decisions, review a versioned plan, then explicitly start implementation."
-       :type :boolean
-       :default false
-       :experimental? true
-       :scopes toggle-contract/scopes
-       :owner :vis
-       :group :experimental
-       :persist? true})
     (register-toggle! {:id "improve_mode"
                        :label "Improve mode"
                        :description

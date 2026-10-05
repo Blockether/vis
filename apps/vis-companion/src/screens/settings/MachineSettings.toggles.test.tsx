@@ -78,19 +78,24 @@ describe('global settings provenance', () => {
   // Global settings are the root scope: an explicit value there overrides nothing, so its
   // row shows no "Set here" caption and offers no "Use inherited value" reset.
   it('shows no provenance caption or reset action, even for explicit values', async () => {
-    const plans: Toggle = { id: 'plans', label: 'Plans', type: 'boolean', enabled: false };
+    const subagents: Toggle = {
+      id: 'subagents',
+      label: 'Subagents',
+      type: 'boolean',
+      enabled: false,
+    };
     vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue({
       revision: 'toggles-1',
       groups: [{
         id: 'sandbox', title: 'Sandbox', toggles: [
           { ...backend, source: 'default', is_override: false },
-          { ...plans, source: 'global', is_override: true },
+          { ...subagents, source: 'global', is_override: true },
         ],
       }],
     });
 
     await openSettings();
-    expect(await screen.findByRole('switch', { name: 'Plans: off' })).toBeEnabled();
+    expect(await screen.findByRole('switch', { name: 'Subagents: off' })).toBeEnabled();
     expect(screen.queryByText('Set here')).toBeNull();
     expect(screen.queryByText(/^Inherited from/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Use inherited value' })).toBeNull();

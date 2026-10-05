@@ -2067,7 +2067,7 @@
         (try (swap! registry assoc sid {:next-seq 0 :turns {} :turn-order []})
              (with-redefs-fn {#'lp/by-id (fn [_]
                                            {:id sid})
-                              #'scoped/values (constantly {"plans" false})
+                              #'scoped/values (constantly {"subagents" false})
                               #'state/session-model (fn [_]
                                                       {:provider "lmstudio" :model "ornith"})
                               #'state/launch-turn-worker! (fn [& args]
@@ -2075,7 +2075,7 @@
                #(state/submit-turn! sid {:request "hello"}))
              (expect (= "lmstudio" (get-in @launched [3 :provider])))
              (expect (= "ornith" (get-in @launched [3 :model])))
-             (expect (= {"plans" false} (get-in @launched [3 :engine-opts :settings-snapshot])))
+             (expect (= {"subagents" false} (get-in @launched [3 :engine-opts :settings-snapshot])))
              (expect (= "lmstudio" (get (state/get-turn sid (second @launched)) "provider")))
              (expect (= "ornith" (get (state/get-turn sid (second @launched)) "model")))
              (finally (swap! registry dissoc sid)))))
@@ -2088,53 +2088,54 @@
           (str "route-snapshot-queued-" (java.util.UUID/randomUUID))
 
           pin
-          (atom {:provider "openai-codex" :model "gpt-5.6-sol" :settings {"plans" false}})
+          (atom {:provider "openai-codex" :model "gpt-5.6-sol" :settings {"subagents" false}})
 
           launched
           (atom [])]
 
-      (try (swap! registry assoc
-             sid
-             {:next-seq 0
-              :current-turn "r0"
-              :turns {"r0" {:turn_id "r0" :session_id sid :status "running" :request "run"}}
-              :turn-order ["r0"]})
-           (with-redefs-fn {#'lp/by-id (fn [_]
-                                         {:id sid})
-                            #'scoped/values (fn [& _]
-                                              (:settings @pin))
-                            #'state/session-model (fn [_]
-                                                    @pin)
-                            #'state/append-event! (fn [& _]
-                                                    nil)
-                            #'state/launch-turn-worker! (fn [& args]
-                                                          (swap! launched conj (vec args)))}
-             (fn []
-               (state/submit-turn! sid {:request "first queued"})
-               (reset! pin {:provider "anthropic" :model "claude-opus-5" :settings {"plans" true}})
-               (state/submit-turn! sid {:request "second queued"})
-               (reset! pin {:provider "lmstudio" :model "ornith" :settings {"plans" false}})
-               (let [[q1 q2] (subvec (get-in @registry [sid :turn-order]) 1)]
-                 (expect (= ["openai-codex" "gpt-5.6-sol"]
-                            (mapv #(get-in @registry [sid :turns q1 %]) [:provider :model])))
-                 (expect (= ["anthropic" "claude-opus-5"]
-                            (mapv #(get-in @registry [sid :turns q2 %]) [:provider :model])))
-                 (swap! registry assoc-in [sid :current-turn] nil)
-                 (state/drain-idle! sid)
-                 (expect (= ["openai-codex" "gpt-5.6-sol"]
-                            (mapv #(get-in (first @launched) [3 %]) [:provider :model])))
-                 (expect (= {"plans" false}
-                            (get-in (first @launched) [3 :engine-opts :settings-snapshot])))
-                 (swap! registry (fn [entries]
-                                   (-> entries
-                                       (assoc-in [sid :current-turn] nil)
-                                       (assoc-in [sid :turns q1 :status] "completed"))))
-                 (state/drain-idle! sid)
-                 (expect (= ["anthropic" "claude-opus-5"]
-                            (mapv #(get-in (second @launched) [3 %]) [:provider :model])))
-                 (expect (= {"plans" true}
-                            (get-in (second @launched) [3 :engine-opts :settings-snapshot]))))))
-           (finally (swap! registry dissoc sid))))))
+      (try
+        (swap! registry assoc
+          sid
+          {:next-seq 0
+           :current-turn "r0"
+           :turns {"r0" {:turn_id "r0" :session_id sid :status "running" :request "run"}}
+           :turn-order ["r0"]})
+        (with-redefs-fn {#'lp/by-id (fn [_]
+                                      {:id sid})
+                         #'scoped/values (fn [& _]
+                                           (:settings @pin))
+                         #'state/session-model (fn [_]
+                                                 @pin)
+                         #'state/append-event! (fn [& _]
+                                                 nil)
+                         #'state/launch-turn-worker! (fn [& args]
+                                                       (swap! launched conj (vec args)))}
+          (fn []
+            (state/submit-turn! sid {:request "first queued"})
+            (reset! pin {:provider "anthropic" :model "claude-opus-5" :settings {"subagents" true}})
+            (state/submit-turn! sid {:request "second queued"})
+            (reset! pin {:provider "lmstudio" :model "ornith" :settings {"subagents" false}})
+            (let [[q1 q2] (subvec (get-in @registry [sid :turn-order]) 1)]
+              (expect (= ["openai-codex" "gpt-5.6-sol"]
+                         (mapv #(get-in @registry [sid :turns q1 %]) [:provider :model])))
+              (expect (= ["anthropic" "claude-opus-5"]
+                         (mapv #(get-in @registry [sid :turns q2 %]) [:provider :model])))
+              (swap! registry assoc-in [sid :current-turn] nil)
+              (state/drain-idle! sid)
+              (expect (= ["openai-codex" "gpt-5.6-sol"]
+                         (mapv #(get-in (first @launched) [3 %]) [:provider :model])))
+              (expect (= {"subagents" false}
+                         (get-in (first @launched) [3 :engine-opts :settings-snapshot])))
+              (swap! registry (fn [entries]
+                                (-> entries
+                                    (assoc-in [sid :current-turn] nil)
+                                    (assoc-in [sid :turns q1 :status] "completed"))))
+              (state/drain-idle! sid)
+              (expect (= ["anthropic" "claude-opus-5"]
+                         (mapv #(get-in (second @launched) [3 %]) [:provider :model])))
+              (expect (= {"subagents" true}
+                         (get-in (second @launched) [3 :engine-opts :settings-snapshot]))))))
+        (finally (swap! registry dissoc sid))))))
 
 (defdescribe turn-terminal-claim-once-test
              (it "allows exactly one terminal landing for a turn"

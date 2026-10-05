@@ -1757,43 +1757,15 @@
         (expect (str/includes? text "Create Python extensions only when the user asks"))
         (expect (str/includes? text "First read `doc(\"extending\")`")))))
 
-(defdescribe
-  planning-prompt-test
-  (it "adds exactly one planning block to interactive channels only when enabled"
-      (doseq [channel
-              [:web :tui :cli]
-
-              enabled?
-              [false true]]
-
-        (with-redefs [toggles/enabled? (fn [id]
-                                         (and (= "plans" id) enabled?))]
-          (let [messages (prompt/assemble-stable-prompt-messages {:channel channel}
-                                                                 {:active-extensions []})
-                text (prompt/stable-prompt-text messages)]
-
-            (expect (= (if (and enabled? (not= :cli channel)) 1 0)
-                       (count (re-seq #";; -- PLANS --" text))))))))
-  (it "keeps review versioned and makes approval authorize implementation"
-      (with-redefs [toggles/enabled? (constantly true)]
-        (let [build #(prompt/assemble-stable-prompt-messages {:channel :tui}
-                                                             {:active-extensions []})]
-          (expect (= (build) (build)))
-          (doseq [instruction ["Blocked by" "end-to-end" "authorizes implementation immediately"
-                               "A document status is not permission"
-                               "explicitly says not to implement"
-                               "comments never authorize project edits" "newer revision exists"
-                               "complete review round" "## Implementation plan" "read_attachment"
-                               "SAME filename" "## Resolved comments" "IMPLEMENTATION-<feature>.md"
-                               "Do not publish tracker tickets" "Markdown is the source of truth"
-                               "normal chat" "workflow controls are optional shortcuts"]]
-            (expect (str/includes? prompt/planning-rules instruction))))))
-  (it "publishes reviewable specifications and diffs, but read-only implementation records"
-      (doseq [instruction ["commentable=True" "commentable=False" "read-only execution record"
-                           "kind=\"diff\"" "application/vnd.vis.diff+json" "draft_diff"
-                           "after each completed task" "final cumulative diff"
-                           "unrelated or pre-existing changes" "patch bytes unchanged"]]
-        (expect (str/includes? prompt/planning-rules instruction)))))
+(defdescribe planning-prompt-test
+             (it "adds no planning block, also when a retired plans value is on"
+                 (with-redefs [toggles/enabled? (constantly true)]
+                   (doseq [channel [:web :tui :cli]]
+                     (let [text (prompt/stable-prompt-text (prompt/assemble-stable-prompt-messages
+                                                             {:channel channel}
+                                                             {:active-extensions []}))]
+                       (expect (not (str/includes? text ";; -- PLANS --")))
+                       (expect (not (str/includes? text "PLANNING WORKFLOW"))))))))
 
 (defdescribe request-tokenizer-test
              (it "uses a declared tokenizer consistently for priming and marginal message counts"

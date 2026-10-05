@@ -14,7 +14,7 @@
         (toggles/enabled? "improve")
 
         raw
-        (atom {"toggles" {"plans" true}})]
+        (atom {"toggles" {"subagents" true}})]
 
     (try (toggles/set-enabled! "improve" true)
          (toggles/set-value! "improve_mode" "human")
@@ -43,7 +43,7 @@
                                                                   :provider "chosen"
                                                                   :model "exact"
                                                                   :interval_minutes 2}))))
-                     (expect (true? (get-in @raw ["toggles" "plans"])))
+                     (expect (true? (get-in @raw ["toggles" "subagents"])))
                      (expect (= "automatic" (get-in @raw ["toggles" "improve_mode"])))
                      (expect (validation/valid? @raw))
                      (expect (= "chosen" (get-in @raw ["improve" "provider"])))))))
@@ -57,7 +57,7 @@
                                     {:interval_minutes 0} {:interval_minutes 1441}
                                     {:interval_minutes 1.5} {:mode "automatic" :provider " "}]]
                        (expect (= 400 (status #(improve/update-settings! attrs)))))
-                     (expect (= {"toggles" {"plans" true}} @raw))))))
+                     (expect (= {"toggles" {"subagents" true}} @raw))))))
 
 (defdescribe route-and-mode-round-trips-invalidate-snapshots
              (it "route and mode round trips invalidate snapshots"

@@ -65,20 +65,18 @@
         (expect (str/includes? text "Produced in this session"))
         (expect (str/includes? text "decision.html  v2  ·  2 versions"))
         (expect (str/includes? text "notes.pdf"))))
-  (it
-    "labels the specification group without hiding other artifacts"
-    (let [artifacts
-          (conj produced {"filename" "PLAN-search.md" "media_type" "text/markdown" "version" 1})
+  (it "lists a PLAN file from an old session with the other artifacts"
+      (let [artifacts
+            (conj produced {"filename" "PLAN-search.md" "media_type" "text/markdown" "version" 1})
 
-          text
-          (cap/frame-text (paint-component
-                            (inspector/inspector-modal-component [] artifacts nil :plans? true)))]
+            text
+            (cap/frame-text (paint-component
+                              (inspector/inspector-modal-component [] artifacts nil)))]
 
-      (expect (str/includes? text "Specifications"))
-      (expect (str/includes? text "PLAN-search.md"))
-      (expect (str/includes? text "Produced in this session"))
-      (expect (str/includes? text "notes.pdf"))
-      (expect (not (str/includes? text "Plans")))))
+        (expect (str/includes? text "PLAN-search.md"))
+        (expect (str/includes? text "Produced in this session"))
+        (expect (str/includes? text "notes.pdf"))
+        (expect (not (str/includes? text "Specifications")))))
   (it "shows an explicit empty state instead of silently doing nothing"
       (let [text (cap/frame-text (paint-component (inspector/inspector-modal-component [] [] nil)))]
         (expect (str/includes? text "No attachments in this session"))))

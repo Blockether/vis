@@ -20,7 +20,6 @@ _SCHEMA_NAMES = (
     "diff",
     "gateway",
     "improve",
-    "plans",
     "provider",
     "rooms",
     "symbol",

@@ -155,7 +155,7 @@ export const ExperimentalFeatures: Story = {
   args: { gateways: STORY_GATEWAYS.slice(0, 1) },
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
-    for (const label of ['Subagents', 'Improve', 'Plan before coding']) {
+    for (const label of ['Subagents', 'Improve']) {
       const toggle = await page.findByRole('switch', { name: `${label}: off` });
       await expect(toggle).not.toBeChecked();
       const row = toggle.closest('.grid')!;

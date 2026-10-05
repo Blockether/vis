@@ -1036,7 +1036,7 @@
 (defdescribe
   settings-enum-dropdown-test
   (it "marks experimental settings in the production terminal render"
-      (doseq [id ["subagents" "improve" "plans"]]
+      (doseq [id ["subagents" "improve"]]
         (expect (false? (:default (toggles/toggle-spec id))))
         (expect (true? (:experimental? (toggles/toggle-spec id))))
         (expect (str/includes?
@@ -3601,8 +3601,8 @@
                                                     "value" "off"
                                                     "choices" ["auto" "worktree" "rift" "off"]
                                                     "is_experimental" true}
-                                                   {"id" "plans"
-                                                    "label" "Plan before coding"
+                                                   {"id" "subagents"
+                                                    "label" "Subagents"
                                                     "type" "boolean"
                                                     "enabled" false
                                                     "is_experimental" true}]}]})
@@ -3620,9 +3620,9 @@
                (expect (= "Draft backend  [Experimental]" (settings-option-label drafts {})))
                (expect (= "Off" (#'dlg/settings-option-value drafts {})))
                (expect (= p/MARK_VALUE (first (settings-row-mark drafts {})))))
-             (let [plans (nth rows 2)]
-               (expect (= "Plan before coding  [Experimental]" (settings-option-label plans {})))
-               (expect (= p/STATUS_OFF (first (settings-row-mark plans {}))))))
+             (let [subagents (nth rows 2)]
+               (expect (= "Subagents  [Experimental]" (settings-option-label subagents {})))
+               (expect (= p/STATUS_OFF (first (settings-row-mark subagents {}))))))
            (finally (reset! inventory original)))))
   (it
     "mirrors the daemon's answer back into the catalog a flipped row renders from"
@@ -3676,7 +3676,7 @@
                (dlg/load-settings-inventory!))
              (expect (= :error (:status @inventory)))
              (let [rows (registry-toggle-rows)]
-               (expect (some #(= "plans" (:toggle-id %)) rows))
+               (expect (some #(= "subagents" (:toggle-id %)) rows))
                (expect (some #(and (= :section (:type %)) (= "Experimental" (:label %))) rows)))
              (finally (reset! inventory original)))))
   (it "keeps the gateway's name for a group or project target"
@@ -3738,28 +3738,26 @@
             shell-note
             "Project settings turn this off for this session. Change it in Project settings."]
 
-        (try (reset! inventory {:status :ok
-                                :error nil
-                                :groups [{"id" "tools"
-                                          "title" "Tools"
-                                          "toggles"
-                                          [{"id" "shell"
-                                            "label" "Shell commands"
-                                            "type" "boolean"
-                                            "enabled" true
-                                            "is_override" true
-                                            "overridden_by" {"scope" "project" "enabled" false}}
-                                           {"id" "reasoning_effort"
-                                            "label" "Reasoning"
-                                            "type" "enum"
-                                            "value" "high"
-                                            "choices" ["low" "high"]
-                                            "overridden_by" {"scope" "group" "value" "low"}}
-                                           {"id" "plans"
-                                            "label" "Plan before coding"
-                                            "type" "boolean"
-                                            "enabled" true}]}]})
-             (let [[_ shell reasoning plans]
+        (try (reset! inventory
+               {:status :ok
+                :error nil
+                :groups [{"id" "tools"
+                          "title" "Tools"
+                          "toggles"
+                          [{"id" "shell"
+                            "label" "Shell commands"
+                            "type" "boolean"
+                            "enabled" true
+                            "is_override" true
+                            "overridden_by" {"scope" "project" "enabled" false}}
+                           {"id" "reasoning_effort"
+                            "label" "Reasoning"
+                            "type" "enum"
+                            "value" "high"
+                            "choices" ["low" "high"]
+                            "overridden_by" {"scope" "group" "value" "low"}}
+                           {"id" "improve" "label" "Improve" "type" "boolean" "enabled" true}]}]})
+             (let [[_ shell reasoning improve]
                    (registry-toggle-rows)
 
                    inherit
@@ -3775,19 +3773,19 @@
                     (:locked reasoning)))
                (expect (= "Reasoning  [Locked]" (settings-option-label reasoning {})))
                (expect (= "high" (#'dlg/settings-option-value reasoning {})))
-               (expect (nil? (:locked plans)))
+               (expect (nil? (:locked improve)))
                (with-redefs-fn {#'dlg/mini-note! (fn [_ _ _ title line]
                                                    (swap! events conj [title line]))
                                 #'dlg/activate-unlocked-row!
                                 (fn [& args]
                                   (swap! events conj [:changed (:toggle-id (last args))]))}
-                 #(doseq [row [shell inherit plans]] (activate-settings-row! nil
-                                                                             nil
-                                                                             nil
-                                                                             (atom {})
-                                                                             {}
-                                                                             row))))
-             (expect (= [["Locked" shell-note] ["Locked" shell-note] [:changed "plans"]] @events))
+                 #(doseq [row [shell inherit improve]] (activate-settings-row! nil
+                                                                               nil
+                                                                               nil
+                                                                               (atom {})
+                                                                               {}
+                                                                               row))))
+             (expect (= [["Locked" shell-note] ["Locked" shell-note] [:changed "improve"]] @events))
              (finally (reset! inventory original))))))
 
 (defn- back-buffer-text

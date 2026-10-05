@@ -52,7 +52,7 @@ function client() {
 
 describe('attachment review capability', () => {
   it.each([undefined, false])(
-    'keeps a specification read-only when commentable is %s',
+    'keeps a PLAN file from an old session read-only when commentable is %s',
     async (commentable) => {
       const gateway = client();
       const { host } = await mount(
@@ -70,14 +70,14 @@ describe('attachment review capability', () => {
       );
       expect(host.textContent).toContain('Session search');
       expect(host.querySelectorAll('button')).toHaveLength(0);
-      expect(host.querySelector('[aria-label="Specification workflow"]')).toBeNull();
       expect(gateway.setting).not.toHaveBeenCalled();
     },
   );
-  it('only enables specification review for an explicitly commentable attachment', async () => {
+  it('opens a commentable PLAN file from an old session as an ordinary document', async () => {
+    const gateway = client();
     const { host } = await mount(
       <MarkdownArtifact
-        client={client()}
+        client={gateway}
         sid="s"
         iterationId="i"
         name="PLAN-session-search.md"
@@ -89,24 +89,10 @@ describe('attachment review capability', () => {
       />,
     );
     expect(host.querySelector('[aria-label="Comment on the whole document"]')).toBeInTheDocument();
-    expect(host.textContent).toContain('Approve and start');
-  });
-  it('shows IMPLEMENTATION as a report without review controls', async () => {
-    const { host } = await mount(
-      <MarkdownArtifact
-        client={client()}
-        sid="s"
-        iterationId="i"
-        name="IMPLEMENTATION-session-search.md"
-        mediaType="text/markdown"
-        source={text}
-        version={3}
-        commentable={false}
-        chrome={chrome}
-      />,
-    );
-    expect(host.querySelectorAll('button')).toHaveLength(0);
-    expect(host.textContent).toContain('Session search');
+    expect(host.querySelector('[aria-label="Save changes"]')).toBeInTheDocument();
+    expect(host.textContent).not.toContain('Approve and start');
+    expect(gateway.setting).not.toHaveBeenCalled();
+    expect(gateway.submitTurn).not.toHaveBeenCalled();
   });
   // Reported from an IMPLEMENTATION record: the relative diff link opened an app URL.
   it('opens a linked diff without navigating the application', async () => {
@@ -226,7 +212,6 @@ describe('diff review', () => {
     const patch = fixture.patch + ' \r\n\n';
     const props = diffProps(gateway, JSON.stringify({ ...fixture, patch, comments: [] }));
     const { host } = await mount(<DiffArtifact {...props} commentable />);
-    expect(host.textContent).not.toContain('Approve and start');
     expect(host.querySelector('[aria-label="Save changes"]')).toBeNull();
     await addComment(host, 'Keep archived optional.');
     expect(gateway.saveArtifactText).not.toHaveBeenCalled();
