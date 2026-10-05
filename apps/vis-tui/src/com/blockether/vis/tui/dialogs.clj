@@ -3417,68 +3417,117 @@
       (if (= "stale" status) "Reload failed — using last loaded version" "Extension failed to load")
       :description error}]))
 
+(defn- catalog-setting-row
+  "One gateway catalog row as a settings row."
+  [row]
+  (let [type
+        (get row "type")
+
+        id
+        (get row "id")
+
+        override?
+        (and *settings-target* (get row "is_override"))]
+
+    {:key (keyword (str "toggle::" id))
+     :type (case type
+             "string"
+             :text-setting
+
+             "number"
+             :number-setting
+
+             ("array" "object")
+             :structured-setting
+
+             :registry-toggle)
+     :toggle-id id
+     :toggle-type (keyword type)
+     :toggle-value (if (= "boolean" type) (boolean (get row "enabled")) (get row "value"))
+     :setting row
+     :choices (vec (get row "choices"))
+     :experimental? (boolean (get row "is_experimental"))
+     :source (get row "source")
+     :is-override? (boolean override?)
+     :label (str (get row "label"))
+     :description (str (get row "description"))}))
+
+(defn- extension-rows
+  "One extension as settings rows. Its first row is the Auto/On/Off choice of the extension,
+   or only its name when it has no such choice. That row carries the install scope. A load
+   failure follows it, and the other settings stand one level in."
+  [group rows]
+  (let [{:strs [title extension]}
+        group
+
+        ext-name
+        (str title)
+
+        engine?
+        #(str/starts-with? (str (get % "id")) "engines_")
+
+        engine
+        (first (filter engine? rows))
+
+        info
+        (extension-failure-rows extension)
+
+        scope
+        (extension-scope extension)
+
+        member
+        #(assoc % :extension-name ext-name)]
+
+    (when (or (seq rows) (seq info))
+      (concat [(member
+                 (cond-> (if engine (catalog-setting-row engine) {:type :extension :label ext-name})
+                   true
+                   (assoc :extension-head? true)
+
+                   (and (nil? engine) (seq info))
+                   (assoc :tone :bad)
+
+                   scope
+                   (assoc :tag scope)))]
+              (map member info)
+              (map #(member (assoc (catalog-setting-row %) :depth 1)) (remove engine? rows))))))
+
 (defn- catalog-toggle-rows
   "Project the gateway catalog without repeating metadata or reset actions in the list. An
-   extension group becomes a subsection, tagged `project` or `global` where it is installed.
+   extension group becomes its own rows (`extension-rows`), not a section.
    Global settings are the root scope: an explicit value there overrides nothing, so only a
    scoped target marks overrides and offers their reset."
   [groups]
-  (vec
-    (mapcat
-      (fn [group]
-        (let [rows
-              (filterv #(not= "agent_name" (get % "id")) (get group "toggles"))
+  (vec (mapcat (fn [group]
+                 (let [rows (filterv #(not= "agent_name" (get % "id")) (get group "toggles"))]
+                   (cond (get group "extension") (extension-rows group rows)
+                         (seq rows) (cons {:type :section :label (str (get group "title"))}
+                                          (map catalog-setting-row rows)))))
+               (or groups []))))
 
-              extension
-              (get group "extension")
+(defn- settings-extension-matches
+  "Widen search hits to whole extensions. A matching name keeps every row of that extension,
+   and a matching setting keeps the name row of its extension."
+  [rows matched]
+  (let [rows
+        (vec rows)
 
-              info
-              (extension-failure-rows extension)
+        hits
+        (into #{} (keep #(:extension-name (nth rows %))) matched)
 
-              scope
-              (extension-scope extension)]
+        named
+        (into #{}
+              (keep #(let [{:keys [extension-name extension-head?]} (nth rows %)]
+                       (when extension-head? extension-name)))
+              matched)]
 
-          (when (or (seq rows) (seq info))
-            (concat
-              [(cond-> {:type (if extension :subsection :section) :label (str (get group "title"))}
-                 scope
-                 (assoc :tag scope))]
-              info
-              (mapv (fn [row]
-                      (let [type
-                            (get row "type")
-
-                            id
-                            (get row "id")
-
-                            override?
-                            (and *settings-target* (get row "is_override"))]
-
-                        {:key (keyword (str "toggle::" id))
-                         :type (case type
-                                 "string"
-                                 :text-setting
-
-                                 "number"
-                                 :number-setting
-
-                                 ("array" "object")
-                                 :structured-setting
-
-                                 :registry-toggle)
-                         :toggle-id id
-                         :toggle-type (keyword type)
-                         :toggle-value
-                         (if (= "boolean" type) (boolean (get row "enabled")) (get row "value"))
-                         :setting row
-                         :choices (vec (get row "choices"))
-                         :experimental? (boolean (get row "is_experimental"))
-                         :source (get row "source")
-                         :is-override? (boolean override?)
-                         :label (str (get row "label"))
-                         :description (str (get row "description"))}))
-                    rows)))))
-      (or groups []))))
+    (into (set matched)
+          (keep-indexed (fn [i {:keys [extension-name extension-head?]}]
+                          (when (and extension-name
+                                     (or (contains? named extension-name)
+                                         (and extension-head? (contains? hits extension-name))))
+                            i)))
+          rows)))
 
 (defn- override-note
   "Explain why a more specific scope decides this catalog row for the session
@@ -3941,7 +3990,7 @@
   "Leading status glyph + its color for a settings row. Provider rows use
    the daemon's four auth states: green verified, red rejected, yellow degraded,
    and a neutral hollow dot when unverified/off. Returns `[glyph fg-color]`."
-  [{:keys [key type set-key item-id toggle-id toggle-type toggle-value server auth]} values]
+  [{:keys [key type set-key item-id toggle-id toggle-type toggle-value server auth tone]} values]
   (let [on
         [p/STATUS_ON t/status-ok]
 
@@ -3967,6 +4016,10 @@
 
       :env-var
       [" " t/dialog-fg]
+
+      ;; an extension without its own choice; red when it failed to load
+      :extension
+      (if (= :bad tone) bad [" " t/dialog-fg])
 
       :agent-name
       val
@@ -4927,10 +4980,11 @@
             match?
             (fn [i]
               (let [row (nth rows i)]
-                (and (settings-selectable? row) (str/includes? (settings-row-search-text row) q))))
+                (and (or (settings-selectable? row) (:extension-head? row))
+                     (str/includes? (settings-row-search-text row) q))))
 
             matched
-            (into #{} (filter match? (range n)))
+            (settings-extension-matches rows (into #{} (filter match? (range n))))
 
             next-idx
             (fn [i pred]
@@ -5460,7 +5514,7 @@
 
                     (if (< entry-idx visual-n)
                       (let [{:keys [row-idx part text head?]} (nth entries entry-idx)
-                            {:keys [label tone tag]} (nth rows row-idx)
+                            {:keys [label tone tag depth]} (nth rows row-idx)
                             option-label (nth labels row-idx)
                             selected? (= row-idx @selected)
                             [mark mark-color] (settings-row-mark (nth rows row-idx) @values)]
@@ -5478,25 +5532,15 @@
                                                     row-y
                                                     (ellipsize label (max 0 (- paint-w 4))))))
 
-                          ;; An extension's install scope sits at the right edge, where an
-                          ;; option shows its value. A narrow pane keeps only the name.
                           :subsection
-                          (let [tag-w (long (p/display-width (str tag)))
-                                tagged? (and (pos? tag-w) (< (+ tag-w 12) paint-w))]
-
-                            (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                            (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                            (p/styled g
-                                      [p/BOLD]
-                                      (p/put-str! g
-                                                  (+ lleft 2)
-                                                  row-y
-                                                  (settings-subsection-text
-                                                    label
-                                                    (if tagged? (- paint-w tag-w 2) paint-w))))
-                            (when tagged?
-                              (p/set-fg! g t/dialog-hint)
-                              (p/put-str! g (- (+ lleft paint-w) tag-w) row-y (str tag))))
+                          (do (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                              (p/fill-rect! g (inc lleft) row-y paint-w 1)
+                              (p/styled g
+                                        [p/BOLD]
+                                        (p/put-str! g
+                                                    (+ lleft 2)
+                                                    row-y
+                                                    (settings-subsection-text label paint-w))))
 
                           ;; Prose ABOUT the section (empty state, gateway error): a
                           ;; bold head line plus its own wrapped body, both in the
@@ -5522,18 +5566,42 @@
                             (p/set-colors! g t/dialog-fg t/dialog-bg)
                             (p/fill-rect! g (inc lleft) row-y paint-w 1)
                             ;; The leading status glyph reports the current setting value.
-                            (let [label-x
-                                  (p/status-mark! g option-x row-y mark mark-color t/dialog-bg)
+                            (let [indent (* 2 (long (or depth 0)))
+                                  label-x (p/status-mark! g
+                                                          (+ option-x indent)
+                                                          row-y
+                                                          mark
+                                                          mark-color
+                                                          t/dialog-bg)
                                   value (nth option-values row-idx)
-                                  label-w
-                                  (max 1
-                                       (- option-w
-                                          p/STATUS_WIDTH
-                                          (if (and (some? value) (pos? value-w)) (+ value-w 2) 0)))
+                                  value-room (if (pos? value-w) (+ value-w 2) 0)
+                                  ;; An extension's install scope stands left of the value column,
+                                  ;; so every scope lines up. It shows only when the whole name
+                                  ;; and the value still fit.
+                                  tag-w (long (p/display-width (str tag)))
+                                  tagged?
+                                  (and (pos? tag-w)
+                                       (or (nil? value) (pos? value-w))
+                                       (<= (long (p/display-width (str option-label)))
+                                           (- option-w p/STATUS_WIDTH indent value-room tag-w 2)))
+                                  label-w (max 1
+                                               (- option-w
+                                                  p/STATUS_WIDTH
+                                                  indent
+                                                  (cond tagged? (+ value-room tag-w 2)
+                                                        (and (some? value) (pos? value-w))
+                                                        value-room
+                                                        :else 0)))
                                   lbl (ellipsize option-label label-w)]
 
                               (p/set-colors! g t/dialog-fg t/dialog-bg)
                               (p/put-str! g label-x row-y lbl)
+                              (when tagged?
+                                (p/set-colors! g t/dialog-hint t/dialog-bg)
+                                (p/put-str! g
+                                            (- (+ lleft paint-w) value-room tag-w)
+                                            row-y
+                                            (str tag)))
                               (when (and (some? value) (pos? value-w))
                                 (let [text (ellipsize value value-w)
                                       dx (- (+ lleft paint-w) (p/display-width text))]

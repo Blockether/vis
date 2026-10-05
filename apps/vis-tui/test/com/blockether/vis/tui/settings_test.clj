@@ -620,64 +620,111 @@
           frame
           (cap/frame-text (capture-settings rows [:esc]))
 
-          heading
-          (fn [label]
-            (first (filter #(str/includes? % (str "◆ " label)) (str/split-lines frame))))]
+          line
+          (fn [text]
+            (first (filter #(str/includes? % text) (str/split-lines frame))))]
 
-      (expect (= [{:type :subsection :label "broken.py" :tag "project"}
-                  {:type :subsection :label "notifier" :tag "global"}]
-                 (filterv #(= :subsection (:type %)) rows)))
-      (expect (str/includes? (str (heading "broken.py")) "project"))
-      (expect (str/includes? (str (heading "notifier")) "global"))
+      (expect (= [[:extension "broken.py" "project" nil] [:info "Extension failed to load" nil nil]
+                  [:extension "notifier" "global" nil]
+                  [:info "Reload failed — using last loaded version" nil nil]
+                  [:registry-toggle "Desktop alerts" nil 1]]
+                 (mapv (juxt :type :label :tag :depth) rows)))
+      (expect (str/includes? (str (line "broken.py")) "project"))
+      (expect (str/includes? (str (line "notifier")) "global"))
       (expect (str/includes? frame "Invalid Python syntax"))
-      (expect (str/includes? frame "last loaded version"))
+      (expect (str/includes? frame "Missing dependency"))
       (expect (not (str/includes? frame "Project extension")))
       (expect (not (str/includes? frame "Machine extension")))
       (expect (not (str/includes? frame ".vis/extensions")))
-      (expect (some #(= "Desktop alerts" (:label %)) rows))
       (expect (empty? (#'dlg/catalog-toggle-rows
                        [{"title" "builtin"
                          "extension" {"name" "builtin" "origin" "built_in" "status" "loaded"}
-                         "toggles" []}])))
-      (expect (= {:type :subsection :label "builtin"}
-                 (first (#'dlg/catalog-toggle-rows
-                         [{"title" "builtin"
-                           "extension" {"name" "builtin" "origin" "built_in" "status" "loaded"}
-                           "toggles" [{"id" "builtin_enabled"
-                                       "label" "Built-in tools"
-                                       "type" "boolean"
-                                       "enabled" true}]}]))))))
-  (it "lists extension settings under Extensions, after its actions"
-      (let [groups
-            [{"title" "Planning"
-              "toggles" [{"id" "plans" "label" "Plans" "type" "boolean" "enabled" true}]}
-             {"title" "vis-spel"
-              "extension" {"name" "vis-spel" "origin" "global" "status" "loaded"}
-              "toggles" [{"id" "vis_spel" "label" "Browser" "type" "boolean" "enabled" true}]}
-             {"title" "foundation-mcp"
-              "extension" {"name" "foundation-mcp" "origin" "built_in" "status" "loaded"}
-              "toggles"
-              [{"id" "foundation_mcp" "label" "MCP tools" "type" "boolean" "enabled" true}]}]
+                         "toggles" []}])))))
+  (it
+    "puts each extension on one row with its scope and its choice"
+    (let [engine
+          (fn [id label]
+            {"id" id
+             "label" label
+             "type" "enum"
+             "value" "auto"
+             "choices" ["auto" "on" "off"]
+             "description" "Auto detects applicability; On stays active; Off denies tools."})
 
-            rows
-            (binding [dlg/*settings-target*
-                      {:scope :project :target-id "example-project"}
+          groups
+          [{"title" "Planning"
+            "toggles" [{"id" "plans" "label" "Plans" "type" "boolean" "enabled" true}]}
+           {"title" "foundation-mcp"
+            "extension" {"name" "foundation-mcp" "origin" "built_in" "status" "loaded"}
+            "toggles" [(engine "engines_1" "foundation-mcp")]}
+           {"title" "vis-spel"
+            "extension" {"name" "vis-spel" "origin" "global" "status" "loaded"}
+            "toggles"
+            [(engine "engines_2" "vis-spel")
+             {"id" "skills_1" "label" "vis-spel/browser" "type" "boolean" "enabled" true}]}]
 
-                      dlg/*local-settings-inventory*
-                      (atom {:status :ok :groups groups :error nil})
+          rows
+          (binding [dlg/*settings-target*
+                    {:scope :project :target-id "example-project"}
 
-                      dlg/*local-mcp-inventory*
-                      (atom {:status :unloaded :servers [] :error nil})]
+                    dlg/*local-settings-inventory*
+                    (atom {:status :ok :groups groups :error nil})
 
-              (#'dlg/settings-rows))]
+                    dlg/*local-mcp-inventory*
+                    (atom {:status :unloaded :servers [] :error nil})]
 
-        (expect (= [[:section "Planning" nil] [:registry-toggle "Plans" nil]
-                    [:section "Extensions" nil] [:action "Refresh list" nil]
-                    [:action "Reload extensions" nil] [:subsection "vis-spel" "global"]
-                    [:registry-toggle "Browser" nil] [:subsection "foundation-mcp" nil]
-                    [:registry-toggle "MCP tools" nil]]
-                   (mapv (juxt :type :label :tag) rows)))
-        (expect (= ["Planning" "Extensions"] (mapv :label (#'dlg/settings-toc rows 0))))))
+            (#'dlg/settings-rows))
+
+          lines
+          (str/split-lines (cap/frame-text (capture-settings rows [:esc])))
+
+          line
+          (fn [text]
+            (first (filter #(str/includes? % text) lines)))]
+
+      (expect (= [[:section "Planning" nil nil] [:registry-toggle "Plans" nil nil]
+                  [:section "Extensions" nil nil] [:action "Refresh list" nil nil]
+                  [:action "Reload extensions" nil nil] [:registry-toggle "foundation-mcp" nil nil]
+                  [:registry-toggle "vis-spel" "global" nil]
+                  [:registry-toggle "vis-spel/browser" nil 1]]
+                 (mapv (juxt :type :label :tag :depth) rows)))
+      (expect (= ["Planning" "Extensions"] (mapv :label (#'dlg/settings-toc rows 0))))
+      ;; The choice row is the extension's own row, so its name shows once.
+      (expect (= 1 (count (filter #(str/includes? % "foundation-mcp") lines))))
+      (expect (re-find #"vis-spel\s+global\s+Auto" (str (line "vis-spel "))))
+      ;; A packaged skill stands one level in from its extension.
+      (expect (= (+ 2 (long (str/index-of (line "vis-spel ") "vis-spel")))
+                 (long (str/index-of (line "vis-spel/browser") "vis-spel/browser"))))
+      ;; A narrow pane drops the scope before it cuts a name.
+      (let [narrow (str/split-lines (cap/frame-text (capture-settings rows [:esc] :cols 48)))]
+        (expect (some #(re-find #"◆ vis-spel\s" %) narrow))
+        (expect (not-any? #(str/includes? % "global") narrow)))))
+  (it
+    "keeps the extension name row with the settings that a search finds"
+    (let [rows
+          (#'dlg/catalog-toggle-rows
+           [{"title" "notifier"
+             "extension" {"name" "notifier" "origin" "global" "status" "loaded"}
+             "toggles"
+             [{"id" "engines_1"
+               "label" "notifier"
+               "type" "enum"
+               "value" "auto"
+               "choices" ["auto" "on" "off"]}
+              {"id" "notifier_enabled" "label" "Desktop alerts" "type" "boolean" "enabled" false}]}
+            {"title" "broken.py"
+             "extension" {"name" "broken.py"
+                          "origin" "project"
+                          "status" "failed"
+                          "error" "Invalid Python syntax"}
+             "toggles" []}])
+
+          labels
+          #(mapv :label (#'dlg/filter-settings-rows rows %))]
+
+      (expect (= ["notifier" "Desktop alerts"] (labels "desktop")))
+      (expect (= ["notifier" "Desktop alerts"] (labels "notifier")))
+      (expect (= ["broken.py" "Extension failed to load"] (labels "broken")))))
   (it "refreshes without running extension code and reloads only on request"
       (let [target
             {:scope :project :target-id "example-project"}
