@@ -104,4 +104,4 @@ extensions:
   vis-spel:
     source: https://github.com/Blockether/spel
     subdirectory: extensions/vis-spel
-    version: "0.1.12"
+    version: "0.1.14"
