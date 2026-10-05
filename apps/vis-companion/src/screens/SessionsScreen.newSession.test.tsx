@@ -130,6 +130,42 @@ describe('where "New session" lives', () => {
     expect(create?.body).toEqual({ channel: 'web', root: '/Users/dev/project' });
   });
 
+  // Regression, user report, Vis session 2692dc5c-b2fd-4502-b7fa-5fe440a16c1d (paraphrased:
+  // with two projects added, a new session took its prompt to the first project).
+  it('starts the session in the project it was asked on, not the first one', async () => {
+    const added = (root: string, id: string) => ({
+      root,
+      project_id: id,
+      name: '',
+      session_count: 0,
+      live_count: 0,
+      awaiting_count: 0,
+      last_activity_ms: 0,
+    });
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          label: 'alpha',
+          sessions: [],
+          projects: [added('/Users/dev/wallet', 'p-wallet'), added('/Users/dev/notes', 'p-notes')],
+        },
+      ],
+    });
+    restore = view.restore;
+    await screen.findByLabelText('notes sessions');
+
+    view.requests.length = 0;
+    const menu = await sessionsMenu('/Users/dev/notes', 'notes');
+    await userEvent.click(menu.getByRole('button', { name: 'New session' }));
+
+    await waitFor(() =>
+      expect(
+        view.requests.find((request) => request.method === 'POST' && request.path === '/v1/sessions')
+          ?.body,
+      ).toEqual({ channel: 'web', root: '/Users/dev/notes' }),
+    );
+  });
+
   // Regression, user report (paraphrased: take the `⋯` off the right of the machine row):
   // the list's last overflow menu stood beside the switcher and held two rows — `Manage
   // projects`, which is the sheet the machine's own control opens anyway, and `Machine settings`,

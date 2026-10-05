@@ -167,6 +167,7 @@ import { visibleAnsweredTurnCount } from '../lib/unread';
 import { App } from '@capacitor/app';
 
 import { OpenPathContext } from '../lib/open-path';
+import { projectPath } from '../lib/fleet';
 import { workspaceRelativePath } from '../lib/path';
 import { WorkspaceRootsContext } from '../lib/workspace-roots';
 
@@ -3668,7 +3669,13 @@ export function SessionScreen({
       setError(null);
       setRunning(true);
       try {
-        const created = await client.createSession({ channel: 'web' });
+        // Start in THIS session's project, as the TUI command does. Without a root,
+        // the gateway used its own launch folder, which can be another project.
+        const origin = session ?? (await client.session(sid));
+        const created = await client.createSession({
+          channel: 'web',
+          root: projectPath(origin) || undefined,
+        });
         if (command === '/new-session' && args) await client.submitTurn(created.id, args);
         onOpenSession(created.id, true);
       } catch (cause) {
