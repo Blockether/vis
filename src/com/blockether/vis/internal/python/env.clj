@@ -1388,7 +1388,8 @@
 (def ^:private restore-reports
   "Python context -> what its restore brought back. `:notice` is the restart
    notice the next block prints once; `:lost` maps each name the restart could not
-   bring back to the reason, for the NameError hint in [[map-python-error]]."
+   bring back to the reason; `:held` is every name the snapshot restored or lost.
+   The NameError hint in [[map-python-error]] reads both."
   (atom {}))
 
 (defn dispose-python-context!
@@ -1831,6 +1832,8 @@
         ;; A name the last restart could not bring back says WHY, and a context
         ;; rebuilt from its snapshot says so for any other missing name: the
         ;; transcript still shows what the old sandbox held (Blockether/vis#305).
+        ;; A name the snapshot never held is not a restart loss, so its hint says
+        ;; that and does not send the reader after a lost import.
         restore-report
         (when undefined-name (get @restore-reports session))
 
@@ -1863,6 +1866,12 @@
                    "` did not come back when this sandbox restarted: "
                    lost-reason
                    ". Re-create it, and what it depends on, before you use it. Original error: ")
+              (and restore-report (not (contains? (:held restore-report) undefined-name)))
+              (str "`"
+                   undefined-name
+                   "` is not defined, and the session snapshot that rebuilt "
+                   "this sandbox did not hold it either. Import or define it before you use it. "
+                   "Original error: ")
               restore-report
               (str "This sandbox restarted and was rebuilt from the session snapshot. If an "
                    "earlier block created `" undefined-name
@@ -2214,7 +2223,11 @@
                     :lost (into {}
                                 (map (fn [[k v]]
                                        [(name k) (str v)]))
-                                (:lost report))}))
+                                (:lost report))
+                    :held (into #{}
+                                (map name)
+                                (concat (mapcat report [:functions :classes :variables :imports])
+                                        (keys (:lost report))))}))
                (when (number? n) (long n)))))
          (catch Throwable e
            (tel/log! {:level :debug :id ::restore-session-defs-failed :error e})

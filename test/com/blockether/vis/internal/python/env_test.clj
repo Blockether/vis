@@ -327,35 +327,49 @@
       (let [sid (str "vis-test-defs-notice-" (random-uuid))
             file (io/file (paths/sandbox-defs-file sid))]
 
-        (try (tpc/with-own [ctx {} nil {:worker? worker?}]
-                           (expect (nil? (:error
-                                           (ep/run-python-block
-                                             ctx
-                                             (str "TOTAL = 41\n" "rows = [{'id': 1}, {'id': 2}]\n"
+        (try
+          (tpc/with-own [ctx {} nil {:worker? worker?}]
+                        (expect (nil? (:error (ep/run-python-block
+                                                ctx
+                                                (str
+                                                  "TOTAL = 41\n"
+                                                  "rows = [{'id': 1}, {'id': 2}]\n"
                                                   "pending = (n for n in range(3))\n"
+                                                  "import xml.dom.minidom\n"
                                                   "def next_total():\n    return TOTAL + 1\n")))))
-                           (expect (some? (ep/persist-session-defs! ctx sid))))
-             (ep/forget-session-defs! sid)
-             (tpc/with-own
-               [ctx {} nil {:worker? worker?}]
-               (expect (= 1 (ep/restore-session-defs! ctx sid)))
-               (let [notice (ep/take-restore-notice! ctx)]
-                 (expect (str/starts-with? (str notice) "[Sandbox restarted]") notice)
-                 (doseq [part ["The conversation above is unchanged" "1 helper (next_total)" "TOTAL"
-                               "rows" "NOT restored: pending (" "cannot be pickled"]]
-                   (expect (str/includes? notice part) part)))
-               ;; One notice per restore: the next block does not repeat it.
-               (expect (nil? (ep/take-restore-notice! ctx)))
-               (expect (= "42 2\n"
-                          (:stdout (ep/run-python-block ctx "print(next_total(), len(rows))"))))
-               (let [lost (str (:error (ep/run-python-block ctx "next(pending)")))]
-                 (expect (str/includes? lost
-                                        "`pending` did not come back when this sandbox restarted")
-                         lost))
-               (let [unknown (str (:error (ep/run-python-block ctx "print(never_created)")))]
-                 (expect (str/includes? unknown "If an earlier block created `never_created`")
-                         unknown)))
-             (finally (ep/forget-session-defs! sid) (io/delete-file file true)))))))
+                        (expect (some? (ep/persist-session-defs! ctx sid))))
+          (ep/forget-session-defs! sid)
+          (tpc/with-own
+            [ctx {} nil {:worker? worker?}]
+            (expect (= 1 (ep/restore-session-defs! ctx sid)))
+            (let [notice (ep/take-restore-notice! ctx)]
+              (expect (str/starts-with? (str notice) "[Sandbox restarted]") notice)
+              (doseq [part ["The conversation above is unchanged" "1 helper (next_total)" "TOTAL"
+                            "rows" "1 import (xml)" "NOT restored: pending (" "cannot be pickled"]]
+                (expect (str/includes? notice part) part)))
+            ;; One notice per restore: the next block does not repeat it.
+            (expect (nil? (ep/take-restore-notice! ctx)))
+            (expect (= "42 2\n"
+                       (:stdout (ep/run-python-block ctx "print(next_total(), len(rows))"))))
+            ;; `import xml.dom.minidom` binds only `xml`. The snapshot must load the
+            ;; submodule too: a new worker process does not have it.
+            (let [dotted (ep/run-python-block
+                           ctx
+                           "print(xml.dom.minidom.parseString('<a/>').documentElement.tagName)")]
+              (expect (= "a\n" (:stdout dotted)) (str (:error dotted))))
+            (let [lost (str (:error (ep/run-python-block ctx "next(pending)")))]
+              (expect (str/includes? lost "`pending` did not come back when this sandbox restarted")
+                      lost))
+            ;; A name that the snapshot never held is not a restart loss.
+            (let [unknown (str (:error (ep/run-python-block ctx "print(never_created)")))]
+              (expect (str/includes?
+                        unknown
+                        "the session snapshot that rebuilt this sandbox did not hold it")
+                      unknown)
+              (expect (not (str/includes? unknown "If an earlier block created")) unknown))
+            (let [deleted (str (:error (ep/run-python-block ctx "del TOTAL\nprint(TOTAL)")))]
+              (expect (str/includes? deleted "If an earlier block created `TOTAL`") deleted)))
+          (finally (ep/forget-session-defs! sid) (io/delete-file file true)))))))
 
 ;; #317: an extension result is a record whose class exists for that result alone.
 ;; It comes back after a restart, with the runtime types inside it. A small result
