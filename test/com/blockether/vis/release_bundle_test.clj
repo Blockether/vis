@@ -3641,7 +3641,8 @@
                        "(async () => {\n"
                        script
                        "\n})().then(() => assert.deepEqual(deleted, [1, 2, 8]));")]
-                 {})]
+                 ;; The launching shell can set NODE_OPTIONS to a missing preload.
+                 {"NODE_OPTIONS" ""})]
 
       (expect (str/includes? workflow "- cron: '0 5 * * 1'"))
       (expect (str/includes? workflow "workflow_dispatch:"))
