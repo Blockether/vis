@@ -49,6 +49,12 @@
                        reasoning/content for this attempt and keeps a retry
                        recap in `:provider-fallbacks`.
 
+     :provider-wait    The model of the live provider attempt has been silent
+                       for 20 seconds. Carries `:silent-ms`, `:connection`,
+                       `:awaiting-output?`, `:received-ms` and, when Svar has a
+                       deadline, `:deadline-in-ms` and `:deadline-action`. It
+                       replaces a retry error; the next model output ends it.
+
    Public API:
 
      `(make-progress-tracker)`              - fresh tracker, no callback
@@ -292,6 +298,18 @@
       ;; ...and WHO it is waiting on, so the spinner names the resolved model
       ;; instead of "the provider".
       :activity/model (:model chunk))
+
+    :provider-wait
+    ;; The silence gets its own line. It replaces the retry error, whose recap stays
+    ;; in `:provider-fallbacks`; the next model output ends it (`:activity nil`).
+    (cond-> (-> entry
+                (assoc :activity :provider-wait
+                       :activity/wait (select-keys chunk
+                                                   [:silent-ms :connection :awaiting-output?
+                                                    :received-ms :deadline-in-ms :deadline-action]))
+                (dissoc :error))
+      (:model chunk)
+      (assoc :activity/model (:model chunk)))
 
     :shell-run
     (assoc entry

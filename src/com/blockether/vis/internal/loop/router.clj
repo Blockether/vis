@@ -207,6 +207,59 @@
                                 (if (and (pos? ttft-ms) (pos? body-ms)) (+ ttft-ms body-ms) 0))
      :stall-timeout-ms (backstop (longest-ms [:idle-timeout-ms :semantic-timeout-ms]))}))
 
+(defn provider-resend-limits
+  "Svar's own deadlines for one provider attempt, as positive milliseconds.
+   The gateway counts down to the next one in its provider wait notice. A key
+   is absent when Vis sets no limit for it, so Svar's own default applies."
+  [provider-network]
+  (let [effective (rt/with-default-ask-code-idle-timeout {} provider-network)]
+    (into {}
+          (keep (fn [k]
+                  (let [v (get effective k)]
+                    (when (and (number? v) (pos? (long v))) [k (long v)]))))
+          [:ttft-timeout-ms :first-byte-timeout-ms :idle-timeout-ms :semantic-timeout-ms
+           :timeout-ms])))
+
+(defn provider-resend-deadline-ms
+  "Wall-clock ms when Svar's next watchdog closes this provider attempt, or nil.
+
+   `attempt` has `:started-ms`, the last stream event `:byte-ms` and the last
+   model output `:output-ms`; the last two are nil until they occur. Before the
+   first stream event Svar waits for the response headers, then for the first
+   body byte. After it, Svar closes on transport silence (idle) or on model
+   silence (semantic). Channels see parsed events only, not SSE comments, so an
+   idle estimate that passed gives way to the next deadline that has not passed."
+  [limits {:keys [started-ms byte-ms output-ms]} now-ms]
+  (when started-ms
+    (let [{:keys [ttft-timeout-ms first-byte-timeout-ms idle-timeout-ms semantic-timeout-ms
+                  timeout-ms]}
+          limits
+
+          shortest
+          (fn [vs]
+            (some->> vs
+                     (remove nil?)
+                     seq
+                     (apply min)))
+
+          candidates
+          (if byte-ms
+            [(some-> idle-timeout-ms
+                     (+ (long byte-ms)))
+             (some-> semantic-timeout-ms
+                     (+ (long (or output-ms started-ms))))]
+            ;; Without Svar's own first-byte default, idle is the upper bound.
+            (let [headers-ms
+                  (some-> (shortest [ttft-timeout-ms timeout-ms])
+                          (+ (long started-ms)))
+
+                  body-ms
+                  (shortest [first-byte-timeout-ms idle-timeout-ms])]
+
+              [headers-ms (when (and headers-ms body-ms) (+ (long headers-ms) (long body-ms)))]))]
+
+      (shortest (filter #(and % (> (long %) (long now-ms))) candidates)))))
+
 (defn- with-provider-network-defaults
   [router opts]
   (rt/with-default-ask-code-idle-timeout

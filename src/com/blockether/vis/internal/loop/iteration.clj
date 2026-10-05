@@ -436,6 +436,11 @@
       (swap! turn-state-atom assoc :best-answer {:value value :answer-markdown answer-text}))
     value))
 
+(def ^:private TOOL_INPUT_TICK_MS
+  "Shortest gap between two `:tool-input` chunks while the model writes a native
+   tool call. The gateway needs only a sign of life, not every argument token."
+  1000)
+
 (defn run-iteration
   "Runs a single RLM iteration: ask! -> check final -> execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
@@ -468,9 +473,11 @@
           ;; and an append-only delta; if a provider rewrites its cumulative text, emit no delta.
           reasoning-prev-volatile (volatile! "")
           content-prev-volatile (volatile! "")
+          tool-input-volatile (volatile! {:chars 0 :ms 0})
           reset-stream-state! (fn []
                                 (vreset! reasoning-prev-volatile "")
-                                (vreset! content-prev-volatile ""))
+                                (vreset! content-prev-volatile "")
+                                (vreset! tool-input-volatile {:chars 0 :ms 0}))
           cumulative-delta! (fn [prev-volatile s]
                               (let [prev (str @prev-volatile)]
                                 (vreset! prev-volatile (or s ""))
@@ -480,7 +487,7 @@
                                       :else "")))
           streaming-fn
           (when on-chunk
-            (fn [{:keys [reasoning content done?] :as chunk}]
+            (fn [{:keys [reasoning content tool-input done?] :as chunk}]
               ;; svar speaks two kinds of notice on this stream. Routing events ARE
               ;; the provider swap `:provider-fallback` names. Session events are the
               ;; Codex socket's own lifecycle: a restart replays the turn on a fresh
@@ -548,6 +555,20 @@
                                              :content content-s
                                              :delta delta
                                              :done? (boolean done?)})))
+                              ;; A native tool call streams as arguments, often with no
+                              ;; text at all. Say at most once a second that the model is
+                              ;; writing, so a long call does not look like a silent provider.
+                              (let [chars (count (str tool-input))
+                                    {seen :chars at :ms} @tool-input-volatile
+                                    now (util/now-ms)]
+
+                                (when (and (pos? chars)
+                                           (not= chars (long seen))
+                                           (>= (- now (long at)) (long TOOL_INPUT_TICK_MS)))
+                                  (vreset! tool-input-volatile {:chars chars :ms now})
+                                  (on-chunk {:phase :tool-input
+                                             :iteration iteration-position
+                                             :chars chars})))
                               ;; Provider transport bookkeeping has no channel projection.
                               nil))))
           initiator (loop-router/iteration-initiator iteration)
@@ -562,10 +583,12 @@
                                   (when (= "active" (get goal "status")) goal))
           provider-started-at-ms (util/now-ms)
           _ (when on-chunk
-              (on-chunk (transcript/provider-call-chunk iteration-position
-                                                        resolved-model
-                                                        provider-started-at-ms
-                                                        provider-watchdog-timeouts)))
+              (on-chunk (transcript/provider-call-chunk
+                          iteration-position
+                          resolved-model
+                          provider-started-at-ms
+                          (assoc provider-watchdog-timeouts
+                            :resend-limits (loop-router/provider-resend-limits provider-network)))))
           provider-start-ns (System/nanoTime)
           ;; An explicit session cache key preserves sticky routing across prompt changes.
           ;; Anthropic ignores the field, so setting it unconditionally is harmless.

@@ -8212,6 +8212,42 @@
         (when (seq parts)
           (str p/INLINE_ERR_ON "  \u2014 " (str/join " \u00b7 " parts) p/INLINE_ERR_OFF))))))
 
+(defn- wait-clock
+  "`25s` or `3m 5s`: whole seconds, because the wait clocks move once a second."
+  [ms]
+  (let [s (quot (max 0 (long ms)) 1000)]
+    (if (< s 60) (str s "s") (str (quot s 60) "m " (mod s 60) "s"))))
+
+(defn- provider-wait-segment
+  "Suffix for the spinner row while the model of the provider attempt is silent,
+   or nil:
+
+     \u2014 no response for 25s \u00b7 connection alive \u00b7 retry in 3m 35s
+
+   Both clocks move from the moment the notice arrived (`:received-ms`), so the
+   row stays live between two notices. `connection alive` means stream events
+   still arrive. At the deadline Svar re-sends the request (`retry`) or ends it
+   (`timeout`)."
+  [iterations now-ms]
+  (let [{:keys [activity] wait :activity/wait} (last iterations)]
+    (when (and (= :provider-wait activity) (map? wait))
+      (let [{:keys [silent-ms connection awaiting-output? received-ms deadline-in-ms
+                    deadline-action]}
+            wait
+            passed (max 0 (- (long now-ms) (long (or received-ms now-ms))))
+            parts (cond-> [(str (if awaiting-output? "no response" "no new output")
+                                " for "
+                                (wait-clock (+ (long (or silent-ms 0)) passed)))]
+                    connection
+                    (conj (str "connection " (name connection)))
+
+                    deadline-in-ms
+                    (conj (str (if (= :retry deadline-action) "retry" "timeout")
+                               " in "
+                               (wait-clock (- (long deadline-in-ms) passed)))))]
+
+        (str "  \u2014 " (str/join " \u00b7 " parts))))))
+
 (defn- progress-phase
   "Human-readable phase label for the current iteration state. Drives
    the spinner row text so the user can tell whether Vis is calling
@@ -8324,6 +8360,8 @@
           (= :slash activity) (str agent-name " is running: " slash-label)
           (= :attachment-transcription activity) (str agent-name
                                                       " is transcribing recordings (up to 5 min)")
+          (= :provider-wait activity)
+          (str agent-name " is waiting for " (or activity-model "the provider") " (iter " n ")")
           (= :provider-call activity)
           (case activity-reason
             :tool-result
@@ -9175,6 +9213,7 @@
                 "...  "
                 elapsed-str
                 (or (progress-error-segment iterations) "")
+                (or (provider-wait-segment iterations now-ms) "")
                 "  /  Esc to cancel"))
 
          line-entry

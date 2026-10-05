@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import activityFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json';
-import { reduceRunningTurnEvent } from './running-turn';
+import { providerWaitDetail, reduceRunningTurnEvent, type ProviderWait } from './running-turn';
 import type { SseEvent } from './types';
 
 const runningTurn = {
@@ -319,5 +319,88 @@ describe('a queued message delivered into the running turn', () => {
     const settled = { ...runningTurn, status: 'completed' as const };
 
     expect(reduceRunningTurnEvent(settled, input(1, [sent]))).toBe(settled);
+  });
+});
+
+describe('the provider wait notice', () => {
+  const notice = (extra: Record<string, unknown> = {}) =>
+    event({
+      type: 'turn.progress',
+      turn_id: 'gw-thinking',
+      progress: 'provider-wait',
+      iteration: 2,
+      model: 'model-a',
+      silent_ms: 25_000,
+      connection: 'alive',
+      awaiting_output: true,
+      deadline_in_ms: 215_000,
+      deadline_action: 'retry',
+      ...extra,
+    });
+
+  const wait: ProviderWait = {
+    silentMs: 25_000,
+    receivedAt: 1_000,
+    awaitingOutput: true,
+    connection: 'alive',
+    deadline: { inMs: 215_000, action: 'retry' },
+  };
+
+  it('keeps the silence, the connection and the deadline of the attempt', () => {
+    const before = Date.now();
+    const turn = reduceRunningTurnEvent(runningTurn, notice());
+
+    expect(turn?.progress).toMatchObject({ kind: 'provider-wait', iteration: 2, model: 'model-a' });
+    expect(turn?.progress?.wait).toMatchObject({
+      silentMs: 25_000,
+      awaitingOutput: true,
+      connection: 'alive',
+      deadline: { inMs: 215_000, action: 'retry' },
+    });
+    expect(turn?.progress?.wait?.receivedAt).toBeGreaterThanOrEqual(before);
+  });
+
+  it('ends when the model sends output', () => {
+    const waiting = reduceRunningTurnEvent(runningTurn, notice());
+
+    expect(reduceRunningTurnEvent(waiting, reasoning('Plan'))?.progress).toBeUndefined();
+  });
+
+  it('gives no wait to another progress kind', () => {
+    const turn = reduceRunningTurnEvent(runningTurn, notice({ progress: 'provider-call' }));
+
+    expect(turn?.progress?.kind).toBe('provider-call');
+    expect(turn?.progress?.wait).toBeUndefined();
+  });
+
+  it('moves both clocks on from the moment the notice arrived', () => {
+    expect(providerWaitDetail(wait, 1_000)).toBe(
+      'No response for 25s · connection alive · retry in 3m 35s',
+    );
+    expect(providerWaitDetail(wait, 41_000)).toBe(
+      'No response for 1m 5s · connection alive · retry in 2m 55s',
+    );
+  });
+
+  it('names stopped output, a silent connection and a timeout that is due', () => {
+    const stopped: ProviderWait = {
+      ...wait,
+      awaitingOutput: false,
+      connection: 'silent',
+      deadline: { inMs: 2_000, action: 'timeout' },
+    };
+
+    expect(providerWaitDetail(stopped, 5_000)).toBe(
+      'No new output for 29s · connection silent · timeout in 0s',
+    );
+  });
+
+  it('leaves out the connection and the deadline when the notice has none', () => {
+    const bare = reduceRunningTurnEvent(
+      runningTurn,
+      notice({ connection: undefined, deadline_in_ms: undefined }),
+    )?.progress?.wait;
+
+    expect(bare && providerWaitDetail(bare, bare.receivedAt)).toBe('No response for 25s');
   });
 });

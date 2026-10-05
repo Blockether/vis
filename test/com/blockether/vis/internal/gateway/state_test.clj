@@ -2699,7 +2699,11 @@
         ;; turn the provider never answered therefore looked like a producing one
         ;; and kept both the full cancel grace and the full stall ceiling.
         (let [marker (advance {} {:phase :provider-call :iteration 0 :started-at-ms 1} 100)]
-          (expect (= {:phase :provider-call :produced? false :call-output? false :last-ms 100}
+          (expect (= {:phase :provider-call
+                      :produced? false
+                      :call-output? false
+                      :last-ms 100
+                      :attempt {:started-ms 1 :retry? true :iteration 0}}
                      marker))
           (expect (true? (:produced? (advance marker {:phase :content :delta "hi"} 200))))))
     (it "force-cancels a started turn the provider never answered at all"
@@ -2926,6 +2930,211 @@
                  (expect (true? (await-cancel token 4000))))
                (expect (true? (:stalled? @stall)))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))))
+
+;; Claude Code and Hermes say after about 20s that they still wait for the model.
+;; Vis waited as long but showed nothing, so a slow provider looked like a slow Vis.
+(defdescribe
+  provider-wait-notice-test
+  "While the model of a provider attempt is silent, the gateway says so live: for
+   how long, if stream events still arrive and when Svar re-sends the call."
+  (let [advance
+        @#'state/advance-turn-stall-state
+
+        notice
+        @#'state/provider-wait-notice
+
+        due?
+        @#'state/provider-wait-due?
+
+        publish!
+        @#'state/publish-provider-wait!
+
+        limits
+        {:ttft-timeout-ms 200000 :idle-timeout-ms 300000 :semantic-timeout-ms 240000}
+
+        called
+        (fn [started-ms]
+          (advance {:started? true}
+                   {:phase :provider-call
+                    :iteration 3
+                    :reason :tool-result
+                    :started-at-ms started-ms
+                    :model "claude-x"
+                    :resend-limits limits}
+                   started-ms))
+
+        probe!
+        (fn [sid events]
+          (swap! @#'state/registry assoc
+            sid
+            {:next-seq 0
+             :events []
+             :current-turn "t1"
+             :subscribers {"probe" #(swap! events conj %)}}))]
+
+    (it
+      "follows the live provider attempt"
+      (let [call
+            (advance {}
+                     {:phase :provider-call
+                      :iteration 2
+                      :reason :tool-result
+                      :started-at-ms 1000
+                      :model "claude-x"
+                      :resend-limits limits}
+                     1500)
+
+            pinged
+            (advance call {:phase :reasoning :delta ""} 5000)
+
+            thought
+            (advance pinged {:phase :reasoning :delta "hmm"} 6000)
+
+            writing
+            (advance thought {:phase :tool-input :iteration 2 :chars 40} 7000)
+
+            resent
+            (advance
+              writing
+              {:phase :provider-retry-reset :iteration 2 :attempt 2 :max-retries 2 :delay-ms 3000}
+              8000)]
+
+        (expect
+          (= {:iteration 2 :reason :tool-result :resend-limits limits :started-ms 1000 :retry? true}
+             (:attempt call)))
+        ;; A keepalive proves the connection, not the model.
+        (expect (= 5000 (get-in pinged [:attempt :byte-ms])))
+        (expect (nil? (get-in pinged [:attempt :output-ms])))
+        (expect (= {:byte-ms 6000 :output-ms 6000 :output-phase :reasoning}
+                   (select-keys (:attempt thought) [:byte-ms :output-ms :output-phase :answer?])))
+        ;; Svar does not re-send a call whose answer has begun.
+        (expect (= {:output-phase :tool-input :answer? true}
+                   (select-keys (:attempt writing) [:output-phase :answer?])))
+        ;; A re-send starts after its delay, and the last allowed one cannot re-send.
+        (expect (= {:iteration 2
+                    :reason :tool-result
+                    :resend-limits limits
+                    :started-ms 11000
+                    :retry? false}
+                   (:attempt resent)))
+        (expect (true? (get-in (advance resent {:phase :content :delta "" :done? true} 12000)
+                               [:attempt :done?])))))
+    (it "says after 20 seconds of model silence what Vis waits for"
+        (let [pinged
+              (advance (called 0) {:phase :reasoning :delta ""} 15000)
+
+              answering
+              (advance pinged {:phase :content :delta "Hi"} 30000)]
+
+          (expect (nil? (notice pinged 19999)))
+          (expect (= {:progress "provider-wait"
+                      :iteration 3
+                      :model "claude-x"
+                      :silent-ms 25000
+                      :connection "alive"
+                      :awaiting-output true
+                      :deadline-in-ms 215000
+                      :deadline-action "retry"}
+                     (notice pinged 25000)))
+          ;; No stream event for 30 seconds: the connection is silent too.
+          (expect (= "silent" (:connection (notice pinged 46000))))
+          ;; Silence after the answer began: Svar ends the call and does not re-send it.
+          (expect (= {:silent-ms 21000
+                      :connection "silent"
+                      :awaiting-output false
+                      :deadline-in-ms 219000
+                      :deadline-action "timeout"}
+                     (select-keys (notice answering 51000)
+                                  [:silent-ms :connection :awaiting-output :deadline-in-ms
+                                   :deadline-action])))
+          (expect (nil? (notice (advance answering {:phase :content :delta "" :done? true} 52000)
+                                80000)))
+          (expect (nil? (notice (advance answering {:phase :response-parse :status :started} 52000)
+                                80000)))))
+    (it "sends the notice again only when it tells something new"
+        (let [n
+              {:connection "alive" :deadline-action "retry" :deadline-in-ms 200000}
+
+              shown
+              {:notice n :started-ms 0 :ms 25000}]
+
+          (expect (true? (due? nil n 0 25000)))
+          ;; The countdown moves with the clock, so it is no news.
+          (expect (false? (due? shown (assoc n :deadline-in-ms 199000) 0 26000)))
+          (expect (true? (due? shown
+                               (assoc n
+                                 :connection "silent"
+                                 :deadline-in-ms 199000)
+                               0
+                               26000)))
+          (expect (true? (due? shown (assoc n :deadline-in-ms 150000) 0 26000)))
+          (expect (true? (due? shown (dissoc n :deadline-in-ms) 0 26000)))
+          (expect (true? (due? shown n 5000 26000)))
+          (expect (true? (due? shown (assoc n :deadline-in-ms 190000) 0 35000)))))
+    (it
+      "publishes the notice live and puts the provider call back after a tool call"
+      (let [sid
+            (str "wait-" (random-uuid))
+
+            events
+            (atom [])
+
+            shown
+            (volatile! nil)
+
+            call
+            (called 0)
+
+            writing
+            (advance call {:phase :tool-input :iteration 3 :chars 40} 26500)]
+
+        (try (probe! sid events)
+             (publish! sid "t1" call shown 25000)
+             (publish! sid "t1" call shown 26000)
+             (publish! sid "t1" writing shown 27000)
+             (publish! sid "t1" writing shown 28000)
+             (expect (= [["turn.progress" "provider-wait"] ["turn.progress" "provider-call"]]
+                        (mapv (juxt #(get % "type") #(get % "progress")) @events)))
+             (expect (= {"turn_id" "t1"
+                         "iteration" 3
+                         "model" "claude-x"
+                         "silent_ms" 25000
+                         "connection" "silent"
+                         "awaiting_output" true
+                         "deadline_in_ms" 175000
+                         "deadline_action" "retry"}
+                        (select-keys (first @events)
+                                     ["turn_id" "iteration" "model" "silent_ms" "connection"
+                                      "awaiting_output" "deadline_in_ms" "deadline_action"])))
+             (expect (nil? @shown))
+             ;; Live only: a reconnect must not replay an old countdown.
+             (expect (empty? (state/events-since sid 0)))
+             (finally (swap! @#'state/registry dissoc sid)))))
+    (it "comes from the turn watchdog while the model is silent"
+        (let [sid
+              (str "wait-" (random-uuid))
+
+              events
+              (atom [])
+
+              token
+              (cancellation/cancellation-token)
+
+              now
+              (System/currentTimeMillis)
+
+              stall
+              (atom (advance (called (- now 25000)) {:phase :reasoning :delta ""} (- now 10000)))]
+
+          (try (probe! sid events)
+               (@#'state/start-turn-stall-watchdog! sid "t1" token stall)
+               (loop [n 0]
+                 (when (and (empty? @events) (< n 200)) (Thread/sleep 25) (recur (inc n))))
+               (let [event (first @events)]
+                 (expect (= "provider-wait" (get event "progress")))
+                 (expect (= "alive" (get event "connection")))
+                 (expect (<= 25000 (long (get event "silent_ms")) 35000)))
+               (finally (cancellation/cancel! token) (swap! @#'state/registry dissoc sid)))))))
 
 (defdescribe
   turn-launch-orphan-test
@@ -7147,6 +7356,43 @@
         (expect (every? #(seq (str (get % "text"))) deltas))
         ;; …and the block that DID open still closes exactly once.
         (expect (= (count started) (count (of-type "content.block.completed"))))))))
+
+;; A provider keepalive repeats the cumulative text, and a native tool call streams
+;; only its arguments. Channels took the empty deltas for output and cleared the
+;; provider wait notice on every keepalive.
+(defdescribe
+  provider-keepalive-publishes-nothing-test
+  (it "publishes no delta for repeated text and no event for tool input"
+      (let [sid
+            (str (random-uuid))
+
+            tid
+            (str (random-uuid))]
+
+        (swap! @#'state/registry assoc
+          sid
+          {:next-seq 0
+           :events []
+           :subscribers {}
+           :turns {tid {:turn_id tid :status "running"}}
+           :turn-order [tid]
+           :current-turn tid})
+        (with-redefs [lp/send!
+                      (fn [_ _ opts]
+                        (let [on-chunk (get-in opts [:hooks :on-chunk])]
+                          (on-chunk {:phase :reasoning :iteration 1 :thinking "alpha"})
+                          (on-chunk {:phase :reasoning :iteration 1 :thinking "alpha"})
+                          (on-chunk {:phase :tool-input :iteration 1 :chars 40})
+                          (on-chunk
+                            {:phase :reasoning :iteration 1 :thinking "alpha beta" :done? true}))
+                        {:status :ok :answer nil})]
+          (#'state/run-turn! sid tid "hi" {}))
+        (let [events (state/events-since sid 0)]
+          (expect (= ["alpha" " beta"]
+                     (mapv #(get % "text")
+                           (filterv #(= "content.block.delta" (get % "type")) events))))
+          (expect (not-any? #(= "tool-input" (get % "phase")) events))
+          (expect (every? #(string? (get % "type")) events))))))
 
 ;; Regression: `iteration.completed` shipped the provider's CUT summary as the
 ;; iteration's thinking, so every surface painted a two-word stub — `So the

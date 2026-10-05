@@ -648,7 +648,29 @@
                    (g->c {"type" "turn.progress"
                           "progress" "provider-call"
                           "iteration" 3
-                          "reason" "tool-result"}))))))
+                          "reason" "tool-result"}))))
+    ;; The model can stay silent for minutes. The notice says for how long, and
+    ;; the spinner moves its clocks from the moment it arrived.
+    (it "a provider-wait progress event projects to :provider-wait with its clocks"
+        (let [chunk (g->c {"type" "turn.progress"
+                           "progress" "provider-wait"
+                           "iteration" 3
+                           "model" "claude-x"
+                           "silent_ms" 25000
+                           "connection" "alive"
+                           "awaiting_output" true
+                           "deadline_in_ms" 215000
+                           "deadline_action" "retry"})]
+          (expect (= {:phase :provider-wait
+                      :iteration 3
+                      :model "claude-x"
+                      :silent-ms 25000
+                      :connection :alive
+                      :awaiting-output? true
+                      :deadline-in-ms 215000
+                      :deadline-action :retry}
+                     (dissoc chunk :received-ms)))
+          (expect (int? (:received-ms chunk)))))))
 
 (defdescribe provider-retry-event-chunk-test
              (let [g->c @#'chat/gateway-event->chunk]

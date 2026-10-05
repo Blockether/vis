@@ -620,6 +620,97 @@ describe('the wait between a submit and the first token', () => {
     expect((await screen.findAllByText(/Vis is calling claude-opus-5/)).length).toBeGreaterThan(0);
     expect(screen.queryByText(/Vis is transcribing recordings/)).toBeNull();
   });
+
+  it('says how long the model is silent and when Svar acts, until output arrives', async () => {
+    const listeners = new Set<(event: Record<string, unknown>) => void>();
+    const never = new Promise<never>(() => {});
+
+    renderSessionScreen({
+      session: sessionFixture({
+        status: 'running',
+        live: true,
+        current_turn_id: 't-live',
+        running_request: 'measure the wait',
+      }),
+      client: {
+        cachedTranscript: () => [],
+        transcript: () => never,
+        turnTrace: () => never,
+      },
+      subscriptions: {
+        subscribeConnection: (on: (live: boolean) => void) => {
+          on(true);
+          return () => {};
+        },
+        subscribeSession: (_sid: string, on: (event: Record<string, unknown>) => void) => {
+          listeners.add(on);
+          return () => listeners.delete(on);
+        },
+      },
+    });
+
+    await waitFor(() => expect(listeners.size).toBeGreaterThanOrEqual(2));
+    const emit = (event: Record<string, unknown>) => {
+      for (const listener of listeners) listener(event);
+    };
+
+    act(() => {
+      emit({
+        type: 'subscription.ready',
+        session_id: 's1',
+        current_turn_id: 't-live',
+        is_live: true,
+      });
+      emit({
+        type: 'turn.started',
+        session_id: 's1',
+        turn_id: 't-live',
+        request: 'measure the wait',
+        seq: 1,
+      });
+      emit({
+        type: 'turn.progress',
+        session_id: 's1',
+        turn_id: 't-live',
+        progress: 'provider-wait',
+        iteration: 1,
+        model: 'claude-opus-5',
+        silent_ms: 20_000,
+        connection: 'alive',
+        awaiting_output: true,
+        deadline_in_ms: 180_500,
+        deadline_action: 'retry',
+        seq: 2,
+      });
+    });
+
+    expect(
+      (await screen.findAllByText(/Vis is waiting for claude-opus-5 \(iter 1\)/)).length,
+    ).toBeGreaterThan(0);
+    // The clocks move once a second; allow one tick on a slow runner.
+    expect(
+      await screen.findByText(
+        /^No response for 2[01]s · connection alive · retry in (3m 0s|2m 59s)$/,
+      ),
+    ).toBeInTheDocument();
+
+    act(() => {
+      emit({
+        type: 'content.block.delta',
+        session_id: 's1',
+        turn_id: 't-live',
+        iteration: 1,
+        block_id: 't-live:reasoning:1',
+        field: 'text',
+        text: 'Plan',
+        cumulative: 'Plan',
+        seq: 3,
+      });
+    });
+
+    await waitFor(() => expect(screen.queryByText(/No response for/)).toBeNull());
+    expect(screen.queryByText(/Vis is waiting for/)).toBeNull();
+  });
 });
 
 // Regression: `form_index` is a number, and the reducer once read the form
@@ -668,7 +759,9 @@ describe('a windowed running turn', () => {
     });
     const progress = await screen.findByText('Latest visible progress');
     expect(progress).toBeVisible();
-    expect(progress.closest('article')?.querySelector('[data-anchor="skip"]')).not.toBeNull();
+    expect(progress.closest('article')?.querySelector('[data-anchor="skip"]')).toBeInstanceOf(
+      HTMLElement,
+    );
     expect(screen.queryByRole('button', { name: /earlier step/ })).toBeNull();
     expect(turnTrace).not.toHaveBeenCalled();
   });

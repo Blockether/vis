@@ -3067,6 +3067,46 @@
           (expect (= :llm.routing/provider-fallback
                      (get-in (first fallbacks) [:event :event/type])))))))
 
+;; A native tool call streams only its arguments. The gateway saw no chunk while
+;; the model wrote a long call, so the turn looked like a silent provider.
+(defdescribe
+  provider-wait-signals-test
+  (let [chunks-of
+        (fn [emit!]
+          (let [env (loop-env/create-environment ::router {:db :memory})
+                chunks (atom [])]
+
+            (try (with-redefs [svar/ask-code!
+                               (fn [_router opts]
+                                 (emit! (:on-chunk opts))
+                                 {:stop-reason :end :tool-calls [] :content "ok" :tokens {}})]
+                   (iteration/run-iteration env
+                                            []
+                                            {:iteration 0
+                                             :resolved-model {:provider :anthropic :name "claude-x"}
+                                             :on-chunk #(swap! chunks conj %)})
+                   @chunks)
+                 (finally (loop-env/dispose-environment! env)))))]
+    (it "says at most once a second that the model writes a tool call"
+        (let [clock (atom 5000)
+              chunks (with-redefs [util/now-ms (fn ^long []
+                                                 (long @clock))]
+                       (chunks-of (fn [on-chunk]
+                                    (doseq [[tick args] [[0 "{\"code\": \"pri"]
+                                                         [0 "{\"code\": \"print(1"]
+                                                         [1000 "{\"code\": \"print(1)\"}"]
+                                                         [1000 "{\"code\": \"print(1)\"}"]]]
+                                      (swap! clock + tick)
+                                      (on-chunk {:content "" :tool-input args :done? false})))))]
+
+          ;; The second chunk arrives in the same second, and the last one adds nothing.
+          (expect (= [13 20] (mapv :chars (filterv #(= :tool-input (:phase %)) chunks))))))
+    (it "hands the gateway the limits at which Svar re-sends the call"
+        (let [call (first (filter #(= :provider-call (:phase %))
+                                  (chunks-of (fn [_on-chunk]))))]
+          (expect (= {:ttft-timeout-ms 200000 :idle-timeout-ms 300000 :semantic-timeout-ms 240000}
+                     (:resend-limits call)))))))
+
 ;; Regression, issue #120: every provider request looked identical in the TUI, so a
 ;; long tool-result loop was indistinguishable from the client re-sending on its
 ;; own — the spinner said "Vis is calling the provider (iter 12)" and never why.
@@ -11799,6 +11839,51 @@
                                           42
                                           {:first-output-timeout-ms 700 :stall-timeout-ms 600})
                                          [:first-output-timeout-ms :stall-timeout-ms])))))
+
+(defdescribe
+  provider-resend-deadline-test
+  (it
+    "counts down to the deadline at which Svar re-sends the attempt"
+    (let [limits (loop-router/provider-resend-limits nil)]
+      ;; Vis defaults. Svar keeps its own first-byte default, so idle bounds it.
+      (expect (= {:ttft-timeout-ms 200000 :idle-timeout-ms 300000 :semantic-timeout-ms 240000}
+                 limits))
+      ;; Before the first stream event: the headers, then the first body byte.
+      (expect (= 201000 (loop-router/provider-resend-deadline-ms limits {:started-ms 1000} 21000)))
+      (expect (= 501000 (loop-router/provider-resend-deadline-ms limits {:started-ms 1000} 202000)))
+      ;; After it: transport silence or model silence, whichever comes first.
+      (expect (= 241000
+                 (loop-router/provider-resend-deadline-ms limits
+                                                          {:started-ms 1000 :byte-ms 30000}
+                                                          31000)))
+      (expect (= 300000
+                 (loop-router/provider-resend-deadline-ms
+                   limits
+                   {:started-ms 1000 :byte-ms 60000 :output-ms 60000}
+                   61000)))
+      ;; SSE comments keep the transport alive but never reach Vis, so an idle
+      ;; estimate that passed gives way to the next deadline that has not.
+      (expect (= 302000
+                 (loop-router/provider-resend-deadline-ms limits
+                                                          {:started-ms 1000 :byte-ms 2000}
+                                                          250000)))
+      (expect (nil? (loop-router/provider-resend-deadline-ms limits
+                                                             {:started-ms 1000 :byte-ms 2000}
+                                                             400000)))
+      (expect (nil? (loop-router/provider-resend-deadline-ms limits {} 1000)))))
+  (it "follows the provider policy and an explicit nil that turns a watchdog off"
+      (let [limits (loop-router/provider-resend-limits {:idle-timeout-ms 45000
+                                                        :semantic-timeout-ms nil})]
+        (expect (= {:ttft-timeout-ms 200000 :idle-timeout-ms 45000} limits))
+        (expect (= 75000
+                   (loop-router/provider-resend-deadline-ms limits
+                                                            {:started-ms 1000 :byte-ms 30000}
+                                                            31000))))
+      ;; A whole-request cap bounds the header wait.
+      (expect (= 101000
+                 (loop-router/provider-resend-deadline-ms {:timeout-ms 100000}
+                                                          {:started-ms 1000}
+                                                          2000)))))
 
 ;; Regression: `list_attachments()` located a TOOL artifact by its iteration
 ;; alone, so a descriptor for anything the model produced carried no turn id at

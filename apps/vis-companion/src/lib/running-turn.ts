@@ -19,6 +19,23 @@ import type {
   TranscriptIteration,
 } from './types';
 
+/**
+ * The silence of the model in one provider attempt (`provider-wait` progress).
+ * Both clocks move on from `receivedAt`, so the line stays live between two notices.
+ */
+export interface ProviderWait {
+  /** Model silence when the gateway sent the notice. */
+  silentMs: number;
+  /** Device clock when the notice arrived. */
+  receivedAt: number;
+  /** True while this attempt has sent no output. */
+  awaitingOutput: boolean;
+  /** `alive` while stream events still arrive; `silent` when nothing arrives. */
+  connection?: 'alive' | 'silent';
+  /** When Svar re-sends the request (`retry`) or ends the call (`timeout`). */
+  deadline?: { inMs: number; action: 'retry' | 'timeout' };
+}
+
 export interface TurnProgress {
   kind: string;
   iteration?: number;
@@ -29,6 +46,8 @@ export interface TurnProgress {
   phrase?: string;
   /** The router-resolved model while a provider call is in flight. */
   model?: string;
+  /** The silence of the model while `kind` is `provider-wait`. */
+  wait?: ProviderWait;
 }
 
 export interface RunningTurn {
@@ -57,6 +76,44 @@ export interface RunningTurn {
 
 function applyText(_current: string, event: SseEvent): string {
   return eventString(event, 'cumulative');
+}
+
+function providerWaitFromEvent(event: SseEvent): ProviderWait | undefined {
+  const silentMs = event.silent_ms;
+  if (typeof silentMs !== 'number' || !Number.isFinite(silentMs)) return undefined;
+  const connection = eventString(event, 'connection');
+  const deadlineInMs = event.deadline_in_ms;
+  return {
+    silentMs,
+    receivedAt: Date.now(),
+    awaitingOutput: event.awaiting_output === true,
+    connection: connection === 'alive' || connection === 'silent' ? connection : undefined,
+    deadline:
+      typeof deadlineInMs === 'number' && Number.isFinite(deadlineInMs)
+        ? {
+            inMs: deadlineInMs,
+            action: eventString(event, 'deadline_action') === 'retry' ? 'retry' : 'timeout',
+          }
+        : undefined,
+  };
+}
+
+/** `25s` or `3m 5s`: whole seconds, because the wait clocks move once a second. */
+function waitClock(ms: number): string {
+  const seconds = Math.floor(Math.max(0, ms) / 1_000);
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+/** The line under the ticker: `No response for 25s · connection alive · retry in 3m 35s`. */
+export function providerWaitDetail(wait: ProviderWait, now: number): string {
+  const passed = Math.max(0, now - wait.receivedAt);
+  const silence = waitClock(wait.silentMs + passed);
+  const parts = [`${wait.awaitingOutput ? 'No response' : 'No new output'} for ${silence}`];
+  if (wait.connection) parts.push(`connection ${wait.connection}`);
+  if (wait.deadline) {
+    parts.push(`${wait.deadline.action} in ${waitClock(wait.deadline.inMs - passed)}`);
+  }
+  return parts.join(' · ');
 }
 
 function updateRunningIteration(
@@ -321,6 +378,7 @@ export function reduceRunningTurnEvent(
             label: eventString(event, 'label') || undefined,
             phrase: eventString(event, 'phrase') || undefined,
             model: eventString(event, 'model') || undefined,
+            wait: kind === 'provider-wait' ? providerWaitFromEvent(event) : undefined,
           }
         : undefined,
     };

@@ -3079,6 +3079,64 @@
    such a marker."
   (conj provider-attempt-phases :attachment-transcription))
 
+(def ^:private provider-stream-phases
+  "Chunks of a live provider stream: text deltas, the empty transport heartbeats
+   among them, and the `:tool-input` sign that the model writes a native tool call."
+  #{:reasoning :content :tool-input})
+
+(def ^:private PROVIDER_WAIT_NOTICE_MS
+  "Model silence in one provider attempt before channels name the wait: the model,
+   the silence, the connection state and the time left until Svar's next watchdog."
+  20000)
+
+(def ^:private PROVIDER_ALIVE_WINDOW_MS
+  "A stream event this recent, inside the silence, shows a live connection."
+  30000)
+
+(def ^:private PROVIDER_WAIT_REFRESH_MS
+  "Repeat interval of an unchanged wait notice. The event is not stored, so a
+   channel that connects during the wait gets it with the next repeat."
+  10000)
+
+(def ^:private PROVIDER_WAIT_DRIFT_MS
+  "Change of the deadline estimate that sends a new wait notice at once."
+  2000)
+
+(defn- provider-attempt
+  "The provider attempt that an attempt marker opens. `:started-ms` is when Svar
+   sends the request; a re-send first waits its announced delay. `:retry?` says
+   if Svar can still re-send the attempt when its watchdog closes it."
+  [{:keys [attempt]} {:keys [phase iteration reason resend-limits started-at-ms delay-ms] :as chunk}
+   now]
+  (let [sent
+        (:attempt chunk)
+
+        allowed
+        (:max-retries chunk)]
+
+    (cond-> (merge (when-not (= :provider-call phase)
+                     (select-keys attempt [:iteration :reason :resend-limits]))
+                   {:started-ms (case phase
+                                  :provider-call
+                                  (long (or started-at-ms now))
+
+                                  :provider-retry-reset
+                                  (+ (long now) (long (or delay-ms 0)))
+
+                                  (long now))
+                    :retry? (or (not= :provider-retry-reset phase)
+                                (not (number? sent))
+                                (not (number? allowed))
+                                (< (long sent) (long allowed)))})
+      (some? iteration)
+      (assoc :iteration iteration)
+
+      (some? reason)
+      (assoc :reason reason)
+
+      (some? resend-limits)
+      (assoc :resend-limits resend-limits))))
+
 (defn- advance-turn-stall-state
   "Records the live phase, but moves the deadline only for real progress.
    Streaming callbacks carry cumulative text plus `:delta`; an empty delta is
@@ -3088,25 +3146,39 @@
    never a [[stall-lifecycle-phases]] marker. It is the flag that separates a turn
    the provider is answering slowly from one it never answered at all.
    `:call-output?` is the same flag for the current provider attempt, which each
-   [[provider-attempt-phases]] marker starts again."
+   [[provider-attempt-phases]] marker starts again.
+
+   `:attempt` follows the live provider attempt for the wait notice: the last
+   stream event, heartbeats included (`:byte-ms`), the last model output
+   (`:output-ms`, `:output-phase`), answer output after which Svar no longer
+   re-sends (`:answer?`) and the end of the stream (`:done?`)."
   [state chunk now]
-  (let [meaningful?
+  (let [phase
+        (:phase chunk)
+
+        meaningful?
         (or (not (contains? chunk :delta)) (seq (:delta chunk)) (:done? chunk))
 
         output?
-        (and meaningful? (not (contains? stall-lifecycle-phases (:phase chunk))))
+        (and meaningful? (not (contains? stall-lifecycle-phases phase)))
 
         provider-call?
-        (= :provider-call (:phase chunk))
+        (= :provider-call phase)
+
+        stream?
+        (and (contains? provider-stream-phases phase) (some? (:attempt state)))
+
+        answer?
+        (or (= :tool-input phase) (and (= :content phase) (seq (:delta chunk))))
 
         state
-        (cond-> (assoc state :phase (:phase chunk))
+        (cond-> (assoc state :phase phase)
           provider-call?
           (-> (dissoc :first-output-timeout-ms :stall-timeout-ms)
               (update :produced? boolean))
 
-          (contains? provider-attempt-phases (:phase chunk))
-          (assoc :call-output? false))]
+          (contains? provider-attempt-phases phase)
+          (merge {:call-output? false :attempt (provider-attempt state chunk now)}))]
 
     (cond-> state
       ;; Provider calls may carry a wider provider-owned prefill envelope. Keep
@@ -3131,7 +3203,126 @@
       (assoc :last-ms now)
 
       output?
-      (merge {:produced? true :call-output? true}))))
+      (merge {:produced? true :call-output? true})
+
+      stream?
+      (assoc-in [:attempt :byte-ms] now)
+
+      (and stream? output?)
+      (update :attempt assoc :output-ms now :output-phase phase)
+
+      (and stream? answer?)
+      (assoc-in [:attempt :answer?] true)
+
+      (and stream? (:done? chunk))
+      (assoc-in [:attempt :done?] true))))
+
+(defn- provider-in-flight?
+  "True while the provider attempt of this stall state still streams: its marker
+   or a stream chunk is the live phase, and the stream has not ended."
+  [{:keys [phase attempt]}]
+  (and (some? attempt)
+       (not (:done? attempt))
+       (or (contains? provider-attempt-phases phase) (contains? provider-stream-phases phase))))
+
+(defn- provider-wait-notice
+  "Ephemeral `provider-wait` progress payload for a provider attempt whose model
+   has been silent for [[PROVIDER_WAIT_NOTICE_MS]], or nil. `:connection` is
+   `alive` when stream events arrived during the silence. `:deadline-in-ms` is
+   the time left until Svar's next watchdog. It then re-sends the request
+   (`retry`) or ends it (`timeout`)."
+  [{:keys [attempt model] :as state} now]
+  (let [{:keys [iteration started-ms byte-ms output-ms answer? retry? resend-limits]}
+        attempt
+
+        quiet-since
+        (or output-ms started-ms)
+
+        silent-ms
+        (when quiet-since (- (long now) (long quiet-since)))]
+
+    (when (and (provider-in-flight? state)
+               silent-ms
+               (>= (long silent-ms) (long PROVIDER_WAIT_NOTICE_MS)))
+      (let [deadline
+            (loop-router/provider-resend-deadline-ms resend-limits attempt now)
+
+            alive?
+            (and byte-ms
+                 (> (long byte-ms) (long quiet-since))
+                 (< (- (long now) (long byte-ms)) (long PROVIDER_ALIVE_WINDOW_MS)))]
+
+        (cond-> {:progress "provider-wait"
+                 :silent-ms silent-ms
+                 :connection (if alive? "alive" "silent")
+                 :awaiting-output (nil? output-ms)}
+          (some? iteration)
+          (assoc :iteration iteration)
+
+          (some? model)
+          (assoc :model (str model))
+
+          deadline
+          (merge {:deadline-in-ms (- (long deadline) (long now))
+                  :deadline-action (if (and retry? (not answer?)) "retry" "timeout")}))))))
+
+(defn- provider-wait-due?
+  "True when the wait notice must go out now: it is new, or its attempt,
+   connection or deadline changed, or [[PROVIDER_WAIT_REFRESH_MS]] passed since
+   it last went out."
+  [shown notice started-ms now]
+  (let [{prior :notice at :ms prior-started :started-ms}
+        shown
+
+        deadline-at
+        (fn [n t]
+          (some-> (:deadline-in-ms n)
+                  (+ (long t))))
+
+        before
+        (when shown (deadline-at prior at))
+
+        after
+        (deadline-at notice now)]
+
+    (boolean (or (nil? shown)
+                 (not= prior-started started-ms)
+                 (not= (:connection prior) (:connection notice))
+                 (not= (:deadline-action prior) (:deadline-action notice))
+                 (not= (some? before) (some? after))
+                 (and before
+                      after
+                      (> (Math/abs (- (long after) (long before))) (long PROVIDER_WAIT_DRIFT_MS)))
+                 (>= (- (long now) (long at)) (long PROVIDER_WAIT_REFRESH_MS))))))
+
+(defn- publish-provider-wait!
+  "Send the provider wait notice of this turn when it is due. When the silence
+   ends with output that channels do not draw (a native tool call being
+   written), put their provider-call line back. Only the turn watchdog thread
+   calls this, so `shown`, a volatile with the last notice, needs no lock."
+  [sid tid state shown now]
+  (let [notice
+        (provider-wait-notice state now)
+
+        started-ms
+        (get-in state [:attempt :started-ms])]
+
+    (cond notice (when (provider-wait-due? @shown notice started-ms now)
+                   (append-event! sid "turn.progress" (assoc notice :turn_id tid) {:store? false})
+                   (vreset! shown {:notice notice :started-ms started-ms :ms now}))
+          @shown (do (vreset! shown nil)
+                     (when (and (provider-in-flight? state)
+                                (= :tool-input (get-in state [:attempt :output-phase])))
+                       (let [{:keys [iteration reason]}
+                             (:attempt state)
+
+                             [type _ payload]
+                             (progress-chunk->event {:phase :provider-call
+                                                     :iteration iteration
+                                                     :reason reason
+                                                     :model (:model state)})]
+
+                         (append-event! sid type (assoc payload :turn_id tid) {:store? false})))))))
 
 (defonce ^:private turn-terminal-claims
   ;; `[sid tid]` -> the claim key of the run that owns the turn's one terminal
@@ -3296,6 +3487,11 @@
    cancelled. Entering the body takes microseconds, so a minute is pure slack."
   60000)
 
+(def ^:private TURN_WATCHDOG_TICK_MS
+  "Longest sleep of the turn watchdog between two checks. One second keeps the
+   provider wait notice on time."
+  1000)
+
 (defn- turn-stall-decision
   [{:keys [phase started? produced? call-output? first-output-timeout-ms stall-timeout-ms]} idle-ms]
   (let [owes-output?
@@ -3427,6 +3623,9 @@
    nobody landed one within this turn's [[cancel-terminal-grace-ms]] it lands
    `turn.failed` itself. Every `turn.started` therefore ends in a terminal event.
 
+   While the model of a provider attempt is silent, it also sends the provider
+   wait notice ([[publish-provider-wait!]]).
+
    Self-terminating: exits as soon as the turn no longer owes a terminal."
   [sid tid cancel-token stall]
   (let [check-ms (-> (min (long TURN_STALL_TIMEOUT_MS)
@@ -3434,7 +3633,8 @@
                           (long TURN_LAUNCH_TIMEOUT_MS))
                      (quot 8)
                      (max 25)
-                     (min 20000))]
+                     (min (long TURN_WATCHDOG_TICK_MS)))
+        shown-wait (volatile! nil)]
     (doto (Thread.
             ^Runnable
             (fn []
@@ -3478,7 +3678,8 @@
                              (Thread/sleep (cancel-terminal-grace-ms stall))
                              (when (turn-watchdog-live? sid tid cancel-token)
                                (fail-orphaned-turn! sid tid cancel-token reason)))
-                           (recur)))))
+                           (do (publish-provider-wait! sid tid stall-state shown-wait (util/now-ms))
+                               (recur))))))
                    (catch InterruptedException _ nil)
                    (catch Throwable t
                      (tel/log! :error ["gateway: turn watchdog failed" tid (ex-message t)]))))
@@ -3735,9 +3936,19 @@
                         (and streaming?
                              (not= phase :tool-preview)
                              (not (contains? @started-blocks block-id))
-                             (str/blank? cumulative))]
+                             (str/blank? cumulative))
 
-                    (when-not nothing-said?
+                        ;; A provider heartbeat repeats the cumulative text. Its empty
+                        ;; delta is no news, and channels that took it for output
+                        ;; cleared the provider wait notice on every keepalive.
+                        unchanged?
+                        (and streaming?
+                             (not (:done? chunk))
+                             (contains? @started-blocks block-id)
+                             (= (count cumulative) previous-len))]
+
+                    ;; `:tool-input` is a sign of life for the turn watchdog only.
+                    (when-not (or nothing-said? unchanged? (= phase :tool-input))
                       (when streaming?
                         (when (and (not= phase :tool-preview)
                                    (not (contains? @started-blocks block-id)))

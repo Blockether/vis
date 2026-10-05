@@ -104,6 +104,7 @@ import type {
   CouncilRequest,
 } from '../lib/types';
 import type { GatewayClient } from '../lib/gateway';
+import { providerWaitDetail, type ProviderWait } from '../lib/running-turn';
 import { speechOutput } from '../lib/speech';
 import type { SpokenTrack } from '../lib/speech';
 import { ExpandableImage } from './ImageViewer';
@@ -3823,12 +3824,15 @@ function runningTurnPhase(turn: TranscriptTurn, agentName: string): string {
 function TurnPhaseLine({
   phase,
   startedAt,
+  wait,
   still = false,
   terminal = false,
 }: {
   phase: string;
   /** When the work in `phase` began. Without it the slot carries NO clock. */
   startedAt?: number;
+  /** The silence of the model under a ticking phase: how long, and what Svar does next. */
+  wait?: ProviderWait;
   still?: boolean;
   /** A final phase keeps the same slot but has no in-progress punctuation. */
   terminal?: boolean;
@@ -3861,6 +3865,14 @@ function TurnPhaseLine({
           {ticking && elapsed ? <>&nbsp;&nbsp;{elapsed}</> : null}
         </span>
       </div>
+      {ticking && wait ? (
+        <div
+          className="mt-1 truncate whitespace-nowrap pl-[3ch] font-mono text-ui text-footer-muted"
+          aria-hidden="true"
+        >
+          {providerWaitDetail(wait, now)}
+        </div>
+      ) : null}
       <span className="sr-only" role="status">
         {phase}
       </span>
@@ -4276,6 +4288,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   agentName = 'Vis',
   streaming = false,
   progressLabel,
+  providerWait,
   pending,
   startedAt,
   settled = false,
@@ -4291,6 +4304,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   agentName?: string;
   streaming?: boolean;
   progressLabel?: string;
+  /** The silence of the model in the running provider attempt. */
+  providerWait?: ProviderWait;
   /** A settled running-turn bubble is waiting for its authoritative transcript row. */
   pending?: string;
   startedAt?: number;
@@ -4407,7 +4422,11 @@ export const AssistantMessage = memo(function AssistantMessage({
           </div>
         )}
         {streaming ? (
-          <TurnPhaseLine phase={progressLabel ?? `${agentName} is working`} startedAt={startedAt} />
+          <TurnPhaseLine
+            phase={progressLabel ?? `${agentName} is working`}
+            startedAt={startedAt}
+            wait={providerWait}
+          />
         ) : cancelled ? (
           <TurnPhaseLine phase="Cancelled by user." terminal />
         ) : pending ? (

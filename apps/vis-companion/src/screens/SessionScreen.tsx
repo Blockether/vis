@@ -371,6 +371,9 @@ function runningTurnPhase(
       return `${agentName} is running: ${compactLabel(progress.command ?? '', 'command')}`;
     case 'attachment-transcription':
       return `${agentName} is transcribing recordings (up to 5 min)`;
+    case 'provider-wait':
+      // The model is silent. The line under this one says for how long and what comes next.
+      return `${agentName} is waiting for ${progress.model ?? 'the provider'} ${suffix}`;
     case 'provider-call':
       // Naming the model is what makes this line change during the longest
       // silence of the turn: "sent" -> "calling claude-opus-5" -> "thinking".
@@ -4541,6 +4544,7 @@ export function SessionScreen({
             watching,
             session?.agent_name ?? 'Vis',
           )}
+          providerWait={connected && !runningTurn.cancelling ? runningTurn.progress?.wait : undefined}
           startedAt={runningTurn.startedAt}
           client={client}
           sid={sid}

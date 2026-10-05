@@ -1299,6 +1299,24 @@
             (event-get event :model)
             (assoc :model (str (event-get event :model))))
 
+          ;; The model of the live provider attempt is silent. `:received-ms` lets the
+          ;; spinner move both of its clocks between two notices.
+          "provider-wait"
+          (cond-> {:phase :provider-wait
+                   :iteration iteration
+                   :silent-ms (event-get event :silent-ms)
+                   :awaiting-output? (boolean (event-get event :awaiting-output))
+                   :received-ms (System/currentTimeMillis)}
+            (event-get event :model)
+            (assoc :model (str (event-get event :model)))
+
+            (event-get event :connection)
+            (assoc :connection (wire-keyword (event-get event :connection)))
+
+            (event-get event :deadline-in-ms)
+            (merge {:deadline-in-ms (event-get event :deadline-in-ms)
+                    :deadline-action (wire-keyword (event-get event :deadline-action))}))
+
           "response-parse"
           {:phase :response-parse :iteration iteration}
 

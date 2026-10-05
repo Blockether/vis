@@ -3943,6 +3943,71 @@
         (expect (str/includes? (spinner [{:activity :provider-call}])
                                "Vis is calling the provider (iter 1)")))))
 
+;; Claude Code and Hermes say after about 20s that they still wait for the model.
+;; The Vis line said "calling the provider" for minutes, so a slow provider looked
+;; like a slow Vis.
+(defdescribe
+  spinner-provider-wait-test
+  (let [received
+        1700000000000
+
+        spinner
+        (fn [iterations now-ms]
+          (first (filter #(str/includes? (str %) "Esc to cancel")
+                         (:lines (render/progress->lines-data {:iterations iterations}
+                                                              200
+                                                              {}
+                                                              {:now-ms now-ms
+                                                               :turn-start-ms received})))))
+
+        waiting
+        (fn [chunk]
+          (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)]
+            (on-chunk {:phase :provider-call :iteration 1 :reason :tool-result :model "claude-x"})
+            (on-chunk (merge {:phase :provider-wait :iteration 1 :received-ms received} chunk))
+            (get-timeline)))]
+
+    (it "says what Vis waits for and moves both clocks"
+        (let [timeline (waiting {:silent-ms 25000
+                                 :connection :alive
+                                 :awaiting-output? true
+                                 :deadline-in-ms 215000
+                                 :deadline-action :retry})]
+          (expect (str/includes? (spinner timeline received)
+                                 "Vis is waiting for claude-x (iter 1)"))
+          (expect (str/includes? (spinner timeline received)
+                                 "no response for 25s · connection alive · retry in 3m 35s"))
+          (expect (str/includes? (spinner timeline (+ received 5000))
+                                 "no response for 30s · connection alive · retry in 3m 30s"))))
+    (it "says when Svar ends the call instead of sending it again"
+        (expect (str/includes? (spinner (waiting {:silent-ms 21000
+                                                  :connection :silent
+                                                  :awaiting-output? false
+                                                  :deadline-in-ms 219000
+                                                  :deadline-action :timeout})
+                                        received)
+                               "no new output for 21s · connection silent · timeout in 3m 39s")))
+    (it "replaces the retry error and ends with the next model output"
+        (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)]
+          (on-chunk {:phase :provider-call :iteration 1 :model "claude-x"})
+          (on-chunk {:phase :provider-retry-reset
+                     :iteration 1
+                     :attempt 1
+                     :max-retries 2
+                     :delay-ms 2000
+                     :error {:type :llm.routing/provider-retry}})
+          (expect (str/includes? (spinner (get-timeline) received) "Vis is retrying"))
+          (on-chunk {:phase :provider-wait
+                     :iteration 1
+                     :silent-ms 20000
+                     :awaiting-output? true
+                     :received-ms received})
+          (expect (str/includes? (spinner (get-timeline) received)
+                                 "Vis is waiting for claude-x (iter 1)"))
+          (expect (not (str/includes? (spinner (get-timeline) received) p/INLINE_ERR_ON)))
+          (on-chunk {:phase :reasoning :iteration 1 :thinking "Now I see."})
+          (expect (not (str/includes? (spinner (get-timeline) received) "waiting for")))))))
+
 ;; Regression, issue #152: a run SHOWING its work on the band was reported as
 ;; "Vis is thinking (iter 30)... 10m 1s" — the live panel and its Interrupt sat
 ;; right under that row, so the ticker read as a hang for the whole run.
