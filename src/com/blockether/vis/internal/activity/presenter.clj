@@ -302,7 +302,7 @@
 
 (def ^:private summary-only-results
   "Built-ins whose successful Activity carries only a summary, not argument or result bodies."
-  #{"cat" "grep"})
+  #{"cat" "grep" "fold_session"})
 
 (def ^:private tool-headlines
   "Each built-in owns its start headline, settled headline and start visibility."
@@ -312,6 +312,7 @@
    "doc" ["Read documentation" "Read documentation" false]
    "apropos" ["Find symbols" "Found symbols" false]
    "defs" ["Read definitions" "Read definitions" false]
+   "fold_session" ["Fold steps" "Folded steps" false]
    "shell" ["Run command" "Started command" true]
    "_shell-logs" ["Read command output" "Read command output" false]
    "_shell-wait" ["Wait for command" "Command finished" true]
@@ -383,6 +384,20 @@
          (when (or (> characters limit) (next lines)) "…"))))
 
 (defn summary-line [parts] (str/join " · " (remove str/blank? parts)))
+
+(defn- fold-summary
+  "The folded key and its removal estimate from a fold receipt, without the gist or budgets."
+  [text]
+  (let [receipt
+        (first (str/split (or text "") #" → " 2))
+
+        [head & notes]
+        (str/split receipt #" · ")]
+
+    (if (str/starts-with? head "folded ")
+      (summary-line (cons (subs head (count "folded "))
+                          (filter #(re-find #"^(estimated |removal estimate)" %) notes)))
+      "Nothing to fold")))
 
 (defn- draft-summary
   [op value]
@@ -853,6 +868,7 @@
                                     (str " · lines " (first read-lines) "–" (last read-lines))))
                 (contains? #{"doc" "defs" "patch" "shell"} op) path
                 (= op "grep") (or (first (str/split-lines (or text ""))) "")
+                (= op "fold_session") (fold-summary text)
                 (str/starts-with? op "draft_") (draft-summary op value)
                 (= op "update_goal")
                 (summary-line [(if-let [status (field value "status")]

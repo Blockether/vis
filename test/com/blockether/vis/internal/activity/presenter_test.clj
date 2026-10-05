@@ -164,6 +164,29 @@
                    (expect (true? (:show-start declared))))))
 
 (defdescribe
+  fold-session-presentation-test
+  (it "shows only the folded key and the removal estimate, never the gist or the budgets"
+      (doseq [[text summary]
+              [[(str
+                  "folded through t1/i2 · estimated removal ~15k tokens · last input 42k measured "
+                  "tokens · operating budget 70k · model limit 96k → private gist")
+                "through t1/i2 · estimated removal ~15k tokens"]
+               [(str "folded t1/i1 · removal estimate unavailable · provider net change pending in "
+                     "request health after the next response")
+                "t1/i1 · removal estimate unavailable"] ["folded t1/i1 → private gist" "t1/i1"]
+               ["fold_session: nothing to fold — the key is a string" "Nothing to fold"]]]
+        (let [row (get-in (result-fixture [[:fold_session "t1/i1" text nil]]) ["rows" 0])]
+          (expect (= {"headline" "Folded steps" "summary" summary "content" []}
+                     (get row "presentation")))
+          (expect (not (contains? row "result_summary")))
+          (expect (not (str/includes? (pr-str row) "private gist"))))))
+  (it "declares an end-only fold that carries only its summary"
+      (let [declared (presenter/for-tool :fold_session)]
+        (expect (= "Fold steps" (:headline declared)))
+        (expect (true? (:summary-only declared)))
+        (expect (false? (:show-start declared))))))
+
+(defdescribe
   compact-built-in-results-test
   (it
     "keeps routine draft and session outcomes on the summary line"

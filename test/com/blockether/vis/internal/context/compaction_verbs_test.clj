@@ -12,9 +12,11 @@
         and that a broader re-fold supersedes a finer one.
      4. Session-bag reflection — fold counts and the diagnostic ledger are not
         echoed in the per-iteration model-facing utilization delta."
-  (:require [com.blockether.vis.internal.content :as content]
+  (:require [com.blockether.vis.internal.activity.core :as activity]
+            [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.context.engine :as eng]
             [com.blockether.vis.internal.context.renderer :as cr]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.compaction :as compaction]
@@ -1648,6 +1650,46 @@
         (expect (= "folded t1/i1 → g" out))
         (expect (not (str/includes? out "ntr")))
         (expect (not (str/includes? out "more results"))))))
+
+(defdescribe
+  fold-session-activity-test
+  ;; A fold had no Activity row, so its step showed raw execution with the whole gist.
+  (it "records one end-only Activity row with the folded key and the estimated removal"
+      (let [events
+            (atom [])
+
+            out
+            (binding [extension/*tool-event-sink* #(swap! events conj %)]
+              ((get (compaction-verbs (priced-ctx)) 'fold-session) "-t1/i2" "private gist"))
+
+            row
+            (first (:rows (activity/presentation (activity/replay @events))))]
+
+        (expect (str/starts-with? out "folded through t1/i2 · estimated removal ~15k tokens"))
+        (expect (= [:start :terminal] (mapv :phase @events)))
+        (expect (false? (:show-start (first @events))))
+        (expect (= "succeeded" (:state row)))
+        (expect (= {"headline" "Folded steps"
+                    "summary" "through t1/i2 · estimated removal ~15k tokens"
+                    "content" []}
+                   (:presentation row)))
+        (expect (not (str/includes? (pr-str @events) "private gist")))))
+  (it "records a refused fold as a failed row and still throws the same refusal"
+      (let [events
+            (atom [])
+
+            error
+            (binding [extension/*tool-event-sink* #(swap! events conj %)]
+              (try ((get (compaction-verbs (priced-ctx)) 'fold-session) "bogus" "gist")
+                   nil
+                   (catch clojure.lang.ExceptionInfo e e)))
+
+            row
+            (first (:rows (activity/presentation (activity/replay @events))))]
+
+        (expect (str/starts-with? (ex-message error) "fold_session: not a step key"))
+        (expect (= "failed" (:state row)))
+        (expect (str/includes? (:error-summary (last @events)) "not a step key")))))
 
  ;; ── layer 5d: Svar's canonical structured-message counter ──────────────────
 

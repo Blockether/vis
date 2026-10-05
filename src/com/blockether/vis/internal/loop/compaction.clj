@@ -7,9 +7,11 @@
   (:require [charred.api :as json]
             [clojure.set :as set]
             [clojure.string :as str]
+            [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.internal.context.engine :as ctx-engine]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.context.renderer :as ctx-renderer]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [taoensso.telemere :as tel]))
 
@@ -89,7 +91,7 @@
       ;; Preserve the original selector shape, not its expanded scope list.
       "session_summaries" (into [] (keep-indexed #(when (contains? kept %1) %2)) candidates))))
 
-(defn compaction-verbs
+(defn- fold-verbs
   "Build the model-facing compaction verb bound into the sandbox as
    `fold_session`, closing over `ctx-atom`. It records a `:session/summaries`
    intent the wire applies via `apply-summaries`, and returns a visible
@@ -381,3 +383,24 @@
                       " · provider net change pending in request health after the next response")
                     (when g (str " → " g)))))
            (str "fold_session: nothing to fold — " ctx-engine/fold-key-grammar))))}))
+
+(defn- observed-fold
+  "Run `fold-session` as an observed tool, so each call records one end-only Activity
+   row. The receipt and every refusal reach Python unchanged."
+  [fold-session]
+  (let [entry {:ext.symbol/symbol 'fold-session
+               :ext.symbol/tag :mutation
+               :ext.symbol/activity (presenter/for-tool :fold_session)
+               :ext.symbol/fn (fn [& args]
+                                (extension/success {:result (apply fold-session args)}))}]
+    (fn [& args]
+      (extension/invoke-symbol-wrapper {:ext/name "foundation-compaction"}
+                                       entry
+                                       (vec args)
+                                       extension/*current-environment*))))
+
+(defn compaction-verbs
+  "Build the compaction verbs that the sandbox binds. `fold_session` records an
+   Activity row, so its step does not fall back to raw execution."
+  [ctx-atom & [session-rebase-atom checkpoint!]]
+  (update (fold-verbs ctx-atom session-rebase-atom checkpoint!) 'fold-session observed-fold))
