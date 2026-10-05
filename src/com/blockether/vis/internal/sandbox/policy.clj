@@ -328,12 +328,14 @@
 
 (defn no-search-roots
   "Roots excluded from the DEFAULT grep sweep; explicit paths still reach
-   them. With the jail disabled, host filesystem roots are excluded so granting
+   them. Catalog `search: false` roots stay excluded with the jail on or off. With
+   the jail disabled, host filesystem roots are also excluded so granting
    unrestricted explicit access does not make an unscoped grep crawl the machine."
   [policy]
-  (if (:jail-enabled policy)
-    (vec (get-in policy [:process-jail :no-search]))
-    (host-filesystem-roots)))
+  (let [configured (get-in policy [:process-jail :no-search])]
+    (if (:jail-enabled policy)
+      (vec configured)
+      (vec (distinct (concat configured (host-filesystem-roots)))))))
 
 (defn access-view
   "Build the string-keyed model context from the exact enforcement snapshot.

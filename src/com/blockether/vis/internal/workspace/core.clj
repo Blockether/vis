@@ -207,8 +207,9 @@
    call. Includes the session's OWN draft pair, the per-root clones minted for
    that draft, configured workspace catalog entries, and immutable read/write
    roots from the environment security snapshot. Live workspace state takes
-   precedence over the original environment snapshot. With the jail disabled, host
-   filesystem roots are granted and marked no-search so explicit paths are
+   precedence over the original environment snapshot. Catalog `search: false` roots
+   are marked no-search with the jail on or off. With the jail disabled, host
+   filesystem roots are also granted and marked no-search so explicit paths are
    unrestricted without making default searches crawl the machine.
 
    `:draft` carries the root's `workspace.filesystem` isolation policy. In a
@@ -274,10 +275,10 @@
           (concat host-roots))
 
         no-search
-        (if unrestricted?
-          (into #{} (keep normalize-root) host-roots)
-          (when environment?
-            (into #{} (keep normalize-root) (:security/no-search-roots env-or-roots))))
+        (when environment?
+          (into #{}
+                (keep normalize-root)
+                (concat host-roots (:security/no-search-roots env-or-roots))))
 
         entry
         (fn [trunk clone policy]

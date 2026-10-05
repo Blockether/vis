@@ -330,8 +330,11 @@
             (->> (java.io.File/listRoots)
                  (mapv #(.getCanonicalPath ^java.io.File %)))
 
+            vis-home
+            (.getPath (java.io.File. home ".vis"))
+
             catalog
-            [(.getPath sibling) (.getPath (java.io.File. home ".vis"))]
+            [(.getPath sibling) vis-home]
 
             view
             (policy/access-view snapshot [base])]
@@ -339,12 +342,16 @@
         (expect (false? (:jail-enabled snapshot)))
         (expect (false? (get view "is_jailed")))
         (expect (= (vec (distinct (concat catalog host-roots))) (policy/read-write-roots snapshot)))
-        (expect (= host-roots (policy/no-search-roots snapshot)))
+        (expect (= (vec (distinct (concat [vis-home] host-roots)))
+                   (policy/no-search-roots snapshot)))
         (expect (= (vec (distinct (concat ["~/vis" "~/sibling" "~/.vis"] host-roots)))
                    (get-in view ["filesystem" "read_write"])))
-        (expect (= host-roots (get-in view ["filesystem" "no_search"])))
+        (expect (= (vec (distinct (concat ["~/.vis"] host-roots)))
+                   (get-in view ["filesystem" "no_search"])))
         (expect (= (into (mapv (fn [root]
-                                 {:trunk root :clone root :draft :shared})
+                                 (cond-> {:trunk root :clone root :draft :shared}
+                                   (= vis-home root)
+                                   (assoc :no-search? true)))
                                catalog)
                          (mapv (fn [root]
                                  {:trunk root :clone root :draft :shared :no-search? true})
@@ -353,6 +360,44 @@
                      {:security-policy snapshot
                       :security/filesystem-roots (policy/read-write-roots snapshot)
                       :security/no-search-roots (policy/no-search-roots snapshot)})))))
+  (it "keeps `search: false` catalog roots out of the default search when the jail is disabled"
+      ;; Regression: a disabled jail replaced the catalog `search: false` roots with the host
+      ;; roots, so an unscoped grep crawled caches such as `~/.npm`.
+      (let [home
+            (.getCanonicalFile (.toFile (Files/createTempDirectory
+                                          "vis-policy-no-search"
+                                          (make-array java.nio.file.attribute.FileAttribute 0))))
+
+            base
+            (.getPath (doto (java.io.File. home "vis") .mkdirs))
+
+            cache
+            (.getPath (doto (java.io.File. home "cache") .mkdirs))
+
+            vis-home
+            (.getPath (java.io.File. home ".vis"))
+
+            snapshot
+            (policy/snapshot {"jail" {"enabled" false}
+                              "workspace" {"filesystem"
+                                           [{"id" "cache" "path" cache "search" false}]}}
+                             {:base-dir base :home (.getPath home)})
+
+            host-roots
+            (->> (java.io.File/listRoots)
+                 (mapv #(.getCanonicalPath ^java.io.File %)))
+
+            entries
+            (workspace/env-filesystem-roots
+              {:security-policy snapshot
+               :security/filesystem-roots (policy/read-write-roots snapshot)
+               :security/no-search-roots (policy/no-search-roots snapshot)})]
+
+        (expect (= (vec (distinct (concat [cache vis-home] host-roots)))
+                   (policy/no-search-roots snapshot)))
+        (expect (= (vec (distinct (concat ["~/cache" "~/.vis"] host-roots)))
+                   (get-in (policy/access-view snapshot [base]) ["filesystem" "no_search"])))
+        (expect (true? (:no-search? (first (filter #(= cache (:trunk %)) entries)))))))
   (it
     "keeps a stable generation for equivalent snapshots and changes it with policy"
     (let [base
