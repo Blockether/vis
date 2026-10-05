@@ -17,7 +17,6 @@
             [com.blockether.vis.internal.extension.client :as client-extensions]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.manifest :as manifest]
-            [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.internal.loop.compaction :as compaction]
             [com.blockether.vis.internal.loop.python-exec :as python-exec]
             [com.blockether.vis.internal.loop.router :as loop-router]
@@ -446,14 +445,9 @@
                            ;; worker pool runs the thunks, because a Python
                            ;; callable can only be called from inside the
                            ;; interpreter, never from a host thread.
-                           compaction
-                           ;; Canonical stateful-resource lifecycle:
-                           ;; `resource_stop(id)` (B-dispatch — act by id;
-                           ;; ctx advertises can_stop). Session-scoped so the
-                           ;; agent only touches THIS session's resources.
                            ;; No context mutator or introspect
                            ;; bindings are installed here.
-                           (resources/sandbox-bindings session-id))
+                           compaction)
             ;; Security configuration is resolved exactly once per environment; it never
             ;; re-reads model-writable vis.yml mid-life. `/reload` bumps
             ;; `policy-reload-epoch`, so each live env recycles at its next turn and

@@ -2345,16 +2345,14 @@
 
      (authorize-origin! env session id)
      (when-not entry
-       (throw (ex-info (str "No background shell '"
-                            id
+       (throw (ex-info (str "No background shell '" id
                             "' in this session — start one with"
-                            " await shell({\"command\": \"…\", \"wait\": 0, \"id\": id});"
-                            " live ids are listed in resources.")
+                            " await shell({\"command\": \"…\", \"wait\": 0, \"id\": id}).")
                        {:type ::unknown-bg-id :id id})))
      (when-not (live-entry? entry)
        (throw (ex-info (str "Background shell '" id
                             "' has exited — nothing to send"
-                            " to. Its logs stay readable until resource_stop.")
+                            " to. Read its output with sh.logs(offset=0).")
                        {:type ::bg-exited :id id})))
      (let [send-fn (:send entry)]
        (when (nil? send-fn)
@@ -2392,11 +2390,8 @@
           (if (some? v) v (recur (rest ks))))))))
 
 (defn- shell-stop-impl
-  "`sh.stop()` — the TERMINAL lifecycle stage. Stopping used to be
-   reachable only through `resource_stop`, so the end of a background shell's life
-   was undiscoverable from the thing that started it; it is now a method on the
-   handle. Routes through
-   `resources/stop!` — the single stop path the footer and `resource_stop` share —
+  "`sh.stop()` — the TERMINAL lifecycle stage. Routes through
+   `resources/stop!` — the single stop path that the footer shares —
    so the process tree dies and the registry entry disappears exactly once.
    The log stays on disk and remains readable by id."
   [env id]
@@ -2418,9 +2413,7 @@
           [(bg-entry session id) (resources/stop! session id)])]
 
     (when (= :unknown (:result r))
-      (throw (ex-info (str "No background shell '" id
-                           "' in this session — nothing to stop;"
-                           " live ids are listed in resources.")
+      (throw (ex-info (str "No background shell '" id "' in this session — nothing to stop.")
                       {:type ::unknown-bg-id :id id})))
     (when (= :error (:result r))
       (throw (ex-info (str "Background shell '" id "' failed to stop: " (:message r))

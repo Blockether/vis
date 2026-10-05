@@ -92,7 +92,6 @@
     [com.blockether.vis.internal.provider.service :as providers]
     [com.blockether.vis.internal.session.model :as session-model]
     [com.blockether.vis.internal.extension.registry :as registry]
-    [com.blockether.vis.internal.gateway.resources :as resources]
     [com.blockether.vis.internal.channel.slash :as slash]
     [com.blockether.vis.internal.channel.theme :as theme]
     [com.blockether.vis.internal.config.toggles :as toggles]
@@ -714,19 +713,6 @@
              [create-python-context env/create-python-context]
              [set-python-binding! env/set-python-binding!]
              [bind-and-bump! env/bind-and-bump!])
-
-;; Stateful-resource registry — the canonical interface owners use to register a
-;; long-lived thing vis manages (nREPL, daemon, watch…). Session-scoped: every
-;; verb takes the owning session id. See `internal.gateway.resources`.
-
-(import-vars [register-resource! resources/register!]
-             [update-resource! resources/update!]
-             [unregister-resource! resources/unregister!]
-             [list-resources resources/list-resources]
-             [get-resource resources/get-resource]
-             [resource-logs resources/logs]
-             [stop-resource! resources/stop!]
-             [stop-session-resources! resources/stop-all!])
 
 ;; Turn runtime / iteration loop / environment / sessions
 (import-vars [turn! turn/turn!]

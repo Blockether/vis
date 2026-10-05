@@ -9671,6 +9671,17 @@
                              (expect (not (.isLocked ^java.util.concurrent.locks.ReentrantLock
                                                      (:lock entry)))))))))
 
+(defdescribe session-sandbox-bindings-test
+             (it "binds no resource_stop: sh.stop() ends a background shell"
+                 (let [environment (loop-env/create-environment ::router {:db :memory})]
+                   (try (let [result
+                              (python-exec/execute-code
+                                environment
+                                "print('resource_stop' in globals(), 'fold_session' in globals())")]
+                          (expect (nil? (:error result)) (pr-str result))
+                          (expect (= "False True" (str/trim (str (:stdout result))))))
+                        (finally (loop-env/dispose-environment! environment))))))
+
 (defdescribe reload-unbuilt-sandbox-test
              (it "does not start a worker just to close it"
                  (with-redefs [loop-env/cache

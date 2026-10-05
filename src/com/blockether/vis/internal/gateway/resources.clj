@@ -321,7 +321,7 @@
 
 (defn stop!
   "Atomically claim a resource and run its `:stop-fn`.
-   THE single stop path — the agent tool and the footer both land here, always
+   THE single stop path — `sh.stop()` and the footer both land here, always
    scoped to `session` so no session can stop another's resource. A successful
    stop leaves the claimed generation unregistered. If its callback throws, that
    generation is restored only when the id is still vacant, preserving both a
@@ -451,36 +451,3 @@
   (let [result (teardown-sessions! (constantly true))]
     (reset! registry {})
     result))
-
-;; Agent surface — B-dispatch. The sandbox gets ONE engine-builtin tool,
-;; CLOSED OVER the owning session, that acts on a resource purely by its `:id`.
-;; The id comes from the caller that started the resource — a `shell` handle —
-;; never from ctx, which carries no resource at all.
-;; Wired by the loop via env/set-python-binding!,
-;; which snake-cases the symbol: `resource-stop` -> `resource_stop(id)`.
-
-(defn- ->model-result
-  "Project an internal `stop!` result map (`{:result :stopped
-   :id ...}`) to a strings-only payload for the model-facing tools — the return
-   value crosses the Python boundary, so nothing keyword may survive."
-  [{:keys [result id message]}]
-  (cond-> {"result" (name result) "id" (str id)}
-    message
-    (assoc "message" message)))
-
-(defn- ->id
-  "Normalize a model-supplied resource id. The tool is documented as taking a
-   positional string, but a model frequently calls `resource_stop({\"id\": x})`;
-   sandbox arguments arrive JSON-keyed, so unwrap that single-key map to its id
-   value and the call resolves instead of stringifying to a bogus `{id x}` literal."
-  [id]
-  (if (map? id) (str (or (get id "id") id)) (str id)))
-
-(defn sandbox-bindings
-  "Map of engine-builtin tool fns the loop merges into `session`'s agent sandbox.
-   Closures bind the session so the tools are session-scoped by construction.
-   Returns are projected to strings-only (`->model-result`) since they cross the
-   boundary as the tool result; `stop!` stays keyword-keyed for internal callers."
-  [session]
-  {'resource-stop (fn [id]
-                    (->model-result (stop! session (->id id))))})
