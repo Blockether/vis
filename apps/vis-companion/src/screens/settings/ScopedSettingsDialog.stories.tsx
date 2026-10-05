@@ -58,11 +58,11 @@ export const Catalog: Story = {
 };
 
 const engine = (name: string): Toggle => ({
-  id: `${name}_engine`, label: name, description: 'Auto detects applicability; On stays active; Off denies tools.',
+  id: `engines_${name}`, label: name, description: 'Auto detects applicability; On stays active; Off denies tools.',
   type: 'enum', choices: ['auto', 'on', 'off'], value: 'auto', scopes: ['global', 'group'], source: 'global', is_override: false,
 });
 
-/** Every extension stands under Extensions with its install scope, never its file path. */
+/** Every extension stands under Extensions once, with its install scope, never its file path. */
 export const Extensions: Story = {
   args: {
     client: fixtureClient({
@@ -97,6 +97,11 @@ export const Extensions: Story = {
     await expect(scope('vis-optmem')).toBe('global');
     await expect(scope('vis-spel')).toBe('global');
     await expect(scope('review.py')).toBe('project');
+    // The Auto/On/Off choice is the extension's own row, and a skill drops the extension prefix.
+    await expect(within(extensions!).getAllByText('vis-spel')).toHaveLength(1);
+    await expect(within(extensions!).getByRole('switch', { name: /^browser:/ })).toBeInTheDocument();
+    // The band explains the Auto/On/Off choice once.
+    await expect(within(extensions!).getAllByText(/^Auto detects applicability/)).toHaveLength(1);
     await expect(extensions).not.toHaveTextContent('.vis/extensions');
   },
 };

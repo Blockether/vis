@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { GatewayClient, GatewayError } from '../../lib/gateway';
 import { DEFAULT_SPEECH_PREFS } from '../../lib/storage';
-import type { SettingsResponse, SettingsTarget } from '../../lib/types';
+import type { SettingsResponse, SettingsTarget, Toggle } from '../../lib/types';
 import { MachineSettings } from './MachineSettings';
 import { ScopedSettingsDialog } from './ScopedSettingsDialog';
 
@@ -167,4 +167,56 @@ it('reloads machine extensions from machine settings and explains an older gatew
   expect(
     await within(header).findByText('This gateway does not support extension reload. Update Vis on that machine.'),
   ).toBeInTheDocument();
+});
+it('names each extension once, on the row of its Auto/On/Off choice', async () => {
+  // Settings showed each extension name twice: as a heading and again as its choice row.
+  const engine = (name: string): Toggle => ({
+    id: `engines_${name}`,
+    label: name,
+    type: 'enum',
+    choices: ['auto', 'on', 'off'],
+    value: 'auto',
+    description: 'Auto detects applicability; On stays active; Off denies tools.',
+    source: 'global',
+  });
+  const target: SettingsTarget = { scope: 'project', target_id: 'p1', label: 'Workspace' };
+  const client = new GatewayClient({ url: 'http://127.0.0.1:7890' });
+  vi.spyOn(client, 'cachedSettings').mockReturnValue(null);
+  vi.spyOn(client, 'settings').mockResolvedValue({
+    revision: 'extensions-2',
+    scope: 'project',
+    target_id: 'p1',
+    groups: [
+      {
+        id: 'extension:vis-optmem',
+        title: 'vis-optmem',
+        extension: { name: 'vis-optmem', origin: 'global', status: 'loaded' },
+        toggles: [engine('vis-optmem')],
+      },
+      {
+        id: 'extension:vis-spel',
+        title: 'vis-spel',
+        extension: { name: 'vis-spel', origin: 'global', status: 'loaded' },
+        toggles: [
+          engine('vis-spel'),
+          { id: 'skills_1', label: 'vis-spel/browser', type: 'boolean', enabled: true, source: 'global' },
+        ],
+      },
+    ],
+  });
+  vi.spyOn(client, 'cachedMcpServers').mockReturnValue([]);
+  vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
+  render(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
+
+  await screen.findByRole('heading', { name: 'vis-spel' });
+  const { band, names, scope } = extensionsBand(4);
+  expect(names).toEqual(['vis-optmem', 'vis-spel']);
+  expect(within(band).getAllByText('vis-spel')).toHaveLength(1);
+  expect(scope('vis-spel')).toBe('global');
+  const spel = within(band).getByRole('region', { name: 'vis-spel' });
+  expect(within(spel).getByRole('combobox', { name: 'vis-spel' })).toBeInTheDocument();
+  expect(within(spel).getByRole('switch', { name: 'browser: on' })).toBeInTheDocument();
+  expect(band).not.toHaveTextContent('vis-spel/browser');
+  // The band explains the Auto/On/Off choice once, not on each extension.
+  expect(within(band).getAllByText(/^Auto detects applicability/)).toHaveLength(1);
 });

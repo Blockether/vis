@@ -3454,7 +3454,8 @@
 (defn- extension-rows
   "One extension as settings rows. Its first row is the Auto/On/Off choice of the extension,
    or only its name when it has no such choice. That row carries the install scope. A load
-   failure follows it, and the other settings stand one level in."
+   failure follows it, and the other settings stand one level in, without the extension name
+   in front of their own."
   [group rows]
   (let [{:strs [title extension]}
         group
@@ -3475,7 +3476,15 @@
         (extension-scope extension)
 
         member
-        #(assoc % :extension-name ext-name)]
+        #(assoc % :extension-name ext-name)
+
+        ;; A packaged skill repeats the extension name, for example `vis-spel/browser`.
+        member-label
+        (fn [label]
+          (let [prefix (str ext-name "/")]
+            (if (and (str/starts-with? label prefix) (> (count label) (count prefix)))
+              (subs label (count prefix))
+              label)))]
 
     (when (or (seq rows) (seq info))
       (concat [(member
@@ -3489,7 +3498,10 @@
                    scope
                    (assoc :tag scope)))]
               (map member info)
-              (map #(member (assoc (catalog-setting-row %) :depth 1)) (remove engine? rows))))))
+              (map #(member (-> (catalog-setting-row %)
+                                (update :label member-label)
+                                (assoc :depth 1)))
+                   (remove engine? rows))))))
 
 (defn- catalog-toggle-rows
   "Project the gateway catalog without repeating metadata or reset actions in the list. An
@@ -4983,10 +4995,12 @@
 (defn- settings-header-row? [{:keys [type]}] (contains? #{:section :subsection} type))
 
 (defn- settings-row-search-text
-  "Lowercased haystack for a row's search match: its label + description, and those of
-   its header button."
-  [{:keys [label description source button]}]
-  (str/lower-case (str/join " " [label description source (:label button) (:description button)])))
+  "Lowercased haystack for a row's search match: its label + description, the catalog label
+   that a shorter label replaces, and the label + description of its header button."
+  [{:keys [label description source button setting]}]
+  (str/lower-case (str/join " "
+                            [label description source (get setting "label") (:label button)
+                             (:description button)])))
 
 (defn- filter-settings-rows
   "Live-filter settings `rows` by `query` (case-insensitive substring over

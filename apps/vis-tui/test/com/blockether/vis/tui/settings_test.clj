@@ -716,8 +716,7 @@
 
       (expect (= [[:section "Planning" nil nil] [:registry-toggle "Plans" nil nil]
                   [:section "Extensions" nil nil] [:registry-toggle "foundation-mcp" nil nil]
-                  [:registry-toggle "vis-spel" "global" nil]
-                  [:registry-toggle "vis-spel/browser" nil 1]]
+                  [:registry-toggle "vis-spel" "global" nil] [:registry-toggle "browser" nil 1]]
                  (mapv (juxt :type :label :tag :depth) rows)))
       ;; The one action stands inside the Extensions header rule, not on a row of its own.
       (expect (= "Reload" (:label (:button (nth rows 2)))))
@@ -727,10 +726,14 @@
                  (mapv (juxt :label :count) (#'dlg/settings-toc rows 0))))
       ;; The choice row is the extension's own row, so its name shows once.
       (expect (= 1 (count (filter #(str/includes? % "foundation-mcp") lines))))
+      (expect (= 1 (count (filter #(str/includes? % "vis-spel") lines))))
       (expect (re-find #"vis-spel\s+global\s+Auto" (str (line "vis-spel "))))
-      ;; A packaged skill stands one level in from its extension.
+      ;; A packaged skill stands one level in from its extension, without its name again.
       (expect (= (+ 2 (long (str/index-of (line "vis-spel ") "vis-spel")))
-                 (long (str/index-of (line "vis-spel/browser") "vis-spel/browser"))))
+                 (long (str/index-of (line " browser") "browser"))))
+      ;; A search for the whole skill name still finds the shorter row.
+      (expect (= ["Extensions" "vis-spel" "browser"]
+                 (mapv :label (#'dlg/filter-settings-rows rows "vis-spel/browser"))))
       ;; A narrow pane drops the scope before it cuts a name.
       (let [narrow (str/split-lines (cap/frame-text (capture-settings rows [:esc] :cols 48)))]
         (expect (some #(re-find #"◆ vis-spel\s" %) narrow))

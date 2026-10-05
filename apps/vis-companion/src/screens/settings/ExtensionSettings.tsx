@@ -2,7 +2,7 @@ import { useId, useState, type ReactNode } from 'react';
 import { RefreshIcon } from '../../components/icons';
 import { Banner, IconButton, Text } from '../../components/ui';
 import { GatewayError, type GatewayClient } from '../../lib/gateway';
-import type { SettingsTarget, ToggleGroup } from '../../lib/types';
+import type { SettingsTarget, Toggle, ToggleGroup } from '../../lib/types';
 import { SettingsPanel } from './SettingsLayout';
 
 /** Extension sections stand under Extensions. Older gateways do not mark them. */
@@ -37,38 +37,70 @@ export function ExtensionNotice({ group }: { group: ToggleGroup }) {
 }
 
 /**
- * One extension under the Extensions heading: its name, its scope, a load error and its
- * settings. The left rail draws the depth, so the name never reads as a band of its own.
+ * The row that names an extension: its label is the heading, with the install scope beside it.
+ * The extension's Auto/On/Off choice is this row, so the name shows once.
+ */
+export interface SettingHead {
+  id: string;
+  level: 4 | 5;
+  scope?: 'project' | 'global';
+}
+
+/** The Auto/On/Off choice of an optional tool extension. The gateway names it after the extension. */
+export function isEngineToggle(toggle: Toggle): boolean {
+  return toggle.id.startsWith('engines_');
+}
+
+/** A packaged skill repeats its extension's name, for example `vis-spel/browser` under `vis-spel`. */
+function memberLabel(group: ToggleGroup, label: string): string {
+  const prefix = `${group.title}/`;
+  return label.startsWith(prefix) && label.length > prefix.length ? label.slice(prefix.length) : label;
+}
+
+/**
+ * One extension under the Extensions heading. Its first row names it and shows its scope: the
+ * Auto/On/Off choice, or only the name when the extension has no such choice. A load error
+ * follows, and the other settings stand one step in. The left rail draws the depth.
  */
 function ExtensionGroup({
   group,
   headingLevel,
-  children,
+  renderSetting,
 }: {
   group: ToggleGroup;
   headingLevel: 4 | 5;
-  children: ReactNode;
+  renderSetting: (toggle: Toggle, head?: SettingHead) => ReactNode;
 }) {
   const headingId = useId();
   const scope = extensionScope(group);
+  const engine = group.toggles.find(isEngineToggle);
+  const members = group.toggles.filter((toggle) => toggle !== engine);
   return (
     <section
       aria-labelledby={headingId}
       className="min-w-0 divide-y divide-dialog-edge border-l-2 border-dialog-edge"
     >
-      <header className="flex min-w-0 items-baseline gap-3 px-3 pb-1.5 pt-3 sm:px-4">
-        <Text
-          as={headingLevel === 4 ? 'h4' : 'h5'}
-          id={headingId}
-          variant="section"
-          className="min-w-0 flex-auto truncate"
-        >
-          {group.title}
-        </Text>
-        {scope && <Text variant="meta">{scope}</Text>}
-      </header>
+      {engine ? (
+        renderSetting(engine, { id: headingId, level: headingLevel, scope })
+      ) : (
+        <div className="flex min-w-0 items-baseline gap-3 px-3 py-2 sm:px-4">
+          <Text
+            as={headingLevel === 4 ? 'h4' : 'h5'}
+            id={headingId}
+            variant="label"
+            className="min-w-0 flex-auto truncate"
+          >
+            {group.title}
+          </Text>
+          {scope && <Text variant="meta">{scope}</Text>}
+        </div>
+      )}
       <ExtensionNotice group={group} />
-      {children}
+      {members.length > 0 && (
+        <div className="divide-y divide-dialog-edge ps-3 sm:ps-4">
+          {members.map((toggle) => renderSetting({ ...toggle, label: memberLabel(group, toggle.label) }))}
+        </div>
+      )}
     </section>
   );
 }
@@ -92,7 +124,7 @@ export function ExtensionsPanel({
   groups,
   hasActions = true,
   onRefresh,
-  renderSettings,
+  renderSetting,
 }: {
   client: GatewayClient;
   target?: SettingsTarget;
@@ -101,13 +133,15 @@ export function ExtensionsPanel({
   /** A search shows only the matching sections, without the reload button. */
   hasActions?: boolean;
   onRefresh: () => Promise<unknown>;
-  /** The setting rows of one extension; the dialog that saves them draws them. */
-  renderSettings: (group: ToggleGroup) => ReactNode;
+  /** One setting row; the dialog that saves it draws it. `head` marks the row that names its extension. */
+  renderSetting: (toggle: Toggle, head?: SettingHead) => ReactNode;
 }) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const scoped = Boolean(target && target.scope !== 'global');
   const headingLevel = scoped ? 3 : 4;
+  // Every Auto/On/Off choice has the same explanation, so the band shows it once, above the extensions.
+  const choiceNote = groups.flatMap((group) => group.toggles).find(isEngineToggle)?.description;
 
   const reload = async () => {
     setBusy(true);
@@ -147,10 +181,14 @@ export function ExtensionsPanel({
         ) : undefined
       }
     >
+      {choiceNote && <Text as="p" variant="description" className="break-words px-3 py-2 sm:px-4">{choiceNote}</Text>}
       {groups.map((group) => (
-        <ExtensionGroup key={group.id} group={group} headingLevel={headingLevel === 3 ? 4 : 5}>
-          {renderSettings(group)}
-        </ExtensionGroup>
+        <ExtensionGroup
+          key={group.id}
+          group={group}
+          headingLevel={headingLevel === 3 ? 4 : 5}
+          renderSetting={renderSetting}
+        />
       ))}
     </SettingsPanel>
   );

@@ -4,7 +4,7 @@ import type { GatewayClient } from '../../lib/gateway';
 import type { SettingValue, SettingsResponse, SettingsTarget, Toggle, ToggleGroup } from '../../lib/types';
 import { Banner, Button, CloseButton, DialogFrame, Input, Modal, Text } from '../../components/ui';
 import { McpServersPanel, SettingRow } from './MachineSettings';
-import { ExtensionsPanel, hasExtensionNotice, isExtensionGroup } from './ExtensionSettings';
+import { ExtensionsPanel, hasExtensionNotice, isExtensionGroup, type SettingHead } from './ExtensionSettings';
 import { SettingsPanel } from './SettingsLayout';
 
 type ScopedSettingsProps = {
@@ -81,9 +81,10 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
     );
   const matches = groups.reduce((count, group) => count + group.toggles.length, 0);
   const extensions = groups.filter(isExtensionGroup);
+  const row = (toggle: Toggle, head?: SettingHead) => <SettingRow key={toggle.id} toggle={toggle} head={head} busy={pending !== null}
+    onToggle={() => void save(toggle, 'toggle')} onPick={(value) => save(toggle, 'value', value)} onInherit={() => void save(toggle, 'inherit')} />;
   const rows = (group: ToggleGroup) => group.toggles.length > 0 && (
-    <div className="divide-y divide-dialog-edge">{group.toggles.map((toggle) => <SettingRow key={toggle.id} toggle={toggle} busy={pending !== null}
-      onToggle={() => void save(toggle, 'toggle')} onPick={(value) => save(toggle, 'value', value)} onInherit={() => void save(toggle, 'inherit')} />)}</div>
+    <div className="divide-y divide-dialog-edge">{group.toggles.map((toggle) => row(toggle))}</div>
   );
   const clearSearch = () => {
     setSearch('');
@@ -140,7 +141,7 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
                 {rows(group)}
               </SettingsPanel>)}
               {(!needle || extensions.length > 0) && <ExtensionsPanel client={client} target={owner} groups={extensions} hasActions={!needle}
-                onRefresh={reread} renderSettings={rows} />}
+                onRefresh={reread} renderSetting={row} />}
               {!needle && <McpServersPanel client={client} target={owner} />}
             </div>
           )}

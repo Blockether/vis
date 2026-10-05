@@ -52,7 +52,7 @@ import {
 import { NotificationsPanel } from './NotificationSettings';
 import { SpeechEnginesPanel, type SaveSpeechPrefs } from './SpeechSettings';
 import { FormLabel, SettingsPanel } from './SettingsLayout';
-import { ExtensionsPanel, isExtensionGroup } from './ExtensionSettings';
+import { ExtensionsPanel, isExtensionGroup, type SettingHead } from './ExtensionSettings';
 import { SettingField } from './SettingField';
 import { CouncilRooms } from './CouncilRooms';
 import { IMPROVE_MODE_LABELS, type ImproveMode } from '../../lib/improve';
@@ -294,9 +294,11 @@ export function lockNote(toggle: Toggle): string | null {
  * The same value row is used for gateway and scoped settings. Only scoped settings pass
  * `onInherit`: global settings are the root scope, so their rows show no provenance or reset.
  */
-export function SettingRow({ toggle, busy, onToggle, onPick, onInherit }: {
+export function SettingRow({ toggle, busy, head, onToggle, onPick, onInherit }: {
   toggle: Toggle;
   busy: boolean;
+  /** Only on the row that names an extension: the label is its heading, with its scope beside it. */
+  head?: SettingHead;
   onToggle: () => void;
   onPick: (value: SettingValue) => Promise<boolean>;
   onInherit?: () => void;
@@ -309,15 +311,17 @@ export function SettingRow({ toggle, busy, onToggle, onPick, onInherit }: {
       ) : toggle.type === 'number' || toggle.type === 'array' || toggle.type === 'object' ? (
         <ValueSetting key={`${toggle.id}:${JSON.stringify(toggle.value)}`} toggle={toggle} busy={busy} disabled={lock !== null} onSave={onPick} />
       ) : (
-        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-2 sm:px-4">
+        <div className={`grid min-w-0 grid-cols-[minmax(0,1fr)_auto] ${head ? 'items-center' : 'items-start'} gap-x-4 gap-y-2 px-3 py-2 sm:px-4`}>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <Text as="p" variant="label" className="break-words">{toggle.label}</Text>
+              <Text as={head ? (head.level === 4 ? 'h4' : 'h5') : 'p'} id={head?.id} variant="label" className="break-words">{toggle.label}</Text>
               {toggle.is_experimental && (
                 <span className="bg-thinking-surface px-1 font-mono text-ui text-warn">Experimental</span>
               )}
+              {head?.scope && <Text variant="meta" className="ms-auto">{head.scope}</Text>}
             </div>
-            {toggle.description && <Text as="p" variant="description" className="mt-0.5 break-words">{toggle.description}</Text>}
+            {/* The Extensions band explains the Auto/On/Off choice once, so the row that names an extension omits it. */}
+            {!head && toggle.description && <Text as="p" variant="description" className="mt-0.5 break-words">{toggle.description}</Text>}
           </div>
           {toggle.type === 'boolean' && <Switch className="self-center" label={toggle.label} isOn={!!toggle.enabled} isBusy={busy} disabled={busy || lock !== null} onClick={onToggle} />}
           {toggle.type === 'enum' && <EnumSetting toggle={toggle} busy={busy} disabled={lock !== null} onPick={(value) => void onPick(value)} />}
@@ -461,13 +465,14 @@ export function MachineSettings({
   }
 
   // A Vis band and an extension under Extensions draw and save their rows the same way.
+  const settingRow = (toggle: Toggle, head?: SettingHead) => (
+    <SettingRow key={toggle.id} toggle={toggle} head={head} busy={pending === toggle.id}
+      onToggle={() => void flip(toggle)} onPick={(value) => pick(toggle, value)} />
+  );
   const settingRows = (group: ToggleGroup) =>
     group.toggles.length > 0 && (
       <div className="divide-y divide-dialog-edge">
-        {group.toggles.map((toggle) => (
-          <SettingRow key={toggle.id} toggle={toggle} busy={pending === toggle.id}
-            onToggle={() => void flip(toggle)} onPick={(value) => pick(toggle, value)} />
-        ))}
+        {group.toggles.map((toggle) => settingRow(toggle))}
       </div>
     );
 
@@ -582,7 +587,7 @@ export function MachineSettings({
 
       {failure === null && groups !== null && (
         <ExtensionsPanel client={client} groups={groups.filter(isExtensionGroup)} onRefresh={load}
-          renderSettings={settingRows} />
+          renderSetting={settingRow} />
       )}
     </div>
   );
