@@ -27,6 +27,7 @@ from typing import (
     Annotated,
     Any,
     ClassVar,
+    Generic,
     Literal,
     Optional,
     Protocol,
@@ -38,6 +39,9 @@ from typing import (
     overload,
     runtime_checkable,
 )
+
+# A setting value: `bool` for a boolean setting, `str` for a choice setting.
+_SettingValue = TypeVar("_SettingValue", bool, str)
 
 
 @runtime_checkable
@@ -52,8 +56,8 @@ class Host(Protocol):
         """Validate a declaration and fill defaults from the contract schema."""
         ...
 
-    def setting(self, id: str, default: bool | str) -> bool | str:
-        """Read one setting from the current callback snapshot."""
+    def setting(self, id: str, default: _SettingValue) -> _SettingValue:
+        """Read one setting from the current callback snapshot, as the type of `default`."""
         ...
 
     def state_get(self, key: str) -> Any:
@@ -561,8 +565,9 @@ ActivityBlock: TypeAlias = (
 
 _ActivitySummaryFormat: TypeAlias = Literal["inline", "markdown"]
 _ActivityVerdict: TypeAlias = Literal["passed", "failed"]
-_SymbolTag: TypeAlias = Literal["observation", "mutation", "verification", "external"]
-_SYMBOL_TAGS = get_args(_SymbolTag)
+# The kind of work of one tool call. Annotate a tag in a variable with this type.
+SymbolTag: TypeAlias = Literal["observation", "mutation", "verification", "external"]
+_SYMBOL_TAGS = get_args(SymbolTag)
 
 
 @dataclass(frozen=True, slots=True)
@@ -819,19 +824,20 @@ _registration: dict[str, Any] = {"spec": None}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class Setting:
+class Setting(Generic[_SettingValue]):
     """Declare a boolean or choice setting shared by the app and TUI.
 
     `scopes` allows any non-empty combination of global, project, group and session.
     Omitting it uses the contract's global-only default. A project extension exists
     only in its project, so there `global` means the whole project. The setting shows
     in its extension's own settings section. `value()` reads the current callback's
-    response snapshot. Outside Vis, it returns the declared default.
+    response snapshot. Its type follows `default`: `bool` for a boolean setting, `str`
+    for a choice setting. Outside Vis, it returns the declared default.
     """
 
     id: str
     label: str
-    default: bool | str
+    default: _SettingValue
     type: str = "boolean"
     choices: Sequence[str] = ()
     scopes: Sequence[str] | None = None
@@ -873,7 +879,7 @@ class Setting:
             spec["description"] = self.description
         return spec
 
-    def value(self) -> bool | str:
+    def value(self) -> _SettingValue:
         """Read this setting in the current callback without changing any scope."""
         return _host.setting(self.id, self.default)
 
@@ -1912,7 +1918,7 @@ def _method_function(value: Any) -> Any:
 def method(
     fn: _Method,
     *,
-    tag: _SymbolTag = "observation",
+    tag: SymbolTag = "observation",
     is_hidden: bool = False,
     activity: Activity | None = None,
 ) -> _Method: ...
@@ -1922,7 +1928,7 @@ def method(
 def method(
     fn: None = None,
     *,
-    tag: _SymbolTag = "observation",
+    tag: SymbolTag = "observation",
     is_hidden: bool = False,
     activity: Activity | None = None,
 ) -> _MethodDecorator: ...
@@ -1931,7 +1937,7 @@ def method(
 def method(
     fn: Any = None,
     *,
-    tag: _SymbolTag = "observation",
+    tag: SymbolTag = "observation",
     is_hidden: bool = False,
     activity: Activity | None = None,
 ) -> Any:
@@ -2098,7 +2104,7 @@ class Symbol:
 
     fn: Callable[..., Any] | object
     name: str | None = None
-    tag: _SymbolTag = "observation"
+    tag: SymbolTag = "observation"
     is_hidden: bool = False
     activity: Activity | None = None
 
@@ -2208,7 +2214,7 @@ class ToolSpec:
 
     version: int
     name: str
-    tag: _SymbolTag
+    tag: SymbolTag
     description: str
     signature: str
     parameters: tuple[ParameterSpec, ...]

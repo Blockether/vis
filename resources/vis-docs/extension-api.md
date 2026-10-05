@@ -119,8 +119,9 @@ not `Extension`.
 Declare `vis.Setting` objects in `Extension(settings=[...])` to use the app and
 TUI's shared settings rows. Read `setting.value()` inside a callback. It returns
 that response's effective snapshot without changing the global setting. Outside
-Vis, it returns the declared default. Registration validates declarations but
-does not create overrides.
+Vis, it returns the declared default. Type checkers give `value()` the type of the
+default: `bool` for a boolean setting, `str` for a choice setting. Registration
+validates declarations but does not create overrides.
 
 ```python
 import blockether.vis.extension as vis
@@ -348,7 +349,8 @@ attributes become nested namespaces. Names beginning with `_` are excluded. Publ
 classes, cycles and repeated object references are rejected with their path.
 
 `vis.method(tag="observation", is_hidden=False, activity=None)` overrides metadata for one method.
-Metadata never changes the method's Python signature.
+Metadata never changes the method's Python signature. If you keep a tag in a variable or a helper
+parameter, annotate it with `vis.SymbolTag`.
 
 ### Activity presentation
 
