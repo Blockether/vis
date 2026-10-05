@@ -55,7 +55,12 @@ jobs:
               track=beta ;;
             *) track=release ;;
           esac
-          version="$(bin/sdk-version "$track")"
+          if [ "$track" = release ]; then
+            # A release bundles VIS_VERSION. Its tag can predate bin/sdk-version.
+            version="$(tr -d '[:space:]' < VIS_VERSION)"
+          else
+            version="$(bin/sdk-version "$track")"
+          fi
           # PyPI refuses local labels such as +dirty.
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.dev[0-9]+)?$ ]] || {
             echo "::error::SDK version $version cannot be published"; exit 1; }
