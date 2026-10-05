@@ -934,6 +934,28 @@ class ExtensionGatewayTest(unittest.TestCase):
         finally:
             run.shutil.rmtree(gateway["runtime"])
 
+    def test_source_gateway_keeps_global_extensions_out_unless_asked(self):
+        for explicit in (None, "/tmp/operator-extensions"):
+            with (
+                self.subTest(explicit=explicit),
+                patch.dict(os.environ, {}),
+                patch.object(run, "gateway_eval") as evaluate,
+            ):
+                os.environ.pop("VIS_EXTENSIONS_DIR", None)
+                if explicit:
+                    os.environ["VIS_EXTENSIONS_DIR"] = explicit
+                evaluate.return_value.returncode = 0
+                gateway = run.start_source_gateway(cwd="/tmp/fixture")
+                try:
+                    directory = gateway["env"]["VIS_EXTENSIONS_DIR"]
+                    if explicit:
+                        self.assertEqual(explicit, directory)
+                    else:
+                        self.assertTrue(directory.startswith(gateway["runtime"]))
+                        self.assertFalse(os.path.exists(directory))
+                finally:
+                    run.shutil.rmtree(gateway["runtime"])
+
     def test_local_extension_gateway_is_seeded_isolated_and_always_stopped(self):
         scenario = run.load_scenarios(["extension-watchdog"])[0]
         shared_env = {"VIS_DB_PATH": "/tmp/shared.mdb"}

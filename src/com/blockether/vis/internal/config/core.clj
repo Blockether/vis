@@ -63,6 +63,15 @@
 
 (defn db-path ^String [] (str (config-dir) "/vis.mdb"))
 
+(defn global-extensions-dir
+  "The global Python extension directory: JVM property `vis.extensions.dir`, then
+   `VIS_EXTENSIONS_DIR`, then `~/.vis/extensions`. A benchmark harness points it at an
+   empty directory, so the user's own extensions stay out of its measurements."
+  ^java.io.File []
+  (io/file (or (not-empty (System/getProperty "vis.extensions.dir"))
+               (not-empty (System/getenv "VIS_EXTENSIONS_DIR"))
+               (str (config-dir) "/extensions"))))
+
 (defn default-db-spec [] {:backend :sqlite :path (db-path)})
 
 (defn log-path
@@ -1261,7 +1270,7 @@
                  (when-not same? (read-tier (project-config-yaml-paths))))]
 
       (cond-> [{:scope "global"
-                :directory (str (io/file (config-dir) "extensions"))
+                :directory (str (global-extensions-dir))
                 :packages (if same? (merge global project) (or global {}))}]
         (not same?)
         (conj {:scope "project"

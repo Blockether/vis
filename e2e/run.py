@@ -1100,11 +1100,16 @@ def stop_source_gateway(gateway):
 
 
 def start_source_gateway(*, cwd=REPO):
-    """Start a current-classpath gateway on an isolated DB and free loopback port."""
+    """Start a current-classpath gateway on an isolated DB and free loopback port.
+
+    The gateway gets an empty global extension directory, so the operator's own
+    extensions do not change the measurement. An explicit VIS_EXTENSIONS_DIR wins.
+    """
     runtime = tempfile.mkdtemp(prefix="vis_e2e_gateway_")
     env = os.environ.copy()
     env.pop("VIS_GATEWAY_URL", None)
     env["VIS_DB_PATH"] = os.path.join(runtime, "vis.mdb")
+    env.setdefault("VIS_EXTENSIONS_DIR", os.path.join(runtime, "extensions"))
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]

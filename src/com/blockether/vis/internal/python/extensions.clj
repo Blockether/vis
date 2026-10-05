@@ -1945,7 +1945,7 @@
 
 (defn ^:no-doc default-extension-dirs
   []
-  [(io/file (config/config-dir) "extensions") (io/file (workspace/cwd) ".vis" "extensions")])
+  [(config/global-extensions-dir) (io/file (workspace/cwd) ".vis" "extensions")])
 
 (defn ^:no-doc test-file?
   "A `test_*.py` / `*_test.py` module — a Python test, never an extension entry."

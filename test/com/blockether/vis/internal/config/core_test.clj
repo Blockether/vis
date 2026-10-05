@@ -1942,3 +1942,17 @@
             (.getCanonicalPath (io/file (:path (config/resolve-db-spec))))]
 
         (expect (not (str/starts-with? db (str home "/")))))))
+
+(defdescribe
+  global-extensions-dir-test
+  (it "lets the JVM property replace the global extension directory"
+      (let [prop (System/getProperty "vis.extensions.dir")]
+        (try (System/clearProperty "vis.extensions.dir")
+             (with-redefs [config/config-dir (constantly "/tmp/vis-home")]
+               (when (str/blank? (System/getenv "VIS_EXTENSIONS_DIR"))
+                 (expect (= (io/file "/tmp/vis-home/extensions") (config/global-extensions-dir))))
+               (System/setProperty "vis.extensions.dir" "/tmp/vis-bench-extensions")
+               (expect (= (io/file "/tmp/vis-bench-extensions") (config/global-extensions-dir))))
+             (finally (if prop
+                        (System/setProperty "vis.extensions.dir" prop)
+                        (System/clearProperty "vis.extensions.dir")))))))

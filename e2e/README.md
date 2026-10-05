@@ -4,6 +4,9 @@ End-to-end tests run `vis-agent` on editing tasks and check completion, file
 contents, errors and use of anchored `patch` edits. See `run.py`'s module
 docstring for the full contract. Each invocation starts a gateway from the
 current classpath with a temporary database, independent of installed daemons.
+The gateway also gets an empty global extension directory, so extensions in
+`~/.vis/extensions` do not change the measured runs. To include them, set
+`VIS_EXTENSIONS_DIR="$HOME/.vis/extensions"`.
 Every scenario passes `--persist` to use gateway session/turn handling rather than
 the ephemeral CLI engine path. Sessions stay in that temporary database.
 These tests use real model calls and incur provider costs.
