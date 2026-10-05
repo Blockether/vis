@@ -2771,7 +2771,7 @@
               (expect (str/includes? output "desktop-open<-W>") output)
               (expect (str/includes? output (.getAbsolutePath (io/file desktop "9.8.7/Vis.app")))
                       output)))))))
-  (it "opens the app alone for --no-gateway, a remote gateway, or no installed engine"
+  (it "opens the app alone for --no-gateway, --gateway, VIS_GATEWAY_URL or no installed engine"
       (doseq [[os arch] [["Darwin" "arm64"] ["Linux" "x86_64"]]]
         (with-desktop-fixture
           os
@@ -2782,7 +2782,13 @@
 
               (expect (zero? exit) output)
               (expect (str/includes? output "--no-gateway") output)
+              (expect (str/includes? output "--gateway HOST") output)
+              (let [{:keys [exit output]} (run! ["--gateway"] {})]
+                (expect (not (zero? exit)) output)
+                (expect (str/includes? output "desktop: --gateway needs a value") output))
               (doseq [[args extra-env] [[["--no-gateway"] {}]
+                                        [["--gateway" "10.0.0.5" "--gateway-token" "token"] {}]
+                                        [["--gateway=gateway.example.com"] {}]
                                         [[] {"VIS_GATEWAY_URL" "http://gateway.example.com:7890"}]]]
                 (let [{:keys [exit output]} (run! args extra-env)]
                   (expect (zero? exit) output)

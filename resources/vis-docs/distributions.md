@@ -418,13 +418,14 @@ on disk. The other tracks keep their files. Release and beta apps deleted this w
 download again when you need them, and dev builds are rebuilt from source on every
 launch.
 
-A desktop launch does not change your engine track. It starts the local gateway in the
-background through your installed engine. The gateway stays up while the app runs.
+A desktop launch does not change your engine track. If no local gateway runs, it starts one
+in the background through your installed engine. The gateway stays up while the app runs.
 After you quit the app, a gateway started this way stops when no other client or work
 remains. A gateway that you started with `vis-agent gateway start` keeps running.
 
-`--no-gateway` opens the app alone. A launch with `VIS_GATEWAY_URL` set, or without an
-installed engine, also opens the app alone.
+`--no-gateway` opens the app alone. `--gateway` or `VIS_GATEWAY_URL` names another gateway, so
+a launch with either one also opens the app alone. The TUI and `vis-agent web` follow the
+same rule. A launch without an installed engine also opens the app alone.
 
 On first launch, add this machine in the app with `http://127.0.0.1:7890` and an empty
 bearer token. For a gateway on another machine, use its URL and bearer token.

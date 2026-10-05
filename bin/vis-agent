@@ -1222,7 +1222,8 @@ vis_do_switch() {
 # ── Desktop companion ────────────────────────────────────────────────────────
 vis_desktop_usage() {
   cat <<'EOF'
-Usage: vis-agent desktop [--track release|beta|dev] [--update] [--no-gateway]
+Usage: vis-agent desktop [--track release|beta|dev] [--update]
+                         [--no-gateway | --gateway HOST [--gateway-token TOKEN]]
 
 Open the desktop for your installed track; --track overrides it for this launch.
   release  Download the stable app once; --update checks for a newer release.
@@ -1242,9 +1243,10 @@ Supports macOS (Apple silicon and Intel) and Linux (x64 and ARM64).
 Files live in ${VIS_HOME:-~/.vis}/install/desktop; no administrator access needed
 for the app itself. Dev build prerequisites may need administrator installation.
 The desktop uses Companion pairing. This command also starts the local gateway in
-the background and keeps it up while the app runs. In the app, add this machine
-once with http://127.0.0.1:7890. --no-gateway, or a remote VIS_GATEWAY_URL, opens
-the app alone. This command does not change the engine's installed track.
+the background when none runs, and keeps it up while the app runs. In the app, add
+this machine once with http://127.0.0.1:7890. --no-gateway, --gateway HOST or
+VIS_GATEWAY_URL starts no local gateway and opens the app alone. This command does
+not change the engine's installed track.
 EOF
 }
 
@@ -1437,9 +1439,10 @@ vis_prune_desktops() {
   return 0
 }
 
-# The engine starts the local gateway with the app and keeps it up for the app.
-# Skip it for --no-gateway or a remote VIS_GATEWAY_URL. Without an installed
-# engine, warn and open the app alone.
+# The engine starts the local gateway with the app when none runs, and keeps it
+# up for the app. Skip it for --no-gateway, and for --gateway or VIS_GATEWAY_URL,
+# which name another gateway, as the TUI and web do. Without an installed engine,
+# warn and open the app alone.
 vis_desktop_gateway() {
   (( $1 )) || return 1
   [[ -z "${VIS_GATEWAY_URL:-}" || -z "${VIS_GATEWAY_URL// /}" ]] || return 1
@@ -1461,6 +1464,11 @@ vis_do_desktop() {
       -h|--help) vis_desktop_usage; exit 0 ;;
       --update) update=1 ;;
       --no-gateway) gateway=0 ;;
+      # As for the TUI and web, a named gateway means that no local one starts.
+      --gateway|--gateway-token)
+        [[ $# -ge 2 && -n "$2" ]] || die "desktop: $1 needs a value"
+        gateway=0; shift ;;
+      --gateway=*|--gateway-token=*) gateway=0 ;;
       --track)
         [[ $# -ge 2 && -n "$2" ]] || die "desktop: --track needs release, beta, or dev"
         track="$2"; shift ;;

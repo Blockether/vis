@@ -113,7 +113,7 @@ On macOS and Linux, open the app from a terminal:
 vis-agent desktop
 ```
 
-This command opens the app and starts the local gateway in the background. The gateway stays up while the app runs.
+This command opens the app. If no local gateway runs, it starts one in the background. The gateway stays up while the app runs.
 
 1. In **Add a machine**, enter `http://127.0.0.1:7890`.
 2. Leave the bearer token empty for the default local gateway.
