@@ -1582,18 +1582,16 @@ export function useLiveViews(
   return views;
 }
 
-/** Open views, either within their owning Activity or in an unmatched fallback. */
+/** Open views as one-line runs, or in the session's dialog when `onClose` is given. */
 export function LiveView({
   views,
   client,
   sid,
-  embedded = false,
   onClose,
 }: {
   views: LiveViewModel[];
   client: GatewayClient;
   sid: string;
-  embedded?: boolean;
   /** Show the views already opened in the session's dialog, and call this when it closes. */
   onClose?: () => void;
 }) {
@@ -1658,8 +1656,8 @@ export function LiveView({
     return onClose ? (
       <OpenedRun key={view.id} {...panel} onClose={onClose} />
     ) : (
-      <LiveViewPanel key={view.id} {...panel} embedded={embedded} />
+      <LiveViewPanel key={view.id} {...panel} embedded />
     );
   });
-  return embedded || onClose ? panels : <div className="min-w-0 space-y-3">{panels}</div>;
+  return panels;
 }

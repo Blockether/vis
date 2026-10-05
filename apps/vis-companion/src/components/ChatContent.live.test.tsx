@@ -226,12 +226,14 @@ it('preserves the explicit interrupt action inside an opened live screen', () =>
 });
 
 // Regression #222: explicit ownership survives bounded Activity windows.
+// Regression, user report: before its form arrived, the view painted its whole picture in a
+// frame, then moved into the form. It waits for the form now.
 it.each([
   { showCode: true, source: 'monitor()' },
   { showCode: false, source: 'monitor()' },
   { showCode: false, source: undefined },
 ])(
-  'moves an owned live view once (Python shown: $showCode, source: $source)',
+  'shows an owned live view once, only in its form (Python shown: $showCode, source: $source)',
   ({ showCode, source }) => {
     const activity = activityHistoryPage();
     const liveView = {
@@ -249,8 +251,8 @@ it.each([
         whole
       />,
     );
-    expect(mounted.getByText(liveView.title).closest('[data-execution-group]')).toBeNull();
-    expect(mounted.getByText(liveView.title).closest('section')).toHaveClass('border');
+    expect(mounted.queryByText(liveView.title)).toBeNull();
+    expect(mounted.queryByRole('progressbar')).toBeNull();
     mounted.rerender(
       <IterationTrace
         iterations={[{ forms: [{ source, activity }] }]}
@@ -312,7 +314,10 @@ it('keeps concurrent owned views and unmatched views separate, including streame
   const secondSurface = mounted.getByText('Second monitor').closest('[data-execution-group]');
   expect(firstSurface).toBeVisible();
   expect(secondSurface).not.toBe(firstSurface);
-  expect(mounted.getByText('Other monitor').closest('[data-execution-group]')).toBeNull();
+  // A view that no form owns stays one click away in the digest control, never in a form.
+  const other = mounted.getByRole('button', { name: 'Open running live view: Other monitor' });
+  expect(other.closest('[data-execution-group]')).toBeNull();
+  expect(mounted.queryByText('Other monitor')).toBeNull();
   mounted.rerender(
     <IterationTrace
       {...props}
@@ -476,50 +481,62 @@ it('retains host ownership through wire parsing and a sealed record', () => {
   expect(record?.view.owner).toEqual(owner);
 });
 
-// Regression #222: a folded or deliberately hidden owner cannot swallow the live view.
-it.each(['hidden', 'ramped'])(
-  'keeps the %s owner view in the fallback until renderable',
-  (mode) => {
-    const activity = activityHistoryPage();
-    const liveView = {
-      ...STORY_LIVE_VIEW,
-      owner: { invocation_id: 'absent', activity_id: activity.history!.id },
-    };
-    const iterations = [
-      {
-        assistant_prose: 'Owner execution',
-        forms: [{ source: 'monitor()', activity, silent: mode === 'hidden' }],
-      },
-      ...Array.from({ length: 40 }, (_, index) => ({
-        assistant_prose: `Later step ${index}`,
-        forms: [{ source: `step(${index})` }],
-      })),
-    ];
-    const mounted = renderOpenSteps(
-      <IterationTrace
-        iterations={iterations}
-        liveViews={[liveView]}
-        client={{} as GatewayClient}
-        sid="session"
-      />,
-    );
-    expect(mounted.getAllByText(liveView.title)).toHaveLength(1);
-    expect(mounted.getByText(liveView.title).closest('[data-execution-group]')).toBeNull();
-    if (mode === 'ramped') {
-      mounted.rerender(
-        <IterationTrace
-          iterations={iterations}
-          liveViews={[liveView]}
-          client={{} as GatewayClient}
-          sid="session"
-          whole
-        />,
-      );
-      expect(mounted.getAllByText(liveView.title)).toHaveLength(1);
-      expect(mounted.getByText(liveView.title).closest('[data-execution-group]')).toBeVisible();
-    }
-  },
-);
+// Regression #222: a folded or deliberately hidden owner cannot swallow the live view, and
+// the view never paints its picture before a click.
+const heldOwnerTrace = (silent: boolean) => {
+  const activity = activityHistoryPage();
+  const liveView = {
+    ...STORY_LIVE_VIEW,
+    owner: { invocation_id: 'absent', activity_id: activity.history!.id },
+  };
+  const iterations = [
+    {
+      assistant_prose: 'Owner execution',
+      forms: [{ source: 'monitor()', activity, silent }],
+    },
+    ...Array.from({ length: 40 }, (_, index) => ({
+      assistant_prose: `Later step ${index}`,
+      forms: [{ source: `step(${index})` }],
+    })),
+  ];
+  return { liveView, iterations };
+};
+
+it('keeps the hidden owner view one click away in the last digest', () => {
+  const { liveView, iterations } = heldOwnerTrace(true);
+  const mounted = renderOpenSteps(
+    <IterationTrace
+      iterations={iterations}
+      liveViews={[liveView]}
+      client={{} as GatewayClient}
+      sid="session"
+    />,
+  );
+  const control = mounted.getByRole('button', {
+    name: `Open running live view: ${liveView.title}`,
+  });
+  expect(control.closest('[data-execution-group]')).toBeNull();
+  expect(mounted.queryByRole('progressbar')).toBeNull();
+  fireEvent.click(control);
+  const dialog = mounted.getByRole('dialog', { name: liveView.title });
+  expect(within(dialog).getByRole('progressbar')).toBeVisible();
+  // An opened run stays open across mounts, so close it before the next test.
+  fireEvent.click(within(dialog).getByRole('button', { name: `Close ${liveView.title}` }));
+});
+
+it('shows the ramped owner view only once its owner mounts', () => {
+  const { liveView, iterations } = heldOwnerTrace(false);
+  const props = { iterations, liveViews: [liveView], client: {} as GatewayClient, sid: 'session' };
+  const mounted = renderOpenSteps(<IterationTrace {...props} />);
+  // No other step shows the view meanwhile, so it never moves.
+  expect(mounted.queryByText(liveView.title)).toBeNull();
+  expect(
+    mounted.queryByRole('button', { name: `Open running live view: ${liveView.title}` }),
+  ).toBeNull();
+  mounted.rerender(<IterationTrace {...props} whole />);
+  expect(mounted.getAllByText(liveView.title)).toHaveLength(1);
+  expect(mounted.getByText(liveView.title).closest('[data-execution-group]')).toBeVisible();
+});
 
 // Regression #222: association must not add hierarchy or another horizontal inset.
 it('renders RUN beside Activity and opens it without folding the preview', () => {

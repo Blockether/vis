@@ -137,15 +137,14 @@ export const Unmatched: Story = {
       },
     }),
   },
-  // A view without an owner stays in the turn, outside the closed step digest.
+  // A view without an owner joins the closed step digest. Its picture opens only on a click.
   play: async ({ canvas }) => {
-    const title = await canvas.findByText(view.title);
-    const launch = canvas.queryByRole('button', { name: `Open run ${view.title}` });
-    if (launch) {
-      await userEvent.click(launch);
-      const page = within(document.body);
-      await userEvent.click(page.getByRole('button', { name: `Close ${view.title}` }));
-      await expect(title).toBeVisible();
-    }
+    const name = `Open running live view: ${view.title}`;
+    const launch = await canvas.findByRole('button', { name });
+    await expect(document.querySelector('.live-view-panel')).toBeNull();
+    await userEvent.click(launch);
+    const page = within(document.body);
+    await expect(page.getByRole('dialog', { name: view.title })).toBeVisible();
+    await userEvent.click(page.getByRole('button', { name: `Close ${view.title}` }));
   },
 };

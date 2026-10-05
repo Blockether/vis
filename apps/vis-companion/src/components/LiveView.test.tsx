@@ -479,6 +479,9 @@ describe('selecting a table row', () => {
     const client = { viewAction } as unknown as GatewayClient;
 
     render(<LiveViewList views={[view]} client={client} sid="session-1" />);
+    // The list shows the run as one line. Its table is in the picture, one click away.
+    expect(screen.queryByRole('button', { name: 'Select db-2' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: `Open run ${view.title}` }));
     fireEvent.click(screen.getByRole('button', { name: 'Select db-2' }));
 
     expect(viewAction).toHaveBeenCalledWith('session-1', view.id, {

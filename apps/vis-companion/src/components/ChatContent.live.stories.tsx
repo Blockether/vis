@@ -234,10 +234,21 @@ export const BandRhythm: Story = {
   globals: { viewport: { value: 'desktop', isRotated: false } },
 };
 
-export const Unmatched: Story = { args: { liveViews: [{ ...view, owner: undefined }] } };
+// A view that no Activity claims joins the last step digest. Its picture opens only on a click.
+export const Unmatched: Story = {
+  args: { liveViews: [{ ...view, owner: undefined }] },
+  play: async ({ canvas, canvasElement }) => {
+    const control = canvas.getByRole('button', { name: `Open running live view: ${view.title}` });
+    await expect(canvasElement.querySelector('.live-view-panel')).toBeNull();
+    await userEvent.click(control);
+    const opened = within(document.body);
+    await expect(opened.getByRole('dialog', { name: view.title })).toBeVisible();
+    await userEvent.click(opened.getByRole('button', { name: `Close ${view.title}` }));
+  },
+};
 
-// A run nobody could match to an Activity paints its whole picture in the transcript, and its
-// rows state one line each: a step timeline and a result link print a name that is longer than a
+// A run nobody could match to an Activity waits in the last step digest. In its dialog, its rows
+// state one line each: a step timeline and a result link print a name that is longer than a
 // phone is wide, and they say so by ending in an ellipsis or wrapping.
 const longRun: LiveView = {
   ...view,
@@ -292,10 +303,15 @@ const longRun: LiveView = {
 
 // Regression, user report (screenshot): on a phone that picture dragged the whole card past the
 // right edge of the screen — the box lost its right border and the failed jobs were cut off
-// mid-word. The rail is a COLUMN of the message grid: it takes the reading width it is given, and
-// the widest line a row could print never becomes the width of the card.
+// mid-word. The picture opens in the run's dialog now. The dialog takes the width it is given,
+// and the widest line a row could print never becomes the width of the screen.
 export const NarrowUnmatched: Story = {
   args: { liveViews: [longRun] },
+  play: async ({ canvas }) => {
+    const name = `Open running live view: ${longRun.title}`;
+    await userEvent.click(canvas.getByRole('button', { name }));
+    await expect(within(document.body).getByRole('dialog', { name: longRun.title })).toBeVisible();
+  },
 };
 export const Settled: Story = {
   args: {

@@ -1742,7 +1742,7 @@ function OwnedRuns({
 }) {
   return (
     <>
-      <LiveView views={views} client={client} sid={sid} embedded />
+      <LiveView views={views} client={client} sid={sid} />
       {runs.map((attachment) => (
         <section
           key={`run-${attachment.iteration_id ?? 'iter'}-${attachment.index}`}
@@ -2631,6 +2631,8 @@ type TraceSegmentProps = {
   client?: GatewayClient;
   sid?: string;
   liveViews: LiveViewModel[];
+  /** Views that no renderable form of the trace owns. Only the last segment gets them. */
+  strayViews: LiveViewModel[];
 };
 
 /**
@@ -2654,7 +2656,8 @@ function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
     a.summarize !== b.summarize ||
     a.client !== b.client ||
     a.sid !== b.sid ||
-    a.liveViews !== b.liveViews
+    a.liveViews !== b.liveViews ||
+    a.strayViews !== b.strayViews
   )
     return false;
   const before = a.segment;
@@ -2960,6 +2963,7 @@ const TraceSegment = memo(function TraceSegment({
   client,
   sid,
   liveViews,
+  strayViews,
 }: TraceSegmentProps) {
   const [open, setOpen] = useState(false);
   // Summarized, a run's consecutive Python forms share one source and Activity; otherwise
@@ -3026,8 +3030,11 @@ const TraceSegment = memo(function TraceSegment({
   // Mirrors the TUI (`render/step-digest-lives`).
   const lives = useMemo(() => {
     const forms = chunks.flatMap((chunk) => (chunk.kind === 'code' ? chunk.forms : []));
-    const views = liveViews.filter((view) =>
-      forms.some((form) => liveOwnerMatches(view.owner, form.activity)),
+    // The stray views stay in session order, so the control still opens the newest view.
+    const views = liveViews.filter(
+      (view) =>
+        strayViews.includes(view) ||
+        forms.some((form) => liveOwnerMatches(view.owner, form.activity)),
     );
     const records = collapseAttachmentVersions(
       attachments.filter(
@@ -3038,7 +3045,7 @@ const TraceSegment = memo(function TraceSegment({
       ),
     ).map((thread) => thread[0]);
     return { views, records };
-  }, [chunks, liveViews, attachments]);
+  }, [chunks, liveViews, strayViews, attachments]);
 
   return (
     <section
@@ -3099,6 +3106,8 @@ const TraceSegment = memo(function TraceSegment({
           })}
         </div>
       )}
+      {/* Without a digest, the views that no form owns stay one-line runs. */}
+      {!digest && client && sid && <LiveView views={strayViews} client={client} sid={sid} />}
       {client && sid && (
         <AttachmentRail
           client={client}
@@ -3248,24 +3257,30 @@ export const IterationTrace = memo(function IterationTrace({
   }, [hiddenSegments, rampDone, rampId, whole]);
 
   const shown = hidden > 0 ? segments.slice(hidden) : segments;
-  const unmatchedViews = liveViews.filter(
-    (view) =>
-      !shown.some((segment) =>
-        segment.items.some((entry) =>
-          entry.forms.some(
-            (form) =>
-              !hiddenForm(form) &&
-              (showFormCode(form, formCode(form)) || (!showCode && isPythonForm(form))) &&
-              liveOwnerMatches(view.owner, form.activity),
+  // A live view belongs to the form that owns it, also while the ramp still holds that form
+  // back. The last segment takes the views that no renderable form owns. Every view is one
+  // click away, and no view paints its picture inline.
+  const strayViews = useMemo(() => {
+    const strays = liveViews.filter(
+      (view) =>
+        !segments.some((segment) =>
+          segment.items.some((entry) =>
+            entry.forms.some(
+              (form) =>
+                !hiddenForm(form) &&
+                (showFormCode(form, formCode(form)) || (!showCode && isPythonForm(form))) &&
+                liveOwnerMatches(view.owner, form.activity),
+            ),
           ),
         ),
-      ),
-  );
-  if (!segments.length && !unmatchedViews.length) return null;
+    );
+    return strays.length > 0 ? strays : NO_LIVE_VIEWS;
+  }, [liveViews, segments, showCode]);
+  if (!segments.length) return null;
   return (
     <ActivityAttachmentContext.Provider value={iterationAttachment(iterations, client, sid)}>
       <div ref={rootRef} className="mb-2.5 grid gap-2.5">
-        {shown.map((segment) => (
+        {shown.map((segment, index) => (
           <TraceSegment
             key={segment.key}
             segment={segment}
@@ -3275,9 +3290,9 @@ export const IterationTrace = memo(function IterationTrace({
             client={client}
             sid={sid}
             liveViews={liveViews}
+            strayViews={index === shown.length - 1 ? strayViews : NO_LIVE_VIEWS}
           />
         ))}
-        {client && sid && <LiveView views={unmatchedViews} client={client} sid={sid} />}
       </div>
     </ActivityAttachmentContext.Provider>
   );

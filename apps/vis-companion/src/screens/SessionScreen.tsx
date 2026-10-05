@@ -58,7 +58,7 @@ import { HumanInputPrompt } from '../components/HumanInputPrompt';
 import { JumpToLatestButton } from '../components/JumpToLatestButton';
 import { PasteEditor } from '../components/PasteEditor';
 import { QueuedTurnsTray } from '../components/QueuedTurnsTray';
-import { LiveView, useLiveViews } from '../components/LiveView';
+import { useLiveViews } from '../components/LiveView';
 import { reduceRunningTurnEvent, type RunningTurn } from '../lib/running-turn';
 import { eventString, sessionEventBatch } from '../lib/session-stream';
 import { speechOutput } from '../lib/speech';
@@ -4907,15 +4907,6 @@ export function SessionScreen({
                   {turnRows}
 
                   {liveRow}
-
-                  {/* A view can outlive the optimistic running row during resync. In that
-                    narrow gap it still paints at the transcript end; otherwise the row owns
-                    it so the phase line follows, rather than precedes, the live panel. */}
-                  {!liveRow && liveViews.length > 0 && (
-                    <div className="mt-5">
-                      <LiveView views={liveViews} client={client} sid={sid} />
-                    </div>
-                  )}
                 </>
               </div>
             </div>
