@@ -3582,6 +3582,9 @@ export class GatewayClient {
     for (const key of Array.from(this.attachmentFetches.keys())) {
       if (key.startsWith(`${sid}\u0000`)) this.attachmentFetches.delete(key);
     }
+    for (const key of Array.from(this.turnTraces.keys())) {
+      if (key.startsWith(`${sid}\u0000`)) this.turnTraces.delete(key);
+    }
     scheduleSnapshotFlush(snapshotStores);
   }
 
@@ -5327,6 +5330,30 @@ export class GatewayClient {
   }
 
   /**
+   * The complete steps of turns that this process already read, by turn id.
+   *
+   * The transcript sends only the newest steps of a long turn, and `TurnTrace`
+   * reads the rest when the turn comes near the reader. Without this cache, each
+   * visit painted the short list first and the turn grew a moment later, so the
+   * view jumped. Memory only and bounded, like `sentAttachments`.
+   */
+  private readonly turnTraces = new Map<string, TranscriptIteration[]>();
+
+  /** The complete steps of `turn`, or null when this process has not read all of them. */
+  cachedTurnTrace(sid: string, turn: TranscriptTurn): TranscriptIteration[] | null {
+    const key = `${sid}\u0000${turn.turn_id}`;
+    const rows = this.turnTraces.get(key);
+    // A trace that was read while the turn ran has fewer steps than the settled turn.
+    const total =
+      turn.iterations_total ?? (turn.iterations_offset ?? 0) + (turn.iterations?.length ?? 0);
+    if (!rows || rows.length < total) return null;
+    // Map order is the LRU order: re-insert to mark this trace as used.
+    this.turnTraces.delete(key);
+    this.turnTraces.set(key, rows);
+    return rows;
+  }
+
+  /**
    * The iterations the gateway has ALREADY PERSISTED for ONE turn — the resume
    * source for a turn that is still running.
    *
@@ -5340,6 +5367,7 @@ export class GatewayClient {
    *
    * This is the same trace the TUI resumes from, so the adopted bubble starts
    * with everything that happened while we were away instead of a blank one.
+   * The rows also go to `cachedTurnTrace` for the next visit.
    */
   async turnTrace(sid: string, tid: string, signal?: AbortSignal): Promise<TranscriptIteration[]> {
     const response = await this.request<{ iterations?: unknown }>(
@@ -5348,7 +5376,17 @@ export class GatewayClient {
       undefined,
       signal,
     );
-    return Array.isArray(response.iterations) ? (response.iterations as TranscriptIteration[]) : [];
+    const rows = Array.isArray(response.iterations) ? (response.iterations as TranscriptIteration[]) : [];
+    if (this.isSessionDeleted(sid)) return rows;
+    const key = `${sid}\u0000${tid}`;
+    this.turnTraces.delete(key);
+    this.turnTraces.set(key, rows);
+    while (this.turnTraces.size > SESSION_CACHE_LIMIT) {
+      const oldest = this.turnTraces.keys().next();
+      if (oldest.done) break;
+      this.turnTraces.delete(oldest.value);
+    }
+    return rows;
   }
 
   /**

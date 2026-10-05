@@ -12,7 +12,12 @@ import {
   type PointerEvent as ReactPointerEvent,
   type SetStateAction,
 } from 'react';
-import { AssistantMessage, transcriptEnterClass, UserMessage } from '../components/ChatContent';
+import {
+  AssistantMessage,
+  earlierStepsPendingInView,
+  transcriptEnterClass,
+  UserMessage,
+} from '../components/ChatContent';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
 import { AgentTeam } from '../components/AgentTeam';
 import { ScopedSettingsDialog } from './settings/ScopedSettingsDialog';
@@ -1191,7 +1196,9 @@ export function SessionScreen({
     }
     setVoiceModeHolding(false);
     const needsColdLoad = !fresh && cachedTranscript === null;
-    setLoading(needsColdLoad);
+    // The mount run follows the opening layout effect, which can hold the sheet over a
+    // long turn in view (see `revealWhenSettled`). Only a new visit may lower it here.
+    if (isNewVisit || needsColdLoad) setLoading(needsColdLoad);
     // THE READING POSITION BELONGS TO THE VISIT, AND NOT TO EVERY RUN OF THIS
     // EFFECT. This component mounts already holding it: `initialScrollPendingRef`
     // is armed in its own initializer and the opening layout effect consumes it
@@ -2883,7 +2890,10 @@ export function SessionScreen({
     if (revealFrameRef.current !== null) return;
     const settled = heightSettler();
     const step = () => {
-      if (settled(scrollRef.current?.scrollHeight ?? 0)) {
+      const scroller = scrollRef.current;
+      // A long turn in view grows when its earlier steps land: reveal it whole.
+      const isQuiet = settled(scroller?.scrollHeight ?? 0);
+      if (isQuiet && !(scroller && earlierStepsPendingInView(scroller))) {
         revealFrameRef.current = null;
         setLoading(false);
         return;
@@ -2904,6 +2914,10 @@ export function SessionScreen({
     ) {
       pinToEnd();
       initialScrollPendingRef.current = false;
+      // A long turn in view reads its earlier steps next and grows. Hold the sheet
+      // over that read, also for a cached session that opens without the sheet.
+      const scroller = scrollRef.current;
+      if (scroller && earlierStepsPendingInView(scroller)) setLoading(true);
       // Reveal one frame after the opening window is placed — but only when it
       // is already WHOLE. A session whose ramp is still running is revealed by
       // the effect below, once it stops repainting itself (OPENING_RAMP_MAX_MS).

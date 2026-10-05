@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AssistantMessage, AttachmentRail } from './ChatContent';
+import { AssistantMessage, AttachmentRail, earlierStepsPendingInView } from './ChatContent';
 import type { GatewayClient } from '../lib/gateway';
 import { setStepsSummarized } from '../lib/transcript-display';
-import type { TranscriptTurn } from '../lib/types';
+import type { TranscriptIteration, TranscriptTurn } from '../lib/types';
 
 /** The test decides when the trace nears the reader. Only marks above loading content hear it. */
 function stubNearness() {
@@ -29,6 +29,11 @@ function stubNearness() {
   });
 }
 
+/** A client that reads a turn trace, and holds `cached` from an earlier visit. */
+function traceClient(turnTrace: unknown, cached: TranscriptIteration[] | null = null) {
+  return { turnTrace, cachedTurnTrace: () => cached } as unknown as GatewayClient;
+}
+
 // Large session switches must not download hidden steps before painting an answer.
 describe('a windowed turn trace', () => {
   const newest = { id: 'i100', position: 100, assistant_prose: 'Latest progress' };
@@ -40,6 +45,7 @@ describe('a windowed turn trace', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     setStepsSummarized(true);
   });
 
@@ -49,7 +55,7 @@ describe('a windowed turn trace', () => {
     const near = stubNearness();
     let resolve!: (rows: typeof newest[]) => void;
     const turnTrace = vi.fn(() => new Promise<typeof newest[]>((done) => { resolve = done; }));
-    const client = { turnTrace } as unknown as GatewayClient;
+    const client = traceClient(turnTrace);
     const view = render(<AssistantMessage turn={turn} client={client} sid="s1" />);
     expect(screen.getByText('The answer is ready.')).toBeVisible();
     expect(screen.getByText('Latest progress')).toBeVisible();
@@ -71,7 +77,7 @@ describe('a windowed turn trace', () => {
   it('keeps the answer and retries a failed history read on request', async () => {
     const near = stubNearness();
     const turnTrace = vi.fn().mockRejectedValueOnce(new Error('History is offline')).mockResolvedValueOnce([newest]);
-    render(<AssistantMessage turn={turn} client={{ turnTrace } as unknown as GatewayClient} sid="s1" />);
+    render(<AssistantMessage turn={turn} client={traceClient(turnTrace)} sid="s1" />);
     near(true);
     expect(await screen.findByText('History is offline')).toBeVisible();
     expect(screen.getByText('The answer is ready.')).toBeVisible();
@@ -86,7 +92,7 @@ describe('a windowed turn trace', () => {
     const near = stubNearness();
     const turnTrace = vi.fn().mockResolvedValue([newest]);
     render(<AssistantMessage turn={{ ...turn, iterations: [], iterations_offset: 100 }}
-      client={{ turnTrace } as unknown as GatewayClient} sid="s1" />);
+      client={traceClient(turnTrace)} sid="s1" />);
     expect(screen.getByText('The answer is ready.')).toBeVisible();
     expect(turnTrace).not.toHaveBeenCalled();
     near(true);
@@ -96,7 +102,7 @@ describe('a windowed turn trace', () => {
   it('stops reading history when the turn leaves the screen', () => {
     const near = stubNearness();
     const turnTrace = vi.fn(() => new Promise<never>(() => {}));
-    const view = render(<AssistantMessage turn={turn} client={{ turnTrace } as unknown as GatewayClient} sid="s1" />);
+    const view = render(<AssistantMessage turn={turn} client={traceClient(turnTrace)} sid="s1" />);
     near(true);
     const signal = (turnTrace.mock.calls[0] as unknown[])[2] as AbortSignal;
     expect(signal.aborted).toBe(false);
@@ -109,12 +115,52 @@ describe('a windowed turn trace', () => {
     setStepsSummarized(false);
     const near = stubNearness();
     const turnTrace = vi.fn().mockResolvedValue([earliest, newest]);
-    render(<AssistantMessage turn={turn} client={{ turnTrace } as unknown as GatewayClient} sid="s1" />);
+    render(<AssistantMessage turn={turn} client={traceClient(turnTrace)} sid="s1" />);
     expect(screen.queryByRole('button', { name: /earlier step/ })).toBeNull();
     expect(turnTrace).not.toHaveBeenCalled();
     near(true);
     expect(await screen.findByText('Earlier progress')).toBeVisible();
     expect(turnTrace).toHaveBeenCalledOnce();
+  });
+
+  // Regression, user report: opening a session grew a long turn in view a moment later.
+  it('paints the steps that an earlier visit read without reading them again', () => {
+    const near = stubNearness();
+    const turnTrace = vi.fn();
+    const view = render(
+      <AssistantMessage turn={turn} client={traceClient(turnTrace, [earliest, newest])} sid="s1" />,
+    );
+    expect(screen.getByText('Earlier progress')).toBeVisible();
+    expect(screen.getByText('Latest progress')).toBeVisible();
+    expect(view.container.querySelector('[data-earlier-steps]')).toBeNull();
+    near(true);
+    expect(turnTrace).not.toHaveBeenCalled();
+  });
+
+  it('reports a turn in view until its earlier steps land', async () => {
+    const near = stubNearness();
+    let resolve!: (rows: typeof newest[]) => void;
+    const turnTrace = vi.fn(() => new Promise<typeof newest[]>((done) => { resolve = done; }));
+    render(
+      <div data-testid="reader">
+        <AssistantMessage turn={turn} client={traceClient(turnTrace)} sid="s1" />
+      </div>,
+    );
+    const reader = screen.getByTestId('reader');
+    let markTop = 300;
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      const top = this === reader ? 0 : markTop;
+      return { top, bottom: top + 800, left: 0, right: 400, width: 400, height: 800, x: 0, y: top } as DOMRect;
+    });
+    expect(earlierStepsPendingInView(reader)).toBe(true);
+    // Steps that land above the view move nothing that the reader sees.
+    markTop = -40;
+    expect(earlierStepsPendingInView(reader)).toBe(false);
+    markTop = 300;
+    near(true);
+    await act(async () => resolve([earliest, newest]));
+    expect(screen.getByText('Earlier progress')).toBeVisible();
+    expect(earlierStepsPendingInView(reader)).toBe(false);
   });
 });
 

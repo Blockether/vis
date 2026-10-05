@@ -59,4 +59,34 @@ describe('bounded reads during session switches', () => {
     expect(client.cachedTranscript('s1')?.[0].iterations_offset).toBe(99);
     expect(fetched).toHaveBeenCalledOnce();
   });
+
+  // Regression, user report: each visit grew a long turn in view a moment after the session opened.
+  it('keeps a complete turn trace for the next visit', async () => {
+    const steps = [{ position: 1 }, { position: 2 }, { position: 3 }];
+    const fetched = vi.fn(async () => new Response(JSON.stringify({ iterations: steps })));
+    vi.stubGlobal('fetch', fetched);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient({ url: 'http://gateway.example.com' });
+    const turn: import('./types').TranscriptTurn = {
+      turn_id: 't1', status: 'completed', iterations: [{ position: 3 }], iterations_offset: 2, iterations_total: 3,
+    };
+    expect(client.cachedTurnTrace('s1', turn)).toBeNull();
+    expect(await client.turnTrace('s1', 't1')).toEqual(steps);
+    expect(client.cachedTurnTrace('s1', turn)).toEqual(steps);
+    // A trace that was read while the turn ran is short of the settled turn.
+    expect(client.cachedTurnTrace('s1', { ...turn, iterations_total: 4 })).toBeNull();
+    client.forgetSession('s1');
+    expect(client.cachedTurnTrace('s1', turn)).toBeNull();
+    expect(fetched).toHaveBeenCalledOnce();
+  });
+
+  it('keeps only the newest turn traces', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ iterations: [{ position: 2 }] }))));
+    const { GatewayClient, SESSION_CACHE_LIMIT } = await import('./gateway');
+    const client = new GatewayClient({ url: 'http://gateway.example.com' });
+    const turn = (turn_id: string) => ({ turn_id, iterations: [], iterations_offset: 1 });
+    for (let index = 0; index <= SESSION_CACHE_LIMIT; index += 1) await client.turnTrace('s1', `t${index}`);
+    expect(client.cachedTurnTrace('s1', turn('t0'))).toBeNull();
+    expect(client.cachedTurnTrace('s1', turn(`t${SESSION_CACHE_LIMIT}`))).toHaveLength(1);
+  });
 });

@@ -4132,11 +4132,28 @@ function TurnStamp({ position, createdAt }: { position?: number; createdAt?: num
 // opened in Compact mode as a few notes and digests.
 const HISTORY_NEAR_MARGIN = '100%';
 
+/**
+ * Whether a windowed turn in the scroller's view still waits for its earlier steps.
+ * They land above the turn's newest steps, so all content above them in view moves.
+ */
+export function earlierStepsPendingInView(scroller: Element): boolean {
+  const view = scroller.getBoundingClientRect();
+  return Array.from(scroller.querySelectorAll('[data-earlier-steps]')).some((mark) => {
+    const { top } = mark.getBoundingClientRect();
+    return top > view.top && top < view.bottom;
+  });
+}
+
 function TurnTrace({
   turn,
   ...props
 }: Omit<ComponentProps<typeof IterationTrace>, 'iterations'> & { turn: TranscriptTurn }) {
-  const [history, setHistory] = useState<TranscriptIteration[] | null>(null);
+  // A trace that an earlier visit read paints the whole turn at once, so the turn never grows in view.
+  const [history, setHistory] = useState<TranscriptIteration[] | null>(() =>
+    (turn.iterations_offset ?? 0) > 0 && props.client && props.sid
+      ? props.client.cachedTurnTrace(props.sid, turn)
+      : null,
+  );
   const [historyError, setHistoryError] = useState('');
   const markRef = useRef<HTMLDivElement>(null);
   const reading = useRef(false);
@@ -4196,7 +4213,9 @@ function TurnTrace({
   return (
     <>
       {/* The mark sits above the steps it loads, so it never anchors the reader. */}
-      {isArmed && <div ref={markRef} aria-hidden="true" data-anchor="skip" className="h-px" />}
+      {isArmed && (
+        <div ref={markRef} aria-hidden="true" data-anchor="skip" data-earlier-steps="" className="h-px" />
+      )}
       {canRead && historyError && (
         <LoadMore label="Try loading earlier steps again" tone="error" onClick={() => void readHistory()}>
           Try again
