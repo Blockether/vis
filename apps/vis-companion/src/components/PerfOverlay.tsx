@@ -143,18 +143,21 @@ export function PerfOverlay({
   read = perfReport,
   refreshMs = REFRESH_MS,
   turnOff = PERF_BUILD ? null : turnOffOverlay,
+  startOpen = false,
 }: {
   read?: () => PerfReport;
   /** Milliseconds between readings; `0` keeps the first reading, as a story needs. */
   refreshMs?: number;
   /** Turns the overlay off; `null` in the `perf` build, which always shows it. */
   turnOff?: (() => boolean) | null;
+  /** Open the details at once. By default the overlay starts as a dot. */
+  startOpen?: boolean;
 }) {
   const [report, setReport] = useState<PerfReport>(read);
   const [history, setHistory] = useState<Sample[]>([]);
   const [baseline, setBaseline] = useState<Baseline | null>(null);
   const [metric, setMetric] = useState<HeatMetric>('bytes');
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(startOpen);
   const [copied, setCopied] = useState(false);
   const [turnOffFailed, setTurnOffFailed] = useState(false);
 
@@ -182,14 +185,15 @@ export function PerfOverlay({
         .slice(0, 8)
     : [];
   const heapTrend = history.flatMap((sample) => (sample.heap === null ? [] : [sample.heap]));
+  const summary = `Memory ${heap === null ? '' : `${formatBytes(heap)} · `}${report.listeners.live.toLocaleString()} listeners`;
 
   return (
     <section
       aria-label={open ? 'Memory overlay' : undefined}
-      className={`pointer-events-auto bg-panel p-2 font-mono text-meta shadow-float ${
+      className={`pointer-events-auto font-mono text-meta ${
         open
-          ? 'flex h-[calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-1rem)] w-[calc(100dvw-env(safe-area-inset-left)-env(safe-area-inset-right)-1rem)] flex-col gap-2 overflow-hidden border border-dialog-edge'
-          : 'max-w-full'
+          ? 'flex h-[calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-1rem)] w-[calc(100dvw-env(safe-area-inset-left)-env(safe-area-inset-right)-1rem)] flex-col gap-2 overflow-hidden border border-dialog-edge bg-panel p-2 shadow-float'
+          : ''
       }`}
     >
       <header className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-3 mouse:gap-y-2">
@@ -200,7 +204,8 @@ export function PerfOverlay({
           variant="quiet"
           density="compact"
           className="inline-flex max-w-full items-center justify-center mouse:order-last"
-          aria-label={open ? 'Minimize memory overlay' : undefined}
+          aria-label={open ? 'Minimize memory overlay' : summary}
+          title={open ? undefined : summary}
           aria-expanded={open}
           onClick={() => setOpen(!open)}
         >
@@ -210,10 +215,8 @@ export function PerfOverlay({
               <span>Minimize</span>
             </span>
           ) : (
-            <>
-              Memory {heap === null ? '' : `${formatBytes(heap)} · `}
-              {report.listeners.live.toLocaleString()} listeners
-            </>
+            // Closed, the overlay is only a dot: the figures wait behind a click.
+            <span aria-hidden className="block size-3 bg-accent" />
           )}
         </Button>
         {open ? (
@@ -387,8 +390,8 @@ export function PerfOverlay({
 }
 
 /**
- * Mount the overlay in its own root, outside the app's tree and layout. Minimized, it
- * waits at the middle of the right edge, clear of the app bar and the composer.
+ * Mount the overlay in its own root, outside the app's tree and layout. Its dot waits at
+ * the middle of the right edge, clear of the app bar and the composer.
  */
 export function mountPerfOverlay(): void {
   if (document.getElementById('vis-perf')) return;

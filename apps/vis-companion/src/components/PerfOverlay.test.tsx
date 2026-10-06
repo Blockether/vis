@@ -66,7 +66,7 @@ describe('formatBytes', () => {
 describe('memory overlay', () => {
   it('shows the platform counters and what each session holds, heaviest first', () => {
     window.location.hash = '#/s/s-small';
-    render(<PerfOverlay read={() => report()} refreshMs={60_000} />);
+    render(<PerfOverlay startOpen read={() => report()} refreshMs={60_000} />);
 
     expect(screen.getByRole('region', { name: 'Memory overlay' })).toBeInTheDocument();
     expect(figure('JS heap')).toHaveTextContent('48.0 MB');
@@ -89,7 +89,7 @@ describe('memory overlay', () => {
   });
 
   it('switches the heatmap between approximate bytes and item counts', () => {
-    render(<PerfOverlay read={() => report()} refreshMs={60_000} />);
+    render(<PerfOverlay startOpen read={() => report()} refreshMs={60_000} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Show items' }));
 
@@ -112,7 +112,7 @@ describe('memory overlay', () => {
       bytes: (index + 1) * 1024,
       entries: 1,
     }));
-    render(<PerfOverlay read={() => report({ cells })} refreshMs={60_000} />);
+    render(<PerfOverlay startOpen read={() => report({ cells })} refreshMs={60_000} />);
 
     expect(tableRows()).toHaveLength(17);
     expect(screen.getByText(/1 lighter session not shown/)).toBeInTheDocument();
@@ -122,7 +122,7 @@ describe('memory overlay', () => {
   it('shows what grew after the baseline and draws the trends', () => {
     vi.useFakeTimers();
     let current = report();
-    render(<PerfOverlay read={() => current} refreshMs={1_000} />);
+    render(<PerfOverlay startOpen read={() => current} refreshMs={1_000} />);
 
     expect(screen.getByText(/Set a baseline/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Set baseline' }));
@@ -163,6 +163,7 @@ describe('memory overlay', () => {
     const base = report();
     render(
       <PerfOverlay
+        startOpen
         read={() =>
           report({
             listeners: { ...base.listeners, detached: 3 },
@@ -182,7 +183,7 @@ describe('memory overlay', () => {
   it('keeps its first reading when the refresh is off', () => {
     vi.useFakeTimers();
     const read = vi.fn(() => report());
-    render(<PerfOverlay read={read} refreshMs={0} />);
+    render(<PerfOverlay startOpen read={read} refreshMs={0} />);
 
     act(() => {
       vi.advanceTimersByTime(60_000);
@@ -192,8 +193,22 @@ describe('memory overlay', () => {
     expect(screen.queryByRole('img', { name: 'Listener trend' })).not.toBeInTheDocument();
   });
 
-  it('minimizes to a one-line summary and opens again', () => {
+  // User report (paraphrased: the memory overlay should be a small dot that shows the
+  // figures only after a click): it starts closed, as one dot with the figures as its name.
+  it('starts as a dot and opens on a click', () => {
     render(<PerfOverlay read={() => report()} refreshMs={60_000} />);
+
+    expect(screen.queryByRole('region', { name: 'Memory overlay' })).not.toBeInTheDocument();
+    const dot = screen.getByRole('button', { name: 'Memory 48.0 MB · 10 listeners' });
+    expect(dot).toHaveAttribute('aria-expanded', 'false');
+    expect(dot).toHaveAttribute('title', 'Memory 48.0 MB · 10 listeners');
+    expect(dot).toHaveTextContent('');
+    fireEvent.click(dot);
+    expect(screen.getByRole('region', { name: 'Memory overlay' })).toBeInTheDocument();
+  });
+
+  it('minimizes to the dot and opens again', () => {
+    render(<PerfOverlay startOpen read={() => report()} refreshMs={60_000} />);
 
     const toggle = screen.getByRole('button', { name: 'Minimize memory overlay' });
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
@@ -210,7 +225,7 @@ describe('memory overlay', () => {
   });
 
   it('says when the browser does not report the heap', () => {
-    render(<PerfOverlay read={() => report({ heap: null })} refreshMs={60_000} />);
+    render(<PerfOverlay startOpen read={() => report({ heap: null })} refreshMs={60_000} />);
 
     expect(figure('JS heap')).toHaveTextContent('Not reported');
     fireEvent.click(screen.getByRole('button', { name: 'Minimize memory overlay' }));
@@ -220,7 +235,7 @@ describe('memory overlay', () => {
   it('copies the full report as JSON', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
-    render(<PerfOverlay read={() => report()} refreshMs={60_000} />);
+    render(<PerfOverlay startOpen read={() => report()} refreshMs={60_000} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy report' }));
 
@@ -230,7 +245,7 @@ describe('memory overlay', () => {
 
   it('turns itself off from the open overlay', () => {
     const turnOff = vi.fn(() => true);
-    render(<PerfOverlay read={() => report()} refreshMs={60_000} turnOff={turnOff} />);
+    render(<PerfOverlay startOpen read={() => report()} refreshMs={60_000} turnOff={turnOff} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Turn off' }));
 
@@ -239,7 +254,7 @@ describe('memory overlay', () => {
   });
 
   it('says when this device did not save turning it off', () => {
-    render(<PerfOverlay read={() => report()} refreshMs={60_000} turnOff={() => false} />);
+    render(<PerfOverlay startOpen read={() => report()} refreshMs={60_000} turnOff={() => false} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Turn off' }));
 
@@ -247,7 +262,7 @@ describe('memory overlay', () => {
   });
 
   it('has no Turn off control in the perf build', () => {
-    render(<PerfOverlay read={() => report()} refreshMs={60_000} turnOff={null} />);
+    render(<PerfOverlay startOpen read={() => report()} refreshMs={60_000} turnOff={null} />);
 
     expect(screen.queryByRole('button', { name: 'Turn off' })).not.toBeInTheDocument();
   });
@@ -265,7 +280,7 @@ describe('memory overlay', () => {
       const classes = host!.className.split(' ');
       expect(classes).toEqual(expect.arrayContaining(['fixed', 'inset-0', 'items-center', 'justify-end']));
       expect(host!.className).not.toMatch(/(^| )(top|right)-/);
-      expect(within(host!).getByRole('button', { name: 'Turn off' })).toBeInTheDocument();
+      expect(within(host!).getByRole('button', { name: /^Memory .* listeners$/ })).toHaveAttribute('aria-expanded', 'false');
     } finally {
       host?.remove();
     }

@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, userEvent } from 'storybook/test';
+import { expect } from 'storybook/test';
 
 import type { MemoryCell, PerfReport } from '../lib/perf';
 import { PerfOverlay } from './PerfOverlay';
@@ -71,7 +71,7 @@ const meta = {
   title: 'Diagnostics/Memory overlay',
   component: PerfOverlay,
   parameters: { layout: 'padded' },
-  args: { read: () => MANY_SESSIONS, refreshMs: 0 },
+  args: { read: () => MANY_SESSIONS, refreshMs: 0, startOpen: true },
 } satisfies Meta<typeof PerfOverlay>;
 
 export default meta;
@@ -98,9 +98,10 @@ export const WithoutHeapSize: Story = {
   args: { read: () => ({ ...MANY_SESSIONS, heap: null }) },
 };
 
+/** How every launch starts: one dot, with the figures behind a click. */
 export const Minimized: Story = {
+  args: { startOpen: false },
   play: async ({ canvas }) => {
-    await userEvent.click(canvas.getByRole('button', { name: 'Minimize memory overlay' }));
     await expect(canvas.getByRole('button', { name: /^Memory 96\.4 MB · 671 listeners$/ })).toBeVisible();
   },
 };
