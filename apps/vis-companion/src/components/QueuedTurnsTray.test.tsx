@@ -248,7 +248,7 @@ describe('send now', () => {
     );
 
     const all = screen.getByRole('button', { name: 'Send all queued messages now' });
-    expect(all).toHaveTextContent(/^Send now$/);
+    expect(all).toHaveTextContent(/^Send all now$/);
     fireEvent.click(all);
     expect(client.sendQueueNow).toHaveBeenCalledWith('session-1');
     await waitFor(() => expect(onError).toHaveBeenCalledWith('gateway away'));
@@ -290,7 +290,7 @@ describe('send now', () => {
     expect(all).not.toHaveClass('text-white');
   });
 
-  it('labels every send control as a Send now button, without arrow glyphs', () => {
+  it('labels the send controls as short text buttons, without arrow glyphs', () => {
     render(
       <QueuedTurnsTray
         client={gateway()}
@@ -302,12 +302,16 @@ describe('send now', () => {
       />,
     );
 
-    const sends = [
-      screen.getByRole('button', { name: 'Send all queued messages now' }),
+    // User decision: the header sends the whole queue, a row sends only its own message.
+    const all = screen.getByRole('button', { name: 'Send all queued messages now' });
+    const rows = [
       screen.getByRole('button', { name: 'Send queued message 1 now' }),
       screen.getByRole('button', { name: 'Keep queued message 2 for the turn end' }),
     ];
-    for (const button of sends) expect(button).toHaveTextContent(/^Send now$/);
+    expect(all).toHaveTextContent(/^Send all now$/);
+    for (const button of rows) expect(button).toHaveTextContent(/^Send it now$/);
+    // The buttons fit the one-line row and band: they never make them taller.
+    for (const button of [all, ...rows]) expect(button).toHaveClass('h-6', 'mouse:h-5');
     expect(screen.queryByText(/→/)).not.toBeInTheDocument();
   });
 

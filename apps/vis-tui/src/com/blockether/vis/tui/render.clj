@@ -1886,7 +1886,7 @@
                    :bounds {:row (+ (long viewport-top) (long y)) :col col :width width})))))
 
 (defn- draw-queue-send-all!
-  "Paint the ` Send now ` button at the right edge of the Queued header and register
+  "Paint the ` Send all now ` button at the right edge of the Queued header and register
    it as the `:queue-send-all-now` hit region. `used-cols` is the width of the header
    text; the button is skipped when the row leaves no room for it."
   [g {:keys [session-id label]} x y iw used-cols viewport-top]
@@ -1910,9 +1910,11 @@
 
     (when (>= (- (long iw) (long used-cols) 2) width)
       (p/clear-styles! g)
-      (p/set-colors! g
-                     (if hovered? t/header-active-tab-fg t/button-fg)
-                     (if hovered? t/header-active-tab-accent t/button-bg))
+      ;; Primary: the accent fill, as the Companion's header button.
+      (p/set-colors!
+        g
+        (if hovered? t/header-active-tab-fg (t/contrast-ink t/header-active-tab-accent))
+        (if hovered? t/header-active-tab-bg t/header-active-tab-accent))
       (p/enable! g p/BOLD)
       (p/put-str! g col y cap)
       (p/clear-styles! g)
@@ -1922,7 +1924,7 @@
                   :session-id session-id}))))
 
 (defn- draw-queue-send-button!
-  "Paint a queue row's ` Send now ` button at the right edge and register it as its
+  "Paint a queue row's ` Send it now ` button at the right edge and register it as its
    `:queue-send-now` hit region. An unmarked row wears the button fill; a row marked for
    the next step wears the primary fill. `deliver` is the mode a press sets, so one
    button serves both the mark and its undo."
@@ -1948,13 +1950,14 @@
              (= (str turn-id) (str (:turn-id hovered))))]
 
     (p/clear-styles! g)
+    ;; Secondary at rest (the muted dialog-button fill), primary accent once marked.
     (p/set-colors! g
                    (cond hovered? t/header-active-tab-fg
-                         marked? t/dialog-bg
-                         :else t/button-fg)
-                   (cond hovered? t/header-active-tab-accent
-                         marked? t/dialog-hint-key
-                         :else t/button-bg))
+                         marked? (t/contrast-ink t/header-active-tab-accent)
+                         :else t/dialog-bg)
+                   (cond hovered? t/header-active-tab-bg
+                         marked? t/header-active-tab-accent
+                         :else t/dialog-hint))
     (p/enable! g p/BOLD)
     (p/put-str! g col y cap)
     (p/clear-styles! g)
@@ -2534,11 +2537,12 @@
                     ;; left edge.
                     (str/starts-with? line queue-hdr-marker)
                     (let [raw (subs line 1)]
-                      (p/set-bg! g bg-color)
+                      ;; The dark title band, as the Companion's queue header.
+                      (p/set-bg! g t/dialog-title-bg)
                       (p/fill-rect! g fbx y fill-iw 1)
-                      (p/set-colors! g t/header-active-tab-accent bg-color)
+                      (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
                       (p/styled g [p/BOLD] (p/put-str! g x y (str "┌ " raw)))
-                      ;; ` Send now ` at the right edge while a turn runs and a
+                      ;; ` Send all now ` at the right edge while a turn runs and a
                       ;; markable row is still unmarked (`queued-progress-entries`).
                       (when-let [send-all (:queue-send-all meta)]
                         (draw-queue-send-all! g
@@ -2595,7 +2599,7 @@
                                     (+ (long x) 2 gutter-n (long (p/display-width body)))
                                     y
                                     suffix))
-                      ;; ` Send now ` ends the row while a turn runs. The preview
+                      ;; ` Send it now ` ends the row while a turn runs. The preview
                       ;; already left room for it.
                       (when-let [send (:queue-send meta)]
                         (draw-queue-send-button! g send x y iw viewport-top)))
@@ -9065,9 +9069,13 @@
   [row]
   (= gateway-contract/queued-turn-deliver-next-iteration (:deliver row)))
 
-(def ^:private queue-send-now-label
-  "Label of the queue buttons: the header's (every markable row) and each row's own."
-  "Send now")
+(def ^:private queue-send-all-label
+  "Label of the header button that sends every markable queued row at the next step."
+  "Send all now")
+
+(def ^:private queue-send-it-label
+  "Label of a queue row's own button that sends only that row at the next step."
+  "Send it now")
 
 (def ^:private queue-marked-suffix
   "Trailer of a queue row that is marked to send at the next step."
@@ -9075,8 +9083,8 @@
 
 (defn- queued-progress-entries
   "Rows of the Queued block. `send-opts` is `{:running? bool :session-id sid}`: while
-   a turn runs, every markable row ends in a ` Send now ` button and the header gets one
-   too (see `markable-queued-row?`). With no running turn there is no next step, so
+   a turn runs, every markable row ends in a ` Send it now ` button and the header gets
+   ` Send all now ` (see `markable-queued-row?`). With no running turn there is no next step, so
    nothing is painted (the paused and held flows have their own controls)."
   [pending-sends content-w paused-info send-opts]
   (let [queued
@@ -9093,12 +9101,13 @@
             ;; the marker painters) so the whole block reads as ONE bracketed
             ;; group — the same left-bar affordance a "You" bubble uses.
             ;;
-            ;; Header row: bold accent "Queued". While a turn runs and a markable
-            ;; row is still unmarked, the painter adds ` Send now ` at the right
-            ;; edge and registers it as the `:queue-send-all-now` hit region.
+            ;; Header row: the dark title band with "Queued · N". While a turn runs and a
+            ;; markable row is still unmarked, the painter adds ` Send all now ` at the
+            ;; right edge and registers it as the `:queue-send-all-now` hit region.
             hdr-line
             (str queue-hdr-marker
-                 "Queued"
+                 "Queued · "
+                 (count queued)
                  (when paused-info
                    (if (:is-breaker-open paused-info) " · provider unhealthy" " · paused")))
 
@@ -9107,7 +9116,7 @@
                  (some #(and (markable-queued-row? %) (not (marked-queued-row? %))) queued))
 
             hdr-meta
-            (when send-all? {:queue-send-all {:session-id session-id :label queue-send-now-label}})
+            (when send-all? {:queue-send-all {:session-id session-id :label queue-send-all-label}})
 
             ;; Rail + its trailing space eat 2 cols before any content.
             rail-w
@@ -9121,7 +9130,7 @@
             ;; Each row is ONE clipped line: the ordinal in the accent gutter,
             ;; then the preview right-clipped with an ellipsis so it always fits
             ;; the width and never wraps. While a turn runs a markable row also
-            ;; keeps room for its ` Send now ` button (and one gap) at the right edge.
+            ;; keeps room for its ` Send it now ` button (and one gap) at the right edge.
             item-line
             (fn [idx entry]
               (let [markable?
@@ -9140,7 +9149,7 @@
                     (when marked? queue-marked-suffix)
 
                     button-w
-                    (if markable? (+ 3 (long (p/display-width queue-send-now-label))) 0)
+                    (if markable? (+ 3 (long (p/display-width queue-send-it-label))) 0)
 
                     avail
                     (max 1
@@ -9165,7 +9174,7 @@
                          markable?
                          (assoc :queue-send
                            {:session-id session-id
-                            :label queue-send-now-label
+                            :label queue-send-it-label
                             :turn-id (:turn-id entry)
                             :marked? marked?
                             ;; The mode a press SETS: a marked row goes back to the

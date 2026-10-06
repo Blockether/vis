@@ -95,7 +95,7 @@ export function QueuedTurnsTray({
             {markable.length > 0 && (
               <Button
                 variant="primary"
-                density="compact"
+                density="inline"
                 aria-label="Send all queued messages now"
                 title="Deliver every queued message into the running turn at its next step"
                 disabled={sendingAll || unmarked.length === 0}
@@ -108,7 +108,7 @@ export function QueuedTurnsTray({
                     .finally(() => setSendingAll(false));
                 }}
               >
-                Send now
+                Send all now
               </Button>
             )}
           </div>
@@ -192,7 +192,7 @@ export function QueuedTurnsTray({
                         }
                         title={isMarked ? 'Keep for the turn end' : 'Send at the next step'}
                         variant={isMarked ? 'primary' : 'secondary'}
-                        density="compact"
+                        density="inline"
                         className="shrink-0"
                         aria-pressed={isMarked}
                         disabled={isBusy}
@@ -205,7 +205,7 @@ export function QueuedTurnsTray({
                             .finally(() => markBusy(item.turnId, false));
                         }}
                       >
-                        Send now
+                        Send it now
                       </Button>
                     )}
                     <CloseButton

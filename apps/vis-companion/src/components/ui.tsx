@@ -134,8 +134,10 @@ export const Button = forwardRef<
      * Invisible reach preserves a 44px touch target; owners leave at least 8px
      * between adjacent targets. `compact` centres the button in a header and
      * uses metadata type under a pointer. `panel` keeps fixed horizontal padding.
+     * `inline` sits inside a one-line row or band: a 24px touch / 20px pointer face
+     * with invisible reach to 44px, so it never makes the row taller.
      */
-    density?: 'default' | 'compact' | 'panel';
+    density?: 'default' | 'compact' | 'panel' | 'inline';
   }
 >(function Button(
   {
@@ -200,6 +202,8 @@ export const Button = forwardRef<
     default: `${touchReach} min-h-8 px-2.5 text-ui sm:px-3 mouse:min-h-7`,
     compact: `${touchReach} h-8 min-h-8 px-2.5 self-center text-ui sm:px-3 mouse:h-7 mouse:min-h-7 mouse:text-meta`,
     panel: `${touchReach} min-h-8 px-3 font-mono text-ui mouse:min-h-7`,
+    inline:
+      'relative h-6 min-h-6 self-center px-2 leading-none text-meta after:absolute after:inset-x-0 after:-top-2.5 after:-bottom-2.5 after:content-[""] mouse:h-5 mouse:min-h-5 mouse:after:content-none'
   }[density];
   const frame = `rounded-none py-0.5 ${scale}`;
 

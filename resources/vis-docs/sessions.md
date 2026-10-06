@@ -95,12 +95,12 @@ a correction or a fact that changes the next step. By default a queued message w
 for the turn end.
 
 - **Terminal:** press **Ctrl+X k** to send the whole queue now. To send one message,
-  click **Send now** at the end of its row, or press **Ctrl+X z** and type the label of
+  click **Send it now** at the end of its row, or press **Ctrl+X z** and type the label of
   that button.
-- **Desktop or phone app:** choose **Send now** in the queue header to send the whole
-  queue. To send one message, choose **Send now** on its row.
+- **Desktop or phone app:** choose **Send all now** in the queue header to send the whole
+  queue. To send one message, choose **Send it now** on its row.
 
-A sent message shows **next step** on its row. Choose its **Send now** again to let it wait
+A sent message shows **next step** on its row. Choose its **Send it now** again to let it wait
 for the turn end. The running turn reads the sent messages, in queue order, when it
 starts its next step. The conversation then shows them as **You · sent now** inside
 that turn, with the step they reached.
