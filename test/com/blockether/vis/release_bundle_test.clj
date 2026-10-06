@@ -524,7 +524,7 @@
                        (git! src "show" ":VIS_VERSION")))
             (expect (= "cached data\n" (slurp (io/file src "ignored-cache"))))
             (expect (str/includes? (slurp native) "old-runtime"))
-            (doseq [message ["local changes" (.getAbsolutePath src) "git -C" "status"
+            (doseq [message ["local changes" "~/.vis/install/src" "git -C" "status"
                              "commit or stash" "untracked files" "manually" "detached pin"
                              "same 'vis-agent update' command" "--track"
                              "Native installation and selected track unchanged"]]
@@ -706,6 +706,15 @@
           (expect (= new-commit (git! managed-src "rev-parse" "HEAD")) output)
           (expect (not (str/includes? output "Update the gateway")) output)
           (expect (not (str/includes? output "leaving 1 commit behind")) output))))
+  (it "shows paths under the home directory with ~ in update messages"
+      (with-source-update-fixture
+        {}
+        (fn [{:keys [exit output new-commit managed-src]}]
+          (expect (zero? exit) output)
+          (expect (str/includes? output
+                                 (str "source pinned at " new-commit " (~/.vis/install/src)"))
+                  output)
+          (expect (not (str/includes? output (.getAbsolutePath ^File managed-src))) output))))
   ;; Regression: a dev update asked the old gateway to stop with a bare
   ;; `clojure -M:vis` inside a checkout whose `:deps/prep-lib` Git dependency was
   ;; never prepared. tools.deps refused to build that classpath, `|| true` swallowed
@@ -730,9 +739,8 @@
           (expect (= old-commit (git! managed-src "rev-parse" "HEAD")))
           (expect (= old-commit (str/trim (slurp (io/file managed-src ".." "ref")))))
           (expect (= "local work\n" (slurp (io/file managed-src "update-marker"))))
-          (doseq [message ["local changes" (.getAbsolutePath managed-src) "git -C" "status"
-                           "commit or stash" "manually" "detached pin"
-                           "same 'vis-agent update' command" "--track"]]
+          (doseq [message ["local changes" "~/.vis/install/src" "git -C" "status" "commit or stash"
+                           "manually" "detached pin" "same 'vis-agent update' command" "--track"]]
             (expect (str/includes? output message) output))
           (expect (not (str/includes? output "fetching")) output)
           (expect (not (str/includes? output "installed the dev track")) output)

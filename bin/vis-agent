@@ -64,9 +64,26 @@ managed_ref_file="$vis_install_dir/ref"
 # The installed selection controls launch, not the default for a later update.
 vis_track_file="$vis_install_dir/track"
 
-say()  { printf 'vis-agent: %s\n' "$*"; }
-warn() { printf 'vis-agent: %s\n' "$*" >&2; }
-die()  { printf 'vis-agent: %s\n' "$1" >&2; shift; for line in "$@"; do printf '  %s\n' "$line" >&2; done; exit 1; }
+# Show each path under $HOME as ~ in messages. Bash 3.2 needs this loop, not ${//}.
+tilde_home() {
+  local text="$1" home="${HOME:-}" out="" before after
+  if [[ -z "$home" || "$home" == "/" ]]; then printf '%s' "$text"; return 0; fi
+  while [[ "$text" == *"$home"* ]]; do
+    before=${text%%"$home"*}
+    after=${text#*"$home"}
+    if [[ "$after" == [[:alnum:]._-]* ]]; then out+="$before$home"; else out+="$before~"; fi
+    text=$after
+  done
+  printf '%s' "$out$text"
+}
+
+say()  { printf 'vis-agent: %s\n' "$(tilde_home "$*")"; }
+warn() { printf 'vis-agent: %s\n' "$(tilde_home "$*")" >&2; }
+die()  {
+  printf 'vis-agent: %s\n' "$(tilde_home "$1")" >&2; shift
+  for line in "$@"; do printf '  %s\n' "$(tilde_home "$line")" >&2; done
+  exit 1
+}
 
 # First non-blank line of a state file, or nothing.
 read_state() {
