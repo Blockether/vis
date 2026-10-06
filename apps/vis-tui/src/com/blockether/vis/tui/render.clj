@@ -1886,12 +1886,15 @@
                    :bounds {:row (+ (long viewport-top) (long y)) :col col :width width})))))
 
 (defn- draw-queue-send-all!
-  "Paint the `→ Send now` control at the right edge of the Queued header and register
+  "Paint the ` Send now ` button at the right edge of the Queued header and register
    it as the `:queue-send-all-now` hit region. `used-cols` is the width of the header
-   text; the control is skipped when the row leaves no room for it."
-  [g {:keys [session-id label]} x y iw used-cols viewport-top bg-color]
-  (let [width
-        (long (p/display-width label))
+   text; the button is skipped when the row leaves no room for it."
+  [g {:keys [session-id label]} x y iw used-cols viewport-top]
+  (let [cap
+        (str " " label " ")
+
+        width
+        (long (p/display-width cap))
 
         col
         (+ (long x) (max 0 (- (long iw) width)))
@@ -1908,23 +1911,32 @@
     (when (>= (- (long iw) (long used-cols) 2) width)
       (p/clear-styles! g)
       (p/set-colors! g
-                     (if hovered? t/header-active-tab-fg t/header-active-tab-accent)
-                     (if hovered? t/header-active-tab-accent bg-color))
+                     (if hovered? t/header-active-tab-fg t/button-fg)
+                     (if hovered? t/header-active-tab-accent t/button-bg))
       (p/enable! g p/BOLD)
-      (p/put-str! g col y label)
+      (p/put-str! g col y cap)
       (p/clear-styles! g)
       (.register interactions/hit-map
                  {:bounds {:row abs-row :col col :width width}
                   :kind :queue-send-all-now
                   :session-id session-id}))))
 
-(defn- draw-queue-send-arrow!
-  "Paint a queue row's `→` control — dim when the row waits for the turn end, accent
-   bold when it is marked for the next step — and register the gutter (`→ 1. `) as
-   its `:queue-send-now` hit region, wide enough for a pointer. `deliver` is the mode
-   a press sets, so one region serves both the mark and its undo."
-  [g {:keys [session-id turn-id deliver marked?]} col y width viewport-top bg-color]
-  (let [abs-row
+(defn- draw-queue-send-button!
+  "Paint a queue row's ` Send now ` button at the right edge and register it as its
+   `:queue-send-now` hit region. An unmarked row wears the button fill; a row marked for
+   the next step wears the primary fill. `deliver` is the mode a press sets, so one
+   button serves both the mark and its undo."
+  [g {:keys [session-id turn-id deliver marked? label]} x y iw viewport-top]
+  (let [cap
+        (str " " label " ")
+
+        width
+        (long (p/display-width cap))
+
+        col
+        (+ (long x) (max 0 (- (long iw) width)))
+
+        abs-row
         (+ (long viewport-top) (long y))
 
         hovered
@@ -1938,11 +1950,13 @@
     (p/clear-styles! g)
     (p/set-colors! g
                    (cond hovered? t/header-active-tab-fg
-                         marked? t/header-active-tab-accent
-                         :else t/dialog-hint)
-                   (if hovered? t/header-active-tab-accent bg-color))
-    (when marked? (p/enable! g p/BOLD))
-    (p/put-str! g col y "→")
+                         marked? t/dialog-bg
+                         :else t/button-fg)
+                   (cond hovered? t/header-active-tab-accent
+                         marked? t/dialog-hint-key
+                         :else t/button-bg))
+    (p/enable! g p/BOLD)
+    (p/put-str! g col y cap)
     (p/clear-styles! g)
     (.register interactions/hit-map
                {:bounds {:row abs-row :col col :width width}
@@ -2524,7 +2538,7 @@
                       (p/fill-rect! g fbx y fill-iw 1)
                       (p/set-colors! g t/header-active-tab-accent bg-color)
                       (p/styled g [p/BOLD] (p/put-str! g x y (str "┌ " raw)))
-                      ;; `→ Send now` at the right edge while a turn runs and a
+                      ;; ` Send now ` at the right edge while a turn runs and a
                       ;; markable row is still unmarked (`queued-progress-entries`).
                       (when-let [send-all (:queue-send-all meta)]
                         (draw-queue-send-all! g
@@ -2533,8 +2547,7 @@
                                               y
                                               iw
                                               (+ 2 (long (p/display-width raw)))
-                                              viewport-top
-                                              bg-color)))
+                                              viewport-top)))
                     ;; ── Queued message row — left rail `│`, then the ordinal
                     ;; ("1. ") in the accent gutter, then the single-line
                     ;; preview (already right-clipped with an ellipsis so it
@@ -2564,15 +2577,6 @@
                                 [p/BOLD]
                                 (p/put-str! g x y "│")
                                 (when (pos? gutter-n) (p/put-str! g (+ (long x) 2) y ord)))
-                      ;; The `→` control leads the gutter while a turn runs.
-                      (when-let [send (:queue-send meta)]
-                        (draw-queue-send-arrow! g
-                                                send
-                                                (+ (long x) 2)
-                                                y
-                                                gutter-n
-                                                viewport-top
-                                                bg-color))
                       ;; Preview — dim italic, after the ordinal.
                       (p/set-colors! g t/dialog-hint bg-color)
                       (p/styled g
@@ -2590,7 +2594,11 @@
                         (p/put-str! g
                                     (+ (long x) 2 gutter-n (long (p/display-width body)))
                                     y
-                                    suffix)))
+                                    suffix))
+                      ;; ` Send now ` ends the row while a turn runs. The preview
+                      ;; already left room for it.
+                      (when-let [send (:queue-send meta)]
+                        (draw-queue-send-button! g send x y iw viewport-top)))
                     ;; ── Queue bottom border — a square corner `└` at the rail
                     ;; column, then a horizontal rule filling the rest of the
                     ;; width. Caps the left rail and separates the queued items
@@ -9057,9 +9065,9 @@
   [row]
   (= gateway-contract/queued-turn-deliver-next-iteration (:deliver row)))
 
-(def ^:private queue-send-all-label
-  "Header control that marks every markable queued row for the next step."
-  "→ Send now")
+(def ^:private queue-send-now-label
+  "Label of the queue buttons: the header's (every markable row) and each row's own."
+  "Send now")
 
 (def ^:private queue-marked-suffix
   "Trailer of a queue row that is marked to send at the next step."
@@ -9067,10 +9075,9 @@
 
 (defn- queued-progress-entries
   "Rows of the Queued block. `send-opts` is `{:running? bool :session-id sid}`: while
-   a turn runs, every markable row gets a `→` control in one aligned column and the
-   header gets `→ Send now` (see `markable-queued-row?`). With no running turn there
-   is no next step, so nothing is painted (the paused and held flows have their own
-   controls)."
+   a turn runs, every markable row ends in a ` Send now ` button and the header gets one
+   too (see `markable-queued-row?`). With no running turn there is no next step, so
+   nothing is painted (the paused and held flows have their own controls)."
   [pending-sends content-w paused-info send-opts]
   (let [queued
         (vec (or pending-sends []))
@@ -9087,7 +9094,7 @@
             ;; group — the same left-bar affordance a "You" bubble uses.
             ;;
             ;; Header row: bold accent "Queued". While a turn runs and a markable
-            ;; row is still unmarked, the painter adds `→ Send now` at the right
+            ;; row is still unmarked, the painter adds ` Send now ` at the right
             ;; edge and registers it as the `:queue-send-all-now` hit region.
             hdr-line
             (str queue-hdr-marker
@@ -9100,10 +9107,12 @@
                  (some #(and (markable-queued-row? %) (not (marked-queued-row? %))) queued))
 
             hdr-meta
-            (when send-all? {:queue-send-all {:session-id session-id :label queue-send-all-label}})
+            (when send-all? {:queue-send-all {:session-id session-id :label queue-send-now-label}})
 
             ;; Rail + its trailing space eat 2 cols before any content.
-            rail-w 2
+            rail-w
+            2
+
             ;; Ordinals count in SEND ORDER, top to bottom: #1 is the item that
             ;; fires NEXT (oldest, first in the vec, rendered at the top), then
             ;; #2, #3 … down to #N — the newest queued submission at the bottom,
@@ -9111,9 +9120,8 @@
             ;; Reading top-to-bottom is 1,2,3,…,N, matching the order they send.
             ;; Each row is ONE clipped line: the ordinal in the accent gutter,
             ;; then the preview right-clipped with an ellipsis so it always fits
-            ;; the width and never wraps. While a turn runs the gutter starts
-            ;; with the `→` column (`→ 1. `, or two spaces for a row that cannot
-            ;; be marked) so the ordinals stay aligned.
+            ;; the width and never wraps. While a turn runs a markable row also
+            ;; keeps room for its ` Send now ` button (and one gap) at the right edge.
             item-line
             (fn [idx entry]
               (let [markable?
@@ -9123,7 +9131,7 @@
                     (and markable? (marked-queued-row? entry))
 
                     ord
-                    (str (when running? (if markable? "→ " "  ")) (inc (long idx)) ". ")
+                    (str (inc (long idx)) ". ")
 
                     gutter-n
                     (count ord)
@@ -9131,27 +9139,33 @@
                     suffix
                     (when marked? queue-marked-suffix)
 
+                    button-w
+                    (if markable? (+ 3 (long (p/display-width queue-send-now-label))) 0)
+
                     avail
                     (max 1
                          (- (long content-w)
                             (long rail-w)
                             (long gutter-n)
-                            (long (count (or suffix "")))))
+                            (long (count (or suffix "")))
+                            (long button-w)))
 
                     ;; A row the gateway never accepted (`:stage-queued-locally`)
                     ;; says so: it is held in THIS client only, so painting it
                     ;; identically to a server-backed row is a lie.
-                    preview (ellipsize-cols (cond->> (queued-preview (or (:preview-text entry)
-                                                                         (:text entry)))
-                                              (:unsent? entry)
-                                              (str "⚠ unsent · "))
-                                            avail)]
+                    preview
+                    (ellipsize-cols (cond->> (queued-preview (or (:preview-text entry)
+                                                                 (:text entry)))
+                                      (:unsent? entry)
+                                      (str "⚠ unsent · "))
+                                    avail)]
 
                 {:line (str queue-item-marker ord preview suffix)
                  :meta (cond-> {:queue-gutter gutter-n}
                          markable?
                          (assoc :queue-send
                            {:session-id session-id
+                            :label queue-send-now-label
                             :turn-id (:turn-id entry)
                             :marked? marked?
                             ;; The mode a press SETS: a marked row goes back to the
@@ -9163,15 +9177,21 @@
                            suffix))}))
 
             ;; Items stack directly, one line each — no blank rows between them.
-            item-lines (vec (map-indexed item-line queued))
+            item-lines
+            (vec (map-indexed item-line queued))
+
             ;; Bottom border closes the block and caps the left rail, sitting
             ;; between the queued items and the edit hint.
-            border {:line queue-border-marker :meta nil}
+            border
+            {:line queue-border-marker :meta nil}
+
             ;; Nudge: ArrowUp on an empty input box pulls the newest queued
             ;; submission (item #N, the bottom row) back into the editor (see state.clj
             ;; :history-up). Accent hint on the REGULAR bubble bg (via
             ;; `hint-marker`) so the affordance pops as a control.
-            hint {:line (str hint-marker "↑ to edit") :meta nil}
+            hint
+            {:line (str hint-marker "↑ to edit") :meta nil}
+
             ;; When the gateway paused the queue after a provider failure, the head
             ;; is held (not cascaded). Show WHY on its own row, above the edit hint.
             paused-line

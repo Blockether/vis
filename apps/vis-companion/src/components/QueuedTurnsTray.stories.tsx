@@ -32,7 +32,7 @@ type Story = StoryObj<typeof meta>;
 
 export const PausedWithTwoTurns: Story = {};
 
-/** No turn runs: the queue waits for a turn start and shows no `→` controls. */
+/** No turn runs: the queue waits for a turn start and shows no Send now buttons. */
 export const Idle: Story = {
   args: {
     paused: null,

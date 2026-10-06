@@ -11567,9 +11567,10 @@ print(paths)"
 
 (defdescribe
   queue-send-now-controls-test
-  ;; "Send now": while a turn runs, the Queued block offers `→ Send now` on its
-  ;; header and an aligned `→` on every markable row. A marked row keeps its place
-  ;; and says `· next step`; a command (`/…`, `!…`) and a local-only row show no `→`;
+  ;; "Send now": while a turn runs, the Queued block offers a ` Send now ` button on its
+  ;; header and at the right edge of every markable row, with no arrow glyphs. A marked
+  ;; row keeps its place and says `· next step`; a command (`/…`, `!…`) and a local-only
+  ;; row show no button;
   ;; a held queue (no running turn) shows no control at all.
   (let [settings
         {:show-thinking true :show-iterations true}
@@ -11603,7 +11604,7 @@ print(paths)"
           (first (filter #(str/includes? (str (first %)) needle) (rows payload))))]
 
     (it
-      "paints `→ Send now` on the header and a `→` column on markable rows while a turn runs"
+      "paints a `Send now` button on the header and on markable rows while a turn runs"
       (let [d
             (payload {:iterations [{:activity :provider-call}]} pending {})
 
@@ -11622,19 +11623,25 @@ print(paths)"
             [marked-line marked-meta]
             (row-with d "third queued message")]
 
-        (expect (= {:session-id "s1" :label "→ Send now"} (:queue-send-all hdr-meta)))
-        ;; One aligned column: `→ 1. ` for a markable row, two spaces otherwise.
-        (expect (str/includes? first-line "→ 1. first queued message"))
-        (expect (= {:session-id "s1" :turn-id "t1" :marked? false :deliver "next_iteration"}
+        (expect (= {:session-id "s1" :label "Send now"} (:queue-send-all hdr-meta)))
+        ;; Plain ordinals: the button is painted from meta, never an arrow in the text.
+        (expect (str/includes? first-line "1. first queued message"))
+        (expect (not (str/includes? first-line "→")))
+        (expect (= {:session-id "s1"
+                    :label "Send now"
+                    :turn-id "t1"
+                    :marked? false
+                    :deliver "next_iteration"}
                    (:queue-send first-meta)))
-        (expect (str/includes? cmd-line "  2. /help"))
+        (expect (str/includes? cmd-line "2. /help"))
         (expect (nil? (:queue-send cmd-meta)))
-        (expect (str/includes? local-line "  3. ⚠ unsent · local only"))
+        (expect (str/includes? local-line "3. ⚠ unsent · local only"))
         (expect (nil? (:queue-send local-meta)))
-        ;; The marked row stays in place, says so, and its `→` undoes the mark.
-        (expect (str/includes? marked-line "→ 4. third queued message · next step"))
-        (expect (= {:session-id "s1" :turn-id "t3" :marked? true :deliver "turn_end"}
-                   (:queue-send marked-meta)))
+        ;; The marked row stays in place, says so, and its button undoes the mark.
+        (expect (str/includes? marked-line "4. third queued message · next step"))
+        (expect
+          (= {:session-id "s1" :label "Send now" :turn-id "t3" :marked? true :deliver "turn_end"}
+             (:queue-send marked-meta)))
         (expect (= " · next step" (:queue-suffix marked-meta)))))
     (it "drops the header control once every markable row is marked"
         (let [d
@@ -11650,7 +11657,7 @@ print(paths)"
 
           (expect (nil? (:queue-send-all hdr-meta)))
           ;; A command stays a turn of its own, whatever its `deliver` says.
-          (expect (str/includes? cmd-line "  2. /help"))
+          (expect (str/includes? cmd-line "2. /help"))
           (expect (nil? (:queue-send cmd-meta)))))
     (it "paints no control while the queue is held, because no turn runs"
         (let [d
@@ -11668,7 +11675,7 @@ print(paths)"
           (expect (not (str/includes? first-line "→")))
           (expect (nil? (:queue-send first-meta)))))
     (it
-      "registers the header control and each `→` as hit regions"
+      "registers the header button and each row button as hit regions at the right edge"
       (let [d
             (payload {:iterations [{:activity :provider-call}]} pending {})
 
@@ -11700,8 +11707,13 @@ print(paths)"
 
         (expect (= 1 (count (:queue-send-all-now by-kind))))
         (expect (= "s1" (:session-id send-all)))
-        (expect (= (count "→ Send now") (long (:width (:bounds send-all)))))
-        ;; One `→` per markable row (t1, t3): not the command, not the local row.
+        (expect (= (count " Send now ") (long (:width (:bounds send-all)))))
+        ;; One button per markable row (t1, t3): not the command, not the local row.
+        ;; Every button ends at the same right edge as the header button.
+        (expect (= [(count " Send now ") (count " Send now ")]
+                   (mapv #(long (:width (:bounds %))) sends)))
+        (expect (= [(:col (:bounds send-all)) (:col (:bounds send-all))]
+                   (mapv #(:col (:bounds %)) sends)))
         (expect (= ["t1" "t3"] (mapv :turn-id sends)))
         (expect (= ["next_iteration" "turn_end"] (mapv :deliver sends)))
         ;; The `z` overlay addresses each control once, by the turn it marks.

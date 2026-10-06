@@ -248,7 +248,7 @@ describe('send now', () => {
     );
 
     const all = screen.getByRole('button', { name: 'Send all queued messages now' });
-    expect(all).toHaveTextContent('→ Send now');
+    expect(all).toHaveTextContent(/^Send now$/);
     fireEvent.click(all);
     expect(client.sendQueueNow).toHaveBeenCalledWith('session-1');
     await waitFor(() => expect(onError).toHaveBeenCalledWith('gateway away'));
@@ -271,7 +271,8 @@ describe('send now', () => {
 
   // Regression, user report: on the dark queue band, "→ Send now" wore the page's ink, not the
   // band's own ink. It read at 1.44:1 in the default theme and vanished in tokyonight-day.
-  it('writes the header verb in the ink of the band it stands on', () => {
+  // The header button now wears the accent fill with its own contrast pair.
+  it('gives the header button its own ink pair on the dark band', () => {
     render(
       <QueuedTurnsTray
         client={gateway()}
@@ -285,8 +286,29 @@ describe('send now', () => {
 
     const all = screen.getByRole('button', { name: 'Send all queued messages now' });
     expect(all.parentElement).toHaveClass('bg-dialog-title', 'text-dialog-title-foreground');
-    expect(all).toHaveClass('text-current');
+    expect(all).toHaveClass('bg-accent', 'text-accent-foreground');
     expect(all).not.toHaveClass('text-white');
+  });
+
+  it('labels every send control as a Send now button, without arrow glyphs', () => {
+    render(
+      <QueuedTurnsTray
+        client={gateway()}
+        sid="session-1"
+        queued={[queued[0], { ...second, deliver: 'next_iteration' }]}
+        paused={null}
+        running
+        onError={vi.fn()}
+      />,
+    );
+
+    const sends = [
+      screen.getByRole('button', { name: 'Send all queued messages now' }),
+      screen.getByRole('button', { name: 'Send queued message 1 now' }),
+      screen.getByRole('button', { name: 'Keep queued message 2 for the turn end' }),
+    ];
+    for (const button of sends) expect(button).toHaveTextContent(/^Send now$/);
+    expect(screen.queryByText(/→/)).not.toBeInTheDocument();
   });
 
   it('offers no controls without a running turn and none on command rows', () => {
