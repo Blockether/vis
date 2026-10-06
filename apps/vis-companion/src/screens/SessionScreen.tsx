@@ -92,6 +92,7 @@ import { isLayerUp } from '../lib/edge-back';
 import {
   GatewayError,
   mergeQueueBacklog,
+  onSettingChange,
   queuedTurnFromWire,
   type QueueDelta,
 } from '../lib/gateway';
@@ -598,6 +599,15 @@ function currentConnection(subscriptions: SessionSubscriptionHub): boolean {
   return connected;
 }
 
+/** The settings that the composer's response controls read. */
+const RESPONSE_CONTROL_SETTINGS = new Set([
+  'reasoning_level',
+  'verbosity',
+  'thinking_summary',
+  'codex_fast_mode',
+  'reasoning_effort',
+  'simplified_thinking_modes',
+]);
 /**
  * The rung of `options` that a turn sends for `wanted`, as Svar picks it: `wanted`
  * when the model offers it, else the strongest offered rung below it, else the
@@ -1357,8 +1367,14 @@ export function SessionScreen({
     };
     refresh();
     const stopWake = onWake(refresh);
+    // Settings can change a response control while this session is open, for example
+    // when it turns off simplified thinking modes. Read the controls again at once.
+    const stopSettings = onSettingChange(client.base, (updated) => {
+      if (RESPONSE_CONTROL_SETTINGS.has(updated.id)) refresh();
+    });
     return () => {
       stopWake();
+      stopSettings();
       controller?.abort();
     };
   }, [client, connected, routerOpen, sid, settingsTarget, settingsOpen]);

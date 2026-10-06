@@ -554,6 +554,26 @@ const providerLimitsListeners = new Map<
   string,
   Set<(providerId: string, limits: ProviderLimits) => void>
 >();
+/** Setting writes per gateway base URL, so other mounted screens read the new value. */
+const settingListeners = new Map<string, Set<(updated: Toggle) => void>>();
+
+/**
+ * Hear every setting write on the gateway at `base`. A row in one screen can change
+ * what another screen shows: Settings turns off simplified thinking modes, and the
+ * open session's reasoning chip must list the exact levels at once.
+ */
+export function onSettingChange(base: string, receive: (updated: Toggle) => void): () => void {
+  let listeners = settingListeners.get(base);
+  if (!listeners) {
+    listeners = new Set();
+    settingListeners.set(base, listeners);
+  }
+  listeners.add(receive);
+  return () => {
+    listeners.delete(receive);
+    if (!listeners.size) settingListeners.delete(base);
+  };
+}
 // A retry on another screen/client still represents the same account operation.
 const providerResetInflight = new Map<string, Promise<ProviderResetOutcome>>();
 /** In-flight router reads per base URL, so concurrent opens cost one request. */
@@ -2472,6 +2492,7 @@ export class GatewayClient {
         })),
       });
     }
+    for (const receive of settingListeners.get(this.base) ?? []) receive(updated);
     return updated;
   }
 

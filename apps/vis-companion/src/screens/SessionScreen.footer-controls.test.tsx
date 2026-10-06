@@ -251,7 +251,35 @@ describe('composer response controls', () => {
           setSetting,
         },
       });
+      return settings;
     }
+
+    // Regression: Settings turned off simplified thinking modes, and the open session
+    // kept its quick, balanced and deep cycle until it was reopened.
+    it('lists the exact levels at once when Settings turns simplified thinking modes off', async () => {
+      const settings = renderWithReasoning(true, vi.fn());
+      await screen.findByRole('button', { name: 'Reasoning effort — balanced, tap for the next level' });
+
+      const off = {
+        id: 'simplified_thinking_modes',
+        label: 'Simplified thinking modes',
+        type: 'boolean',
+        enabled: false,
+      };
+      settings.set('simplified_thinking_modes', off);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(JSON.stringify(off), { headers: { 'Content-Type': 'application/json' } })),
+      );
+      try {
+        // The Settings dialog writes through its own client for the same machine.
+        await act(() => new GatewayClient({ url: 'http://gateway.example.com' }).setSetting(off.id, 'toggle'));
+      } finally {
+        vi.unstubAllGlobals();
+      }
+
+      expect(await screen.findByRole('button', { name: 'Thinking level — xhigh, choose a level' })).toBeVisible();
+    });
 
     it('steps to the next of quick, balanced and deep while simplified thinking modes are on', async () => {
       const user = userEvent.setup();

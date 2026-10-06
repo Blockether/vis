@@ -4150,3 +4150,18 @@ therapy line 2"
       (expect (< (or (str/index-of exited "\u001b[?9001l") Long/MAX_VALUE) main-screen))))
   (it "leaves terminals without ANSI escape codes alone"
       (expect (nil? (#'screen/configure-terminal-input! (DefaultVirtualTerminal.) {})))))
+
+(defdescribe settings-modal-session-refresh-test
+             (it "reads the open session's settings again when Settings closes"
+                 ;; A global Settings change, such as simplified thinking modes, must reach the
+                 ;; footer of the open session without a session switch.
+                 (let [events (atom [])]
+                   (with-redefs-fn {#'state/app-db (atom {:session {:id "s1"} :settings {}})
+                                    #'state/dispatch (fn [event]
+                                                       (swap! events conj event))
+                                    #'dlg/settings-dialog! (fn [& _]
+                                                             nil)
+                                    #'screen/refresh-improve-settings! (fn []
+                                                                         nil)}
+                     #(#'screen/open-settings-modal! nil))
+                   (expect (= [[:refresh-session-settings "s1"]] @events)))))

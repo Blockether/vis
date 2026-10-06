@@ -3666,6 +3666,10 @@
                                 (repaint-chat-frame! screen))})]
      (state/dispatch [:update-settings s]))
    (refresh-improve-settings!)
+   ;; Settings can change a gateway default that the open session inherits, such as
+   ;; `simplified_thinking_modes`. Read the session rows again so its footer agrees.
+   (when-let [sid (get-in @state/app-db [:session :id])]
+     (state/dispatch [:refresh-session-settings sid]))
    nil))
 
 (defn- open-settings-target!
