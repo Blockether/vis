@@ -1949,6 +1949,65 @@
         (expect (= 3 (count (:tabs @state/app-db))) "A pinned row is not an open TUI view")))))
 
 (defdescribe
+  sidebar-arrows-fold-rows-test
+  ;; User decision: in the sidebar and in Settings, Left folds and Right unfolds.
+  (it
+    "folds and unfolds sidebar rows with the arrow keys"
+    (with-redefs [state/app-db
+                  (atom (fixture-db))
+
+                  vis/worker-future
+                  (fn [_ f]
+                    (f))
+
+                  vis/gateway-list-session-groups-page
+                  (fn [_]
+                    {:groups [{"id" "g1" "name" "Release"}] :total 1})
+
+                  vis/gateway-list-sessions-page
+                  (fn [_]
+                    {:sessions [{"id" "s1" "title" "Loose"}]
+                     :grouped [{"id" "s2" "title" "Filed" "group_id" "g1"}]
+                     :total 2})]
+
+      (#'screen/load-project-page! "a")
+      (state/dispatch [:project-sidebar {:expanded #{"a"} :focused? true :index 1}])
+      (let [at
+            (fn [label]
+              (inc (count (take-while #(not= label (:label %))
+                                      (projects/sidebar-entries @state/app-db)))))
+
+            key-at
+            (fn [label k]
+              (state/dispatch [:project-sidebar {:index (at label)}])
+              (projects/key-action @state/app-db (cap/key-stroke k)))
+
+            press!
+            (fn [k]
+              (#'screen/project-sidebar-key!
+               (cap/key-stroke k)
+               (fn [_])
+               (fn [_])
+               (fn [_])
+               (fn [_])
+               (fn [_])))]
+
+        (expect (= [:toggle-project "a"] (key-at "Vis" :left)))
+        (expect (= [:noop] (key-at "Vis" :right)) "Right never closes an open row")
+        (expect (= [:toggle-groups "a"] (key-at "Groups" :left)))
+        (expect (= [:toggle-group "a" "g1"] (key-at "Release" :left)))
+        (expect (= [:toggle-sessions "a"] (key-at "Sessions" :left)))
+        (expect (= [:fold-parent -1] (key-at "Filed" :left)))
+        (expect (= [:fold-parent -1] (key-at "Loose" :left)))
+        ;; Left inside a fold selects the fold row and folds it; Right opens it again.
+        (state/dispatch [:project-sidebar {:index (at "Loose")}])
+        (press! :left)
+        (expect (= (at "Sessions") (get-in @state/app-db [:project-sidebar :index])))
+        (expect (= {"a" true} (get-in @state/app-db [:project-sidebar :sessions-folded?])))
+        (press! :right)
+        (expect (= {"a" false} (get-in @state/app-db [:project-sidebar :sessions-folded?])))))))
+
+(defdescribe
   saved-project-row-state-and-metadata-test
   (it
     "saved project row state and metadata"

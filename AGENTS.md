@@ -87,6 +87,13 @@ own explicit request. Report every commit, push and release in the final reply.
 - Keep errors, meaningful counts and diffs. Never replace them with a generic result preview.
 - Follow `resources/vis-docs/extension-api.md#activity-presentation`. Test registration and the running, success, failure and empty states.
 
+### Folds
+
+- In TUI lists and trees, ← folds the selected row and → unfolds it. This includes the project sidebar (projects, Groups, groups and Sessions) and Settings sections.
+- On a row inside a fold, ← selects that fold row and folds it. Enter and a click also toggle a fold.
+- Show the fold state with ▸ (folded) or ▾ (open). List the arrow keys in that surface's help.
+- Test the arrow keys of each new fold.
+
 ### Code
 
 - Do not add compatibility layers or migrations for obsolete APIs. Update the consumers and remove the old paths.

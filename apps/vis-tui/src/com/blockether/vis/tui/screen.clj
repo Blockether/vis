@@ -6777,7 +6777,7 @@
         (state/dispatch [:toggle-help])
         (when-let [{:keys [id] :as command} (keys!)]
           (case id
-            (:help :rows :jump)
+            (:help :rows :jump :fold)
             nil
 
             :hide
@@ -6919,6 +6919,21 @@
                           :index (max 0
                                       (min (count (projects/sidebar-entries @state/app-db))
                                            (+ (long (or (:index sidebar) 0)) (long value))))}]))
+
+      ;; Left inside a fold: select the fold row, then fold it with the same key.
+      :fold-parent
+      (do (state/dispatch [:project-sidebar
+                           {:focused? true
+                            :index (+ (long (or (get-in @state/app-db [:project-sidebar :index]) 0))
+                                      (long value))}])
+          (project-sidebar-key! (KeyStroke. KeyType/ArrowLeft false false)
+                                select!
+                                add!
+                                refresh!
+                                menu!
+                                open-session!
+                                new-folder!
+                                keys!))
 
       nil)
     (not= :blur-pass action)))

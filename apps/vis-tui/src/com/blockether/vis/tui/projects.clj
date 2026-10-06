@@ -1620,6 +1620,54 @@
 
     (char-action db (keymap/sidebar-key command))))
 
+(defn- fold-state
+  "`:open` or `:closed` for a sidebar row that folds, else nil."
+  [entry]
+  (cond (and (= :project-select (:kind entry)) (contains? entry :expanded?))
+        (if (:expanded? entry) :open :closed)
+        (and (#{:project-set :project-group} (:kind entry)) (contains? entry :folded?))
+        (if (:folded? entry) :closed :open)))
+
+(defn- fold-depth
+  "How deep a sidebar row sits under its project row."
+  ^long [entry]
+  (case (:kind entry)
+    :project-select
+    0
+
+    :project-set
+    1
+
+    :project-session
+    (if (:nested? entry) 3 2)
+
+    2))
+
+(defn- fold-key-action
+  "Right opens a folded row. Left folds an open row, or moves to the fold row
+   that holds the selection and folds it, the same as Settings sections."
+  [db index direction]
+  (let [entries
+        (sidebar-entries db)
+
+        entry
+        (nth entries (dec (long index)) nil)
+
+        state
+        (fold-state entry)]
+
+    (cond (nil? entry) [:noop]
+          (= :right direction) (if (= :closed state) (:action entry) [:noop])
+          (= :open state) (:action entry)
+          :else (if-let [at (some (fn [at]
+                                    (let [row (nth entries at)]
+                                      (when (and (< (fold-depth row) (fold-depth entry))
+                                                 (= :open (fold-state row)))
+                                        at)))
+                                  (range (- (long index) 2) -1 -1))]
+                  [:fold-parent (- (inc (long at)) (long index))]
+                  [:noop]))))
+
 (defn key-action
   "Return a sidebar action or nil to leave the event to the normal TUI dispatcher."
   [db ^KeyStroke key]
@@ -1734,6 +1782,8 @@
         (= KeyType/PageDown (.getKeyType key)) [:move (page-size db)]
         (= KeyType/Home (.getKeyType key)) [:move (- 1 index)]
         (= KeyType/End (.getKeyType key)) [:move (- (count (sidebar-entries db)) index)]
+        (= KeyType/ArrowLeft (.getKeyType key)) (fold-key-action db index :left)
+        (= KeyType/ArrowRight (.getKeyType key)) (fold-key-action db index :right)
         (= KeyType/Enter (.getKeyType key))
         (if (zero? index) [:add] (or (:action (nth (sidebar-entries db) (dec index) nil)) [:noop]))
         (= KeyType/Character (.getKeyType key)) (char-action db (.getCharacter key))

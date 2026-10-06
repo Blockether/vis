@@ -256,6 +256,7 @@
    {:id :back :keys "Esc · Tab" :label "Return to the chat"}
    {:id :hide :keys (label-for :switch-project) :label "Hide the sidebar"}
    {:id :rows :keys "↑ ↓ · C-p C-n" :label "Move between rows"}
+   {:id :fold :keys "← →" :label "Fold or unfold the row"}
    {:id :jump :keys "PgUp PgDn · Home End" :label "Jump a page or to an end"}])
 
 (defn sidebar-key
