@@ -360,6 +360,29 @@ describe('send now', () => {
       screen.queryByRole('button', { name: 'Send queued message 1 now' }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Send queued message 2 now' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Send all queued messages now' })).toBeEnabled();
+    // One markable row: its own button is enough, the header offers no Send all.
+    expect(
+      screen.queryByRole('button', { name: 'Send all queued messages now' }),
+    ).not.toBeInTheDocument();
+  });
+
+  // Regression, user report: one queued message showed "Send all now" next to its own
+  // "Send it now". The header button starts at two markable rows.
+  it('offers no header button for a single queued message', () => {
+    render(
+      <QueuedTurnsTray
+        client={gateway()}
+        sid="session-1"
+        queued={[queued[0]]}
+        paused={null}
+        running
+        onError={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Send queued message 1 now' })).toBeEnabled();
+    expect(
+      screen.queryByRole('button', { name: 'Send all queued messages now' }),
+    ).not.toBeInTheDocument();
   });
 });

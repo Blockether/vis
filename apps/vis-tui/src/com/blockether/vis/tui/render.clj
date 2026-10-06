@@ -2542,8 +2542,8 @@
                       (p/fill-rect! g fbx y fill-iw 1)
                       (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
                       (p/styled g [p/BOLD] (p/put-str! g x y (str "┌ " raw)))
-                      ;; ` Send all now ` at the right edge while a turn runs and a
-                      ;; markable row is still unmarked (`queued-progress-entries`).
+                      ;; ` Send all now ` at the right edge while a turn runs, two or more
+                      ;; rows are markable and one is still unmarked (`queued-progress-entries`).
                       (when-let [send-all (:queue-send-all meta)]
                         (draw-queue-send-all! g
                                               send-all
@@ -9007,9 +9007,10 @@
 
 (defn- queued-progress-entries
   "Rows of the Queued block. `send-opts` is `{:running? bool :session-id sid}`: while
-   a turn runs, every markable row ends in a ` Send it now ` button and the header gets
-   ` Send all now ` (see `markable-queued-row?`). With no running turn there is no next step, so
-   nothing is painted (the paused and held flows have their own controls)."
+   a turn runs, every markable row ends in a ` Send it now ` button. The header gets
+   ` Send all now ` only with two or more markable rows (see `markable-queued-row?`): one
+   row has its own button. With no running turn there is no next step, so nothing is
+   painted (the paused and held flows have their own controls)."
   [pending-sends content-w paused-info send-opts]
   (let [queued
         (vec (or pending-sends []))
@@ -9025,9 +9026,9 @@
             ;; the marker painters) so the whole block reads as ONE bracketed
             ;; group — the same left-bar affordance a "You" bubble uses.
             ;;
-            ;; Header row: the dark title band with "Queued · N". While a turn runs and a
-            ;; markable row is still unmarked, the painter adds ` Send all now ` at the
-            ;; right edge and registers it as the `:queue-send-all-now` hit region.
+            ;; Header row: the dark title band with "Queued · N". While a turn runs, two or
+            ;; more rows are markable and one is still unmarked, the painter adds ` Send all now `
+            ;; at the right edge and registers it as the `:queue-send-all-now` hit region.
             hdr-line
             (str queue-hdr-marker
                  "Queued · "
@@ -9035,9 +9036,13 @@
                  (when paused-info
                    (if (:is-breaker-open paused-info) " · provider unhealthy" " · paused")))
 
+            markable
+            (if running? (filterv markable-queued-row? queued) [])
+
+            ;; User decision: one markable row already has ` Send it now `, so the header
+            ;; button starts at two.
             send-all?
-            (and running?
-                 (some #(and (markable-queued-row? %) (not (marked-queued-row? %))) queued))
+            (and (>= (count markable) 2) (some #(not (marked-queued-row? %)) markable))
 
             hdr-meta
             (when send-all? {:queue-send-all {:session-id session-id :label queue-send-all-label}})

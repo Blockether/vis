@@ -92,7 +92,8 @@ export function QueuedTurnsTray({
             <span aria-hidden="true">┌</span>
             Queued · {queued.length}
             {/* Primary brings its own ink pair; the page ink vanishes on the dark band. */}
-            {markable.length > 0 && (
+            {/* User decision: one markable row has its own button, so this one starts at two. */}
+            {markable.length > 1 && (
               <Button
                 variant="primary"
                 density="inline"

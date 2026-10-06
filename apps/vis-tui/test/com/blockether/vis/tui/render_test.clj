@@ -11664,6 +11664,23 @@ print(paths)"
           ;; A command stays a turn of its own, whatever its `deliver` says.
           (expect (str/includes? cmd-line "2. /help"))
           (expect (nil? (:queue-send cmd-meta)))))
+    ;; Regression, user report: one queued message showed ` Send all now ` next to its own
+    ;; ` Send it now `. The header button starts at two markable rows.
+    (it "paints no header control for a single markable row, only its own row button"
+        (let [d
+              (payload {:iterations [{:activity :provider-call}]}
+                       [{:text "first queued message" :turn-id "t1"} {:text "/help" :turn-id "t2"}]
+                       {})
+
+              [hdr-line hdr-meta]
+              (row-with d "Queued")
+
+              [_ first-meta]
+              (row-with d "first queued message")]
+
+          (expect (str/includes? hdr-line "Queued · 2"))
+          (expect (nil? (:queue-send-all hdr-meta)))
+          (expect (= "Send it now" (:label (:queue-send first-meta))))))
     (it "paints no control while the queue is held, because no turn runs"
         (let [d
               (payload {:iterations []} pending {:queue-paused {:reason "turn_failed"}})
