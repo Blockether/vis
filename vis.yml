@@ -93,15 +93,15 @@ toggles:
 extensions:
   vis-lang-interface:
     source: https://github.com/Blockether/vis-lang-interface
-    version: "2.9.0"
+    version: "2.9.1"
   vis-lang-clojure:
     source: https://github.com/Blockether/vis-lang-clojure
     subdirectory: extension
-    version: "1.13.0"
+    version: "1.13.1"
   vis-lang-python:
     source: https://github.com/Blockether/vis-lang-python
-    version: "1.9.0"
+    version: "1.9.1"
   vis-spel:
     source: https://github.com/Blockether/spel
     subdirectory: extensions/vis-spel
-    version: "0.1.15"
+    version: "0.1.16"
