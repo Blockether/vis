@@ -53,7 +53,11 @@ const LAST = STEPS.length - 1;
 /** A group of choices, one of which is the answer. */
 function Choices({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div role="group" aria-label={label} className="grid grid-cols-1 gap-px bg-dialog-edge">
+    <div
+      role="group"
+      aria-label={label}
+      className="grid grid-cols-1 gap-px border border-dialog-edge bg-dialog-edge"
+    >
       {children}
     </div>
   );
@@ -309,30 +313,6 @@ export function AutomationForm({
         else next();
       }}
     >
-      <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-dialog-edge p-3">
-        {isSaveShown ? (
-          <Button type="submit" disabled={busy}>
-            {automation ? 'Save automation' : 'Create automation'}
-          </Button>
-        ) : (
-          <Button type="submit" disabled={busy}>
-            Next
-          </Button>
-        )}
-        {!isNew && at < LAST && (
-          <Button type="button" variant="secondary" disabled={busy} onClick={next}>
-            Next
-          </Button>
-        )}
-        {at > 0 && (
-          <Button type="button" variant="secondary" disabled={busy} onClick={() => go(at - 1)}>
-            Back
-          </Button>
-        )}
-        <Button type="button" variant="secondary" disabled={busy} onClick={onCancel}>
-          Cancel
-        </Button>
-      </div>
       <ol
         aria-label="Steps"
         className="flex shrink-0 flex-wrap gap-x-4 gap-y-1 border-b border-dialog-edge px-3 py-2 font-mono text-ui"
@@ -357,7 +337,33 @@ export function AutomationForm({
       </ol>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
         <h2 className="break-words font-mono text-title font-bold text-white">{title}</h2>
-        <h3 className="font-mono text-ui font-bold text-white">{question}</h3>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="font-mono text-ui font-bold text-white">{question}</h3>
+          <div role="group" aria-label="Step actions" className="flex flex-wrap items-center gap-3">
+            {isSaveShown ? (
+              <Button type="submit" disabled={busy}>
+                {automation ? 'Save automation' : 'Create automation'}
+              </Button>
+            ) : (
+              <Button type="submit" disabled={busy}>
+                Next
+              </Button>
+            )}
+            {!isNew && at < LAST && (
+              <Button type="button" variant="secondary" disabled={busy} onClick={next}>
+                Next
+              </Button>
+            )}
+            {at > 0 && (
+              <Button type="button" variant="secondary" disabled={busy} onClick={() => go(at - 1)}>
+                Back
+              </Button>
+            )}
+            <Button type="button" variant="secondary" disabled={busy} onClick={onCancel}>
+              Cancel
+            </Button>
+          </div>
+        </div>
         {problem && <Banner kind="err">{problem}</Banner>}
         {step.id === 'start' && first && (
           <Choices label="What starts it">

@@ -173,6 +173,21 @@ describe('Automations workspace', () => {
     expect(screen.queryByRole('combobox', { name: 'Trigger kind' })).toBeNull();
   });
 
+  it('puts the step actions on the question line and frames the choices', async () => {
+    renderBand();
+    expect(await screen.findByText('Morning summary')).toBeVisible();
+    click('New automation');
+    fireEvent.click(screen.getByRole('button', { name: /^Run when a service sends an event/ }));
+    const question = screen.getByRole('heading', { name: 'Which webhook starts it?' });
+    const actions = screen.getByRole('group', { name: 'Step actions' });
+    expect(actions.parentElement).toBe(question.parentElement);
+    for (const name of ['Next', 'Back', 'Cancel']) {
+      expect(actions).toContainElement(screen.getByRole('button', { name }));
+    }
+    const signatures = screen.getByRole('group', { name: 'Trigger signature' });
+    expect(signatures).toHaveClass('border', 'border-dialog-edge');
+  });
+
   it('jumps to the step of a problem when you create the automation', async () => {
     const client = storyAutomationsClient();
     const create = vi.spyOn(client, 'createAutomation');
