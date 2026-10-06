@@ -241,7 +241,10 @@ export function PerfOverlay({
           type="button"
           variant="quiet"
           density="compact"
-          className="inline-flex max-w-full items-center justify-center mouse:order-last"
+          className={`inline-flex max-w-full items-center justify-center mouse:order-last ${
+            // A closed dot still needs a 44px touch target; a pointer keeps the small face.
+            open ? '' : 'min-w-11 mouse:min-w-0'
+          }`}
           aria-label={open ? 'Minimize memory overlay' : summary}
           title={open ? undefined : summary}
           aria-expanded={open}

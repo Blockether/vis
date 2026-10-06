@@ -66,15 +66,18 @@ it.runIf(process.env.CI)('keeps memory controls tappable inside every safe area'
       await page.setViewportSize({ width, height });
       await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets });
       await page.goto('http://127.0.0.1/?perf=1');
+      // The overlay starts as a dot; its summary button opens the details.
+      await page.getByRole('button', { name: /^Memory .* listeners$/ }).tap();
       const panel = page.getByRole('region', { name: 'Memory overlay', exact: true });
       await panel.waitFor();
-      const insideSafeArea = async (locator, control = false) => {
+      const insideSafeArea = async (locator, control = false, margin = 8) => {
         const box = control ? await touchTarget(locator) : await locator.boundingBox();
         expect(box).not.toBeNull();
-        expect(box.x).toBeGreaterThanOrEqual(insets.left + 8);
-        expect(box.y).toBeGreaterThanOrEqual(insets.top + 8);
-        expect(box.x + box.width).toBeLessThanOrEqual(width - insets.right - 8);
-        expect(box.y + box.height).toBeLessThanOrEqual(height - insets.bottom - 8);
+        const where = `${width}x${height}: ${JSON.stringify(box)}`;
+        expect(box.x, where).toBeGreaterThanOrEqual(insets.left + margin);
+        expect(box.y, where).toBeGreaterThanOrEqual(insets.top + margin);
+        expect(box.x + box.width, where).toBeLessThanOrEqual(width - insets.right - margin);
+        expect(box.y + box.height, where).toBeLessThanOrEqual(height - insets.bottom - margin);
         if (control) {
           expect(box.height).toBeGreaterThanOrEqual(44);
           expect(box.width).toBeGreaterThanOrEqual(44);
@@ -115,8 +118,10 @@ it.runIf(process.env.CI)('keeps memory controls tappable inside every safe area'
       await minimize.tap();
       const summary = page.getByRole('button', { name: /^Memory .* listeners$/ });
       await summary.waitFor();
-      await insideSafeArea(summary, true);
-      expect((await page.locator('#vis-perf').boundingBox()).height).toBeLessThan(height / 2);
+      // The closed dot can sit in the app bar beside the wordmark, so it only has to clear the insets.
+      await insideSafeArea(summary, true, 0);
+      // The host fills the screen without catching pointers; the closed section itself stays small.
+      expect((await summary.locator('xpath=ancestor::section[1]').boundingBox()).height).toBeLessThan(height / 2);
       await summary.tap();
       await panel.waitFor();
       await fillsSafeArea();
