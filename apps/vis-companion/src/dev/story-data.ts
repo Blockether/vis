@@ -3000,12 +3000,21 @@ export function storyAutomationsClient({
   };
 }
 
-/** Authenticated HTTP is the only mocked boundary in the Automations entry story. */
-export function storyAutomationsFetch(
-  options: { enabled?: boolean; empty?: boolean } = {},
-): typeof fetch {
-  const client = storyAutomationsClient(options);
+/**
+ * Authenticated HTTP is the only mocked boundary in the Automations entry story. An
+ * unavailable machine answers 404, like an older gateway without Automations routes.
+ */
+export function storyAutomationsFetch({
+  available = true,
+  empty = false,
+}: { available?: boolean; empty?: boolean } = {}): typeof fetch {
+  const client = storyAutomationsClient({ empty });
   return async (input, init) => {
+    if (!available)
+      return new Response(JSON.stringify({ error: 'Not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
     const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const url = new URL(href);
     const attrs = init?.body ? JSON.parse(String(init.body)) : {};

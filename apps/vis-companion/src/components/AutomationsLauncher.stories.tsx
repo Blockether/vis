@@ -7,21 +7,21 @@ import { storyAutomationsFetch, STORY_GATEWAYS } from '../dev/story-data';
 
 /** The shipping global header; only its gateway HTTP boundary uses fixture data. */
 export function AutomationsHeaderPreview({
-  enabled = true,
+  available = true,
   empty = false,
 }: {
-  enabled?: boolean;
+  available?: boolean;
   empty?: boolean;
 }) {
   const [ready, setReady] = useState(false);
   useEffect(() => {
     const previous = globalThis.fetch;
-    globalThis.fetch = storyAutomationsFetch({ enabled, empty });
+    globalThis.fetch = storyAutomationsFetch({ available, empty });
     setReady(true);
     return () => {
       globalThis.fetch = previous;
     };
-  }, [enabled, empty]);
+  }, [available, empty]);
   return ready ? (
     <Header
       onSearch={fn()}
@@ -52,8 +52,10 @@ export const OpenList: Story = {
     await expect(await page.findByText('Morning summary')).toBeVisible();
   },
 };
+// Automations are always on, so only a machine that does not answer the request
+// (an older or unavailable gateway) leaves the header without the entry.
 export const Hidden: Story = {
-  args: { enabled: false, empty: true },
+  args: { available: false },
   play: async ({ canvas }) => {
     await expect(canvas.queryByRole('button', { name: 'Open automations' })).not.toBeInTheDocument();
   },
