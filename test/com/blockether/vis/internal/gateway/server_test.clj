@@ -2925,7 +2925,7 @@
                  (toggles/register-toggle! {:id "server_test_toggle" :label "Test" :default false})
                  (toggles/set-enabled! "server_test_toggle" false)
                  (let [synced (atom 0)]
-                   (with-redefs [loop-env/sync-cached-extension-symbols! #(swap! synced inc)
+                   (with-redefs [loop-env/sync-cached-extension-symbols! (fn [_] (swap! synced inc))
                                  config/load-global-yaml-config-raw (constantly {})
                                  config/load-global-config-raw (constantly {})
                                  config/update-machine-config! (fn [f]

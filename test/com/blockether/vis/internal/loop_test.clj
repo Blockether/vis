@@ -10003,7 +10003,33 @@
                (finally (deliver release true)
                         (.join holder 1000)
                         (swap! env-cache dissoc k)
-                        (toggles/set-enabled! "loop_test_fanout_busy" false)))))))
+                         (toggles/set-enabled! "loop_test_fanout_busy" false)))))))
+
+;; A session-scoped write changes only its own session. The fan-out refreshed every
+;; idle cached session, so a TUI reasoning change waited 140-350 ms on the gateway.
+(defdescribe session-setting-refreshes-own-env-test
+             (it "refreshes only the cached env of the session that a session-scoped write changes"
+                 (let [own
+                       (java.util.UUID/randomUUID)
+
+                       other
+                       (java.util.UUID/randomUUID)
+
+                       synced
+                       (atom [])]
+
+                   (swap! env-cache assoc
+                     own
+                     (new-cache-entry {:marker :own})
+                     other
+                     (new-cache-entry {:marker :other}))
+                   (try (with-redefs [loop-env/sync-active-extension-symbols!
+                                      (partial swap! synced conj)]
+                          (#'loop-env/refresh-cached-settings!
+                           {:scope "session" :target-id (str own) :id "reasoning_level"}))
+                        (expect (some #(= {:marker :own} %) @synced))
+                        (expect (not-any? #(= {:marker :other} %) @synced))
+                        (finally (swap! env-cache dissoc own other))))))
 
 (defdescribe env-reaper-enablement-test
              (it "starts for the RSS budget even when every older policy is off"

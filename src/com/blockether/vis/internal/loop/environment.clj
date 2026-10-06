@@ -1244,16 +1244,27 @@
 
    A Settings change is process-wide while each session owns a persistent
    Python context. Busy contexts retain their started tool surface and are
-   synchronized at the next turn boundary. Returns the refreshed count."
-  []
-  (reduce-kv (fn [refreshed _ {:keys [environment lock]}]
-               (if (and lock (.tryLock ^java.util.concurrent.locks.ReentrantLock lock))
-                 (try (sync-active-extension-symbols! environment)
-                      (unchecked-inc (long refreshed))
-                      (finally (.unlock ^java.util.concurrent.locks.ReentrantLock lock)))
-                 refreshed))
-             0
-             @cache))
+   synchronized at the next turn boundary. `entries` limits the sync to part of
+   the cache. Returns the refreshed count."
+  ([] (sync-cached-extension-symbols! @cache))
+  ([entries]
+   (reduce-kv (fn [refreshed _ {:keys [environment lock]}]
+                (if (and lock (.tryLock ^java.util.concurrent.locks.ReentrantLock lock))
+                  (try (sync-active-extension-symbols! environment)
+                       (unchecked-inc (long refreshed))
+                       (finally (.unlock ^java.util.concurrent.locks.ReentrantLock lock)))
+                  refreshed))
+              0
+              entries)))
+
+(defn- affected-cache-entries
+  "The cache entries whose settings `event` can change. A session-scoped write
+   changes only its own session; every other scope can reach any session."
+  [event]
+  (let [entries @cache]
+    (if (= "session" (:scope event))
+      (select-keys entries [(cache-key (:target-id event))])
+      entries)))
 
 ;; A Settings flip must reach the TOOLS, whatever channel made it. The fan-out
 ;; used to sit inline in the gateway's HTTP settings handler, so a flip from the
@@ -1265,21 +1276,22 @@
 ;; idempotent across `(require ... :reload)`.
 (defn- refresh-cached-settings!
   [event]
-  (doseq [{:keys [environment]} (vals @cache)]
-    (when-let [values (:config/toggles environment)]
-      (let [rows (scoped/settings
-                   (:db-info environment)
-                   (scoped/target (:db-info environment) "session" (:session-id environment)))
-            effective (into {} (map (juxt :id :value)) rows)
-            source (:source (first (filter #(= (:id event) (:id %)) rows)))]
+  (let [entries (affected-cache-entries event)]
+    (doseq [{:keys [environment]} (vals entries)]
+      (when-let [values (:config/toggles environment)]
+        (let [rows (scoped/settings
+                     (:db-info environment)
+                     (scoped/target (:db-info environment) "session" (:session-id environment)))
+              effective (into {} (map (juxt :id :value)) rows)
+              source (:source (first (filter #(= (:id event) (:id %)) rows)))]
 
-        (reset! values (cond-> effective
-                         (and (not (:scope event)) (#{"global" "default"} source))
-                         (assoc (:id event) (:new event)))))))
-  (when (or (= workspace/draft-backend-toggle-id (:id event))
-            (#{["workspace"] ["jail"]} (:section event)))
-    (mark-policy-reload!))
-  (sync-cached-extension-symbols!))
+          (reset! values (cond-> effective
+                           (and (not (:scope event)) (#{"global" "default"} source))
+                           (assoc (:id event) (:new event)))))))
+    (when (or (= workspace/draft-backend-toggle-id (:id event))
+              (#{["workspace"] ["jail"]} (:section event)))
+      (mark-policy-reload!))
+    (sync-cached-extension-symbols! entries)))
 
 (defonce ^:private _toggle-extension-sync-listener
   (toggles/add-listener! #(when-not (false? (:persist? %)) (refresh-cached-settings! %))))
