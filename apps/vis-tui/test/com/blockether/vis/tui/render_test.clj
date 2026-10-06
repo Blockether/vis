@@ -6129,13 +6129,22 @@
             (expect (= (dec (long (:rows img))) (count pad-rows)))
             ;; pads carry the img map too, so every painted row is clickable
             (expect (every? #(= "/tmp/shot.png" (:path (:img %))) pad-rows)))))
-    (it "plain terminal: caption + text fallback always visible, no chevron"
+    (it "plain terminal: one link card opens the picture, no chevron"
         (with-redefs [timg/images-protocol (constantly nil)]
-          (let [txt (:text (render/format-answer-markdown-data ast 76 (opts {})))]
-            (expect (str/includes? txt "[Image #1: shot.png 1200×800, 245KB]"))
-            (expect (not (str/includes? txt "▸ [Image #1")))
-            (expect (str/includes? txt "shot.png"))
-            (expect (str/includes? txt "1200×800")))))))
+          ;; Layouts are cached by text and width, not by terminal kind.
+          (render/invalidate-cache!)
+          (try (let [{:keys [text line-meta]} (render/format-answer-markdown-data ast 76 (opts {}))
+                     links (filter :doc line-meta)]
+
+                 (expect (str/includes? text "[Image #1: shot.png 1200×800, 245KB]"))
+                 (expect (str/includes? text "↗ click to open in the system viewer"))
+                 (expect (not (str/includes? text "▸ [Image #1")))
+                 ;; The caption shows once, inside the link card.
+                 (expect (= 1 (count (re-seq #"\[Image #1" text))))
+                 (expect (seq links))
+                 (expect (every? #(= "/tmp/shot.png" (:path (:doc %))) links))
+                 (expect (not-any? #(#{:image :image-pad} (:kind %)) line-meta)))
+               (finally (render/invalidate-cache!)))))))
 
 (def ^:private render-iteration-entries @#'render/render-iteration-entries)
 
@@ -6922,6 +6931,98 @@ h = 8"
         (expect (str/includes? expanded-text "click to open in the system viewer"))
         (expect (not (str/includes? expanded-text "is_pending")))
         (expect (not (str/includes? expanded-text "vis-doc"))))))
+
+(defdescribe
+  shown-picture-test
+  ;; Regression: a picture that a step printed showed only after the reader opened
+  ;; Code and then Result. The companion shows it directly below the step.
+  (let [stdout
+        (str "chart ready\n"
+             "````vis-image\n[Image #1: chart.png 1200×800, 245KB]\n"
+             "/tmp/chart.png\nimage/png\n1200x800\n245KB\n````\n")
+
+        entry
+        {:iteration-id "iteration-1"
+         :forms [{:code "attach(chart)" :stdout stdout :success? true :duration-ms 25}]}
+
+        render-step
+        (fn [step protocol opts]
+          (with-redefs [timg/images-protocol (constantly protocol)]
+            (render/invalidate-cache!)
+            (try (format-iteration-entry-entries
+                   step
+                   80
+                   1
+                   (merge {:session-id "session-1" :session-turn-id "turn-1"} opts))
+                 (finally (render/invalidate-cache!)))))
+
+        picture-rows
+        (fn [entries]
+          (filterv #(= :image (get-in % [:meta :kind])) entries))
+
+        text-of
+        (fn [entries]
+          (str/join "\n" (entry-text entries)))
+
+        doc-fence
+        (str "````vis-doc\n[Document: report.html HTML, 2 KB]\n"
+             "/tmp/report.html\ntext/html\nreport.html\n2 KB\n````\n")]
+
+    (it "paints the picture while Code stays collapsed"
+        (let [rows (picture-rows (render-step entry :kitty {}))]
+          (expect (= 1 (count rows)))
+          (expect (= "/tmp/chart.png" (get-in (first rows) [:meta :img :path])))))
+    (it "paints the picture with Code mode off"
+        (expect (= 1 (count (picture-rows (render-step entry :kitty {:show-python-code? false}))))))
+    (it "paints the picture below a closed digest"
+        (expect (= 1 (count (picture-rows (render-step entry :kitty {:digest-closed? true}))))))
+    (it "keeps the other output in RESULT and paints the picture once"
+        (let [entries
+              (render-step entry
+                           :kitty
+                           {:detail-expansions {:vis.channel-tui/expand-all-details? true}})
+
+              text
+              (text-of entries)]
+
+          (expect (= 1 (count (picture-rows entries))))
+          (expect (str/includes? text "chart ready"))
+          (expect (not (str/includes? text "vis-image")))))
+    (it "shows a link that opens the picture on a terminal without graphics"
+        (let [entries
+              (render-step entry nil {})
+
+              links
+              (filterv #(get-in % [:meta :doc]) entries)]
+
+          (expect (empty? (picture-rows entries)))
+          (expect (seq links))
+          (expect (every? #(= "/tmp/chart.png" (get-in % [:meta :doc :path])) links))
+          (expect (str/includes? (text-of entries) "click to open in the system viewer"))))
+    (it "shows a printed document without an attachment row as a link"
+        (let [entries (render-step
+                        {:iteration-id "iteration-1"
+                         :forms
+                         [{:code "attach(page)" :stdout doc-fence :success? true :duration-ms 25}]}
+                        :kitty
+                        {})]
+          (expect (some #(= "/tmp/report.html" (get-in % [:meta :doc :path])) entries))))
+    (it "shows a document once when an attachment row of a later form names it"
+        (let [entries (render-step
+                        {:iteration-id "iteration-1"
+                         :attachments [{"index" 0
+                                        "iteration_id" "iteration-1"
+                                        "kind" "doc"
+                                        "media_type" "text/html"
+                                        "filename" "report.html"
+                                        "size" 2048}]
+                         :forms
+                         [{:code "attach(page)" :stdout doc-fence :success? true :duration-ms 25}
+                          {:code "print(1)" :stdout "1" :success? true :duration-ms 5}]}
+                        :kitty
+                        {})]
+          (expect (= 1
+                     (count (re-seq #"click to open in the system viewer" (text-of entries)))))))))
 
 (defdescribe produced-attachment-inline-dedup-test
              (it "keeps inline images out of the durable document card without shifting indexes"

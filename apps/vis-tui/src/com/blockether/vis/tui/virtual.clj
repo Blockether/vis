@@ -438,9 +438,9 @@
                     fences, list gaps) makes /60 the safe historical
                     ballpark at any width ≥ 60, and narrower terminals
                     fold at their own width.
-     * digest     — a closed step digest paints its note, its row and
-                    the failures. Steps with files keep their full
-                    charge, because files stay visible.
+     * digest     — a closed step digest paints its note, its row, the
+                    failures and the shown files. Steps with files keep
+                    their full charge, because files stay visible.
    User / plain-assistant text goes through the markdown walker, which
    word-wraps and inserts block chrome — fold at 3/4 width to stay above
    it."
@@ -545,7 +545,7 @@
                       (if provider? (+ 12 (quot (+ 1200 (dec fold-w)) fold-w)) 0)))
                  0))
 
-             ;; Code + result (+ comment, + error) rows of one form.
+             ;; Code + result (+ comment, + error) rows of one form, plus its shown files.
              form-rows-of
              (fn ^long [f]
                (let [c
@@ -561,12 +561,13 @@
                     (long (if (and (string? cm) (not (str/blank? cm)))
                             (+ (wrapped-rows-est cm fold-w) 2)
                             0))
-                    (long (error-rows (:error f))))))
+                    (long (error-rows (:error f)))
+                    (long (render/shown-file-rows (:stdout f) fold-w)))))
 
              ;; A closed digest paints a subset of its open steps, plus its own row and gap.
              ;; Files stay visible, so their steps keep the full charge. Other steps keep
-             ;; their failures, but not an interruption. Recaps and fallback notes lose the
-             ;; slack of the hidden code, so they get their own rows.
+             ;; their shown files and failures, but not an interruption. Recaps and fallback
+             ;; notes lose the slack of the hidden code, so they get their own rows.
              closed-step-rows
              (fn ^long [it]
                (let [forms
@@ -575,8 +576,9 @@
                      shown-rows
                      (if (seq (:attachments it))
                        form-rows-of
-                       (fn [{:keys [error]}]
-                         (if (render/interrupted-error? error) 0 (error-rows error))))]
+                       (fn [{:keys [error stdout]}]
+                         (+ (long (if (render/interrupted-error? error) 0 (error-rows error)))
+                            (long (render/shown-file-rows stdout fold-w)))))]
 
                  (+ (long (error-rows (:error it)))
                     (* 3 (+ (count (:recaps it)) (count (:provider-fallbacks it))))

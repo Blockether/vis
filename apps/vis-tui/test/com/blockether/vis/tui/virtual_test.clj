@@ -832,7 +832,47 @@
                                (conj out (long (:total-h ly)))
                                (inc k)))))))]
 
-          (expect (apply >= totals) (str "total-h grew while scrolling up: " (vec totals))))))))
+          (expect (apply >= totals) (str "total-h grew while scrolling up: " (vec totals))))))
+    ;; A step shows its printed files below its closed digest: a table preview, a
+    ;; picture box and a document link. The estimate keeps their rows.
+    (describe
+      "files that a step printed"
+      (it
+        "estimates their rows with and without a digest, across widths"
+        (doseq [w
+                [84 154 254]
+
+                sid
+                ["files" nil]]
+
+          (let [table
+                (str "````vis-table\n[Table: sales.csv 3 columns, 40 rows]\nsales.csv\n"
+                     "text/csv\n3x40\n1 KB\nmonth,region,total\n"
+                     (str/join "\n"
+                               (for [r (range 40)]
+                                 (str "m" r ",north," (* 10 r))))
+                     "\n````")
+
+                doc
+                (str "````vis-doc\n[Document: report.html HTML, 2 KB]\n/tmp/report.html\n"
+                     "text/html\nreport.html\n2 KB\n````")
+
+                m
+                (-> (trace-assistant-msg 4 1 "Final answer.")
+                    (assoc-in [:traces 0 :assistant-prose] "First I build the report.")
+                    (assoc-in [:traces 1 :forms 0 :stdout]
+                              (str/join "\n" [table (fence 2 64 64) doc])))
+
+                [est real]
+                (graphical
+                  (fn []
+                    [(estimated-height m w {} sid)
+                     (render/bubble-height
+                       (project-message m w settings {:session-id sid :detail-expansions {}})
+                       w)]))]
+
+            (expect (>= (long est) (long real))
+                    (str "w=" w " sid=" sid " est=" est " real=" real))))))))
 
 (defdescribe
   overshoot-drift-tripwire-test

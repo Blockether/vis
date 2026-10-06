@@ -2391,7 +2391,7 @@
                                {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
                                 :kind :table
                                 :table tbl}))
-                  ;; Document-card rows open their host file.
+                  ;; Document and picture link rows open their host file.
                   (when-let [doc (:doc meta)]
                     (.register interactions/hit-map
                                {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
@@ -4718,11 +4718,7 @@
         lines
 
         [w h]
-        (when (seq dims) (str/split (str dims) #"x"))
-
-        ascii
-        (let [a (str/join "\n" (drop 5 lines))]
-          (when-not (str/blank? a) a))]
+        (when (seq dims) (str/split (str dims) #"x"))]
 
     {:summary (str/trim (str summary))
      :path (str path)
@@ -4735,8 +4731,7 @@
                      str/trim
                      not-empty
                      parse-long)
-     :size-label (not-empty (str/trim (str size-label)))
-     :ascii ascii}))
+     :size-label (not-empty (str/trim (str size-label)))}))
 
 (defn- paste-block-parts
   "Split a `vis-paste` code node body into `[summary payload]` — the
@@ -4879,11 +4874,12 @@
    screen loop can paint the actual picture (Kitty/iTerm2 graphics) over the
    box AFTER Lanterna's delta refresh; every reserved row (pads included)
    carries the `:img` map so the paint loop registers a click region that
-   opens the file in the OS previewer. Terminals without inline-image
-   support (or an unreadable file) render the descriptive fallback plus the
-   fence's ASCII body instead — likewise always visible."
+   opens the file in the OS previewer. A terminal without inline-image support,
+   or a fence without dimensions, gets a link card instead: the caption and one
+   hint line. Every link row carries the file in `:meta :doc`, so a click opens
+   the picture in the system viewer, like a document card."
   [node content-w {:keys [session-turn-id] :as opts}]
-  (let [{:keys [summary path mime width height size-label ascii]}
+  (let [{:keys [summary path mime width height size-label]}
         (image-block-parts node)
 
         id
@@ -4897,11 +4893,12 @@
                          :kind :image
                          :details-path [id]})
 
-        header
-        (vec (layout/ast->entries [:ast {} [:p {} summary]] content-w {}))
-
         can-draw?
         (and (timg/graphical-terminal?) width height)
+
+        ;; The link card of the fallback names the picture itself.
+        header
+        (when can-draw? (vec (layout/ast->entries [:ast {} [:p {} summary]] content-w {})))
 
         body
         (if can-draw?
@@ -4932,20 +4929,23 @@
                   (map (fn [i]
                          {:line "" :meta {:kind :image-pad :img img :img-idx (inc (long i))}})
                        (range (dec rows)))))
-          ;; Fallback: describe the image so headless / unsupported
-          ;; terminals still see what was attached (ASCII body included).
-          (let [dims
-                (when (and width height) (str width "×" height))
+          ;; Fallback: a terminal without inline pictures gets a link card. A click
+          ;; opens the file in the system viewer, like a document card.
+          (let [title
+                (if (str/blank? summary) "[Image]" summary)
 
-                desc
-                (str (or (not-empty (last (str/split path #"/"))) "image")
-                     (when dims (str "  " dims))
-                     (when size-label (str "  " size-label)))
+                doc
+                {:path path
+                 :mime mime
+                 :name (not-empty (last (str/split path #"/")))
+                 :size-label size-label
+                 :title title}]
 
-                ast
-                (if ascii [:ast {} [:p {} desc] [:code {} ascii]] [:ast {} [:p {} desc]])]
-
-            (tag-copy-block-body (vec (layout/ast->entries ast content-w {})) node-id path)))]
+            (mapv #(assoc-in % [:meta :doc] doc)
+                  (layout/ast->entries
+                    [:ast {} [:code {} (str title "\n↗ click to open in the system viewer")]]
+                    content-w
+                    {}))))]
 
     (vec (concat header body))))
 
@@ -5164,13 +5164,67 @@
                  (assoc :owner (wire/->engine (get artifact "owner"))))))))
        vec))
 
+(def ^:private display-fence-re
+  "One complete picture, table or document fence that `attach` or `plt.show()`
+   prints on stdout."
+  #"(?sm)^````vis-(?:image|table|doc)\n.*?\n````(?=\n|\z)\n?")
+
+(defn- display-fences
+  "The complete display fences in `stdout`, in print order."
+  [stdout]
+  (some->> stdout
+           str
+           (re-seq display-fence-re)
+           vec))
+
+(defn shown-file-rows
+  "Upper bound of the rows that the display fences in one form's `stdout` paint
+   below the step at `content-w` columns, without the picture boxes that
+   [[image-fence-rows]] charges. Each fence gets its wrapped headline, one hint or
+   separator row and its table preview. The band adds its two pad rows."
+  ^long [stdout ^long content-w]
+  (let [fences
+        (display-fences stdout)
+
+        ;; Card insets make the painted headline narrower than `content-w`.
+        w
+        (max 1 (- content-w 6))]
+
+    (if (empty? fences)
+      0
+      (long (reduce (fn [^long acc ^String fence]
+                      (let [headline
+                            (nth (str/split-lines fence) 1 "")
+
+                            head-rows
+                            (max 1 (quot (+ (long (p/display-width headline)) (dec w)) w))]
+
+                        (+ acc
+                           head-rows
+                           2
+                           (if (str/starts-with? fence "````vis-table")
+                             (+ (long table-preview-rows) 6)
+                             0))))
+                    2
+                    fences)))))
+
+(defn- strip-display-fences
+  "Remove the display fences from `stdout`, because the transcript shows them
+   below the step. Output without a fence stays unchanged."
+  [stdout]
+  (if (and (string? stdout) (re-find display-fence-re stdout))
+    (some-> (str/replace stdout display-fence-re "")
+            (str/replace #"^(?:[ \t]*\n)+" "")
+            str/trimr
+            not-empty)
+    stdout))
+
 (defn- strip-produced-artifact-transport
-  "Remove attach’s internal document fence and pending descriptor once the
-   canonical iteration attachment owns presentation and durable opening."
+  "Remove attach’s pending descriptor once the canonical iteration attachment owns
+   presentation and durable opening."
   [stdout]
   (some-> stdout
           str
-          (str/replace #"(?s)````vis-doc\n.*?\n````\n?" "")
           (str/replace #"(?m)^\{[^\n]*is_pending[^\n]*\}\s*$" "")
           str/trim
           not-empty))
@@ -5369,6 +5423,19 @@
                   content)
           (conj pad)))))
 
+(defn- result-body-entry
+  "Move one body row into the RESULT band, under the body indent."
+  [e]
+  (let [l
+        (str (:line e))
+
+        stripped
+        (or (second (split-structural-line-marker l)) l)]
+
+    (assoc e
+      :line (str result-marker
+                 (if (str/blank? stripped) stripped (str result-body-indent stripped))))))
+
 (defn- tool-card-entries
   "Render one stdout card (`vis/result-card` descriptor) into TUI line entries.
    RESULT is the stable disclosure label; the Markdown body nests under it and is
@@ -5387,18 +5454,6 @@
         ;; owner, stdout; RESULT names the band without restating its body.
         head-line
         (band-label "RESULT")
-
-        ->result
-        (fn [e]
-          (let [l
-                (str (:line e))
-
-                stripped
-                (or (second (split-structural-line-marker l)) l)]
-
-            (assoc e
-              :line (str result-marker
-                         (if (str/blank? stripped) stripped (str result-body-indent stripped))))))
 
         ast
         (some-> body-text
@@ -5433,7 +5488,7 @@
             (detail-expanded? detail-expansions session-id node-id has-image?)
 
             body-entries
-            (compact-tool-card-body-entries (mapv ->result entries))
+            (compact-tool-card-body-entries (mapv result-body-entry entries))
 
             header
             (detail-summary-entries {:marker result-marker
@@ -5479,7 +5534,7 @@
             ;; under — e.g. a nil session-id). Never DROP that body: render it
             ;; inline, always-expanded, so the result still produces its output.
             body-rows
-            (when (seq entries) (compact-tool-card-body-entries (mapv ->result entries)))]
+            (when (seq entries) (compact-tool-card-body-entries (mapv result-body-entry entries)))]
 
         ;; Bodyless descriptors still get the result-band pad. Body cards keep the
         ;; same one-row disclosure separator as collapsible cards.
@@ -5487,6 +5542,27 @@
                      (when (seq body-rows) [{:line (str result-marker "") :meta nil}])
                      body-rows
                      (when-not (seq body-rows) [{:line (str result-marker "") :meta nil}])))))))
+
+(defn- shown-file-entries
+  "Render the display fences of one form as a band below the step. Pictures,
+   tables and documents stay visible without the CODE or RESULT disclosure, like
+   the attachment rail in the companion. The band uses the RESULT body width."
+  [fences fill-w opts]
+  (let [text
+        (some->> (seq fences)
+                 (map str/trimr)
+                 (str/join "\n\n")
+                 not-empty)
+
+        entries
+        (when text
+          (paste-aware-ast->entries (vis/markdown->ast text)
+                                    (max 1 (- (long fill-w) (long result-body-indent-cols)))
+                                    (assoc opts :mode :channel)))]
+
+    (when (seq entries)
+      (into [{:line (str result-marker "") :meta nil}]
+            (compact-tool-card-body-entries (mapv result-body-entry entries))))))
 
 (defn- activity-inline-text
   "Row text the engine MARKED as markdown, lifted through the IR walker so a code span or an
@@ -7761,12 +7837,20 @@
                                   (line-entry (str c-marker "")))
                             [(line-entry (str c-marker ""))]))))
 
+                ;; Pictures, tables and documents that the form printed show below the step,
+                ;; outside every disclosure, like the attachment rail in the companion. A
+                ;; canonical attachment row replaces the document fence.
+                shown-fences
+                (cond->> (display-fences (:stdout form))
+                  (some #(not (attach/live-artifact? %)) iteration-artifacts)
+                  (into [] (remove #(str/starts-with? % "````vis-doc"))))
+
                 ;; Human output surface: derive the local RESULT body solely from canonical
-                ;; stdout. Strip artifact transport markers first so live, restored, and
-                ;; direct renderer inputs share the same view. Long output mirrors thinking
-                ;; and collapses only the surplus.
+                ;; stdout. Strip display fences and artifact transport markers first so live,
+                ;; restored, and direct renderer inputs share the same view. Long output
+                ;; mirrors thinking and collapses only the surplus.
                 display-form
-                (cond-> form
+                (cond-> (update form :stdout strip-display-fences)
                   (seq form-artifacts)
                   (update :stdout strip-produced-artifact-transport))
 
@@ -7797,6 +7881,7 @@
                                   (nil? card)
                                   (nil? error)
                                   (empty? form-artifacts)
+                                  (empty? shown-fences)
                                   (or result-text (nil? activity-run))
                                   (some? result-duration-ms)
                                   (vis/format-duration result-duration-ms))]
@@ -7961,6 +8046,16 @@
                   (filterv #(and (attach/live-artifact? %) (owns-live-view? activity (:owner %)))
                     form-artifacts))
 
+                ;; Shown files stay outside the inset execution surface, next to the
+                ;; attachment rows, so a closed digest or hidden Code keeps them visible.
+                shown-block
+                (shown-file-entries shown-fences
+                                    fill-w
+                                    {:session-id session-id
+                                     :session-turn-id session-turn-id
+                                     :detail-expansions detail-expansions
+                                     :image-section :iteration})
+
                 ;; A closed digest row opens the recordings, so only files stay below it.
                 artifact-block
                 (artifact-disclosure-entries (cond->> (remove (set nested-artifacts) form-artifacts)
@@ -8048,10 +8143,12 @@
                                  (when (seq run-sections) [(line-entry activity-marker)])))))]
 
             ;; CODE, ACTIVITY and RUN share one execution surface. A closed digest keeps
-            ;; only files below its row. Failures and their details stay inside the steps.
+            ;; only pictures and files below its row. Failures and their details stay inside
+            ;; the steps.
             (vec (concat (inset-entries
                            (when-not digest-closed?
                              (concat comment-block code-block execution-details activity-surface)))
+                         shown-block
                          artifact-block
                          (when-not (or activity-run digest-closed?) generic-run-entries)))))
 
