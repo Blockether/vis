@@ -646,7 +646,7 @@ export function TranscriptOutline({
                       aria-describedby={
                         preview?.entry.id === entry.id && !preview.scrub ? previewId : undefined
                       }
-                      className={`flex w-full items-baseline gap-2 px-3 py-2.5 text-left text-title transition-colors duration-150 focus-visible:bg-hover focus-visible:text-dialog-foreground focus-visible:outline-none motion-reduce:transition-none mouse:py-1.5 ${
+                      className={`flex w-full items-baseline gap-2 px-3 py-2.5 text-left text-ui transition-colors duration-150 focus-visible:bg-hover focus-visible:text-dialog-foreground focus-visible:outline-none motion-reduce:transition-none mouse:py-1.5 ${
                         isCurrent
                           ? 'font-bold text-dialog-foreground'
                           : 'text-dialog-hint mouse:hover:text-dialog-foreground'
