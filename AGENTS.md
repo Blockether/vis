@@ -141,6 +141,21 @@ Keep the modules of `resources/vis-docs/site.edn` in this order:
 - This permission does not make unavailable tools available. It does not authorize unrelated account changes.
 - Keep passwords, private keys and recovery codes out of transcripts and tracked files. When authentication is necessary, use private human input.
 
+## Project layout
+
+Each project has its own build, dependencies and checks. Run its tools from its own directory.
+
+| Path | Project |
+|---|---|
+| `src/`, `resources/`, `deps.edn` | The engine and gateway (Clojure). Internal code is in `src/com/blockether/vis/internal/`. |
+| `apps/vis-tui/` | The terminal client: a separate Clojure project with its own `deps.edn`. It uses the gateway over HTTP and never loads the engine. Code is in `src/com/blockether/vis/tui/`. |
+| `apps/vis-companion/` | The Companion app: one React and Vite bundle in `src/`. Capacitor wraps it for Android and iOS (`native/`), and Pake (Tauri) for desktop. |
+| `apps/vis-companion-relay/` | The push and Council Rooms relay service. |
+| `apps/vis-docs/` | The Extension Center Worker and catalog. |
+| `packages/vis-contract/` | The shared contract: JSON Schemas and wire keys for the engine, TUI, Companion and SDK. Change every consumer with it. |
+| `packages/vis-agent/` | The Python SDK and the `vis-agent` CLI. |
+| `packages/vis-python-presentation/` | The Python formatter and highlighter (Java) for the engine and the TUI. |
+
 ## Area owners
 
 Read a row only when you change that area. Paths are relative to this repository. Internal
