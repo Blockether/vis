@@ -231,7 +231,7 @@
                    (expect (str/includes? joined "▼") joined)
                    (expect (not (str/includes? joined "flowchart TD")) joined)
                    (expect (not (str/includes? joined "-->")) joined)))
-             (it "diagram chrome is dim and the labels keep the foreground"
+             (it "each diagram row is one code run that keeps its theme tones"
                  (let [lines
                        (layout/ast->lines
                          [:ast [:code {:lang "mermaid"} "flowchart TD\n  A[One] --> B[Two]\n"]]
@@ -240,28 +240,21 @@
                        runs
                        (mapcat :runs lines)
 
-                       chrome
-                       (filter #(str/includes? (or (:text %) "") "─") runs)
+                       joined
+                       (str/join "\n" (texts lines))]
 
-                       label
-                       (filter #(str/includes? (or (:text %) "") "One") runs)]
-
-                   (expect (seq chrome))
-                   (expect (seq label))
-                   (expect (every? #(contains? (:style %) :dim) chrome))
-                   (expect (every? #(and (contains? (:style %) :code)
-                                         (not (contains? (:style %) :dim)))
-                                   label))))
+                   (expect (seq runs))
+                   (expect (every? #(= #{:code} (:style %)) runs))
+                   (expect (str/includes? joined "\u001b[90m") joined)
+                   (expect (str/includes? joined "One") joined)))
              (it "a fence the renderer does not own stays verbatim"
                  (let [lines
-                       (layout/ast->lines
-                         [:ast [:code {:lang "mermaid"} "sequenceDiagram\n  Alice->>Bob: hi\n"]]
-                         60)
+                       (layout/ast->lines [:ast [:code {:lang "mermaid"} "notADiagram\n  x\n"]] 60)
 
                        joined
                        (str/join "\n" (texts lines))]
 
-                   (expect (str/includes? joined "sequenceDiagram") joined))))
+                   (expect (str/includes? joined "notADiagram") joined))))
 
 ;; Regression for https://github.com/Blockether/vis/issues/319: each streamed
 ;; chunk flipped the bubble between a diagram and its source.
@@ -292,9 +285,7 @@
         (expect (not (str/includes? drawn "waiting")) drawn)))
   (it "a fence that is not drawn keeps its source under one dim line with the reason"
       (let [lines
-            (layout/ast->lines [:ast
-                                [:code {:lang "mermaid"} "sequenceDiagram\n  Alice->>Bob: hi\n"]]
-                               60)
+            (layout/ast->lines [:ast [:code {:lang "mermaid"} "notADiagram\n  x\n"]] 60)
 
             note
             (first (filter #(str/starts-with? (apply str (map :text (:runs %)))
@@ -303,7 +294,7 @@
 
         (expect (some? note) (pr-str (texts lines)))
         (expect (every? #(contains? (:style %) :dim) (:runs note)))
-        (expect (some #(= "sequenceDiagram" %) (texts lines))))))
+        (expect (some #(= "notADiagram" %) (texts lines))))))
 
 ;; tables
 

@@ -609,19 +609,11 @@
           (.put ^java.util.Map mermaid-cache key drawing)
           drawing))))
 
-(def ^:private diagram-glyphs
-  "Box-drawing and arrow glyphs a diagram paints. They carry the SHAPE, so they
-   are dimmed and the labels inside the boxes keep the foreground."
-  (set "─│┌┐└┘├┤┬┴┼━┃┏┓┗┛┣┫┳┻╋╭╮╯╰╱╲╌╎▼▲▶◀"))
-
 (defn- diagram-runs
-  "Split one diagram row into dim chrome runs and foreground label runs."
+  "One code run for a diagram row. The row keeps its ANSI tones; the code painter
+   maps each SGR code to a colour of the active theme."
   [^String row node]
-  (mapv (fn [chunk]
-          {:text (apply str chunk)
-           :style (if (contains? diagram-glyphs (first chunk)) #{:code :dim} #{:code})
-           :node node})
-        (partition-by #(contains? diagram-glyphs %) row)))
+  [{:text row :style #{:code} :node node}])
 
 (defn- code-block->lines
   "Code blocks preserve source indentation. A `mermaid` fence becomes a
@@ -680,8 +672,8 @@
                 (some-> lang
                         str/lower-case)))
 
-        ;; A `mermaid` fence is a PICTURE: rank / order / place the flowchart and
-        ;; paint it with box-drawing glyphs. An open fence is still streaming, so
+        ;; A `mermaid` fence is a PICTURE: `mermaid/draw` paints any Mermaid diagram
+        ;; type with box-drawing glyphs in theme tones. An open fence is still streaming, so
         ;; it is not drawn: each chunk would flip between a picture and the
         ;; source. It holds one constant placeholder row until its closing line.
         mermaid-open?

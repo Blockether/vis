@@ -1,16 +1,26 @@
 (ns com.blockether.vis.tui.mermaid-test
-  "Tests for the mermaid flowchart renderer.
+  "Tests for the Mermaid renderer.
 
-   The renderer owns the `mermaid` fences the TUI can draw and answers nil for
-   everything else, so the markdown walker can fall back to the source text.
-   Coverage is golden rows for the small canonical shapes plus structural
-   assertions for the layouts whose exact geometry may keep improving."
-  (:require [clojure.string :as str]
+   The renderer draws every diagram type of the official Mermaid docs and answers
+   nil for a fence it cannot read, so the markdown walker can fall back to the
+   source text. Coverage is golden rows for small canonical shapes, every
+   official example at two widths, and the ANSI tones that carry the theme
+   colours. `rows` strips the tones; `tones` keeps them."
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.tui.mermaid :as mermaid]
+            [com.blockether.vis.tui.mermaid.canvas :as c]
             [com.blockether.vis.tui.primitives :as p]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defn- rows ([source] (rows source 72)) ([source width] (mermaid/diagram source width)))
+(defn- rows
+  ([source] (rows source 72))
+  ([source width]
+   (some->> (mermaid/diagram source width)
+            (mapv c/plain))))
+
+(defn- tones [source width] (str/join "\n" (mermaid/diagram source width)))
 
 (defn- picture
   ([source] (picture source 72))
@@ -117,15 +127,71 @@
   (it "a non-positive width answers nil" (expect (nil? (rows "flowchart TD\n  A[One]\n" 0)))))
 
 (defdescribe unsupported-test
-             (it "another diagram type is not ours"
-                 (expect (nil? (rows "sequenceDiagram\n  Alice->>Bob: hi\n")))
-                 (expect (nil? (rows "classDiagram\n  Animal <|-- Duck\n")))
-                 (expect (nil? (rows "stateDiagram-v2\n  [*] --> Idle\n"))))
+             (it "an unknown diagram type is not ours" (expect (nil? (rows "notADiagram\n  x\n"))))
              (it "an unparsable statement gives the whole fence back"
                  (expect (nil? (rows "flowchart TD\n  A[One] --> \n"))))
              (it "an empty fence answers nil"
                  (expect (nil? (rows "")))
                  (expect (nil? (rows "flowchart TD\n")))))
+
+(def ^:private official-examples
+  "Every diagram example of the official Mermaid docs, `[{:page :at :source}]`."
+  (edn/read-string (slurp (io/resource "resources/fixtures/mermaid_examples.edn"))))
+
+(defdescribe official-examples-test
+             (it "has examples of each diagram page"
+                 (expect (< 500 (count official-examples)))
+                 (expect (< 30 (count (distinct (map :page official-examples))))))
+             (it "every official example draws inside the width"
+                 (doseq [{:keys [page at source]}
+                         official-examples
+
+                         width
+                         [100 40]
+
+                         ;; gantt.md 6 is a settings fragment without tasks.
+                         :when (not= ["gantt.md" 6] [page at])]
+
+                   (let [{drawn :rows reason :reason}
+                         (mermaid/draw source width)
+
+                         where
+                         (str page " " at " @" width)]
+
+                     (expect (seq drawn) (str where ": " reason))
+                     (expect (every? #(<= (c/row-width %) width) drawn) where)))))
+
+(defdescribe kind-test
+             (it "a sequence diagram draws lifelines and messages"
+                 (expect (= ["┌───────┐┌─────┐" "│ Alice ││ Bob │" "└───┬───┘└──┬──┘"
+                             "    │  hi   │" "    │──────▶│" "    │       │"]
+                            (rows "sequenceDiagram\n  Alice->>Bob: hi\n" 60))))
+             (it "a git graph puts each branch in its own lane"
+                 (expect (= ["●─┐  main A" "│ │" "│ ●  dev B [v1]" "│ │" "◉─┘  merge dev"]
+                            (rows
+                              (str "gitGraph\n  commit id: \"A\"\n  branch dev\n"
+                                   "  commit id: \"B\" tag: \"v1\"\n  checkout main\n  merge dev\n")
+                              40))))
+             (it "a railroad rule stacks its choices between junctions"
+                 (expect (= ["sign" "├──┬─\"+\"─┬──┤" "   ╰─\"-\"─╯"]
+                            (rows "railroad-ebnf-beta\nsign = \"+\" | \"-\" ;\n" 40)))))
+
+(defdescribe
+  colour-test
+  (it "lines and chrome use the muted tone"
+      (expect (str/includes? (tones "flowchart LR\n  A[One] --> B[Two]\n" 60) "\u001b[90m")))
+  (it "a style colour tints the border of its node"
+      (let [drawn (tones "flowchart LR\n  A[One] --> B[Two]\n  style A stroke:#ff0000\n" 60)]
+        (expect (str/includes? drawn "\u001b[91m┌─────┐") drawn)
+        (expect (str/includes? drawn "\u001b[90m┌─────┐") drawn)))
+  (it "each git branch takes the next palette tone"
+      (let [drawn (tones "gitGraph\n  commit\n  branch dev\n  commit\n" 40)]
+        (expect (str/includes? drawn "\u001b[36mmain") drawn)
+        (expect (str/includes? drawn "\u001b[31mdev") drawn)))
+  (it "railroad terminals are green and rule references cyan"
+      (let [drawn (tones "railroad-ebnf-beta\nsign = \"+\" | digit ;\n" 40)]
+        (expect (str/includes? drawn "\u001b[32m\"+\"") drawn)
+        (expect (str/includes? drawn "\u001b[36mdigit") drawn))))
 
 ;; Regression for https://github.com/Blockether/vis/issues/319: a valid
 ;; flowchart with a subgraph legend, `:::class` suffixes and `~~~` links fell
@@ -170,8 +236,8 @@
 
 (defdescribe reason-test
              (it "a fence that is not drawn answers the reason"
-                 (expect (= {:reason "only flowcharts are drawn, not sequenceDiagram"}
-                            (mermaid/draw "sequenceDiagram\n  Alice->>Bob: hi\n" 60)))
+                 (expect (= {:reason "unknown diagram type: notadiagram"}
+                            (mermaid/draw "notADiagram\n  x\n" 60)))
                  (expect (= {:reason "cannot read: A[One] -->"}
                             (mermaid/draw "flowchart TD\n  A[One] --> \n" 60)))
                  (expect (= {:reason "empty flowchart"} (mermaid/draw "flowchart TD\n" 60))))
