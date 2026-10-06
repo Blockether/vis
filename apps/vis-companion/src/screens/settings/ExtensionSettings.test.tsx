@@ -224,6 +224,6 @@ it('names each extension once, on the row of its Auto/On/Off choice', async () =
   expect(within(spel).getByRole('switch', { name: 'Headless: off' })).toBeInTheDocument();
   expect(within(skills).queryByRole('switch', { name: 'Headless: off' })).toBeNull();
   expect(band).not.toHaveTextContent('vis-spel/browser');
-  // The band explains the Auto/On/Off choice once, not on each extension.
-  expect(within(band).getAllByText(/^Auto detects applicability/)).toHaveLength(1);
+  // The Auto/On/Off explanation is not shown: neither above the extensions nor on each one.
+  expect(within(band).queryByText(/^Auto detects applicability/)).toBeNull();
 });

@@ -101,8 +101,8 @@ export const Extensions: Story = {
     await expect(within(extensions!).getAllByText('vis-spel')).toHaveLength(1);
     const skills = within(within(extensions!).getByRole('region', { name: 'vis-spel' })).getByRole('region', { name: 'Skills' });
     await expect(within(skills).getByRole('switch', { name: /^browser:/ })).toBeInTheDocument();
-    // The band explains the Auto/On/Off choice once.
-    await expect(within(extensions!).getAllByText(/^Auto detects applicability/)).toHaveLength(1);
+    // The Auto/On/Off explanation is not shown.
+    await expect(within(extensions!).queryByText(/^Auto detects applicability/)).toBeNull();
     await expect(extensions).not.toHaveTextContent('.vis/extensions');
   },
 };

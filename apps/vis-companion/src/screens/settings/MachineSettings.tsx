@@ -320,7 +320,7 @@ export function SettingRow({ toggle, busy, head, onToggle, onPick, onInherit }: 
               )}
               {head?.scope && <Text variant="meta" className="ms-auto">{head.scope}</Text>}
             </div>
-            {/* The Extensions band explains the Auto/On/Off choice once, so the row that names an extension omits it. */}
+            {/* The row that names an extension omits the shared Auto/On/Off explanation. */}
             {!head && toggle.description && <Text as="p" variant="description" className="mt-0.5 break-words">{toggle.description}</Text>}
           </div>
           {toggle.type === 'boolean' && <Switch className="self-center" label={toggle.label} isOn={!!toggle.enabled} isBusy={busy} disabled={busy || lock !== null} onClick={onToggle} />}

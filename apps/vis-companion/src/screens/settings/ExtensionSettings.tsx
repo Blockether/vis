@@ -66,7 +66,7 @@ function memberLabel(group: ToggleGroup, label: string): string {
  * One extension under the Extensions heading. Its first row names it and shows its scope: the
  * Auto/On/Off choice, or only the name when the extension has no such choice. A load error
  * follows, then the other settings one step in, and last its packaged skills under Skills.
- * The left rail draws the depth.
+ * The indent draws the depth.
  */
 function ExtensionGroup({
   group,
@@ -85,10 +85,7 @@ function ExtensionGroup({
   const skills = group.toggles.filter(isSkillToggle);
   const memberRow = (toggle: Toggle) => renderSetting({ ...toggle, label: memberLabel(group, toggle.label) });
   return (
-    <section
-      aria-labelledby={headingId}
-      className="min-w-0 divide-y divide-dialog-edge border-l-2 border-dialog-edge"
-    >
+    <section aria-labelledby={headingId} className="min-w-0 divide-y divide-dialog-edge">
       {engine ? (
         renderSetting(engine, { id: headingId, level: headingLevel, scope })
       ) : (
@@ -159,9 +156,6 @@ export function ExtensionsPanel({
   const [status, setStatus] = useState<string | null>(null);
   const scoped = Boolean(target && target.scope !== 'global');
   const headingLevel = scoped ? 3 : 4;
-  // Every Auto/On/Off choice has the same explanation, so the band shows it once, above the extensions.
-  const choiceNote = groups.flatMap((group) => group.toggles).find(isEngineToggle)?.description;
-
   const reload = async () => {
     setBusy(true);
     setStatus('Reloading…');
@@ -200,13 +194,6 @@ export function ExtensionsPanel({
         ) : undefined
       }
     >
-      {choiceNote && (
-        <div className="px-3 py-2 sm:px-4">
-          <Text as="p" variant="description" className="break-words">
-            {choiceNote}
-          </Text>
-        </div>
-      )}
       {groups.map((group) => (
         <ExtensionGroup
           key={group.id}

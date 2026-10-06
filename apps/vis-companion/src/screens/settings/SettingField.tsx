@@ -107,7 +107,7 @@ function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
       {rows.map((entry, index) => {
         const row = objectValue(entry);
         return (
-          <div key={index} className="space-y-2 border-l-2 border-dialog-edge pl-3">
+          <div key={index} className="space-y-2 border-l border-dialog-edge pl-3">
             <div className="grid gap-2 sm:grid-cols-2">
               <Input
                 aria-label={`Root name ${index + 1}`}
@@ -267,7 +267,7 @@ function NetworkRules({
       {rows.map((entry, index) => {
         const row = objectValue(entry);
         return (
-          <div key={index} className="space-y-2 border-l-2 border-dialog-edge pl-3">
+          <div key={index} className="space-y-2 border-l border-dialog-edge pl-3">
             <Input
               aria-label={`Rule host ${index + 1}`}
               placeholder="gateway.example.com"
