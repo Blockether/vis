@@ -125,6 +125,40 @@ function HeatRowView({
   );
 }
 
+/** The app bar's wordmark carries this attribute; the closed dot sits just after it. */
+const WORDMARK = '[data-wordmark]';
+/** How often the dot follows the wordmark, which moves with the sidebar and the window. */
+const ANCHOR_MS = 500;
+
+interface Anchor {
+  left: number;
+  top: number;
+}
+
+/**
+ * Where the closed dot goes: just after the VIS wordmark, at the bar's middle. `null` while
+ * the overlay is open or the wordmark is not on screen, as under the splash.
+ */
+function useWordmarkAnchor(active: boolean): Anchor | null {
+  const [anchor, setAnchor] = useState<Anchor | null>(null);
+  useEffect(() => {
+    if (!active) return undefined;
+    const place = () => {
+      const box = document.querySelector(WORDMARK)?.getBoundingClientRect();
+      const next = box && box.width > 0 ? { left: Math.round(box.right), top: Math.round(box.top + box.height / 2) } : null;
+      setAnchor((previous) => (previous?.left === next?.left && previous?.top === next?.top ? previous : next));
+    };
+    place();
+    const timer = setInterval(place, ANCHOR_MS);
+    window.addEventListener('resize', place);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('resize', place);
+    };
+  }, [active]);
+  return active ? anchor : null;
+}
+
 /**
  * Turn the overlay off for the next loads and load the page again. Answers `false` when
  * this device did not save the choice.
@@ -186,6 +220,7 @@ export function PerfOverlay({
     : [];
   const heapTrend = history.flatMap((sample) => (sample.heap === null ? [] : [sample.heap]));
   const summary = `Memory ${heap === null ? '' : `${formatBytes(heap)} · `}${report.listeners.live.toLocaleString()} listeners`;
+  const anchor = useWordmarkAnchor(!open);
 
   return (
     <section
@@ -193,8 +228,11 @@ export function PerfOverlay({
       className={`pointer-events-auto font-mono text-meta ${
         open
           ? 'flex h-[calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-1rem)] w-[calc(100dvw-env(safe-area-inset-left)-env(safe-area-inset-right)-1rem)] flex-col gap-2 overflow-hidden border border-dialog-edge bg-panel p-2 shadow-float'
-          : ''
+          : anchor
+            ? 'fixed -translate-y-1/2'
+            : ''
       }`}
+      style={anchor ? { left: anchor.left, top: anchor.top } : undefined}
     >
       <header className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-3 mouse:gap-y-2">
         {open ? <h2 className="min-w-0 flex-1 font-bold">Memory</h2> : null}
@@ -216,7 +254,7 @@ export function PerfOverlay({
             </span>
           ) : (
             // Closed, the overlay is only a dot: the figures wait behind a click.
-            <span aria-hidden className="block size-3 bg-accent" />
+            <span aria-hidden className="block size-2 bg-accent" />
           )}
         </Button>
         {open ? (
@@ -390,8 +428,8 @@ export function PerfOverlay({
 }
 
 /**
- * Mount the overlay in its own root, outside the app's tree and layout. Its dot waits at
- * the middle of the right edge, clear of the app bar and the composer.
+ * Mount the overlay in its own root, outside the app's tree and layout. Its dot sits just
+ * after the VIS wordmark, or at the middle of the right edge while the app bar is away.
  */
 export function mountPerfOverlay(): void {
   if (document.getElementById('vis-perf')) return;

@@ -207,6 +207,35 @@ describe('memory overlay', () => {
     expect(screen.getByRole('region', { name: 'Memory overlay' })).toBeInTheDocument();
   });
 
+  // User request: the closed dot sits next to the VIS wordmark in the app bar.
+  it('puts the dot just after the wordmark in the app bar', () => {
+    const mark = document.createElement('div');
+    mark.setAttribute('data-wordmark', '');
+    mark.getBoundingClientRect = () => ({ left: 12, right: 96, top: 0, bottom: 48, width: 84, height: 48, x: 12, y: 0, toJSON: () => ({}) });
+    document.body.append(mark);
+    try {
+      render(<PerfOverlay read={() => report()} refreshMs={60_000} />);
+
+      const dot = screen.getByRole('button', { name: 'Memory 48.0 MB · 10 listeners' });
+      const box = dot.closest('section')!;
+      expect(box).toHaveClass('fixed');
+      expect(box.style.left).toBe('96px');
+      expect(box.style.top).toBe('24px');
+      fireEvent.click(dot);
+      expect(screen.getByRole('region', { name: 'Memory overlay' }).style.left).toBe('');
+    } finally {
+      mark.remove();
+    }
+  });
+
+  it('keeps the dot at the right edge while the wordmark is away', () => {
+    render(<PerfOverlay read={() => report()} refreshMs={60_000} />);
+
+    const box = screen.getByRole('button', { name: 'Memory 48.0 MB · 10 listeners' }).closest('section')!;
+    expect(box).not.toHaveClass('fixed');
+    expect(box.style.left).toBe('');
+  });
+
   it('minimizes to the dot and opens again', () => {
     render(<PerfOverlay startOpen read={() => report()} refreshMs={60_000} />);
 

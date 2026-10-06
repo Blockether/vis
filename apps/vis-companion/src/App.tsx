@@ -1539,7 +1539,8 @@ export function Header({
             than the wordmark. The nudge is that offset, a twelfth of the mark's
             height, and it moves the ink only:
             the box stays where the row put it. */}
-        <div className="flex h-12 items-center gap-2.5" aria-label="Vis">
+        {/* `data-wordmark` places the memory overlay's dot just after the wordmark. */}
+        <div className="flex h-12 items-center gap-2.5" aria-label="Vis" data-wordmark>
           <img src="/vis-logo.png" alt="" className="h-6 w-7 -translate-y-0.5 object-contain" />
           {/* The face stays in foreground ink. Blockether Dark shares Light's yellow
               hard offset rather than the dialog's black shadow. */}
