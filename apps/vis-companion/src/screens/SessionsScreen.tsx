@@ -29,7 +29,7 @@ import {
 import { PANEL_SIZES } from '../components/Menu';
 import { GatewayClient, onTurnSubmitted, type ProjectWindows, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
-import type { GatewayConn, Session, SseEvent } from '../lib/types';
+import type { ForkPoint, GatewayConn, Session, SseEvent } from '../lib/types';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, viewKind } from '../lib/view';
 import { onWake } from '../lib/wake';
 import { answeredTurnCount, unreadAfterVisit, unreadTurnCount } from '../lib/unread';
@@ -133,6 +133,10 @@ const SEARCH_DEBOUNCE_MS = 200;
 // Search has an interactive timeout shorter than the general transport budget, so one
 // sleeping machine is reported rather than holding the whole fleet.
 const SEARCH_REACH_MS = 8_000;
+
+// How long the search pane's selection rests on a session before the pane reads its
+// newest messages, so a held arrow key does not read every session that it passes.
+const RECENT_DELAY_MS = 120;
 
 // ONE machine's answer to the live question: the rows its search answered with, in the
 // gateway's own order, where each of them matched, and whether the machine ANSWERED AT
@@ -1793,6 +1797,39 @@ export function SessionsScreen({
     rowCommands.read?.(preview.conn, preview.session);
     void rowCommands.open(preview.conn, preview.session.id);
   }, [preview, rowCommands]);
+  // The newest messages of the previewed session. The pane shows them whenever no message
+  // matches, before and during a query, as the terminal switcher does. The read waits
+  // until the selection rests, and a new turn or status change reads the session again.
+  const [recentAnswers, setRecentAnswers] = useState<ReadonlyMap<string, readonly ForkPoint[] | 'failed'>>(
+    () => new Map(),
+  );
+  const previewConn = preview?.conn ?? null;
+  const recentKey = preview
+    ? [
+        sessionRowKey(preview.conn, preview.session.id),
+        preview.session.modified_at ?? '',
+        preview.session.current_turn_id ?? '',
+      ].join('\u0000')
+    : null;
+  const isRecentHeld = recentKey !== null && recentAnswers.has(recentKey);
+  useEffect(() => {
+    if (!isSearchOpen || !previewConn || !previewId || recentKey === null || isRecentHeld) return;
+    const controller = new AbortController();
+    const settle = (turns: readonly ForkPoint[] | 'failed') => {
+      if (controller.signal.aborted) return;
+      setRecentAnswers((held) => new Map(held).set(recentKey, turns));
+    };
+    const timer = setTimeout(() => {
+      clientFor(previewConn)
+        .forkPoints(previewId, controller.signal)
+        .then(settle, () => settle('failed'));
+    }, RECENT_DELAY_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [isSearchOpen, previewConn, previewId, recentKey, isRecentHeld]);
+  const recent = (recentKey !== null ? recentAnswers.get(recentKey) : undefined) ?? 'loading';
   // The list's rows answer no query: the search has its own rows, in its own dialog.
   const rowContext = useMemo<SessionRowsContext>(
     () => ({
@@ -2246,6 +2283,7 @@ export function SessionsScreen({
                 match={searching ? matches?.get(preview.session.id) ?? null : null}
                 query={searching ? searchNeedle : ''}
                 isSearching={searching && searchPending}
+                recent={recent}
                 onOpen={openPreview}
                 className="min-h-0 flex-1"
               />

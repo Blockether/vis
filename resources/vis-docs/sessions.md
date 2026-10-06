@@ -151,9 +151,13 @@ recent sessions. Type to search session titles and conversation text, choose a
 session with **↑** and **↓**, and press **Enter** to open it.
 
 A border always divides the switcher, also before you type. The left side lists the
-recent sessions or the sessions that match. The right side shows the matching messages
-of the selected session. Each message shows who wrote it, **You** or **Vis**, and when.
-Your search words are highlighted. The messages stay beside the list in a narrow terminal.
+recent sessions or the sessions that match. The right side shows messages of the selected
+session, so you always see a part of its conversation.
+
+Before you type, the right side shows the newest messages, newest turn first. When you
+search, it shows the matching messages, with your search words highlighted. If no message
+matches, a short note says so above the newest messages. Each message shows who wrote it,
+**You** or **Vis**, and when. The messages stay beside the list in a narrow terminal.
 
 The switcher also has these keys:
 
@@ -225,9 +229,9 @@ With a keyboard, press **Ctrl+/** to open the search. This shortcut also works w
 type in a text box. When you are not typing, you can also press **/**.
 
 A border always divides the dialog in the same way as the terminal switcher. The sessions
-are on the left. The matching messages of one session are on the right, with your search
-words highlighted. Before you type, the right side names one session and asks you to type.
-On a phone or in a narrow window, the messages are below the sessions.
+are on the left. The messages of one session are on the right. Before you type, and when no
+message matches, you see its newest messages. When messages match, you see them with your
+search words highlighted. On a phone or in a narrow window, the messages are below the sessions.
 
 The messages of the first session in the results show first. To see the messages of a
 different session, choose that session. To open the session, choose it again. You

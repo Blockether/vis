@@ -6780,6 +6780,66 @@
           (not (str/blank? (:reply-snippet match)))
           (conj {:label "Vis" :role :ai :side :reply :text (:reply-snippet match)}))))))
 
+(def ^:private navigator-recent-turns
+  "How many of a session's newest turns the message pane offers."
+  6)
+
+(def ^:private navigator-recent-chars
+  "The longest request excerpt that the message pane shows, in characters. It is as
+   long as the answer excerpt that the gateway sends."
+  400)
+
+(def ^:private navigator-recent-delay-ms
+  "How long the selection rests on a session before the picker reads its newest
+   messages, so a held arrow key does not read every session that it passes."
+  120)
+
+(defn- navigator-recent-entries
+  "Message rows for the newest turns of a session, newest turn first. Each turn gives
+   its request (`You`, with the turn's time) and then the start of its answer (`Vis`).
+   `turns` are oldest-first `fork-points` rows. A long request is cut and ends with `…`."
+  [turns]
+  (into []
+        (mapcat
+          (fn [{:keys [user-request answer created-at]}]
+            (let [request
+                  (str/trim (str user-request))
+
+                  answer
+                  (str/trim (str answer))
+
+                  limit
+                  (long navigator-recent-chars)]
+
+              (cond-> []
+                (seq request)
+                (conj {:label "You"
+                       :role :user
+                       :side :request
+                       :at created-at
+                       :text (if (> (count request) limit)
+                               (str (str/trimr (subs request 0 (dec limit))) "…")
+                               request)})
+
+                (seq answer)
+                (conj {:label "Vis" :role :ai :side :reply :text answer})))))
+        (reverse (take-last navigator-recent-turns turns))))
+
+(defn- navigator-attach-recent
+  "`entry` with the newest messages that `cache` holds for its session: `:recent` the
+   message rows, and `:recent-status` `:loading` before they arrive or `:failed`."
+  [entry cache]
+  (when entry
+    (let [cached (get cache
+                      (some-> entry
+                              :target
+                              :id
+                              str))]
+      (assoc entry
+        :recent (:entries cached)
+        :recent-status (cond (nil? cached) :loading
+                             (:failed? cached) :failed)))))
+
 (defn- navigator-block-heights
   "Two terminal lines per session: title/status, then explicit location."
   [visible-rows]
@@ -6887,9 +6947,14 @@
    lines of `width` columns. Each line is a map by `:kind`: `:title` the
    session's title; `:label` one message's author (`:label`, `:role`), place and
    time; `:text` one wrapped line of its snippet as `navigator-highlight-segments`;
-   `:note` why no message shows; `:more` the matched messages that did not fit;
+   `:note` why no message matches or shows; `:more` the messages that did not fit;
    `:blank` a spacer. Whole messages fit first: only a first message taller than
-   the pane is clipped."
+   the pane is clipped.
+
+   Matched messages come first. Without them the pane shows the session's newest
+   messages (`:recent` of `entry`), with or without a query, so the reader always
+   sees a part of the conversation. `:recent-status` `:loading` or `:failed` says
+   why they are absent."
   [entry query {:keys [width height pending?]}]
   (let [width
         (max 1 (long width))
@@ -6909,50 +6974,75 @@
            :count n
            :text (str "+" n (if (= 1 (long n)) " more message" " more messages"))})
 
-        groups
-        (mapv (fn [{:keys [label role side at text]}]
-                (into [{:kind :label
-                        :label label
-                        :role role
-                        :place (when (= :thinking side) "thinking")
-                        :stamp (when (some? at) (navigator-stamp at))}]
-                      (map (fn [line]
-                             {:kind :text :segments (navigator-highlight-segments line query)}))
-                      (p/word-wrap (str/trim (str/replace (str text) #"\s+" " ")) width)))
-              (navigator-preview-entries match))
+        ->groups
+        (fn [entries]
+          (mapv (fn [{:keys [label role side at text]}]
+                  (into [{:kind :label
+                          :label label
+                          :role role
+                          :place (when (= :thinking side) "thinking")
+                          :stamp (when (some? at) (navigator-stamp at))}]
+                        (map (fn [line]
+                               {:kind :text :segments (navigator-highlight-segments line query)}))
+                        (p/word-wrap (str/trim (str/replace (str text) #"\s+" " ")) width)))
+                entries))
+
+        fit
+        (fn [start groups]
+          (loop [acc
+                 start
+
+                 groups
+                 groups
+
+                 shown
+                 0]
+
+            (if-let [group (first groups)]
+              (let [gap (if (pos? shown) [{:kind :blank}] [])
+                    later (dec (count groups))
+                    ;; While more messages follow, one line stays free for the
+                    ;; note that counts them.
+                    room (- height (if (pos? later) 1 0))]
+
+                (cond (<= (+ (count acc) (count gap) (count group)) room)
+                      (recur (into (into acc gap) group) (rest groups) (inc shown))
+                      (zero? shown) (cond-> (into acc (take (max 0 (- room (count acc))) group))
+                                      (pos? later)
+                                      (conj (more later)))
+                      :else (conj acc (more (count groups)))))
+              acc)))
+
+        match-groups
+        (->groups (navigator-preview-entries match))
+
+        recent-groups
+        (->groups (:recent entry))
+
+        note
+        (cond (str/blank? (str query)) nil
+              pending? "Searching messages…"
+              (= :title (:kind match)) "The title matches. No message matches."
+              :else "No message matches.")
+
+        noted
+        (cond-> head
+          note
+          (conj {:kind :note :text note}))
 
         lines
         (cond (nil? entry) (if pending? [{:kind :note :text "Searching messages…"}] [])
-              (seq groups) (loop [acc
-                                  head
-
-                                  groups
-                                  groups
-
-                                  shown
-                                  0]
-
-                             (if-let [group (first groups)]
-                               (let [gap (if (pos? shown) [{:kind :blank}] [])
-                                     later (dec (count groups))
-                                     ;; While more messages follow, one line stays free for the
-                                     ;; note that counts them.
-                                     room (- height (if (pos? later) 1 0))]
-
-                                 (cond (<= (+ (count acc) (count gap) (count group)) room)
-                                       (recur (into (into acc gap) group) (rest groups) (inc shown))
-                                       (zero? shown)
-                                       (cond-> (into acc (take (max 0 (- room (count acc))) group))
-                                         (pos? later)
-                                         (conj (more later)))
-                                       :else (conj acc (more (count groups)))))
-                               acc))
-              (str/blank? (str query)) (conj head
-                                             {:kind :note :text "Type to find matching messages."})
-              pending? (conj head {:kind :note :text "Searching messages…"})
-              (= :title (:kind match))
-              (conj head {:kind :note :text "The title matches. No message matches."})
-              :else (conj head {:kind :note :text "No message matches."}))]
+              (seq match-groups) (fit head match-groups)
+              (seq recent-groups) (fit (cond-> noted
+                                         note
+                                         (conj {:kind :blank}))
+                                       recent-groups)
+              note noted
+              (= :loading (:recent-status entry)) (conj head
+                                                        {:kind :note :text "Loading messages…"})
+              (= :failed (:recent-status entry))
+              (conj head {:kind :note :text "Could not load messages."})
+              :else (conj head {:kind :note :text "No messages yet."}))]
 
     (vec (take height lines))))
 
@@ -7190,6 +7280,24 @@
           search-result
           (atom nil)
 
+          ;; The newest messages of each session that the reader selected, keyed by
+          ;; session id. The message pane shows them when no message matches. A fleet
+          ;; frame for a session drops its entry, so the next selection reads it again.
+          recent-messages
+          (:recent-messages opts)
+
+          recent-cache
+          (atom {})
+
+          recent-task
+          (atom nil)
+
+          recent-sid
+          (atom nil)
+
+          recent-result
+          (atom {})
+
           ;; What the FLEET stream said since the last paint. The picker holds a window and
           ;; never re-reads a row, so this delta feed is how a session that went live, parked
           ;; on a human or was renamed reaches the list at all.
@@ -7233,6 +7341,29 @@
                                              (fn [needle]
                                                (assoc (search-sessions needle scope)
                                                  :scope scope)))))))
+         (load-recent! [entry]
+           (let [sid (some-> entry
+                             :target
+                             :id
+                             str)]
+             (when
+               (and recent-messages sid (not (contains? @recent-cache sid)) (not= sid @recent-sid))
+               ;; The opening selection reads at once; later moves wait for the selection to rest.
+               (let [rest-ms
+                     (if (or (seq @recent-cache) @recent-task) (long navigator-recent-delay-ms) 0)]
+                 (when-let [running @recent-task]
+                   (future-cancel running))
+                 (reset! recent-sid sid)
+                 (reset! recent-task (future (try (Thread/sleep rest-ms)
+                                                  (let [turns (recent-messages sid)]
+                                                    (swap! recent-result assoc
+                                                      sid
+                                                      {:entries (navigator-recent-entries turns)}))
+                                                  (catch InterruptedException _ nil)
+                                                  (catch Throwable _
+                                                    (swap! recent-result assoc
+                                                      sid
+                                                      {:failed? true})))))))))
          (reset-list! [search?]
            (reset! selected 0)
            (reset! scroll 0)
@@ -7346,7 +7477,12 @@
                   (when (seq (:matches page)) (swap! transcript-ids merge (:matches page))))))
             (when (seq @fleet-frames)
               (let [frames (first (swap-vals! fleet-frames empty))]
-                (swap! loaded-sessions #(reduce navigator-apply-fleet-frame % frames))))
+                (swap! loaded-sessions #(reduce navigator-apply-fleet-frame % frames))
+                (swap! recent-cache #(apply dissoc
+                                       %
+                                       (map (fn [frame]
+                                              (str (get frame "session_id")))
+                                            frames)))))
             (when-let [{:keys [token query matches]} @search-result]
               (reset! search-result nil)
               (when (and (= token @search-generation) (= (:scope matches) @search-scope))
@@ -7355,6 +7491,12 @@
                 (reset! transcript-query query)
                 (reset! transcript-ids (or (:matches matches) {}))
                 (reset! search-task nil)))
+            (let [arrived (first (swap-vals! recent-result empty))]
+              (when (seq arrived)
+                (swap! recent-cache merge arrived)
+                (when (contains? arrived @recent-sid)
+                  (reset! recent-sid nil)
+                  (reset! recent-task nil))))
             (let [rows
                   (filterv #(navigator-row-in-scope? % @search-scope)
                     (navigator-all-rows (assoc opts
@@ -7444,6 +7586,9 @@
                   (page-in! total)
 
                   _
+                  (when (pos? total) (load-recent! (nth visible-rows @selected)))
+
+                  _
                   (swap! scroll #(navigator-scroll-start block-heights @selected % list-budget))
 
                   blocks
@@ -7499,7 +7644,10 @@
                   preview-top
                   preview-w
                   (navigator-preview-lines
-                    (when (pos? total) (nth visible-rows @selected))
+                    (when (pos? total)
+                      (cond-> (nth visible-rows @selected)
+                        recent-messages
+                        (navigator-attach-recent @recent-cache)))
                     (or @transcript-query @query)
                     {:width preview-w :height preview-h :pending? (some? @search-task)}))
                 (when (> total page-rows)
@@ -7529,9 +7677,10 @@
                           screen
                           search-task
                           search-result
-                          (when (or stop-fleet! @page-task @page-result @groups-task)
+                          (when (or stop-fleet! @page-task @page-result @groups-task @recent-task)
                             #(or (seq @fleet-frames)
                                  @page-result
+                                 (seq @recent-result)
                                  (and @groups-task (future-done? @groups-task)))))]
                 (if-not key
                   (recur)
@@ -7682,6 +7831,8 @@
                    (when-let [running @page-task]
                      (future-cancel running))
                    (when-let [running @groups-task]
+                     (future-cancel running))
+                   (when-let [running @recent-task]
                      (future-cancel running))
                    (when stop-fleet! (stop-fleet!))))))))
 

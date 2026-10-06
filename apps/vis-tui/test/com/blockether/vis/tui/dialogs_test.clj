@@ -818,6 +818,51 @@
           (expect (= "Searching messages…" (note {:title "T"} {:pending? true})))
           (expect (= "Searching messages…" (note nil {:pending? true})))
           (expect (= [] (lines nil "x" {:width 40 :height 9})))))
+    ;; User report (paraphrased): in the TUI and the app, the pane at the right of the
+    ;; session list must always show a part of the conversation, also before a query.
+    (it "the message pane shows the newest messages with or without a query"
+        (let [lines (var-get #'dlg/navigator-preview-lines)
+              recent (var-get #'dlg/navigator-recent-entries)
+              entries (recent [{:user-request "first ask" :answer "first answer" :created-at 0}
+                               {:user-request "second ask" :created-at 60000}])
+              entry {:title "T" :recent entries}
+              plan (lines entry "" {:width 40 :height 20})
+              searched (lines entry "zzz" {:width 40 :height 20})]
+
+          ;; The newest turn comes first; in a turn the request comes before its answer.
+          (expect (= ["You" "You" "Vis"] (mapv :label entries)))
+          (expect (= ["second ask" "first ask" "first answer"] (mapv :text entries)))
+          (expect (= [:title :blank :label :text :blank :label :text :blank :label :text]
+                     (mapv :kind plan)))
+          (expect (= [["second ask" false]] (:segments (nth plan 3))))
+          ;; A query without a message match keeps its note above the conversation.
+          (expect (= [:title :blank :note :blank :label :text] (take 6 (mapv :kind searched))))
+          (expect (= "No message matches." (:text (nth searched 2))))))
+    (it "the message pane says when the newest messages load, fail or do not exist"
+        (let [lines (var-get #'dlg/navigator-preview-lines)
+              note (fn [entry]
+                     (:text (last (lines entry "" {:width 40 :height 9}))))]
+
+          (expect (= "Loading messages…" (note {:title "T" :recent-status :loading})))
+          (expect (= "Could not load messages." (note {:title "T" :recent-status :failed})))
+          (expect (= "No messages yet." (note {:title "T" :recent []})))))
+    (it "the newest messages keep the last turns and cut a long request"
+        (let [recent (var-get #'dlg/navigator-recent-entries)
+              attach (var-get #'dlg/navigator-attach-recent)
+              turns (mapv (fn [i]
+                            {:user-request (str "ask " i)})
+                          (range 10))
+              long-ask (first (recent [{:user-request (apply str (repeat 500 "a"))}]))]
+
+          (expect (= ["ask 9" "ask 8" "ask 7" "ask 6" "ask 5" "ask 4"] (mapv :text (recent turns))))
+          (expect (= 400 (count (:text long-ask))))
+          (expect (str/ends-with? (:text long-ask) "…"))
+          (expect (= :loading (:recent-status (attach {:target {:id "a"}} {}))))
+          (expect (= [{:text "x"}]
+                     (:recent (attach {:target {:id "a"}} {"a" {:entries [{:text "x"}]}}))))
+          (expect (nil? (:recent-status (attach {:target {:id "a"}} {"a" {:entries []}}))))
+          (expect (= :failed (:recent-status (attach {:target {:id "a"}} {"a" {:failed? true}}))))
+          (expect (nil? (attach nil {})))))
     (it "the message pane marks the matched words like a highlighter"
         (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)
               draw-segments (var-get #'dlg/draw-navigator-segments!)]
@@ -1893,6 +1938,47 @@
                          (let [col (str/index-of line needle)]
                            (when col [row col])))
                        lines)))
+
+;; User report (paraphrased): the pane at the right of the session list stayed empty
+;; until the reader typed a query.
+(defdescribe
+  navigator-recent-messages-test
+  (it
+    "shows the selected session's newest messages before anything is typed"
+    (let [seen
+          (promise)
+
+          asked
+          (atom [])
+
+          terminal-ref
+          (atom nil)
+
+          task
+          (future (capture-navigator! {:sessions [{"id" "a" "title" "Alpha plan" "turn_count" 1}]
+                                       :recent-messages (fn [sid]
+                                                          (swap! asked conj sid)
+                                                          [{:user-request "plan the release"
+                                                            :answer "The release has three steps."
+                                                            :created-at 0}])}
+                                      (fn [^DefaultVirtualTerminal terminal]
+                                        (reset! terminal-ref terminal)
+                                        (let [lines (terminal-lines terminal)]
+                                          (when (and (not (realized? seen))
+                                                     (some #(str/includes? % "three steps") lines))
+                                            (deliver seen lines)
+                                            (.addInput terminal (cap/key-stroke :esc)))))))
+
+          lines
+          (deref seen 5000 nil)]
+
+      (when-not lines
+        (some-> ^DefaultVirtualTerminal @terminal-ref
+                (.addInput (cap/key-stroke :esc))))
+      (expect (some? lines))
+      (expect (some #(str/includes? % "plan the release") lines))
+      (expect (= ["a"] @asked))
+      (expect (not= ::blocked (deref task 5000 ::blocked))))))
 
 ;; The search answers its hits WITH their rows: a hit outside the window the picker
 ;; holds is painted from that one answer, and no second read fetches it.

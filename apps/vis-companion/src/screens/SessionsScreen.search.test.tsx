@@ -495,6 +495,9 @@ describe('search shows the matching messages of one session beside the results',
             },
           ],
         },
+        '/v1/sessions/a1/forks': {
+          turns: [{ turn_id: 't1', request: 'Where did I leave it?', answer: 'In the drawer.', created_at: 0 }],
+        },
       },
     },
   ];
@@ -530,7 +533,9 @@ describe('search shows the matching messages of one session beside the results',
     expect(side.className).toContain('@min-[40rem]/search:border-l');
 
     view.setQuery('');
-    await waitFor(() => expect(within(pane()).getByText('Type to find matching messages.')).toBeVisible());
+    // Without a query the pane shows the session's newest messages, not an empty note.
+    await waitFor(() => expect(within(pane()).getByText('Where did I leave it?')).toBeVisible());
+    expect(within(pane()).getByText('In the drawer.')).toBeVisible();
   });
 
   it('previews another session on the first press and opens it on the second', async () => {
@@ -570,7 +575,10 @@ describe('the search dialog opens on the recent sessions', () => {
     {
       label: 'alpha',
       sessions: [older, newer],
-      routes: { '/v1/sessions/actions/search': { query: '', sessions, total: sessions.length } },
+      routes: {
+        '/v1/sessions/actions/search': { query: '', sessions, total: sessions.length },
+        '/v1/sessions/newer/forks': { turns: [{ turn_id: 't1', request: 'Plan the release', answer: 'Three steps.' }] },
+      },
     },
   ];
   const recent = (sid: string) =>
@@ -588,7 +596,8 @@ describe('the search dialog opens on the recent sessions', () => {
     expect(searches(view.requests)).toEqual(['']);
     const pane = screen.getByRole('region', { name: 'Matching messages' });
     expect(within(pane).getByRole('heading')).toHaveTextContent('Newer work');
-    expect(within(pane).getByText('Type to find matching messages.')).toBeVisible();
+    await waitFor(() => expect(within(pane).getByText('Plan the release')).toBeVisible());
+    expect(within(pane).getByText('Three steps.')).toBeVisible();
   });
 
   it('opens a recent session on the first press', async () => {

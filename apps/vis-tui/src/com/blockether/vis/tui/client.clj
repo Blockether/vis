@@ -1426,13 +1426,15 @@
          "workspace")))
 
 (defn fork-points
-  "Lean, oldest-first turn rows at which `sid` can be forked."
+  "Lean, oldest-first turn rows at which `sid` can be forked. `:answer` is the start
+   of the turn's answer as Markdown, cut by the gateway, or nil."
   [sid]
   (mapv (fn [index row]
           {:id (get row "turn_id")
            :position (inc (long index))
            :user-request (get row "request")
-           :created-at (get row "created_at")})
+           :created-at (get row "created_at")
+           :answer (get row "answer")})
         (range)
         (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/forks")) "turns")))
 

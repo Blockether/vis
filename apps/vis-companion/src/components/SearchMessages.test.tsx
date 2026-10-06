@@ -6,6 +6,9 @@ import { STORY_SESSION_SEARCH_MATCH } from '../dev/story-data';
 import { timeLabel } from '../lib/fleet';
 import type { SessionMatch } from '../lib/gateway';
 import { SearchMessages } from './SearchMessages';
+import type { ForkPoint } from '../lib/types';
+
+type SearchMessagesRecent = readonly ForkPoint[] | 'loading' | 'failed';
 
 function pane({
   match = STORY_SESSION_SEARCH_MATCH,
@@ -164,5 +167,72 @@ describe('search messages pane', () => {
       fireEvent.click(within(item).getByRole('button'));
     }
     expect(onOpen).toHaveBeenCalledTimes(4);
+  });
+});
+
+// User report (paraphrased): in the app and in the TUI, the pane at the right of the session
+// list must always show a part of the conversation, also before a query.
+describe('search messages pane without a message match', () => {
+  const turns: ForkPoint[] = [
+    { turn_id: 't1', request: 'First ask', answer: 'First **answer**', created_at: 0 },
+    { turn_id: 't2', request: 'Second ask', created_at: 60_000 },
+  ];
+  const recentPane = (query: string, recent: SearchMessagesRecent, match: SessionMatch | null = null) =>
+    render(
+      <SearchMessages title="Release checks" match={match} query={query} isSearching={false} recent={recent} onOpen={vi.fn()} />,
+    );
+
+  it('shows the newest messages before a query, newest turn first', () => {
+    const { container } = recentPane('', turns);
+    const items = screen.getAllByRole('listitem');
+
+    expect(items.map((item) => item.textContent)).toEqual([
+      expect.stringContaining('Second ask'),
+      expect.stringContaining('First ask'),
+      expect.stringContaining('First answer'),
+    ]);
+    expect(within(items[2]).getByText('Vis')).toBeVisible();
+    expect(container.querySelector('strong')).toHaveTextContent('answer');
+    expect(screen.queryByText(/matches/)).toBeNull();
+  });
+
+  it('keeps the note above the newest messages when a query matches no message', () => {
+    recentPane('zzz', turns);
+
+    expect(screen.getByText('No message matches.')).toBeVisible();
+    expect(screen.getAllByRole('listitem')).toHaveLength(3);
+  });
+
+  it('shows the matched messages, not the newest ones, when a message matches', () => {
+    recentPane('windows', turns, STORY_SESSION_SEARCH_MATCH);
+
+    expect(screen.queryByText('Second ask')).toBeNull();
+  });
+
+  it('keeps the six newest turns and cuts a long request', () => {
+    const many: ForkPoint[] = Array.from({ length: 8 }, (_, index) => ({ turn_id: `t${index}`, request: `Ask ${index}` }));
+    const { unmount } = recentPane('', many);
+    expect(screen.getAllByRole('listitem').map((item) => item.textContent)).toEqual(
+      [7, 6, 5, 4, 3, 2].map((index) => `YouAsk ${index}`),
+    );
+    unmount();
+
+    recentPane('', [{ turn_id: 'long', request: 'a'.repeat(500) }]);
+    const text = screen.getByRole('listitem').textContent ?? '';
+    expect(text).toMatch(/…$/);
+    expect(text.length).toBe('You'.length + 400);
+  });
+
+  it('says when the newest messages load, fail or do not exist', () => {
+    const { unmount } = recentPane('', 'loading');
+    expect(screen.getByText('Loading messages...')).toBeVisible();
+    unmount();
+
+    const failed = recentPane('', 'failed');
+    expect(screen.getByText('Could not load messages.')).toBeVisible();
+    failed.unmount();
+
+    recentPane('', []);
+    expect(screen.getByText('No messages yet.')).toBeVisible();
   });
 });

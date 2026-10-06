@@ -5608,6 +5608,7 @@
                               (fn []))))
         :active-session-id active-id
         :db db
+        :recent-messages vis/fork-points
         :search-sessions
         (fn [q scope]
           (try (let [answer (vis/gateway-search-sessions
