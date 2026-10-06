@@ -11573,10 +11573,10 @@ print(paths)"
 (defdescribe
   queue-send-now-controls-test
   ;; "Send now": while a turn runs, the Queued block offers ` Send all now ` on its
-  ;; header and ` Send it now ` at the right edge of every markable row, with no arrow glyphs. A marked
-  ;; row keeps its place and says `· next iter`; a command (`/…`, `!…`) and a local-only
-  ;; row show no button;
-  ;; a held queue (no running turn) shows no control at all.
+  ;; header and ` Send it now ` at the right edge of every markable row, with no arrow
+  ;; glyphs. A marked row keeps its place, says `· next iter` and its button reads
+  ;; ` Unsend `. A command (`/…`, `!…`) and a local-only row show no button. A held
+  ;; queue (no running turn) shows no control at all.
   (let [settings
         {:show-thinking true :show-iterations true}
 
@@ -11645,10 +11645,11 @@ print(paths)"
         (expect (str/includes? local-line "3. ⚠ unsent · local only"))
         (expect (nil? (:queue-send local-meta)))
         ;; The marked row stays in place, says so, and its button undoes the mark.
+        ;; User report: the marked row still said Send it now, so the undo was unclear.
         (expect (str/includes? marked-line "4. third queued message · next iter"))
-        (expect
-          (= {:session-id "s1" :label "Send it now" :turn-id "t3" :marked? true :deliver "turn_end"}
-             (:queue-send marked-meta)))
+        (expect (=
+                  {:session-id "s1" :label "Unsend" :turn-id "t3" :marked? true :deliver "turn_end"}
+                  (:queue-send marked-meta)))
         (expect (= " · next iter" (:queue-suffix marked-meta)))))
     (it "drops the header control once every markable row is marked"
         (let [d
@@ -11734,7 +11735,7 @@ print(paths)"
         (expect (= (count " Send all now ") (long (:width (:bounds send-all)))))
         ;; One button per markable row (t1, t3): not the command, not the local row.
         ;; Every button ends at the same right edge as the header button.
-        (expect (= [(count " Send it now ") (count " Send it now ")]
+        (expect (= [(count " Send it now ") (count " Unsend ")]
                    (mapv #(long (:width (:bounds %))) sends)))
         (let [right-edge (fn [region]
                            (+ (long (:col (:bounds region))) (long (:width (:bounds region)))))]

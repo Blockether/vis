@@ -188,14 +188,14 @@ export function QueuedTurnsTray({
                       <Button
                         aria-label={
                           isMarked
-                            ? `Keep queued message ${index + 1} for the turn end`
+                            ? `Unsend queued message ${index + 1}`
                             : `Send queued message ${index + 1} now`
                         }
                         title={isMarked ? 'Keep for the turn end' : 'Send at the next step'}
+                        // A marked row shows the accent fill and the label of the undo.
                         variant={isMarked ? 'primary' : 'secondary'}
                         density="inline"
                         className="shrink-0"
-                        aria-pressed={isMarked}
                         disabled={isBusy}
                         onClick={() => {
                           const deliver = isMarked ? 'turn_end' : 'next_iteration';
@@ -206,7 +206,7 @@ export function QueuedTurnsTray({
                             .finally(() => markBusy(item.turnId, false));
                         }}
                       >
-                        Send it now
+                        {isMarked ? 'Unsend' : 'Send it now'}
                       </Button>
                     )}
                     <CloseButton

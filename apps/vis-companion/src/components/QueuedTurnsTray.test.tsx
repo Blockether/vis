@@ -200,7 +200,8 @@ describe('send now', () => {
     );
 
     const arrow = screen.getByRole('button', { name: 'Send queued message 2 now' });
-    expect(arrow).toHaveAttribute('aria-pressed', 'false');
+    // The label names the press, so the button is no aria-pressed toggle.
+    expect(arrow).not.toHaveAttribute('aria-pressed');
     fireEvent.click(arrow);
     expect(client.markQueuedTurn).toHaveBeenCalledTimes(1);
     expect(client.markQueuedTurn).toHaveBeenCalledWith('session-1', 'turn-3', 'next_iteration');
@@ -230,9 +231,14 @@ describe('send now', () => {
     // The number takes the message's size and line height, so both share one baseline.
     expect(screen.getByText('#2')).toHaveClass('font-mono', 'text-ui');
     expect(screen.getByText('#2')).not.toHaveClass('leading-none');
-    const keep = screen.getByRole('button', { name: 'Keep queued message 2 for the turn end' });
-    expect(keep).toHaveAttribute('aria-pressed', 'true');
-    fireEvent.click(keep);
+    // User report: a marked row still said Send it now. Its button now names the undo.
+    const unsend = screen.getByRole('button', { name: 'Unsend queued message 2' });
+    expect(unsend).toHaveTextContent(/^Unsend$/);
+    expect(unsend).toHaveClass('bg-accent', 'text-accent-foreground');
+    const send = screen.getByRole('button', { name: 'Send queued message 1 now' });
+    expect(send).toHaveTextContent(/^Send it now$/);
+    expect(send).not.toHaveClass('bg-accent');
+    fireEvent.click(unsend);
     expect(client.markQueuedTurn).toHaveBeenCalledWith('session-1', 'turn-3', 'turn_end');
   });
 
@@ -309,10 +315,11 @@ describe('send now', () => {
     const all = screen.getByRole('button', { name: 'Send all queued messages now' });
     const rows = [
       screen.getByRole('button', { name: 'Send queued message 1 now' }),
-      screen.getByRole('button', { name: 'Keep queued message 2 for the turn end' }),
+      screen.getByRole('button', { name: 'Unsend queued message 2' }),
     ];
     expect(all).toHaveTextContent(/^Send all now$/);
-    for (const button of rows) expect(button).toHaveTextContent(/^Send it now$/);
+    expect(rows[0]).toHaveTextContent(/^Send it now$/);
+    expect(rows[1]).toHaveTextContent(/^Unsend$/);
     // The buttons fit the one-line row and band: they never make them taller.
     for (const button of [all, ...rows]) expect(button).toHaveClass('h-6', 'mouse:h-5');
     expect(screen.queryByText(/→/)).not.toBeInTheDocument();

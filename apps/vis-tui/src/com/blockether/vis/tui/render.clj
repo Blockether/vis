@@ -1926,8 +1926,8 @@
 (defn- draw-queue-send-button!
   "Paint a queue row's ` Send it now ` button at the right edge and register it as its
    `:queue-send-now` hit region. An unmarked row wears the button fill; a row marked for
-   the next step wears the primary fill. `deliver` is the mode a press sets, so one
-   button serves both the mark and its undo."
+   the next step wears the primary fill and reads ` Unsend `. `deliver` is the mode a
+   press sets, so one button serves both the mark and its undo."
   [g {:keys [session-id turn-id deliver marked? label]} x y iw viewport-top]
   (let [cap
         (str " " label " ")
@@ -9001,6 +9001,10 @@
   "Label of a queue row's own button that sends only that row at the next step."
   "Send it now")
 
+(def ^:private queue-unsend-label
+  "Label of a marked queue row's button: a press keeps the row for the turn end."
+  "Unsend")
+
 (def ^:private queue-marked-suffix
   "Trailer of a queue row that is marked to send at the next iteration."
   " · next iter")
@@ -9077,8 +9081,13 @@
                     suffix
                     (when marked? queue-marked-suffix)
 
+                    ;; Room for the wider label, so a toggle never moves the preview.
                     button-w
-                    (if markable? (+ 3 (long (p/display-width queue-send-it-label))) 0)
+                    (if markable?
+                      (+ 3
+                         (long (max (p/display-width queue-send-it-label)
+                                    (p/display-width queue-unsend-label))))
+                      0)
 
                     avail
                     (max 1
@@ -9103,7 +9112,7 @@
                          markable?
                          (assoc :queue-send
                            {:session-id session-id
-                            :label queue-send-it-label
+                            :label (if marked? queue-unsend-label queue-send-it-label)
                             :turn-id (:turn-id entry)
                             :marked? marked?
                             ;; The mode a press SETS: a marked row goes back to the

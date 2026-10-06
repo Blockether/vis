@@ -100,10 +100,10 @@ for the turn end.
 - **Desktop or phone app:** choose **Send all now** in the queue header to send the whole
   queue. To send one message, choose **Send it now** on its row.
 
-A sent message shows **next iter** on its row. Choose its **Send it now** again to let it wait
-for the turn end. The running turn reads the sent messages, in queue order, when it
-starts its next step. The conversation then shows them as **You · sent now** inside
-that turn, with the step they reached.
+A sent message shows **next iter** on its row, and its button changes to **Unsend**. Choose
+**Unsend** to let the message wait for the turn end. The running turn reads the sent
+messages, in queue order, when it starts its next step. The conversation then shows them
+as **You · sent now** inside that turn, with the step they reached.
 
 Images attached to a sent message go with it to the running turn. Vis keeps them with
 that turn, so the desktop and phone app show them, also after a reload.
