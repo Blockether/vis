@@ -3003,6 +3003,33 @@
           (svar/ask-code! (:router environment)
                           (update ask-opts :messages apply-cache-breakpoints provider))))))
 
+(defn prompt-cache-warm-ttl-ms
+  "Returns the prompt-cache TTL of `provider` in milliseconds when a warm request
+   can extend it, or nil. Only explicit cache breakpoints have a TTL that a cache
+   read refreshes; a server continuation keeps its own state."
+  [provider]
+  (let [{:keys [strategy ttl]} (provider-prompt-cache provider)]
+    (when (= :explicit-breakpoints strategy)
+      (case ttl
+        :1h
+        3600000
+
+        :5m
+        300000
+
+        nil))))
+
+(defn warm-prompt-cache!
+  "Sends the last request again with a minimal output budget, so that the prompt
+   cache of the route that served it stays warm. Pass the `ask-opts` of that
+   request, so that the prefix and the cache breakpoints match. `served-provider`
+   and `served-model` pin the warm to that route."
+  [environment resolved-model served-provider served-model ask-opts]
+  (svar/warm-prompt-cache! (:router environment)
+                           (-> ask-opts
+                               (update :messages apply-cache-breakpoints (:provider resolved-model))
+                               (pin-session-route served-provider served-model))))
+
 (defn context-overflow-token-data
   "Keep rejection counts separate from response usage. Preflight may count remotely;
    the tokens error type alone identifies neither a provider refusal nor a local count."

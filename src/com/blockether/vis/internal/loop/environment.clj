@@ -17,6 +17,7 @@
             [com.blockether.vis.internal.extension.client :as client-extensions]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.manifest :as manifest]
+            [com.blockether.vis.internal.loop.cache-warmer :as cache-warmer]
             [com.blockether.vis.internal.loop.compaction :as compaction]
             [com.blockether.vis.internal.loop.python-exec :as python-exec]
             [com.blockether.vis.internal.loop.router :as loop-router]
@@ -174,18 +175,19 @@
   ;; recycle. Worker teardown is therefore a `finally`, and a failure is LOGGED
   ;; rather than dropped, because a leak nothing reports is one nobody can find.
   (try
-    (doseq [[step run!] [[:egress-proxy
-                          #(when-let [tok (:sandbox-token environment)]
-                             (gateway-sandbox/unregister-session! tok))]
-                         [:llm-session
-                          #(when-let [a (:llm-session-atom environment)]
-                             (locking a (transcript/close-llm-session! a)))]
-                         ;; BEFORE the context goes: the session's helper-source memo outlives
-                         ;; both the context and the engine, and nothing else ever drops it
-                         ;; (see `env-python/forget-session-defs!`).
-                         [:session-defs
-                          #(when-let [sid (:session-id environment)] (env/forget-session-defs!
-                                                                       sid))]]]
+    (doseq [[step run!]
+            [[:egress-proxy
+              #(when-let [tok (:sandbox-token environment)] (gateway-sandbox/unregister-session!
+                                                              tok))]
+             [:prompt-cache-warmer #(cache-warmer/stop! (:prompt-cache-warmer environment))]
+             [:llm-session
+              #(when-let [a (:llm-session-atom environment)] (locking a
+                                                               (transcript/close-llm-session! a)))]
+             ;; BEFORE the context goes: the session's helper-source memo outlives
+             ;; both the context and the engine, and nothing else ever drops it
+             ;; (see `env-python/forget-session-defs!`).
+             [:session-defs
+              #(when-let [sid (:session-id environment)] (env/forget-session-defs! sid))]]]
       (try (run!)
            (catch Throwable t
              (tel/log! :warn
@@ -705,6 +707,8 @@
                   ;; session/cursor per Vis environment, opened lazily on its first iteration
                   ;; and closed with env.
                   :llm-session-atom (atom nil)
+                  ;; Keepalive warms for the provider prompt cache, see `cache-warmer`.
+                  :prompt-cache-warmer (cache-warmer/create)
                   ;; Compact fingerprints and weights support reuse telemetry without
                   ;; retaining full requests. Exact accepted prefixes live in the single
                   ;; disk checkpoint and are read only for cross-turn restoration.

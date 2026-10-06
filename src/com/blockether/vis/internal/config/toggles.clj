@@ -619,6 +619,22 @@
                        :owner :vis
                        :group :provider
                        :persist? true})
+    ;; A warm request shortly before the provider cache TTL ends keeps the cache of
+    ;; a long tool run, so the next request reads it instead of writing it again.
+    ;; `idle` also warms for 30 minutes after a turn ends. A warm runs only when
+    ;; its expected saving beats its cost.
+    (register-toggle!
+      {:id "prompt_cache_keepalive"
+       :label "Prompt cache keepalive"
+       :description
+       "Keep the provider prompt cache warm during long tool runs; idle also warms between turns."
+       :type :enum
+       :choices ["off" "running" "idle"]
+       :default "running"
+       :scopes toggle-contract/scopes
+       :owner :vis
+       :group :provider
+       :persist? true})
     ;; A session routes to ONE model, and a coding plan's model often has no
     ;; vision. Rather than dropping the pixels and telling the agent to open a
     ;; screenshot with PIL (which yields size and mode, never meaning), one cheap

@@ -26,6 +26,7 @@
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.loop.accounting :as accounting]
+            [com.blockether.vis.internal.loop.cache-warmer :as cache-warmer]
             [com.blockether.vis.internal.loop.compaction :as compaction]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.errors :as loop-errors]
@@ -447,7 +448,7 @@
   [environment messages &
    [{:keys [routing iteration reasoning-level reasoning-effort resolved-model on-chunk extra-body
             llm-headers active-extensions answer-validation-context request-context on-response
-            message-token-counter input-token-estimator]}]]
+            message-token-counter input-token-estimator turn-pricing]}]]
   (binding [rt/*rlm-context* (merge rt/*rlm-context* {:rlm-phase :run-iteration})]
     (let [iteration-position (inc (long (or iteration 0)))
           turn-prefix (transcript/runtime-turn-prefix environment)
@@ -698,6 +699,7 @@
                   (fn []
                     (boolean (deref ca))))))
             provider-network)
+          _ (cache-warmer/request-started! (:prompt-cache-warmer environment))
           ask-result-raw
           ;; Svar forwards query-id; its request-id belongs to the upstream HTTP request.
           (svar/with-log-context
@@ -767,6 +769,23 @@
           _ (when on-response
               (on-response
                 {:api-usage api-usage :llm-provider actual-provider :llm-model actual-model}))
+          ;; The warm replays this request on the route that served it, so the cache
+          ;; of a long tool run survives; `request-started!` above cancels a stale warm.
+          _ (when (= actual-provider (:provider resolved-model))
+              (cache-warmer/request-finished!
+                (:prompt-cache-warmer environment)
+                {:mode #(toggles/value-of "prompt_cache_keepalive")
+                 :ttl-ms (transcript/prompt-cache-warm-ttl-ms actual-provider)
+                 :prompt-tokens (:input-tokens api-usage)
+                 :pricing turn-pricing
+                 :provider actual-provider
+                 :model actual-model
+                 :warm! (fn [cancel?]
+                          (transcript/warm-prompt-cache! environment
+                                                         resolved-model
+                                                         actual-provider
+                                                         actual-model
+                                                         (assoc ask-opts :cancel-fn cancel?)))}))
           fold-measurement (get (some-> (:ctx-atom environment)
                                         deref)
                                 "engine_fold_measurement")
@@ -2691,7 +2710,7 @@
            message-token-counter on-chunk pre-resolved-model provider-output-started?
            provider-replay-unsafe? reasoning-effort reasoning-level recall-options replay-target
            request-budget-atom route-change route-command-at-turn-start routing session-turn-id
-           summaries trailer-iters user-request]
+           summaries trailer-iters turn-pricing user-request]
     :as state}]
   (let [resolved-model
         pre-resolved-model
@@ -2807,6 +2826,7 @@
                            :reasoning-effort reasoning-effort
                            :routing @iteration-routing
                            :resolved-model resolved-model
+                           :turn-pricing turn-pricing
                            :on-response
                            (fn [response]
                              (transcript/stamp-served-route! environment response)
@@ -3063,6 +3083,7 @@
           _ (swap! accounting-atom accounting/add-usage
               (:api-usage iteration-result)
               (:duration-ms iteration-result))
+          _ (cache-warmer/drain-costs! (:prompt-cache-warmer environment) accounting-atom)
           ;; Providers Svar left for rejecting their credentials start the auth
           ;; cooldown first: the re-admission and pick move below read it.
           _ (loop-router/note-auth-rejections! (:llm-routing-trace iteration-result) nil)
@@ -3491,21 +3512,23 @@
         (start-turn! turn)]
 
     (binding [rt/*rlm-context* (merge rt/*rlm-context* {:rlm-phase :iteration-loop})]
-      (loop [loop-state first-state]
-        (let [outcome (or (halted-turn turn loop-state)
-                          (-> turn
-                              (assoc :loop-state loop-state
-                                     :iteration (:iteration loop-state)
-                                     :trace (:trace loop-state)
-                                     :trailer-iters (:trailer-iters loop-state)
-                                     :llm-provider (:llm-provider loop-state))
-                              plan-request
-                              project-context
-                              call-provider
-                              apply-result))]
-          (if-let [next-state (::next-state outcome)]
-            (recur next-state)
-            outcome))))))
+      ;; A settled turn ends running prompt-cache warms; `idle` mode keeps them.
+      (try (loop [loop-state first-state]
+             (let [outcome (or (halted-turn turn loop-state)
+                               (-> turn
+                                   (assoc :loop-state loop-state
+                                          :iteration (:iteration loop-state)
+                                          :trace (:trace loop-state)
+                                          :trailer-iters (:trailer-iters loop-state)
+                                          :llm-provider (:llm-provider loop-state))
+                                   plan-request
+                                   project-context
+                                   call-provider
+                                   apply-result))]
+               (if-let [next-state (::next-state outcome)]
+                 (recur next-state)
+                 outcome)))
+           (finally (cache-warmer/turn-settled! (:prompt-cache-warmer environment)))))))
 
 (defn iteration-loop
   "Run the core loop with disk-backed trace history, released on every exit path."
